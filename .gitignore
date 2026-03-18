@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+bun.lockb
+
+# Test output
+test-results/
+coverage/
+*.lcov
+
+# Test sandbox (created by test harness)
+.test-tmp/
+tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Build / dist
+dist/
+out/
