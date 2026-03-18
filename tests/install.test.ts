@@ -21,7 +21,7 @@ describe("install.sh", () => {
     expect(stdout).toContain("installed successfully");
   });
 
-  it("creates .claude/commands/office/ with all 18 commands", () => {
+  it("creates .claude/commands/office/ with all 21 commands", () => {
     runScript("install.sh", [dir]);
     const commandDir = join(dir, ".claude/commands/office");
     assertExists(commandDir);
@@ -32,9 +32,9 @@ describe("install.sh", () => {
 
     const expected = [
       "_meta.md", "advance.md", "agency.md", "ai-office.md", "doctor.md",
-      "graph.md", "milestone.md", "report.md", "review.md", "route.md",
-      "scaffold.md", "script.md", "setup.md", "status.md", "task-create.md",
-      "task-list.md", "task-move.md", "validate.md",
+      "graph.md", "milestone.md", "report.md", "review.md", "role.md", "route.md",
+      "run-tests.md", "scaffold.md", "script.md", "setup.md", "status.md",
+      "task-create.md", "task-list.md", "task-move.md", "validate.md", "validate-secrets.md",
     ];
     for (const name of expected) {
       expect(files).toContain(name);
@@ -81,6 +81,28 @@ describe("install.sh", () => {
     expect(content).toMatch(/BACKLOG:\s*0/);
     expect(content).toMatch(/TODO:\s*0/);
     expect(content).toMatch(/WIP:\s*0/);
+  });
+
+  it("creates .mcp.json at project root", () => {
+    runScript("install.sh", [dir]);
+    const mcp = join(dir, ".mcp.json");
+    assertExists(mcp);
+    const data = JSON.parse(readFileSync(mcp, "utf8"));
+    expect(data.mcpServers).toBeDefined();
+    expect(Object.keys(data.mcpServers)).toContain("fetch");
+    expect(Object.keys(data.mcpServers)).toContain("supabase");
+    expect(Object.keys(data.mcpServers)).toContain("playwright");
+    expect(Object.keys(data.mcpServers)).toContain("snyk");
+  });
+
+  it("does not overwrite existing .mcp.json", () => {
+    runScript("install.sh", [dir]);
+    const mcp = join(dir, ".mcp.json");
+    Bun.write(mcp, JSON.stringify({ mcpServers: { custom: {} } }));
+    runScript("install.sh", [dir]);
+    const after = JSON.parse(readFileSync(mcp, "utf8"));
+    expect(after.mcpServers.custom).toBeDefined();
+    expect(after.mcpServers.fetch).toBeUndefined();
   });
 
   it("creates .ai-office/office-config.md with Agency Identity section", () => {

@@ -71,7 +71,22 @@ Loop guards (increment counter in status file):
 
 3. **Determine the next stage**: use the `[next-stage]` argument if provided, otherwise use the transition table above.
 
-4. **Check loop guards**: if the iteration count would exceed the max, set state to `blocked` instead and note the reason.
+4. **Check and increment loop guards**:
+
+   Read the `## Loop Guards` table from the status file. If the table is absent, treat all counters as 0 with their default maxes.
+
+   Identify which guard (if any) applies to the transition:
+
+   | Transition | Guard key | Max |
+   |------------|-----------|-----|
+   | `qa → dev` (regression loop) | `qa_iteration` | 2 |
+   | `review → dev` (revision loop) | `review_iteration` | 2 |
+   | `user_acceptance → dev` (UAT loop) | `uat_iteration` | 1 |
+
+   If a guard applies:
+   - Read the current `Count` value from the table.
+   - If `Count >= Max`: set the new state to `blocked` instead of the requested stage. Append a note: `Blocked: <guard_key> limit (<Max>) reached`.
+   - Otherwise: increment the `Count` by 1 and write the updated table back to the status file before making any other changes.
 
 5. **In `manual` mode**: before making changes, output a summary:
    ```

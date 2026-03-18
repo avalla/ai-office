@@ -1,0 +1,71 @@
+{
+  "mcpServers": {
+
+    "fetch": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-fetch"]
+    },
+
+    "sequential-thinking": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+    },
+
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com",
+      "headers": {
+        "Authorization": "Bearer ${SUPABASE_ACCESS_TOKEN}"
+      }
+    },
+
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"]
+    },
+
+    "snyk": {
+      "type": "http",
+      "url": "https://mcp.snyk.com",
+      "headers": {
+        "Authorization": "Bearer ${SNYK_TOKEN}"
+      }
+    },
+
+    "lighthouse": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-lighthouse"]
+    },
+
+    "postgresql": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@bytebase/dbhub", "--dsn", "${DATABASE_URL}"]
+    },
+
+    "runcomfy": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@runcomfy/mcp-server"]
+    },
+
+    "stitch": {
+      "type": "http",
+      "url": "https://mcp.stitch.design",
+      "headers": {
+        "Authorization": "Bearer ${STITCH_API_KEY}"
+      }
+    },
+
+    "ios-simulator": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@anthropic-ai/mcp-server-ios-simulator"]
+    }
+
+  }
+}

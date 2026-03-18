@@ -135,6 +135,14 @@ See `.ai-office/tasks/` kanban board for task files.
 **Owner:** Unassigned
 **Updated:** <today>
 
+## Loop Guards
+
+| Guard | Count | Max |
+|-------|-------|-----|
+| qa_iteration | 0 | 2 |
+| review_iteration | 0 | 2 |
+| uat_iteration | 0 | 1 |
+
 ## Notes
 —
 

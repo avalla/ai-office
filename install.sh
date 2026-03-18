@@ -66,6 +66,14 @@ if [[ ! -f "$AI_OFFICE/office-config.md" ]]; then
   cp "$SKELETON/.ai-office/office-config.md" "$AI_OFFICE/office-config.md"
 fi
 
+# .mcp.json (only if not exists)
+if [[ ! -f "$PROJECT_ROOT/.mcp.json" ]]; then
+  cp "$SKELETON/.mcp.json" "$PROJECT_ROOT/.mcp.json"
+  echo "  ✅ .mcp.json created — fill in env vars for the adapters your agency needs"
+else
+  echo "  ↩️  .mcp.json already exists, skipped"
+fi
+
 # software-mcp-proposals.md (only if not exists)
 if [[ ! -f "$AI_OFFICE/software-mcp-proposals.md" ]]; then
   cp "$SKELETON/.ai-office/software-mcp-proposals.md" "$AI_OFFICE/software-mcp-proposals.md"

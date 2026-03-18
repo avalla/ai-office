@@ -26,6 +26,8 @@ Audit the AI Office framework setup in this project. Check each item and report 
 ### Config Files
 - [ ] `.ai-office/office-config.md` exists and has `Agency Identity` section
 - [ ] `.ai-office/tasks/README.md` exists
+- [ ] `.mcp.json` exists at project root — WARN if missing (run `/install` or copy from framework skeleton)
+- [ ] If `.mcp.json` exists: check that adapters required by the active agency are present (read `agency` from `project.config.md`, cross-reference against `software-mcp-proposals.md`)
 
 ### Project Configuration
 - [ ] `.ai-office/project.config.md` exists — WARN if missing (run `/office:setup`)
@@ -34,7 +36,7 @@ Audit the AI Office framework setup in this project. Check each item and report 
 
 ### Claude Code Integration
 - [ ] `.claude/commands/office/` directory exists
-- [ ] All 18 commands present: `_meta.md`, `advance.md`, `agency.md`, `ai-office.md`, `doctor.md`, `graph.md`, `milestone.md`, `report.md`, `review.md`, `route.md`, `scaffold.md`, `script.md`, `setup.md`, `status.md`, `task-create.md`, `task-list.md`, `task-move.md`, `validate.md`
+- [ ] All 21 commands present: `_meta.md`, `advance.md`, `agency.md`, `ai-office.md`, `doctor.md`, `graph.md`, `milestone.md`, `report.md`, `review.md`, `role.md`, `route.md`, `run-tests.md`, `scaffold.md`, `script.md`, `setup.md`, `status.md`, `task-create.md`, `task-list.md`, `task-move.md`, `validate.md`, `validate-secrets.md`
 - [ ] `.claude/commands/office/.version` exists (version stamp)
 
 ### Task Board Integrity
@@ -67,7 +69,7 @@ AI Office Doctor — <today>
 ✅ Directory structure: 15/15 checks passed
 ✅ Config files: 2/2
 ✅ Project configuration: project.config.md present, all required fields set (software-studio, advance_mode: manual)
-✅ Claude Code integration: 18/18 commands, version 1.1.0
+✅ Claude Code integration: 21/21 commands, version 1.2.0
 ✅ Task board integrity: counts match, filename convention followed
 ✅ Milestones: M1 (active), M2 (active)
 ✅ Agent profiles: 21 agents, all personality.md present

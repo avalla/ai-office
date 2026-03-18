@@ -68,15 +68,22 @@ done
 echo ""
 
 # ── Agency selection ──────────────────────────────────────────────────────────
-AGENCIES=("software-studio" "lean-startup" "game-studio" "creative-agency" "media-agency" "penetration-test-agency")
-AGENCY_DESCS=(
-  "Full-stack web/mobile — complete SDLC with all quality gates"
-  "Rapid MVP — minimal process, maximum speed"
-  "Game development — interactive experiences and games"
-  "Media & content — creative production pipeline"
-  "Video and movie production — pre-production to delivery"
-  "Security testing — pentests, audits, remediation"
-)
+# Dynamically discover agencies from skeleton directory
+AGENCIES=()
+AGENCY_DESCS=()
+AGENCY_CUSTOMS=()
+
+for agency_dir in "$FRAMEWORK_DIR/skeleton/.ai-office/agencies"/*/; do
+  [[ -d "$agency_dir" ]] || continue
+  agency_slug="$(basename "$agency_dir")"
+  config_file="$agency_dir/config.md"
+  [[ -f "$config_file" ]] || continue
+  desc="$(awk '/^description:/{sub(/^description:[[:space:]]*/, ""); print; exit}' "$config_file")"
+  custom="$(awk '/^custom:/{sub(/^custom:[[:space:]]*/, ""); print; exit}' "$config_file")"
+  AGENCIES+=("$agency_slug")
+  AGENCY_DESCS+=("${desc:-$agency_slug}")
+  AGENCY_CUSTOMS+=("${custom:-false}")
+done
 
 if [[ -n "$AGENCY_ARG" ]]; then
   SELECTED_AGENCY="$AGENCY_ARG"
@@ -85,7 +92,9 @@ elif [[ "$NON_INTERACTIVE" == true ]]; then
 else
   echo "Select agency type:"
   for i in "${!AGENCIES[@]}"; do
-    echo "  $((i+1))) ${AGENCIES[$i]} — ${AGENCY_DESCS[$i]}"
+    marker=""
+    [[ "${AGENCY_CUSTOMS[$i]}" == "true" ]] && marker=" [custom]"
+    echo "  $((i+1))) ${AGENCIES[$i]}${marker} — ${AGENCY_DESCS[$i]}"
   done
   read -p "Agency [1]: " agency_choice
   agency_choice="${agency_choice:-1}"
@@ -234,11 +243,19 @@ EOF
 echo "  ✅ Created .ai-office/project.config.md"
 
 # ── Write agency.json ─────────────────────────────────────────────────────────
+IS_CUSTOM=false
+for i in "${!AGENCIES[@]}"; do
+  if [[ "${AGENCIES[$i]}" == "$SELECTED_AGENCY" && "${AGENCY_CUSTOMS[$i]}" == "true" ]]; then
+    IS_CUSTOM=true
+    break
+  fi
+done
+
 cat > "$AGENCY_JSON" <<EOF
 {
   "name": "$SELECTED_AGENCY",
   "selectedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "custom": false
+  "custom": $IS_CUSTOM
 }
 EOF
 echo "  ✅ Updated .ai-office/agency.json"
