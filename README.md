@@ -74,8 +74,9 @@ After install, your project will have:
 │   ├── prd/
 │   ├── adr/
 │   └── runbooks/
-├── agents/              ← agent role profiles
-├── agencies/            ← agency configurations
+├── agents/              ← 21 agent profiles (personality, competencies, skills, …)
+├── agencies/            ← agency configurations + templates
+├── templates/           ← document templates (prd, adr, qa-checklist, …)
 ├── scripts/             ← custom runbooks
 └── memory/
 ```
@@ -116,6 +117,7 @@ Five agency templates are bundled and installed during setup:
 | `lean-startup` | Rapid MVP — minimal process, maximum speed |
 | `game-studio` | Game development — interactive experiences and games |
 | `creative-agency` | Media & content — creative production pipeline |
+| `media-agency` | Video and movie production — pre-production to delivery |
 | `penetration-test-agency` | Security testing — pentests, audits, remediation |
 
 ## Project Configuration

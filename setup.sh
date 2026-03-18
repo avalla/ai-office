@@ -54,7 +54,7 @@ fi
 
 # ── Copy bundled agency templates ────────────────────────────────────────────
 echo "→ Installing agency templates..."
-for agency_dir in "$FRAMEWORK_DIR/agencies"/*/; do
+for agency_dir in "$FRAMEWORK_DIR/skeleton/.ai-office/agencies"/*/; do
   agency_name="$(basename "$agency_dir")"
   target="$AI_OFFICE/agencies/$agency_name"
   if [[ ! -d "$target" ]]; then
@@ -68,12 +68,13 @@ done
 echo ""
 
 # ── Agency selection ──────────────────────────────────────────────────────────
-AGENCIES=("software-studio" "lean-startup" "game-studio" "creative-agency" "penetration-test-agency")
+AGENCIES=("software-studio" "lean-startup" "game-studio" "creative-agency" "media-agency" "penetration-test-agency")
 AGENCY_DESCS=(
   "Full-stack web/mobile — complete SDLC with all quality gates"
   "Rapid MVP — minimal process, maximum speed"
   "Game development — interactive experiences and games"
   "Media & content — creative production pipeline"
+  "Video and movie production — pre-production to delivery"
   "Security testing — pentests, audits, remediation"
 )
 

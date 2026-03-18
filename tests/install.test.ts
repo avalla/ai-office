@@ -27,7 +27,8 @@ describe("install.sh", () => {
     assertExists(commandDir);
 
     const files = readdirSync(commandDir).filter((f) => f.endsWith(".md"));
-    expect(files.length).toBe(18);
+    const skeleton = readdirSync(join(FRAMEWORK_DIR, "skeleton/.claude/commands/office")).filter((f) => f.endsWith(".md"));
+    expect(files.length).toBe(skeleton.length);
 
     const expected = [
       "_meta.md", "advance.md", "agency.md", "ai-office.md", "doctor.md",

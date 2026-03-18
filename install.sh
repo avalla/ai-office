@@ -4,6 +4,7 @@
 set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKELETON="$FRAMEWORK_DIR/skeleton"
 PROJECT_ROOT="${1:-.}"
 STAMP_ONLY="${2:-}"
 VERSION="$(cat "$FRAMEWORK_DIR/VERSION")"
@@ -26,9 +27,9 @@ fi
 # ── Install Claude Code commands ──────────────────────────────────────────────
 echo "→ Installing commands to .claude/commands/office/"
 mkdir -p "$PROJECT_ROOT/.claude/commands/office"
-cp "$FRAMEWORK_DIR/commands/office/"*.md "$PROJECT_ROOT/.claude/commands/office/"
+cp "$SKELETON/.claude/commands/office/"*.md "$PROJECT_ROOT/.claude/commands/office/"
 echo "$VERSION" > "$PROJECT_ROOT/.claude/commands/office/.version"
-echo "  ✅ $(ls "$FRAMEWORK_DIR/commands/office/"*.md | wc -l | tr -d ' ') commands installed"
+echo "  ✅ $(ls "$SKELETON/.claude/commands/office/"*.md | wc -l | tr -d ' ') commands installed"
 
 # ── Create .ai-office/ structure ──────────────────────────────────────────────
 echo "→ Setting up .ai-office/ directory structure"
@@ -55,52 +56,38 @@ done
 
 # tasks/README.md (only if not exists)
 if [[ ! -f "$AI_OFFICE/tasks/README.md" ]]; then
-  cat > "$AI_OFFICE/tasks/README.md" <<'EOF'
-BACKLOG: 0
-TODO: 0
-WIP: 0
-REVIEW: 0
-DONE: 0
-
-Updated: $(date +%Y-%m-%d)
-EOF
-  sed -i.bak "s/\$(date +%Y-%m-%d)/$(date +%Y-%m-%d)/" "$AI_OFFICE/tasks/README.md"
-  rm -f "$AI_OFFICE/tasks/README.md.bak"
+  sed "s/__DATE__/$(date +%Y-%m-%d)/" \
+    "$SKELETON/.ai-office/tasks/README.md" \
+    > "$AI_OFFICE/tasks/README.md"
 fi
 
 # office-config.md (only if not exists)
 if [[ ! -f "$AI_OFFICE/office-config.md" ]]; then
-  cat > "$AI_OFFICE/office-config.md" <<'EOF'
-# AI Office Configuration
+  cp "$SKELETON/.ai-office/office-config.md" "$AI_OFFICE/office-config.md"
+fi
 
-> Virtual AI Agency structure, roles, and operational parameters
+# software-mcp-proposals.md (only if not exists)
+if [[ ! -f "$AI_OFFICE/software-mcp-proposals.md" ]]; then
+  cp "$SKELETON/.ai-office/software-mcp-proposals.md" "$AI_OFFICE/software-mcp-proposals.md"
+fi
 
----
-trigger: always_on
----
+# agents/ — copy all agent profiles (skip if already present)
+echo "→ Installing agent profiles"
+for agent_dir in "$SKELETON/.ai-office/agents"/*/; do
+  agent_name="$(basename "$agent_dir")"
+  target="$AI_OFFICE/agents/$agent_name"
+  if [[ ! -d "$target" ]]; then
+    cp -r "$agent_dir" "$target"
+    echo "  ✅ $agent_name"
+  else
+    echo "  ↩️  $agent_name (already present, skipped)"
+  fi
+done
 
-## Agency Identity
-
-**Name:** AI Office
-**Type:** Virtual Software Agency
-**Mission:** Deliver high-quality software projects through AI-driven multi-role collaboration
-**Version:** 1.0
-
-## Default Agency
-
-Software Studio (full SDLC with all quality gates)
-
-## Quality Thresholds
-
-- **Code Coverage:** ≥ 80%
-- **Test Pass Rate:** 100%
-- **Security Vulnerabilities:** 0 high/critical
-
-## Iteration Limits
-
-- **QA Iterations:** Max 2 (then escalate)
-- **Review Iterations:** Max 2 (then escalate)
-EOF
+# templates/ — copy document templates (skip if already present)
+if [[ ! -d "$AI_OFFICE/templates" ]]; then
+  cp -r "$SKELETON/.ai-office/templates" "$AI_OFFICE/templates"
+  echo "→ Document templates installed ($(ls "$AI_OFFICE/templates/"*.md | wc -l | tr -d ' ') files)"
 fi
 
 echo "  ✅ .ai-office/ structure ready"
@@ -112,10 +99,11 @@ echo ""
 
 if [[ ! -f "$AI_OFFICE/project.config.md" ]]; then
   echo "Next: configure your project"
-  echo "  ./tools/ai-office-framework/setup.sh   ← interactive setup (agency, tech stack)"
-  echo "  /office:setup                          ← same, inside Claude Code"
+  echo "  ./setup.sh $PROJECT_ROOT   ← interactive setup (agency, tech stack)"
+  echo "  /office:setup              ← same, inside Claude Code"
 else
   echo "Get started:"
+  echo "  /office:ai-office          ← interactive wizard"
   echo "  /office:route <describe your task>"
   echo "  /office:doctor"
 fi

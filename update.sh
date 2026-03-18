@@ -38,7 +38,7 @@ fi
 
 # ── Show what will change ─────────────────────────────────────────────────────
 echo "Commands to update:"
-for src in "$FRAMEWORK_DIR/commands/office/"*.md; do
+for src in "$FRAMEWORK_DIR/skeleton/.claude/commands/office/"*.md; do
   name="$(basename "$src")"
   dst="$PROJECT_ROOT/.claude/commands/office/$name"
   if [[ ! -f "$dst" ]]; then
@@ -56,7 +56,7 @@ read -p "Apply update v$INSTALLED → v$AVAILABLE? [Y/n] " confirm
 echo ""
 echo "→ Updating commands..."
 mkdir -p "$PROJECT_ROOT/.claude/commands/office"
-cp "$FRAMEWORK_DIR/commands/office/"*.md "$PROJECT_ROOT/.claude/commands/office/"
+cp "$FRAMEWORK_DIR/skeleton/.claude/commands/office/"*.md "$PROJECT_ROOT/.claude/commands/office/"
 echo "$AVAILABLE" > "$INSTALLED_FILE"
 echo "  ✅ Commands updated"
 
