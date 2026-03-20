@@ -26,13 +26,9 @@ Software and MCP proposal baseline for all agencies:
 | **Lean Startup** | Rapid MVP development | Startups, prototypes |
 | **Penetration Test Agency** | Offensive security testing | Pentests, remediation validation, security audits |
 | **Media Agency** | Video and movie production | Short films, movies, video campaigns |
-
-## Planned Agencies (not yet implemented)
-
-| Agency | Focus | Best For |
-|--------|-------|----------|
-| **Enterprise Team** | Large-scale systems | Enterprise software |
-| **Solo Creator** | Individual projects | Personal apps, side projects |
+| **Italian Legal Studio** | Italian law firm workflows | Italian legal practices, law firms |
+| **Furniture CAD Studio** | Furniture design and CAD modeling | Furniture designers, makers, manufacturers |
+| **Crypto Scalping Studio** | Scalping strategy development and signal services | Crypto traders, signal service providers |
 
 ## How to Use
 
@@ -92,9 +88,10 @@ To create a custom agency:
 | Penetration testing engagement | Penetration Test Agency |
 | Game | Game Studio |
 | MVP / Prototype | Lean Startup |
-| Enterprise system | Enterprise Team (planned) |
-| Personal project | Solo Creator (planned) |
+| Italian law firm | Italian Legal Studio |
+| Furniture design / CAD | Furniture CAD Studio |
+| Crypto trading / signals | Crypto Scalping Studio |
 
 ---
 
-Updated: 2026-03-10
+Updated: 2026-03-20

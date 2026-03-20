@@ -1,3 +1,6 @@
+---
+trigger: when_referenced
+---
 # Compliance Officer — Personality & Traits
 
 ## Core Identity

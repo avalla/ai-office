@@ -57,7 +57,8 @@ Outputs:
 | Collaborator | Interaction |
 |--------------|-------------|
 | PM | Objectives, boundaries, and launch priorities |
-| Tokenomics Strategist | Incentive and mechanism constraints |
+| Signal Analyst | Signal spec delivery and indicator logic for execution rule design |
+| Tokenomics Strategist | Incentive and mechanism constraints (non-trading contexts) |
 | Developer | Implementation feasibility and integration |
 | Security | Adversarial abuse review |
 | QA | Validation scenarios and edge-case checks |

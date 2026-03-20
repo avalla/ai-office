@@ -1,3 +1,6 @@
+---
+trigger: when_referenced
+---
 # Paralegal — Personality & Traits
 
 ## Core Identity

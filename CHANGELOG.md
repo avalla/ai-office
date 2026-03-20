@@ -1,3 +1,77 @@
+## 1.4.0 — 2026-03-19
+
+### Added
+
+**Furniture CAD Studio agency:**
+- New custom agency `furniture-cad-studio` for furniture design and manufacturing workflows
+- 10 agents mapped to furniture roles: Design Director, Project Manager, Furniture Designer, CAD Modeler, Structural Reviewer, Material Specifier, Manufacturing Spec Writer, Quality Controller, Project Planner, Delivery Manager
+- Full pipeline: brief intake → concept → structural review → CAD modeling + materials (parallel) → QA → manufacturing specs → delivery
+- Templates: Client Brief, Concept Doc, Structural ADR, Materials Spec, Manufacturing Spec (with cut list and tolerances), CAD Session Log
+- Quality thresholds: ±0.5 mm dimensional accuracy, 100% spec coverage, mandatory structural sign-off
+- Iteration limits: CAD↔QA max 3, concept↔client max 3, manufacturing spec↔review max 2
+
+**FreeCAD MCP adapter:**
+- `freecad` adapter added to `skeleton/.mcp.json` using env vars `FREECAD_MCP_SERVER_PATH` and `FREECAD_CMD_PATH`
+- Runs FreeCAD headless via `QT_QPA_PLATFORM=offscreen`
+- Added to company-level MCP baseline in `software-mcp-proposals.md`
+
+**Task management improvements:**
+- Task Slug field — link tasks to parent features for better tracking
+- BLOCKED column — tasks with blockers tracked with explicit unblock criteria
+- Labels visible in `/office:task-list` output
+
+**Reporting:**
+- Velocity reporting added to `/office:report velocity` — throughput metrics per milestone
+
+**Artifacts:**
+- Discuss artifact — context documents at `.ai-office/docs/context/<slug>.md`
+- Runbook artifact — deployment runbooks at `.ai-office/docs/runbooks/<slug>-plan.md`
+
+**Italian Legal Studio agency:**
+- New agency `italian-legal-studio` for Italian law firms
+- 6 agents: Senior Partner, Associate Attorney, Paralegal, Compliance Officer, Reviewer, Practice Manager
+- Templates for: Atto di Citazione, Memoria Difensiva, Parere Legale, Contratto, Delibera
+- Statute of limitations tracking, billable hours, partner approval workflow
+
+**Status file loop guards:**
+- All status files now include a `## Loop Guards` table with iteration counters
+
+**Signal Analyst agent:**
+- New `signal-analyst` agent with full technical analysis expertise for crypto trading contexts
+- Competencies: EMA/RSI/MACD/ATR/Bollinger/VWAP/Volume Profile, crypto-specific signals (funding rates, OI, liquidation levels, exchange flows), market regime detection, walk-forward testing, overfitting detection
+- Owns `25_signal_design` and `40_backtest_review` workflows
+- Replaces Tokenomics Strategist as Signal Analyst in `crypto-scalping-studio`
+
+**Crypto Scalping Studio agency:**
+- New custom agency `crypto-scalping-studio` for scalping strategy development, signal services, and live trading operations
+- 10 agents: Trading Director, PM, Signal Analyst, Scalping Engineer, Quant Developer, Risk Manager, Backtester/QA, Strategy Reviewer, Ops Monitor, Delivery Manager
+- Full pipeline: brief → risk params → signal design + implement → backtest → strategy review → paper trade → live deploy → monitor
+- Quality thresholds: Sharpe ≥ 1.5, drawdown ≤ 15%, win rate ≥ 52%, paper trade ≥ 7 days
+- Templates: Signal Brief, Risk ADR, Backtest Report, Paper Trade Report, Deployment Runbook, Performance Review
+- Quickstart guide with worked example pipeline
+
+**Website and presentation:**
+- `website/` — Vite + React marketing site with all 9 agencies, 27 agents, commands, quick start, v1.4.0 highlights
+- `spectacle-slides/` — Spectacle MDX presentation covering full framework
+
+**Legal agent profile audit:**
+- All 5 legal agents (senior-partner, associate-attorney, compliance-officer, paralegal, practice-manager) normalized to standard 6-file structure
+- Added `trigger: when_referenced` frontmatter to all legal agent files
+- Expanded competencies, skills, triggers, workflows, mcp-adapters to match quality of development agents
+- Fixed paralegal and practice-manager MCP adapters (removed non-existent `calendar-management`, `document-editor`, `calendar-integration`, `billing-system`)
+
+**Version annotations:**
+- All skeleton command files tagged with `<!-- ai-office-version: 1.4.0 -->`
+
+### Fixed
+
+- `/office:verify` now recommends REVIEW (not DONE) as the next state
+- `/office:validate` sprint duration set to a concrete 14 days
+- `/office:advance` improved error handling
+- Task matching now uses Slug field with filename fallback
+
+---
+
 ## 1.3.0 — 2026-03-18
 
 ### Added

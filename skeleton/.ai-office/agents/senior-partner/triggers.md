@@ -1,3 +1,6 @@
+---
+trigger: when_referenced
+---
 # Senior Partner — Triggers & Activation
 
 ## When Senior Partner is Involved

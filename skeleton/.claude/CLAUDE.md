@@ -77,6 +77,27 @@ These rules are always active. Project-specific rules are in `.ai-office/project
 
 ---
 
+## Branch Workflow
+
+Every task is developed in its own git branch and squash-merged into `dev` at the end of the iteration.
+
+**Branch naming:** `task/<milestone-id>/T<NNN>-<slug>`
+- Examples: `task/M1/T003-fix-upload-timeout`, `task/sprint-2/T001-billing-ui`
+
+**Rules:**
+- Create the branch when the task moves to `WIP` (handled automatically by `/office:task-move`).
+- Never commit directly to `dev` while the iteration is open.
+- Keep one task per branch — no cross-task commits.
+- Squash merge (not rebase, not regular merge) to keep `dev` history linear and readable.
+- All branches for a milestone are merged when `/office:milestone close <id>` is called.
+
+**Commit message format for squash merges:**
+```
+squash(<milestone-id>): <task title> (<task-id>)
+```
+
+---
+
 ## Git & Commits
 
 - Use Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`, `perf:`, `ci:`.

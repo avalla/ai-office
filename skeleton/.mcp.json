@@ -65,6 +65,16 @@
       "type": "stdio",
       "command": "npx",
       "args": ["-y", "@anthropic-ai/mcp-server-ios-simulator"]
+    },
+
+    "freecad": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${FREECAD_MCP_SERVER_PATH}/build/index.js"],
+      "env": {
+        "QT_QPA_PLATFORM": "offscreen",
+        "FREECAD_PATH": "${FREECAD_CMD_PATH}"
+      }
     }
 
   }

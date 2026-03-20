@@ -1,3 +1,6 @@
+---
+trigger: when_referenced
+---
 # Associate Attorney — Personality & Traits
 
 ## Core Identity

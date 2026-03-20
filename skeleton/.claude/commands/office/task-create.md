@@ -59,6 +59,7 @@ Examples:
 **ID:** <ms>_T<NNN>
 **Milestone:** <ms>
 **Slug:** <slug or —>
+**Branch:** —
 **Priority:** <priority>
 **Status:** <column>
 **Assignee:** <assignee>
@@ -99,4 +100,4 @@ Examples:
 
 6. Confirm: "Created `<ms>_T<NNN>`: **<title>** → `<COLUMN>` (`<filename>`)"
 
-<!-- ai-office-version: 1.4.0 -->
+<!-- ai-office-version: 1.5.0 -->

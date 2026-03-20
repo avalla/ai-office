@@ -209,8 +209,19 @@ Overdue: — (target not passed)
 
 1. Read the milestone file. If status is already `complete` or `archived`, warn and stop.
 2. Check if any tasks for this milestone are in `WIP`, `TODO`, or `BACKLOG`. If yes, list them and warn: "X tasks are not done. Close anyway? (respond 'yes' to confirm)"
-3. Update the frontmatter: `status: complete`, add `completed: <today ISO>`.
-4. Confirm: "Milestone `<id>` closed."
+3. **Squash merge task branches into `dev`**:
+   - Collect all DONE tasks for this milestone that have a `**Branch:**` value (not `—` and not `merged`).
+   - Verify the current git branch is not already `dev`. If not on `dev`, run `git checkout dev`.
+   - For each task branch (in task-ID order):
+     - Run `git merge --squash <branch-name>`
+     - Run `git commit -m "squash(<id>): <task-title> (<task-id>)"` using the task title from `# <title>` in the task file
+     - Run `git branch -d <branch-name>` to clean up the local branch
+     - Update `**Branch:**` in the task file to `merged`
+     - Append to the task's `## History`: `- <today ISO>: squash-merged into dev and branch deleted`
+   - If any merge has conflicts: stop, report the conflict, and ask the user to resolve before continuing.
+   - After all merges: report "Squash-merged N branches into dev."
+4. Update the frontmatter: `status: complete`, add `completed: <today ISO>`.
+5. Confirm: "Milestone `<id>` closed. N task branches squash-merged into dev."
 
 ---
 
@@ -229,4 +240,4 @@ Overdue: — (target not passed)
    Repeat for each task file in sequence (there is no bulk move — process them one by one).
 4. Confirm: "Milestone `<id>` archived. N tasks moved to ARCHIVED."
 
-<!-- ai-office-version: 1.4.0 -->
+<!-- ai-office-version: 1.5.0 -->

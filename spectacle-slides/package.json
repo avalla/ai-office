@@ -1,0 +1,28 @@
+{
+  "name": "ai-office-spectacle-slides",
+  "version": "1.4.0",
+  "description": "AI Office - Interactive Presentation with Spectacle",
+  "main": "index.js",
+  "scripts": {
+    "start": "spectacle",
+    "build": "spectacle --build",
+    "export": "spectacle --export pdf"
+  },
+  "keywords": [
+    "ai-office",
+    "presentation",
+    "spectacle",
+    "react"
+  ],
+  "author": "Andrea",
+  "license": "MIT",
+  "devDependencies": {
+    "spectacle": "^9.0.0",
+    "@vitejs/plugin-react": "^4.0.0",
+    "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  }
+}

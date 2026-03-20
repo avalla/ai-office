@@ -1,3 +1,6 @@
+---
+trigger: when_referenced
+---
 # Practice Manager — Personality & Traits
 
 ## Core Identity

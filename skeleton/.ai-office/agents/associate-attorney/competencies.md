@@ -1,3 +1,6 @@
+---
+trigger: when_referenced
+---
 # Associate Attorney — Competencies
 
 ## Core Competencies

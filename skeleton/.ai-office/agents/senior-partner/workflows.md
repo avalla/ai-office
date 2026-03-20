@@ -1,41 +1,94 @@
-# Senior Partner — Workflows & Actions
-
-## Document Approval Workflow
-
-```
-Associate submits → Compliance reviews → Reviewer proofs → Partner approves
-                                                              ↓
-                                                    ✅ APPROVED → Client
-                                                    OR
-                                                    ❌ REJECTED → Back to Associate
-```
-
-## Client Call Workflow
-
-```
-Client contacts Associate → Associate gathers info → Partner decides
-                                                       ↓
-                                    Approves strategy → Partner calls client
-                                           OR
-                                    Declines/adjusts → Associate relays to client
-```
-
-## Case Strategy Decision
-
-1. Associate brings research + options
-2. Partner evaluates risk/benefit
-3. Partner decides (with client input if needed)
-4. Partner communicates decision to team
-5. Team executes strategy
-
-## Malpractice Prevention
-
-1. Every document reviewed by Partner
-2. Compliance Officer sign-off required
-3. Citation verification by Reviewer
-4. Insurance coverage confirmed if needed
-5. Documentation of all decisions
-
 ---
+trigger: when_referenced
+---
+# Senior Partner Workflows
 
-**Updated:** 2026-03-19
+## Owned Workflows
+
+| Workflow | Purpose |
+|----------|---------|
+| `document_approval` | Final review and signature on all client-facing documents |
+| `case_strategy` | Define and approve legal strategy for each matter |
+| `client_escalation` | Handle escalated client situations directly |
+
+## Workflow Responsibilities
+
+### document_approval
+
+Purpose: Apply final Partner quality review and signature authority before any document reaches the client or court.
+
+Steps:
+1. Receive document after Reviewer clearance (confirm Reviewer and Compliance certificates are present)
+2. Invoke `review-document-multisector`
+3. Review legal argument strength, risk language, and client impact
+4. Decision:
+   - **APPROVED**: Sign document; Practice Manager sends to client
+   - **RETURNED**: Write specific revision instructions; return to Associate Attorney
+5. Log decision in case file
+
+Outputs:
+- Signed document (if approved)
+- Revision instructions (if returned) in `docs/drafts/<case>-<slug>-partner-notes.md`
+
+### case_strategy
+
+Purpose: Set the legal strategy for each matter and ensure all team members are aligned.
+
+Steps:
+1. Receive research options from Associate Attorney
+2. Evaluate risk/benefit of each approach using full legal expertise
+3. Consult client if material strategic decision requires their input
+4. Select strategy; communicate decision clearly to team
+5. Document strategy decision in matter file
+
+Outputs:
+- Strategy decision recorded in `docs/cases/<case>-strategy.md`
+- Direction memo to Associate Attorney
+
+### client_escalation
+
+Purpose: Handle difficult, sensitive, or high-stakes client situations that require Partner authority.
+
+Steps:
+1. Receive escalation from Associate Attorney or Practice Manager
+2. Assess situation: legal risk, client relationship risk, business risk
+3. Contact client directly (call or formal letter)
+4. Communicate outcome, risk, and firm's recommendation clearly
+5. Document communication and client decision
+
+Outputs:
+- Client communication record
+- Updated strategy or case status as appropriate
+
+## Workflow Interactions
+
+### Triggers
+
+| Workflow | Condition |
+|----------|-----------|
+| Practice Manager (client delivery) | Document approved and signed; ready for delivery |
+
+### Receives From
+
+| Workflow | Condition |
+|----------|-----------|
+| Reviewer | Document cleared and ready for Partner review |
+| Associate Attorney | Research memo and strategy options |
+| Associate Attorney / Practice Manager | Escalated client situation |
+
+## Document Ownership
+
+| Artifact | Location | Purpose |
+|----------|----------|---------|
+| Partner Revision Notes | `docs/drafts/<case>-<slug>-partner-notes.md` | Revision instructions |
+| Case Strategy Record | `docs/cases/<case>-strategy.md` | Strategic decision log |
+
+## Collaboration Points
+
+| Collaborator | Interaction |
+|--------------|-------------|
+| Associate Attorney | Receives research; provides strategy; approves or returns drafts |
+| Compliance Officer | Requires compliance certificate before document review |
+| Reviewer | Requires reviewer clearance before document review |
+| Paralegal | Final formatted document received via Paralegal |
+| Practice Manager | Delegates client delivery, billing, and scheduling |

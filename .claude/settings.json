@@ -6,10 +6,15 @@
       "Bash(/tmp/ai-office-changes/agency.md:*)",
       "Bash(for agent:*)",
       "Read(//Users/andrea/dev/node/ai-office-claude-code/skeleton/.ai-office/agents/**)",
-      "Bash(/dev/null done:*)"
+      "Bash(/dev/null done:*)",
+      "Read(//Users/andrea/dev/node/rave-fighters/.ai-office/docs/runbooks/**)",
+      "Bash(/Users/andrea/dev/node/ai-office-claude-code/setup.sh /Users/andrea/dev/node/rave-fighters)",
+      "Read(//Applications/FreeCAD.app/**)",
+      "Bash(QT_QPA_PLATFORM=offscreen /Applications/FreeCAD.app/Contents/MacOS/FreeCAD --version)"
     ],
     "additionalDirectories": [
-      "/Users/andrea/dev/idt/autoepoque/.ai-office/docs/runbooks"
+      "/Users/andrea/dev/idt/autoepoque/.ai-office/docs/runbooks",
+      "/Users/andrea/dev/node/rave-fighters/.ai-office/docs/runbooks"
     ]
   }
 }

@@ -1,0 +1,6 @@
+{
+  "enabledMcpjsonServers": [
+    "freecad"
+  ],
+  "enableAllProjectMcpServers": true
+}

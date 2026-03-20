@@ -35,6 +35,7 @@ These are the only adapters referenced by at least one active agency. No other a
 | `runcomfy` | creative-agency, media-agency | AI image and video generation |
 | `ios-simulator` | software-studio, creative-agency, game-studio, penetration-test-agency, media-agency | iOS app and game testing / mobile preview |
 | `postgresql` | software-studio | Direct database access when Supabase abstraction is insufficient |
+| `freecad` | furniture-cad-studio | 3D CAD modeling, parametric geometry, boolean operations, STEP/STL export |
 
 ## Agency-Level Proposal Matrix
 
@@ -46,6 +47,11 @@ These are the only adapters referenced by at least one active agency. No other a
 | Lean Startup | Lightweight web stack, analytics, rapid deployment tooling | `supabase`, `mcp-playwright`, `fetch` | `lighthouse`, `snyk`, `sequential-thinking` |
 | Penetration Test Agency | Security scanners, threat modeling docs, reporting suite | `snyk`, `fetch` | `sequential-thinking`, `supabase` |
 | Media Agency | Video/audio/image production tools, publishing pipeline | `runcomfy`, `stitch`, `fetch` | `mcp-playwright`, `lighthouse` |
+| Italian Legal Studio | Markdown docs, case management, legal research | `fetch`, `sequential-thinking` | `supabase` |
+| Furniture CAD Studio | FreeCAD (headless), Git, Markdown docs | `freecad`, `fetch`, `sequential-thinking` | `runcomfy`, `stitch` |
+| Crypto Scalping Studio | Python/TypeScript, CCXT, Supabase, TradingView | `supabase`, `fetch`, `sequential-thinking` | `mcp-playwright`, `postgresql` |
+
+
 
 ## Agent-Level Proposal Matrix
 
@@ -66,6 +72,7 @@ These are the only adapters referenced by at least one active agency. No other a
 | Tokenomics Strategist | Economic modeling, KPI modeling, scenario analysis | `fetch`, `sequential-thinking`, `supabase` | `postgresql` |
 | Developer | IDE/runtime/test stack, CI integration | `supabase`, `mcp-playwright`, `snyk`, `fetch` | `sequential-thinking`, `postgresql` |
 | Scalper | Execution rule modeling, telemetry definition | `sequential-thinking`, `fetch`, `supabase` | `postgresql` |
+| Signal Analyst | Indicator design, signal validation, backtest review, regime analysis | `fetch`, `sequential-thinking`, `supabase` | `postgresql` |
 | Security | Security testing and vuln management tooling | `snyk`, `fetch` | `sequential-thinking`, `supabase` |
 | QA | Test frameworks, validation harnesses | `mcp-playwright`, `lighthouse`, `fetch` | `supabase`, `sequential-thinking` |
 | Reviewer | Code review and quality gate tooling | `fetch`, `sequential-thinking` | `snyk` |
@@ -82,4 +89,4 @@ These are the only adapters referenced by at least one active agency. No other a
 
 ---
 
-Updated: 2026-03-10
+Updated: 2026-03-19

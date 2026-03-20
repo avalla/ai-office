@@ -60,7 +60,18 @@ Software and MCP proposal baseline for all agents:
 | **Tokenomics Strategist** | Token economy design, incentive modeling | `tokenomics-strategist/` |
 | **Developer** | Implementation, coding, debugging | `developer/` |
 | **Scalper** | Execution strategy and risk-limit rule design | `scalper/` |
+| **Signal Analyst** | Signal design, indicator selection, backtest review | `signal-analyst/` |
 | **Security** | Security assessment, penetration testing | `security/` |
+
+### Legal & Compliance Layer
+
+| Agent | Role | Folder |
+|-------|------|--------|
+| **Senior Partner** | Final approval authority, case strategy, client escalation | `senior-partner/` |
+| **Associate Attorney** | Legal research, document drafting, day-to-day client contact | `associate-attorney/` |
+| **Compliance Officer** | Italian law verification, GDPR, professional ethics, deadline calculation | `compliance-officer/` |
+| **Paralegal** | Document formatting, court filing preparation, deadline tracking | `paralegal/` |
+| **Practice Manager** | Billing, calendar management, client administration, firm operations | `practice-manager/` |
 
 ### Quality Layer
 
@@ -93,4 +104,4 @@ Agents communicate through:
 
 ---
 
-Updated: 2026-03-10
+Updated: 2026-03-20

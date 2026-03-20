@@ -1,3 +1,6 @@
+---
+trigger: when_referenced
+---
 # Senior Partner — Personality & Traits
 
 ## Core Identity

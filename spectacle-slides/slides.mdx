@@ -1,0 +1,442 @@
+import { Head, Image, Notes } from 'spectacle';
+
+<Head>
+  <title>AI Office — Multi-Agent Development Framework</title>
+</Head>
+
+---
+
+# 🎯 AI Office
+## Multi-Agent Software Development Framework
+
+<Notes>
+Welcome to AI Office! A complete framework for coordinating multiple AI agents through software development lifecycle.
+</Notes>
+
+---
+
+## What is AI Office?
+
+- 📋 **File-based virtual agency system**
+- 👥 **27 specialized agents** with personalities & skills
+- 📊 **Kanban task board** with milestones & tracking
+- 🛡️ **Loop guards** to prevent infinite cycles
+- 📝 **Artifact management** (PRD, ADR, runbooks)
+- ⚖️ **Italian Legal Studio agency** (NEW in v1.4.0)
+
+---
+
+## The Pipeline
+
+```
+router → prd → adr → plan → tasks → dev → qa → review → release → postmortem
+                                ↘ ux_research → design_ui ─────────────────┘
+                                               ↘ security → dev/qa
+```
+
+<Notes>
+Standard software studio pipeline. Can be customized per agency (lean-startup, game-studio, etc.)
+</Notes>
+
+---
+
+## Key Features
+
+### 📊 Kanban Board
+- **Columns**: BACKLOG → TODO → WIP → REVIEW → BLOCKED → DONE → ARCHIVED
+- **v1.4.0 NEW**: Labels on tasks, Slug field for tracking
+- **Loop guards**: Max iterations before escalation
+
+### 🎯 Milestone Tracking
+- Auto-suggest tasks based on goal
+- Progress tracking (% complete)
+- Velocity reporting (tasks/week)
+
+### 👥 27 Agents
+- Router, CEO, PM, Architect, Developer, Designer, QA, Reviewer
+- Security, Ops, Release Manager, Planner
+- Audio/Video/Image Creators, Game Developer
+- Scalper, Tokenomics Strategist, Culture Hacker, Provocation Director
+- UX Researcher, **NEW**: Compliance Officer, Senior Partner, Associate Attorney, Paralegal, Practice Manager
+
+---
+
+## Agent Workflow Example
+
+```
+Associate Attorney
+  ↓ [researches case law]
+Compliance Officer
+  ↓ [verifies Italian law]
+Reviewer
+  ↓ [checks grammar & citations]
+Senior Partner
+  ↓ [approves + signs]
+Delivery ✅
+```
+
+<Notes>
+This is the Italian Legal Studio workflow. Each agent has personality, competencies, triggers, workflows.
+</Notes>
+
+---
+
+## 9 Pre-Built Agencies
+
+| Agency | Best For | Agents |
+|--------|----------|--------|
+| **software-studio** | Full-stack SaaS | 13 |
+| **lean-startup** | Rapid MVP | 7 |
+| **game-studio** | Game development | Custom |
+| **creative-agency** | Media production | Creators focus |
+| **media-agency** | Video/film | Production pipeline |
+| **italian-legal-studio** | Italian law firms | 6 specialized |
+| **furniture-cad-studio** | Furniture design | 10 specialized |
+| **penetration-test-agency** | Security testing | 11 specialized |
+| **crypto-scalping-studio** | Crypto trading & signals | 9 specialized |
+
+<Notes>
+Each agency has custom pipeline, roles, and templates. Can create custom agencies too.
+</Notes>
+
+---
+
+## Furniture CAD Studio (NEW)
+
+```
+Client Brief → Concept Design → Structural Review
+  → [parallel] CAD Modeling (FreeCAD) + Materials Spec
+  → QA Validation → Manufacturing Specs → Delivery
+```
+
+**Agents:**
+- 🪑 **Design Director** (CEO) — Creative vision, client approval
+- 📋 **Project Manager** — Brief capture, timeline
+- ✏️ **Furniture Designer** — Concept sketches, proportioning
+- 💻 **CAD Modeler** (Developer) — FreeCAD parametric modeling, STEP/STL export
+- 🏗️ **Structural Reviewer** (Architect) — Joinery design, load analysis
+- 🎨 **Material Specifier** — Material palettes, finish references
+- 📄 **Manufacturing Spec Writer** — Cut lists, tolerances, joinery details
+- ✅ **Quality Controller** (QA) — Dimension checking, model validation
+
+<Notes>
+New in v1.4.0: Complete furniture design agency. Uses FreeCAD headless via MCP. Covers full design-to-manufacturing workflow.
+</Notes>
+
+---
+
+## Italian Legal Studio (NEW)
+
+```
+Client Brief
+  ↓
+Legal Research (Ius Online, CECA)
+  ↓
+Compliance Check (Italian law verified)
+  ↓
+Document Draft (Associate Attorney)
+  ↓
+Internal Review (Reviewer)
+  ↓
+Partner Approval (signature authority)
+  ↓
+Filing/Delivery
+```
+
+<Notes>
+New in v1.4.0: Complete Italian legal studio with 6 specialized agents. Templates for common documents.
+</Notes>
+
+---
+
+## Documents Generated
+
+### Software Development
+- PRD (Product Requirements)
+- ADR (Architecture Decisions)
+- Runbooks (deployment plans)
+- Task board (kanban)
+
+### Italian Legal Studio
+- Atto di Citazione (summons)
+- Memoria Difensiva (brief)
+- Parere Legale (opinion)
+- Contratti (contracts)
+- Delibere (resolutions)
+
+<Notes>
+All stored as markdown in version control. All templates customizable.
+</Notes>
+
+---
+
+## Commands (23 Total)
+
+### Core Routing
+- `/office:route` — Classify request, run discussion, suggest pipeline
+- `/office:advance` — Move to next stage, reassign tasks
+- `/office:status` — Get/update pipeline status
+
+### Task Management
+- `/office:task-create` — New task (with optional slug field)
+- `/office:task-move` — Move between columns (NEW: BLOCKED support)
+- `/office:task-list` — View kanban (NEW: Labels column)
+
+### Quality & Testing
+- `/office:verify` — QA verification
+- `/office:validate` — Check quality gates
+- `/office:review` — Multi-sector code review
+
+### Reporting
+- `/office:report status|investor|tech-debt|audit|velocity` (NEW: velocity)
+- `/office:milestone` — Create/manage milestones
+- `/office:run-tests` — Execute tests, track coverage
+
+<Notes>
+23 commands total. All documented in framework. NEW in v1.4.0: task Slug field, BLOCKED column, Labels, velocity reporting.
+</Notes>
+
+---
+
+## v1.4.0 Improvements
+
+### Breaking Changes
+- ✅ **Task Slug field** — link tasks to parent feature
+- ✅ **Status file Loop Guards** — all status files include guards table
+- ✅ **Version annotations** — all commands tagged for smart diffs
+
+### New Features
+- ✅ **BLOCKED column** — tasks with blockers tracked
+- ✅ **Task Labels in output** — visible in task-list
+- ✅ **Velocity reporting** — throughput metrics per milestone
+- ✅ **Discuss artifact** — context docs
+- ✅ **Runbook artifact** — deployment runbooks
+- ✅ **Italian Legal Studio** — complete legal agency
+
+### Fixes
+- ✅ `/office:verify` → recommends REVIEW (not DONE)
+- ✅ `/office:validate` → sprint = 14 days (concrete)
+- ✅ `/office:advance` → better error handling
+- ✅ Task matching → via Slug field + filename fallback
+
+<Notes>
+Major update focused on reliability, Italian legal support, and better task tracking.
+</Notes>
+
+---
+
+## Loop Guards
+
+Prevent infinite QA/review/UAT cycles:
+
+| Loop | Trigger | Max | Escalation |
+|------|---------|-----|------------|
+| **qa → dev** | Regression | 2 | Planner |
+| **review → dev** | Revision | 2 | Planner |
+| **uat → dev** | UAT fail | 1 | Planner |
+
+<Notes>
+Hard limits. When reached, task → BLOCKED with explicit unblock criteria. Prevents endless cycles.
+</Notes>
+
+---
+
+## Quick Start
+
+### 1️⃣ Install
+```bash
+./install.sh [project-path]
+./setup.sh [project-path]
+```
+
+### 2️⃣ Start a Feature
+```bash
+/office:route Add real-time notifications
+```
+
+### 3️⃣ Create Milestone
+```bash
+/office:milestone create M1 "Notifications" tasks:yes
+```
+
+### 4️⃣ Execute Pipeline
+```bash
+/office:scaffold notifications prd
+/office:advance notifications prd "PRD approved"
+# ... continue through pipeline ...
+```
+
+<Notes>
+Simple workflow. Route → scaffold → advance through stages. Agents handle each stage.
+</Notes>
+
+---
+
+## File Structure
+
+```
+.ai-office/
+├── agents/                    (27 agent profiles)
+├── agencies/                  (6 pre-built + custom)
+├── tasks/                     (BACKLOG, TODO, WIP, REVIEW, BLOCKED, DONE, ARCHIVED)
+├── docs/                      (PRD, ADR, runbooks, context)
+├── templates/                 (document templates)
+├── milestones/                (M1.md, M2.md, ...)
+└── memory/                    (persistent context)
+
+.claude/
+├── CLAUDE.md                  (base quality rules)
+└── commands/office/           (23 slash commands)
+```
+
+<Notes>
+Everything is markdown and version-controlled. Easy to track, audit, and version.
+</Notes>
+
+---
+
+## Why AI Office?
+
+### ✅ For AI Developers
+- Structured pipeline prevents chaos
+- Loop guards prevent infinite cycles
+- Artifacts are version-controlled
+- Multiple agents coordinate seamlessly
+
+### ✅ For Law Firms
+- Italian legal compliance built-in
+- Document templates for common cases
+- Deadline tracking & SOL management
+- Partner approval workflow
+
+### ✅ For Agile Teams
+- Kanban board with full visibility
+- Milestone tracking & velocity metrics
+- Loop guards prevent rework
+- Clear agent responsibilities
+
+<Notes>
+Flexible framework for different use cases. Software teams, legal firms, creative agencies.
+</Notes>
+
+---
+
+## Live Demo
+
+**Try it yourself:**
+
+```bash
+git clone https://github.com/avalla/ai-office-claude-code.git
+cd ai-office
+./install.sh ~/my-project
+cd ~/my-project
+/office:ai-office
+```
+
+<Notes>
+Framework is open-source. Try the interactive wizard. All commands are self-documenting.
+</Notes>
+
+---
+
+## Roadmap
+
+- 🚀 **v1.5.0** — Custom agent creation (drag-and-drop)
+- 🚀 **v1.5.0** — Visual pipeline builder
+- 🚀 **v2.0.0** — Multi-project support
+- 🚀 **v2.0.0** — Real-time agent collaboration
+- 🚀 **v2.0.0** — More legal studio templates
+
+<Notes>
+Future direction: more customization, visual tools, multi-project support, more industry templates.
+</Notes>
+
+---
+
+# Questions?
+
+**GitHub:** https://github.com/avalla/ai-office-claude-code
+**Docs:** https://github.com/avalla/ai-office-claude-code/README.md
+**Version:** 1.4.0
+
+---
+
+## Bonus: Italian Legal Studio
+
+<Notes>
+Deep dive into the new legal agency if time permits.
+</Notes>
+
+---
+
+### Legal Studio Workflow
+
+```
+Client Brief → Research → Compliance → Draft → Review → Partner → Filing
+```
+
+**Agents:**
+- 👨‍⚖️ **Senior Partner** — Strategic decisions, signature authority
+- 👨‍💼 **Associate Attorney** — Research, drafting, client calls
+- 📋 **Paralegal** — Formatting, filing, deadlines
+- ✅ **Compliance Officer** — Italian law verification
+- 👁️ **Reviewer** — Grammar, citations, formatting
+- 📅 **Practice Manager** — Billing, calendar, admin
+
+<Notes>
+Custom agent roles designed for Italian law firms. Each agent has full personality profile.
+</Notes>
+
+---
+
+### Documents Supported
+
+- **Atto di Citazione** — Summons
+- **Memoria Difensiva** — Legal brief
+- **Parere Legale** — Legal opinion
+- **Contratto** — Contract
+- **Delibera** — Board resolution
+
+All templates include:
+- Italian legal terminology
+- Proper formatting per court standards
+- Compliance checklists
+- Signature lines
+
+<Notes>
+Templates are markdown-based, customizable, and stored in version control. Can add more templates easily.
+</Notes>
+
+---
+
+### Case Management
+
+```
+.ai-office/cases/civil-dispute-123/
+├── 01-intake-notes.md
+├── 02-legal-research.md
+├── 03-compliance-check.md
+├── 04-first-draft.md
+├── 05-internal-review.md
+├── 06-partner-approved.md
+└── 07-filed-confirmation.md
+```
+
+**Tracking:**
+- ✅ Court deadline: April 15
+- ✅ Statute of limitation: May 1
+- ✅ Billable hours: 18.5h @ €300/hr = €5,550
+
+<Notes>
+Case organization with clear timeline and billing integration. All dates tracked automatically.
+</Notes>
+
+---
+
+# 🚀 Start Using AI Office Today
+
+**Install:** `./install.sh [project-path]`
+**Setup:** `/office:setup`
+**Begin:** `/office:route <your request>`
+
+---
