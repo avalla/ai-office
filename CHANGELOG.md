@@ -1,3 +1,20 @@
+## 1.9.1 — 2026-03-23
+
+### Changed
+
+**Adapter deduplication:**
+- Long-form Codex and Claude Code wrappers now render from shared neutral templates in `skeleton/core/templates/skills/`
+- `src/build-adapters.ts` now rebuilds the full Codex and Claude Code skill sets from neutral sources instead of mixing generated and duplicated hand-maintained files
+- Template-driven wrappers now stamp the current framework version and adapter-specific skill root consistently
+- `install.sh` and `update.sh` now consume generated adapter metadata from the neutral manifest instead of maintaining duplicate adapter path tables
+
+### Fixed
+
+- Removed the accidental `autoepoque` agency from the shipped core agency set
+- README and setup/build tests now reflect the actual bundled agencies and generated wrapper model
+
+---
+
 ## 1.9.0 — 2026-03-23
 
 ### Added
@@ -15,12 +32,6 @@
 - Codex core skills, Claude Code core skills, Windsurf core workflows, and adapter instruction files now share that generated source of truth
 - Windsurf rule and workflow scaffolding now fits the same modular generation model
 - Package versions bumped to `1.9.0` across the framework, website, and slides packages
-
-### Notes
-
-- Remaining legacy wrapper files are still hand-maintained for now and will be migrated in later passes
-
----
 
 ## 1.8.0 — 2026-03-23
 

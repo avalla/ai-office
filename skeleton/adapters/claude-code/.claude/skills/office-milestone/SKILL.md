@@ -21,4 +21,4 @@ Examples:
 4. For list, run `ai-office milestone list`.
 5. Summarize milestone progress and call out any auto-created tasks.
 
-<!-- ai-office-version: 1.9.0 -->
+<!-- ai-office-version: 1.9.1 -->

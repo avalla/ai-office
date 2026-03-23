@@ -23,4 +23,4 @@ Examples:
 3. Report the updated state and any important next-stage implication.
 4. If required update fields are missing, ask only for the missing required values.
 
-<!-- ai-office-version: 1.9.0 -->
+<!-- ai-office-version: 1.9.1 -->

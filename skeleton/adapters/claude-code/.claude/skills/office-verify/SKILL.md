@@ -108,4 +108,4 @@ Append to the task's `## History`:
 - <today ISO>: Verify failed — <N> criteria failed, returned to WIP
 ```
 
-<!-- ai-office-version: 1.6.0 -->
+<!-- ai-office-version: 1.9.1 -->

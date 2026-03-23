@@ -1,4 +1,4 @@
-export type AdapterHost = "codex" | "claude-code" | "windsurf";
+export type AdapterHost = "base" | "codex" | "claude-code" | "windsurf";
 
 export type CommandSpec = {
   id: string;
@@ -12,15 +12,24 @@ export type CommandSpec = {
 export type AdapterProfile = {
   host: AdapterHost;
   adapterLabel: string;
-  instructionFileName: string;
-  instructionOutputPath: string;
+  instructionFileName?: string;
+  instructionOutputPath?: string;
   commandPrefix: "$" | "/";
   skillOutputRoot?: string;
+  installedSkillRoot?: string;
+  versionStampPath?: string;
+  rulesOutputRoot?: string;
+  installedRulesRoot?: string;
   workflowOutputRoot?: string;
-  workspaceRuleOutputPath?: string;
+  installedWorkflowRoot?: string;
 };
 
 export const ADAPTER_PROFILES: AdapterProfile[] = [
+  {
+    host: "base",
+    adapterLabel: "Base adapter",
+    commandPrefix: "/",
+  },
   {
     host: "codex",
     adapterLabel: "Codex adapter",
@@ -28,6 +37,8 @@ export const ADAPTER_PROFILES: AdapterProfile[] = [
     instructionOutputPath: "skeleton/adapters/codex/AGENTS.md",
     commandPrefix: "$",
     skillOutputRoot: "skeleton/adapters/codex/.codex/skills",
+    installedSkillRoot: ".codex/skills",
+    versionStampPath: ".codex/skills/.version",
   },
   {
     host: "claude-code",
@@ -36,6 +47,8 @@ export const ADAPTER_PROFILES: AdapterProfile[] = [
     instructionOutputPath: "skeleton/adapters/claude-code/CLAUDE.md",
     commandPrefix: "/",
     skillOutputRoot: "skeleton/adapters/claude-code/.claude/skills",
+    installedSkillRoot: ".claude/skills",
+    versionStampPath: ".claude/skills/.version",
   },
   {
     host: "windsurf",
@@ -43,8 +56,11 @@ export const ADAPTER_PROFILES: AdapterProfile[] = [
     instructionFileName: "AGENTS.md",
     instructionOutputPath: "skeleton/adapters/windsurf/AGENTS.md",
     commandPrefix: "/",
+    versionStampPath: ".windsurf/.version",
+    rulesOutputRoot: "skeleton/adapters/windsurf/.windsurf/rules",
+    installedRulesRoot: ".windsurf/rules",
     workflowOutputRoot: "skeleton/adapters/windsurf/.windsurf/workflows",
-    workspaceRuleOutputPath: "skeleton/adapters/windsurf/.windsurf/rules/ai-office-workspace.md",
+    installedWorkflowRoot: ".windsurf/workflows",
   },
 ];
 
@@ -62,6 +78,23 @@ export const GENERATED_COMMAND_IDS = [
   "office-task-update",
   "office-validate",
 ] as const;
+
+export const TEMPLATE_COMMAND_IDS = [
+  "office-agency",
+  "office-graph",
+  "office-meta",
+  "office-report",
+  "office-review",
+  "office-role",
+  "office-run-tests",
+  "office-scaffold",
+  "office-script",
+  "office-task-list",
+  "office-validate-secrets",
+  "office-verify",
+] as const;
+
+export const ALL_SUPPORTED_COMMAND_IDS = [...GENERATED_COMMAND_IDS, ...TEMPLATE_COMMAND_IDS] as const;
 
 export const COMMAND_SPECS: CommandSpec[] = [
   {

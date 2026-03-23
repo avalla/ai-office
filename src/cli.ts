@@ -2,6 +2,7 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "fs";
 import { basename, dirname, extname, isAbsolute, join, relative } from "path";
+import { ADAPTER_PROFILES, type AdapterHost } from "./adapter-manifest";
 
 const COLUMNS = ["BACKLOG", "TODO", "WIP", "REVIEW", "BLOCKED", "DONE", "ARCHIVED"] as const;
 const VALID_STATES = [
@@ -27,6 +28,7 @@ const VALID_VALIDATE_STAGES = ["prd", "adr", "plan", "tasks", "dev", "security",
 type Column = (typeof COLUMNS)[number];
 type StatusState = (typeof VALID_STATES)[number];
 type ValidateStage = (typeof VALID_VALIDATE_STAGES)[number];
+type InstalledAdapter = AdapterHost;
 
 type ProjectConfig = {
   agency: string;
@@ -88,6 +90,21 @@ const milestonesDir = join(aiOfficeDir, "milestones");
 const tasksReadmePath = join(tasksDir, "README.md");
 const milestonesReadmePath = join(milestonesDir, "README.md");
 const installMetaPath = join(aiOfficeDir, "install.json");
+const ADAPTER_PROFILE_BY_HOST = new Map(ADAPTER_PROFILES.map((profile) => [profile.host, profile]));
+const ADAPTER_EXCLUDE_DIRS = new Set([
+  "node_modules",
+  ".git",
+  ".ai-office",
+  "dist",
+  "build",
+  "coverage",
+  "tmp",
+  ...ADAPTER_PROFILES.flatMap((profile) => [
+    profile.installedSkillRoot?.split("/")[0],
+    profile.installedRulesRoot?.split("/")[0],
+    profile.installedWorkflowRoot?.split("/")[0],
+  ]).filter((value): value is string => Boolean(value)),
+]);
 
 function fail(message: string): never {
   console.error(message);
@@ -128,7 +145,30 @@ function getInstallMetadata(): InstallMetadata | null {
   }
 }
 
-function detectAdapter(): "codex" | "windsurf" | "claude-code" | "base" {
+function getAdapterProfile(host: InstalledAdapter) {
+  const profile = ADAPTER_PROFILE_BY_HOST.get(host);
+  if (!profile) {
+    throw new Error(`Unknown adapter profile: ${host}`);
+  }
+  return profile;
+}
+
+function projectPathExists(relativePath?: string): boolean {
+  return Boolean(relativePath) && existsSync(join(cwd, relativePath));
+}
+
+function adapterInstructionExists(host: InstalledAdapter): boolean {
+  const profile = getAdapterProfile(host);
+  if (!profile.instructionFileName) {
+    return false;
+  }
+  if (host === "claude-code") {
+    return existsSync(join(cwd, profile.instructionFileName)) || existsSync(join(cwd, ".claude", profile.instructionFileName));
+  }
+  return existsSync(join(cwd, profile.instructionFileName));
+}
+
+function detectAdapter(): InstalledAdapter {
   const metadata = getInstallMetadata();
   if (
     metadata?.adapter === "codex" ||
@@ -139,17 +179,16 @@ function detectAdapter(): "codex" | "windsurf" | "claude-code" | "base" {
     return metadata.adapter;
   }
 
-  if (existsSync(join(cwd, ".windsurf", "workflows")) || existsSync(join(cwd, ".windsurf", "rules"))) {
+  if (
+    projectPathExists(getAdapterProfile("windsurf").installedWorkflowRoot) ||
+    projectPathExists(getAdapterProfile("windsurf").installedRulesRoot)
+  ) {
     return "windsurf";
   }
-  if (existsSync(join(cwd, ".codex", "skills")) || existsSync(join(cwd, "AGENTS.md"))) {
+  if (projectPathExists(getAdapterProfile("codex").installedSkillRoot) || adapterInstructionExists("codex")) {
     return "codex";
   }
-  if (
-    existsSync(join(cwd, ".claude", "skills")) ||
-    existsSync(join(cwd, "CLAUDE.md")) ||
-    existsSync(join(cwd, ".claude", "CLAUDE.md"))
-  ) {
+  if (projectPathExists(getAdapterProfile("claude-code").installedSkillRoot) || adapterInstructionExists("claude-code")) {
     return "claude-code";
   }
   return "base";
@@ -876,7 +915,7 @@ function findPatternMatches(pattern: RegExp, options?: { includeExtensions?: Set
   const matches: Array<{ file: string; line: number; text: string }> = [];
   const files = walkFiles(cwd, {
     includeExtensions: options?.includeExtensions,
-    excludeDirs: options?.excludeDirs ?? new Set(["node_modules", ".git", ".ai-office", ".codex", ".claude", ".windsurf", "dist", "build", "coverage", "tmp"]),
+    excludeDirs: options?.excludeDirs ?? ADAPTER_EXCLUDE_DIRS,
   });
 
   for (const file of files) {
@@ -1634,22 +1673,22 @@ function commandDoctor(): void {
     { ok: existsSync(join(aiOfficeDir, "office-config.md")), message: ".ai-office/office-config.md present" },
   ];
 
-  if (adapter === "codex") {
-    checks.unshift(
-      { ok: existsSync(join(cwd, "AGENTS.md")), message: "AGENTS.md present" },
-      { ok: existsSync(join(cwd, ".codex", "skills")), message: ".codex/skills present" }
-    );
-  } else if (adapter === "windsurf") {
-    checks.unshift(
-      { ok: existsSync(join(cwd, "AGENTS.md")), message: "AGENTS.md present" },
-      { ok: existsSync(join(cwd, ".windsurf", "rules")), message: ".windsurf/rules present" },
-      { ok: existsSync(join(cwd, ".windsurf", "workflows")), message: ".windsurf/workflows present" }
-    );
-  } else if (adapter === "claude-code") {
-    checks.unshift(
-      { ok: existsSync(join(cwd, "CLAUDE.md")) || existsSync(join(cwd, ".claude", "CLAUDE.md")), message: "CLAUDE.md present" },
-      { ok: existsSync(join(cwd, ".claude", "skills")), message: ".claude/skills present" }
-    );
+  if (adapter !== "base") {
+    const profile = getAdapterProfile(adapter);
+    const adapterChecks: Array<{ ok: boolean; message: string }> = [];
+    if (profile.instructionFileName) {
+      adapterChecks.push({ ok: adapterInstructionExists(adapter), message: `${profile.instructionFileName} present` });
+    }
+    if (profile.installedSkillRoot) {
+      adapterChecks.push({ ok: projectPathExists(profile.installedSkillRoot), message: `${profile.installedSkillRoot} present` });
+    }
+    if (profile.installedRulesRoot) {
+      adapterChecks.push({ ok: projectPathExists(profile.installedRulesRoot), message: `${profile.installedRulesRoot} present` });
+    }
+    if (profile.installedWorkflowRoot) {
+      adapterChecks.push({ ok: projectPathExists(profile.installedWorkflowRoot), message: `${profile.installedWorkflowRoot} present` });
+    }
+    checks.unshift(...adapterChecks);
   }
 
   let failed = 0;

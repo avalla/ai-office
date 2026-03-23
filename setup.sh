@@ -18,6 +18,7 @@
 set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$FRAMEWORK_DIR/generated/adapter-metadata.sh"
 
 # Parse flags
 PROJECT_ROOT_ARG=""
@@ -464,9 +465,9 @@ echo "✅ Project configured: $PROJECT_NAME ($SELECTED_AGENCY)"
 echo ""
 echo "Next steps:"
 echo "  ai-office doctor       — verify framework health"
-if [[ -d "$PROJECT_ROOT/.codex/skills" ]]; then
+if [[ -d "$PROJECT_ROOT/$(adapter_skill_dest_rel codex)" ]]; then
   echo "  \$office-route <task>  — start from the Codex adapter"
-elif [[ -d "$PROJECT_ROOT/.claude/skills" ]]; then
+elif [[ -d "$PROJECT_ROOT/$(adapter_skill_dest_rel claude-code)" ]]; then
   echo "  /office route <task>  — start from the Claude Code adapter"
 else
   echo "  ai-office status get <slug> — inspect framework state from the CLI"

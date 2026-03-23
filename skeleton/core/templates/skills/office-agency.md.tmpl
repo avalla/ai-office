@@ -1,6 +1,6 @@
 ---
 name: office-agency
-description: Inspect or re-profile your project agency. Usage: $office-agency [list|get <name>|profile]
+description: Inspect or re-profile your project agency. Usage: {{CMD:office-agency}} [list|get <name>|profile]
 disable-model-invocation: true
 
 $ARGUMENTS format: `[list | get <name> | profile]`
@@ -31,11 +31,11 @@ Active Agency: <name> (custom)
 Handoff rules: <from config>
 Quality gates: <from config>
 
-To re-profile: $office-agency profile
-To inspect raw config: $office-agency get <name>
+To re-profile: {{CMD:office-agency}} profile
+To inspect raw config: {{CMD:office-agency}} get <name>
 ```
 
-If no agency is configured: "No agency configured. Run `$office-setup` to create one."
+If no agency is configured: "No agency configured. Run `{{CMD:office-setup}}` to create one."
 
 ---
 
@@ -109,7 +109,7 @@ Confirm:
 |-------|-------|
 ...
 
-Run $office-agency list to review.
+Run {{CMD:office-agency}} list to review.
 ```
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: {{FRAMEWORK_VERSION}} -->

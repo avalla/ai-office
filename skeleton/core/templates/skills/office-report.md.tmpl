@@ -1,6 +1,6 @@
 ---
 name: office-report
-description: Generate a project report. Usage: /office-report <status|investor|tech-debt|audit|velocity>
+description: Generate a project report. Usage: {{CMD:office-report}} <status|investor|tech-debt|audit|velocity>
 disable-model-invocation: true
 
 $ARGUMENTS: `<status|investor|tech-debt|audit|velocity>`
@@ -140,6 +140,6 @@ Output:
 - <Note any assignee with > 3 tasks in WIP simultaneously>
 ```
 
-If no completed tasks exist, say so and suggest running `/office-task-move <id> DONE` as tasks are finished.
+If no completed tasks exist, say so and suggest running `{{CMD:office-task-move}} <id> DONE` as tasks are finished.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: {{FRAMEWORK_VERSION}} -->

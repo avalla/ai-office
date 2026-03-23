@@ -1,6 +1,6 @@
 ---
 name: office-run-tests
-description: Run the project test suite and append results to the status file. Usage: /office-run-tests <slug>
+description: Run the project test suite and append results to the status file. Usage: {{CMD:office-run-tests}} <slug>
 disable-model-invocation: true
 
 $ARGUMENTS format: `<slug>`
@@ -18,7 +18,7 @@ $ARGUMENTS format: `<slug>`
 
 2. **Locate status file**: check `.ai-office/docs/runbooks/<slug>-status.md`. If it does not exist, warn:
    ```
-   ⚠️  No status file found for '<slug>'. Run `/office-scaffold <slug> status` first.
+   ⚠️  No status file found for '<slug>'. Run `{{CMD:office-scaffold}} <slug> status` first.
    ```
    and stop.
 
@@ -82,4 +82,4 @@ $ARGUMENTS format: `<slug>`
    ⚠️  Coverage <N>% is below threshold <coverage_min>% — address before advancing to QA
    ```
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: {{FRAMEWORK_VERSION}} -->

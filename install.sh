@@ -5,8 +5,8 @@ set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SKELETON="$FRAMEWORK_DIR/skeleton/core"
-ADAPTERS_DIR="$FRAMEWORK_DIR/skeleton/adapters"
 VERSION="$(cat "$FRAMEWORK_DIR/VERSION")"
+source "$FRAMEWORK_DIR/generated/adapter-metadata.sh"
 
 PROJECT_ROOT_ARG=""
 ADAPTER="codex"
@@ -37,32 +37,29 @@ AI_OFFICE="$PROJECT_ROOT/.ai-office"
 INSTALL_META="$AI_OFFICE/install.json"
 
 validate_adapter() {
-  if [[ ! -d "$ADAPTERS_DIR/$ADAPTER" ]]; then
+  if ! adapter_exists "$ADAPTER"; then
     echo "❌ Unknown adapter: $ADAPTER"
     echo "Available adapters:"
-    for adapter_dir in "$ADAPTERS_DIR"/*/; do
-      echo "  - $(basename "$adapter_dir")"
+    for adapter_name in "${AI_OFFICE_ADAPTERS[@]}"; do
+      echo "  - $adapter_name"
     done
     exit 1
   fi
 }
 
-adapter_instruction_target() {
-  case "$ADAPTER" in
-    codex) echo "AGENTS.md" ;;
-    windsurf) echo "AGENTS.md" ;;
-    claude-code) echo "CLAUDE.md" ;;
-    base) echo "AI-OFFICE.md" ;;
-  esac
+adapter_source_abs() {
+  local rel="$1"
+  if [[ -n "$rel" ]]; then
+    echo "$FRAMEWORK_DIR/$rel"
+  fi
 }
 
 adapter_version_file() {
-  case "$ADAPTER" in
-    codex) echo "$PROJECT_ROOT/.codex/skills/.version" ;;
-    windsurf) echo "$PROJECT_ROOT/.windsurf/.version" ;;
-    claude-code) echo "$PROJECT_ROOT/.claude/skills/.version" ;;
-    base) echo "" ;;
-  esac
+  local rel
+  rel="$(adapter_version_file_rel "$ADAPTER")"
+  if [[ -n "$rel" ]]; then
+    echo "$PROJECT_ROOT/$rel"
+  fi
 }
 
 stamp_adapter_version() {
@@ -87,59 +84,57 @@ write_install_metadata() {
 EOF
 }
 
-install_codex_adapter() {
-  local adapter_root="$ADAPTERS_DIR/codex"
-  echo "→ Installing Codex adapter"
-  mkdir -p "$PROJECT_ROOT/.codex/skills"
-  cp -r "$adapter_root/.codex/skills/"* "$PROJECT_ROOT/.codex/skills/"
-  stamp_adapter_version
-  echo "  ✅ $(find "$adapter_root/.codex/skills" -maxdepth 1 -type d -name 'office*' | wc -l | tr -d ' ') skills installed"
+install_adapter_instruction() {
+  local instruction_target instruction_source
+  instruction_target="$(adapter_instruction_target "$ADAPTER")"
+  instruction_source="$(adapter_source_abs "$(adapter_instruction_source_rel "$ADAPTER")")"
+  if [[ -z "$instruction_target" || -z "$instruction_source" ]]; then
+    return
+  fi
 
-  if [[ ! -f "$PROJECT_ROOT/AGENTS.md" ]]; then
-    cp "$adapter_root/AGENTS.md" "$PROJECT_ROOT/AGENTS.md"
-    echo "  ✅ AGENTS.md installed"
+  if [[ ! -f "$PROJECT_ROOT/$instruction_target" ]]; then
+    cp "$instruction_source" "$PROJECT_ROOT/$instruction_target"
+    echo "  ✅ $instruction_target installed"
   else
-    echo "  ↩️  AGENTS.md already exists, skipped"
+    echo "  ↩️  $instruction_target already exists, skipped"
   fi
 }
 
-install_windsurf_adapter() {
-  local adapter_root="$ADAPTERS_DIR/windsurf"
-  echo "→ Installing Windsurf adapter"
-  mkdir -p "$PROJECT_ROOT/.windsurf/rules" "$PROJECT_ROOT/.windsurf/workflows"
-  cp -r "$adapter_root/.windsurf/rules/"* "$PROJECT_ROOT/.windsurf/rules/"
-  cp -r "$adapter_root/.windsurf/workflows/"* "$PROJECT_ROOT/.windsurf/workflows/"
-  stamp_adapter_version
-  echo "  ✅ $(find "$adapter_root/.windsurf/workflows" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') workflows installed"
-  echo "  ✅ $(find "$adapter_root/.windsurf/rules" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') rules installed"
+install_adapter_assets() {
+  local kind source dest
+  kind="$(adapter_kind "$ADAPTER")"
 
-  if [[ ! -f "$PROJECT_ROOT/AGENTS.md" ]]; then
-    cp "$adapter_root/AGENTS.md" "$PROJECT_ROOT/AGENTS.md"
-    echo "  ✅ AGENTS.md installed"
-  else
-    echo "  ↩️  AGENTS.md already exists, skipped"
-  fi
-}
-
-install_claude_adapter() {
-  local adapter_root="$ADAPTERS_DIR/claude-code"
-  echo "→ Installing Claude Code adapter"
-  mkdir -p "$PROJECT_ROOT/.claude/skills"
-  cp -r "$adapter_root/.claude/skills/"* "$PROJECT_ROOT/.claude/skills/"
-  stamp_adapter_version
-  echo "  ✅ $(find "$adapter_root/.claude/skills" -maxdepth 1 -type d -name 'office*' | wc -l | tr -d ' ') skills installed"
-
-  if [[ ! -f "$PROJECT_ROOT/CLAUDE.md" ]]; then
-    cp "$adapter_root/CLAUDE.md" "$PROJECT_ROOT/CLAUDE.md"
-    echo "  ✅ CLAUDE.md installed"
-  else
-    echo "  ↩️  CLAUDE.md already exists, skipped"
-  fi
-}
-
-install_base_adapter() {
-  echo "→ Using base adapter"
-  echo "  ✅ No host-specific wrapper files required"
+  case "$kind" in
+    skills)
+      source="$(adapter_source_abs "$(adapter_skill_source_rel "$ADAPTER")")"
+      dest="$PROJECT_ROOT/$(adapter_skill_dest_rel "$ADAPTER")"
+      echo "→ Installing ${ADAPTER} adapter"
+      mkdir -p "$dest"
+      cp -r "$source/"* "$dest/"
+      stamp_adapter_version
+      echo "  ✅ $(find "$source" -maxdepth 1 -type d -name 'office*' | wc -l | tr -d ' ') skills installed"
+      install_adapter_instruction
+      ;;
+    rules-workflows)
+      local rules_source rules_dest workflows_source workflows_dest
+      rules_source="$(adapter_source_abs "$(adapter_rules_source_rel "$ADAPTER")")"
+      rules_dest="$PROJECT_ROOT/$(adapter_rules_dest_rel "$ADAPTER")"
+      workflows_source="$(adapter_source_abs "$(adapter_workflows_source_rel "$ADAPTER")")"
+      workflows_dest="$PROJECT_ROOT/$(adapter_workflows_dest_rel "$ADAPTER")"
+      echo "→ Installing ${ADAPTER} adapter"
+      mkdir -p "$rules_dest" "$workflows_dest"
+      cp -r "$rules_source/"* "$rules_dest/"
+      cp -r "$workflows_source/"* "$workflows_dest/"
+      stamp_adapter_version
+      echo "  ✅ $(find "$workflows_source" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') workflows installed"
+      echo "  ✅ $(find "$rules_source" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') rules installed"
+      install_adapter_instruction
+      ;;
+    *)
+      echo "→ Using base adapter"
+      echo "  ✅ No host-specific wrapper files required"
+      ;;
+  esac
 }
 
 validate_adapter
@@ -230,12 +225,7 @@ fi
 
 echo "  ✅ Core .ai-office/ structure ready"
 
-case "$ADAPTER" in
-  codex) install_codex_adapter ;;
-  windsurf) install_windsurf_adapter ;;
-  claude-code) install_claude_adapter ;;
-  base) install_base_adapter ;;
-esac
+install_adapter_assets
 
 write_install_metadata
 

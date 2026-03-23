@@ -1,6 +1,6 @@
 ---
 name: office-task-list
-description: List tasks on the kanban board. Usage: /office-task-list [column] [ms:M1] [assignee:name]
+description: List tasks on the kanban board. Usage: {{CMD:office-task-list}} [column] [ms:M1] [assignee:name]
 disable-model-invocation: true
 
 $ARGUMENTS format (all optional): `[column] [ms:M1] [assignee:name]`
@@ -16,7 +16,7 @@ $ARGUMENTS format (all optional): `[column] [ms:M1] [assignee:name]`
 1. Determine which columns to scan:
    - If a specific column is given: scan only that column
    - If no column arg: scan all active columns (`BACKLOG`, `TODO`, `WIP`, `REVIEW`, `BLOCKED`, `DONE`)
-   - `ARCHIVED` is **never** included by default — only when explicitly requested (`/office-task-list ARCHIVED`)
+   - `ARCHIVED` is **never** included by default — only when explicitly requested (`{{CMD:office-task-list}} ARCHIVED`)
 
    Active column dirs:
    - `.ai-office/tasks/BACKLOG/`
@@ -67,4 +67,4 @@ Milestones: M0 (3 tasks) · M1 (5 tasks) · M2 (2 tasks)
 
 If no tasks found in the requested scope, say so clearly.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: {{FRAMEWORK_VERSION}} -->

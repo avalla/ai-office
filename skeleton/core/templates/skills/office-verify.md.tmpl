@@ -1,13 +1,13 @@
 ---
 name: office-verify
-description: Actively verify a task's acceptance criteria and diagnose failures. Usage: $office-verify <task-id>
+description: Actively verify a task's acceptance criteria and diagnose failures. Usage: {{CMD:office-verify}} <task-id>
 disable-model-invocation: true
 
 $ARGUMENTS format: `<task-id>`
 
 - **task-id**: task ID like `M1_T003`, or partial filename match
 
-This command is run by the `qa` agent after implementation is complete. It actively checks each acceptance criterion, diagnoses failures, and renders a verdict. Unlike `$office-validate`, it does not check pipeline gates — it checks whether the *work itself* is done and correct.
+This command is run by the `qa` agent after implementation is complete. It actively checks each acceptance criterion, diagnoses failures, and renders a verdict. Unlike `{{CMD:office-validate}}`, it does not check pipeline gates — it checks whether the *work itself* is done and correct.
 
 ---
 
@@ -84,8 +84,8 @@ Do not just report "tests failed" — identify *why*.
 ✅ Verification passed — <N> criteria met
 
 Recommended: move task to REVIEW and advance the pipeline
-  $office-task-move <task-id> REVIEW
-  $office-advance <slug> "verification passed — <N> criteria met"
+  {{CMD:office-task-move}} <task-id> REVIEW
+  {{CMD:office-advance}} <slug> "verification passed — <N> criteria met"
 ```
 
 Update the task file: check off all passing items in `## Acceptance Criteria`.
@@ -96,7 +96,7 @@ Update the task file: check off all passing items in `## Acceptance Criteria`.
 ❌ Verification failed — <N> passed, <M> failed
 
 Returning to WIP:
-  $office-task-move <task-id> WIP
+  {{CMD:office-task-move}} <task-id> WIP
 
 Issues to fix:
   1. <diagnosis for failure 1>
@@ -108,4 +108,4 @@ Append to the task's `## History`:
 - <today ISO>: Verify failed — <N> criteria failed, returned to WIP
 ```
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: {{FRAMEWORK_VERSION}} -->

@@ -19,4 +19,4 @@ Examples:
 3. Summarize the pass, warn, and fail results.
 4. If validation fails, explain the smallest useful next action instead of claiming the work is complete.
 
-<!-- ai-office-version: 1.9.0 -->
+<!-- ai-office-version: 1.9.1 -->

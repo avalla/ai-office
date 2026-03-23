@@ -6,7 +6,7 @@
 #   ./create-agency.sh <slug> [--from=<base-agency>] [--name=<display-name>] [--desc=<description>]
 #
 # Examples:
-#   ./create-agency.sh autoepoque --from=software-studio --desc="Bespoke fashion & tech studio"
+#   ./create-agency.sh boutique-tech-studio --from=software-studio --desc="Bespoke fashion & tech studio"
 #   ./create-agency.sh my-studio
 set -e
 

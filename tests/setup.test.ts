@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { makeTempProject, runScript, assertExists } from "./helpers";
 
@@ -106,7 +106,7 @@ describe("setup.sh", () => {
     expect(typeof data.selectedAt).toBe("string");
   });
 
-  it("copies all 5 bundled agency templates", () => {
+  it("copies all bundled agency templates except custom project-specific ones", () => {
     runScript("setup.sh", [
       dir,
       "--non-interactive",
@@ -118,12 +118,17 @@ describe("setup.sh", () => {
       "lean-startup",
       "game-studio",
       "creative-agency",
+      "media-agency",
       "penetration-test-agency",
+      "italian-legal-studio",
+      "furniture-cad-studio",
+      "crypto-scalping-studio",
     ];
     for (const agency of agencies) {
       assertExists(join(dir, `.ai-office/agencies/${agency}`), agency);
       assertExists(join(dir, `.ai-office/agencies/${agency}/config.md`), `${agency}/config.md`);
     }
+    expect(existsSync(join(dir, ".ai-office/agencies/autoepoque"))).toBe(false);
   });
 
   it("applies --stack=node-react preset commands", () => {

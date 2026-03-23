@@ -5,8 +5,8 @@ set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SKELETON="$FRAMEWORK_DIR/skeleton/core"
-ADAPTERS_DIR="$FRAMEWORK_DIR/skeleton/adapters"
 AVAILABLE="$(cat "$FRAMEWORK_DIR/VERSION")"
+source "$FRAMEWORK_DIR/generated/adapter-metadata.sh"
 
 PROJECT_ROOT_ARG=""
 ADAPTER_ARG=""
@@ -36,11 +36,11 @@ INSTALL_META="$AI_OFFICE/install.json"
 
 validate_adapter() {
   local adapter="$1"
-  if [[ ! -d "$ADAPTERS_DIR/$adapter" ]]; then
+  if ! adapter_exists "$adapter"; then
     echo "❌ Unknown adapter: $adapter"
     echo "Available adapters:"
-    for adapter_dir in "$ADAPTERS_DIR"/*/; do
-      echo "  - $(basename "$adapter_dir")"
+    for adapter_name in "${AI_OFFICE_ADAPTERS[@]}"; do
+      echo "  - $adapter_name"
     done
     exit 1
   fi
@@ -51,44 +51,26 @@ json_value() {
   sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" | head -n 1
 }
 
+adapter_source_abs() {
+  local rel="$1"
+  if [[ -n "$rel" ]]; then
+    echo "$FRAMEWORK_DIR/$rel"
+  fi
+}
+
+adapter_project_abs() {
+  local rel="$1"
+  if [[ -n "$rel" ]]; then
+    echo "$PROJECT_ROOT/$rel"
+  fi
+}
+
 adapter_version_file() {
-  local adapter="$1"
-  case "$adapter" in
-    codex) echo "$PROJECT_ROOT/.codex/skills/.version" ;;
-    windsurf) echo "$PROJECT_ROOT/.windsurf/.version" ;;
-    claude-code) echo "$PROJECT_ROOT/.claude/skills/.version" ;;
-    base) echo "" ;;
-  esac
-}
-
-adapter_instruction_target() {
-  local adapter="$1"
-  case "$adapter" in
-    codex) echo "AGENTS.md" ;;
-    windsurf) echo "AGENTS.md" ;;
-    claude-code) echo "CLAUDE.md" ;;
-    base) echo "AI-OFFICE.md" ;;
-  esac
-}
-
-adapter_skill_source_dir() {
-  local adapter="$1"
-  case "$adapter" in
-    codex) echo "$ADAPTERS_DIR/$adapter/.codex/skills" ;;
-    windsurf) echo "" ;;
-    claude-code) echo "$ADAPTERS_DIR/$adapter/.claude/skills" ;;
-    base) echo "" ;;
-  esac
-}
-
-adapter_skill_dest_dir() {
-  local adapter="$1"
-  case "$adapter" in
-    codex) echo "$PROJECT_ROOT/.codex/skills" ;;
-    windsurf) echo "" ;;
-    claude-code) echo "$PROJECT_ROOT/.claude/skills" ;;
-    base) echo "" ;;
-  esac
+  local rel
+  rel="$(adapter_version_file_rel "$1")"
+  if [[ -n "$rel" ]]; then
+    echo "$PROJECT_ROOT/$rel"
+  fi
 }
 
 stamp_adapter_version() {
@@ -131,20 +113,26 @@ if [[ -f "$INSTALL_META" ]]; then
 fi
 
 if [[ -z "$INSTALLED_ADAPTER" ]]; then
-  if [[ -f "$PROJECT_ROOT/.windsurf/.version" ]]; then
+  for adapter in windsurf codex claude-code; do
+    version_file="$(adapter_version_file "$adapter")"
+    if [[ -n "$version_file" && -f "$version_file" ]]; then
+      INSTALLED_ADAPTER="$adapter"
+      INSTALLED="$(cat "$version_file" 2>/dev/null || echo "unknown")"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$INSTALLED_ADAPTER" ]]; then
+  windsurf_rules_dir="$(adapter_project_abs "$(adapter_rules_dest_rel windsurf)")"
+  windsurf_workflows_dir="$(adapter_project_abs "$(adapter_workflows_dest_rel windsurf)")"
+  codex_skills_dir="$(adapter_project_abs "$(adapter_skill_dest_rel codex)")"
+  claude_skills_dir="$(adapter_project_abs "$(adapter_skill_dest_rel claude-code)")"
+  if [[ -d "$windsurf_workflows_dir" || -d "$windsurf_rules_dir" ]]; then
     INSTALLED_ADAPTER="windsurf"
-    INSTALLED="$(cat "$PROJECT_ROOT/.windsurf/.version" 2>/dev/null || echo "unknown")"
-  elif [[ -f "$PROJECT_ROOT/.codex/skills/.version" ]]; then
+  elif [[ -f "$PROJECT_ROOT/$(adapter_instruction_target codex)" || -d "$codex_skills_dir" ]]; then
     INSTALLED_ADAPTER="codex"
-    INSTALLED="$(cat "$PROJECT_ROOT/.codex/skills/.version" 2>/dev/null || echo "unknown")"
-  elif [[ -f "$PROJECT_ROOT/.claude/skills/.version" ]]; then
-    INSTALLED_ADAPTER="claude-code"
-    INSTALLED="$(cat "$PROJECT_ROOT/.claude/skills/.version" 2>/dev/null || echo "unknown")"
-  elif [[ -d "$PROJECT_ROOT/.windsurf/workflows" || -d "$PROJECT_ROOT/.windsurf/rules" ]]; then
-    INSTALLED_ADAPTER="windsurf"
-  elif [[ -f "$PROJECT_ROOT/AGENTS.md" || -d "$PROJECT_ROOT/.codex/skills" ]]; then
-    INSTALLED_ADAPTER="codex"
-  elif [[ -f "$PROJECT_ROOT/CLAUDE.md" || -d "$PROJECT_ROOT/.claude/skills" || -f "$PROJECT_ROOT/.claude/CLAUDE.md" ]]; then
+  elif [[ -f "$PROJECT_ROOT/$(adapter_instruction_target claude-code)" || -d "$claude_skills_dir" || -f "$PROJECT_ROOT/.claude/CLAUDE.md" ]]; then
     INSTALLED_ADAPTER="claude-code"
   else
     INSTALLED_ADAPTER="base"
@@ -164,6 +152,121 @@ echo ""
 
 version_gt() {
   [[ "$1" != "$2" ]] && [[ "$(printf '%s\n' "$1" "$2" | sort -V | tail -1)" == "$1" ]]
+}
+
+preview_wrapper_changes() {
+  local adapter="$1"
+  local kind
+  kind="$(adapter_kind "$adapter")"
+
+  case "$kind" in
+    skills)
+      local skill_src_dir skill_dst_dir any_change src_dir skill_name src dst src_ver dst_ver
+      skill_src_dir="$(adapter_source_abs "$(adapter_skill_source_rel "$adapter")")"
+      skill_dst_dir="$(adapter_project_abs "$(adapter_skill_dest_rel "$adapter")")"
+      any_change=0
+      for src_dir in "$skill_src_dir"/office*/; do
+        skill_name="$(basename "$src_dir")"
+        src="$src_dir/SKILL.md"
+        dst="$skill_dst_dir/$skill_name/SKILL.md"
+        if [[ ! -f "$dst" ]]; then
+          echo "  + $skill_name (new)"
+          any_change=1
+        else
+          src_ver="$(get_file_version "$src")"
+          dst_ver="$(get_file_version "$dst")"
+          if [[ -n "$src_ver" && -n "$dst_ver" && "$src_ver" != "$dst_ver" ]]; then
+            echo "  ~ $skill_name (v$dst_ver → v$src_ver)"
+            any_change=1
+          elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
+            echo "  ~ $skill_name (changed)"
+            any_change=1
+          fi
+        fi
+      done
+      if [[ "$any_change" -eq 0 ]]; then
+        echo "  (no adapter skill files changed)"
+      fi
+      ;;
+    rules-workflows)
+      local rules_src_dir rules_dst_dir workflows_src_dir workflows_dst_dir any_change src name dst
+      rules_src_dir="$(adapter_source_abs "$(adapter_rules_source_rel "$adapter")")"
+      rules_dst_dir="$(adapter_project_abs "$(adapter_rules_dest_rel "$adapter")")"
+      workflows_src_dir="$(adapter_source_abs "$(adapter_workflows_source_rel "$adapter")")"
+      workflows_dst_dir="$(adapter_project_abs "$(adapter_workflows_dest_rel "$adapter")")"
+      any_change=0
+      for src in "$rules_src_dir/"*.md "$workflows_src_dir/"*.md; do
+        name="$(basename "$src")"
+        if [[ "$src" == "$rules_src_dir/"* ]]; then
+          dst="$rules_dst_dir/$name"
+        else
+          dst="$workflows_dst_dir/$name"
+        fi
+        if [[ ! -f "$dst" ]]; then
+          echo "  + $name (new)"
+          any_change=1
+        elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
+          echo "  ~ $name (changed)"
+          any_change=1
+        fi
+      done
+      if [[ "$any_change" -eq 0 ]]; then
+        echo "  (no rules or workflow files changed)"
+      fi
+      ;;
+    *)
+      echo "  - base adapter uses no host-specific wrapper files"
+      ;;
+  esac
+}
+
+install_instruction_if_missing() {
+  local adapter="$1"
+  local instruction_target instruction_source
+  instruction_target="$(adapter_instruction_target "$adapter")"
+  instruction_source="$(adapter_source_abs "$(adapter_instruction_source_rel "$adapter")")"
+  if [[ -z "$instruction_target" || -z "$instruction_source" ]]; then
+    return
+  fi
+  if [[ ! -f "$PROJECT_ROOT/$instruction_target" ]]; then
+    cp "$instruction_source" "$PROJECT_ROOT/$instruction_target"
+    echo "  ✅ $instruction_target installed"
+  fi
+}
+
+update_adapter_assets() {
+  local adapter="$1"
+  local kind
+  kind="$(adapter_kind "$adapter")"
+
+  case "$kind" in
+    skills)
+      local source dest
+      source="$(adapter_source_abs "$(adapter_skill_source_rel "$adapter")")"
+      dest="$(adapter_project_abs "$(adapter_skill_dest_rel "$adapter")")"
+      mkdir -p "$dest"
+      cp -r "$source/"* "$dest/"
+      stamp_adapter_version "$adapter"
+      echo "  ✅ $adapter skills updated"
+      install_instruction_if_missing "$adapter"
+      ;;
+    rules-workflows)
+      local rules_source rules_dest workflows_source workflows_dest
+      rules_source="$(adapter_source_abs "$(adapter_rules_source_rel "$adapter")")"
+      rules_dest="$(adapter_project_abs "$(adapter_rules_dest_rel "$adapter")")"
+      workflows_source="$(adapter_source_abs "$(adapter_workflows_source_rel "$adapter")")"
+      workflows_dest="$(adapter_project_abs "$(adapter_workflows_dest_rel "$adapter")")"
+      mkdir -p "$rules_dest" "$workflows_dest"
+      cp -r "$rules_source/"* "$rules_dest/"
+      cp -r "$workflows_source/"* "$workflows_dest/"
+      stamp_adapter_version "$adapter"
+      echo "  ✅ $adapter rules and workflows updated"
+      install_instruction_if_missing "$adapter"
+      ;;
+    *)
+      echo "  ✅ Base adapter requires no host-specific assets"
+      ;;
+  esac
 }
 
 if [[ "${INSTALLED:-unknown}" == "$AVAILABLE" && "$INSTALLED_ADAPTER" == "$TARGET_ADAPTER" ]]; then
@@ -186,59 +289,10 @@ elif ! diff -q "$CORE_SKELETON/AI-OFFICE.md" "$PROJECT_ROOT/AI-OFFICE.md" > /dev
   echo "  ~ AI-OFFICE.md (core guide differs; will not overwrite existing file)"
 fi
 
-skill_src_dir="$(adapter_skill_source_dir "$TARGET_ADAPTER")"
-skill_dst_dir="$(adapter_skill_dest_dir "$TARGET_ADAPTER")"
-if [[ "$TARGET_ADAPTER" == "windsurf" ]]; then
-  any_change=0
-  for src in "$ADAPTERS_DIR/windsurf/.windsurf/rules/"*.md "$ADAPTERS_DIR/windsurf/.windsurf/workflows/"*.md; do
-    name="$(basename "$src")"
-    if [[ "$src" == *"/rules/"* ]]; then
-      dst="$PROJECT_ROOT/.windsurf/rules/$name"
-    else
-      dst="$PROJECT_ROOT/.windsurf/workflows/$name"
-    fi
-
-    if [[ ! -f "$dst" ]]; then
-      echo "  + $name (new)"
-      any_change=1
-    elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
-      echo "  ~ $name (changed)"
-      any_change=1
-    fi
-  done
-  if [[ "$any_change" -eq 0 ]]; then
-    echo "  (no Windsurf workflow or rule files changed)"
-  fi
-elif [[ -n "$skill_src_dir" ]]; then
-  any_change=0
-  for src_dir in "$skill_src_dir"/office*/; do
-    skill_name="$(basename "$src_dir")"
-    src="$src_dir/SKILL.md"
-    dst="$skill_dst_dir/$skill_name/SKILL.md"
-    if [[ ! -f "$dst" ]]; then
-      echo "  + $skill_name (new)"
-      any_change=1
-    else
-      src_ver="$(get_file_version "$src")"
-      dst_ver="$(get_file_version "$dst")"
-      if [[ -n "$src_ver" && -n "$dst_ver" && "$src_ver" != "$dst_ver" ]]; then
-        echo "  ~ $skill_name (v$dst_ver → v$src_ver)"
-        any_change=1
-      elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
-        echo "  ~ $skill_name (changed)"
-        any_change=1
-      fi
-    fi
-  done
-  if [[ "$any_change" -eq 0 ]]; then
-    echo "  (no adapter skill files changed)"
-  fi
-else
-  echo "  - base adapter uses no host-specific skill files"
-fi
+preview_wrapper_changes "$TARGET_ADAPTER"
 
 instruction_target="$(adapter_instruction_target "$TARGET_ADAPTER")"
-if [[ ! -f "$PROJECT_ROOT/$instruction_target" ]]; then
+if [[ -n "$instruction_target" && ! -f "$PROJECT_ROOT/$instruction_target" ]]; then
   echo "  + $instruction_target"
 fi
 echo ""
@@ -263,42 +317,7 @@ if [[ ! -f "$PROJECT_ROOT/.mcp.json" ]]; then
 fi
 
 echo "→ Updating adapter assets..."
-case "$TARGET_ADAPTER" in
-  codex)
-    mkdir -p "$PROJECT_ROOT/.codex/skills"
-    cp -r "$ADAPTERS_DIR/codex/.codex/skills/"* "$PROJECT_ROOT/.codex/skills/"
-    stamp_adapter_version "$TARGET_ADAPTER"
-    echo "  ✅ Codex skills updated"
-    if [[ ! -f "$PROJECT_ROOT/AGENTS.md" ]]; then
-      cp "$ADAPTERS_DIR/codex/AGENTS.md" "$PROJECT_ROOT/AGENTS.md"
-      echo "  ✅ AGENTS.md installed"
-    fi
-    ;;
-  windsurf)
-    mkdir -p "$PROJECT_ROOT/.windsurf/rules" "$PROJECT_ROOT/.windsurf/workflows"
-    cp -r "$ADAPTERS_DIR/windsurf/.windsurf/rules/"* "$PROJECT_ROOT/.windsurf/rules/"
-    cp -r "$ADAPTERS_DIR/windsurf/.windsurf/workflows/"* "$PROJECT_ROOT/.windsurf/workflows/"
-    stamp_adapter_version "$TARGET_ADAPTER"
-    echo "  ✅ Windsurf rules and workflows updated"
-    if [[ ! -f "$PROJECT_ROOT/AGENTS.md" ]]; then
-      cp "$ADAPTERS_DIR/windsurf/AGENTS.md" "$PROJECT_ROOT/AGENTS.md"
-      echo "  ✅ AGENTS.md installed"
-    fi
-    ;;
-  claude-code)
-    mkdir -p "$PROJECT_ROOT/.claude/skills"
-    cp -r "$ADAPTERS_DIR/claude-code/.claude/skills/"* "$PROJECT_ROOT/.claude/skills/"
-    stamp_adapter_version "$TARGET_ADAPTER"
-    echo "  ✅ Claude Code skills updated"
-    if [[ ! -f "$PROJECT_ROOT/CLAUDE.md" ]]; then
-      cp "$ADAPTERS_DIR/claude-code/CLAUDE.md" "$PROJECT_ROOT/CLAUDE.md"
-      echo "  ✅ CLAUDE.md installed"
-    fi
-    ;;
-  base)
-    echo "  ✅ Base adapter requires no host-specific assets"
-    ;;
-esac
+update_adapter_assets "$TARGET_ADAPTER"
 
 if [[ -d "$PROJECT_ROOT/.claude/commands/office" ]]; then
   rm -rf "$PROJECT_ROOT/.claude/commands/office"
