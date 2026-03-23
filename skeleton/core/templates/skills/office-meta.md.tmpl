@@ -5,7 +5,7 @@ disable-model-invocation: true
 
 ## Steps
 
-1. Read `{{ADAPTER_SKILL_ROOT}}/.version` (the installed version stamp). If it doesn't exist, report "unknown".
+1. Read `{{ADAPTER_VERSION_FILE}}` (the installed version stamp). If it doesn't exist, report "unknown".
 
 2. Read the framework source version from the repo root `VERSION` file (present when this repo is cloned locally). If it doesn't exist, note that the source is not available locally.
 
@@ -21,7 +21,7 @@ Available version : 1.1.0
 
 Status: ✅ Up to date
 
-Skills installed: {{ADAPTER_SKILL_ROOT}}/ ({{EXPECTED_SKILL_COUNT}} files)
+Wrapper files installed: {{ADAPTER_WRAPPER_ROOT}}/ ({{EXPECTED_WRAPPER_COUNT}} expected files)
 ```
 
 If installed < available:
@@ -42,6 +42,6 @@ To stamp the current version, run:
   ./install.sh --stamp-only
 ```
 
-5. Also check: are all {{EXPECTED_SKILL_COUNT}} expected skills present in `{{ADAPTER_SKILL_ROOT}}/`? List any missing ones.
+5. Also check: are all {{EXPECTED_WRAPPER_COUNT}} expected wrapper files present in `{{ADAPTER_WRAPPER_ROOT}}/`? List any missing ones.
 
 <!-- ai-office-version: {{FRAMEWORK_VERSION}} -->

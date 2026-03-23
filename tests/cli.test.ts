@@ -76,6 +76,22 @@ describe("ai-office cli", () => {
     }
   });
 
+  it("doctor adapts to an opencode install", () => {
+    const { dir: opencodeDir, cleanup: cleanupOpencode } = makeTempProject();
+    try {
+      runScript("install.sh", [opencodeDir, "--adapter=opencode"]);
+      const result = runCli(opencodeDir, ["doctor"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Adapter: opencode");
+      expect(result.stdout).toContain("PASS opencode.json present");
+      expect(result.stdout).toContain("PASS .opencode/commands present");
+      expect(result.stdout).toContain("PASS .ai-office/install.json present");
+    } finally {
+      cleanupOpencode();
+    }
+  });
+
   it("creates a task deterministically and updates board counts", () => {
     const { exitCode, stdout } = runCli(dir, [
       "task",

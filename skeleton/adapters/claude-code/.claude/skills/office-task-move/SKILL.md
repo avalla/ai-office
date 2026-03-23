@@ -19,4 +19,4 @@ Examples:
 3. Summarize the move and call out any branch or worktree information created as part of task isolation.
 4. If the move implies a next workflow, suggest it explicitly.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

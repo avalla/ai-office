@@ -25,4 +25,4 @@ Examples:
 4. If the transition is not ready, explain the exact missing artifact or evidence instead of advancing.
 5. If the transition is ready, update the relevant status artifact and summarize the next owner and next workflow.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

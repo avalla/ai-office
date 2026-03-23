@@ -24,4 +24,4 @@ Examples:
 5. Create or update the relevant `.ai-office/docs/` context artifact when appropriate.
 6. End with the recommended next action, including the next AI Office command or CLI operation.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

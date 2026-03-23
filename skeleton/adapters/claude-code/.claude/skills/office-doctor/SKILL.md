@@ -13,4 +13,4 @@ disable-model-invocation: true
 3. Summarize PASS and WARN lines in a concise checklist.
 4. If any required file is missing, say what to reinstall, regenerate, or configure next.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

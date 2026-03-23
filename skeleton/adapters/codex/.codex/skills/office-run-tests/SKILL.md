@@ -82,4 +82,4 @@ $ARGUMENTS format: `<slug>`
    ⚠️  Coverage <N>% is below threshold <coverage_min>% — address before advancing to QA
    ```
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

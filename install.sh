@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI Office Framework — Installer
-# Usage: ./install.sh [project-root] [--adapter=<codex|windsurf|claude-code|base>] [--stamp-only]
+# Usage: ./install.sh [project-root] [--adapter=<codex|windsurf|claude-code|opencode|base>] [--stamp-only]
 set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -100,6 +100,16 @@ install_adapter_instruction() {
   fi
 }
 
+addon_target_file() {
+  local instruction_target
+  instruction_target="$(adapter_instruction_target "$ADAPTER")"
+  if [[ -n "$instruction_target" && "$instruction_target" == *.md ]]; then
+    echo "$instruction_target"
+  else
+    echo "AI-OFFICE.md"
+  fi
+}
+
 install_adapter_assets() {
   local kind source dest
   kind="$(adapter_kind "$ADAPTER")"
@@ -113,6 +123,16 @@ install_adapter_assets() {
       cp -r "$source/"* "$dest/"
       stamp_adapter_version
       echo "  ✅ $(find "$source" -maxdepth 1 -type d -name 'office*' | wc -l | tr -d ' ') skills installed"
+      install_adapter_instruction
+      ;;
+    commands)
+      source="$(adapter_source_abs "$(adapter_commands_source_rel "$ADAPTER")")"
+      dest="$PROJECT_ROOT/$(adapter_commands_dest_rel "$ADAPTER")"
+      echo "→ Installing ${ADAPTER} adapter"
+      mkdir -p "$dest"
+      cp -r "$source/"* "$dest/"
+      stamp_adapter_version
+      echo "  ✅ $(find "$source" -maxdepth 1 -type f -name 'office*.md' | wc -l | tr -d ' ') commands installed"
       install_adapter_instruction
       ;;
     rules-workflows)
@@ -256,6 +276,11 @@ else
       echo "  /office route <describe your task>"
       echo "  /office doctor"
       ;;
+    opencode)
+      echo "  /office"
+      echo "  /office-route <describe your task>"
+      echo "  /office-doctor"
+      ;;
     base)
       echo "  ai-office status get <slug>"
       echo "  ai-office task create \"Task title\" column:TODO"
@@ -264,8 +289,9 @@ else
 fi
 
 echo ""
-echo "Optional addons (review and copy into $(adapter_instruction_target) as needed):"
+ADDON_TARGET="$(addon_target_file)"
+echo "Optional addons (review and copy into $ADDON_TARGET as needed):"
 for addon in "$AI_OFFICE/addons/"*.md; do
   echo "  # @.ai-office/addons/$(basename "$addon")"
 done
-echo "Append the addon content you need to $(adapter_instruction_target) — each addon adds domain-specific rules."
+echo "Append the addon content you need to $ADDON_TARGET — each addon adds domain-specific rules."

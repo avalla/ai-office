@@ -22,4 +22,4 @@ Examples:
 7. For installation or configuration checks, call `$office-doctor` or `$office-setup`.
 8. Prefer deterministic `ai-office` CLI commands for state mutations whenever the CLI supports the operation.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

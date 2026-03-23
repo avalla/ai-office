@@ -67,4 +67,4 @@ Milestones: M0 (3 tasks) · M1 (5 tasks) · M2 (2 tasks)
 
 If no tasks found in the requested scope, say so clearly.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

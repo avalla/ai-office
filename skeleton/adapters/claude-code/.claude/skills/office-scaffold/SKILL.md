@@ -254,4 +254,4 @@ Check if the output file already exists. If it does, warn: "File already exists 
 
 If creating: write the appropriate template to the output path with `<slug>` replaced throughout and `<today>` replaced with today's date. Then confirm: "Scaffolded `<stage>` → `<path>`"
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

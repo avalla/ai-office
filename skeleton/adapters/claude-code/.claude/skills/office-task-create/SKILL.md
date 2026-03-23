@@ -23,4 +23,4 @@ Examples:
 3. Return the created task id, column, and filename.
 4. If the task should move immediately after creation, suggest `/office-task-move`.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

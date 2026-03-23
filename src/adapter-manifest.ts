@@ -1,4 +1,4 @@
-export type AdapterHost = "base" | "codex" | "claude-code" | "windsurf";
+export type AdapterHost = "base" | "codex" | "claude-code" | "opencode" | "windsurf";
 
 export type CommandSpec = {
   id: string;
@@ -14,9 +14,12 @@ export type AdapterProfile = {
   adapterLabel: string;
   instructionFileName?: string;
   instructionOutputPath?: string;
+  instructionTemplatePath?: string;
   commandPrefix: "$" | "/";
   skillOutputRoot?: string;
   installedSkillRoot?: string;
+  commandOutputRoot?: string;
+  installedCommandRoot?: string;
   versionStampPath?: string;
   rulesOutputRoot?: string;
   installedRulesRoot?: string;
@@ -49,6 +52,17 @@ export const ADAPTER_PROFILES: AdapterProfile[] = [
     skillOutputRoot: "skeleton/adapters/claude-code/.claude/skills",
     installedSkillRoot: ".claude/skills",
     versionStampPath: ".claude/skills/.version",
+  },
+  {
+    host: "opencode",
+    adapterLabel: "OpenCode adapter",
+    instructionFileName: "opencode.json",
+    instructionOutputPath: "skeleton/adapters/opencode/opencode.json",
+    instructionTemplatePath: "skeleton/core/templates/opencode.json.tmpl",
+    commandPrefix: "/",
+    commandOutputRoot: "skeleton/adapters/opencode/.opencode/commands",
+    installedCommandRoot: ".opencode/commands",
+    versionStampPath: ".opencode/.version",
   },
   {
     host: "windsurf",

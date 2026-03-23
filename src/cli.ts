@@ -101,6 +101,7 @@ const ADAPTER_EXCLUDE_DIRS = new Set([
   "tmp",
   ...ADAPTER_PROFILES.flatMap((profile) => [
     profile.installedSkillRoot?.split("/")[0],
+    profile.installedCommandRoot?.split("/")[0],
     profile.installedRulesRoot?.split("/")[0],
     profile.installedWorkflowRoot?.split("/")[0],
   ]).filter((value): value is string => Boolean(value)),
@@ -174,6 +175,7 @@ function detectAdapter(): InstalledAdapter {
     metadata?.adapter === "codex" ||
     metadata?.adapter === "windsurf" ||
     metadata?.adapter === "claude-code" ||
+    metadata?.adapter === "opencode" ||
     metadata?.adapter === "base"
   ) {
     return metadata.adapter;
@@ -190,6 +192,9 @@ function detectAdapter(): InstalledAdapter {
   }
   if (projectPathExists(getAdapterProfile("claude-code").installedSkillRoot) || adapterInstructionExists("claude-code")) {
     return "claude-code";
+  }
+  if (projectPathExists(getAdapterProfile("opencode").installedCommandRoot) || adapterInstructionExists("opencode")) {
+    return "opencode";
   }
   return "base";
 }
@@ -1681,6 +1686,9 @@ function commandDoctor(): void {
     }
     if (profile.installedSkillRoot) {
       adapterChecks.push({ ok: projectPathExists(profile.installedSkillRoot), message: `${profile.installedSkillRoot} present` });
+    }
+    if (profile.installedCommandRoot) {
+      adapterChecks.push({ ok: projectPathExists(profile.installedCommandRoot), message: `${profile.installedCommandRoot} present` });
     }
     if (profile.installedRulesRoot) {
       adapterChecks.push({ ok: projectPathExists(profile.installedRulesRoot), message: `${profile.installedRulesRoot} present` });

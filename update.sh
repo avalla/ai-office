@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI Office Framework — Updater
-# Usage: ./update.sh [project-root] [--adapter=<codex|windsurf|claude-code|base>]
+# Usage: ./update.sh [project-root] [--adapter=<codex|windsurf|claude-code|opencode|base>] [--prune-legacy]
 set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,10 +10,12 @@ source "$FRAMEWORK_DIR/generated/adapter-metadata.sh"
 
 PROJECT_ROOT_ARG=""
 ADAPTER_ARG=""
+PRUNE_LEGACY=false
 
 for arg in "$@"; do
   case "$arg" in
     --adapter=*) ADAPTER_ARG="${arg#*=}" ;;
+    --prune-legacy) PRUNE_LEGACY=true ;;
     -*)
       echo "⚠️  Unknown flag: $arg"
       exit 1
@@ -113,7 +115,7 @@ if [[ -f "$INSTALL_META" ]]; then
 fi
 
 if [[ -z "$INSTALLED_ADAPTER" ]]; then
-  for adapter in windsurf codex claude-code; do
+  for adapter in windsurf codex claude-code opencode; do
     version_file="$(adapter_version_file "$adapter")"
     if [[ -n "$version_file" && -f "$version_file" ]]; then
       INSTALLED_ADAPTER="$adapter"
@@ -128,12 +130,15 @@ if [[ -z "$INSTALLED_ADAPTER" ]]; then
   windsurf_workflows_dir="$(adapter_project_abs "$(adapter_workflows_dest_rel windsurf)")"
   codex_skills_dir="$(adapter_project_abs "$(adapter_skill_dest_rel codex)")"
   claude_skills_dir="$(adapter_project_abs "$(adapter_skill_dest_rel claude-code)")"
+  opencode_commands_dir="$(adapter_project_abs "$(adapter_commands_dest_rel opencode)")"
   if [[ -d "$windsurf_workflows_dir" || -d "$windsurf_rules_dir" ]]; then
     INSTALLED_ADAPTER="windsurf"
   elif [[ -f "$PROJECT_ROOT/$(adapter_instruction_target codex)" || -d "$codex_skills_dir" ]]; then
     INSTALLED_ADAPTER="codex"
   elif [[ -f "$PROJECT_ROOT/$(adapter_instruction_target claude-code)" || -d "$claude_skills_dir" || -f "$PROJECT_ROOT/.claude/CLAUDE.md" ]]; then
     INSTALLED_ADAPTER="claude-code"
+  elif [[ -f "$PROJECT_ROOT/$(adapter_instruction_target opencode)" || -d "$opencode_commands_dir" ]]; then
+    INSTALLED_ADAPTER="opencode"
   else
     INSTALLED_ADAPTER="base"
   fi
@@ -186,6 +191,33 @@ preview_wrapper_changes() {
       done
       if [[ "$any_change" -eq 0 ]]; then
         echo "  (no adapter skill files changed)"
+      fi
+      ;;
+    commands)
+      local commands_src_dir commands_dst_dir any_change src name dst src_ver dst_ver
+      commands_src_dir="$(adapter_source_abs "$(adapter_commands_source_rel "$adapter")")"
+      commands_dst_dir="$(adapter_project_abs "$(adapter_commands_dest_rel "$adapter")")"
+      any_change=0
+      for src in "$commands_src_dir"/office*.md; do
+        name="$(basename "$src")"
+        dst="$commands_dst_dir/$name"
+        if [[ ! -f "$dst" ]]; then
+          echo "  + $name (new)"
+          any_change=1
+        else
+          src_ver="$(get_file_version "$src")"
+          dst_ver="$(get_file_version "$dst")"
+          if [[ -n "$src_ver" && -n "$dst_ver" && "$src_ver" != "$dst_ver" ]]; then
+            echo "  ~ $name (v$dst_ver → v$src_ver)"
+            any_change=1
+          elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
+            echo "  ~ $name (changed)"
+            any_change=1
+          fi
+        fi
+      done
+      if [[ "$any_change" -eq 0 ]]; then
+        echo "  (no adapter command files changed)"
       fi
       ;;
     rules-workflows)
@@ -250,6 +282,16 @@ update_adapter_assets() {
       echo "  ✅ $adapter skills updated"
       install_instruction_if_missing "$adapter"
       ;;
+    commands)
+      local source dest
+      source="$(adapter_source_abs "$(adapter_commands_source_rel "$adapter")")"
+      dest="$(adapter_project_abs "$(adapter_commands_dest_rel "$adapter")")"
+      mkdir -p "$dest"
+      cp -r "$source/"* "$dest/"
+      stamp_adapter_version "$adapter"
+      echo "  ✅ $adapter commands updated"
+      install_instruction_if_missing "$adapter"
+      ;;
     rules-workflows)
       local rules_source rules_dest workflows_source workflows_dest
       rules_source="$(adapter_source_abs "$(adapter_rules_source_rel "$adapter")")"
@@ -269,7 +311,144 @@ update_adapter_assets() {
   esac
 }
 
-if [[ "${INSTALLED:-unknown}" == "$AVAILABLE" && "$INSTALLED_ADAPTER" == "$TARGET_ADAPTER" ]]; then
+preview_prune_legacy() {
+  local target_adapter="$1"
+  local target_instruction
+  local any_change=0
+  target_instruction="$(adapter_instruction_target "$target_adapter")"
+
+  for adapter in "${AI_OFFICE_ADAPTERS[@]}"; do
+    [[ "$adapter" == "$target_adapter" ]] && continue
+
+    local version_file instruction_target skill_dir command_dir workflow_dir rules_dir legacy
+    version_file="$(adapter_version_file "$adapter")"
+    if [[ -n "$version_file" && -f "$version_file" ]]; then
+      echo "  - prune ${version_file#$PROJECT_ROOT/}"
+      any_change=1
+    fi
+
+    instruction_target="$(adapter_instruction_target "$adapter")"
+    if [[ -n "$instruction_target" && "$instruction_target" != "$target_instruction" && -f "$PROJECT_ROOT/$instruction_target" ]]; then
+      echo "  - prune $instruction_target"
+      any_change=1
+    fi
+
+    skill_dir="$(adapter_project_abs "$(adapter_skill_dest_rel "$adapter")")"
+    if [[ -n "$skill_dir" && -d "$skill_dir" ]]; then
+      for legacy in "$skill_dir"/office*; do
+        [[ -e "$legacy" ]] || continue
+        echo "  - prune ${legacy#$PROJECT_ROOT/}"
+        any_change=1
+      done
+    fi
+
+    command_dir="$(adapter_project_abs "$(adapter_commands_dest_rel "$adapter")")"
+    if [[ -n "$command_dir" && -d "$command_dir" ]]; then
+      for legacy in "$command_dir"/office*.md; do
+        [[ -e "$legacy" ]] || continue
+        echo "  - prune ${legacy#$PROJECT_ROOT/}"
+        any_change=1
+      done
+    fi
+
+    rules_dir="$(adapter_project_abs "$(adapter_rules_dest_rel "$adapter")")"
+    if [[ -n "$rules_dir" && -f "$rules_dir/ai-office-workspace.md" ]]; then
+      echo "  - prune ${rules_dir#$PROJECT_ROOT/}/ai-office-workspace.md"
+      any_change=1
+    fi
+
+    workflow_dir="$(adapter_project_abs "$(adapter_workflows_dest_rel "$adapter")")"
+    if [[ -n "$workflow_dir" && -d "$workflow_dir" ]]; then
+      for legacy in "$workflow_dir"/office*.md; do
+        [[ -e "$legacy" ]] || continue
+        echo "  - prune ${legacy#$PROJECT_ROOT/}"
+        any_change=1
+      done
+    fi
+  done
+
+  if [[ -f "$PROJECT_ROOT/.claude/CLAUDE.md" ]]; then
+    echo "  - prune .claude/CLAUDE.md"
+    any_change=1
+  fi
+
+  if [[ -d "$PROJECT_ROOT/.claude/commands" ]]; then
+    for legacy in "$PROJECT_ROOT/.claude/commands"/office* "$PROJECT_ROOT/.claude/commands"/office*.md; do
+      [[ -e "$legacy" ]] || continue
+      echo "  - prune ${legacy#$PROJECT_ROOT/}"
+      any_change=1
+    done
+  fi
+
+  if [[ "$any_change" -eq 0 ]]; then
+    echo "  (no legacy AI Office artifacts detected)"
+  fi
+}
+
+prune_legacy_assets() {
+  local target_adapter="$1"
+  local target_instruction
+  target_instruction="$(adapter_instruction_target "$target_adapter")"
+
+  for adapter in "${AI_OFFICE_ADAPTERS[@]}"; do
+    [[ "$adapter" == "$target_adapter" ]] && continue
+
+    local version_file instruction_target skill_dir command_dir workflow_dir rules_dir legacy
+    version_file="$(adapter_version_file "$adapter")"
+    if [[ -n "$version_file" && -f "$version_file" ]]; then
+      rm -f "$version_file"
+    fi
+
+    instruction_target="$(adapter_instruction_target "$adapter")"
+    if [[ -n "$instruction_target" && "$instruction_target" != "$target_instruction" && -f "$PROJECT_ROOT/$instruction_target" ]]; then
+      rm -f "$PROJECT_ROOT/$instruction_target"
+    fi
+
+    skill_dir="$(adapter_project_abs "$(adapter_skill_dest_rel "$adapter")")"
+    if [[ -n "$skill_dir" && -d "$skill_dir" ]]; then
+      for legacy in "$skill_dir"/office*; do
+        [[ -e "$legacy" ]] || continue
+        rm -rf "$legacy"
+      done
+      rmdir "$skill_dir" 2>/dev/null || true
+      rmdir "$(dirname "$skill_dir")" 2>/dev/null || true
+    fi
+
+    command_dir="$(adapter_project_abs "$(adapter_commands_dest_rel "$adapter")")"
+    if [[ -n "$command_dir" && -d "$command_dir" ]]; then
+      for legacy in "$command_dir"/office*.md; do
+        [[ -e "$legacy" ]] || continue
+        rm -f "$legacy"
+      done
+      rmdir "$command_dir" 2>/dev/null || true
+      rmdir "$(dirname "$command_dir")" 2>/dev/null || true
+    fi
+
+    rules_dir="$(adapter_project_abs "$(adapter_rules_dest_rel "$adapter")")"
+    if [[ -n "$rules_dir" ]]; then
+      rm -f "$rules_dir/ai-office-workspace.md"
+      rmdir "$rules_dir" 2>/dev/null || true
+    fi
+
+    workflow_dir="$(adapter_project_abs "$(adapter_workflows_dest_rel "$adapter")")"
+    if [[ -n "$workflow_dir" && -d "$workflow_dir" ]]; then
+      for legacy in "$workflow_dir"/office*.md; do
+        [[ -e "$legacy" ]] || continue
+        rm -f "$legacy"
+      done
+      rmdir "$workflow_dir" 2>/dev/null || true
+    fi
+  done
+
+  rm -f "$PROJECT_ROOT/.claude/CLAUDE.md"
+  if [[ -d "$PROJECT_ROOT/.claude/commands" ]]; then
+    rm -rf "$PROJECT_ROOT/.claude/commands"/office*
+    rm -f "$PROJECT_ROOT/.claude/commands"/office*.md
+    rmdir "$PROJECT_ROOT/.claude/commands" 2>/dev/null || true
+  fi
+}
+
+if [[ "$PRUNE_LEGACY" != true && "${INSTALLED:-unknown}" == "$AVAILABLE" && "$INSTALLED_ADAPTER" == "$TARGET_ADAPTER" ]]; then
   echo "✅ Already up to date (v$AVAILABLE, adapter $TARGET_ADAPTER)"
   exit 0
 fi
@@ -295,6 +474,10 @@ instruction_target="$(adapter_instruction_target "$TARGET_ADAPTER")"
 if [[ -n "$instruction_target" && ! -f "$PROJECT_ROOT/$instruction_target" ]]; then
   echo "  + $instruction_target"
 fi
+if [[ "$PRUNE_LEGACY" == true ]]; then
+  echo "Legacy AI Office artifacts to prune:"
+  preview_prune_legacy "$TARGET_ADAPTER"
+fi
 echo ""
 
 read -p "Apply update ${INSTALLED:-unknown} → $AVAILABLE for adapter $TARGET_ADAPTER? [Y/n] " confirm
@@ -319,7 +502,11 @@ fi
 echo "→ Updating adapter assets..."
 update_adapter_assets "$TARGET_ADAPTER"
 
-if [[ -d "$PROJECT_ROOT/.claude/commands/office" ]]; then
+if [[ "$PRUNE_LEGACY" == true ]]; then
+  echo "→ Pruning legacy AI Office artifacts..."
+  prune_legacy_assets "$TARGET_ADAPTER"
+  echo "  ✅ Legacy adapter artifacts pruned"
+elif [[ -d "$PROJECT_ROOT/.claude/commands/office" ]]; then
   rm -rf "$PROJECT_ROOT/.claude/commands/office"
   rmdir "$PROJECT_ROOT/.claude/commands" 2>/dev/null || true
   echo "  🗑️  Removed legacy .claude/commands/office/"

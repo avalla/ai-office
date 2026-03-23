@@ -21,7 +21,7 @@ Available version : 1.1.0
 
 Status: ✅ Up to date
 
-Skills installed: .claude/skills/ (24 files)
+Wrapper files installed: .claude/skills/ (24 expected files)
 ```
 
 If installed < available:
@@ -42,6 +42,6 @@ To stamp the current version, run:
   ./install.sh --stamp-only
 ```
 
-5. Also check: are all 24 expected skills present in `.claude/skills/`? List any missing ones.
+5. Also check: are all 24 expected wrapper files present in `.claude/skills/`? List any missing ones.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

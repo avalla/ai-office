@@ -17,4 +17,4 @@ Examples:
 2. Run `ai-office task update <task-id> ...`.
 3. Confirm the updated metadata and mention any meaningful effect on milestone or workflow tracking.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

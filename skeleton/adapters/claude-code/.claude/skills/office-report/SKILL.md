@@ -142,4 +142,4 @@ Output:
 
 If no completed tasks exist, say so and suggest running `/office-task-move <id> DONE` as tasks are finished.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

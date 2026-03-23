@@ -26,6 +26,9 @@ describe("build:adapters", () => {
     const claudeSkill = join(dir, "skeleton/adapters/claude-code/.claude/skills/office-task-create/SKILL.md");
     const codexMetaSkill = join(dir, "skeleton/adapters/codex/.codex/skills/office-meta/SKILL.md");
     const claudeMetaSkill = join(dir, "skeleton/adapters/claude-code/.claude/skills/office-meta/SKILL.md");
+    const opencodeCommand = join(dir, "skeleton/adapters/opencode/.opencode/commands/office-task-create.md");
+    const opencodeMetaCommand = join(dir, "skeleton/adapters/opencode/.opencode/commands/office-meta.md");
+    const opencodeInstructions = join(dir, "skeleton/adapters/opencode/opencode.json");
     const windsurfWorkflow = join(dir, "skeleton/adapters/windsurf/.windsurf/workflows/office-task-create.md");
     const codexInstructions = join(dir, "skeleton/adapters/codex/AGENTS.md");
     const windsurfInstructions = join(dir, "skeleton/adapters/windsurf/AGENTS.md");
@@ -33,6 +36,8 @@ describe("build:adapters", () => {
 
     assertExists(codexSkill);
     assertExists(claudeSkill);
+    assertExists(opencodeCommand);
+    assertExists(opencodeInstructions);
     assertExists(windsurfWorkflow);
     assertExists(codexInstructions);
     assertExists(windsurfInstructions);
@@ -40,17 +45,26 @@ describe("build:adapters", () => {
 
     expect(readFileSync(codexSkill, "utf8")).toContain("$office-task-create");
     expect(readFileSync(claudeSkill, "utf8")).toContain("/office-task-create");
+    expect(readFileSync(opencodeCommand, "utf8")).toContain("# /office-task-create");
+    expect(readFileSync(opencodeCommand, "utf8")).toContain("Follow these steps:");
     expect(readFileSync(codexMetaSkill, "utf8")).toContain(".codex/skills/.version");
-    expect(readFileSync(codexMetaSkill, "utf8")).toContain("all 24 expected skills");
+    expect(readFileSync(codexMetaSkill, "utf8")).toContain("all 24 expected wrapper files");
     expect(readFileSync(claudeMetaSkill, "utf8")).toContain(".claude/skills/.version");
-    expect(readFileSync(claudeMetaSkill, "utf8")).toContain("all 24 expected skills");
-    expect(readFileSync(shellMetadata, "utf8")).toContain("AI_OFFICE_ADAPTERS=(\"base\" \"codex\" \"claude-code\" \"windsurf\")");
+    expect(readFileSync(claudeMetaSkill, "utf8")).toContain("all 24 expected wrapper files");
+    expect(readFileSync(opencodeMetaCommand, "utf8")).toContain(".opencode/.version");
+    expect(readFileSync(opencodeMetaCommand, "utf8")).toContain(".opencode/commands/");
+    expect(readFileSync(opencodeInstructions, "utf8")).toContain("\"$schema\": \"https://opencode.ai/config.json\"");
+    expect(readFileSync(shellMetadata, "utf8")).toContain("AI_OFFICE_ADAPTERS=(\"base\" \"codex\" \"claude-code\" \"opencode\" \"windsurf\")");
     expect(readFileSync(shellMetadata, "utf8")).toContain("adapter_skill_dest_rel");
+    expect(readFileSync(shellMetadata, "utf8")).toContain("adapter_commands_dest_rel");
     expect(readFileSync(windsurfWorkflow, "utf8")).toContain("# /office-task-create");
     expect(readFileSync(codexInstructions, "utf8")).toContain("Codex adapter");
     expect(readFileSync(windsurfInstructions, "utf8")).toContain("Windsurf adapter");
     expect(readdirSync(join(dir, "skeleton/adapters/codex/.codex/skills")).sort()).toEqual([...ALL_SUPPORTED_COMMAND_IDS].sort());
     expect(readdirSync(join(dir, "skeleton/adapters/claude-code/.claude/skills")).sort()).toEqual([...ALL_SUPPORTED_COMMAND_IDS].sort());
+    expect(readdirSync(join(dir, "skeleton/adapters/opencode/.opencode/commands")).sort()).toEqual(
+      [...ALL_SUPPORTED_COMMAND_IDS].map((id) => `${id}.md`).sort()
+    );
     expect(readdirSync(join(dir, "skeleton/adapters/windsurf/.windsurf/workflows")).sort()).toEqual(
       [...GENERATED_COMMAND_IDS].map((id) => `${id}.md`).sort()
     );

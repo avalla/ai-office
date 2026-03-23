@@ -207,6 +207,19 @@ describe("install.sh", () => {
     expect(metadata.adapter).toBe("claude-code");
   });
 
+  it("supports installing the opencode adapter", () => {
+    runScript("install.sh", [dir, "--adapter=opencode"]);
+    assertExists(join(dir, "opencode.json"));
+    assertExists(join(dir, ".opencode/.version"));
+    assertExists(join(dir, ".opencode/commands/office.md"));
+    expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(dir, ".codex"))).toBe(false);
+    expect(existsSync(join(dir, ".claude"))).toBe(false);
+
+    const metadata = JSON.parse(readFileSync(join(dir, ".ai-office/install.json"), "utf8"));
+    expect(metadata.adapter).toBe("opencode");
+  });
+
   it("supports installing the windsurf adapter", () => {
     runScript("install.sh", [dir, "--adapter=windsurf"]);
     assertExists(join(dir, "AGENTS.md"));

@@ -467,6 +467,8 @@ echo "Next steps:"
 echo "  ai-office doctor       — verify framework health"
 if [[ -d "$PROJECT_ROOT/$(adapter_skill_dest_rel codex)" ]]; then
   echo "  \$office-route <task>  — start from the Codex adapter"
+elif [[ -d "$PROJECT_ROOT/$(adapter_command_dest_rel opencode)" ]]; then
+  echo "  /office-route <task>  — start from the OpenCode adapter"
 elif [[ -d "$PROJECT_ROOT/$(adapter_skill_dest_rel claude-code)" ]]; then
   echo "  /office route <task>  — start from the Claude Code adapter"
 else

@@ -20,4 +20,4 @@ Examples:
 3. If the project is already configured and the user wants to change it, prefer `./setup.sh . --reconfigure ...`.
 4. Summarize the resulting configuration and the next AI Office command to run.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->

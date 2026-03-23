@@ -125,4 +125,78 @@ describe("update.sh", () => {
     assertExists(join(dir, ".windsurf/rules/ai-office-workspace.md"));
     assertExists(join(dir, ".windsurf/workflows/office.md"));
   });
+
+  it("updates an opencode install and preserves the opencode adapter", () => {
+    runScript("install.sh", [dir, "--adapter=opencode"]);
+    const metadataPath = join(dir, ".ai-office/install.json");
+    const versionFile = join(dir, ".opencode/.version");
+    writeFileSync(versionFile, "0.0.1");
+    writeFileSync(metadataPath, JSON.stringify({
+      schemaVersion: 1,
+      version: "0.0.1",
+      adapter: "opencode",
+      installedAt: "2026-03-23T00:00:00Z",
+    }, null, 2));
+
+    const proc = Bun.spawnSync(["bash", "update.sh", dir], {
+      cwd: FRAMEWORK_DIR,
+      stdin: new TextEncoder().encode("Y\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(proc.exitCode).toBe(0);
+    expect(readFileSync(versionFile, "utf8").trim()).toBe(readFileSync(join(FRAMEWORK_DIR, "VERSION"), "utf8").trim());
+
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+    expect(metadata.adapter).toBe("opencode");
+    assertExists(join(dir, "opencode.json"));
+    assertExists(join(dir, ".opencode/commands/office.md"));
+  });
+
+  it("can prune legacy adapter artifacts while keeping the active adapter healthy", () => {
+    runScript("install.sh", [dir, "--adapter=windsurf"]);
+
+    mkdirSync(join(dir, ".codex/skills/office-review"), { recursive: true });
+    writeFileSync(join(dir, ".codex/skills/.version"), "0.0.1");
+    writeFileSync(join(dir, ".codex/skills/office-review/SKILL.md"), "legacy codex skill");
+
+    mkdirSync(join(dir, ".claude/skills/office-review"), { recursive: true });
+    writeFileSync(join(dir, ".claude/skills/.version"), "0.0.1");
+    writeFileSync(join(dir, ".claude/skills/office-review/SKILL.md"), "legacy claude skill");
+    mkdirSync(join(dir, ".claude/commands"), { recursive: true });
+    writeFileSync(join(dir, ".claude/commands/office-review.md"), "legacy claude command");
+    writeFileSync(join(dir, ".claude/CLAUDE.md"), "legacy hidden claude instructions");
+    writeFileSync(join(dir, "CLAUDE.md"), "legacy root claude instructions");
+    writeFileSync(join(dir, ".claude/settings.json"), "{\"keep\":true}");
+
+    writeFileSync(join(dir, ".windsurf/workflows/custom.md"), "# custom workflow");
+
+    const proc = Bun.spawnSync(["bash", "update.sh", dir, "--adapter=windsurf", "--prune-legacy"], {
+      cwd: FRAMEWORK_DIR,
+      stdin: new TextEncoder().encode("Y\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(proc.exitCode).toBe(0);
+    const stdout = new TextDecoder().decode(proc.stdout);
+    expect(stdout).toContain("Legacy AI Office artifacts to prune");
+    expect(stdout).toContain("Legacy adapter artifacts pruned");
+
+    expect(existsSync(join(dir, ".codex/skills/office-review"))).toBe(false);
+    expect(existsSync(join(dir, ".codex/skills/.version"))).toBe(false);
+    expect(existsSync(join(dir, ".claude/skills/office-review"))).toBe(false);
+    expect(existsSync(join(dir, ".claude/skills/.version"))).toBe(false);
+    expect(existsSync(join(dir, ".claude/commands/office-review.md"))).toBe(false);
+    expect(existsSync(join(dir, ".claude/CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(dir, "CLAUDE.md"))).toBe(false);
+
+    expect(existsSync(join(dir, ".claude/settings.json"))).toBe(true);
+    expect(existsSync(join(dir, ".windsurf/workflows/custom.md"))).toBe(true);
+    expect(existsSync(join(dir, ".windsurf/workflows/office.md"))).toBe(true);
+
+    const metadata = JSON.parse(readFileSync(join(dir, ".ai-office/install.json"), "utf8"));
+    expect(metadata.adapter).toBe("windsurf");
+  });
 });

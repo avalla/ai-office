@@ -1,3 +1,35 @@
+## 1.11.0 — 2026-03-23
+
+### Added
+
+**OpenCode adapter:**
+- New first-party `opencode` adapter with `opencode.json` plus `.opencode/commands/`
+- Generated OpenCode command wrappers for the full AI Office command surface
+
+### Changed
+
+**Neutral adapter generation:**
+- `src/build-adapters.ts` now renders OpenCode command markdown from the same neutral manifest and shared templates used by the other adapters
+- `office-meta` now uses generic wrapper metadata tokens instead of skill-specific wording so it can render cleanly across Codex, Claude Code, and OpenCode
+- `install.sh`, `update.sh`, `setup.sh`, and `ai-office doctor` now recognize and manage `opencode`
+- README now documents the OpenCode adapter and the correct addon target for config-based adapters
+
+---
+
+## 1.10.0 — 2026-03-23
+
+### Added
+
+**Update cleanup support:**
+- `update.sh --prune-legacy` can now remove stale AI Office artifacts from previous adapters while preserving the active adapter
+- Legacy cleanup is conservative: it prunes AI Office-managed wrapper files and version stamps without deleting unrelated editor settings or custom files
+
+### Changed
+
+- README now documents the new `--prune-legacy` update flow for adapter migrations and repo cleanup
+
+---
+
 ## 1.9.1 — 2026-03-23
 
 ### Changed

@@ -56,6 +56,10 @@ function hostCommand(host: AdapterHost, id: string): string {
   return `/${id}`;
 }
 
+function renderStaticTemplate(template: string, replacements: Record<string, string>): string {
+  return Object.entries(replacements).reduce((current, [token, value]) => current.replaceAll(token, value), template);
+}
+
 function replaceTokens(input: string, host: AdapterHost, selfId?: string): string {
   return input
     .replace(/\{\{SELF\}\}/g, selfId ? hostCommand(host, selfId) : "")
@@ -63,16 +67,27 @@ function replaceTokens(input: string, host: AdapterHost, selfId?: string): strin
 }
 
 function renderInstructionTemplate(template: string, host: AdapterHost, adapterLabel: string): string {
-  const replacements: Record<string, string> = {
+  return `${renderStaticTemplate(template, {
     "{{ADAPTER_LABEL}}": adapterLabel,
     "{{ROUTE_COMMAND}}": hostCommand(host, "office-route"),
     "{{TASK_MOVE_COMMAND}}": hostCommand(host, "office-task-move"),
     "{{TASK_INTEGRATE_COMMAND}}": hostCommand(host, "office-task-integrate"),
     "{{VALIDATE_COMMAND}}": hostCommand(host, "office-validate"),
     "{{ADVANCE_COMMAND}}": hostCommand(host, "office-advance"),
-  };
+  }).trim()}\n`;
+}
 
-  return `${Object.entries(replacements).reduce((current, [token, value]) => current.replaceAll(token, value), template).trim()}\n`;
+function splitFrontmatter(markdown: string): { frontmatter: string; body: string } {
+  const match = markdown.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!match) {
+    return { frontmatter: "", body: markdown };
+  }
+  return { frontmatter: match[1], body: match[2] };
+}
+
+function frontmatterField(frontmatter: string, field: string): string {
+  const match = frontmatter.match(new RegExp(`^${field}:\\s*(.*)$`, "m"));
+  return match ? match[1].trim() : "";
 }
 
 function renderSkill(host: AdapterHost, version: string, spec: (typeof COMMAND_SPECS)[number]): string {
@@ -115,13 +130,94 @@ function renderSkill(host: AdapterHost, version: string, spec: (typeof COMMAND_S
   return lines.join("\n");
 }
 
-function renderSkillTemplate(template: string, host: AdapterHost, version: string, installedSkillRoot: string): string {
-  const tokenized = template
-    .replaceAll("{{FRAMEWORK_VERSION}}", version)
-    .replaceAll("{{ADAPTER_SKILL_ROOT}}", installedSkillRoot)
-    .replaceAll("{{EXPECTED_SKILL_COUNT}}", String(ALL_SUPPORTED_COMMAND_IDS.length));
+function renderSkillTemplate(
+  template: string,
+  host: AdapterHost,
+  version: string,
+  wrapperRoot: string,
+  versionFilePath: string,
+): string {
+  const tokenized = renderStaticTemplate(template, {
+    "{{FRAMEWORK_VERSION}}": version,
+    "{{ADAPTER_SKILL_ROOT}}": wrapperRoot,
+    "{{ADAPTER_WRAPPER_ROOT}}": wrapperRoot,
+    "{{ADAPTER_VERSION_FILE}}": versionFilePath,
+    "{{EXPECTED_SKILL_COUNT}}": String(ALL_SUPPORTED_COMMAND_IDS.length),
+    "{{EXPECTED_WRAPPER_COUNT}}": String(ALL_SUPPORTED_COMMAND_IDS.length),
+  });
 
   return `${replaceTokens(tokenized, host).trim()}\n`;
+}
+
+function renderOpencodeCommand(version: string, spec: (typeof COMMAND_SPECS)[number]): string {
+  const lines: string[] = [
+    `# ${hostCommand("opencode", spec.id)}`,
+    "",
+    `Description: ${replaceTokens(spec.description, "opencode", spec.id)}`,
+    "",
+  ];
+
+  if (spec.argumentsFormat) {
+    lines.push(`Usage: \`${hostCommand("opencode", spec.id)} ${spec.argumentsFormat}\``, "");
+  }
+
+  if (spec.argumentGuidance && spec.argumentGuidance.length > 0) {
+    lines.push("Argument guidance:");
+    for (const item of spec.argumentGuidance) {
+      lines.push(`- ${replaceTokens(item, "opencode", spec.id)}`);
+    }
+    lines.push("");
+  }
+
+  if (spec.examples && spec.examples.length > 0) {
+    lines.push("Examples:");
+    for (const example of spec.examples) {
+      lines.push(`- \`${replaceTokens(example, "opencode", spec.id)}\``);
+    }
+    lines.push("");
+  }
+
+  lines.push("Follow these steps:");
+  spec.steps.forEach((step, index) => {
+    lines.push(`${index + 1}. ${replaceTokens(step, "opencode", spec.id)}`);
+  });
+  lines.push("", `<!-- ai-office-version: ${version} -->`, "");
+
+  return lines.join("\n");
+}
+
+function renderOpencodeTemplateCommand(
+  template: string,
+  commandId: string,
+  version: string,
+  wrapperRoot: string,
+  versionFilePath: string,
+): string {
+  const { frontmatter, body } = splitFrontmatter(template);
+  const description = replaceTokens(
+    frontmatterField(frontmatter, "description") || `AI Office command: ${commandId}`,
+    "opencode",
+    commandId,
+  );
+  const tokenizedBody = renderStaticTemplate(body, {
+    "{{FRAMEWORK_VERSION}}": version,
+    "{{ADAPTER_SKILL_ROOT}}": wrapperRoot,
+    "{{ADAPTER_WRAPPER_ROOT}}": wrapperRoot,
+    "{{ADAPTER_VERSION_FILE}}": versionFilePath,
+    "{{EXPECTED_SKILL_COUNT}}": String(ALL_SUPPORTED_COMMAND_IDS.length),
+    "{{EXPECTED_WRAPPER_COUNT}}": String(ALL_SUPPORTED_COMMAND_IDS.length),
+  });
+
+  return [
+    `# ${hostCommand("opencode", commandId)}`,
+    "",
+    `Description: ${description}`,
+    "",
+    replaceTokens(tokenizedBody, "opencode", commandId).trim(),
+    "",
+    `<!-- ai-office-version: ${version} -->`,
+    "",
+  ].join("\n");
 }
 
 function renderWindsurfWorkflow(spec: (typeof COMMAND_SPECS)[number]): string {
@@ -187,6 +283,9 @@ function renderShellMetadata(): string {
     "}",
     "",
     renderShellCaseFunction("adapter_kind", (adapter) => {
+      if (adapter.commandOutputRoot) {
+        return "commands";
+      }
       if (adapter.skillOutputRoot) {
         return "skills";
       }
@@ -209,6 +308,10 @@ function renderShellMetadata(): string {
     renderShellCaseFunction("adapter_skill_source_rel", (adapter) => adapter.skillOutputRoot ?? ""),
     "",
     renderShellCaseFunction("adapter_skill_dest_rel", (adapter) => adapter.installedSkillRoot ?? ""),
+    "",
+    renderShellCaseFunction("adapter_commands_source_rel", (adapter) => adapter.commandOutputRoot ?? ""),
+    "",
+    renderShellCaseFunction("adapter_commands_dest_rel", (adapter) => adapter.installedCommandRoot ?? ""),
     "",
     renderShellCaseFunction("adapter_rules_source_rel", (adapter) => adapter.rulesOutputRoot ?? ""),
     "",
@@ -238,18 +341,28 @@ function cleanGeneratedCommandOutput(root: string): void {
         rmSync(join(outputRoot, `${spec.id}.md`), { force: true });
       }
     }
+
+    if (adapter.commandOutputRoot) {
+      const outputRoot = join(root, adapter.commandOutputRoot);
+      for (const commandId of ALL_SUPPORTED_COMMAND_IDS) {
+        rmSync(join(outputRoot, `${commandId}.md`), { force: true });
+      }
+    }
   }
 }
 
 function build(root: string): void {
   const version = readText(join(root, "VERSION")).trim();
-  const instructionTemplate = readText(join(root, "skeleton/core/templates/adapter-instructions.md.tmpl"));
+  const defaultInstructionTemplate = readText(join(root, "skeleton/core/templates/adapter-instructions.md.tmpl"));
+  const templateRoot = join(root, "skeleton/core/templates/skills");
 
   cleanGeneratedCommandOutput(root);
 
   for (const adapter of ADAPTER_PROFILES) {
     if (adapter.instructionOutputPath) {
-      const instructionContent = renderInstructionTemplate(instructionTemplate, adapter.host, adapter.adapterLabel);
+      const instructionContent = adapter.instructionTemplatePath
+        ? `${readText(join(root, adapter.instructionTemplatePath)).trim()}\n`
+        : renderInstructionTemplate(defaultInstructionTemplate, adapter.host, adapter.adapterLabel);
       writeText(join(root, adapter.instructionOutputPath), instructionContent);
     }
 
@@ -259,15 +372,29 @@ function build(root: string): void {
       for (const spec of COMMAND_SPECS) {
         writeText(join(outputRoot, spec.id, "SKILL.md"), renderSkill(adapter.host, version, spec));
       }
-      if (adapter.installedSkillRoot) {
-        const templateRoot = join(root, "skeleton/core/templates/skills");
+      if (adapter.installedSkillRoot && adapter.versionStampPath) {
         for (const commandId of TEMPLATE_COMMAND_IDS) {
           const template = readText(join(templateRoot, `${commandId}.md.tmpl`));
           writeText(
             join(outputRoot, commandId, "SKILL.md"),
-            renderSkillTemplate(template, adapter.host, version, adapter.installedSkillRoot)
+            renderSkillTemplate(template, adapter.host, version, adapter.installedSkillRoot, adapter.versionStampPath)
           );
         }
+      }
+    }
+
+    if (adapter.commandOutputRoot && adapter.installedCommandRoot && adapter.versionStampPath) {
+      const outputRoot = join(root, adapter.commandOutputRoot);
+      ensureDir(outputRoot);
+      for (const spec of COMMAND_SPECS) {
+        writeText(join(outputRoot, `${spec.id}.md`), renderOpencodeCommand(version, spec));
+      }
+      for (const commandId of TEMPLATE_COMMAND_IDS) {
+        const template = readText(join(templateRoot, `${commandId}.md.tmpl`));
+        writeText(
+          join(outputRoot, `${commandId}.md`),
+          renderOpencodeTemplateCommand(template, commandId, version, adapter.installedCommandRoot, adapter.versionStampPath),
+        );
       }
     }
 

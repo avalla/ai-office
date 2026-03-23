@@ -19,4 +19,4 @@ Examples:
 3. Run `ai-office task integrate <task-id>` and include any provided reason if supported by the CLI.
 4. Report the integration target branch and any follow-up step for UAT or release.
 
-<!-- ai-office-version: 1.9.1 -->
+<!-- ai-office-version: 1.11.0 -->
