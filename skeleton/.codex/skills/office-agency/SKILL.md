@@ -1,0 +1,115 @@
+---
+name: office-agency
+description: Inspect or re-profile your project agency. Usage: $office-agency [list|get <name>|profile]
+disable-model-invocation: true
+
+$ARGUMENTS format: `[list | get <name> | profile]`
+
+- `list` (default if no args): show active agency and its agent roster
+- `get <name>`: show full config for a specific agency directory
+- `profile`: re-run the agency profiling interview and regenerate the agency config
+
+Agencies directory: `.ai-office/agencies/`
+Selection file: `.ai-office/agency.json`
+
+---
+
+## `list` (or no args)
+
+Read `.ai-office/agency.json` to find the active agency name. Read `.ai-office/agencies/<name>/config.md`.
+
+Output:
+```
+Active Agency: <name> (custom)
+
+| Agent | Role | Focus |
+|-------|------|-------|
+| developer | Implementation | <focus> |
+| qa | Quality assurance | <focus> |
+...
+
+Handoff rules: <from config>
+Quality gates: <from config>
+
+To re-profile: $office-agency profile
+To inspect raw config: $office-agency get <name>
+```
+
+If no agency is configured: "No agency configured. Run `$office-setup` to create one."
+
+---
+
+## `get <name>`
+
+Read all `.md` files inside `.ai-office/agencies/<name>/`. Display their contents separated by filename headings.
+
+---
+
+## `profile`
+
+Re-run the agency profiling interview without touching other project settings.
+
+Ask these questions one at a time:
+
+### 1. Domain
+"What kind of project is this?
+
+1. Web app (frontend + backend, SaaS, dashboards)
+2. Mobile app (iOS / Android / React Native)
+3. API / backend service (no UI)
+4. Data pipeline / analytics
+5. CLI tool / developer tooling
+6. Game
+7. Content / media production
+8. Other — describe it"
+
+### 2. Team composition
+"Who is working on this project?
+
+1. Just me + AI (solo)
+2. Small team (2–5 people) + AI
+3. Larger team — AI assists specific roles"
+
+### 3. Quality concerns
+"What are the critical quality concerns? (pick all that apply, e.g. '1 3')
+
+1. Security-sensitive (auth, payments, PII, compliance)
+2. Performance-critical (latency, throughput, scale)
+3. High test coverage required
+4. Strong UX / accessibility standards
+5. Compliance or audit trail required (SOC2, HIPAA, GDPR)
+6. None in particular — standard quality"
+
+### 4. Release cadence
+"How do you ship?
+
+1. Continuous deploy (merge to main = ship)
+2. Sprint-based (weekly or biweekly releases)
+3. Milestone releases (explicit version tags)"
+
+**Agent selection rules:**
+
+| Condition | Include agent |
+|-----------|--------------|
+| Always | `developer`, `qa` |
+| Domain = web app or mobile | `designer` |
+| Domain = web app or mobile, team > solo | `pm` |
+| Quality concern = security, compliance | `security-specialist` |
+| Quality concern = performance | `reviewer` (performance focus) |
+| Team > solo OR milestone releases | `architect` |
+| Continuous deploy OR compliance | `ops` |
+
+Read the existing `project.config.md` for `project_name` and `agency` (slug). Overwrite `.ai-office/agencies/<slug>/config.md` with the new profile. Update `agency.json` timestamp.
+
+Confirm:
+```
+✅ Agency re-profiled: <slug>
+
+| Agent | Focus |
+|-------|-------|
+...
+
+Run $office-agency list to review.
+```
+
+<!-- ai-office-version: 1.5.0 -->

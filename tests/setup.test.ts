@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "bun:test";
-import { readFileSync } from "fs";
+import { readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { makeTempProject, runScript, assertExists } from "./helpers";
 
@@ -133,6 +133,116 @@ describe("setup.sh", () => {
     ]);
     expect(stdout).toContain("already exists");
     expect(readFileSync(configPath, "utf8")).toBe(original);
+  });
+
+  it("reconfigures an existing project.config.md when --reconfigure is passed", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+    ]);
+
+    const { exitCode, stdout } = runScript("setup.sh", [
+      dir,
+      "--reconfigure",
+      "--non-interactive",
+      "--agency=lean-startup",
+      "--name=reconfigured-project",
+      "--stack=go",
+      "--advance-mode=auto",
+    ]);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("Reconfiguring existing project settings");
+    expect(stdout).toContain("Updated .ai-office/project.config.md");
+
+    const configPath = join(dir, ".ai-office/project.config.md");
+    const content = readFileSync(configPath, "utf8");
+    expect(content).toContain("agency: lean-startup");
+    expect(content).toContain("project_name: reconfigured-project");
+    expect(content).toContain('typecheck_cmd: "go vet ./..."');
+    expect(content).toContain("advance_mode: auto");
+
+    const agencyJson = JSON.parse(readFileSync(join(dir, ".ai-office/agency.json"), "utf8"));
+    expect(agencyJson.name).toBe("lean-startup");
+
+    const backups = readdirSync(join(dir, ".ai-office")).filter((name) => name.startsWith("project.config.md.bak."));
+    expect(backups.length).toBeGreaterThan(0);
+  });
+
+  it("preserves custom frontmatter and notes during reconfigure", () => {
+    const configPath = join(dir, ".ai-office/project.config.md");
+    const customConfig = `---
+agency: software-studio
+project_name: autoepoque
+typecheck_cmd: "bun run typecheck:all"
+lint_cmd: "bun run lint"
+test_cmd: "bun run test:vitest"
+test_runner: vitest
+dev_web_cmd: "bun run dev:web"
+dev_queues_cmd: "bun run dev:queues"
+ui_framework: "React"
+design_system: "Tailwind"
+coverage_min: 80
+lighthouse_min: 90
+advance_mode: manual
+---
+
+# Project Configuration
+
+**Project:** autoepoque
+**Agency:** software-studio
+**Created:** 2026-03-18
+
+## Notes
+
+> Preserved project note
+> Second line
+`;
+    writeFileSync(configPath, customConfig);
+    writeFileSync(join(dir, ".ai-office/agency.json"), JSON.stringify({
+      name: "software-studio",
+      selectedAt: "2026-03-18T00:00:00.000Z",
+      custom: false,
+    }, null, 2));
+
+    const { exitCode } = runScript("setup.sh", [
+      dir,
+      "--reconfigure",
+      "--non-interactive",
+      "--name=autoepoque",
+    ]);
+
+    expect(exitCode).toBe(0);
+    const updated = readFileSync(configPath, "utf8");
+    expect(updated).toContain('dev_web_cmd: "bun run dev:web"');
+    expect(updated).toContain('dev_queues_cmd: "bun run dev:queues"');
+    expect(updated).toContain("> Preserved project note");
+    expect(updated).toContain("> Second line");
+    expect(updated).toContain("# Tech stack — used by $office-validate (dev stage)");
+    expect(updated).toContain("# Design system — used by $office-review (UX sector)");
+  });
+
+  it("supports --force as an alias for --reconfigure", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+    ]);
+
+    const { exitCode } = runScript("setup.sh", [
+      dir,
+      "--force",
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=forced-project",
+    ]);
+
+    expect(exitCode).toBe(0);
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("project_name: forced-project");
   });
 
   it("exits with error if .ai-office/ does not exist", () => {

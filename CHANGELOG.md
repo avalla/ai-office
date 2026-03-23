@@ -18,10 +18,10 @@
 **Task management improvements:**
 - Task Slug field — link tasks to parent features for better tracking
 - BLOCKED column — tasks with blockers tracked with explicit unblock criteria
-- Labels visible in `/office:task-list` output
+- Labels visible in `$office-task-list` output
 
 **Reporting:**
-- Velocity reporting added to `/office:report velocity` — throughput metrics per milestone
+- Velocity reporting added to `$office-report velocity` — throughput metrics per milestone
 
 **Artifacts:**
 - Discuss artifact — context documents at `.ai-office/docs/context/<slug>.md`
@@ -65,9 +65,9 @@
 
 ### Fixed
 
-- `/office:verify` now recommends REVIEW (not DONE) as the next state
-- `/office:validate` sprint duration set to a concrete 14 days
-- `/office:advance` improved error handling
+- `$office-verify` now recommends REVIEW (not DONE) as the next state
+- `$office-validate` sprint duration set to a concrete 14 days
+- `$office-advance` improved error handling
 - Task matching now uses Slug field with filename fallback
 
 ---
@@ -77,25 +77,25 @@
 ### Added
 
 **Labels support:**
-- `/office:task-create` — new `labels:tag1,tag2` argument; `**Labels:**` field added to task file template
-- `/office:task-update` — new command to update task metadata (labels, priority, assignee, estimate, deps) without moving the task
+- `$office-task-create` — new `labels:tag1,tag2` argument; `**Labels:**` field added to task file template
+- `$office-task-update` — new command to update task metadata (labels, priority, assignee, estimate, deps) without moving the task
 
 **Task history:**
-- Task files now include a `## History` section; `/office:task-create` writes the initial `Created in <column>` entry
-- `/office:task-move` appends a timestamped `<OLD> → <NEW>` entry to `## History` on every move
-- `/office:task-update` appends a `Updated — <changed fields>` entry to `## History`
-- `/office:verify` appends verdict and outcome to `## History`
+- Task files now include a `## History` section; `$office-task-create` writes the initial `Created in <column>` entry
+- `$office-task-move` appends a timestamped `<OLD> → <NEW>` entry to `## History` on every move
+- `$office-task-update` appends a `Updated — <changed fields>` entry to `## History`
+- `$office-verify` appends verdict and outcome to `## History`
 
 **Discussion phase (GSD-inspired):**
-- `/office:route` now runs a two-phase flow: (1) classify the request, (2) ask 4–6 tailored questions before routing and write `.ai-office/docs/context/<slug>.md` with constraints, patterns, and ruled-out approaches; Quick fix requests skip the discussion phase
+- `$office-route` now runs a two-phase flow: (1) classify the request, (2) ask 4–6 tailored questions before routing and write `.ai-office/docs/context/<slug>.md` with constraints, patterns, and ruled-out approaches; Quick fix requests skip the discussion phase
 
 **Active QA verification:**
-- `/office:verify <task-id>` — new command that actively verifies acceptance criteria using auto (tests, typecheck, lint, grep), inspect (code reading), and manual methods; diagnoses root causes of failures; renders an APPROVED or RETURNED verdict; updates the task's `## History`
+- `$office-verify <task-id>` — new command that actively verifies acceptance criteria using auto (tests, typecheck, lint, grep), inspect (code reading), and manual methods; diagnoses root causes of failures; renders an APPROVED or RETURNED verdict; updates the task's `## History`
 
 **Custom agency profiling:**
-- `/office:setup` — step 2 replaced: instead of picking from a premade list, Claude interviews you (domain, team, quality concerns, cadence) and generates a custom `.ai-office/agencies/<slug>/config.md` with tailored agent roster, per-agent focus, and handoff rules
-- `/office:route` — new pre-check warns if no agency is configured and blocks routing until `/office:setup` is run
-- `/office:agency` — simplified to three subcommands: `list` (active roster), `get <name>` (raw config), `profile` (re-run interview independently)
+- `$office-setup` — step 2 replaced: instead of picking from a premade list, Claude interviews you (domain, team, quality concerns, cadence) and generates a custom `.ai-office/agencies/<slug>/config.md` with tailored agent roster, per-agent focus, and handoff rules
+- `$office-route` — new pre-check warns if no agency is configured and blocks routing until `$office-setup` is run
+- `$office-agency` — simplified to three subcommands: `list` (active roster), `get <name>` (raw config), `profile` (re-run interview independently)
 
 **File version annotations:**
 - Modified skeleton command files now include `<!-- ai-office-version: 1.3.0 -->` at the end; `update.sh` uses these annotations to detect per-file staleness
@@ -113,7 +113,7 @@
 
 ### Added
 
-**`/office:milestone create` — task generation:**
+**`$office-milestone create` — task generation:**
 - New optional argument `tasks:yes|no|ask` (default: `ask`)
 - After creating the milestone file, the system reasons about the milestone name plus any related PRD/ADR context to suggest 4–12 tasks covering the full pipeline (backend, API, UI, tests, security, docs)
 - Each suggestion includes title, assignee (agent-mapped by task type), priority, and estimate
@@ -123,12 +123,12 @@
 - Task numbers are auto-assigned sequentially within the milestone
 
 **New commands (3):**
-- `/office:run-tests <slug>` — runs `test_cmd` from `project.config.md`, parses runner output (vitest, jest, pytest, go test), appends `## Test Results` with per-suite breakdown and coverage % to `<slug>-status.md`; warns if coverage is below `coverage_min`
-- `/office:validate-secrets [path]` — scans the codebase for hardcoded secrets using pattern matching (passwords, API keys, tokens, private keys, AWS IDs, GitHub tokens); allowlists env-var placeholders and test fixtures; shows redacted snippets and remediation advice
-- `/office:role <agent-name>` — displays an agent's `personality.md` enriched with stage-specific focus guidance; warns if viewing a non-active agent's role for the current pipeline state
+- `$office-run-tests <slug>` — runs `test_cmd` from `project.config.md`, parses runner output (vitest, jest, pytest, go test), appends `## Test Results` with per-suite breakdown and coverage % to `<slug>-status.md`; warns if coverage is below `coverage_min`
+- `$office-validate-secrets [path]` — scans the codebase for hardcoded secrets using pattern matching (passwords, API keys, tokens, private keys, AWS IDs, GitHub tokens); allowlists env-var placeholders and test fixtures; shows redacted snippets and remediation advice
+- `$office-role <agent-name>` — displays an agent's `personality.md` enriched with stage-specific focus guidance; warns if viewing a non-active agent's role for the current pipeline state
 
-**Base rules (`CLAUDE.md`):**
-- `skeleton/.claude/CLAUDE.md` — always-on quality rules installed at `.claude/CLAUDE.md` in every project; ported and adapted from Windsurf `base-*` + `global.md` + `task-management.md` rule files; covers reasoning & scope control, code quality, TypeScript strict rules, security, git conventions, AI Office workflow, task state transitions, and loop guards
+**Base rules (`AGENTS.md`):**
+- `skeleton/AGENTS.md` — always-on quality rules installed at `AGENTS.md` in every project; ported and adapted from Windsurf `base-*` + `global.md` + `task-management.md` rule files; covers reasoning & scope control, code quality, TypeScript strict rules, security, git conventions, AI Office workflow, task state transitions, and loop guards
 
 **Opt-in addons (`skeleton/.ai-office/addons/`):**
 - `typescript-naming.md` — file naming, identifier casing, boolean/async function prefixes
@@ -138,7 +138,7 @@
 - `react-native.md` — Expo conventions, SecureStore, navigation typing
 - `mcp-usage.md` — MCP tool preferences and AI Office slash command reference
 
-Addons are activated by adding `@.ai-office/addons/<name>.md` to `.claude/CLAUDE.md`.
+Addons are activated by copying the contents of `.ai-office/addons/<name>.md` into `AGENTS.md`.
 
 ### Changed
 
@@ -146,7 +146,7 @@ Addons are activated by adding `@.ai-office/addons/<name>.md` to `.claude/CLAUDE
 - `scaffold.md` — `status` template now includes a `## Loop Guards` table with `qa_iteration`, `review_iteration`, `uat_iteration` counters initialized to 0
 - `advance.md` — step 4 now explicitly reads the `## Loop Guards` table, increments the applicable counter, writes it back to the status file, and blocks with `blocked_reason` when the limit is reached (previously the guard logic was described but not given a concrete read/write procedure)
 - `doctor.md` — expected command count updated from 18 to 21; output format example updated to reflect v1.2.0
-- `install.sh` — copies `skeleton/.claude/CLAUDE.md` to `.claude/CLAUDE.md` (skip if already exists); copies `skeleton/.ai-office/addons/` to `.ai-office/addons/` (skip if already exists)
+- `install.sh` — copies `skeleton/AGENTS.md` to `AGENTS.md` (skip if already exists); copies `skeleton/.ai-office/addons/` to `.ai-office/addons/` (skip if already exists)
 
 ---
 
@@ -154,10 +154,10 @@ Addons are activated by adding `@.ai-office/addons/<name>.md` to `.claude/CLAUDE
 
 ### Added
 - `setup.sh` — interactive project setup wizard (agency selection, tech stack, thresholds)
-- `/office:setup` command — in-editor reconfiguration wizard
+- `$office-setup` command — in-editor reconfiguration wizard
 - `agencies/` bundle — 5 agency templates ship with the framework (software-studio, lean-startup, game-studio, creative-agency, penetration-test-agency)
 - `project.config.md` format — per-project config read by `validate` and `review` commands
-- `commands/office/setup.md` — new `/office:setup` slash command
+- `skills/office-setup/SKILL.md` — new `$office-setup` skill
 
 ### Changed
 - `validate.md` — reads `typecheck_cmd`, `lint_cmd`, `test_cmd`, `coverage_min`, `lighthouse_min` from `project.config.md`; falls back to npm defaults

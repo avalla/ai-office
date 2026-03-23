@@ -18,25 +18,25 @@ echo ""
 
 # ── Stamp-only mode ───────────────────────────────────────────────────────────
 if [[ "$STAMP_ONLY" == "--stamp-only" ]]; then
-  mkdir -p "$PROJECT_ROOT/.claude/skills"
-  echo "$VERSION" > "$PROJECT_ROOT/.claude/skills/.version"
+  mkdir -p "$PROJECT_ROOT/.codex/skills"
+  echo "$VERSION" > "$PROJECT_ROOT/.codex/skills/.version"
   echo "✅ Version stamped: $VERSION"
   exit 0
 fi
 
-# ── Install Claude Code skills ────────────────────────────────────────────────
-echo "→ Installing skills to .claude/skills/"
-mkdir -p "$PROJECT_ROOT/.claude/skills"
-cp -r "$SKELETON/.claude/skills/"* "$PROJECT_ROOT/.claude/skills/"
-echo "$VERSION" > "$PROJECT_ROOT/.claude/skills/.version"
-echo "  ✅ $(ls -d "$SKELETON/.claude/skills/"/office-* | wc -l | tr -d ' ') skills installed"
+# ── Install Codex skills ──────────────────────────────────────────────────────
+echo "→ Installing skills to .codex/skills/"
+mkdir -p "$PROJECT_ROOT/.codex/skills"
+cp -r "$SKELETON/.codex/skills/"* "$PROJECT_ROOT/.codex/skills/"
+echo "$VERSION" > "$PROJECT_ROOT/.codex/skills/.version"
+echo "  ✅ $(ls -d "$SKELETON/.codex/skills/"/office-* | wc -l | tr -d ' ') skills installed"
 
-# CLAUDE.md (only if not exists)
-if [[ ! -f "$PROJECT_ROOT/.claude/CLAUDE.md" ]]; then
-  cp "$SKELETON/.claude/CLAUDE.md" "$PROJECT_ROOT/.claude/CLAUDE.md"
-  echo "  ✅ CLAUDE.md installed"
+# AGENTS.md (only if not exists)
+if [[ ! -f "$PROJECT_ROOT/AGENTS.md" ]]; then
+  cp "$SKELETON/AGENTS.md" "$PROJECT_ROOT/AGENTS.md"
+  echo "  ✅ AGENTS.md installed"
 else
-  echo "  ↩️  CLAUDE.md already exists, skipped"
+  echo "  ↩️  AGENTS.md already exists, skipped"
 fi
 
 # ── Create .ai-office/ structure ──────────────────────────────────────────────
@@ -123,17 +123,17 @@ echo ""
 if [[ ! -f "$AI_OFFICE/project.config.md" ]]; then
   echo "Next: configure your project"
   echo "  ./setup.sh $PROJECT_ROOT   ← interactive setup (agency, tech stack)"
-  echo "  /office-setup              ← same, inside Claude Code"
+  echo "  \$office-setup              ← same, inside Codex"
 else
   echo "Get started:"
-  echo "  /office                    ← interactive wizard"
-  echo "  /office-route <describe your task>"
-  echo "  /office-doctor"
+  echo "  \$office                    ← interactive wizard"
+  echo "  \$office-route <describe your task>"
+  echo "  \$office-doctor"
 fi
 
 echo ""
-echo "Optional addons (activate in .claude/CLAUDE.md):"
+echo "Optional addons (review and copy into AGENTS.md as needed):"
 for addon in "$AI_OFFICE/addons/"*.md; do
   echo "  # @.ai-office/addons/$(basename "$addon")"
 done
-echo "Uncomment the lines you need — each addon adds domain-specific rules."
+echo "Append the addon content you need to AGENTS.md — each addon adds domain-specific rules."

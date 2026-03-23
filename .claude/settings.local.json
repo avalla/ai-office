@@ -1,6 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(ls -1d /Users/andrea/dev/node/ai-office-claude-code/skeleton/.ai-office/agents/*/)",
+      "Bash(grep -r \"revenuecat\" /Users/andrea/dev/node/ai-office-claude-code/skeleton/.ai-office/agents/*/mcp-adapters.md)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "freecad"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }

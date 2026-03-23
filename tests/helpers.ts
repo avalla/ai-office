@@ -32,6 +32,25 @@ export function runScript(
   };
 }
 
+/** Run the ai-office CLI synchronously in a target project directory. */
+export function runCli(
+  projectDir: string,
+  args: string[] = [],
+  env: Record<string, string> = {}
+): { exitCode: number; stdout: string; stderr: string } {
+  const proc = Bun.spawnSync(["bash", join(FRAMEWORK_DIR, "bin/ai-office"), ...args], {
+    cwd: projectDir,
+    env: { ...process.env, ...env },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return {
+    exitCode: proc.exitCode ?? -1,
+    stdout: new TextDecoder().decode(proc.stdout),
+    stderr: new TextDecoder().decode(proc.stderr),
+  };
+}
+
 /** Assert a path exists, throw with a descriptive message if not. */
 export function assertExists(path: string, label?: string): void {
   if (!existsSync(path)) {

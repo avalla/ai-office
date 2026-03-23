@@ -8,7 +8,10 @@ PROJECT_ROOT="${1:-.}"
 PROJECT_ROOT="$(cd "$PROJECT_ROOT" && pwd)"
 
 AVAILABLE="$(cat "$FRAMEWORK_DIR/VERSION")"
-INSTALLED_FILE="$PROJECT_ROOT/.claude/skills/.version"
+INSTALLED_FILE="$PROJECT_ROOT/.codex/skills/.version"
+if [[ ! -f "$INSTALLED_FILE" && -f "$PROJECT_ROOT/.claude/skills/.version" ]]; then
+  INSTALLED_FILE="$PROJECT_ROOT/.claude/skills/.version"
+fi
 INSTALLED="$(cat "$INSTALLED_FILE" 2>/dev/null || echo "unknown")"
 
 echo "AI Office Framework — Update"
@@ -47,10 +50,10 @@ get_file_version() {
 # ── Show what will change ─────────────────────────────────────────────────────
 echo "Skills to update:"
 any_change=0
-for src_dir in "$FRAMEWORK_DIR/skeleton/.claude/skills/"/office*/; do
+for src_dir in "$FRAMEWORK_DIR/skeleton/.codex/skills/"/office*/; do
   skill_name="$(basename "$src_dir")"
   src="$src_dir/SKILL.md"
-  dst="$PROJECT_ROOT/.claude/skills/$skill_name/SKILL.md"
+  dst="$PROJECT_ROOT/.codex/skills/$skill_name/SKILL.md"
   if [[ ! -f "$dst" ]]; then
     echo "  + $skill_name (new)"
     any_change=1
@@ -78,10 +81,16 @@ read -p "Apply update v$INSTALLED → v$AVAILABLE? [Y/n] " confirm
 # ── Apply update ──────────────────────────────────────────────────────────────
 echo ""
 echo "→ Updating skills..."
-mkdir -p "$PROJECT_ROOT/.claude/skills"
-cp -r "$FRAMEWORK_DIR/skeleton/.claude/skills/"* "$PROJECT_ROOT/.claude/skills/"
-echo "$AVAILABLE" > "$INSTALLED_FILE"
+mkdir -p "$PROJECT_ROOT/.codex/skills"
+cp -r "$FRAMEWORK_DIR/skeleton/.codex/skills/"* "$PROJECT_ROOT/.codex/skills/"
+echo "$AVAILABLE" > "$PROJECT_ROOT/.codex/skills/.version"
 echo "  ✅ Skills updated"
+
+# ── Install AGENTS.md if missing ──────────────────────────────────────────────
+if [[ ! -f "$PROJECT_ROOT/AGENTS.md" ]]; then
+  cp "$FRAMEWORK_DIR/skeleton/AGENTS.md" "$PROJECT_ROOT/AGENTS.md"
+  echo "  ✅ AGENTS.md installed"
+fi
 
 # ── Remove legacy commands directory if present ───────────────────────────────
 if [[ -d "$PROJECT_ROOT/.claude/commands/office" ]]; then
@@ -96,9 +105,9 @@ echo "→ Checking .ai-office/ structure..."
 AI_OFFICE="$PROJECT_ROOT/.ai-office"
 for dir in \
   "$AI_OFFICE/tasks/BACKLOG" "$AI_OFFICE/tasks/TODO" "$AI_OFFICE/tasks/WIP" \
-  "$AI_OFFICE/tasks/REVIEW" "$AI_OFFICE/tasks/DONE" "$AI_OFFICE/tasks/ARCHIVED" \
+  "$AI_OFFICE/tasks/REVIEW" "$AI_OFFICE/tasks/BLOCKED" "$AI_OFFICE/tasks/DONE" "$AI_OFFICE/tasks/ARCHIVED" \
   "$AI_OFFICE/docs/prd" "$AI_OFFICE/docs/adr" "$AI_OFFICE/docs/runbooks" \
-  "$AI_OFFICE/milestones" "$AI_OFFICE/scripts" "$AI_OFFICE/memory"
+  "$AI_OFFICE/agents" "$AI_OFFICE/agencies" "$AI_OFFICE/milestones" "$AI_OFFICE/scripts" "$AI_OFFICE/memory"
 do
   mkdir -p "$dir"
 done

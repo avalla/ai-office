@@ -21,33 +21,63 @@ describe("install.sh", () => {
     expect(stdout).toContain("installed successfully");
   });
 
-  it("creates .claude/commands/office/ with all 21 commands", () => {
+  it("creates .codex/skills with all bundled office skills", () => {
     runScript("install.sh", [dir]);
-    const commandDir = join(dir, ".claude/commands/office");
-    assertExists(commandDir);
+    const skillsDir = join(dir, ".codex/skills");
+    assertExists(skillsDir);
 
-    const files = readdirSync(commandDir).filter((f) => f.endsWith(".md"));
-    const skeleton = readdirSync(join(FRAMEWORK_DIR, "skeleton/.claude/commands/office")).filter((f) => f.endsWith(".md"));
-    expect(files.length).toBe(skeleton.length);
+    const installed = readdirSync(skillsDir).filter((entry) => entry.startsWith("office"));
+    const bundled = readdirSync(join(FRAMEWORK_DIR, "skeleton/.codex/skills")).filter((entry) => entry.startsWith("office"));
+    expect(installed.length).toBe(bundled.length);
 
     const expected = [
-      "_meta.md", "advance.md", "agency.md", "ai-office.md", "doctor.md",
-      "graph.md", "milestone.md", "report.md", "review.md", "role.md", "route.md",
-      "run-tests.md", "scaffold.md", "script.md", "setup.md", "status.md",
-      "task-create.md", "task-list.md", "task-move.md", "validate.md", "validate-secrets.md",
+      "office",
+      "office-advance",
+      "office-agency",
+      "office-doctor",
+      "office-graph",
+      "office-meta",
+      "office-milestone",
+      "office-report",
+      "office-review",
+      "office-role",
+      "office-route",
+      "office-run-tests",
+      "office-scaffold",
+      "office-script",
+      "office-setup",
+      "office-status",
+      "office-task-create",
+      "office-task-list",
+      "office-task-move",
+      "office-task-update",
+      "office-validate",
+      "office-validate-secrets",
+      "office-verify",
     ];
+
     for (const name of expected) {
-      expect(files).toContain(name);
+      expect(installed).toContain(name);
+      assertExists(join(skillsDir, name, "SKILL.md"));
     }
   });
 
   it("stamps the version file", () => {
     runScript("install.sh", [dir]);
-    const versionFile = join(dir, ".claude/commands/office/.version");
+    const versionFile = join(dir, ".codex/skills/.version");
     assertExists(versionFile);
     const installed = readFileSync(versionFile, "utf8").trim();
     const source = readFileSync(join(FRAMEWORK_DIR, "VERSION"), "utf8").trim();
     expect(installed).toBe(source);
+  });
+
+  it("installs AGENTS.md", () => {
+    runScript("install.sh", [dir]);
+    const agents = join(dir, "AGENTS.md");
+    assertExists(agents);
+    const content = readFileSync(agents, "utf8");
+    expect(content).toContain("AI Office");
+    expect(content).toContain("Codex");
   });
 
   it("creates the full .ai-office/ directory structure", () => {
@@ -57,6 +87,7 @@ describe("install.sh", () => {
       ".ai-office/tasks/TODO",
       ".ai-office/tasks/WIP",
       ".ai-office/tasks/REVIEW",
+      ".ai-office/tasks/BLOCKED",
       ".ai-office/tasks/DONE",
       ".ai-office/tasks/ARCHIVED",
       ".ai-office/docs/prd",
@@ -125,10 +156,11 @@ describe("install.sh", () => {
 
   it("--stamp-only only writes the version file, skips everything else", () => {
     runScript("install.sh", [dir, "--stamp-only"]);
-    assertExists(join(dir, ".claude/commands/office/.version"));
-    const commandDir = join(dir, ".claude/commands/office");
-    const mdFiles = readdirSync(commandDir).filter((f) => f.endsWith(".md"));
-    expect(mdFiles.length).toBe(0);
+    assertExists(join(dir, ".codex/skills/.version"));
+    const skillsDir = join(dir, ".codex/skills");
+    const skillDirs = readdirSync(skillsDir).filter((entry) => entry !== ".version");
+    expect(skillDirs.length).toBe(0);
     expect(existsSync(join(dir, ".ai-office"))).toBe(false);
+    expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
   });
 });
