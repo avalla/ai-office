@@ -8,6 +8,10 @@
 #   --name=<name>           Skip project name prompt
 #   --stack=<preset>        Apply a stack preset (node-react|python-fastapi|go|mobile-rn)
 #   --advance-mode=<mode>   Pipeline advance mode: manual | auto (default: manual)
+#   --task-isolation-mode=<mode>  Task git isolation: none | branch | worktree
+#   --task-base-branch=<name>     Base branch for new task branches (default: dev)
+#   --task-merge-target=<name>    Integration branch for task squash merges (default: dev)
+#   --task-worktree-root=<path>   Root folder for task worktrees (default: .ai-office/worktrees)
 #   --non-interactive       Use all defaults or existing values, no prompts
 #   --reconfigure           Overwrite an existing project.config.md using current values as defaults
 #   --force                 Alias for --reconfigure
@@ -21,6 +25,10 @@ AGENCY_ARG=""
 NAME_ARG=""
 STACK_ARG=""
 ADVANCE_MODE_ARG=""
+TASK_ISOLATION_MODE_ARG=""
+TASK_BASE_BRANCH_ARG=""
+TASK_MERGE_TARGET_ARG=""
+TASK_WORKTREE_ROOT_ARG=""
 NON_INTERACTIVE=false
 RECONFIGURE=false
 for arg in "$@"; do
@@ -30,6 +38,10 @@ for arg in "$@"; do
     --name=*)   NAME_ARG="${arg#*=}" ;;
     --stack=*)  STACK_ARG="${arg#*=}" ;;
     --advance-mode=*) ADVANCE_MODE_ARG="${arg#*=}" ;;
+    --task-isolation-mode=*) TASK_ISOLATION_MODE_ARG="${arg#*=}" ;;
+    --task-base-branch=*) TASK_BASE_BRANCH_ARG="${arg#*=}" ;;
+    --task-merge-target=*) TASK_MERGE_TARGET_ARG="${arg#*=}" ;;
+    --task-worktree-root=*) TASK_WORKTREE_ROOT_ARG="${arg#*=}" ;;
     --non-interactive) NON_INTERACTIVE=true ;;
     -*)
       echo "⚠️  Unknown flag: $arg"
@@ -101,7 +113,7 @@ get_extra_frontmatter_lines() {
       exit
     }
     in_frontmatter == 1 {
-      if ($0 ~ /^(agency|project_name|typecheck_cmd|lint_cmd|test_cmd|test_runner|ui_framework|design_system|coverage_min|lighthouse_min|advance_mode):/) {
+      if ($0 ~ /^(agency|project_name|typecheck_cmd|lint_cmd|test_cmd|test_runner|ui_framework|design_system|coverage_min|lighthouse_min|advance_mode|task_isolation_mode|task_base_branch|task_merge_target|task_worktree_root):/) {
         next
       }
       if ($0 ~ /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*/) {
@@ -131,7 +143,7 @@ fi
 # ── Guard: don't overwrite existing config unless requested ───────────────────
 if [[ "$CONFIG_EXISTS" == true && "$RECONFIGURE" == false ]]; then
   echo "⚠️  project.config.md already exists."
-  echo "   To reconfigure, use \$office-setup inside Codex."
+  echo "   To reconfigure, use the installed AI Office adapter shortcut if available."
   echo "   Or re-run this script with --reconfigure (or --force)."
   exit 0
 fi
@@ -142,7 +154,7 @@ fi
 
 # ── Copy bundled agency templates ────────────────────────────────────────────
 echo "→ Installing agency templates..."
-for agency_dir in "$FRAMEWORK_DIR/skeleton/.ai-office/agencies"/*/; do
+for agency_dir in "$FRAMEWORK_DIR/skeleton/core/.ai-office/agencies"/*/; do
   agency_name="$(basename "$agency_dir")"
   target="$AI_OFFICE/agencies/$agency_name"
   if [[ ! -d "$target" ]]; then
@@ -161,7 +173,7 @@ AGENCIES=()
 AGENCY_DESCS=()
 AGENCY_CUSTOMS=()
 
-for agency_dir in "$FRAMEWORK_DIR/skeleton/.ai-office/agencies"/*/; do
+for agency_dir in "$FRAMEWORK_DIR/skeleton/core/.ai-office/agencies"/*/; do
   [[ -d "$agency_dir" ]] || continue
   agency_slug="$(basename "$agency_dir")"
   config_file="$agency_dir/config.md"
@@ -223,6 +235,10 @@ UI_FRAMEWORK="react"
 COVERAGE_MIN="80"
 LIGHTHOUSE_MIN="90"
 ADVANCE_MODE="manual"
+TASK_ISOLATION_MODE="none"
+TASK_BASE_BRANCH="dev"
+TASK_MERGE_TARGET="dev"
+TASK_WORKTREE_ROOT=".ai-office/worktrees"
 CREATED_DATE=""
 EXTRA_FRONTMATTER_LINES=""
 NOTES_BLOCK="> Add project-specific context here — tech decisions, constraints, key stakeholders."
@@ -239,6 +255,10 @@ if [[ "$CONFIG_EXISTS" == true ]]; then
   COVERAGE_MIN="$(get_config_value coverage_min)"
   LIGHTHOUSE_MIN="$(get_config_value lighthouse_min)"
   ADVANCE_MODE="$(get_config_value advance_mode)"
+  TASK_ISOLATION_MODE="$(get_config_value task_isolation_mode)"
+  TASK_BASE_BRANCH="$(get_config_value task_base_branch)"
+  TASK_MERGE_TARGET="$(get_config_value task_merge_target)"
+  TASK_WORKTREE_ROOT="$(get_config_value task_worktree_root)"
   CREATED_DATE="$(sed -n 's/^\*\*Created:\*\* //p' "$CONFIG_FILE" | head -n 1)"
   EXTRA_FRONTMATTER_LINES="$(get_extra_frontmatter_lines)"
   NOTES_BLOCK="$(get_notes_block)"
@@ -253,6 +273,10 @@ if [[ "$CONFIG_EXISTS" == true ]]; then
   [[ -z "$COVERAGE_MIN" ]] && COVERAGE_MIN="80"
   [[ -z "$LIGHTHOUSE_MIN" ]] && LIGHTHOUSE_MIN="90"
   [[ -z "$ADVANCE_MODE" ]] && ADVANCE_MODE="manual"
+  [[ -z "$TASK_ISOLATION_MODE" ]] && TASK_ISOLATION_MODE="none"
+  [[ -z "$TASK_BASE_BRANCH" ]] && TASK_BASE_BRANCH="dev"
+  [[ -z "$TASK_MERGE_TARGET" ]] && TASK_MERGE_TARGET="dev"
+  [[ -z "$TASK_WORKTREE_ROOT" ]] && TASK_WORKTREE_ROOT=".ai-office/worktrees"
   [[ -z "$NOTES_BLOCK" ]] && NOTES_BLOCK="> Add project-specific context here — tech decisions, constraints, key stakeholders."
 fi
 
@@ -262,6 +286,18 @@ fi
 
 if [[ -n "$ADVANCE_MODE_ARG" ]]; then
   ADVANCE_MODE="$ADVANCE_MODE_ARG"
+fi
+if [[ -n "$TASK_ISOLATION_MODE_ARG" ]]; then
+  TASK_ISOLATION_MODE="$TASK_ISOLATION_MODE_ARG"
+fi
+if [[ -n "$TASK_BASE_BRANCH_ARG" ]]; then
+  TASK_BASE_BRANCH="$TASK_BASE_BRANCH_ARG"
+fi
+if [[ -n "$TASK_MERGE_TARGET_ARG" ]]; then
+  TASK_MERGE_TARGET="$TASK_MERGE_TARGET_ARG"
+fi
+if [[ -n "$TASK_WORKTREE_ROOT_ARG" ]]; then
+  TASK_WORKTREE_ROOT="$TASK_WORKTREE_ROOT_ARG"
 fi
 
 # ── Interactive prompts ───────────────────────────────────────────────────────
@@ -329,6 +365,13 @@ echo "Pipeline behaviour:"
 prompt_with_default "  Advance mode (manual|auto)" "$ADVANCE_MODE" ADVANCE_MODE
 echo ""
 
+echo "Git task workflow:"
+prompt_with_default "  Task isolation (none|branch|worktree)" "$TASK_ISOLATION_MODE" TASK_ISOLATION_MODE
+prompt_with_default "  Task base branch                 " "$TASK_BASE_BRANCH" TASK_BASE_BRANCH
+prompt_with_default "  Task merge target                " "$TASK_MERGE_TARGET" TASK_MERGE_TARGET
+prompt_with_default "  Task worktree root               " "$TASK_WORKTREE_ROOT" TASK_WORKTREE_ROOT
+echo ""
+
 TODAY="$(date +%Y-%m-%d)"
 WRITTEN_CREATED_DATE="${CREATED_DATE:-$TODAY}"
 
@@ -368,6 +411,12 @@ lighthouse_min: $LIGHTHOUSE_MIN
 
 # Pipeline behaviour — manual | auto
 advance_mode: $ADVANCE_MODE
+
+# Git task workflow — opt-in branch/worktree isolation
+task_isolation_mode: $TASK_ISOLATION_MODE
+task_base_branch: "$TASK_BASE_BRANCH"
+task_merge_target: "$TASK_MERGE_TARGET"
+task_worktree_root: "$TASK_WORKTREE_ROOT"
 $([[ -n "$EXTRA_FRONTMATTER_BLOCK" ]] && printf '\n\n%s' "$EXTRA_FRONTMATTER_BLOCK")
 
 # Optional: skip pipeline stages for this project
@@ -414,5 +463,11 @@ echo ""
 echo "✅ Project configured: $PROJECT_NAME ($SELECTED_AGENCY)"
 echo ""
 echo "Next steps:"
-echo "  \$office-doctor       — verify framework health"
-echo "  \$office-route <task> — start your first request"
+echo "  ai-office doctor       — verify framework health"
+if [[ -d "$PROJECT_ROOT/.codex/skills" ]]; then
+  echo "  \$office-route <task>  — start from the Codex adapter"
+elif [[ -d "$PROJECT_ROOT/.claude/skills" ]]; then
+  echo "  /office route <task>  — start from the Claude Code adapter"
+else
+  echo "  ai-office status get <slug> — inspect framework state from the CLI"
+fi

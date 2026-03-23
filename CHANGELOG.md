@@ -1,3 +1,95 @@
+## 1.9.0 — 2026-03-23
+
+### Added
+
+**Neutral adapter build system:**
+- New shared adapter manifest in `src/adapter-manifest.ts`
+- New adapter renderer CLI in `src/build-adapters.ts`
+- New shared instruction template at `skeleton/core/templates/adapter-instructions.md.tmpl`
+- New `bun run build:adapters` script to regenerate host-specific wrapper files
+
+### Changed
+
+**Generated wrapper layer:**
+- The core operational wrapper set is now generated from the neutral manifest: `office`, `office-route`, `office-advance`, `office-doctor`, `office-milestone`, `office-setup`, `office-status`, `office-task-create`, `office-task-integrate`, `office-task-move`, `office-task-update`, and `office-validate`
+- Codex core skills, Claude Code core skills, Windsurf core workflows, and adapter instruction files now share that generated source of truth
+- Windsurf rule and workflow scaffolding now fits the same modular generation model
+- Package versions bumped to `1.9.0` across the framework, website, and slides packages
+
+### Notes
+
+- Remaining legacy wrapper files are still hand-maintained for now and will be migrated in later passes
+
+---
+
+## 1.8.0 — 2026-03-23
+
+### Added
+
+**Windsurf adapter:**
+- New first-party `windsurf` adapter under `skeleton/adapters/windsurf/`
+- `AGENTS.md` wrapper tailored for Windsurf
+- Workspace rule at `.windsurf/rules/ai-office-workspace.md`
+- Reusable Windsurf workflows under `.windsurf/workflows/` for routing, doctor, setup, status, task, milestone, validation, and stage-advance operations
+
+### Changed
+
+**Installer, updater, and doctor:**
+- `install.sh` now supports `--adapter=windsurf`
+- `update.sh` now detects and updates Windsurf installs using `.windsurf/.version` or the neutral install metadata
+- `ai-office doctor` now recognizes the Windsurf adapter and validates `.windsurf/rules/` plus `.windsurf/workflows/`
+- CLI validation scans now ignore `.windsurf/` like the other adapter-specific directories
+
+---
+
+## 1.7.0 — 2026-03-23
+
+### Added
+
+**Host-neutral architecture:**
+- New `skeleton/core/` layout for the framework engine, templates, agencies, and the canonical `AI-OFFICE.md` guide
+- New `skeleton/adapters/` layout with first-party `codex`, `claude-code`, and `base` adapters
+- Neutral install metadata at `.ai-office/install.json` with `schemaVersion`, `version`, `adapter`, and `installedAt`
+
+### Changed
+
+**Install and update flow:**
+- `install.sh` now supports `--adapter=codex|claude-code|base` and always installs the core guide plus the selected adapter wrapper
+- `update.sh` now detects the active adapter from neutral metadata or legacy version stamps and preserves that adapter by default
+- `setup.sh` and `create-agency.sh` now resolve agencies from the host-neutral core layout instead of a host-specific skeleton path
+
+**CLI and docs:**
+- `ai-office doctor` now detects the installed adapter and validates the appropriate wrapper files for that environment
+- README now documents the `core + adapters` model and adapter-aware install/update commands
+
+### Fixed
+
+- Legacy Claude Code installs now update into the neutral metadata model without being migrated to Codex
+
+---
+
+## 1.6.0 — 2026-03-23
+
+### Added
+
+**Task isolation and integration:**
+- New project config keys for Git task workflow: `task_isolation_mode`, `task_base_branch`, `task_merge_target`, `task_worktree_root`
+- `task move <id> WIP` can now create a dedicated task branch and, in `worktree` mode, a linked worktree for isolated implementation
+- New `task integrate <id> [reason]` command for squash-merging a reviewed task branch into the configured integration branch
+- Task files now track `**Worktree:**` alongside `**Branch:**`
+
+**Skills and docs:**
+- New `office-task-integrate` skill for Codex and Claude installs
+- `office-task-move` skill fallback updated to respect configured branch/worktree isolation
+- Branch workflow docs updated to describe opt-in task isolation and explicit integration into the configured UAT branch
+
+### Fixed
+
+- Package versions are now aligned with the framework release version
+- Skill annotations and doctor output now report the correct release version and skill count
+
+---
+
 ## 1.4.0 — 2026-03-19
 
 ### Added

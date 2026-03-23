@@ -1,7 +1,7 @@
 {
   "name": "ai-office-framework",
-  "version": "1.4.0",
-  "description": "File-based virtual agency system for AI-assisted software development via Codex skills",
+  "version": "1.9.0",
+  "description": "File-based virtual agency system for AI-assisted software development with a host-neutral core and adapter-based integrations",
   "bin": {
     "ai-office": "./bin/ai-office"
   },
@@ -9,7 +9,9 @@
   "private": false,
   "scripts": {
     "ai-office": "./bin/ai-office",
+    "build:adapters": "bun run src/build-adapters.ts",
     "test": "bun test",
+    "test:build": "bun test tests/build.test.ts",
     "test:cli": "bun test tests/cli.test.ts",
     "test:watch": "bun test --watch",
     "test:install": "bun test tests/install.test.ts",

@@ -11,7 +11,7 @@
 set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AGENCIES_DIR="$FRAMEWORK_DIR/skeleton/.ai-office/agencies"
+AGENCIES_DIR="$FRAMEWORK_DIR/skeleton/core/.ai-office/agencies"
 
 SLUG=""
 FROM="software-studio"

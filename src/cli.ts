@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "fs";
-import { basename, dirname, extname, join } from "path";
+import { basename, dirname, extname, isAbsolute, join, relative } from "path";
 
 const COLUMNS = ["BACKLOG", "TODO", "WIP", "REVIEW", "BLOCKED", "DONE", "ARCHIVED"] as const;
 const VALID_STATES = [
@@ -38,6 +38,10 @@ type ProjectConfig = {
   testCmd: string;
   coverageMin: number;
   lighthouseMin: number;
+  taskIsolationMode: string;
+  taskBaseBranch: string;
+  taskMergeTarget: string;
+  taskWorktreeRoot: string;
 };
 
 type TaskCreateInput = {
@@ -67,6 +71,12 @@ type ValidationItem = {
   detail?: string;
 };
 
+type InstallMetadata = {
+  version?: string;
+  adapter?: string;
+  installedAt?: string;
+};
+
 const cwd = process.cwd();
 const aiOfficeDir = join(cwd, ".ai-office");
 const tasksDir = join(aiOfficeDir, "tasks");
@@ -77,6 +87,7 @@ const adrDir = join(docsDir, "adr");
 const milestonesDir = join(aiOfficeDir, "milestones");
 const tasksReadmePath = join(tasksDir, "README.md");
 const milestonesReadmePath = join(milestonesDir, "README.md");
+const installMetaPath = join(aiOfficeDir, "install.json");
 
 function fail(message: string): never {
   console.error(message);
@@ -103,6 +114,45 @@ function readText(path: string): string {
 
 function writeText(path: string, content: string): void {
   writeFileSync(path, content, "utf8");
+}
+
+function getInstallMetadata(): InstallMetadata | null {
+  if (!existsSync(installMetaPath)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(readText(installMetaPath)) as InstallMetadata;
+  } catch {
+    return null;
+  }
+}
+
+function detectAdapter(): "codex" | "windsurf" | "claude-code" | "base" {
+  const metadata = getInstallMetadata();
+  if (
+    metadata?.adapter === "codex" ||
+    metadata?.adapter === "windsurf" ||
+    metadata?.adapter === "claude-code" ||
+    metadata?.adapter === "base"
+  ) {
+    return metadata.adapter;
+  }
+
+  if (existsSync(join(cwd, ".windsurf", "workflows")) || existsSync(join(cwd, ".windsurf", "rules"))) {
+    return "windsurf";
+  }
+  if (existsSync(join(cwd, ".codex", "skills")) || existsSync(join(cwd, "AGENTS.md"))) {
+    return "codex";
+  }
+  if (
+    existsSync(join(cwd, ".claude", "skills")) ||
+    existsSync(join(cwd, "CLAUDE.md")) ||
+    existsSync(join(cwd, ".claude", "CLAUDE.md"))
+  ) {
+    return "claude-code";
+  }
+  return "base";
 }
 
 function escapeRegExp(value: string): string {
@@ -147,6 +197,10 @@ function getProjectConfig(): ProjectConfig {
     testCmd: "npm run test",
     coverageMin: 80,
     lighthouseMin: 90,
+    taskIsolationMode: "none",
+    taskBaseBranch: "dev",
+    taskMergeTarget: "dev",
+    taskWorktreeRoot: ".ai-office/worktrees",
   };
 
   const configPath = join(aiOfficeDir, "project.config.md");
@@ -165,6 +219,10 @@ function getProjectConfig(): ProjectConfig {
     testCmd: frontmatter.test_cmd || defaults.testCmd,
     coverageMin: Number(frontmatter.coverage_min || defaults.coverageMin),
     lighthouseMin: Number(frontmatter.lighthouse_min || defaults.lighthouseMin),
+    taskIsolationMode: frontmatter.task_isolation_mode || defaults.taskIsolationMode,
+    taskBaseBranch: frontmatter.task_base_branch || defaults.taskBaseBranch,
+    taskMergeTarget: frontmatter.task_merge_target || defaults.taskMergeTarget,
+    taskWorktreeRoot: frontmatter.task_worktree_root || defaults.taskWorktreeRoot,
   };
 }
 
@@ -345,6 +403,7 @@ function buildTaskFileContent(input: TaskCreateInput, taskId: string): string {
 **Milestone:** ${input.milestone}
 **Slug:** ${input.slug}
 **Branch:** —
+**Worktree:** —
 **Priority:** ${input.priority}
 **Status:** ${input.column}
 **Assignee:** ${input.assignee}
@@ -567,6 +626,221 @@ function runCommand(command: string): { exitCode: number; stdout: string; stderr
   };
 }
 
+function runProcess(command: string[], workdir = cwd): { exitCode: number; stdout: string; stderr: string } {
+  const proc = Bun.spawnSync(command, {
+    cwd: workdir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: process.env,
+  });
+  return {
+    exitCode: proc.exitCode ?? 1,
+    stdout: new TextDecoder().decode(proc.stdout),
+    stderr: new TextDecoder().decode(proc.stderr),
+  };
+}
+
+function runGit(args: string[], workdir = cwd): { exitCode: number; stdout: string; stderr: string } {
+  return runProcess(["git", ...args], workdir);
+}
+
+function normalizeTaskIsolationMode(mode: string): "none" | "branch" | "worktree" {
+  const normalized = mode.trim().toLowerCase();
+  if (normalized === "branch" || normalized === "worktree") {
+    return normalized;
+  }
+  return "none";
+}
+
+function getGitTopLevel(workdir = cwd): string {
+  const result = runGit(["rev-parse", "--show-toplevel"], workdir);
+  if (result.exitCode !== 0) {
+    fail("❌ Git task isolation requires a git repository. Run `git init` first or set task_isolation_mode: none.");
+  }
+  return result.stdout.trim();
+}
+
+function getCurrentGitBranch(workdir = cwd): string {
+  const result = runGit(["branch", "--show-current"], workdir);
+  if (result.exitCode !== 0) {
+    fail("❌ Unable to determine the current git branch.");
+  }
+  return result.stdout.trim();
+}
+
+function ensureGitBranchExists(branchName: string, label: string, workdir = cwd): void {
+  const result = runGit(["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], workdir);
+  if (result.exitCode !== 0) {
+    fail(`❌ ${label} branch \`${branchName}\` does not exist locally.`);
+  }
+}
+
+function resolveWorktreePath(value: string): string {
+  return isAbsolute(value) ? value : join(cwd, value);
+}
+
+function displayPath(path: string): string {
+  const relativePath = relative(cwd, path);
+  if (!relativePath || relativePath.startsWith("..")) {
+    return path;
+  }
+  return relativePath;
+}
+
+function isSubpath(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function getGitDir(workdir = cwd): string {
+  const result = runGit(["rev-parse", "--git-dir"], workdir);
+  if (result.exitCode !== 0) {
+    fail("❌ Unable to resolve .git metadata for this repository.");
+  }
+  const gitDir = result.stdout.trim();
+  return isAbsolute(gitDir) ? gitDir : join(workdir, gitDir);
+}
+
+function ensureGitExcludePattern(topLevel: string, pattern: string): void {
+  const gitDir = getGitDir(topLevel);
+  const excludePath = join(gitDir, "info", "exclude");
+  const existing = existsSync(excludePath) ? readText(excludePath) : "";
+  const lines = existing.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.includes(pattern)) {
+    return;
+  }
+  const next = existing.trimEnd();
+  writeText(excludePath, `${next ? `${next}\n` : ""}${pattern}\n`);
+}
+
+function listGitWorktrees(workdir = cwd): Array<{ path: string; branch: string | null }> {
+  const result = runGit(["worktree", "list", "--porcelain"], workdir);
+  if (result.exitCode !== 0) {
+    fail("❌ Unable to inspect git worktrees.");
+  }
+
+  const entries: Array<{ path: string; branch: string | null }> = [];
+  let currentPath: string | null = null;
+  let currentBranch: string | null = null;
+
+  for (const line of result.stdout.split("\n")) {
+    if (!line.trim()) {
+      if (currentPath) {
+        entries.push({ path: currentPath, branch: currentBranch });
+      }
+      currentPath = null;
+      currentBranch = null;
+      continue;
+    }
+    if (line.startsWith("worktree ")) {
+      currentPath = line.slice("worktree ".length).trim();
+      continue;
+    }
+    if (line.startsWith("branch ")) {
+      currentBranch = line.slice("branch ".length).trim().replace(/^refs\/heads\//, "");
+    }
+  }
+
+  if (currentPath) {
+    entries.push({ path: currentPath, branch: currentBranch });
+  }
+
+  return entries;
+}
+
+function listGitStatusPaths(workdir = cwd): string[] {
+  const result = runGit(["status", "--porcelain"], workdir);
+  if (result.exitCode !== 0) {
+    fail("❌ Unable to inspect git working tree status.");
+  }
+
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const pathText = line.slice(3);
+      return pathText.includes(" -> ") ? pathText.split(" -> ").pop() ?? pathText : pathText;
+    });
+}
+
+function ensureNoCodeChangesOutsideAiOffice(workdir = cwd): void {
+  const dirtyPaths = listGitStatusPaths(workdir).filter((path) => !path.startsWith(".ai-office/"));
+  if (dirtyPaths.length > 0) {
+    fail(`❌ Integration requires a clean code workspace. Commit or stash these paths first:\n${dirtyPaths.map((path) => `- ${path}`).join("\n")}`);
+  }
+}
+
+function taskHasAheadCommits(taskBranch: string, targetBranch: string, workdir = cwd): boolean {
+  const result = runGit(["rev-list", "--count", `${targetBranch}..${taskBranch}`], workdir);
+  if (result.exitCode !== 0) {
+    fail(`❌ Unable to compare ${taskBranch} against ${targetBranch}.`);
+  }
+  return Number(result.stdout.trim() || "0") > 0;
+}
+
+function ensureTaskWorkspace(config: ProjectConfig, branchName: string, taskId: string, titleSlug: string, existingWorktree: string | null): string | null {
+  const mode = normalizeTaskIsolationMode(config.taskIsolationMode);
+  if (mode === "none") {
+    return null;
+  }
+
+  const topLevel = getGitTopLevel();
+  const baseBranch = config.taskBaseBranch.trim();
+  if (!baseBranch) {
+    fail("❌ task_base_branch must be configured when task isolation is enabled.");
+  }
+
+  const branchExists = runGit(["show-ref", "--verify", "--quiet", `refs/heads/${branchName}`], topLevel).exitCode === 0;
+  if (!branchExists) {
+    ensureGitBranchExists(baseBranch, "Base", topLevel);
+    const createBranch = runGit(["branch", branchName, baseBranch], topLevel);
+    if (createBranch.exitCode !== 0) {
+      fail(`❌ Unable to create task branch ${branchName} from ${baseBranch}.\n${(createBranch.stderr || createBranch.stdout).trim()}`);
+    }
+  }
+
+  if (mode === "branch") {
+    return null;
+  }
+
+  const configuredRoot = resolveWorktreePath(config.taskWorktreeRoot.trim() || ".ai-office/worktrees");
+  const worktreePath = existingWorktree && existingWorktree !== "—"
+    ? resolveWorktreePath(existingWorktree)
+    : join(configuredRoot, `${taskId}-${titleSlug}`);
+
+  if (isSubpath(topLevel, configuredRoot)) {
+    const relativeRoot = displayPath(configuredRoot).replace(/\\/g, "/").replace(/\/+$/, "");
+    ensureGitExcludePattern(topLevel, `${relativeRoot}/`);
+  }
+
+  const worktrees = listGitWorktrees(topLevel);
+  const alreadyAttached = worktrees.find((entry) => entry.path === worktreePath);
+  if (alreadyAttached) {
+    if (alreadyAttached.branch && alreadyAttached.branch !== branchName) {
+      fail(`❌ Worktree path ${displayPath(worktreePath)} is already attached to ${alreadyAttached.branch}.`);
+    }
+    return displayPath(worktreePath);
+  }
+
+  if (existsSync(worktreePath)) {
+    fail(`❌ Worktree path already exists and is not registered: ${displayPath(worktreePath)}`);
+  }
+
+  ensureDirectory(dirname(worktreePath));
+  const attach = runGit(["worktree", "add", worktreePath, branchName], topLevel);
+  if (attach.exitCode !== 0) {
+    fail(`❌ Unable to create worktree at ${displayPath(worktreePath)}.\n${(attach.stderr || attach.stdout).trim()}`);
+  }
+
+  return displayPath(worktreePath);
+}
+
+function buildSquashCommitMessage(taskId: string, title: string): string {
+  const [milestone] = taskId.split("_");
+  return `squash(${milestone}): ${title} (${taskId})`;
+}
+
 function walkFiles(root: string, options?: { excludeDirs?: Set<string>; includeExtensions?: Set<string> }): string[] {
   const excludeDirs = options?.excludeDirs ?? new Set<string>();
   const includeExtensions = options?.includeExtensions;
@@ -602,7 +876,7 @@ function findPatternMatches(pattern: RegExp, options?: { includeExtensions?: Set
   const matches: Array<{ file: string; line: number; text: string }> = [];
   const files = walkFiles(cwd, {
     includeExtensions: options?.includeExtensions,
-    excludeDirs: options?.excludeDirs ?? new Set(["node_modules", ".git", ".ai-office", ".codex", "dist", "build", "coverage", "tmp"]),
+    excludeDirs: options?.excludeDirs ?? new Set(["node_modules", ".git", ".ai-office", ".codex", ".claude", ".windsurf", "dist", "build", "coverage", "tmp"]),
   });
 
   for (const file of files) {
@@ -689,6 +963,7 @@ function commandTaskCreate(args: string[]): void {
 
 function commandTaskMove(args: string[]): void {
   ensureAiOffice();
+  const config = getProjectConfig();
   const [query, rawColumn, ...reasonParts] = args;
   if (!query || !rawColumn) {
     fail("❌ Usage: ai-office task move <task-id> <column> [reason]");
@@ -705,6 +980,7 @@ function commandTaskMove(args: string[]): void {
   const today = todayIso();
   const originalName = basename(taskPath);
   let content = readText(taskPath);
+  const messages: string[] = [];
 
   if (currentColumn === targetColumn) {
     fail(`⚠️  Task is already in ${targetColumn}`);
@@ -719,9 +995,17 @@ function commandTaskMove(args: string[]): void {
     if (extractField(content, "Started") === "—") {
       content = setField(content, "Started", today);
     }
-    if (extractField(content, "Branch") === "—") {
-      content = setField(content, "Branch", deriveBranchName(taskId, titleSlug));
+    const branchName = extractField(content, "Branch") === "—"
+      ? deriveBranchName(taskId, titleSlug)
+      : extractField(content, "Branch") ?? deriveBranchName(taskId, titleSlug);
+    content = setField(content, "Branch", branchName);
+
+    const worktreeValue = ensureTaskWorkspace(config, branchName, taskId, titleSlug, extractField(content, "Worktree"));
+    if (worktreeValue) {
+      content = setField(content, "Worktree", worktreeValue, "Branch");
+      messages.push(`Worktree: ${worktreeValue}`);
     }
+    messages.push(`Branch: ${branchName}`);
   }
 
   if (targetColumn === "DONE" && extractField(content, "Completed") === "—") {
@@ -751,6 +1035,93 @@ function commandTaskMove(args: string[]): void {
   updateTaskReadme();
 
   console.log(`Moved ${taskId}: ${currentColumn} -> ${targetColumn}`);
+  for (const message of messages) {
+    console.log(message);
+  }
+}
+
+function commandTaskIntegrate(args: string[]): void {
+  ensureAiOffice();
+  const config = getProjectConfig();
+  const [query, ...reasonParts] = args;
+  if (!query) {
+    fail("❌ Usage: ai-office task integrate <task-id> [reason]");
+  }
+
+  const mergeTarget = config.taskMergeTarget.trim();
+  if (!mergeTarget) {
+    fail("❌ task_merge_target must be configured before integrating a task.");
+  }
+
+  const taskPath = findTaskFile(query);
+  const column = getTaskColumn(taskPath);
+  if (column !== "REVIEW" && column !== "DONE") {
+    fail(`❌ Task must be in REVIEW or DONE before integration. Current column: ${column}`);
+  }
+
+  let content = readText(taskPath);
+  const taskId = extractField(content, "ID") ?? basename(taskPath, ".md");
+  const branchName = extractField(content, "Branch");
+  if (!branchName || branchName === "—") {
+    fail(`❌ Task ${taskId} has no branch assigned. Move it to WIP first.`);
+  }
+
+  const title = extractHeading(content);
+  const worktreeValue = extractField(content, "Worktree");
+  const topLevel = getGitTopLevel();
+  ensureGitBranchExists(mergeTarget, "Merge target", topLevel);
+  ensureGitBranchExists(branchName, "Task", topLevel);
+
+  const currentBranch = getCurrentGitBranch(topLevel);
+  if (currentBranch !== mergeTarget) {
+    fail(`❌ Current branch is \`${currentBranch}\`. Checkout \`${mergeTarget}\` in the main workspace before integrating ${taskId}.`);
+  }
+
+  ensureNoCodeChangesOutsideAiOffice(topLevel);
+
+  if (worktreeValue && worktreeValue !== "—") {
+    const worktreePath = resolveWorktreePath(worktreeValue);
+    if (existsSync(worktreePath)) {
+      const taskDirtyPaths = listGitStatusPaths(worktreePath).filter((path) => !path.startsWith(".ai-office/"));
+      if (taskDirtyPaths.length > 0) {
+        fail(`❌ Task worktree has uncommitted code changes at ${worktreeValue}.\n${taskDirtyPaths.map((path) => `- ${path}`).join("\n")}`);
+      }
+    }
+  }
+
+  if (!taskHasAheadCommits(branchName, mergeTarget, topLevel)) {
+    fail(`❌ Task branch ${branchName} has no commits ahead of ${mergeTarget}.`);
+  }
+
+  const merge = runGit(["merge", "--squash", "--no-commit", branchName], topLevel);
+  if (merge.exitCode !== 0) {
+    runGit(["merge", "--abort"], topLevel);
+    fail(`❌ Squash merge failed for ${branchName} -> ${mergeTarget}.\n${(merge.stderr || merge.stdout).trim()}`);
+  }
+
+  const today = todayIso();
+  const reason = reasonParts.join(" ").trim();
+  content = appendHistory(content, `${today}: integrated into ${mergeTarget} from ${branchName}${reason ? ` — ${reason}` : ""}`);
+  content = appendNote(content, `- ${today}: integrated into ${mergeTarget}${reason ? ` — ${reason}` : ""}`);
+  writeText(taskPath, content);
+
+  const commitMessage = buildSquashCommitMessage(taskId, title);
+  const addResult = runGit(["add", "-A"], topLevel);
+  if (addResult.exitCode !== 0) {
+    fail(`❌ Unable to stage the integration commit.\n${(addResult.stderr || addResult.stdout).trim()}`);
+  }
+
+  const commitResult = runGit(["commit", "-m", commitMessage], topLevel);
+  if (commitResult.exitCode !== 0) {
+    fail(`❌ Unable to create the squash commit.\n${(commitResult.stderr || commitResult.stdout).trim()}`);
+  }
+
+  console.log(`Integrated ${taskId} into ${mergeTarget}`);
+  console.log(`Branch: ${branchName}`);
+  if (worktreeValue && worktreeValue !== "—") {
+    console.log(`Worktree: ${worktreeValue}`);
+  }
+  console.log(`Commit: ${commitMessage}`);
 }
 
 function commandTaskUpdate(args: string[]): void {
@@ -1254,15 +1625,35 @@ function commandValidate(slug: string, rawStage: string): void {
 }
 
 function commandDoctor(): void {
+  const adapter = detectAdapter();
   const checks: Array<{ ok: boolean; message: string }> = [
-    { ok: existsSync(join(cwd, "AGENTS.md")), message: "AGENTS.md present" },
-    { ok: existsSync(join(cwd, ".codex", "skills")), message: ".codex/skills present" },
+    { ok: existsSync(join(cwd, "AI-OFFICE.md")), message: "AI-OFFICE.md present" },
     { ok: existsSync(aiOfficeDir), message: ".ai-office present" },
+    { ok: existsSync(installMetaPath), message: ".ai-office/install.json present" },
     { ok: existsSync(tasksReadmePath), message: ".ai-office/tasks/README.md present" },
     { ok: existsSync(join(aiOfficeDir, "office-config.md")), message: ".ai-office/office-config.md present" },
   ];
 
+  if (adapter === "codex") {
+    checks.unshift(
+      { ok: existsSync(join(cwd, "AGENTS.md")), message: "AGENTS.md present" },
+      { ok: existsSync(join(cwd, ".codex", "skills")), message: ".codex/skills present" }
+    );
+  } else if (adapter === "windsurf") {
+    checks.unshift(
+      { ok: existsSync(join(cwd, "AGENTS.md")), message: "AGENTS.md present" },
+      { ok: existsSync(join(cwd, ".windsurf", "rules")), message: ".windsurf/rules present" },
+      { ok: existsSync(join(cwd, ".windsurf", "workflows")), message: ".windsurf/workflows present" }
+    );
+  } else if (adapter === "claude-code") {
+    checks.unshift(
+      { ok: existsSync(join(cwd, "CLAUDE.md")) || existsSync(join(cwd, ".claude", "CLAUDE.md")), message: "CLAUDE.md present" },
+      { ok: existsSync(join(cwd, ".claude", "skills")), message: ".claude/skills present" }
+    );
+  }
+
   let failed = 0;
+  console.log(`Adapter: ${adapter}`);
   for (const check of checks) {
     if (check.ok) {
       console.log(`PASS ${check.message}`);
@@ -1294,6 +1685,11 @@ function main(): void {
 
   if (command === "task" && subcommand === "move") {
     commandTaskMove(rest);
+    return;
+  }
+
+  if (command === "task" && subcommand === "integrate") {
+    commandTaskIntegrate(rest);
     return;
   }
 

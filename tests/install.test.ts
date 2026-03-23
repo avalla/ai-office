@@ -21,13 +21,13 @@ describe("install.sh", () => {
     expect(stdout).toContain("installed successfully");
   });
 
-  it("creates .codex/skills with all bundled office skills", () => {
+  it("creates .codex/skills with all bundled office skills for the default codex adapter", () => {
     runScript("install.sh", [dir]);
     const skillsDir = join(dir, ".codex/skills");
     assertExists(skillsDir);
 
     const installed = readdirSync(skillsDir).filter((entry) => entry.startsWith("office"));
-    const bundled = readdirSync(join(FRAMEWORK_DIR, "skeleton/.codex/skills")).filter((entry) => entry.startsWith("office"));
+    const bundled = readdirSync(join(FRAMEWORK_DIR, "skeleton/adapters/codex/.codex/skills")).filter((entry) => entry.startsWith("office"));
     expect(installed.length).toBe(bundled.length);
 
     const expected = [
@@ -48,6 +48,7 @@ describe("install.sh", () => {
       "office-setup",
       "office-status",
       "office-task-create",
+      "office-task-integrate",
       "office-task-list",
       "office-task-move",
       "office-task-update",
@@ -78,6 +79,25 @@ describe("install.sh", () => {
     const content = readFileSync(agents, "utf8");
     expect(content).toContain("AI Office");
     expect(content).toContain("Codex");
+  });
+
+  it("installs the core AI-OFFICE.md guide", () => {
+    runScript("install.sh", [dir]);
+    const guide = join(dir, "AI-OFFICE.md");
+    assertExists(guide);
+    const content = readFileSync(guide, "utf8");
+    expect(content).toContain("host-neutral contract");
+    expect(content).toContain("adapter");
+  });
+
+  it("writes neutral install metadata", () => {
+    runScript("install.sh", [dir]);
+    const metadataPath = join(dir, ".ai-office/install.json");
+    assertExists(metadataPath);
+    const data = JSON.parse(readFileSync(metadataPath, "utf8"));
+    expect(data.adapter).toBe("codex");
+    expect(data.version).toBe(readFileSync(join(FRAMEWORK_DIR, "VERSION"), "utf8").trim());
+    expect(data.schemaVersion).toBe(1);
   });
 
   it("creates the full .ai-office/ directory structure", () => {
@@ -157,10 +177,46 @@ describe("install.sh", () => {
   it("--stamp-only only writes the version file, skips everything else", () => {
     runScript("install.sh", [dir, "--stamp-only"]);
     assertExists(join(dir, ".codex/skills/.version"));
+    assertExists(join(dir, ".ai-office/install.json"));
     const skillsDir = join(dir, ".codex/skills");
     const skillDirs = readdirSync(skillsDir).filter((entry) => entry !== ".version");
     expect(skillDirs.length).toBe(0);
-    expect(existsSync(join(dir, ".ai-office"))).toBe(false);
+    expect(existsSync(join(dir, "AI-OFFICE.md"))).toBe(false);
     expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+  });
+
+  it("supports installing the base adapter without host-specific wrapper files", () => {
+    runScript("install.sh", [dir, "--adapter=base"]);
+    assertExists(join(dir, "AI-OFFICE.md"));
+    assertExists(join(dir, ".ai-office/install.json"));
+    expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(dir, ".codex"))).toBe(false);
+
+    const metadata = JSON.parse(readFileSync(join(dir, ".ai-office/install.json"), "utf8"));
+    expect(metadata.adapter).toBe("base");
+  });
+
+  it("supports installing the claude-code adapter", () => {
+    runScript("install.sh", [dir, "--adapter=claude-code"]);
+    assertExists(join(dir, "CLAUDE.md"));
+    assertExists(join(dir, ".claude/skills/.version"));
+    expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(dir, ".codex"))).toBe(false);
+
+    const metadata = JSON.parse(readFileSync(join(dir, ".ai-office/install.json"), "utf8"));
+    expect(metadata.adapter).toBe("claude-code");
+  });
+
+  it("supports installing the windsurf adapter", () => {
+    runScript("install.sh", [dir, "--adapter=windsurf"]);
+    assertExists(join(dir, "AGENTS.md"));
+    assertExists(join(dir, ".windsurf/.version"));
+    assertExists(join(dir, ".windsurf/rules/ai-office-workspace.md"));
+    assertExists(join(dir, ".windsurf/workflows/office.md"));
+    expect(existsSync(join(dir, ".codex"))).toBe(false);
+    expect(existsSync(join(dir, ".claude"))).toBe(false);
+
+    const metadata = JSON.parse(readFileSync(join(dir, ".ai-office/install.json"), "utf8"));
+    expect(metadata.adapter).toBe("windsurf");
   });
 });

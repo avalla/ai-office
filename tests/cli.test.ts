@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach } from "bun:test";
-import { readFileSync, readdirSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { join } from "path";
-import { assertExists, makeTempProject, runCli, runScript } from "./helpers";
+import { assertExists, initGitRepo, makeTempProject, runCli, runGit, runScript } from "./helpers";
 
 let dir: string;
 let cleanup: () => void;
@@ -19,8 +19,61 @@ describe("ai-office cli", () => {
   it("doctor passes after install", () => {
     const { exitCode, stdout } = runCli(dir, ["doctor"]);
     expect(exitCode).toBe(0);
+    expect(stdout).toContain("Adapter: codex");
+    expect(stdout).toContain("PASS AI-OFFICE.md present");
     expect(stdout).toContain("PASS AGENTS.md present");
     expect(stdout).toContain("PASS .codex/skills present");
+    expect(stdout).toContain("PASS .ai-office/install.json present");
+  });
+
+  it("doctor adapts to a base install", () => {
+    const { dir: baseDir, cleanup: cleanupBase } = makeTempProject();
+    try {
+      runScript("install.sh", [baseDir, "--adapter=base"]);
+      const result = runCli(baseDir, ["doctor"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Adapter: base");
+      expect(result.stdout).toContain("PASS AI-OFFICE.md present");
+      expect(result.stdout).toContain("PASS .ai-office/install.json present");
+      expect(result.stdout).not.toContain("AGENTS.md present");
+      expect(result.stdout).not.toContain(".codex/skills present");
+    } finally {
+      cleanupBase();
+    }
+  });
+
+  it("doctor adapts to a claude-code install", () => {
+    const { dir: claudeDir, cleanup: cleanupClaude } = makeTempProject();
+    try {
+      runScript("install.sh", [claudeDir, "--adapter=claude-code"]);
+      const result = runCli(claudeDir, ["doctor"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Adapter: claude-code");
+      expect(result.stdout).toContain("PASS CLAUDE.md present");
+      expect(result.stdout).toContain("PASS .claude/skills present");
+      expect(result.stdout).toContain("PASS .ai-office/install.json present");
+    } finally {
+      cleanupClaude();
+    }
+  });
+
+  it("doctor adapts to a windsurf install", () => {
+    const { dir: windsurfDir, cleanup: cleanupWindsurf } = makeTempProject();
+    try {
+      runScript("install.sh", [windsurfDir, "--adapter=windsurf"]);
+      const result = runCli(windsurfDir, ["doctor"]);
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("Adapter: windsurf");
+      expect(result.stdout).toContain("PASS AGENTS.md present");
+      expect(result.stdout).toContain("PASS .windsurf/rules present");
+      expect(result.stdout).toContain("PASS .windsurf/workflows present");
+      expect(result.stdout).toContain("PASS .ai-office/install.json present");
+    } finally {
+      cleanupWindsurf();
+    }
   });
 
   it("creates a task deterministically and updates board counts", () => {
@@ -218,5 +271,82 @@ advance_mode: manual
     expect(result.stdout).toContain("PASS Run lint — true");
     expect(result.stdout).toContain("PASS Run tests — echo 'coverage 91%'");
     expect(result.stdout).toContain("Result: PASS");
+  });
+
+  it("creates a dedicated task worktree when task isolation is enabled", () => {
+    const setup = runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+      "--task-isolation-mode=worktree",
+      "--task-base-branch=development",
+      "--task-merge-target=development",
+      "--task-worktree-root=.ai-office/worktrees",
+    ]);
+    expect(setup.exitCode).toBe(0);
+
+    initGitRepo(dir, "development");
+
+    runCli(dir, ["task", "create", "Implement", "billing", "sync", "assignee:Developer"]);
+    const moved = runCli(dir, ["task", "move", "M0_T001", "WIP", "started work"]);
+
+    expect(moved.exitCode).toBe(0);
+    expect(moved.stdout).toContain("Worktree: .ai-office/worktrees/M0_T001-implement-billing-sync");
+
+    const taskPath = join(dir, ".ai-office/tasks/WIP", readdirSync(join(dir, ".ai-office/tasks/WIP"))[0]);
+    const task = readFileSync(taskPath, "utf8");
+    expect(task).toContain("**Branch:** task/M0/T001-implement-billing-sync");
+    expect(task).toContain("**Worktree:** .ai-office/worktrees/M0_T001-implement-billing-sync");
+
+    const worktreePath = join(dir, ".ai-office/worktrees/M0_T001-implement-billing-sync");
+    expect(existsSync(worktreePath)).toBe(true);
+
+    const worktreeList = runGit(dir, ["worktree", "list", "--porcelain"]);
+    expect(worktreeList.exitCode).toBe(0);
+    expect(worktreeList.stdout).toContain(worktreePath);
+  });
+
+  it("squash-merges a task branch into the configured integration branch", () => {
+    const setup = runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+      "--task-isolation-mode=worktree",
+      "--task-base-branch=development",
+      "--task-merge-target=development",
+      "--task-worktree-root=.ai-office/worktrees",
+    ]);
+    expect(setup.exitCode).toBe(0);
+
+    initGitRepo(dir, "development");
+
+    runCli(dir, ["task", "create", "Implement", "billing", "sync", "assignee:Developer"]);
+    expect(runCli(dir, ["task", "move", "M0_T001", "WIP", "started work"]).exitCode).toBe(0);
+
+    const worktreePath = join(dir, ".ai-office/worktrees/M0_T001-implement-billing-sync");
+    writeFileSync(join(worktreePath, "feature.txt"), "billing sync ready\n");
+    expect(runGit(worktreePath, ["add", "feature.txt"]).exitCode).toBe(0);
+    expect(runGit(worktreePath, ["commit", "-m", "feat: add billing sync"]).exitCode).toBe(0);
+
+    const reviewMove = runCli(dir, ["task", "move", "M0_T001", "REVIEW", "ready for integration"]);
+    expect(reviewMove.exitCode).toBe(0);
+
+    const integrate = runCli(dir, ["task", "integrate", "M0_T001", "ready for UAT"]);
+    expect(integrate.exitCode).toBe(0);
+    expect(integrate.stdout).toContain("Integrated M0_T001 into development");
+    expect(integrate.stdout).toContain("Commit: squash(M0): Implement billing sync (M0_T001)");
+
+    expect(readFileSync(join(dir, "feature.txt"), "utf8")).toContain("billing sync ready");
+
+    const log = runGit(dir, ["log", "-1", "--pretty=%s"]);
+    expect(log.exitCode).toBe(0);
+    expect(log.stdout.trim()).toBe("squash(M0): Implement billing sync (M0_T001)");
+
+    const taskPath = join(dir, ".ai-office/tasks/REVIEW", readdirSync(join(dir, ".ai-office/tasks/REVIEW"))[0]);
+    const task = readFileSync(taskPath, "utf8");
+    expect(task).toContain("integrated into development from task/M0/T001-implement-billing-sync");
+    expect(task).toContain("integrated into development — ready for UAT");
   });
 });

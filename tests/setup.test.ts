@@ -44,6 +44,10 @@ describe("setup.sh", () => {
     expect(content).toContain("coverage_min:");
     expect(content).toContain("lighthouse_min:");
     expect(content).toContain("advance_mode:");
+    expect(content).toContain("task_isolation_mode:");
+    expect(content).toContain("task_base_branch:");
+    expect(content).toContain("task_merge_target:");
+    expect(content).toContain("task_worktree_root:");
   });
 
   it("defaults advance_mode to manual", () => {
@@ -67,6 +71,25 @@ describe("setup.sh", () => {
     ]);
     const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
     expect(content).toContain("advance_mode: auto");
+  });
+
+  it("supports configuring the git task workflow", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+      "--task-isolation-mode=worktree",
+      "--task-base-branch=development",
+      "--task-merge-target=development",
+      "--task-worktree-root=.ai-office/worktrees",
+    ]);
+
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("task_isolation_mode: worktree");
+    expect(content).toContain('task_base_branch: "development"');
+    expect(content).toContain('task_merge_target: "development"');
+    expect(content).toContain('task_worktree_root: ".ai-office/worktrees"');
   });
 
   it("creates agency.json with the selected agency name", () => {
