@@ -18,7 +18,13 @@
 set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$FRAMEWORK_DIR/generated/adapter-metadata.sh"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "❌ bun is required to configure AI Office from source"
+  exit 1
+fi
+
+eval "$(bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" emit-shell-metadata)"
 
 # Parse flags
 PROJECT_ROOT_ARG=""
@@ -467,7 +473,7 @@ echo "Next steps:"
 echo "  ai-office doctor       — verify framework health"
 if [[ -d "$PROJECT_ROOT/$(adapter_skill_dest_rel codex)" ]]; then
   echo "  \$office-route <task>  — start from the Codex adapter"
-elif [[ -d "$PROJECT_ROOT/$(adapter_command_dest_rel opencode)" ]]; then
+elif [[ -d "$PROJECT_ROOT/$(adapter_commands_dest_rel opencode)" ]]; then
   echo "  /office-route <task>  — start from the OpenCode adapter"
 elif [[ -d "$PROJECT_ROOT/$(adapter_skill_dest_rel claude-code)" ]]; then
   echo "  /office route <task>  — start from the Claude Code adapter"

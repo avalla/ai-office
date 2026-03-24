@@ -27,9 +27,6 @@ describe("install.sh", () => {
     assertExists(skillsDir);
 
     const installed = readdirSync(skillsDir).filter((entry) => entry.startsWith("office"));
-    const bundled = readdirSync(join(FRAMEWORK_DIR, "skeleton/adapters/codex/.codex/skills")).filter((entry) => entry.startsWith("office"));
-    expect(installed.length).toBe(bundled.length);
-
     const expected = [
       "office",
       "office-advance",
@@ -56,6 +53,8 @@ describe("install.sh", () => {
       "office-validate-secrets",
       "office-verify",
     ];
+
+    expect(installed.length).toBe(expected.length);
 
     for (const name of expected) {
       expect(installed).toContain(name);

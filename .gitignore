@@ -12,6 +12,15 @@ coverage/
 .test-tmp/
 tmp/
 
+# Local generated workspace state
+.claude/worktrees/
+.mcp.json
+/generated/adapter-metadata.sh
+/skeleton/adapters/*
+!/skeleton/adapters/base/
+/skeleton/adapters/base/*
+!/skeleton/adapters/base/README.md
+
 # OS
 .DS_Store
 Thumbs.db

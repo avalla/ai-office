@@ -6,7 +6,13 @@ set -e
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SKELETON="$FRAMEWORK_DIR/skeleton/core"
 VERSION="$(cat "$FRAMEWORK_DIR/VERSION")"
-source "$FRAMEWORK_DIR/generated/adapter-metadata.sh"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "❌ bun is required to install AI Office from source"
+  exit 1
+fi
+
+eval "$(bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" emit-shell-metadata)"
 
 PROJECT_ROOT_ARG=""
 ADAPTER="codex"
@@ -47,13 +53,6 @@ validate_adapter() {
   fi
 }
 
-adapter_source_abs() {
-  local rel="$1"
-  if [[ -n "$rel" ]]; then
-    echo "$FRAMEWORK_DIR/$rel"
-  fi
-}
-
 adapter_version_file() {
   local rel
   rel="$(adapter_version_file_rel "$ADAPTER")"
@@ -84,22 +83,6 @@ write_install_metadata() {
 EOF
 }
 
-install_adapter_instruction() {
-  local instruction_target instruction_source
-  instruction_target="$(adapter_instruction_target "$ADAPTER")"
-  instruction_source="$(adapter_source_abs "$(adapter_instruction_source_rel "$ADAPTER")")"
-  if [[ -z "$instruction_target" || -z "$instruction_source" ]]; then
-    return
-  fi
-
-  if [[ ! -f "$PROJECT_ROOT/$instruction_target" ]]; then
-    cp "$instruction_source" "$PROJECT_ROOT/$instruction_target"
-    echo "  ✅ $instruction_target installed"
-  else
-    echo "  ↩️  $instruction_target already exists, skipped"
-  fi
-}
-
 addon_target_file() {
   local instruction_target
   instruction_target="$(adapter_instruction_target "$ADAPTER")"
@@ -111,44 +94,73 @@ addon_target_file() {
 }
 
 install_adapter_assets() {
-  local kind source dest
+  local kind instruction_target instruction_existed_before
   kind="$(adapter_kind "$ADAPTER")"
 
   case "$kind" in
     skills)
-      source="$(adapter_source_abs "$(adapter_skill_source_rel "$ADAPTER")")"
-      dest="$PROJECT_ROOT/$(adapter_skill_dest_rel "$ADAPTER")"
       echo "→ Installing ${ADAPTER} adapter"
-      mkdir -p "$dest"
-      cp -r "$source/"* "$dest/"
-      stamp_adapter_version
-      echo "  ✅ $(find "$source" -maxdepth 1 -type d -name 'office*' | wc -l | tr -d ' ') skills installed"
-      install_adapter_instruction
+      instruction_target="$(adapter_instruction_target "$ADAPTER")"
+      instruction_existed_before=false
+      if [[ -n "$instruction_target" && -f "$PROJECT_ROOT/$instruction_target" ]]; then
+        instruction_existed_before=true
+      fi
+      bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" install \
+        --framework-dir "$FRAMEWORK_DIR" \
+        --project-root "$PROJECT_ROOT" \
+        --adapter "$ADAPTER" \
+        --instruction-mode if-missing >/dev/null
+      echo "  ✅ $(find "$PROJECT_ROOT/$(adapter_skill_dest_rel "$ADAPTER")" -maxdepth 1 -type d -name 'office*' | wc -l | tr -d ' ') skills installed"
+      if [[ -n "$instruction_target" ]]; then
+        if [[ "$instruction_existed_before" == true ]]; then
+          echo "  ↩️  $instruction_target already exists, skipped"
+        else
+          echo "  ✅ $instruction_target installed"
+        fi
+      fi
       ;;
     commands)
-      source="$(adapter_source_abs "$(adapter_commands_source_rel "$ADAPTER")")"
-      dest="$PROJECT_ROOT/$(adapter_commands_dest_rel "$ADAPTER")"
       echo "→ Installing ${ADAPTER} adapter"
-      mkdir -p "$dest"
-      cp -r "$source/"* "$dest/"
-      stamp_adapter_version
-      echo "  ✅ $(find "$source" -maxdepth 1 -type f -name 'office*.md' | wc -l | tr -d ' ') commands installed"
-      install_adapter_instruction
+      instruction_target="$(adapter_instruction_target "$ADAPTER")"
+      instruction_existed_before=false
+      if [[ -n "$instruction_target" && -f "$PROJECT_ROOT/$instruction_target" ]]; then
+        instruction_existed_before=true
+      fi
+      bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" install \
+        --framework-dir "$FRAMEWORK_DIR" \
+        --project-root "$PROJECT_ROOT" \
+        --adapter "$ADAPTER" \
+        --instruction-mode if-missing >/dev/null
+      echo "  ✅ $(find "$PROJECT_ROOT/$(adapter_commands_dest_rel "$ADAPTER")" -maxdepth 1 -type f -name 'office*.md' | wc -l | tr -d ' ') commands installed"
+      if [[ -n "$instruction_target" ]]; then
+        if [[ "$instruction_existed_before" == true ]]; then
+          echo "  ↩️  $instruction_target already exists, skipped"
+        else
+          echo "  ✅ $instruction_target installed"
+        fi
+      fi
       ;;
     rules-workflows)
-      local rules_source rules_dest workflows_source workflows_dest
-      rules_source="$(adapter_source_abs "$(adapter_rules_source_rel "$ADAPTER")")"
-      rules_dest="$PROJECT_ROOT/$(adapter_rules_dest_rel "$ADAPTER")"
-      workflows_source="$(adapter_source_abs "$(adapter_workflows_source_rel "$ADAPTER")")"
-      workflows_dest="$PROJECT_ROOT/$(adapter_workflows_dest_rel "$ADAPTER")"
       echo "→ Installing ${ADAPTER} adapter"
-      mkdir -p "$rules_dest" "$workflows_dest"
-      cp -r "$rules_source/"* "$rules_dest/"
-      cp -r "$workflows_source/"* "$workflows_dest/"
-      stamp_adapter_version
-      echo "  ✅ $(find "$workflows_source" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') workflows installed"
-      echo "  ✅ $(find "$rules_source" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') rules installed"
-      install_adapter_instruction
+      instruction_target="$(adapter_instruction_target "$ADAPTER")"
+      instruction_existed_before=false
+      if [[ -n "$instruction_target" && -f "$PROJECT_ROOT/$instruction_target" ]]; then
+        instruction_existed_before=true
+      fi
+      bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" install \
+        --framework-dir "$FRAMEWORK_DIR" \
+        --project-root "$PROJECT_ROOT" \
+        --adapter "$ADAPTER" \
+        --instruction-mode if-missing >/dev/null
+      echo "  ✅ $(find "$PROJECT_ROOT/$(adapter_workflows_dest_rel "$ADAPTER")" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') workflows installed"
+      echo "  ✅ $(find "$PROJECT_ROOT/$(adapter_rules_dest_rel "$ADAPTER")" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') rules installed"
+      if [[ -n "$instruction_target" ]]; then
+        if [[ "$instruction_existed_before" == true ]]; then
+          echo "  ↩️  $instruction_target already exists, skipped"
+        else
+          echo "  ✅ $instruction_target installed"
+        fi
+      fi
       ;;
     *)
       echo "→ Using base adapter"

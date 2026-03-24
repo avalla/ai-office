@@ -1,3 +1,24 @@
+## 1.12.0 — 2026-03-24
+
+### Added
+
+**Runtime adapter engine:**
+- New shared adapter renderer in `src/adapter-renderer.ts`
+- New Bun runtime entrypoint in `src/adapter-runtime.ts` for install/update/setup metadata and adapter rendering
+
+### Changed
+
+**Single-source adapter generation:**
+- `install.sh`, `update.sh`, and `setup.sh` now load adapter metadata from the Bun runtime instead of sourcing a committed generated shell file
+- The selected adapter is now rendered on demand during install/update instead of being copied from versioned wrapper bundles
+- `bun run build:adapters` remains available for framework maintainers to regenerate preview outputs from the neutral manifest and shared templates
+- README and package metadata now reflect the Bun-powered runtime adapter model
+
+### Fixed
+
+- Removed the versioned generated adapter wrapper trees and derived shell metadata from the normal repo state to reduce drift
+- Added a duplicate-file hygiene test so exact tracked duplicates fail fast
+
 ## 1.11.0 — 2026-03-23
 
 ### Added

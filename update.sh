@@ -6,7 +6,13 @@ set -e
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CORE_SKELETON="$FRAMEWORK_DIR/skeleton/core"
 AVAILABLE="$(cat "$FRAMEWORK_DIR/VERSION")"
-source "$FRAMEWORK_DIR/generated/adapter-metadata.sh"
+
+if ! command -v bun >/dev/null 2>&1; then
+  echo "❌ bun is required to update AI Office from source"
+  exit 1
+fi
+
+eval "$(bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" emit-shell-metadata)"
 
 PROJECT_ROOT_ARG=""
 ADAPTER_ARG=""
@@ -53,13 +59,6 @@ json_value() {
   sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" | head -n 1
 }
 
-adapter_source_abs() {
-  local rel="$1"
-  if [[ -n "$rel" ]]; then
-    echo "$FRAMEWORK_DIR/$rel"
-  fi
-}
-
 adapter_project_abs() {
   local rel="$1"
   if [[ -n "$rel" ]]; then
@@ -75,17 +74,6 @@ adapter_version_file() {
   fi
 }
 
-stamp_adapter_version() {
-  local adapter="$1"
-  local version_file
-  version_file="$(adapter_version_file "$adapter")"
-  if [[ -z "$version_file" ]]; then
-    return
-  fi
-  mkdir -p "$(dirname "$version_file")"
-  echo "$AVAILABLE" > "$version_file"
-}
-
 write_install_metadata() {
   local adapter="$1"
   mkdir -p "$AI_OFFICE"
@@ -97,13 +85,6 @@ write_install_metadata() {
   "installedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 EOF
-}
-
-get_file_version() {
-  grep -m1 'ai-office-version:' "$1" 2>/dev/null \
-    | sed 's/.*ai-office-version:[[:space:]]*//' \
-    | tr -d ' -->' \
-    || echo ""
 }
 
 INSTALLED="unknown"
@@ -166,104 +147,18 @@ preview_wrapper_changes() {
 
   case "$kind" in
     skills)
-      local skill_src_dir skill_dst_dir any_change src_dir skill_name src dst src_ver dst_ver
-      skill_src_dir="$(adapter_source_abs "$(adapter_skill_source_rel "$adapter")")"
-      skill_dst_dir="$(adapter_project_abs "$(adapter_skill_dest_rel "$adapter")")"
-      any_change=0
-      for src_dir in "$skill_src_dir"/office*/; do
-        skill_name="$(basename "$src_dir")"
-        src="$src_dir/SKILL.md"
-        dst="$skill_dst_dir/$skill_name/SKILL.md"
-        if [[ ! -f "$dst" ]]; then
-          echo "  + $skill_name (new)"
-          any_change=1
-        else
-          src_ver="$(get_file_version "$src")"
-          dst_ver="$(get_file_version "$dst")"
-          if [[ -n "$src_ver" && -n "$dst_ver" && "$src_ver" != "$dst_ver" ]]; then
-            echo "  ~ $skill_name (v$dst_ver → v$src_ver)"
-            any_change=1
-          elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
-            echo "  ~ $skill_name (changed)"
-            any_change=1
-          fi
-        fi
-      done
-      if [[ "$any_change" -eq 0 ]]; then
-        echo "  (no adapter skill files changed)"
-      fi
+      echo "  ~ regenerates $(adapter_skill_dest_rel "$adapter") from the neutral adapter manifest"
       ;;
     commands)
-      local commands_src_dir commands_dst_dir any_change src name dst src_ver dst_ver
-      commands_src_dir="$(adapter_source_abs "$(adapter_commands_source_rel "$adapter")")"
-      commands_dst_dir="$(adapter_project_abs "$(adapter_commands_dest_rel "$adapter")")"
-      any_change=0
-      for src in "$commands_src_dir"/office*.md; do
-        name="$(basename "$src")"
-        dst="$commands_dst_dir/$name"
-        if [[ ! -f "$dst" ]]; then
-          echo "  + $name (new)"
-          any_change=1
-        else
-          src_ver="$(get_file_version "$src")"
-          dst_ver="$(get_file_version "$dst")"
-          if [[ -n "$src_ver" && -n "$dst_ver" && "$src_ver" != "$dst_ver" ]]; then
-            echo "  ~ $name (v$dst_ver → v$src_ver)"
-            any_change=1
-          elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
-            echo "  ~ $name (changed)"
-            any_change=1
-          fi
-        fi
-      done
-      if [[ "$any_change" -eq 0 ]]; then
-        echo "  (no adapter command files changed)"
-      fi
+      echo "  ~ regenerates $(adapter_commands_dest_rel "$adapter") from the neutral adapter manifest"
       ;;
     rules-workflows)
-      local rules_src_dir rules_dst_dir workflows_src_dir workflows_dst_dir any_change src name dst
-      rules_src_dir="$(adapter_source_abs "$(adapter_rules_source_rel "$adapter")")"
-      rules_dst_dir="$(adapter_project_abs "$(adapter_rules_dest_rel "$adapter")")"
-      workflows_src_dir="$(adapter_source_abs "$(adapter_workflows_source_rel "$adapter")")"
-      workflows_dst_dir="$(adapter_project_abs "$(adapter_workflows_dest_rel "$adapter")")"
-      any_change=0
-      for src in "$rules_src_dir/"*.md "$workflows_src_dir/"*.md; do
-        name="$(basename "$src")"
-        if [[ "$src" == "$rules_src_dir/"* ]]; then
-          dst="$rules_dst_dir/$name"
-        else
-          dst="$workflows_dst_dir/$name"
-        fi
-        if [[ ! -f "$dst" ]]; then
-          echo "  + $name (new)"
-          any_change=1
-        elif ! diff -q "$src" "$dst" > /dev/null 2>&1; then
-          echo "  ~ $name (changed)"
-          any_change=1
-        fi
-      done
-      if [[ "$any_change" -eq 0 ]]; then
-        echo "  (no rules or workflow files changed)"
-      fi
+      echo "  ~ regenerates $(adapter_rules_dest_rel "$adapter") and $(adapter_workflows_dest_rel "$adapter") from the neutral adapter manifest"
       ;;
     *)
       echo "  - base adapter uses no host-specific wrapper files"
       ;;
   esac
-}
-
-install_instruction_if_missing() {
-  local adapter="$1"
-  local instruction_target instruction_source
-  instruction_target="$(adapter_instruction_target "$adapter")"
-  instruction_source="$(adapter_source_abs "$(adapter_instruction_source_rel "$adapter")")"
-  if [[ -z "$instruction_target" || -z "$instruction_source" ]]; then
-    return
-  fi
-  if [[ ! -f "$PROJECT_ROOT/$instruction_target" ]]; then
-    cp "$instruction_source" "$PROJECT_ROOT/$instruction_target"
-    echo "  ✅ $instruction_target installed"
-  fi
 }
 
 update_adapter_assets() {
@@ -273,37 +168,28 @@ update_adapter_assets() {
 
   case "$kind" in
     skills)
-      local source dest
-      source="$(adapter_source_abs "$(adapter_skill_source_rel "$adapter")")"
-      dest="$(adapter_project_abs "$(adapter_skill_dest_rel "$adapter")")"
-      mkdir -p "$dest"
-      cp -r "$source/"* "$dest/"
-      stamp_adapter_version "$adapter"
+      bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" install \
+        --framework-dir "$FRAMEWORK_DIR" \
+        --project-root "$PROJECT_ROOT" \
+        --adapter "$adapter" \
+        --instruction-mode if-missing >/dev/null
       echo "  ✅ $adapter skills updated"
-      install_instruction_if_missing "$adapter"
       ;;
     commands)
-      local source dest
-      source="$(adapter_source_abs "$(adapter_commands_source_rel "$adapter")")"
-      dest="$(adapter_project_abs "$(adapter_commands_dest_rel "$adapter")")"
-      mkdir -p "$dest"
-      cp -r "$source/"* "$dest/"
-      stamp_adapter_version "$adapter"
+      bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" install \
+        --framework-dir "$FRAMEWORK_DIR" \
+        --project-root "$PROJECT_ROOT" \
+        --adapter "$adapter" \
+        --instruction-mode if-missing >/dev/null
       echo "  ✅ $adapter commands updated"
-      install_instruction_if_missing "$adapter"
       ;;
     rules-workflows)
-      local rules_source rules_dest workflows_source workflows_dest
-      rules_source="$(adapter_source_abs "$(adapter_rules_source_rel "$adapter")")"
-      rules_dest="$(adapter_project_abs "$(adapter_rules_dest_rel "$adapter")")"
-      workflows_source="$(adapter_source_abs "$(adapter_workflows_source_rel "$adapter")")"
-      workflows_dest="$(adapter_project_abs "$(adapter_workflows_dest_rel "$adapter")")"
-      mkdir -p "$rules_dest" "$workflows_dest"
-      cp -r "$rules_source/"* "$rules_dest/"
-      cp -r "$workflows_source/"* "$workflows_dest/"
-      stamp_adapter_version "$adapter"
+      bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" install \
+        --framework-dir "$FRAMEWORK_DIR" \
+        --project-root "$PROJECT_ROOT" \
+        --adapter "$adapter" \
+        --instruction-mode if-missing >/dev/null
       echo "  ✅ $adapter rules and workflows updated"
-      install_instruction_if_missing "$adapter"
       ;;
     *)
       echo "  ✅ Base adapter requires no host-specific assets"
