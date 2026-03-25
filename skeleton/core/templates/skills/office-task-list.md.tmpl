@@ -5,7 +5,7 @@ disable-model-invocation: true
 
 $ARGUMENTS format (all optional): `[column] [ms:M1] [assignee:name]`
 
-- **column**: filter by `BACKLOG` | `TODO` | `WIP` | `REVIEW` | `DONE` — omit for all
+- **column**: filter by `BACKLOG` | `TODO` | `WIP` | `REVIEW` | `BLOCKED` | `REJECTED` | `DONE` | `ARCHIVED` — omit for all
 - **ms**: filter by milestone (e.g. `ms:M1`) — omit for all
 - **assignee:name**: filter by assignee
 
@@ -15,7 +15,7 @@ $ARGUMENTS format (all optional): `[column] [ms:M1] [assignee:name]`
 
 1. Determine which columns to scan:
    - If a specific column is given: scan only that column
-   - If no column arg: scan all active columns (`BACKLOG`, `TODO`, `WIP`, `REVIEW`, `BLOCKED`, `DONE`)
+   - If no column arg: scan all active columns (`BACKLOG`, `TODO`, `WIP`, `REVIEW`, `BLOCKED`, `REJECTED`, `DONE`)
    - `ARCHIVED` is **never** included by default — only when explicitly requested (`{{CMD:office-task-list}} ARCHIVED`)
 
    Active column dirs:
@@ -24,6 +24,7 @@ $ARGUMENTS format (all optional): `[column] [ms:M1] [assignee:name]`
    - `.ai-office/tasks/WIP/`
    - `.ai-office/tasks/REVIEW/`
    - `.ai-office/tasks/BLOCKED/`
+   - `.ai-office/tasks/REJECTED/`
    - `.ai-office/tasks/DONE/`
    - `.ai-office/tasks/ARCHIVED/` (only when explicitly requested)
 

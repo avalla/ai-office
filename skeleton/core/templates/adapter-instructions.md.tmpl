@@ -9,6 +9,10 @@ These rules are always active. Project-specific rules are in `.ai-office/project
 ## Reasoning & Scope Control
 
 - Before making changes, confirm your understanding of the problem.
+- Read `pre_implementation_mode` from `.ai-office/project.config.md` when present and honor it before coding:
+  - `minimal`: ask only the essential blocking questions, then proceed.
+  - `confirm`: finish the analysis, propose one work plan, and wait for explicit user confirmation before implementation.
+  - `collaborative`: finish the analysis, propose the recommended plan plus 1-2 viable alternatives for non-trivial work, ask which path the user prefers or whether they want a different one, and wait for confirmation before implementation.
 - If uncertain about an API, library, or function behavior, check docs or read the source first.
 - Never invent function signatures, parameters, or APIs that don't exist.
 - When debugging, identify the root cause before proposing fixes.

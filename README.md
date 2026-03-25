@@ -9,7 +9,7 @@ A file-based virtual agency system for AI-assisted software development. AI Offi
 - 📋 **Pipeline stages**: discussion → requirements → architecture → planning → implementation → QA → review → UAT → release → postmortem
 - 👥 **22 specialized agents**: PM, architect, developer, designer, QA, security, reviewer, ops, and more
 - 🗂️ **9 pre-built agencies**: software, startup, game, creative, media, security, legal, CAD, and crypto trading workflows
-- 📊 **Kanban board**: backlog, TODO, WIP, review, blocked, done, archived
+- 📊 **Kanban board**: backlog, TODO, WIP, review, blocked, rejected, done, archived
 - 🎯 **Milestone tracking**: auto-suggest tasks, measure velocity, track progress
 - 🛡️ **Loop guards**: prevent infinite QA/review/UAT cycles (hard limits with escalation)
 - 📝 **Artifacts**: PRD, ADR, runbooks, task board, status files—all markdown, all version-controlled
@@ -60,8 +60,7 @@ Pick the adapter that matches your preferred host:
 # Base markdown + CLI workflow
 ./install.sh [project-root] --adapter=base
 
-# Then configure
-./setup.sh [project-root]
+# Add --skip-setup if you only want to install the files
 ```
 
 The installer creates:
@@ -69,12 +68,14 @@ The installer creates:
 - `.ai-office/` — framework engine (agents, agencies, configs, task board)
 - Adapter-specific wrapper files such as `AGENTS.md` + `.codex/skills/`, `AGENTS.md` + `.windsurf/rules/` + `.windsurf/workflows/`, `CLAUDE.md` + `.claude/skills/`, or `opencode.json` + `.opencode/commands/`
 
+In an interactive terminal, `install.sh` now launches the setup wizard automatically after the files are installed. If the install is running non-interactively, or you pass `--skip-setup`, run `./setup.sh [project-root]` yourself afterward.
+
 Those adapter wrapper files are generated at install/update time from the neutral manifest and shared templates rather than copied from committed adapter bundles.
 
 ### 2. Configure
 
 ```bash
-# Interactive setup wizard from the terminal
+# If setup did not auto-launch, start the interactive wizard manually
 ./setup.sh .
 
 # Or automatic with flags
@@ -127,7 +128,7 @@ This step is mainly for framework maintainers. Projects consuming AI Office do n
 ## 📚 Table of Contents
 
 - [Commands Reference](#commands-reference)
-- [What's New in v1.12.0](#whats-new-in-v1120)
+- [What's New in v1.13.0](#whats-new-in-v1130)
 - [Directory Structure](#directory-structure)
 - [Task Management](#task-management)
 - [Pipeline & Stages](#pipeline--stages)
@@ -226,9 +227,9 @@ graph TD
 | Command | Purpose |
 |---------|---------|
 | `$office-task-create <title> [ms:M1] [priority:HIGH] [column:BACKLOG] [assignee:Developer] [estimate:4h] [labels:bug,auth] [slug:feature]` | Create new task with optional slug linking |
-| `$office-task-move <task-id> <column> [reason]` | Move task (BACKLOG, TODO, WIP, REVIEW, BLOCKED, DONE, ARCHIVED) |
+| `$office-task-move <task-id> <column> [reason]` | Move task (BACKLOG, TODO, WIP, REVIEW, BLOCKED, REJECTED, DONE, ARCHIVED) |
 | `$office-task-update <task-id> [priority:] [assignee:] [estimate:] [labels:] [slug:]` | Update task metadata without moving |
-| `$office-task-list [column] [ms:M1] [assignee:name]` | View kanban board (shows Labels and BLOCKED column) |
+| `$office-task-list [column] [ms:M1] [assignee:name]` | View kanban board (shows Labels, BLOCKED, and REJECTED columns) |
 
 ### Quality & Testing
 
@@ -266,7 +267,14 @@ graph TD
 
 ---
 
-## ✨ What's New in v1.12.0
+## ✨ What's New in v1.13.0
+
+### Pre-Implementation Collaboration
+- **Configurable analysis style**: `pre_implementation_mode` can now keep the current lightweight flow, require explicit plan approval, or ask the user to choose between alternative approaches before coding
+
+### Task Completion Verification
+- **Project-specific end-of-task checks**: setup can now collect up to three ordered completion-check commands, such as DB reset, regression tests, and Playwright
+- **QA validation uses configured checks**: when present, `validate <slug> qa` runs those commands in order and still reports coverage when detected
 
 ### Runtime Adapter Generation
 - **Neutral manifest stays canonical**: `src/adapter-manifest.ts` remains the single source of truth for adapter behavior
@@ -320,6 +328,7 @@ graph TD
     TASKS --> WIP["WIP/"]
     TASKS --> REVIEW["REVIEW/"]
     TASKS --> BLOCKED["BLOCKED/"]
+    TASKS --> REJECTED["REJECTED/"]
     TASKS --> DONE["DONE/"]
     TASKS --> ARCHIVED["ARCHIVED/"]
 
@@ -348,7 +357,7 @@ AI-OFFICE.md                     ← Host-neutral workflow contract
 
 .ai-office/
 ├── office-config.md             ← Agency identity & base config
-├── project.config.md            ← Tech stack, thresholds, advance_mode
+├── project.config.md            ← Tech stack, thresholds, advance_mode, pre_implementation_mode
 ├── agency.json                  ← Active agency selection metadata
 │
 ├── milestones/                  ← M1.md, M2.md, … (milestone definitions)
@@ -359,6 +368,7 @@ AI-OFFICE.md                     ← Host-neutral workflow contract
 │   ├── WIP/
 │   ├── REVIEW/
 │   ├── BLOCKED/                 ← NEW: unrealized tasks with blocker notes
+│   ├── REJECTED/                ← Rejected tasks retained for traceability
 │   ├── DONE/
 │   ├── ARCHIVED/                ← Superseded or old tasks
 │   └── README.md                ← Column counts (auto-updated)
@@ -445,7 +455,7 @@ Example: `M1_T003-fix-upload-timeout-developer.md`
 **Milestone:** M1                  ← Milestone reference (M0 = unscheduled)
 **Slug:** fix-upload              ← NEW: Parent feature slug for $office-advance matching
 **Priority:** HIGH                ← HIGH | MEDIUM | LOW
-**Status:** WIP                    ← BACKLOG | TODO | WIP | REVIEW | BLOCKED | DONE | ARCHIVED
+**Status:** WIP                    ← BACKLOG | TODO | WIP | REVIEW | BLOCKED | REJECTED | DONE | ARCHIVED
 **Assignee:** Developer           ← Agent or person name
 **Labels:** bug,perf              ← NEW: Visible in $office-task-list output
 **Dependencies:** M1_T001,M1_T002 ← Task IDs this depends on
@@ -462,6 +472,7 @@ Example: `M1_T003-fix-upload-timeout-developer.md`
 - **Slug field (NEW)** — used by `$office-advance` to find and reassign related tasks
 - **Labels (NEW)** — categorization tags, visible in task-list output
 - **BLOCKED column (NEW)** — requires a reason; `$office-task-list` shows it alongside other columns
+- **REJECTED column** — keeps declined work visible without mixing it into archived completion history
 
 ### Task Lifecycle
 
@@ -476,6 +487,7 @@ stateDiagram-v2
 
     REVIEW --> DONE: $office-task-move<br/>$office-verify ✅
     REVIEW --> WIP: $office-task-move<br/>feedback: fix and retry
+    REVIEW --> REJECTED: $office-task-move<br/>rejected after review
 
     DONE --> ARCHIVED: $office-milestone archive
 
@@ -493,6 +505,7 @@ BACKLOG  →  TODO  →  WIP  →  REVIEW  →  DONE  →  ARCHIVED
            ↑                   ↑          ↑
            └─ Rework ──────────┘          │
                                           │
+                   REJECTED ←──────────────┤
                               BLOCKED ←──┴─ (blocker found)
 ```
 
@@ -888,6 +901,12 @@ lighthouse_min: 90
 
 # Pipeline behavior
 advance_mode: manual    # manual = pause for confirmation, auto = proceed
+pre_implementation_mode: minimal  # minimal | confirm | collaborative
+
+# Task completion verification (optional, run in order)
+completion_check_cmd_1: "npm run db:reset"
+completion_check_cmd_2: "npm run test"
+completion_check_cmd_3: "npx playwright test"
 
 # Git task workflow
 task_isolation_mode: none          # none | branch | worktree
@@ -916,6 +935,19 @@ Each preset auto-fills test commands, linters, UI framework, etc.
 
 - **`auto`** — `$office-advance` validates and transitions immediately without prompting
   - Ideal for CI/CD integration or high-trust workflows
+
+### pre_implementation_mode
+
+- **`minimal`** (default) keeps the current behavior: ask only the blocking clarifications needed to avoid a wrong implementation path.
+- **`confirm`** makes the agent stop after analysis, present the proposed plan, and ask for approval before it edits code.
+- **`collaborative`** makes the agent stop after analysis, present a recommended path plus alternatives when the work is non-trivial, and ask whether the user prefers one of those paths or wants to solve it differently.
+- Useful when you want a more consultative workflow without changing the rest of the AI Office pipeline.
+
+### completion_check_cmd_1..3
+
+- Optional ordered commands executed for end-of-task verification.
+- Useful for project-specific sequences such as reset database → run regression tests → run Playwright.
+- `office-verify` should use them as the preferred automated verification flow, and `ai-office validate <slug> qa` runs them in order when configured.
 
 ### Task Isolation
 
@@ -1006,7 +1038,7 @@ Check for updates:
 
 ```bash
 $office-_meta
-# Output: Framework v1.11.0 installed, v1.12.0 available. Run ./update.sh
+# Output: Framework v1.12.0 installed, v1.13.0 available. Run ./update.sh
 
 # Or manually
 ./update.sh [project-root] [--adapter=codex|windsurf|claude-code|opencode|base] [--prune-legacy]

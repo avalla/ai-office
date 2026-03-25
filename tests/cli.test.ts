@@ -146,6 +146,27 @@ describe("ai-office cli", () => {
     expect(board).toContain("WIP: 1");
   });
 
+  it("moves a task to REJECTED and tracks the board count", () => {
+    runCli(dir, ["task", "create", "Drop", "legacy", "feature", "assignee:Planner"]);
+    const moved = runCli(dir, ["task", "move", "M0_T001", "REJECTED", "out of scope"]);
+
+    expect(moved.exitCode).toBe(0);
+    expect(moved.stdout).toContain("Moved M0_T001: BACKLOG -> REJECTED");
+
+    const rejectedDir = join(dir, ".ai-office/tasks/REJECTED");
+    const files = readdirSync(rejectedDir);
+    expect(files.length).toBe(1);
+
+    const task = readFileSync(join(rejectedDir, files[0]), "utf8");
+    expect(task).toContain("**Status:** REJECTED");
+    expect(task).toContain("BACKLOG → REJECTED — out of scope");
+    expect(task).toContain("moved to REJECTED — out of scope");
+
+    const board = readFileSync(join(dir, ".ai-office/tasks/README.md"), "utf8");
+    expect(board).toContain("BACKLOG: 0");
+    expect(board).toContain("REJECTED: 1");
+  });
+
   it("creates and updates a status file", () => {
     const created = runCli(dir, ["status", "set", "billing-sync", "router", "Planner", "Initial intake"]);
     expect(created.exitCode).toBe(0);
@@ -286,6 +307,43 @@ advance_mode: manual
     expect(result.stdout).toContain("PASS Run typecheck — true");
     expect(result.stdout).toContain("PASS Run lint — true");
     expect(result.stdout).toContain("PASS Run tests — echo 'coverage 91%'");
+    expect(result.stdout).toContain("Result: PASS");
+  });
+
+  it("validates the qa stage using configured completion check commands", () => {
+    const configPath = join(dir, ".ai-office/project.config.md");
+    const prdPath = join(dir, ".ai-office/docs/prd/billing-sync.md");
+    const config = `---
+agency: software-studio
+project_name: test-project
+typecheck_cmd: "true"
+lint_cmd: "true"
+test_cmd: "false"
+test_runner: vitest
+ui_framework: ""
+design_system: ""
+coverage_min: 80
+lighthouse_min: 90
+advance_mode: manual
+pre_implementation_mode: minimal
+completion_check_cmd_1: "echo reset done"
+completion_check_cmd_2: "echo coverage 91%"
+completion_check_cmd_3: "true"
+---`;
+    writeFileSync(configPath, config);
+    writeFileSync(prdPath, `# Billing Sync
+
+## Acceptance Criteria
+
+- Works end to end
+`);
+
+    const result = runCli(dir, ["validate", "billing-sync", "qa"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("PASS Run completion check 1 — echo reset done");
+    expect(result.stdout).toContain("PASS Run completion check 2 — echo coverage 91%");
+    expect(result.stdout).toContain("PASS Run completion check 3 — true");
+    expect(result.stdout).toContain("PASS Coverage ≥ 80%");
     expect(result.stdout).toContain("Result: PASS");
   });
 

@@ -93,6 +93,7 @@ describe("update.sh", () => {
 
     assertExists(join(dir, ".ai-office/tasks/BACKLOG"), "BACKLOG");
     assertExists(join(dir, ".ai-office/tasks/BLOCKED"), "BLOCKED");
+    assertExists(join(dir, ".ai-office/tasks/REJECTED"), "REJECTED");
     assertExists(join(dir, ".ai-office/tasks/DONE"), "DONE");
     assertExists(join(dir, ".ai-office/agents"), "agents");
     assertExists(join(dir, ".ai-office/agencies"), "agencies");

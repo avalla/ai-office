@@ -144,7 +144,10 @@ export const COMMAND_SPECS: CommandSpec[] = [
     steps: [
       "Read `AI-OFFICE.md` and `.ai-office/project.config.md` if it exists.",
       "Summarize the request in one sentence and classify it as quick fix, feature, refactor, audit, or operational task.",
-      "If context is missing, ask only the minimum clarifying questions needed to avoid routing the work incorrectly.",
+      "Check `pre_implementation_mode` in `.ai-office/project.config.md` when present.",
+      "If `pre_implementation_mode` is `minimal`, ask only the minimum clarifying questions needed to avoid routing the work incorrectly.",
+      "If `pre_implementation_mode` is `confirm`, finish the analysis, propose one plan, and ask the user to confirm it before implementation starts.",
+      "If `pre_implementation_mode` is `collaborative`, finish the analysis, propose the recommended path plus 1-2 viable alternatives for non-trivial work, and ask which approach the user prefers or whether they want a different one.",
       "Identify the likely next artifact or pipeline stage, including whether a PRD, ADR, plan, or direct task work is appropriate.",
       "Create or update the relevant `.ai-office/docs/` context artifact when appropriate.",
       "End with the recommended next action, including the next AI Office command or CLI operation.",

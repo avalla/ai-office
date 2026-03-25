@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { makeTempProject, runScript, assertExists } from "./helpers";
 
@@ -44,6 +44,10 @@ describe("setup.sh", () => {
     expect(content).toContain("coverage_min:");
     expect(content).toContain("lighthouse_min:");
     expect(content).toContain("advance_mode:");
+    expect(content).toContain("pre_implementation_mode:");
+    expect(content).toContain("completion_check_cmd_1:");
+    expect(content).toContain("completion_check_cmd_2:");
+    expect(content).toContain("completion_check_cmd_3:");
     expect(content).toContain("task_isolation_mode:");
     expect(content).toContain("task_base_branch:");
     expect(content).toContain("task_merge_target:");
@@ -71,6 +75,45 @@ describe("setup.sh", () => {
     ]);
     const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
     expect(content).toContain("advance_mode: auto");
+  });
+
+  it("defaults pre_implementation_mode to minimal", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+    ]);
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("pre_implementation_mode: minimal");
+  });
+
+  it("respects --pre-implementation-mode=collaborative", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+      "--pre-implementation-mode=collaborative",
+    ]);
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("pre_implementation_mode: collaborative");
+  });
+
+  it("records completion check commands from setup flags", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+      "--completion-check-cmd-1=npm run db:reset",
+      "--completion-check-cmd-2=npm run test",
+      "--completion-check-cmd-3=npx playwright test",
+    ]);
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain('completion_check_cmd_1: "npm run db:reset"');
+    expect(content).toContain('completion_check_cmd_2: "npm run test"');
+    expect(content).toContain('completion_check_cmd_3: "npx playwright test"');
   });
 
   it("supports configuring the git task workflow", () => {
@@ -131,6 +174,33 @@ describe("setup.sh", () => {
     expect(existsSync(join(dir, ".ai-office/agencies/autoepoque"))).toBe(false);
   });
 
+  it("preserves project-local custom agencies during setup", () => {
+    mkdirSync(join(dir, ".ai-office", "agencies", "autoepoque"), { recursive: true });
+    writeFileSync(
+      join(dir, ".ai-office", "agencies", "autoepoque", "config.md"),
+      `---
+agency: autoepoque
+name: Autoepoque
+description: Custom project agency
+custom: true
+---
+`
+    );
+
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=autoepoque",
+      "--name=autoepoque",
+    ]);
+
+    const config = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    const agencyJson = JSON.parse(readFileSync(join(dir, ".ai-office/agency.json"), "utf8"));
+    expect(config).toContain("agency: autoepoque");
+    expect(agencyJson.name).toBe("autoepoque");
+    expect(agencyJson.custom).toBe(true);
+  });
+
   it("applies --stack=node-react preset commands", () => {
     runScript("setup.sh", [
       dir,
@@ -142,6 +212,84 @@ describe("setup.sh", () => {
     const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
     expect(content).toContain("vitest");
     expect(content).toContain("npm run lint");
+  });
+
+  it("detects Bun monorepo defaults from the project tech stack", () => {
+    writeFileSync(join(dir, "bun.lock"), "");
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify(
+        {
+          name: "autoepoque",
+          private: true,
+          scripts: {
+            lint: "eslint .",
+            test: "vitest run",
+            "typecheck:all": "tsc --noEmit",
+          },
+          devDependencies: {
+            eslint: "^9.0.0",
+            typescript: "^5.0.0",
+            vitest: "^4.0.0",
+          },
+        },
+        null,
+        2
+      )
+    );
+    mkdirSync(join(dir, "apps", "web"), { recursive: true });
+    writeFileSync(
+      join(dir, "apps", "web", "package.json"),
+      JSON.stringify(
+        {
+          name: "@autoepoque/web",
+          dependencies: {
+            react: "^18.0.0",
+          },
+          devDependencies: {
+            "@shadcn/ui": "^0.0.4",
+            tailwindcss: "^4.0.0",
+          },
+        },
+        null,
+        2
+      )
+    );
+    writeFileSync(join(dir, "apps", "web", "components.json"), "{}\n");
+
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+    ]);
+
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("project_name: autoepoque");
+    expect(content).toContain('typecheck_cmd: "bun run typecheck:all"');
+    expect(content).toContain('lint_cmd: "bun run lint"');
+    expect(content).toContain('test_cmd: "bun run test"');
+    expect(content).toContain("test_runner: vitest");
+    expect(content).toContain('ui_framework: "react"');
+    expect(content).toContain('design_system: "shadcn/ui"');
+  });
+
+  it("detects Go project defaults from go.mod", () => {
+    writeFileSync(join(dir, "go.mod"), "module github.com/acme/roadrunner\n");
+
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+    ]);
+
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("project_name: roadrunner");
+    expect(content).toContain('typecheck_cmd: "go vet ./..."');
+    expect(content).toContain('lint_cmd: "golangci-lint run"');
+    expect(content).toContain('test_cmd: "go test ./..."');
+    expect(content).toContain("test_runner: go test");
+    expect(content).toContain('ui_framework: ""');
+    expect(content).toContain('design_system: ""');
   });
 
   it("does not overwrite an existing project.config.md", () => {
@@ -201,6 +349,46 @@ describe("setup.sh", () => {
 
   it("preserves custom frontmatter and notes during reconfigure", () => {
     const configPath = join(dir, ".ai-office/project.config.md");
+    writeFileSync(join(dir, "bun.lock"), "");
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify(
+        {
+          name: "autoepoque",
+          private: true,
+          scripts: {
+            lint: "eslint .",
+            test: "vitest run",
+            "typecheck:all": "tsc --noEmit",
+          },
+          devDependencies: {
+            eslint: "^9.0.0",
+            typescript: "^5.0.0",
+            vitest: "^4.0.0",
+          },
+        },
+        null,
+        2
+      )
+    );
+    mkdirSync(join(dir, "apps", "web"), { recursive: true });
+    writeFileSync(
+      join(dir, "apps", "web", "package.json"),
+      JSON.stringify(
+        {
+          name: "@autoepoque/web",
+          dependencies: {
+            react: "^18.0.0",
+          },
+          devDependencies: {
+            "@shadcn/ui": "^0.0.4",
+          },
+        },
+        null,
+        2
+      )
+    );
+    writeFileSync(join(dir, "apps", "web", "components.json"), "{}\n");
     const customConfig = `---
 agency: software-studio
 project_name: autoepoque
@@ -215,6 +403,10 @@ design_system: "Tailwind"
 coverage_min: 80
 lighthouse_min: 90
 advance_mode: manual
+pre_implementation_mode: confirm
+completion_check_cmd_1: "npm run db:reset"
+completion_check_cmd_2: "npm run test"
+completion_check_cmd_3: "npx playwright test"
 ---
 
 # Project Configuration
@@ -244,12 +436,21 @@ advance_mode: manual
 
     expect(exitCode).toBe(0);
     const updated = readFileSync(configPath, "utf8");
+    expect(updated).toContain('typecheck_cmd: "bun run typecheck:all"');
+    expect(updated).toContain('lint_cmd: "bun run lint"');
+    expect(updated).toContain('test_cmd: "bun run test"');
+    expect(updated).toContain('ui_framework: "react"');
+    expect(updated).toContain('design_system: "shadcn/ui"');
     expect(updated).toContain('dev_web_cmd: "bun run dev:web"');
     expect(updated).toContain('dev_queues_cmd: "bun run dev:queues"');
     expect(updated).toContain("> Preserved project note");
     expect(updated).toContain("> Second line");
     expect(updated).toContain("# Tech stack — used by $office-validate (dev stage)");
     expect(updated).toContain("# Design system — used by $office-review (UX sector)");
+    expect(updated).toContain("pre_implementation_mode: confirm");
+    expect(updated).toContain('completion_check_cmd_1: "npm run db:reset"');
+    expect(updated).toContain('completion_check_cmd_2: "npm run test"');
+    expect(updated).toContain('completion_check_cmd_3: "npx playwright test"');
   });
 
   it("supports --force as an alias for --reconfigure", () => {

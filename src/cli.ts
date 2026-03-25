@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync,
 import { basename, dirname, extname, isAbsolute, join, relative } from "path";
 import { ADAPTER_PROFILES, type AdapterHost } from "./adapter-manifest";
 
-const COLUMNS = ["BACKLOG", "TODO", "WIP", "REVIEW", "BLOCKED", "DONE", "ARCHIVED"] as const;
+const COLUMNS = ["BACKLOG", "TODO", "WIP", "REVIEW", "BLOCKED", "REJECTED", "DONE", "ARCHIVED"] as const;
 const VALID_STATES = [
   "router",
   "create_project",
@@ -35,6 +35,10 @@ type ProjectConfig = {
   projectName: string;
   uiFramework: string;
   advanceMode: string;
+  preImplementationMode: string;
+  completionCheckCmd1: string;
+  completionCheckCmd2: string;
+  completionCheckCmd3: string;
   typecheckCmd: string;
   lintCmd: string;
   testCmd: string;
@@ -236,6 +240,10 @@ function getProjectConfig(): ProjectConfig {
     projectName: basename(cwd),
     uiFramework: "",
     advanceMode: "manual",
+    preImplementationMode: "minimal",
+    completionCheckCmd1: "",
+    completionCheckCmd2: "",
+    completionCheckCmd3: "",
     typecheckCmd: "npm run typecheck",
     lintCmd: "npm run lint",
     testCmd: "npm run test",
@@ -258,6 +266,10 @@ function getProjectConfig(): ProjectConfig {
     projectName: frontmatter.project_name || defaults.projectName,
     uiFramework: frontmatter.ui_framework || defaults.uiFramework,
     advanceMode: frontmatter.advance_mode || defaults.advanceMode,
+    preImplementationMode: frontmatter.pre_implementation_mode || defaults.preImplementationMode,
+    completionCheckCmd1: frontmatter.completion_check_cmd_1 || defaults.completionCheckCmd1,
+    completionCheckCmd2: frontmatter.completion_check_cmd_2 || defaults.completionCheckCmd2,
+    completionCheckCmd3: frontmatter.completion_check_cmd_3 || defaults.completionCheckCmd3,
     typecheckCmd: frontmatter.typecheck_cmd || defaults.typecheckCmd,
     lintCmd: frontmatter.lint_cmd || defaults.lintCmd,
     testCmd: frontmatter.test_cmd || defaults.testCmd,
@@ -670,6 +682,16 @@ function runCommand(command: string): { exitCode: number; stdout: string; stderr
   };
 }
 
+function getCompletionCheckCommands(config: ProjectConfig): Array<{ label: string; command: string }> {
+  return [config.completionCheckCmd1, config.completionCheckCmd2, config.completionCheckCmd3]
+    .map((command) => command.trim())
+    .filter((command) => command.length > 0)
+    .map((command, index) => ({
+      label: `Run completion check ${index + 1}`,
+      command,
+    }));
+}
+
 function runProcess(command: string[], workdir = cwd): { exitCode: number; stdout: string; stderr: string } {
   const proc = Bun.spawnSync(command, {
     cwd: workdir,
@@ -1070,6 +1092,8 @@ function commandTaskMove(args: string[]): void {
     content = appendNote(content, `- ${today}: moved to ${targetColumn} — ${reason}`);
   } else if (targetColumn === "BLOCKED") {
     content = appendNote(content, `- ${today}: moved to BLOCKED — no reason given; add unblock criteria`);
+  } else if (targetColumn === "REJECTED") {
+    content = appendNote(content, `- ${today}: moved to REJECTED — no reason given; add rejection rationale`);
   }
 
   const destination = join(tasksDir, targetColumn, originalName);
@@ -1562,9 +1586,27 @@ function validateQa(slug: string, config: ProjectConfig, items: ValidationItem[]
     addValidation(items, "warn", "PRD missing for QA validation");
   }
 
-  const result = runCommand(config.testCmd);
-  addValidation(items, result.exitCode === 0 ? "pass" : "fail", `Test suite passes — ${config.testCmd}`);
-  const coverage = extractCoverage(`${result.stdout}\n${result.stderr}`);
+  const completionChecks = getCompletionCheckCommands(config);
+  let coverageOutput = "";
+
+  if (completionChecks.length > 0) {
+    for (const check of completionChecks) {
+      const result = runCommand(check.command);
+      addValidation(
+        items,
+        result.exitCode === 0 ? "pass" : "fail",
+        `${check.label} — ${check.command}`,
+        result.exitCode === 0 ? undefined : (result.stderr || result.stdout).split("\n")[0]
+      );
+      coverageOutput += `\n${result.stdout}\n${result.stderr}`;
+    }
+  } else {
+    const result = runCommand(config.testCmd);
+    addValidation(items, result.exitCode === 0 ? "pass" : "fail", `Test suite passes — ${config.testCmd}`);
+    coverageOutput = `${result.stdout}\n${result.stderr}`;
+  }
+
+  const coverage = extractCoverage(coverageOutput);
   if (coverage == null) {
     addValidation(items, "warn", `Coverage output not detected for threshold ${config.coverageMin}%`);
   } else {

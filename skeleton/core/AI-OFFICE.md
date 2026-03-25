@@ -50,6 +50,7 @@ Examples:
 
 - Keep diffs focused and avoid unrelated refactors.
 - Never invent APIs, file paths, or schema details without checking.
+- Honor `pre_implementation_mode` from `.ai-office/project.config.md` when present: `minimal` asks only blocking questions, `confirm` asks for plan approval before coding, and `collaborative` offers alternatives and asks the user to choose before implementation.
 - Move tasks as soon as state changes.
 - Validate artifacts before advancing stages.
 - Respect loop guards recorded in status files.

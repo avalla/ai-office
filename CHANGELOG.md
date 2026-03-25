@@ -1,3 +1,22 @@
+## 1.13.0 — 2026-03-25
+
+### Added
+
+**Collaborative planning controls:**
+- New `pre_implementation_mode` project setting with `minimal`, `confirm`, and `collaborative` modes
+- Adapter instructions and `office-route` now honor the configured pre-implementation behavior before coding starts
+
+**Task completion verification:**
+- New optional project config keys `completion_check_cmd_1`, `completion_check_cmd_2`, and `completion_check_cmd_3`
+- `setup.sh` now asks for end-of-task verification commands during initialization or reconfiguration
+- `validate <slug> qa` now runs configured completion checks in order and still reports coverage when detected in their output
+- `office-verify` guidance now treats those commands as the preferred automated verification flow
+
+### Changed
+
+- Package versions bumped to `1.13.0` across the framework, website, and slides packages
+- README now documents the new planning and completion-verification project settings
+
 ## 1.12.0 — 2026-03-24
 
 ### Added

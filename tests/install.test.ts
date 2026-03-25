@@ -21,6 +21,12 @@ describe("install.sh", () => {
     expect(stdout).toContain("installed successfully");
   });
 
+  it("skips automatic setup in non-interactive installs", () => {
+    const { stdout } = runScript("install.sh", [dir]);
+    expect(stdout).toContain("Skipping automatic setup because this install is running non-interactively.");
+    expect(existsSync(join(dir, ".ai-office/project.config.md"))).toBe(false);
+  });
+
   it("creates .codex/skills with all bundled office skills for the default codex adapter", () => {
     runScript("install.sh", [dir]);
     const skillsDir = join(dir, ".codex/skills");
@@ -78,6 +84,7 @@ describe("install.sh", () => {
     const content = readFileSync(agents, "utf8");
     expect(content).toContain("AI Office");
     expect(content).toContain("Codex");
+    expect(content).toContain("pre_implementation_mode");
   });
 
   it("installs the core AI-OFFICE.md guide", () => {
@@ -107,6 +114,7 @@ describe("install.sh", () => {
       ".ai-office/tasks/WIP",
       ".ai-office/tasks/REVIEW",
       ".ai-office/tasks/BLOCKED",
+      ".ai-office/tasks/REJECTED",
       ".ai-office/tasks/DONE",
       ".ai-office/tasks/ARCHIVED",
       ".ai-office/docs/prd",
@@ -131,6 +139,7 @@ describe("install.sh", () => {
     expect(content).toMatch(/BACKLOG:\s*0/);
     expect(content).toMatch(/TODO:\s*0/);
     expect(content).toMatch(/WIP:\s*0/);
+    expect(content).toMatch(/REJECTED:\s*0/);
   });
 
   it("creates .mcp.json at project root", () => {
@@ -182,6 +191,12 @@ describe("install.sh", () => {
     expect(skillDirs.length).toBe(0);
     expect(existsSync(join(dir, "AI-OFFICE.md"))).toBe(false);
     expect(existsSync(join(dir, "AGENTS.md"))).toBe(false);
+  });
+
+  it("supports --skip-setup to suppress automatic configuration", () => {
+    const { stdout } = runScript("install.sh", [dir, "--skip-setup"]);
+    expect(stdout).toContain("Automatic setup skipped (--skip-setup).");
+    expect(existsSync(join(dir, ".ai-office/project.config.md"))).toBe(false);
   });
 
   it("supports installing the base adapter without host-specific wrapper files", () => {

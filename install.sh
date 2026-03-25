@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI Office Framework — Installer
-# Usage: ./install.sh [project-root] [--adapter=<codex|windsurf|claude-code|opencode|base>] [--stamp-only]
+# Usage: ./install.sh [project-root] [--adapter=<codex|windsurf|claude-code|opencode|base>] [--stamp-only] [--skip-setup]
 set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,10 +17,12 @@ eval "$(bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" emit-shell-metadata)"
 PROJECT_ROOT_ARG=""
 ADAPTER="codex"
 STAMP_ONLY=false
+SKIP_SETUP=false
 
 for arg in "$@"; do
   case "$arg" in
     --stamp-only) STAMP_ONLY=true ;;
+    --skip-setup) SKIP_SETUP=true ;;
     --adapter=*) ADAPTER="${arg#*=}" ;;
     -*)
       echo "⚠️  Unknown flag: $arg"
@@ -198,6 +200,7 @@ for dir in \
   "$AI_OFFICE/tasks/WIP" \
   "$AI_OFFICE/tasks/REVIEW" \
   "$AI_OFFICE/tasks/BLOCKED" \
+  "$AI_OFFICE/tasks/REJECTED" \
   "$AI_OFFICE/tasks/DONE" \
   "$AI_OFFICE/tasks/ARCHIVED" \
   "$AI_OFFICE/docs/prd" \
@@ -264,6 +267,22 @@ write_install_metadata
 echo ""
 echo "✅ AI Office Framework v$VERSION installed successfully"
 echo ""
+
+if [[ "$SKIP_SETUP" == true ]]; then
+  echo "ℹ️  Automatic setup skipped (--skip-setup)."
+elif [[ ! -f "$AI_OFFICE/project.config.md" ]]; then
+  if [[ -t 0 && -t 1 ]]; then
+    echo "→ Launching setup wizard..."
+    echo ""
+    "$FRAMEWORK_DIR/setup.sh" "$PROJECT_ROOT"
+    exit 0
+  else
+    echo "ℹ️  Skipping automatic setup because this install is running non-interactively."
+    echo "   Run ./setup.sh $PROJECT_ROOT to open the wizard,"
+    echo "   or ./setup.sh $PROJECT_ROOT --non-interactive <flags> for scripted setup."
+    echo ""
+  fi
+fi
 
 if [[ ! -f "$AI_OFFICE/project.config.md" ]]; then
   echo "Next: configure your project"
