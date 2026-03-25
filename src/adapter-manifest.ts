@@ -266,6 +266,7 @@ export const COMMAND_SPECS: CommandSpec[] = [
     steps: [
       "Confirm the task id to integrate.",
       "Read `.ai-office/project.config.md` if needed to understand task isolation settings.",
+      "Ensure the task branch or worktree has only committed task-related changes before integrating.",
       "Run `ai-office task integrate <task-id>` and include any provided reason if supported by the CLI.",
       "Report the integration target branch and any follow-up step for UAT or release.",
     ],

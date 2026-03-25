@@ -1,6 +1,6 @@
 {
   "name": "ai-office-spectacle-slides",
-  "version": "1.13.0",
+  "version": "1.15.0",
   "description": "AI Office - Interactive Presentation with Spectacle",
   "main": "index.js",
   "scripts": {

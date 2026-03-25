@@ -84,9 +84,19 @@ Do not just report "tests failed" — identify *why*.
 ```
 ✅ Verification passed — <N> criteria met
 
-Recommended: move task to REVIEW and advance the pipeline
+Recommended: commit the task-related files, move the task to REVIEW, and use squash integration when review is complete
+  git status
+  git add <task-related-files>
+  git commit -m "<conventional-commit>"
   {{CMD:office-task-move}} <task-id> REVIEW
+  {{CMD:office-task-integrate}} <task-id> "ready for UAT"
   {{CMD:office-advance}} <slug> "verification passed — <N> criteria met"
+
+Cleanup proposal:
+  1. <optional small cleanup or follow-up, if useful>
+  2. <optional small cleanup or follow-up, if useful>
+  3. <optional small cleanup or follow-up, if useful>
+If there is nothing meaningful to clean up, say: `Cleanup proposal: none`.
 ```
 
 Update the task file: check off all passing items in `## Acceptance Criteria`.

@@ -128,7 +128,7 @@ This step is mainly for framework maintainers. Projects consuming AI Office do n
 ## 📚 Table of Contents
 
 - [Commands Reference](#commands-reference)
-- [What's New in v1.13.0](#whats-new-in-v1130)
+- [What's New in v1.15.0](#whats-new-in-v1150)
 - [Directory Structure](#directory-structure)
 - [Task Management](#task-management)
 - [Pipeline & Stages](#pipeline--stages)
@@ -267,7 +267,14 @@ graph TD
 
 ---
 
-## ✨ What's New in v1.13.0
+## ✨ What's New in v1.15.0
+
+### Cleanup Proposal at Task End
+- **Non-blocking cleanup suggestions**: completed tasks now end with a short cleanup proposal containing up to three optional follow-up cleanups, or an explicit `none`
+
+### Task Closure Git Workflow
+- **Focused task commits**: end-of-task guidance now requires committing only the files related to the task before closure
+- **Squash integration by default**: when task isolation is enabled, the recommended final integration path is `task integrate` so the merge into the target branch stays squash-based and linear
 
 ### Pre-Implementation Collaboration
 - **Configurable analysis style**: `pre_implementation_mode` can now keep the current lightweight flow, require explicit plan approval, or ask the user to choose between alternative approaches before coding
@@ -949,6 +956,12 @@ Each preset auto-fills test commands, linters, UI framework, etc.
 - Useful for project-specific sequences such as reset database → run regression tests → run Playwright.
 - `office-verify` should use them as the preferred automated verification flow, and `ai-office validate <slug> qa` runs them in order when configured.
 
+### Cleanup proposal
+
+- At the end of each completed task, the framework should include a short `Cleanup proposal`.
+- The proposal is non-blocking and should contain 0-3 small cleanups or follow-ups discovered during the task.
+- If there is nothing worth proposing, it should explicitly say `Cleanup proposal: none`.
+
 ### Task Isolation
 
 - **`task_isolation_mode: none`** (default) keeps the current lightweight behavior: task files record the branch name, but no Git workspace is created automatically.
@@ -956,6 +969,7 @@ Each preset auto-fills test commands, linters, UI framework, etc.
 - **`task_isolation_mode: worktree`** creates both a dedicated branch and a linked worktree for the task, rooted at `task_worktree_root`.
 - Use `task_base_branch` to choose where new task branches start from.
 - Use `task_merge_target` to choose the branch that receives squash merges for integrated tasks and UAT.
+- Before task closure, commit only the files related to that task on the task branch or worktree.
 - Run `$office-task-integrate <task-id>` from the main workspace after a task reaches `REVIEW` or `DONE` to squash-merge its branch into the configured integration branch.
 
 ---
@@ -988,7 +1002,7 @@ The adapter wrapper encodes:
 | **Code Quality** | SOLID principles, DRY with judgment, pure functions, descriptive names |
 | **TypeScript** | Strict mode, no `any`, no unsafe casts, `instanceof` in catch |
 | **Security** | No secrets, parameterized queries, least privilege, idempotency keys |
-| **Git** | Conventional Commits, lint/typecheck before committing |
+| **Git** | Conventional Commits, lint/typecheck before committing, focused task-only commits, squash integration |
 | **AI Office** | Always start with the active adapter's route command first, record evidence before advancing, use artifacts |
 | **Tasks** | Immediate state transitions, required update formats, README count sync |
 | **Loop Guards** | Enforce QA/review/UAT iteration limits (hard stops with escalation) |

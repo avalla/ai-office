@@ -93,8 +93,10 @@ When `task_isolation_mode` is enabled in `.ai-office/project.config.md`, every t
 - Create the branch when the task moves to `WIP` (handled automatically by `{{TASK_MOVE_COMMAND}}` when task isolation is enabled).
 - Never commit directly to the integration branch while the iteration is open.
 - Keep one task per branch; no cross-task commits.
+- Before closing a task, commit only the files related to that task on the task branch or worktree.
 - Squash merge (not rebase, not regular merge) to keep the integration branch history linear and readable.
 - Integrate reviewed tasks with `{{TASK_INTEGRATE_COMMAND}}`, targeting the configured `task_merge_target` branch for UAT.
+- At the end of completed work, prefer `{{TASK_INTEGRATE_COMMAND}}` for the final squash merge instead of a manual merge command whenever task isolation is enabled.
 
 **Commit message format for squash merges:**
 ```
@@ -109,6 +111,7 @@ squash(<milestone-id>): <task title> (<task-id>)
 - Keep subject lines under 72 characters; one logical change per commit.
 - Write commit messages in English.
 - Before committing: ensure linting and type-check pass.
+- At task completion, create focused commits that stage only task-related files before moving to the review/integration handoff.
 - Never commit: `.env`, `node_modules`, generated files, build artifacts.
 - Show a diff summary before committing when asked.
 - Use descriptive branch names: `feat/listing-wizard`, `fix/bid-race-condition`.
@@ -129,6 +132,7 @@ Source of truth and precedence when conflicts exist:
 - Never bypass routing or jump directly to implementation without PRD, ADR, or plan context when the work is substantial.
 - Review important written artifacts before advancing.
 - Never say "done" without recorded evidence (tests passed, lint clean, build succeeded) in the status artifact.
+- End each completed task with a short `Cleanup proposal` section containing 0-3 non-blocking cleanup ideas discovered during the work, or explicitly say there is no cleanup proposal.
 - Use `{{VALIDATE_COMMAND}} <slug> <stage>` to verify quality gates before `{{ADVANCE_COMMAND}}`.
 - Keep diffs small and focused.
 - English-only for technical artifacts, variable names, and user-facing strings unless the project explicitly requires another language.

@@ -1,3 +1,30 @@
+## 1.15.0 — 2026-03-25
+
+### Added
+
+**Task-end cleanup guidance:**
+- Completed tasks now require a short `Cleanup proposal` section with up to three optional, non-blocking cleanup ideas or an explicit `none`
+- `office-verify` now includes the cleanup proposal in the successful task-closing path
+
+### Changed
+
+- Package versions bumped to `1.15.0` across the framework, website, and slides packages
+- README and core guidance now document the cleanup proposal expectation
+
+## 1.14.0 — 2026-03-25
+
+### Added
+
+**Task closure git workflow:**
+- Adapter instructions now require focused end-of-task commits that include only task-related files
+- End-of-task guidance now explicitly prefers `task integrate` for the final squash merge when task isolation is enabled
+- `office-verify` now recommends commit → review → squash integrate as the default happy path after successful verification
+
+### Changed
+
+- Package versions bumped to `1.14.0` across the framework, website, and slides packages
+- README now documents the focused-commit and squash-integration closure flow
+
 ## 1.13.0 — 2026-03-25
 
 ### Added
