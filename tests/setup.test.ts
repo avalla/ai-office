@@ -45,6 +45,7 @@ describe("setup.sh", () => {
     expect(content).toContain("lighthouse_min:");
     expect(content).toContain("advance_mode:");
     expect(content).toContain("pre_implementation_mode:");
+    expect(content).toContain("interactive_choices_mode:");
     expect(content).toContain("completion_check_cmd_1:");
     expect(content).toContain("completion_check_cmd_2:");
     expect(content).toContain("completion_check_cmd_3:");
@@ -98,6 +99,29 @@ describe("setup.sh", () => {
     ]);
     const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
     expect(content).toContain("pre_implementation_mode: collaborative");
+  });
+
+  it("defaults interactive_choices_mode to text", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+    ]);
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("interactive_choices_mode: text");
+  });
+
+  it("respects --interactive-choices-mode=buttons-when-available", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+      "--interactive-choices-mode=buttons-when-available",
+    ]);
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("interactive_choices_mode: buttons-when-available");
   });
 
   it("records completion check commands from setup flags", () => {

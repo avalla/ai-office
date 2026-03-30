@@ -1,6 +1,6 @@
 {
   "name": "ai-office-framework",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "description": "File-based virtual agency system for AI-assisted software development with a host-neutral core and adapter-based integrations",
   "bin": {
     "ai-office": "./bin/ai-office"

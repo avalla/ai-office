@@ -1,3 +1,17 @@
+## 1.16.0 — 2026-03-30
+
+### Added
+
+**Structured decision choices:**
+- New `interactive_choices_mode` project setting with `text` and `buttons-when-available`
+- Adapter instructions now tell hosts to prefer structured quick-choice inputs for plan confirmation, approach selection, and cleanup follow-up when the host supports them
+- Codex instructions now explicitly prefer `request_user_input` when it is available and fall back to concise text choices otherwise
+
+### Changed
+
+- `office-route`, `office-verify`, the core guide, and README now document the structured-choice behavior and text fallback
+- Package versions bumped to `1.16.0` across the framework, website, and slides packages
+
 ## 1.15.0 — 2026-03-25
 
 ### Added

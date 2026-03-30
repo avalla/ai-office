@@ -51,6 +51,7 @@ Examples:
 - Keep diffs focused and avoid unrelated refactors.
 - Never invent APIs, file paths, or schema details without checking.
 - Honor `pre_implementation_mode` from `.ai-office/project.config.md` when present: `minimal` asks only blocking questions, `confirm` asks for plan approval before coding, and `collaborative` offers alternatives and asks the user to choose before implementation.
+- Honor `interactive_choices_mode` from `.ai-office/project.config.md` when present: `text` keeps decisions in plain text, and `buttons-when-available` prefers host-provided structured choices for plan approvals, cleanup follow-up, and similar user decisions with text fallback when unsupported.
 - At task completion, commit only the files related to that task and prefer `ai-office task integrate <task-id>` for the final squash merge when task isolation is enabled.
 - End each completed task with a short `Cleanup proposal` section listing 0-3 optional cleanup ideas, or explicitly say there is no cleanup proposal.
 - Move tasks as soon as state changes.

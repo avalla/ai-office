@@ -9,6 +9,7 @@
 #   --stack=<preset>        Apply a stack preset (node-react|python-fastapi|go|mobile-rn)
 #   --advance-mode=<mode>   Pipeline advance mode: manual | auto (default: manual)
 #   --pre-implementation-mode=<mode>  Pre-implementation collaboration: minimal | confirm | collaborative
+#   --interactive-choices-mode=<mode> Structured decision input: text | buttons-when-available
 #   --completion-check-cmd-1=<cmd>    Optional task completion verification command #1
 #   --completion-check-cmd-2=<cmd>    Optional task completion verification command #2
 #   --completion-check-cmd-3=<cmd>    Optional task completion verification command #3
@@ -37,6 +38,7 @@ NAME_ARG=""
 STACK_ARG=""
 ADVANCE_MODE_ARG=""
 PRE_IMPLEMENTATION_MODE_ARG=""
+INTERACTIVE_CHOICES_MODE_ARG=""
 COMPLETION_CHECK_CMD_1_ARG=""
 COMPLETION_CHECK_CMD_2_ARG=""
 COMPLETION_CHECK_CMD_3_ARG=""
@@ -54,6 +56,7 @@ for arg in "$@"; do
     --stack=*)  STACK_ARG="${arg#*=}" ;;
     --advance-mode=*) ADVANCE_MODE_ARG="${arg#*=}" ;;
     --pre-implementation-mode=*) PRE_IMPLEMENTATION_MODE_ARG="${arg#*=}" ;;
+    --interactive-choices-mode=*) INTERACTIVE_CHOICES_MODE_ARG="${arg#*=}" ;;
     --completion-check-cmd-1=*) COMPLETION_CHECK_CMD_1_ARG="${arg#*=}" ;;
     --completion-check-cmd-2=*) COMPLETION_CHECK_CMD_2_ARG="${arg#*=}" ;;
     --completion-check-cmd-3=*) COMPLETION_CHECK_CMD_3_ARG="${arg#*=}" ;;
@@ -132,7 +135,7 @@ get_extra_frontmatter_lines() {
       exit
     }
     in_frontmatter == 1 {
-      if ($0 ~ /^(agency|project_name|typecheck_cmd|lint_cmd|test_cmd|test_runner|ui_framework|design_system|coverage_min|lighthouse_min|advance_mode|pre_implementation_mode|completion_check_cmd_1|completion_check_cmd_2|completion_check_cmd_3|task_isolation_mode|task_base_branch|task_merge_target|task_worktree_root):/) {
+      if ($0 ~ /^(agency|project_name|typecheck_cmd|lint_cmd|test_cmd|test_runner|ui_framework|design_system|coverage_min|lighthouse_min|advance_mode|pre_implementation_mode|interactive_choices_mode|completion_check_cmd_1|completion_check_cmd_2|completion_check_cmd_3|task_isolation_mode|task_base_branch|task_merge_target|task_worktree_root):/) {
         next
       }
       if ($0 ~ /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*/) {
@@ -604,6 +607,7 @@ COVERAGE_MIN="80"
 LIGHTHOUSE_MIN="90"
 ADVANCE_MODE="manual"
 PRE_IMPLEMENTATION_MODE="minimal"
+INTERACTIVE_CHOICES_MODE="text"
 COMPLETION_CHECK_CMD_1=""
 COMPLETION_CHECK_CMD_2=""
 COMPLETION_CHECK_CMD_3=""
@@ -628,6 +632,7 @@ if [[ "$CONFIG_EXISTS" == true ]]; then
   LIGHTHOUSE_MIN="$(get_config_value lighthouse_min)"
   ADVANCE_MODE="$(get_config_value advance_mode)"
   PRE_IMPLEMENTATION_MODE="$(get_config_value pre_implementation_mode)"
+  INTERACTIVE_CHOICES_MODE="$(get_config_value interactive_choices_mode)"
   COMPLETION_CHECK_CMD_1="$(get_config_value completion_check_cmd_1)"
   COMPLETION_CHECK_CMD_2="$(get_config_value completion_check_cmd_2)"
   COMPLETION_CHECK_CMD_3="$(get_config_value completion_check_cmd_3)"
@@ -662,6 +667,7 @@ if [[ "$CONFIG_EXISTS" == true ]]; then
   [[ -z "$LIGHTHOUSE_MIN" ]] && LIGHTHOUSE_MIN="90"
   [[ -z "$ADVANCE_MODE" ]] && ADVANCE_MODE="manual"
   [[ -z "$PRE_IMPLEMENTATION_MODE" ]] && PRE_IMPLEMENTATION_MODE="minimal"
+  [[ -z "$INTERACTIVE_CHOICES_MODE" ]] && INTERACTIVE_CHOICES_MODE="text"
   [[ -z "$COMPLETION_CHECK_CMD_1" ]] && COMPLETION_CHECK_CMD_1=""
   [[ -z "$COMPLETION_CHECK_CMD_2" ]] && COMPLETION_CHECK_CMD_2=""
   [[ -z "$COMPLETION_CHECK_CMD_3" ]] && COMPLETION_CHECK_CMD_3=""
@@ -681,6 +687,9 @@ if [[ -n "$ADVANCE_MODE_ARG" ]]; then
 fi
 if [[ -n "$PRE_IMPLEMENTATION_MODE_ARG" ]]; then
   PRE_IMPLEMENTATION_MODE="$PRE_IMPLEMENTATION_MODE_ARG"
+fi
+if [[ -n "$INTERACTIVE_CHOICES_MODE_ARG" ]]; then
+  INTERACTIVE_CHOICES_MODE="$INTERACTIVE_CHOICES_MODE_ARG"
 fi
 if [[ -n "$COMPLETION_CHECK_CMD_1_ARG" ]]; then
   COMPLETION_CHECK_CMD_1="$COMPLETION_CHECK_CMD_1_ARG"
@@ -768,6 +777,7 @@ echo ""
 echo "Pipeline behaviour:"
 prompt_with_default "  Advance mode (manual|auto)" "$ADVANCE_MODE" ADVANCE_MODE
 prompt_with_default "  Pre-implementation mode (minimal|confirm|collaborative)" "$PRE_IMPLEMENTATION_MODE" PRE_IMPLEMENTATION_MODE
+prompt_with_default "  Interactive choices (text|buttons-when-available)" "$INTERACTIVE_CHOICES_MODE" INTERACTIVE_CHOICES_MODE
 echo ""
 
 echo "Task completion verification (optional, run in order before marking work correct):"
@@ -823,6 +833,7 @@ lighthouse_min: $LIGHTHOUSE_MIN
 # Pipeline behaviour — manual | auto
 advance_mode: $ADVANCE_MODE
 pre_implementation_mode: $PRE_IMPLEMENTATION_MODE
+interactive_choices_mode: $INTERACTIVE_CHOICES_MODE
 
 # Task completion verification — optional ordered commands
 completion_check_cmd_1: "$COMPLETION_CHECK_CMD_1"

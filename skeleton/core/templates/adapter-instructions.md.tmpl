@@ -13,6 +13,10 @@ These rules are always active. Project-specific rules are in `.ai-office/project
   - `minimal`: ask only the essential blocking questions, then proceed.
   - `confirm`: finish the analysis, propose one work plan, and wait for explicit user confirmation before implementation.
   - `collaborative`: finish the analysis, propose the recommended plan plus 1-2 viable alternatives for non-trivial work, ask which path the user prefers or whether they want a different one, and wait for confirmation before implementation.
+- Read `interactive_choices_mode` from `.ai-office/project.config.md` when present and honor it for user decisions:
+  - `text`: keep decisions and confirmations in concise plain text.
+  - `buttons-when-available`: for non-trivial decisions such as plan approval, approach selection, and cleanup follow-up, prefer host-provided structured choices or buttons; if unavailable, fall back to concise text choices with the same options.
+{{STRUCTURED_CHOICE_GUIDANCE}}
 - If uncertain about an API, library, or function behavior, check docs or read the source first.
 - Never invent function signatures, parameters, or APIs that don't exist.
 - When debugging, identify the root cause before proposing fixes.
@@ -133,6 +137,7 @@ Source of truth and precedence when conflicts exist:
 - Review important written artifacts before advancing.
 - Never say "done" without recorded evidence (tests passed, lint clean, build succeeded) in the status artifact.
 - End each completed task with a short `Cleanup proposal` section containing 0-3 non-blocking cleanup ideas discovered during the work, or explicitly say there is no cleanup proposal.
+- When `interactive_choices_mode` is `buttons-when-available`, present cleanup follow-up decisions as structured choices when the host supports them, otherwise keep the same choices in concise text.
 - Use `{{VALIDATE_COMMAND}} <slug> <stage>` to verify quality gates before `{{ADVANCE_COMMAND}}`.
 - Keep diffs small and focused.
 - English-only for technical artifacts, variable names, and user-facing strings unless the project explicitly requires another language.

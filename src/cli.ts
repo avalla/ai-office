@@ -36,6 +36,7 @@ type ProjectConfig = {
   uiFramework: string;
   advanceMode: string;
   preImplementationMode: string;
+  interactiveChoicesMode: string;
   completionCheckCmd1: string;
   completionCheckCmd2: string;
   completionCheckCmd3: string;
@@ -241,6 +242,7 @@ function getProjectConfig(): ProjectConfig {
     uiFramework: "",
     advanceMode: "manual",
     preImplementationMode: "minimal",
+    interactiveChoicesMode: "text",
     completionCheckCmd1: "",
     completionCheckCmd2: "",
     completionCheckCmd3: "",
@@ -267,6 +269,7 @@ function getProjectConfig(): ProjectConfig {
     uiFramework: frontmatter.ui_framework || defaults.uiFramework,
     advanceMode: frontmatter.advance_mode || defaults.advanceMode,
     preImplementationMode: frontmatter.pre_implementation_mode || defaults.preImplementationMode,
+    interactiveChoicesMode: frontmatter.interactive_choices_mode || defaults.interactiveChoicesMode,
     completionCheckCmd1: frontmatter.completion_check_cmd_1 || defaults.completionCheckCmd1,
     completionCheckCmd2: frontmatter.completion_check_cmd_2 || defaults.completionCheckCmd2,
     completionCheckCmd3: frontmatter.completion_check_cmd_3 || defaults.completionCheckCmd3,

@@ -59,7 +59,10 @@ describe("build:adapters", () => {
     expect(readFileSync(shellMetadata, "utf8")).toContain("adapter_commands_dest_rel");
     expect(readFileSync(windsurfWorkflow, "utf8")).toContain("# /office-task-create");
     expect(readFileSync(codexInstructions, "utf8")).toContain("Codex adapter");
+    expect(readFileSync(codexInstructions, "utf8")).toContain("interactive_choices_mode");
+    expect(readFileSync(codexInstructions, "utf8")).toContain("request_user_input");
     expect(readFileSync(windsurfInstructions, "utf8")).toContain("Windsurf adapter");
+    expect(readFileSync(windsurfInstructions, "utf8")).toContain("interactive_choices_mode");
     expect(readdirSync(join(dir, "skeleton/adapters/codex/.codex/skills")).sort()).toEqual([...ALL_SUPPORTED_COMMAND_IDS].sort());
     expect(readdirSync(join(dir, "skeleton/adapters/claude-code/.claude/skills")).sort()).toEqual([...ALL_SUPPORTED_COMMAND_IDS].sort());
     expect(readdirSync(join(dir, "skeleton/adapters/opencode/.opencode/commands")).sort()).toEqual(

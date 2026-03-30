@@ -25,7 +25,7 @@ Find the task file in `.ai-office/tasks/` (any column). Extract:
 Read these if they exist:
 - `.ai-office/docs/prd/<slug>.md` — for full requirements and user stories
 - `.ai-office/docs/context/<slug>.md` — for constraints and ruled-out approaches
-- `.ai-office/project.config.md` — for `test_cmd`, `lint_cmd`, `typecheck_cmd`, and optional `completion_check_cmd_1..3`
+- `.ai-office/project.config.md` — for `test_cmd`, `lint_cmd`, `typecheck_cmd`, `interactive_choices_mode`, and optional `completion_check_cmd_1..3`
 
 ### 3. Classify each criterion
 
@@ -97,6 +97,7 @@ Cleanup proposal:
   2. <optional small cleanup or follow-up, if useful>
   3. <optional small cleanup or follow-up, if useful>
 If there is nothing meaningful to clean up, say: `Cleanup proposal: none`.
+If `interactive_choices_mode` is `buttons-when-available` and the host supports structured inputs, present the cleanup follow-up with short quick-choice options such as apply now, choose one, or skip for now. Otherwise keep the same options in concise text.
 ```
 
 Update the task file: check off all passing items in `## Acceptance Criteria`.

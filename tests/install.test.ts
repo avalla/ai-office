@@ -85,6 +85,8 @@ describe("install.sh", () => {
     expect(content).toContain("AI Office");
     expect(content).toContain("Codex");
     expect(content).toContain("pre_implementation_mode");
+    expect(content).toContain("interactive_choices_mode");
+    expect(content).toContain("request_user_input");
     expect(content).toContain("commit only the files related to that task");
     expect(content).toContain("Cleanup proposal");
   });

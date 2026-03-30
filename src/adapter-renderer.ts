@@ -66,6 +66,10 @@ function replaceTokens(input: string, host: AdapterHost, selfId?: string): strin
 }
 
 function renderInstructionTemplate(template: string, host: AdapterHost, adapterLabel: string): string {
+  const profile = getAdapterProfile(host);
+  const structuredChoiceGuidance = profile.structuredChoiceGuidance && profile.structuredChoiceGuidance.length > 0
+    ? `${profile.structuredChoiceGuidance.map((item) => `- ${item}`).join("\n")}\n`
+    : "";
   return `${renderStaticTemplate(template, {
     "{{ADAPTER_LABEL}}": adapterLabel,
     "{{ROUTE_COMMAND}}": hostCommand(host, "office-route"),
@@ -73,6 +77,7 @@ function renderInstructionTemplate(template: string, host: AdapterHost, adapterL
     "{{TASK_INTEGRATE_COMMAND}}": hostCommand(host, "office-task-integrate"),
     "{{VALIDATE_COMMAND}}": hostCommand(host, "office-validate"),
     "{{ADVANCE_COMMAND}}": hostCommand(host, "office-advance"),
+    "{{STRUCTURED_CHOICE_GUIDANCE}}": structuredChoiceGuidance,
   }).trim()}\n`;
 }
 

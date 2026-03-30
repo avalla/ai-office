@@ -25,6 +25,7 @@ export type AdapterProfile = {
   installedRulesRoot?: string;
   workflowOutputRoot?: string;
   installedWorkflowRoot?: string;
+  structuredChoiceGuidance?: string[];
 };
 
 export const ADAPTER_PROFILES: AdapterProfile[] = [
@@ -42,6 +43,11 @@ export const ADAPTER_PROFILES: AdapterProfile[] = [
     skillOutputRoot: "skeleton/adapters/codex/.codex/skills",
     installedSkillRoot: ".codex/skills",
     versionStampPath: ".codex/skills/.version",
+    structuredChoiceGuidance: [
+      "When `interactive_choices_mode` is `buttons-when-available`, use `request_user_input` when it is available in the current collaboration mode.",
+      "Keep structured prompts short, offer 2-3 mutually exclusive buttons, and put the recommended choice first.",
+      "If `request_user_input` is unavailable, fall back to concise plain-text choices with the same options.",
+    ],
   },
   {
     host: "claude-code",
@@ -145,9 +151,11 @@ export const COMMAND_SPECS: CommandSpec[] = [
       "Read `AI-OFFICE.md` and `.ai-office/project.config.md` if it exists.",
       "Summarize the request in one sentence and classify it as quick fix, feature, refactor, audit, or operational task.",
       "Check `pre_implementation_mode` in `.ai-office/project.config.md` when present.",
+      "Check `interactive_choices_mode` in `.ai-office/project.config.md` when present.",
       "If `pre_implementation_mode` is `minimal`, ask only the minimum clarifying questions needed to avoid routing the work incorrectly.",
       "If `pre_implementation_mode` is `confirm`, finish the analysis, propose one plan, and ask the user to confirm it before implementation starts.",
       "If `pre_implementation_mode` is `collaborative`, finish the analysis, propose the recommended path plus 1-2 viable alternatives for non-trivial work, and ask which approach the user prefers or whether they want a different one.",
+      "If `interactive_choices_mode` is `buttons-when-available`, prefer host-provided structured choices for plan confirmation or approach selection, with concise text fallback when unavailable.",
       "Identify the likely next artifact or pipeline stage, including whether a PRD, ADR, plan, or direct task work is appropriate.",
       "Create or update the relevant `.ai-office/docs/` context artifact when appropriate.",
       "End with the recommended next action, including the next AI Office command or CLI operation.",

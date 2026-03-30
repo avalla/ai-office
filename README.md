@@ -267,34 +267,22 @@ graph TD
 
 ---
 
-## ✨ What's New in v1.15.0
+## ✨ What's New in v1.16.0
 
-### Cleanup Proposal at Task End
-- **Non-blocking cleanup suggestions**: completed tasks now end with a short cleanup proposal containing up to three optional follow-up cleanups, or an explicit `none`
+### Structured Decision Choices
+- **Configurable interaction style**: `interactive_choices_mode` can now keep decisions in plain text or prefer clickable quick choices when the host supports them
+- **Host-aware fallback**: the same plan confirmations, approach selections, and cleanup follow-up prompts automatically fall back to concise text when buttons are unavailable
+- **Codex-specific support**: generated Codex instructions now explicitly prefer `request_user_input` when the current collaboration mode exposes it
 
-### Task Closure Git Workflow
-- **Focused task commits**: end-of-task guidance now requires committing only the files related to the task before closure
-- **Squash integration by default**: when task isolation is enabled, the recommended final integration path is `task integrate` so the merge into the target branch stays squash-based and linear
-
-### Pre-Implementation Collaboration
-- **Configurable analysis style**: `pre_implementation_mode` can now keep the current lightweight flow, require explicit plan approval, or ask the user to choose between alternative approaches before coding
-
-### Task Completion Verification
-- **Project-specific end-of-task checks**: setup can now collect up to three ordered completion-check commands, such as DB reset, regression tests, and Playwright
-- **QA validation uses configured checks**: when present, `validate <slug> qa` runs those commands in order and still reports coverage when detected
-
-### Runtime Adapter Generation
-- **Neutral manifest stays canonical**: `src/adapter-manifest.ts` remains the single source of truth for adapter behavior
-- **Selected adapters render on demand**: `install.sh` and `update.sh` now generate only the active adapter into the target project
-- **Shared Bun runtime**: `src/adapter-runtime.ts` and `src/adapter-renderer.ts` now power install/update/setup metadata and wrapper generation
-- **Preview build remains available**: `bun run build:adapters` still regenerates maintainer preview outputs when you want to inspect rendered wrappers from source
-- **Legacy cleanup still works**: `update.sh --prune-legacy` can still remove stale adapter artifacts from previous installs while preserving the active one
+### Existing Workflow Controls
+- **Pre-implementation collaboration**: `pre_implementation_mode` still controls whether the agent proceeds immediately, asks for plan confirmation, or offers alternatives before coding
+- **Task-end cleanup proposals**: completed tasks still close with a short `Cleanup proposal`, now with support for quick-choice follow-up when available
+- **Task completion verification**: setup can still collect up to three ordered completion-check commands, such as DB reset, regression tests, and Playwright
 
 ### Why It Matters
-- Removes a large set of versioned generated files from the repo
-- Reduces drift between source templates and shipped adapter wrappers
-- Keeps the adapter system easier to extend without maintaining parallel copies
-- Makes the runtime adapter path consistent across install, update, and setup
+- Makes interactive checkpoints feel lighter when the client can render buttons
+- Preserves compatibility across adapters and collaboration modes without breaking text-only hosts
+- Keeps the neutral manifest and adapter wrappers aligned around one structured-choice policy
 
 ---
 
@@ -364,7 +352,7 @@ AI-OFFICE.md                     ← Host-neutral workflow contract
 
 .ai-office/
 ├── office-config.md             ← Agency identity & base config
-├── project.config.md            ← Tech stack, thresholds, advance_mode, pre_implementation_mode
+├── project.config.md            ← Tech stack, thresholds, workflow modes, interactive choices
 ├── agency.json                  ← Active agency selection metadata
 │
 ├── milestones/                  ← M1.md, M2.md, … (milestone definitions)
@@ -909,6 +897,7 @@ lighthouse_min: 90
 # Pipeline behavior
 advance_mode: manual    # manual = pause for confirmation, auto = proceed
 pre_implementation_mode: minimal  # minimal | confirm | collaborative
+interactive_choices_mode: text    # text | buttons-when-available
 
 # Task completion verification (optional, run in order)
 completion_check_cmd_1: "npm run db:reset"
@@ -950,6 +939,12 @@ Each preset auto-fills test commands, linters, UI framework, etc.
 - **`collaborative`** makes the agent stop after analysis, present a recommended path plus alternatives when the work is non-trivial, and ask whether the user prefers one of those paths or wants to solve it differently.
 - Useful when you want a more consultative workflow without changing the rest of the AI Office pipeline.
 
+### interactive_choices_mode
+
+- **`text`** (default) keeps confirmations and small decisions in normal written form.
+- **`buttons-when-available`** tells the framework to prefer host-provided structured choices for decisions such as plan approval, approach selection, and cleanup follow-up, with automatic fallback to plain text when the host or mode cannot render buttons.
+- This setting is intentionally host-aware: some adapters or collaboration modes can expose clickable options, while others will continue to show the same choices as text.
+
 ### completion_check_cmd_1..3
 
 - Optional ordered commands executed for end-of-task verification.
@@ -961,6 +956,7 @@ Each preset auto-fills test commands, linters, UI framework, etc.
 - At the end of each completed task, the framework should include a short `Cleanup proposal`.
 - The proposal is non-blocking and should contain 0-3 small cleanups or follow-ups discovered during the task.
 - If there is nothing worth proposing, it should explicitly say `Cleanup proposal: none`.
+- When `interactive_choices_mode: buttons-when-available` is enabled, the framework should prefer quick-choice UI for cleanup follow-up decisions whenever the host supports it.
 
 ### Task Isolation
 
