@@ -13,7 +13,12 @@ coverage/
 tmp/
 
 # Local generated workspace state
+.ai-office/
+.codex/
+.claude-flow/
 .claude/worktrees/
+AGENTS.md
+AI-OFFICE.md
 .mcp.json
 /generated/adapter-metadata.sh
 /skeleton/adapters/*

@@ -9,6 +9,14 @@ import {
   type AdapterProfile,
   WINDSURF_RULE_BODY,
 } from "./adapter-manifest";
+import {
+  type InstructionConflictPolicy,
+  type InstructionMergeMode,
+  mergeInstructionFile,
+  scanAgentInstructions,
+  writeInstructionDiscoveryReport,
+  writeInstructionMergePolicy,
+} from "./instruction-discovery";
 
 type CommandSpec = (typeof COMMAND_SPECS)[number];
 type RenderInstructionMode = "always" | "if-missing" | "never";
@@ -416,6 +424,10 @@ function writeInstructionFile(
   projectRoot: string,
   adapter: AdapterProfile,
   mode: RenderInstructionMode,
+  mergeMode: InstructionMergeMode,
+  backup: boolean,
+  conflictPolicy: InstructionConflictPolicy,
+  sidecarDir: string,
 ): { target: string; written: boolean } {
   const target = adapter.instructionFileName;
   if (!target || mode === "never") {
@@ -423,12 +435,14 @@ function writeInstructionFile(
   }
 
   const outputPath = join(projectRoot, target);
-  if (mode === "if-missing" && existsSync(outputPath)) {
-    return { target, written: false };
-  }
-
-  writeText(outputPath, instructionContent(frameworkRoot, adapter));
-  return { target, written: true };
+  const existed = existsSync(outputPath);
+  const entry = mergeInstructionFile(projectRoot, target, instructionContent(frameworkRoot, adapter), {
+    mode: mergeMode,
+    backup,
+    conflictPolicy,
+    sidecarDir,
+  });
+  return { target, written: entry.action !== "skipped" };
 }
 
 export function renderInstalledAdapter(options: {
@@ -436,6 +450,10 @@ export function renderInstalledAdapter(options: {
   projectRoot: string;
   adapterHost: AdapterHost;
   instructionMode?: RenderInstructionMode;
+  instructionMergeMode?: InstructionMergeMode;
+  instructionBackup?: boolean;
+  instructionConflictPolicy?: InstructionConflictPolicy;
+  instructionSidecarDir?: string;
 }): RenderedAdapterSummary {
   const { frameworkRoot, projectRoot, adapterHost } = options;
   const adapter = getAdapterProfile(adapterHost);
@@ -444,9 +462,20 @@ export function renderInstalledAdapter(options: {
   const instruction = writeInstructionFile(
     frameworkRoot,
     projectRoot,
-    adapter,
-    options.instructionMode ?? "if-missing",
-  );
+     adapter,
+     options.instructionMode ?? "if-missing",
+     options.instructionMergeMode ?? "section",
+     options.instructionBackup ?? true,
+     options.instructionConflictPolicy ?? "keep-existing",
+     options.instructionSidecarDir ?? ".ai-office/instructions",
+   );
+  writeInstructionMergePolicy(projectRoot);
+  writeInstructionDiscoveryReport(projectRoot, scanAgentInstructions(projectRoot), {
+    mode: options.instructionMergeMode ?? "section",
+    backup: options.instructionBackup ?? true,
+    conflictPolicy: options.instructionConflictPolicy ?? "keep-existing",
+    sidecarDir: options.instructionSidecarDir ?? ".ai-office/instructions",
+  });
 
   if (adapter.host === "base") {
     return {

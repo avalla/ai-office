@@ -36,8 +36,10 @@ describe("setup.sh", () => {
     const config = join(dir, ".ai-office/project.config.md");
     assertExists(config);
     const content = readFileSync(config, "utf8");
+    expect(content).toContain("office: software-studio");
     expect(content).toContain("agency: software-studio");
     expect(content).toContain("office_mode: legacy-preset");
+    expect(content).toContain("legacy_agency_preset: software-studio");
     expect(content).toContain("project_name: test-project");
     expect(content).toContain("typecheck_cmd:");
     expect(content).toContain("lint_cmd:");
@@ -57,6 +59,28 @@ describe("setup.sh", () => {
     expect(content).toContain("enable_github_sync:");
     expect(content).toContain("token_budget_mode: conservative");
     expect(content).toContain("token_budget_max_context_files: 8");
+    expect(content).toContain("agent_operating_mode: review-first");
+    expect(content).toContain("require_intent_check: true");
+    expect(content).toContain("require_plan_before_code: true");
+    expect(content).toContain("allow_tiny_fix_fast_path: true");
+    expect(content).toContain("background_work_mode: simulated");
+    expect(content).toContain("background_requires_status_file: true");
+    expect(content).toContain("task_commit_traceability: yes");
+    expect(content).toContain("task_commit_policy: required-for-implementation");
+    expect(content).toContain("task_commit_link_mode: detect-current-branch");
+    expect(content).toContain("task_commit_require_verification: yes");
+    expect(content).toContain("github_issue_linking: optional");
+    expect(content).toContain("github_commit_linking: optional");
+    expect(content).toContain("commit_reference_style: task-and-issue");
+    expect(content).toContain("github_issue_intake: enabled");
+    expect(content).toContain("github_issue_auto_triage: suggested");
+    expect(content).toContain("agent_instruction_discovery: enabled");
+    expect(content).toContain("instruction_merge_mode: section");
+    expect(content).toContain("instruction_backup: yes");
+    expect(content).toContain("instruction_conflict_policy: keep-existing");
+    expect(content).toContain("instruction_sidecar_dir: \".ai-office/instructions\"");
+    assertExists(join(dir, ".ai-office/instruction-discovery.md"));
+    assertExists(join(dir, ".ai-office/instruction-merge-policy.md"));
   });
 
   it("generates a custom project office in auto mode", () => {
@@ -94,8 +118,11 @@ describe("setup.sh", () => {
 
     expect(exitCode).toBe(0);
     const config = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(config).toContain("office: custom-office");
     expect(config).toContain("agency: custom-office");
     expect(config).toContain("office_mode: custom");
+    expect(config).toContain('legacy_agency_preset: ""');
+    expect(config).not.toContain("Legacy agency preset: custom-office");
     expect(config).toContain('typecheck_cmd: "bun run typecheck"');
     expect(config).toContain('lint_cmd: "bun run lint"');
     expect(config).toContain('test_cmd: "bun run test"');
@@ -115,6 +142,27 @@ describe("setup.sh", () => {
     expect(gates).toContain("RLS review");
     expect(gates).toContain("security review");
 
+    const operatingModel = readFileSync(join(dir, ".ai-office/agent-operating-model.md"), "utf8");
+    expect(operatingModel).toContain("# Agent Operating Model");
+    expect(operatingModel).toContain("review-first");
+    expect(operatingModel).toContain("background-capable");
+
+    const collaborationGates = readFileSync(join(dir, ".ai-office/collaboration-gates.md"), "utf8");
+    expect(collaborationGates).toContain("# Collaboration Gates");
+    expect(collaborationGates).toContain("Gate 1: Intent Check");
+    expect(collaborationGates).toContain("Tiny Fix Fast Path");
+
+    expect(readFileSync(join(dir, ".ai-office/templates/intent-check.md"), "utf8")).toContain("# Intent Check: [Request]");
+    expect(readFileSync(join(dir, ".ai-office/templates/implementation-plan.md"), "utf8")).toContain("# Implementation Plan: [Task]");
+    expect(readFileSync(join(dir, ".ai-office/templates/background-task.md"), "utf8")).toContain("# Background-Capable Task: [Task]");
+    expect(readFileSync(join(dir, ".ai-office/background/README.md"), "utf8")).toContain("does not assume every host can run agents in the background");
+    expect(readFileSync(join(dir, ".ai-office/task-commit-policy.md"), "utf8")).toContain("# Task Commit Policy");
+    expect(readFileSync(join(dir, ".ai-office/issue-intake.md"), "utf8")).toContain("# Issue Intake");
+    expect(readFileSync(join(dir, ".ai-office/templates/github-issue-intake.md"), "utf8")).toContain("# GitHub Issue Intake");
+    expect(readFileSync(join(dir, ".ai-office/templates/user-report-triage.md"), "utf8")).toContain("# User Report Triage");
+    expect(readFileSync(join(dir, ".ai-office/templates/issue-response.md"), "utf8")).toContain("# Issue Response");
+    expect(readFileSync(join(dir, ".ai-office/intake/README.md"), "utf8")).toContain("structured intake records");
+
     const roles = readdirSync(join(dir, ".ai-office/roles")).sort();
     expect(roles).toContain("developer.md");
     expect(roles).toContain("database-security.md");
@@ -125,6 +173,61 @@ describe("setup.sh", () => {
     const agencyJson = JSON.parse(readFileSync(join(dir, ".ai-office/agency.json"), "utf8"));
     expect(agencyJson.name).toBe("custom-office");
     expect(agencyJson.custom).toBe(true);
+  });
+
+  it("generates a legacy preset summary without pretending it is a repo-analyzed custom office", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+    ]);
+
+    const profile = readFileSync(join(dir, ".ai-office/office-profile.md"), "utf8");
+    const config = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(config).toContain("office_mode: legacy-preset");
+    expect(config).toContain("legacy_agency_preset: software-studio");
+    expect(profile).toContain("## Office Mode\nlegacy-preset");
+    expect(profile).toContain("not a repository-analyzed custom office");
+  });
+
+  it("detects env file presence as a secrets risk without reading values", () => {
+    writeFileSync(join(dir, ".env.example"), "SECRET_KEY=do-not-read\n");
+    runScript("setup.sh", [dir, "--auto", "--non-interactive"]);
+
+    const profile = readFileSync(join(dir, ".ai-office/office-profile.md"), "utf8");
+    expect(profile).toContain("- secrets");
+    expect(profile).not.toContain("do-not-read");
+  });
+
+  it("does not default Python projects to npm", () => {
+    writeFileSync(join(dir, "pyproject.toml"), "[project]\nname = \"py-office\"\n");
+    runScript("setup.sh", [dir, "--auto", "--non-interactive"]);
+
+    const profile = readFileSync(join(dir, ".ai-office/office-profile.md"), "utf8");
+    expect(profile).toContain("- Language: Python");
+    expect(profile).toContain("- JavaScript package manager: none detected");
+    expect(profile).not.toContain("Package manager: npm");
+  });
+
+  it("does not default Go projects to npm", () => {
+    writeFileSync(join(dir, "go.mod"), "module github.com/acme/roadrunner\n");
+    runScript("setup.sh", [dir, "--auto", "--non-interactive"]);
+
+    const profile = readFileSync(join(dir, ".ai-office/office-profile.md"), "utf8");
+    expect(profile).toContain("- Language: Go");
+    expect(profile).toContain("- JavaScript package manager: none detected");
+    expect(profile).not.toContain("Package manager: npm");
+  });
+
+  it("does not default Deno projects to npm", () => {
+    writeFileSync(join(dir, "deno.json"), "{}\n");
+    runScript("setup.sh", [dir, "--auto", "--non-interactive"]);
+
+    const profile = readFileSync(join(dir, ".ai-office/office-profile.md"), "utf8");
+    expect(profile).toContain("- Toolchain: deno");
+    expect(profile).toContain("- JavaScript package manager: none detected");
+    expect(profile).not.toContain("Package manager: npm");
   });
 
   it("defaults advance_mode to manual", () => {
@@ -256,6 +359,8 @@ describe("setup.sh", () => {
 
     const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
     expect(content).toContain("enable_github_sync: yes");
+    expect(content).toContain("github_issue_linking: enabled");
+    expect(content).toContain("github_commit_linking: enabled");
 
     const outbound = join(dir, ".github/workflows/ai-office-sync.yml");
     const inbound = join(dir, ".github/workflows/ai-office-github-inbound.yml");
@@ -285,29 +390,27 @@ describe("setup.sh", () => {
     expect(typeof data.selectedAt).toBe("string");
   });
 
-  it("copies all bundled agency templates except custom project-specific ones", () => {
+  it("copies only the requested legacy preset by default", () => {
     runScript("setup.sh", [
       dir,
       "--non-interactive",
       "--agency=software-studio",
       "--name=test-project",
     ]);
-    const agencies = [
-      "software-studio",
-      "lean-startup",
-      "game-studio",
-      "creative-agency",
-      "media-agency",
-      "penetration-test-agency",
-      "italian-legal-studio",
-      "furniture-cad-studio",
-      "crypto-scalping-studio",
-    ];
-    for (const agency of agencies) {
-      assertExists(join(dir, `.ai-office/agencies/${agency}`), agency);
-      assertExists(join(dir, `.ai-office/agencies/${agency}/config.md`), `${agency}/config.md`);
-    }
-    expect(existsSync(join(dir, ".ai-office/agencies/autoepoque"))).toBe(false);
+    assertExists(join(dir, ".ai-office/agencies/software-studio/config.md"));
+    expect(existsSync(join(dir, ".ai-office/agencies/lean-startup/config.md"))).toBe(false);
+  });
+
+  it("copies all bundled legacy presets when explicitly requested", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--auto",
+      "--include-legacy-presets",
+      "--name=test-project",
+    ]);
+    assertExists(join(dir, ".ai-office/agencies/software-studio/config.md"));
+    assertExists(join(dir, ".ai-office/agencies/lean-startup/config.md"));
   });
 
   it("preserves project-local custom agencies during setup", () => {

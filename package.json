@@ -1,6 +1,6 @@
 {
   "name": "ai-office-framework",
-  "version": "1.17.0",
+  "version": "1.18.0",
   "description": "Repo-native workflow and memory layer for AI coding agents with a host-neutral core and adapter-based integrations",
   "bin": {
     "ai-office": "./bin/ai-office"

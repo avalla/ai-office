@@ -23,22 +23,20 @@ AI Office gives your existing AI coding assistant a durable operating model:
 
 ```mermaid
 graph LR
-    A[👤 User Request] -->|$office-route| B[📋 Discussion Phase]
-    B -->|Create Context| C[📝 PRD Stage]
-    C -->|CEO Approval| D[🏗️ ADR Stage]
-    D -->|Architecture| E[📊 Plan Stage]
-    E -->|Break Tasks| F[🎯 Execution]
-    F -->|Dev+UX+Security| G[🧪 QA Stage]
-    G -->|Verify| H[👁️ Review Stage]
-    H -->|Approve| I[✅ UAT Stage]
-    I -->|Sign-off| J[🚀 Release]
-    J -->|Deploy| K[📖 Postmortem]
+    A[User Request] --> B[Route]
+    B --> C[Project Profile]
+    C --> D[Stage Artifact]
+    D --> E[Task]
+    E --> F[Implementation]
+    F --> G[Verification]
+    G --> H[Review]
+    H --> I[Release Notes / Memory]
 
     style A fill:#e1f5ff
-    style B fill:#fff3e0
+    style C fill:#fff3e0
     style F fill:#f3e5f5
     style G fill:#e8f5e9
-    style J fill:#c8e6c9
+    style I fill:#c8e6c9
 ```
 
 ---
@@ -101,6 +99,12 @@ Setup generates:
 - `.ai-office/pipeline.md`
 - `.ai-office/quality-gates.md`
 - `.ai-office/roles/*.md`
+- `.ai-office/agent-operating-model.md`
+- `.ai-office/collaboration-gates.md`
+- `.ai-office/templates/intent-check.md`
+- `.ai-office/templates/implementation-plan.md`
+- `.ai-office/templates/background-task.md`
+- `.ai-office/background/README.md`
 - `.ai-office/project.config.md`
 
 ## Why Not Just Use a Multi-Agent Framework?
@@ -108,6 +112,98 @@ Setup generates:
 AI Office is not an agent runtime. It does not try to run autonomous agents forever.
 
 It gives your existing AI coding assistant a durable operating system: project memory, workflow state, task board, quality gates, and role-specific instructions.
+
+## Agent Operating Model
+
+AI Office makes coding agents less reactive.
+
+Before implementation, AI Office can require:
+
+- intent check
+- task classification
+- product/architecture fit review
+- implementation plan
+- verification gates
+- memory update
+
+This helps turn coding agents from patch executors into disciplined repo collaborators.
+
+The default mode is `review-first`: for non-trivial work, the agent reviews intent, checks product and architecture fit, proposes the smallest safe path, and only then implements. Tiny low-risk fixes can use a fast path when the generated collaboration gates allow it.
+
+## Background-Capable Workflows
+
+AI Office supports background-capable workflows without assuming every host can run agents in the background.
+
+When true background execution is available, AI Office can describe async task execution.
+
+When it is not available, AI Office uses queued tasks, status files, scheduled checks, CI/GitHub triggers, and resume instructions.
+
+The default mode is `simulated`, meaning background work is markdown/status-file based unless the host explicitly supports true background execution.
+
+## Task-to-Commit and GitHub Issue Traceability
+
+AI Office can link tasks to Git commits, GitHub issues, and pull requests.
+
+This lets you track:
+
+- which task produced which commit
+- which GitHub issue belongs to which AI Office task
+- which commits completed a task
+- whether verification happened before completion
+- whether a task was integrated
+- which tasks have missing commit evidence
+
+AI Office does not force every task into exactly one commit. A task may have multiple commits, or be explicitly marked no-code/docs-only/superseded.
+
+```bash
+./setup.sh . \
+  --task-commit-traceability=yes \
+  --task-commit-policy=required-for-implementation \
+  --github-issue-linking=enabled \
+  --github-commit-linking=enabled \
+  --commit-reference-style=task-and-issue
+
+$office-task-commit M1_T003 abc1234 issue:#123 verification:"bun test passed"
+$office-task-trace M1_T003
+$office-task-trace abc1234
+$office-task-trace #123
+```
+
+## GitHub Issue Intake
+
+AI Office can turn user-reported GitHub Issues into structured work.
+
+```text
+GitHub Issue -> Intake -> Classification -> AI Office Task -> Intent Check -> Plan -> Commit / PR -> Verification -> Issue Update
+```
+
+This preserves the original user report, classifies it, links it to a task, and traces the eventual fix back to commits and PRs.
+
+```bash
+$office-issue-intake #123 --create-task
+$office-issue-triage #123
+$office-issue-link #123 M1_T003
+$office-issue-response #123 fixed
+$office-task-trace #123
+```
+
+Issue comments and issue closure are not automatic by default. Security reports should be handled in private mode and should not expose sensitive details in public responses.
+
+## Existing Agent Instructions
+
+AI Office detects and preserves existing agent instruction files such as `CLAUDE.md`, `AGENTS.md`, `.cursor/rules`, `.windsurf/rules`, `.github/copilot-instructions.md`, `opencode.json`, and adapter-specific command directories.
+
+It does not overwrite your existing prompts by default.
+
+Instead, it can merge a small AI Office managed section, create sidecar files, or skip modification entirely.
+
+```bash
+$office-instruction-scan
+$office-instruction-merge --mode=section --target=CLAUDE.md
+$office-instruction-status
+```
+
+Managed sections are bounded by `AI-OFFICE:START` and `AI-OFFICE:END`. User-owned content outside that block is preserved, and backups are written to `.ai-office/backups/instructions/` before existing files are changed.
 
 ## Token Efficiency
 
@@ -259,6 +355,16 @@ graph TD
 |---------|---------|
 | `$office` | **Start here.** Interactive wizard to discover and execute commands step-by-step |
 | `$office-route <request>` | Classify request type, run discussion phase, suggest pipeline path, create context |
+| `$office-intent-check <request>` | Review user intent, product fit, architecture fit, risk, and next action before implementation |
+| `$office-plan <task-or-request>` | Create an implementation plan before coding |
+| `$office-background create\|status\|resume\|list` | Manage background-capable task status and resume files |
+| `$office-instruction-scan` | Detect existing AI agent instruction files without changing them |
+| `$office-instruction-merge [--mode=...] [--target=...]` | Merge AI Office managed instructions safely |
+| `$office-instruction-status` | Show managed block or sidecar status for detected instruction files |
+| `$office-issue-intake <issue>` | Create a structured intake record from a GitHub Issue |
+| `$office-issue-triage <issue>` | Classify a user report and choose the next action |
+| `$office-issue-link <issue> <task-id>` | Link a GitHub Issue to an AI Office task |
+| `$office-issue-response <issue\|task-id> [kind]` | Draft a GitHub Issue response from task state |
 | `$office-status <slug> [state] [owner] [notes]` | Get current pipeline status or update it |
 
 ### Pipeline Management
@@ -276,6 +382,8 @@ graph TD
 | `$office-task-create <title> [ms:M1] [priority:HIGH] [column:BACKLOG] [assignee:Developer] [estimate:4h] [labels:bug,auth] [slug:feature]` | Create new task with optional slug linking |
 | `$office-task-move <task-id> <column> [reason]` | Move task (BACKLOG, TODO, WIP, REVIEW, BLOCKED, REJECTED, DONE, ARCHIVED) |
 | `$office-task-update <task-id> [priority:] [assignee:] [estimate:] [labels:] [slug:]` | Update task metadata without moving |
+| `$office-task-commit <task-id> [sha\|--detect] [verification:...]` | Link commits, issue/PR metadata, and verification evidence to a task |
+| `$office-task-trace <task-id\|sha\|#issue>` | Show task-to-commit / issue / PR traceability |
 | `$office-task-list [column] [ms:M1] [assignee:name]` | View kanban board (shows Labels, BLOCKED, and REJECTED columns) |
 
 ### Quality & Testing
@@ -300,9 +408,10 @@ graph TD
 
 | Command | Purpose |
 |---------|---------|
-| `$office-role <agent-name>` | Display agent personality, competencies, stage-specific guidance |
-| `$office-agency list\|get <name>\|select <name>` | Manage active agency |
-| `$office-setup` | Reconfigure project (agency, tech stack, thresholds) |
+| `$office-profile [summary\|regenerate]` | Read, summarize, or regenerate the custom project office profile |
+| `$office-role <role-name>` | Display generated role guidance, with legacy agent profiles as fallback |
+| `$office-agency list\|get <name>` | Inspect optional legacy presets |
+| `$office-setup` | Reconfigure project office, stack, thresholds, and token budget |
 | `$office-doctor` | Framework health check (directories, config, command count, integrity) |
 | `$office-_meta` | Show version, check for updates |
 
@@ -314,7 +423,7 @@ graph TD
 
 ---
 
-## What's New in v1.17.0
+## What's New in v1.18.0
 
 ### Custom Project Office
 - **Repo analysis by default**: setup now inspects the target project and generates a custom project office instead of asking users to pick a preset first
@@ -863,9 +972,9 @@ The owner (Planner) must explicitly unblock by setting a new stage or unblock cr
 
 Pre-built agencies remain available as optional legacy presets and examples. The default setup path is repo analysis plus generated custom project office.
 
-| Agency | Best for | Active agents | Key traits |
+| Legacy preset | Best for | Legacy roles | Key traits |
 |--------|----------|---------------|-----------|
-| **software-studio** | Full-stack SaaS / web apps | 13 | Complete SDLC, all quality gates, CEO approval, security review |
+| **software-studio** | Full-stack SaaS / web apps | 13 | Complete SDLC, quality gates, security review |
 | **lean-startup** | Rapid MVP / startup | 7 | Minimal process, quick feedback loops, fast iteration |
 | **game-studio** | Games & interactive | Custom | Playtesting, balance, creative reviews |
 | **creative-agency** | Media & content production | Audio/video/image creators | Asset production, creative review cycle |
@@ -930,10 +1039,13 @@ graph LR
 
 ```yaml
 ---
-agency: software-studio
+office: custom-office
+office_mode: custom
+legacy_agency_preset: ""
+agency: custom-office # deprecated compatibility field
 project_name: my-app
 
-# Build & test commands (with fallbacks in parentheses)
+# Build & test commands
 typecheck_cmd: "npm run typecheck"
 lint_cmd: "npm run lint"
 test_cmd: "npm run test"
@@ -1165,7 +1277,7 @@ $office-scaffold notifications status
 # 5. Check the PRD
 $office-review .ai-office/docs/prd/notifications.md
 
-# 6. Advance to PRD stage (CEO approval)
+# 6. Advance from PRD with recorded evidence
 $office-advance notifications "PRD complete and reviewed"
 ```
 

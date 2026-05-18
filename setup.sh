@@ -6,6 +6,7 @@
 # Flags:
 #   --auto                  Analyze the repo and generate a custom project office (default)
 #   --agency=<name>         Use a legacy preset agency instead of custom office generation
+#   --include-legacy-presets Copy all bundled legacy presets into .ai-office/agencies
 #   --name=<name>           Skip project name prompt
 #   --stack=<preset>        Apply a stack preset (node-react|python-fastapi|go|mobile-rn)
 #   --advance-mode=<mode>   Pipeline advance mode: manual | auto (default: manual)
@@ -19,6 +20,15 @@
 #   --task-merge-target=<name>    Integration branch for task squash merges (default: dev)
 #   --task-worktree-root=<path>   Root folder for task worktrees (default: .ai-office/worktrees)
 #   --enable-github-sync=<yes|no> Enable official AI Office <-> GitHub workflow files
+#   --task-commit-traceability=<yes|no>
+#   --task-commit-policy=<disabled|suggested|required-for-implementation|required-for-all>
+#   --task-commit-link-mode=<manual|detect-current-branch|detect-recent-commit>
+#   --github-issue-linking=<disabled|optional|enabled>
+#   --github-commit-linking=<disabled|optional|enabled>
+#   --commit-reference-style=<task-id|issue-number|task-and-issue|conventional>
+#   --github-issue-intake=<disabled|enabled>
+#   --scan-agent-instructions
+#   --instruction-merge-mode=<section|sidecar|append|skip|overwrite-explicit>
 #   --non-interactive       Use all defaults or existing values, no prompts
 #   --reconfigure           Overwrite an existing project.config.md using current values as defaults
 #   --force                 Alias for --reconfigure
@@ -36,6 +46,7 @@ eval "$(bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" emit-shell-metadata)"
 # Parse flags
 PROJECT_ROOT_ARG=""
 AGENCY_ARG=""
+INCLUDE_LEGACY_PRESETS=false
 AUTO_MODE=true
 NAME_ARG=""
 STACK_ARG=""
@@ -50,6 +61,25 @@ TASK_BASE_BRANCH_ARG=""
 TASK_MERGE_TARGET_ARG=""
 TASK_WORKTREE_ROOT_ARG=""
 ENABLE_GITHUB_SYNC_ARG=""
+TASK_COMMIT_TRACEABILITY_ARG=""
+TASK_COMMIT_POLICY_ARG=""
+TASK_COMMIT_LINK_MODE_ARG=""
+TASK_COMMIT_REQUIRE_VERIFICATION_ARG=""
+TASK_COMMIT_ALLOW_NO_CODE_ARG=""
+GITHUB_ISSUE_LINKING_ARG=""
+GITHUB_COMMIT_LINKING_ARG=""
+COMMIT_REFERENCE_STYLE_ARG=""
+GITHUB_ISSUE_INTAKE_ARG=""
+GITHUB_ISSUE_AUTO_TRIAGE_ARG=""
+GITHUB_ISSUE_CREATE_TASK_ARG=""
+GITHUB_ISSUE_COMMENT_UPDATES_ARG=""
+GITHUB_ISSUE_CLOSE_ON_INTEGRATION_ARG=""
+GITHUB_ISSUE_SECURITY_PRIVATE_MODE_ARG=""
+AGENT_INSTRUCTION_DISCOVERY_ARG=""
+INSTRUCTION_MERGE_MODE_ARG=""
+INSTRUCTION_BACKUP_ARG=""
+INSTRUCTION_CONFLICT_POLICY_ARG=""
+INSTRUCTION_SIDECAR_DIR_ARG=""
 NON_INTERACTIVE=false
 RECONFIGURE=false
 for arg in "$@"; do
@@ -57,6 +87,7 @@ for arg in "$@"; do
     --reconfigure|--force) RECONFIGURE=true ;;
     --auto) AUTO_MODE=true ;;
     --agency=*) AGENCY_ARG="${arg#*=}"; AUTO_MODE=false ;;
+    --include-legacy-presets) INCLUDE_LEGACY_PRESETS=true ;;
     --name=*)   NAME_ARG="${arg#*=}" ;;
     --stack=*)  STACK_ARG="${arg#*=}" ;;
     --advance-mode=*) ADVANCE_MODE_ARG="${arg#*=}" ;;
@@ -70,6 +101,26 @@ for arg in "$@"; do
     --task-merge-target=*) TASK_MERGE_TARGET_ARG="${arg#*=}" ;;
     --task-worktree-root=*) TASK_WORKTREE_ROOT_ARG="${arg#*=}" ;;
     --enable-github-sync=*) ENABLE_GITHUB_SYNC_ARG="${arg#*=}" ;;
+    --task-commit-traceability=*) TASK_COMMIT_TRACEABILITY_ARG="${arg#*=}" ;;
+    --task-commit-policy=*) TASK_COMMIT_POLICY_ARG="${arg#*=}" ;;
+    --task-commit-link-mode=*) TASK_COMMIT_LINK_MODE_ARG="${arg#*=}" ;;
+    --task-commit-require-verification=*) TASK_COMMIT_REQUIRE_VERIFICATION_ARG="${arg#*=}" ;;
+    --task-commit-allow-no-code=*) TASK_COMMIT_ALLOW_NO_CODE_ARG="${arg#*=}" ;;
+    --github-issue-linking=*) GITHUB_ISSUE_LINKING_ARG="${arg#*=}" ;;
+    --github-commit-linking=*) GITHUB_COMMIT_LINKING_ARG="${arg#*=}" ;;
+    --commit-reference-style=*) COMMIT_REFERENCE_STYLE_ARG="${arg#*=}" ;;
+    --github-issue-intake=*) GITHUB_ISSUE_INTAKE_ARG="${arg#*=}" ;;
+    --github-issue-auto-triage=*) GITHUB_ISSUE_AUTO_TRIAGE_ARG="${arg#*=}" ;;
+    --github-issue-create-task=*) GITHUB_ISSUE_CREATE_TASK_ARG="${arg#*=}" ;;
+    --github-issue-comment-updates=*) GITHUB_ISSUE_COMMENT_UPDATES_ARG="${arg#*=}" ;;
+    --github-issue-close-on-integration=*) GITHUB_ISSUE_CLOSE_ON_INTEGRATION_ARG="${arg#*=}" ;;
+    --github-issue-security-private-mode=*) GITHUB_ISSUE_SECURITY_PRIVATE_MODE_ARG="${arg#*=}" ;;
+    --scan-agent-instructions) AGENT_INSTRUCTION_DISCOVERY_ARG="enabled" ;;
+    --agent-instruction-discovery=*) AGENT_INSTRUCTION_DISCOVERY_ARG="${arg#*=}" ;;
+    --instruction-merge-mode=*) INSTRUCTION_MERGE_MODE_ARG="${arg#*=}" ;;
+    --instruction-backup=*) INSTRUCTION_BACKUP_ARG="${arg#*=}" ;;
+    --instruction-conflict-policy=*) INSTRUCTION_CONFLICT_POLICY_ARG="${arg#*=}" ;;
+    --instruction-sidecar-dir=*) INSTRUCTION_SIDECAR_DIR_ARG="${arg#*=}" ;;
     --non-interactive) NON_INTERACTIVE=true ;;
     -*)
       echo "⚠️  Unknown flag: $arg"
@@ -141,7 +192,7 @@ get_extra_frontmatter_lines() {
       exit
     }
     in_frontmatter == 1 {
-      if ($0 ~ /^(agency|office_mode|project_name|typecheck_cmd|lint_cmd|test_cmd|test_runner|ui_framework|design_system|coverage_min|lighthouse_min|advance_mode|pre_implementation_mode|interactive_choices_mode|completion_check_cmd_1|completion_check_cmd_2|completion_check_cmd_3|task_isolation_mode|task_base_branch|task_merge_target|task_worktree_root|enable_github_sync|token_budget_mode|token_budget_max_context_files|token_budget_max_roles_per_task|token_budget_max_stage_artifacts|token_budget_max_review_iterations|token_budget_summarize_after_stage):/) {
+      if ($0 ~ /^(office|office_mode|legacy_agency_preset|agency|project_name|typecheck_cmd|lint_cmd|test_cmd|test_runner|ui_framework|design_system|coverage_min|lighthouse_min|advance_mode|pre_implementation_mode|interactive_choices_mode|completion_check_cmd_1|completion_check_cmd_2|completion_check_cmd_3|task_isolation_mode|task_base_branch|task_merge_target|task_worktree_root|enable_github_sync|token_budget_mode|token_budget_max_context_files|token_budget_max_roles_per_task|token_budget_max_stage_artifacts|token_budget_max_review_iterations|token_budget_summarize_after_stage|agent_operating_mode|require_intent_check|require_plan_before_code|allow_tiny_fix_fast_path|max_plan_options|stop_on_product_mismatch|background_work_mode|background_max_active_tasks|background_requires_status_file|background_requires_resume_instructions|task_commit_traceability|task_commit_policy|task_commit_link_mode|task_commit_require_verification|task_commit_allow_no_code|task_commit_allow_multiple|task_commit_message_template|github_issue_linking|github_commit_linking|commit_reference_style|github_commit_closes_issue|github_issue_intake|github_issue_auto_triage|github_issue_create_task|github_issue_default_column|github_issue_default_milestone|github_issue_label_sync|github_issue_comment_updates|github_issue_close_on_integration|github_issue_security_private_mode|agent_instruction_discovery|instruction_merge_mode|instruction_backup|instruction_conflict_policy|instruction_sidecar_dir):/) {
         next
       }
       if ($0 ~ /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*/) {
@@ -180,30 +231,55 @@ if [[ "$CONFIG_EXISTS" == true ]]; then
   echo "→ Reconfiguring existing project settings"
 fi
 
-# ── Copy bundled agency templates ────────────────────────────────────────────
-echo "→ Installing agency templates..."
-for agency_dir in "$FRAMEWORK_DIR/skeleton/core/.ai-office/agencies"/*/; do
-  agency_name="$(basename "$agency_dir")"
-  target="$AI_OFFICE/agencies/$agency_name"
+# ── Legacy preset helpers ─────────────────────────────────────────────────────
+copy_legacy_preset() {
+  local preset_name="$1"
+  local source="$FRAMEWORK_DIR/skeleton/core/.ai-office/agencies/$preset_name"
+  local target="$AI_OFFICE/agencies/$preset_name"
+  if [[ ! -d "$source" ]]; then
+    return
+  fi
   if [[ ! -d "$target" ]]; then
     mkdir -p "$target"
-    cp "$agency_dir"*.md "$target/"
-    echo "  ✅ $agency_name"
+    cp "$source"/*.md "$target/"
+    echo "  ✅ $preset_name"
   else
-    echo "  ↩️  $agency_name (already present, skipped)"
+    echo "  ↩️  $preset_name (already present, skipped)"
   fi
-done
-echo ""
+}
 
-# ── Agency selection ──────────────────────────────────────────────────────────
-# Discover bundled agencies plus any project-local custom agencies
+if [[ "$INCLUDE_LEGACY_PRESETS" == true ]]; then
+  echo "→ Installing optional legacy presets..."
+  for preset_dir in "$FRAMEWORK_DIR/skeleton/core/.ai-office/agencies"/*/; do
+    copy_legacy_preset "$(basename "$preset_dir")"
+  done
+  echo ""
+elif [[ -n "$AGENCY_ARG" ]]; then
+  echo "→ Installing requested legacy preset..."
+  copy_legacy_preset "$AGENCY_ARG"
+  echo ""
+else
+  echo "→ Keeping bundled legacy presets in framework source"
+  echo "  Use --agency=<name> or --include-legacy-presets to copy presets into this project."
+  echo ""
+fi
+
+# ── Legacy preset selection ───────────────────────────────────────────────────
 AGENCIES=()
 AGENCY_DESCS=()
 AGENCY_CUSTOMS=()
 
-for agency_dir in "$AI_OFFICE/agencies"/*/; do
+for agency_dir in "$FRAMEWORK_DIR/skeleton/core/.ai-office/agencies"/*/ "$AI_OFFICE/agencies"/*/; do
   [[ -d "$agency_dir" ]] || continue
   agency_slug="$(basename "$agency_dir")"
+  already_seen=false
+  for existing in "${AGENCIES[@]}"; do
+    if [[ "$existing" == "$agency_slug" ]]; then
+      already_seen=true
+      break
+    fi
+  done
+  [[ "$already_seen" == true ]] && continue
   config_file="$agency_dir/config.md"
   [[ -f "$config_file" ]] || continue
   desc="$(awk '/^description:/{sub(/^description:[[:space:]]*/, ""); print; exit}' "$config_file")"
@@ -215,387 +291,7 @@ done
 
 # ── Project analysis ──────────────────────────────────────────────────────────
 detect_project_settings() {
-  PROJECT_ROOT="$PROJECT_ROOT" bun - <<'DETECT_EOF'
-import { existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { basename, join, relative } from "path";
-
-const root = process.env.PROJECT_ROOT;
-const ignoreDirs = new Set([
-  ".ai-office",
-  ".ai-office-TMP",
-  ".git",
-  ".next",
-  ".turbo",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-  "test-results",
-]);
-const interestingFiles = new Set([
-  "components.json",
-  "Dockerfile",
-  "deno.json",
-  "deno.jsonc",
-  "fly.toml",
-  "go.mod",
-  "netlify.toml",
-  "postcss.config.cjs",
-  "postcss.config.js",
-  "postcss.config.mjs",
-  "pyproject.toml",
-  "supabase",
-  "tailwind.config.cjs",
-  "tailwind.config.js",
-  "tailwind.config.mjs",
-  "tailwind.config.ts",
-  "tsconfig.json",
-  "vercel.json",
-  "wrangler.toml",
-]);
-const packageJsonPaths = new Set();
-const discoveredFiles = new Set();
-const discoveredPaths = new Set();
-
-function walk(dir, depth = 0) {
-  if (depth > 5) {
-    return;
-  }
-
-  for (const entry of readdirSync(dir)) {
-    if (ignoreDirs.has(entry)) {
-      continue;
-    }
-
-    const fullPath = join(dir, entry);
-    let stats;
-    try {
-      stats = statSync(fullPath);
-    } catch {
-      continue;
-    }
-
-    if (stats.isDirectory()) {
-      if (interestingFiles.has(entry) || entry === ".github" || entry === "migrations" || entry === "apps" || entry === "packages") {
-        discoveredPaths.add(relative(root, fullPath));
-      }
-      walk(fullPath, depth + 1);
-      continue;
-    }
-
-    if (entry === "package.json") {
-      packageJsonPaths.add(fullPath);
-    }
-
-    if (interestingFiles.has(entry)) {
-      discoveredFiles.add(entry);
-      discoveredPaths.add(relative(root, fullPath));
-    }
-  }
-}
-
-function safeReadJson(filePath) {
-  try {
-    return JSON.parse(readFileSync(filePath, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
-function safeReadText(filePath) {
-  try {
-    return readFileSync(filePath, "utf8");
-  } catch {
-    return "";
-  }
-}
-
-function detectPackageManager() {
-  if (existsSync(join(root, "bun.lock")) || existsSync(join(root, "bun.lockb"))) {
-    return "bun";
-  }
-  if (existsSync(join(root, "pnpm-lock.yaml"))) {
-    return "pnpm";
-  }
-  if (existsSync(join(root, "yarn.lock"))) {
-    return "yarn";
-  }
-  return "npm";
-}
-
-function scriptCommand(packageManager, scriptName) {
-  switch (packageManager) {
-    case "bun":
-      return `bun run ${scriptName}`;
-    case "pnpm":
-      return `pnpm run ${scriptName}`;
-    case "yarn":
-      return `yarn ${scriptName}`;
-    default:
-      return `npm run ${scriptName}`;
-  }
-}
-
-function execCommand(packageManager, binary, args = "") {
-  const suffix = args ? ` ${args}` : "";
-  switch (packageManager) {
-    case "bun":
-      return `bunx ${binary}${suffix}`;
-    case "pnpm":
-      return `pnpm exec ${binary}${suffix}`;
-    case "yarn":
-      return `yarn ${binary}${suffix}`;
-    default:
-      return `npx ${binary}${suffix}`;
-  }
-}
-
-function emit(key, value) {
-  if (value) {
-    console.log(`${key}\t${String(value).replace(/\r?\n/g, " ").trim()}`);
-  }
-}
-
-walk(root);
-
-const rootPackagePath = join(root, "package.json");
-const rootPackage = existsSync(rootPackagePath) ? safeReadJson(rootPackagePath) : null;
-const allPackages = Array.from(packageJsonPaths)
-  .map((packagePath) => safeReadJson(packagePath))
-  .filter(Boolean);
-const dependencyNames = new Set();
-
-for (const pkg of allPackages) {
-  for (const field of ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]) {
-    const group = pkg[field];
-    if (!group || typeof group !== "object") {
-      continue;
-    }
-    for (const name of Object.keys(group)) {
-      dependencyNames.add(name);
-    }
-  }
-}
-
-const dependencies = Array.from(dependencyNames);
-const hasDependency = (name) => dependencyNames.has(name);
-const hasDependencyPrefix = (prefix) => dependencies.some((name) => name.startsWith(prefix));
-const packageManager = detectPackageManager();
-const scripts = rootPackage && typeof rootPackage.scripts === "object" ? rootPackage.scripts : {};
-const pickScript = (candidates) => candidates.find((candidate) => typeof scripts[candidate] === "string") || "";
-const rootDirName = basename(root);
-
-let projectName = rootDirName;
-let typecheckCmd = "";
-let lintCmd = "";
-let testCmd = "";
-let testRunner = "";
-let uiFramework = "";
-let designSystem = "";
-let summaryPrefix = "";
-let language = "";
-
-const pyprojectText = safeReadText(join(root, "pyproject.toml"));
-const goModText = safeReadText(join(root, "go.mod"));
-const hasRootDenoConfig = existsSync(join(root, "deno.json")) || existsSync(join(root, "deno.jsonc"));
-
-if (rootPackage) {
-  summaryPrefix = packageManager;
-  language = hasDependency("typescript") || discoveredPaths.has("tsconfig.json") ? "TypeScript" : "JavaScript";
-  if (typeof rootPackage.name === "string" && rootPackage.name.trim()) {
-    projectName = rootPackage.name.replace(/^@[^/]+\//, "");
-  }
-
-  const typecheckScript = pickScript(["typecheck", "typecheck:all", "type-check", "check-types", "tsc"]);
-  if (typecheckScript) {
-    typecheckCmd = scriptCommand(packageManager, typecheckScript);
-  } else if (hasDependency("typescript")) {
-    typecheckCmd = execCommand(packageManager, "tsc", "--noEmit");
-  }
-
-  const lintScript = pickScript(["lint", "lint:all"]);
-  if (lintScript) {
-    lintCmd = scriptCommand(packageManager, lintScript);
-  } else if (hasDependency("eslint")) {
-    lintCmd = execCommand(packageManager, "eslint", ".");
-  }
-
-  const testScript = pickScript(["test", "test:all", "test:ci", "test:unit", "test:vitest", "test:e2e"]);
-  if (testScript) {
-    testCmd = scriptCommand(packageManager, testScript);
-  } else if (hasDependency("vitest")) {
-    testCmd = execCommand(packageManager, "vitest", "run");
-  } else if (hasDependency("jest")) {
-    testCmd = execCommand(packageManager, "jest");
-  } else if (hasDependency("@playwright/test")) {
-    testCmd = execCommand(packageManager, "playwright", "test");
-  }
-
-  const scriptText = `${testCmd} ${Object.values(scripts).join(" ")}`.toLowerCase();
-  if (hasDependency("vitest") || scriptText.includes("vitest")) {
-    testRunner = "vitest";
-  } else if (hasDependency("jest") || scriptText.includes("jest")) {
-    testRunner = "jest";
-  } else if (scriptText.includes("bun test")) {
-    testRunner = "bun test";
-  } else if (hasDependency("@playwright/test") || scriptText.includes("playwright")) {
-    testRunner = "playwright";
-  }
-
-  if (
-    hasDependency("react-native") ||
-    hasDependency("expo") ||
-    hasDependency("react-native-paper") ||
-    hasDependency("nativewind")
-  ) {
-    uiFramework = "react-native";
-  } else if (hasDependency("react") || hasDependency("react-dom") || hasDependency("next")) {
-    uiFramework = "react";
-  } else if (hasDependency("vue") || hasDependency("nuxt")) {
-    uiFramework = "vue";
-  } else if (hasDependency("svelte") || hasDependency("@sveltejs/kit")) {
-    uiFramework = "svelte";
-  } else if (hasDependency("solid-js") || hasDependency("solid-start")) {
-    uiFramework = "solid";
-  } else if (hasDependency("@angular/core")) {
-    uiFramework = "angular";
-  }
-
-  if (hasDependency("@shadcn/ui") || discoveredFiles.has("components.json")) {
-    designSystem = "shadcn/ui";
-  } else if (hasDependency("@mui/material")) {
-    designSystem = "MUI";
-  } else if (hasDependency("@chakra-ui/react")) {
-    designSystem = "Chakra UI";
-  } else if (hasDependency("@mantine/core")) {
-    designSystem = "Mantine";
-  } else if (hasDependency("antd")) {
-    designSystem = "Ant Design";
-  } else if (hasDependency("react-native-paper")) {
-    designSystem = "React Native Paper";
-  } else if (
-    hasDependency("tailwindcss") ||
-    hasDependency("@tailwindcss/cli") ||
-    hasDependency("@tailwindcss/vite") ||
-    discoveredFiles.has("tailwind.config.js") ||
-    discoveredFiles.has("tailwind.config.ts") ||
-    discoveredFiles.has("tailwind.config.cjs") ||
-    discoveredFiles.has("tailwind.config.mjs")
-  ) {
-    designSystem = "Tailwind CSS";
-  } else if (hasDependencyPrefix("@radix-ui/")) {
-    designSystem = "Radix UI";
-  }
-} else if (pyprojectText) {
-  summaryPrefix = "python";
-  language = "Python";
-  const pyprojectName =
-    pyprojectText.match(/^\s*name\s*=\s*["']([^"']+)["']/m)?.[1] ||
-    pyprojectText.match(/^\s*\[project\][\s\S]*?^\s*name\s*=\s*["']([^"']+)["']/m)?.[1];
-  projectName = pyprojectName || rootDirName;
-  typecheckCmd = "mypy src";
-  lintCmd = "ruff check .";
-  testCmd = "pytest";
-  testRunner = "pytest";
-} else if (goModText) {
-  summaryPrefix = "go";
-  language = "Go";
-  const moduleName = goModText.match(/^module\s+(.+)$/m)?.[1]?.trim();
-  projectName = moduleName ? moduleName.split("/").pop() || rootDirName : rootDirName;
-  typecheckCmd = "go vet ./...";
-  lintCmd = "golangci-lint run";
-  testCmd = "go test ./...";
-  testRunner = "go test";
-} else if (hasRootDenoConfig) {
-  summaryPrefix = "deno";
-  language = "TypeScript";
-  typecheckCmd = "deno check .";
-  lintCmd = "deno lint";
-  testCmd = "deno test";
-  testRunner = "deno test";
-}
-
-const hasPath = (pattern) => Array.from(discoveredPaths).some((value) => pattern.test(value));
-const hasSupabase = hasDependency("@supabase/supabase-js") || hasPath(/^supabase(\/|$)/) || hasPath(/migrations/i);
-const hasPostgres = hasDependency("pg") || hasDependency("postgres") || hasDependency("drizzle-orm") || hasDependency("prisma") || hasSupabase;
-const hasUi = Boolean(uiFramework);
-const hasInfra = discoveredFiles.has("Dockerfile") || discoveredFiles.has("wrangler.toml") || discoveredFiles.has("vercel.json") || discoveredFiles.has("netlify.toml") || discoveredFiles.has("fly.toml") || hasPath(/^\.github\/workflows\//);
-const hasAuth = hasDependency("next-auth") || hasDependency("@clerk/nextjs") || hasDependency("@auth/core") || hasSupabase;
-const hasPayments = hasDependency("stripe") || hasDependency("@stripe/stripe-js");
-const hasMonorepo = hasPath(/^(apps|packages)\//) || Boolean(rootPackage?.workspaces);
-let projectType = "software project";
-if (hasSupabase) {
-  projectType = "Supabase/Postgres application";
-} else if (hasUi && !hasPostgres) {
-  projectType = "frontend application";
-} else if (hasInfra && !hasUi) {
-  projectType = "infra-heavy project";
-} else if (rootPackage) {
-  projectType = "TypeScript/JavaScript application";
-} else if (pyprojectText) {
-  projectType = "Python application";
-} else if (goModText) {
-  projectType = "Go application";
-}
-
-let pipeline = "request -> clarify -> PRD -> architecture -> plan -> implementation -> tests -> review -> release";
-if (hasSupabase) {
-  pipeline = "request -> data model -> RLS/security design -> migration plan -> pgTAP tests -> implementation -> QA -> review -> release";
-} else if (hasUi && !hasPostgres) {
-  pipeline = "request -> UX notes -> component plan -> implementation -> visual QA -> accessibility review -> release";
-} else if (hasInfra) {
-  pipeline = "request -> risk assessment -> architecture -> runbook -> dry-run -> implementation -> validation -> rollback plan -> release";
-}
-
-const roles = ["product", "architect", "developer", "qa", "reviewer"];
-if (hasSupabase) roles.push("database-security");
-if (hasUi) roles.push("ux");
-if (hasInfra) roles.push("ops");
-if (hasAuth || hasPayments) roles.push("security");
-
-const riskAreas = [];
-if (hasAuth) riskAreas.push("auth");
-if (hasPayments) riskAreas.push("payments");
-if (hasSupabase) riskAreas.push("RLS", "migrations");
-if (hasInfra) riskAreas.push("infra");
-if (hasPath(/\.env/i)) riskAreas.push("secrets");
-if (riskAreas.length === 0) riskAreas.push("general correctness");
-
-const qualityGates = ["typecheck", "lint", "tests", "review"];
-if (hasUi) qualityGates.push("visual QA", "accessibility");
-if (hasSupabase) qualityGates.push("migration review", "RLS review");
-if (hasInfra) qualityGates.push("dry-run", "rollback plan");
-if (hasAuth || hasPayments) qualityGates.push("security review");
-
-const signals = [
-  `package manager: ${packageManager}`,
-  language ? `language: ${language}` : "",
-  uiFramework ? `frontend: ${uiFramework}` : "",
-  designSystem ? `design system: ${designSystem}` : "",
-  testRunner ? `test runner: ${testRunner}` : "",
-  hasMonorepo ? "monorepo: yes" : "",
-  hasSupabase ? "supabase/postgres: yes" : "",
-  hasInfra ? "deployment/infra hints: yes" : "",
-].filter(Boolean);
-const summary = [summaryPrefix, uiFramework, designSystem, testRunner].filter(Boolean).join(", ");
-
-emit("PROJECT_NAME", projectName);
-emit("PACKAGE_MANAGER", packageManager);
-emit("LANGUAGE", language);
-emit("PROJECT_TYPE", projectType);
-emit("TYPECHECK_CMD", typecheckCmd);
-emit("LINT_CMD", lintCmd);
-emit("TEST_CMD", testCmd);
-emit("TEST_RUNNER", testRunner);
-emit("UI_FRAMEWORK", uiFramework);
-emit("DESIGN_SYSTEM", designSystem);
-emit("PIPELINE", pipeline);
-emit("ROLES", roles.join(","));
-emit("RISK_AREAS", riskAreas.join(", "));
-emit("QUALITY_GATES", qualityGates.join(", "));
-emit("REPOSITORY_SIGNALS", signals.join("; "));
-emit("SUMMARY", summary);
-DETECT_EOF
+  bun run "$FRAMEWORK_DIR/src/project-analyzer.ts" "$PROJECT_ROOT"
 }
 
 # ── Stack presets ─────────────────────────────────────────────────────────────
@@ -605,11 +301,13 @@ script_command_for_manager() {
     bun) echo "bun run $script_name" ;;
     pnpm) echo "pnpm run $script_name" ;;
     yarn) echo "yarn $script_name" ;;
+    npm) echo "npm run $script_name" ;;
+    "") echo "" ;;
     *) echo "npm run $script_name" ;;
   esac
 }
 
-NODE_PACKAGE_MANAGER="npm"
+NODE_PACKAGE_MANAGER=""
 
 echo "→ Analyzing project tech stack..."
 DETECTED_PROJECT_NAME=""
@@ -620,6 +318,7 @@ DETECTED_TEST_RUNNER=""
 DETECTED_UI_FRAMEWORK=""
 DETECTED_DESIGN_SYSTEM=""
 DETECTED_LANGUAGE=""
+DETECTED_LANGUAGE_TOOLCHAIN=""
 DETECTED_PROJECT_TYPE=""
 DETECTED_PIPELINE=""
 DETECTED_ROLES=""
@@ -632,6 +331,7 @@ while IFS=$'\t' read -r key value; do
     PROJECT_NAME) DETECTED_PROJECT_NAME="$value" ;;
     PACKAGE_MANAGER) NODE_PACKAGE_MANAGER="$value" ;;
     LANGUAGE) DETECTED_LANGUAGE="$value" ;;
+    LANGUAGE_TOOLCHAIN) DETECTED_LANGUAGE_TOOLCHAIN="$value" ;;
     PROJECT_TYPE) DETECTED_PROJECT_TYPE="$value" ;;
     TYPECHECK_CMD) DETECTED_TYPECHECK_CMD="$value" ;;
     LINT_CMD) DETECTED_LINT_CMD="$value" ;;
@@ -657,11 +357,12 @@ echo ""
 
 # ── Stack presets ─────────────────────────────────────────────────────────────
 apply_preset() {
+  local js_manager="${NODE_PACKAGE_MANAGER:-npm}"
   case "$1" in
     node-react)
-      TYPECHECK_CMD="$(script_command_for_manager "$NODE_PACKAGE_MANAGER" typecheck)"
-      LINT_CMD="$(script_command_for_manager "$NODE_PACKAGE_MANAGER" lint)"
-      TEST_CMD="$(script_command_for_manager "$NODE_PACKAGE_MANAGER" test)"
+      TYPECHECK_CMD="$(script_command_for_manager "$js_manager" typecheck)"
+      LINT_CMD="$(script_command_for_manager "$js_manager" lint)"
+      TEST_CMD="$(script_command_for_manager "$js_manager" test)"
       TEST_RUNNER="vitest"
       DESIGN_SYSTEM="shadcn/ui"
       UI_FRAMEWORK="react"
@@ -695,12 +396,14 @@ apply_preset() {
 
 # Defaults / existing values
 SELECTED_AGENCY_DEFAULT="custom-office"
+OFFICE_DEFAULT="custom-office"
+LEGACY_AGENCY_PRESET_DEFAULT=""
 OFFICE_MODE="custom"
 BASE_PROJECT_NAME_DEFAULT="${DETECTED_PROJECT_NAME:-$(basename "$PROJECT_ROOT")}"
 BASE_TYPECHECK_CMD="${DETECTED_TYPECHECK_CMD:-$(script_command_for_manager "$NODE_PACKAGE_MANAGER" typecheck)}"
 BASE_LINT_CMD="${DETECTED_LINT_CMD:-$(script_command_for_manager "$NODE_PACKAGE_MANAGER" lint)}"
 BASE_TEST_CMD="${DETECTED_TEST_CMD:-$(script_command_for_manager "$NODE_PACKAGE_MANAGER" test)}"
-BASE_TEST_RUNNER="${DETECTED_TEST_RUNNER:-vitest}"
+BASE_TEST_RUNNER="${DETECTED_TEST_RUNNER:-}"
 BASE_DESIGN_SYSTEM="${DETECTED_DESIGN_SYSTEM:-}"
 BASE_UI_FRAMEWORK="${DETECTED_UI_FRAMEWORK:-}"
 PROJECT_NAME_DEFAULT="$BASE_PROJECT_NAME_DEFAULT"
@@ -729,11 +432,48 @@ TOKEN_BUDGET_MAX_ROLES_PER_TASK="2"
 TOKEN_BUDGET_MAX_STAGE_ARTIFACTS="3"
 TOKEN_BUDGET_MAX_REVIEW_ITERATIONS="2"
 TOKEN_BUDGET_SUMMARIZE_AFTER_STAGE="true"
+AGENT_OPERATING_MODE="review-first"
+REQUIRE_INTENT_CHECK="true"
+REQUIRE_PLAN_BEFORE_CODE="true"
+ALLOW_TINY_FIX_FAST_PATH="true"
+MAX_PLAN_OPTIONS="3"
+STOP_ON_PRODUCT_MISMATCH="true"
+BACKGROUND_WORK_MODE="simulated"
+BACKGROUND_MAX_ACTIVE_TASKS="3"
+BACKGROUND_REQUIRES_STATUS_FILE="true"
+BACKGROUND_REQUIRES_RESUME_INSTRUCTIONS="true"
+TASK_COMMIT_TRACEABILITY="yes"
+TASK_COMMIT_POLICY="required-for-implementation"
+TASK_COMMIT_LINK_MODE="detect-current-branch"
+TASK_COMMIT_REQUIRE_VERIFICATION="yes"
+TASK_COMMIT_ALLOW_NO_CODE="yes"
+TASK_COMMIT_ALLOW_MULTIPLE="yes"
+TASK_COMMIT_MESSAGE_TEMPLATE="{task_id}: {task_title}"
+GITHUB_ISSUE_LINKING="optional"
+GITHUB_COMMIT_LINKING="optional"
+COMMIT_REFERENCE_STYLE="task-and-issue"
+GITHUB_COMMIT_CLOSES_ISSUE="false"
+GITHUB_ISSUE_INTAKE="enabled"
+GITHUB_ISSUE_AUTO_TRIAGE="suggested"
+GITHUB_ISSUE_CREATE_TASK="ask"
+GITHUB_ISSUE_DEFAULT_COLUMN="BACKLOG"
+GITHUB_ISSUE_DEFAULT_MILESTONE="M0"
+GITHUB_ISSUE_LABEL_SYNC="yes"
+GITHUB_ISSUE_COMMENT_UPDATES="ask"
+GITHUB_ISSUE_CLOSE_ON_INTEGRATION="no"
+GITHUB_ISSUE_SECURITY_PRIVATE_MODE="true"
+AGENT_INSTRUCTION_DISCOVERY="enabled"
+INSTRUCTION_MERGE_MODE="section"
+INSTRUCTION_BACKUP="yes"
+INSTRUCTION_CONFLICT_POLICY="keep-existing"
+INSTRUCTION_SIDECAR_DIR=".ai-office/instructions"
 CREATED_DATE=""
 EXTRA_FRONTMATTER_LINES=""
 NOTES_BLOCK="> Add project-specific context here — tech decisions, constraints, key stakeholders."
 
 if [[ "$CONFIG_EXISTS" == true ]]; then
+  OFFICE_DEFAULT="$(get_config_value office)"
+  LEGACY_AGENCY_PRESET_DEFAULT="$(get_config_value legacy_agency_preset)"
   SELECTED_AGENCY_DEFAULT="$(get_config_value agency)"
   OFFICE_MODE="$(get_config_value office_mode)"
   PROJECT_NAME_DEFAULT="$(get_config_value project_name)"
@@ -762,6 +502,41 @@ if [[ "$CONFIG_EXISTS" == true ]]; then
   TOKEN_BUDGET_MAX_STAGE_ARTIFACTS="$(get_config_value token_budget_max_stage_artifacts)"
   TOKEN_BUDGET_MAX_REVIEW_ITERATIONS="$(get_config_value token_budget_max_review_iterations)"
   TOKEN_BUDGET_SUMMARIZE_AFTER_STAGE="$(get_config_value token_budget_summarize_after_stage)"
+  AGENT_OPERATING_MODE="$(get_config_value agent_operating_mode)"
+  REQUIRE_INTENT_CHECK="$(get_config_value require_intent_check)"
+  REQUIRE_PLAN_BEFORE_CODE="$(get_config_value require_plan_before_code)"
+  ALLOW_TINY_FIX_FAST_PATH="$(get_config_value allow_tiny_fix_fast_path)"
+  MAX_PLAN_OPTIONS="$(get_config_value max_plan_options)"
+  STOP_ON_PRODUCT_MISMATCH="$(get_config_value stop_on_product_mismatch)"
+  BACKGROUND_WORK_MODE="$(get_config_value background_work_mode)"
+  BACKGROUND_MAX_ACTIVE_TASKS="$(get_config_value background_max_active_tasks)"
+  BACKGROUND_REQUIRES_STATUS_FILE="$(get_config_value background_requires_status_file)"
+  BACKGROUND_REQUIRES_RESUME_INSTRUCTIONS="$(get_config_value background_requires_resume_instructions)"
+  TASK_COMMIT_TRACEABILITY="$(get_config_value task_commit_traceability)"
+  TASK_COMMIT_POLICY="$(get_config_value task_commit_policy)"
+  TASK_COMMIT_LINK_MODE="$(get_config_value task_commit_link_mode)"
+  TASK_COMMIT_REQUIRE_VERIFICATION="$(get_config_value task_commit_require_verification)"
+  TASK_COMMIT_ALLOW_NO_CODE="$(get_config_value task_commit_allow_no_code)"
+  TASK_COMMIT_ALLOW_MULTIPLE="$(get_config_value task_commit_allow_multiple)"
+  TASK_COMMIT_MESSAGE_TEMPLATE="$(get_config_value task_commit_message_template)"
+  GITHUB_ISSUE_LINKING="$(get_config_value github_issue_linking)"
+  GITHUB_COMMIT_LINKING="$(get_config_value github_commit_linking)"
+  COMMIT_REFERENCE_STYLE="$(get_config_value commit_reference_style)"
+  GITHUB_COMMIT_CLOSES_ISSUE="$(get_config_value github_commit_closes_issue)"
+  GITHUB_ISSUE_INTAKE="$(get_config_value github_issue_intake)"
+  GITHUB_ISSUE_AUTO_TRIAGE="$(get_config_value github_issue_auto_triage)"
+  GITHUB_ISSUE_CREATE_TASK="$(get_config_value github_issue_create_task)"
+  GITHUB_ISSUE_DEFAULT_COLUMN="$(get_config_value github_issue_default_column)"
+  GITHUB_ISSUE_DEFAULT_MILESTONE="$(get_config_value github_issue_default_milestone)"
+  GITHUB_ISSUE_LABEL_SYNC="$(get_config_value github_issue_label_sync)"
+  GITHUB_ISSUE_COMMENT_UPDATES="$(get_config_value github_issue_comment_updates)"
+  GITHUB_ISSUE_CLOSE_ON_INTEGRATION="$(get_config_value github_issue_close_on_integration)"
+  GITHUB_ISSUE_SECURITY_PRIVATE_MODE="$(get_config_value github_issue_security_private_mode)"
+  AGENT_INSTRUCTION_DISCOVERY="$(get_config_value agent_instruction_discovery)"
+  INSTRUCTION_MERGE_MODE="$(get_config_value instruction_merge_mode)"
+  INSTRUCTION_BACKUP="$(get_config_value instruction_backup)"
+  INSTRUCTION_CONFLICT_POLICY="$(get_config_value instruction_conflict_policy)"
+  INSTRUCTION_SIDECAR_DIR="$(get_config_value instruction_sidecar_dir)"
   CREATED_DATE="$(sed -n 's/^\*\*Created:\*\* //p' "$CONFIG_FILE" | head -n 1)"
   EXTRA_FRONTMATTER_LINES="$(get_extra_frontmatter_lines)"
   NOTES_BLOCK="$(get_notes_block)"
@@ -776,8 +551,12 @@ if [[ "$CONFIG_EXISTS" == true ]]; then
     [[ -n "$DETECTED_DESIGN_SYSTEM" ]] && DESIGN_SYSTEM="$DETECTED_DESIGN_SYSTEM"
   fi
 
+  [[ -z "$OFFICE_DEFAULT" ]] && OFFICE_DEFAULT="$SELECTED_AGENCY_DEFAULT"
+  [[ -z "$SELECTED_AGENCY_DEFAULT" ]] && SELECTED_AGENCY_DEFAULT="$OFFICE_DEFAULT"
   [[ -z "$SELECTED_AGENCY_DEFAULT" && -f "$AGENCY_JSON" ]] && SELECTED_AGENCY_DEFAULT="$(get_json_value name "$AGENCY_JSON")"
   [[ -z "$SELECTED_AGENCY_DEFAULT" ]] && SELECTED_AGENCY_DEFAULT="custom-office"
+  [[ -z "$OFFICE_DEFAULT" ]] && OFFICE_DEFAULT="$SELECTED_AGENCY_DEFAULT"
+  [[ -z "$LEGACY_AGENCY_PRESET_DEFAULT" && "$OFFICE_MODE" == "legacy-preset" ]] && LEGACY_AGENCY_PRESET_DEFAULT="$SELECTED_AGENCY_DEFAULT"
   [[ -z "$OFFICE_MODE" ]] && OFFICE_MODE="custom"
   [[ -z "$PROJECT_NAME_DEFAULT" ]] && PROJECT_NAME_DEFAULT="$BASE_PROJECT_NAME_DEFAULT"
   [[ -z "$TYPECHECK_CMD" ]] && TYPECHECK_CMD="$BASE_TYPECHECK_CMD"
@@ -805,6 +584,41 @@ if [[ "$CONFIG_EXISTS" == true ]]; then
   [[ -z "$TOKEN_BUDGET_MAX_STAGE_ARTIFACTS" ]] && TOKEN_BUDGET_MAX_STAGE_ARTIFACTS="3"
   [[ -z "$TOKEN_BUDGET_MAX_REVIEW_ITERATIONS" ]] && TOKEN_BUDGET_MAX_REVIEW_ITERATIONS="2"
   [[ -z "$TOKEN_BUDGET_SUMMARIZE_AFTER_STAGE" ]] && TOKEN_BUDGET_SUMMARIZE_AFTER_STAGE="true"
+  [[ -z "$AGENT_OPERATING_MODE" ]] && AGENT_OPERATING_MODE="review-first"
+  [[ -z "$REQUIRE_INTENT_CHECK" ]] && REQUIRE_INTENT_CHECK="true"
+  [[ -z "$REQUIRE_PLAN_BEFORE_CODE" ]] && REQUIRE_PLAN_BEFORE_CODE="true"
+  [[ -z "$ALLOW_TINY_FIX_FAST_PATH" ]] && ALLOW_TINY_FIX_FAST_PATH="true"
+  [[ -z "$MAX_PLAN_OPTIONS" ]] && MAX_PLAN_OPTIONS="3"
+  [[ -z "$STOP_ON_PRODUCT_MISMATCH" ]] && STOP_ON_PRODUCT_MISMATCH="true"
+  [[ -z "$BACKGROUND_WORK_MODE" ]] && BACKGROUND_WORK_MODE="simulated"
+  [[ -z "$BACKGROUND_MAX_ACTIVE_TASKS" ]] && BACKGROUND_MAX_ACTIVE_TASKS="3"
+  [[ -z "$BACKGROUND_REQUIRES_STATUS_FILE" ]] && BACKGROUND_REQUIRES_STATUS_FILE="true"
+  [[ -z "$BACKGROUND_REQUIRES_RESUME_INSTRUCTIONS" ]] && BACKGROUND_REQUIRES_RESUME_INSTRUCTIONS="true"
+  [[ -z "$TASK_COMMIT_TRACEABILITY" ]] && TASK_COMMIT_TRACEABILITY="yes"
+  [[ -z "$TASK_COMMIT_POLICY" ]] && TASK_COMMIT_POLICY="required-for-implementation"
+  [[ -z "$TASK_COMMIT_LINK_MODE" ]] && TASK_COMMIT_LINK_MODE="detect-current-branch"
+  [[ -z "$TASK_COMMIT_REQUIRE_VERIFICATION" ]] && TASK_COMMIT_REQUIRE_VERIFICATION="yes"
+  [[ -z "$TASK_COMMIT_ALLOW_NO_CODE" ]] && TASK_COMMIT_ALLOW_NO_CODE="yes"
+  [[ -z "$TASK_COMMIT_ALLOW_MULTIPLE" ]] && TASK_COMMIT_ALLOW_MULTIPLE="yes"
+  [[ -z "$TASK_COMMIT_MESSAGE_TEMPLATE" ]] && TASK_COMMIT_MESSAGE_TEMPLATE="{task_id}: {task_title}"
+  [[ -z "$GITHUB_ISSUE_LINKING" ]] && GITHUB_ISSUE_LINKING="optional"
+  [[ -z "$GITHUB_COMMIT_LINKING" ]] && GITHUB_COMMIT_LINKING="optional"
+  [[ -z "$COMMIT_REFERENCE_STYLE" ]] && COMMIT_REFERENCE_STYLE="task-and-issue"
+  [[ -z "$GITHUB_COMMIT_CLOSES_ISSUE" ]] && GITHUB_COMMIT_CLOSES_ISSUE="false"
+  [[ -z "$GITHUB_ISSUE_INTAKE" ]] && GITHUB_ISSUE_INTAKE="enabled"
+  [[ -z "$GITHUB_ISSUE_AUTO_TRIAGE" ]] && GITHUB_ISSUE_AUTO_TRIAGE="suggested"
+  [[ -z "$GITHUB_ISSUE_CREATE_TASK" ]] && GITHUB_ISSUE_CREATE_TASK="ask"
+  [[ -z "$GITHUB_ISSUE_DEFAULT_COLUMN" ]] && GITHUB_ISSUE_DEFAULT_COLUMN="BACKLOG"
+  [[ -z "$GITHUB_ISSUE_DEFAULT_MILESTONE" ]] && GITHUB_ISSUE_DEFAULT_MILESTONE="M0"
+  [[ -z "$GITHUB_ISSUE_LABEL_SYNC" ]] && GITHUB_ISSUE_LABEL_SYNC="yes"
+  [[ -z "$GITHUB_ISSUE_COMMENT_UPDATES" ]] && GITHUB_ISSUE_COMMENT_UPDATES="ask"
+  [[ -z "$GITHUB_ISSUE_CLOSE_ON_INTEGRATION" ]] && GITHUB_ISSUE_CLOSE_ON_INTEGRATION="no"
+  [[ -z "$GITHUB_ISSUE_SECURITY_PRIVATE_MODE" ]] && GITHUB_ISSUE_SECURITY_PRIVATE_MODE="true"
+  [[ -z "$AGENT_INSTRUCTION_DISCOVERY" ]] && AGENT_INSTRUCTION_DISCOVERY="enabled"
+  [[ -z "$INSTRUCTION_MERGE_MODE" ]] && INSTRUCTION_MERGE_MODE="section"
+  [[ -z "$INSTRUCTION_BACKUP" ]] && INSTRUCTION_BACKUP="yes"
+  [[ -z "$INSTRUCTION_CONFLICT_POLICY" ]] && INSTRUCTION_CONFLICT_POLICY="keep-existing"
+  [[ -z "$INSTRUCTION_SIDECAR_DIR" ]] && INSTRUCTION_SIDECAR_DIR=".ai-office/instructions"
   [[ -z "$NOTES_BLOCK" ]] && NOTES_BLOCK="> Add project-specific context here — tech decisions, constraints, key stakeholders."
 fi
 
@@ -845,6 +659,25 @@ fi
 if [[ -n "$ENABLE_GITHUB_SYNC_ARG" ]]; then
   ENABLE_GITHUB_SYNC="$ENABLE_GITHUB_SYNC_ARG"
 fi
+[[ -n "$TASK_COMMIT_TRACEABILITY_ARG" ]] && TASK_COMMIT_TRACEABILITY="$TASK_COMMIT_TRACEABILITY_ARG"
+[[ -n "$TASK_COMMIT_POLICY_ARG" ]] && TASK_COMMIT_POLICY="$TASK_COMMIT_POLICY_ARG"
+[[ -n "$TASK_COMMIT_LINK_MODE_ARG" ]] && TASK_COMMIT_LINK_MODE="$TASK_COMMIT_LINK_MODE_ARG"
+[[ -n "$TASK_COMMIT_REQUIRE_VERIFICATION_ARG" ]] && TASK_COMMIT_REQUIRE_VERIFICATION="$TASK_COMMIT_REQUIRE_VERIFICATION_ARG"
+[[ -n "$TASK_COMMIT_ALLOW_NO_CODE_ARG" ]] && TASK_COMMIT_ALLOW_NO_CODE="$TASK_COMMIT_ALLOW_NO_CODE_ARG"
+[[ -n "$GITHUB_ISSUE_LINKING_ARG" ]] && GITHUB_ISSUE_LINKING="$GITHUB_ISSUE_LINKING_ARG"
+[[ -n "$GITHUB_COMMIT_LINKING_ARG" ]] && GITHUB_COMMIT_LINKING="$GITHUB_COMMIT_LINKING_ARG"
+[[ -n "$COMMIT_REFERENCE_STYLE_ARG" ]] && COMMIT_REFERENCE_STYLE="$COMMIT_REFERENCE_STYLE_ARG"
+[[ -n "$GITHUB_ISSUE_INTAKE_ARG" ]] && GITHUB_ISSUE_INTAKE="$GITHUB_ISSUE_INTAKE_ARG"
+[[ -n "$GITHUB_ISSUE_AUTO_TRIAGE_ARG" ]] && GITHUB_ISSUE_AUTO_TRIAGE="$GITHUB_ISSUE_AUTO_TRIAGE_ARG"
+[[ -n "$GITHUB_ISSUE_CREATE_TASK_ARG" ]] && GITHUB_ISSUE_CREATE_TASK="$GITHUB_ISSUE_CREATE_TASK_ARG"
+[[ -n "$GITHUB_ISSUE_COMMENT_UPDATES_ARG" ]] && GITHUB_ISSUE_COMMENT_UPDATES="$GITHUB_ISSUE_COMMENT_UPDATES_ARG"
+[[ -n "$GITHUB_ISSUE_CLOSE_ON_INTEGRATION_ARG" ]] && GITHUB_ISSUE_CLOSE_ON_INTEGRATION="$GITHUB_ISSUE_CLOSE_ON_INTEGRATION_ARG"
+[[ -n "$GITHUB_ISSUE_SECURITY_PRIVATE_MODE_ARG" ]] && GITHUB_ISSUE_SECURITY_PRIVATE_MODE="$GITHUB_ISSUE_SECURITY_PRIVATE_MODE_ARG"
+[[ -n "$AGENT_INSTRUCTION_DISCOVERY_ARG" ]] && AGENT_INSTRUCTION_DISCOVERY="$AGENT_INSTRUCTION_DISCOVERY_ARG"
+[[ -n "$INSTRUCTION_MERGE_MODE_ARG" ]] && INSTRUCTION_MERGE_MODE="$INSTRUCTION_MERGE_MODE_ARG"
+[[ -n "$INSTRUCTION_BACKUP_ARG" ]] && INSTRUCTION_BACKUP="$INSTRUCTION_BACKUP_ARG"
+[[ -n "$INSTRUCTION_CONFLICT_POLICY_ARG" ]] && INSTRUCTION_CONFLICT_POLICY="$INSTRUCTION_CONFLICT_POLICY_ARG"
+[[ -n "$INSTRUCTION_SIDECAR_DIR_ARG" ]] && INSTRUCTION_SIDECAR_DIR="$INSTRUCTION_SIDECAR_DIR_ARG"
 
 normalize_yes_no() {
   local raw="$1"
@@ -862,6 +695,45 @@ normalize_yes_no() {
 
 ENABLE_GITHUB_SYNC="$(normalize_yes_no "$ENABLE_GITHUB_SYNC")"
 
+validate_choice() {
+  local name="$1" value="$2" allowed="$3"
+  case " $allowed " in
+    *" $value "*) ;;
+    *)
+      echo "⚠️  Invalid $name value: $value"
+      echo "   Allowed: $allowed"
+      exit 1
+      ;;
+  esac
+}
+
+TASK_COMMIT_TRACEABILITY="$(normalize_yes_no "$TASK_COMMIT_TRACEABILITY")"
+TASK_COMMIT_REQUIRE_VERIFICATION="$(normalize_yes_no "$TASK_COMMIT_REQUIRE_VERIFICATION")"
+TASK_COMMIT_ALLOW_NO_CODE="$(normalize_yes_no "$TASK_COMMIT_ALLOW_NO_CODE")"
+TASK_COMMIT_ALLOW_MULTIPLE="$(normalize_yes_no "$TASK_COMMIT_ALLOW_MULTIPLE")"
+GITHUB_ISSUE_LABEL_SYNC="$(normalize_yes_no "$GITHUB_ISSUE_LABEL_SYNC")"
+GITHUB_ISSUE_CLOSE_ON_INTEGRATION="$(normalize_yes_no "$GITHUB_ISSUE_CLOSE_ON_INTEGRATION")"
+INSTRUCTION_BACKUP="$(normalize_yes_no "$INSTRUCTION_BACKUP")"
+validate_choice task_commit_policy "$TASK_COMMIT_POLICY" "disabled suggested required-for-implementation required-for-all"
+validate_choice task_commit_link_mode "$TASK_COMMIT_LINK_MODE" "manual detect-current-branch detect-recent-commit"
+validate_choice github_issue_linking "$GITHUB_ISSUE_LINKING" "disabled optional enabled"
+validate_choice github_commit_linking "$GITHUB_COMMIT_LINKING" "disabled optional enabled"
+validate_choice commit_reference_style "$COMMIT_REFERENCE_STYLE" "task-id issue-number task-and-issue conventional"
+validate_choice github_issue_intake "$GITHUB_ISSUE_INTAKE" "disabled enabled"
+validate_choice github_issue_auto_triage "$GITHUB_ISSUE_AUTO_TRIAGE" "disabled suggested auto"
+validate_choice github_issue_create_task "$GITHUB_ISSUE_CREATE_TASK" "never ask auto-for-actionable"
+validate_choice github_issue_comment_updates "$GITHUB_ISSUE_COMMENT_UPDATES" "never ask auto"
+validate_choice github_issue_security_private_mode "$GITHUB_ISSUE_SECURITY_PRIVATE_MODE" "true false"
+validate_choice agent_instruction_discovery "$AGENT_INSTRUCTION_DISCOVERY" "disabled enabled"
+validate_choice instruction_merge_mode "$INSTRUCTION_MERGE_MODE" "section sidecar append skip overwrite-explicit"
+validate_choice instruction_conflict_policy "$INSTRUCTION_CONFLICT_POLICY" "ask keep-existing prefer-ai-office sidecar"
+
+if [[ "$ENABLE_GITHUB_SYNC" == "yes" ]]; then
+  [[ -z "$GITHUB_ISSUE_LINKING_ARG" ]] && GITHUB_ISSUE_LINKING="enabled"
+  [[ -z "$GITHUB_COMMIT_LINKING_ARG" ]] && GITHUB_COMMIT_LINKING="enabled"
+  [[ -z "$COMMIT_REFERENCE_STYLE_ARG" ]] && COMMIT_REFERENCE_STYLE="task-and-issue"
+fi
+
 # ── Interactive prompts ───────────────────────────────────────────────────────
 prompt_with_default() {
   local prompt="$1" default="$2" varname="$3"
@@ -875,12 +747,18 @@ prompt_with_default() {
 
 if [[ "$AUTO_MODE" == true ]]; then
   SELECTED_AGENCY="custom-office"
+  OFFICE="custom-office"
+  LEGACY_AGENCY_PRESET=""
   OFFICE_MODE="custom"
 elif [[ -n "$AGENCY_ARG" ]]; then
   SELECTED_AGENCY="$AGENCY_ARG"
+  OFFICE="$AGENCY_ARG"
+  LEGACY_AGENCY_PRESET="$AGENCY_ARG"
   OFFICE_MODE="legacy-preset"
 elif [[ "$NON_INTERACTIVE" == true ]]; then
   SELECTED_AGENCY="$SELECTED_AGENCY_DEFAULT"
+  OFFICE="$OFFICE_DEFAULT"
+  LEGACY_AGENCY_PRESET="$LEGACY_AGENCY_PRESET_DEFAULT"
 else
   default_agency_choice=1
   for i in "${!AGENCIES[@]}"; do
@@ -890,20 +768,23 @@ else
     fi
   done
 
-  echo "Select agency type:"
+  echo "Select legacy preset:"
   for i in "${!AGENCIES[@]}"; do
     marker=""
     [[ "${AGENCY_CUSTOMS[$i]}" == "true" ]] && marker=" [custom]"
     echo "  $((i+1))) ${AGENCIES[$i]}${marker} — ${AGENCY_DESCS[$i]}"
   done
-  read -p "Agency [$default_agency_choice]: " agency_choice
+  read -p "Legacy preset [$default_agency_choice]: " agency_choice
   agency_choice="${agency_choice:-$default_agency_choice}"
   SELECTED_AGENCY="${AGENCIES[$((agency_choice-1))]}"
+  OFFICE="$SELECTED_AGENCY"
+  LEGACY_AGENCY_PRESET="$SELECTED_AGENCY"
   OFFICE_MODE="legacy-preset"
 fi
+[[ -z "$OFFICE" ]] && OFFICE="$SELECTED_AGENCY"
 echo "  → Office mode: $OFFICE_MODE"
 if [[ "$OFFICE_MODE" == "legacy-preset" ]]; then
-  echo "  → Legacy agency preset: $SELECTED_AGENCY"
+  echo "  → Legacy preset: $LEGACY_AGENCY_PRESET"
 fi
 echo ""
 
@@ -958,6 +839,52 @@ else
 fi
 echo ""
 
+echo "Task commit traceability:"
+prompt_with_default "  Enable task-to-commit traceability (yes|no)" "$TASK_COMMIT_TRACEABILITY" TASK_COMMIT_TRACEABILITY
+prompt_with_default "  Commit policy (disabled|suggested|required-for-implementation|required-for-all)" "$TASK_COMMIT_POLICY" TASK_COMMIT_POLICY
+prompt_with_default "  Commit link mode (manual|detect-current-branch|detect-recent-commit)" "$TASK_COMMIT_LINK_MODE" TASK_COMMIT_LINK_MODE
+prompt_with_default "  Require verification before DONE (yes|no)" "$TASK_COMMIT_REQUIRE_VERIFICATION" TASK_COMMIT_REQUIRE_VERIFICATION
+prompt_with_default "  Allow no-code/docs-only completion (yes|no)" "$TASK_COMMIT_ALLOW_NO_CODE" TASK_COMMIT_ALLOW_NO_CODE
+prompt_with_default "  GitHub issue linking (disabled|optional|enabled)" "$GITHUB_ISSUE_LINKING" GITHUB_ISSUE_LINKING
+prompt_with_default "  GitHub commit linking (disabled|optional|enabled)" "$GITHUB_COMMIT_LINKING" GITHUB_COMMIT_LINKING
+prompt_with_default "  Commit reference style (task-id|issue-number|task-and-issue|conventional)" "$COMMIT_REFERENCE_STYLE" COMMIT_REFERENCE_STYLE
+echo ""
+
+echo "GitHub issue intake:"
+prompt_with_default "  Enable GitHub issue intake (disabled|enabled)" "$GITHUB_ISSUE_INTAKE" GITHUB_ISSUE_INTAKE
+prompt_with_default "  Auto-triage GitHub issues (disabled|suggested|auto)" "$GITHUB_ISSUE_AUTO_TRIAGE" GITHUB_ISSUE_AUTO_TRIAGE
+prompt_with_default "  Create tasks from actionable issues (never|ask|auto-for-actionable)" "$GITHUB_ISSUE_CREATE_TASK" GITHUB_ISSUE_CREATE_TASK
+prompt_with_default "  Comment back on GitHub issues (never|ask|auto)" "$GITHUB_ISSUE_COMMENT_UPDATES" GITHUB_ISSUE_COMMENT_UPDATES
+prompt_with_default "  Close GitHub issues after integration (yes|no)" "$GITHUB_ISSUE_CLOSE_ON_INTEGRATION" GITHUB_ISSUE_CLOSE_ON_INTEGRATION
+prompt_with_default "  Private mode for security reports (true|false)" "$GITHUB_ISSUE_SECURITY_PRIVATE_MODE" GITHUB_ISSUE_SECURITY_PRIVATE_MODE
+echo ""
+
+echo "Existing agent instructions:"
+prompt_with_default "  Scan existing agent instruction files (enabled|disabled)" "$AGENT_INSTRUCTION_DISCOVERY" AGENT_INSTRUCTION_DISCOVERY
+prompt_with_default "  Instruction merge mode (section|sidecar|append|skip)" "$INSTRUCTION_MERGE_MODE" INSTRUCTION_MERGE_MODE
+prompt_with_default "  Backup existing instruction files (yes|no)" "$INSTRUCTION_BACKUP" INSTRUCTION_BACKUP
+prompt_with_default "  Instruction conflict policy (keep-existing|ask|prefer-ai-office|sidecar)" "$INSTRUCTION_CONFLICT_POLICY" INSTRUCTION_CONFLICT_POLICY
+echo ""
+
+TASK_COMMIT_TRACEABILITY="$(normalize_yes_no "$TASK_COMMIT_TRACEABILITY")"
+TASK_COMMIT_REQUIRE_VERIFICATION="$(normalize_yes_no "$TASK_COMMIT_REQUIRE_VERIFICATION")"
+TASK_COMMIT_ALLOW_NO_CODE="$(normalize_yes_no "$TASK_COMMIT_ALLOW_NO_CODE")"
+GITHUB_ISSUE_CLOSE_ON_INTEGRATION="$(normalize_yes_no "$GITHUB_ISSUE_CLOSE_ON_INTEGRATION")"
+INSTRUCTION_BACKUP="$(normalize_yes_no "$INSTRUCTION_BACKUP")"
+validate_choice task_commit_policy "$TASK_COMMIT_POLICY" "disabled suggested required-for-implementation required-for-all"
+validate_choice task_commit_link_mode "$TASK_COMMIT_LINK_MODE" "manual detect-current-branch detect-recent-commit"
+validate_choice github_issue_linking "$GITHUB_ISSUE_LINKING" "disabled optional enabled"
+validate_choice github_commit_linking "$GITHUB_COMMIT_LINKING" "disabled optional enabled"
+validate_choice commit_reference_style "$COMMIT_REFERENCE_STYLE" "task-id issue-number task-and-issue conventional"
+validate_choice github_issue_intake "$GITHUB_ISSUE_INTAKE" "disabled enabled"
+validate_choice github_issue_auto_triage "$GITHUB_ISSUE_AUTO_TRIAGE" "disabled suggested auto"
+validate_choice github_issue_create_task "$GITHUB_ISSUE_CREATE_TASK" "never ask auto-for-actionable"
+validate_choice github_issue_comment_updates "$GITHUB_ISSUE_COMMENT_UPDATES" "never ask auto"
+validate_choice github_issue_security_private_mode "$GITHUB_ISSUE_SECURITY_PRIVATE_MODE" "true false"
+validate_choice agent_instruction_discovery "$AGENT_INSTRUCTION_DISCOVERY" "disabled enabled"
+validate_choice instruction_merge_mode "$INSTRUCTION_MERGE_MODE" "section sidecar append skip overwrite-explicit"
+validate_choice instruction_conflict_policy "$INSTRUCTION_CONFLICT_POLICY" "ask keep-existing prefer-ai-office sidecar"
+
 TODAY="$(date +%Y-%m-%d)"
 WRITTEN_CREATED_DATE="${CREATED_DATE:-$TODAY}"
 
@@ -975,11 +902,23 @@ if [[ -n "$EXTRA_FRONTMATTER_LINES" ]]; then
   EXTRA_FRONTMATTER_BLOCK="$(printf '%s\n' "$EXTRA_FRONTMATTER_LINES" | sed '/^[[:space:]]*$/d')"
 fi
 
+LEGACY_PRESET_LINE=""
+LEGACY_PRESET_SUMMARY=""
+if [[ "$OFFICE_MODE" == "legacy-preset" ]]; then
+  LEGACY_PRESET_LINE="legacy_agency_preset: $LEGACY_AGENCY_PRESET"
+  LEGACY_PRESET_SUMMARY="**Legacy preset:** $LEGACY_AGENCY_PRESET"
+else
+  LEGACY_PRESET_LINE='legacy_agency_preset: ""'
+fi
+
 # ── Write project.config.md ───────────────────────────────────────────────────
 cat > "$CONFIG_FILE" <<EOF
 ---
-agency: $SELECTED_AGENCY
+office: $OFFICE
 office_mode: $OFFICE_MODE
+$LEGACY_PRESET_LINE
+# Deprecated compatibility field. Prefer \`office\` and \`legacy_agency_preset\`.
+agency: $SELECTED_AGENCY
 project_name: $PROJECT_NAME
 
 # Tech stack — used by \$office-validate (dev stage)
@@ -992,7 +931,7 @@ test_runner: $TEST_RUNNER
 ui_framework: "$UI_FRAMEWORK"
 design_system: "$DESIGN_SYSTEM"
 
-# Quality thresholds — override agency defaults
+# Quality thresholds — override office defaults
 coverage_min: $COVERAGE_MIN
 lighthouse_min: $LIGHTHOUSE_MIN
 
@@ -1020,6 +959,53 @@ token_budget_max_roles_per_task: $TOKEN_BUDGET_MAX_ROLES_PER_TASK
 token_budget_max_stage_artifacts: $TOKEN_BUDGET_MAX_STAGE_ARTIFACTS
 token_budget_max_review_iterations: $TOKEN_BUDGET_MAX_REVIEW_ITERATIONS
 token_budget_summarize_after_stage: $TOKEN_BUDGET_SUMMARIZE_AFTER_STAGE
+
+# Agent operating model - review-first collaboration gates
+agent_operating_mode: $AGENT_OPERATING_MODE
+require_intent_check: $REQUIRE_INTENT_CHECK
+require_plan_before_code: $REQUIRE_PLAN_BEFORE_CODE
+allow_tiny_fix_fast_path: $ALLOW_TINY_FIX_FAST_PATH
+max_plan_options: $MAX_PLAN_OPTIONS
+stop_on_product_mismatch: $STOP_ON_PRODUCT_MISMATCH
+
+# Background-capable workflow model - markdown/status based by default
+background_work_mode: $BACKGROUND_WORK_MODE
+background_max_active_tasks: $BACKGROUND_MAX_ACTIVE_TASKS
+background_requires_status_file: $BACKGROUND_REQUIRES_STATUS_FILE
+background_requires_resume_instructions: $BACKGROUND_REQUIRES_RESUME_INSTRUCTIONS
+
+# Task commit traceability
+task_commit_traceability: $TASK_COMMIT_TRACEABILITY
+task_commit_policy: $TASK_COMMIT_POLICY
+task_commit_link_mode: $TASK_COMMIT_LINK_MODE
+task_commit_require_verification: $TASK_COMMIT_REQUIRE_VERIFICATION
+task_commit_allow_no_code: $TASK_COMMIT_ALLOW_NO_CODE
+task_commit_allow_multiple: $TASK_COMMIT_ALLOW_MULTIPLE
+task_commit_message_template: "$TASK_COMMIT_MESSAGE_TEMPLATE"
+
+# GitHub issue / commit linking
+github_issue_linking: $GITHUB_ISSUE_LINKING
+github_commit_linking: $GITHUB_COMMIT_LINKING
+commit_reference_style: $COMMIT_REFERENCE_STYLE
+github_commit_closes_issue: $GITHUB_COMMIT_CLOSES_ISSUE
+
+# GitHub issue intake
+github_issue_intake: $GITHUB_ISSUE_INTAKE
+github_issue_auto_triage: $GITHUB_ISSUE_AUTO_TRIAGE
+github_issue_create_task: $GITHUB_ISSUE_CREATE_TASK
+github_issue_default_column: $GITHUB_ISSUE_DEFAULT_COLUMN
+github_issue_default_milestone: $GITHUB_ISSUE_DEFAULT_MILESTONE
+github_issue_label_sync: $GITHUB_ISSUE_LABEL_SYNC
+github_issue_comment_updates: $GITHUB_ISSUE_COMMENT_UPDATES
+github_issue_close_on_integration: $GITHUB_ISSUE_CLOSE_ON_INTEGRATION
+github_issue_security_private_mode: $GITHUB_ISSUE_SECURITY_PRIVATE_MODE
+
+# Agent instruction discovery / merge
+agent_instruction_discovery: $AGENT_INSTRUCTION_DISCOVERY
+instruction_merge_mode: $INSTRUCTION_MERGE_MODE
+instruction_backup: $INSTRUCTION_BACKUP
+instruction_conflict_policy: $INSTRUCTION_CONFLICT_POLICY
+instruction_sidecar_dir: "$INSTRUCTION_SIDECAR_DIR"
 $([[ -n "$EXTRA_FRONTMATTER_BLOCK" ]] && printf '\n\n%s' "$EXTRA_FRONTMATTER_BLOCK")
 
 # Optional: skip pipeline stages for this project
@@ -1029,8 +1015,9 @@ $([[ -n "$EXTRA_FRONTMATTER_BLOCK" ]] && printf '\n\n%s' "$EXTRA_FRONTMATTER_BLO
 # Project Configuration
 
 **Project:** $PROJECT_NAME
+**Office:** $OFFICE
 **Office mode:** $OFFICE_MODE
-**Legacy agency preset:** $SELECTED_AGENCY
+$LEGACY_PRESET_SUMMARY
 **Created:** $WRITTEN_CREATED_DATE
 
 ## Notes
@@ -1044,166 +1031,37 @@ else
   echo "  ✅ Created .ai-office/project.config.md"
 fi
 
-# ── Generate custom project office artifacts ─────────────────────────────────
-write_role_file() {
-  local role_slug="$1"
-  local role_title
-  role_title="$(echo "$role_slug" | sed 's/-/ /g' | awk '{ for (i=1; i<=NF; i++) $i=toupper(substr($i,1,1)) substr($i,2); print }')"
-  local role_path="$AI_OFFICE/roles/$role_slug.md"
-  local purpose="Own the $role_slug perspective for the current pipeline stage."
-  local invoke="Invoke only when the current stage needs this role's specific judgement."
-  local inputs="Current request, office-profile.md, pipeline.md, current stage artifact, and no more than one supporting file unless required."
-  local outputs="Short findings, concrete next action, changed artifact paths, and evidence required for the next gate."
-  local stop="Stop when the stage output is complete, required evidence is missing, or risk exceeds the role mandate."
+if [[ "$AGENT_INSTRUCTION_DISCOVERY" == "enabled" ]]; then
+  (cd "$PROJECT_ROOT" && bun run "$FRAMEWORK_DIR/src/cli.ts" instruction scan >/dev/null)
+  echo "  ✅ Scanned agent instruction files"
+fi
 
-  case "$role_slug" in
-    product)
-      purpose="Clarify user value, scope, acceptance criteria, and tradeoffs."
-      ;;
-    architect)
-      purpose="Select the smallest defensible technical approach for the detected stack."
-      ;;
-    developer)
-      purpose="Implement focused changes that match the generated pipeline and local code patterns."
-      ;;
-    qa)
-      purpose="Verify acceptance criteria with deterministic checks and regression coverage."
-      ;;
-    reviewer)
-      purpose="Find correctness, maintainability, and release risks before handoff."
-      ;;
-    database-security)
-      purpose="Review schema, migrations, RLS, policies, and data access boundaries."
-      invoke="Invoke for Supabase/Postgres schema, migration, RLS, or data-permission work."
-      ;;
-    ux)
-      purpose="Review user flows, component behavior, visual quality, and accessibility."
-      invoke="Invoke for UI, copy, design-system, accessibility, or visual QA work."
-      ;;
-    ops)
-      purpose="Review deployment, CI, infra, dry-run, validation, and rollback concerns."
-      invoke="Invoke for Docker, hosting, CI, Cloudflare, Vercel, Netlify, or operational changes."
-      ;;
-    security)
-      purpose="Review auth, payments, secrets, permissions, and sensitive control paths."
-      invoke="Invoke for auth, billing, secrets, permissions, or security-sensitive changes."
-      ;;
-  esac
-
-  cat > "$role_path" <<EOF
-# Role: $role_title
-
-## Purpose
-$purpose
-
-## When to invoke
-$invoke
-
-## Inputs required
-$inputs
-
-## Outputs
-$outputs
-
-## Token budget
-Load only this role, current stage artifact, and up to $TOKEN_BUDGET_MAX_CONTEXT_FILES total context files. Prefer summaries over full history.
-
-## Stop conditions
-$stop
-EOF
-}
-
-generate_custom_office() {
-  local roles_csv="${DETECTED_ROLES:-product,architect,developer,qa,reviewer}"
-  local pipeline="${DETECTED_PIPELINE:-request -> clarify -> PRD -> architecture -> plan -> implementation -> tests -> review -> release}"
-  local project_type="${DETECTED_PROJECT_TYPE:-software project}"
-  local signals="${DETECTED_REPOSITORY_SIGNALS:-package manager: $NODE_PACKAGE_MANAGER}"
-  local gates="${DETECTED_QUALITY_GATES:-typecheck, lint, tests, review}"
-  local risks="${DETECTED_RISK_AREAS:-general correctness}"
-
-  mkdir -p "$AI_OFFICE/roles"
-
-  cat > "$AI_OFFICE/office-profile.md" <<EOF
-# Office Profile
-
-## Project Type
-$project_type
-
-## Detected Stack
-- Language: ${DETECTED_LANGUAGE:-unknown}
-- Package manager: $NODE_PACKAGE_MANAGER
-- UI framework: ${UI_FRAMEWORK:-none detected}
-- Design system: ${DESIGN_SYSTEM:-none detected}
-- Test runner: ${TEST_RUNNER:-none detected}
-
-## Repository Signals
-$signals
-
-## Recommended Workflow
-$pipeline
-
-## Recommended Roles
-$roles_csv
-
-## Quality Gates
-$gates
-
-## Risk Areas
-$risks
-
-## Token Efficiency Rules
-- never load all roles
-- never load all historical docs
-- load only current stage artifacts
-- prefer summaries over full conversations
-- use deterministic CLI for state changes
-- summarize completed stages into status files
-- cap review/QA loops
-- ask for missing files only when necessary
-EOF
-
-  cat > "$AI_OFFICE/pipeline.md" <<EOF
-# Project Pipeline
-
-## Default Flow
-$pipeline
-
-## Operating Rules
-- Use the current stage artifact as the primary context.
-- Run deterministic CLI commands for task and status state changes.
-- Record evidence in status files before advancing.
-- Stop after $TOKEN_BUDGET_MAX_REVIEW_ITERATIONS review or QA loops and escalate with unblock criteria.
-EOF
-
-  cat > "$AI_OFFICE/quality-gates.md" <<EOF
-# Quality Gates
-
-## Project-Specific Gates
-$gates
-
-## Verification Commands
-- Typecheck: $TYPECHECK_CMD
-- Lint: $LINT_CMD
-- Test: $TEST_CMD
-
-## Risk Gates
-$risks
-EOF
-
-  rm -f "$AI_OFFICE/roles"/*.md
-  IFS=',' read -ra role_items <<< "$roles_csv"
-  for role in "${role_items[@]}"; do
-    role="$(echo "$role" | xargs)"
-    [[ -n "$role" ]] && write_role_file "$role"
-  done
-
-  echo "  ✅ Generated .ai-office/office-profile.md"
-  echo "  ✅ Generated .ai-office/pipeline.md"
-  echo "  ✅ Generated .ai-office/quality-gates.md"
-  echo "  ✅ Generated .ai-office/roles/*.md"
-}
-
-generate_custom_office
+# ── Generate project office artifacts ─────────────────────────────────────────
+OFFICE="$OFFICE" \
+OFFICE_MODE="$OFFICE_MODE" \
+LEGACY_AGENCY_PRESET="$LEGACY_AGENCY_PRESET" \
+SELECTED_AGENCY="$SELECTED_AGENCY" \
+PROJECT_NAME="$PROJECT_NAME" \
+AI_OFFICE="$AI_OFFICE" \
+FRAMEWORK_DIR="$FRAMEWORK_DIR" \
+DETECTED_PROJECT_TYPE="$DETECTED_PROJECT_TYPE" \
+DETECTED_LANGUAGE="$DETECTED_LANGUAGE" \
+DETECTED_LANGUAGE_TOOLCHAIN="$DETECTED_LANGUAGE_TOOLCHAIN" \
+NODE_PACKAGE_MANAGER="$NODE_PACKAGE_MANAGER" \
+UI_FRAMEWORK="$UI_FRAMEWORK" \
+DESIGN_SYSTEM="$DESIGN_SYSTEM" \
+TEST_RUNNER="$TEST_RUNNER" \
+TYPECHECK_CMD="$TYPECHECK_CMD" \
+LINT_CMD="$LINT_CMD" \
+TEST_CMD="$TEST_CMD" \
+DETECTED_PIPELINE="$DETECTED_PIPELINE" \
+DETECTED_ROLES="$DETECTED_ROLES" \
+DETECTED_RISK_AREAS="$DETECTED_RISK_AREAS" \
+DETECTED_QUALITY_GATES="$DETECTED_QUALITY_GATES" \
+DETECTED_REPOSITORY_SIGNALS="$DETECTED_REPOSITORY_SIGNALS" \
+TOKEN_BUDGET_MAX_CONTEXT_FILES="$TOKEN_BUDGET_MAX_CONTEXT_FILES" \
+TOKEN_BUDGET_MAX_REVIEW_ITERATIONS="$TOKEN_BUDGET_MAX_REVIEW_ITERATIONS" \
+bun run "$FRAMEWORK_DIR/src/custom-office-generator.ts"
 
 # ── Write agency.json ─────────────────────────────────────────────────────────
 IS_CUSTOM=true

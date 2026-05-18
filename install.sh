@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # AI Office Framework — Installer
-# Usage: ./install.sh [project-root] [--adapter=<codex|windsurf|claude-code|opencode|base>] [--stamp-only] [--skip-setup]
+# Usage: ./install.sh [project-root] [--adapter=<codex|windsurf|claude-code|opencode|base>] [--instruction-merge-mode=<section|sidecar|append|skip|overwrite-explicit>] [--stamp-only] [--skip-setup]
 set -e
 
 FRAMEWORK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,12 +18,21 @@ PROJECT_ROOT_ARG=""
 ADAPTER="codex"
 STAMP_ONLY=false
 SKIP_SETUP=false
+INSTRUCTION_MERGE_MODE="section"
+INSTRUCTION_BACKUP="yes"
+INSTRUCTION_CONFLICT_POLICY="keep-existing"
+INSTRUCTION_SIDECAR_DIR=".ai-office/instructions"
 
 for arg in "$@"; do
   case "$arg" in
     --stamp-only) STAMP_ONLY=true ;;
     --skip-setup) SKIP_SETUP=true ;;
     --adapter=*) ADAPTER="${arg#*=}" ;;
+    --merge-existing-instructions) INSTRUCTION_MERGE_MODE="section" ;;
+    --instruction-merge-mode=*) INSTRUCTION_MERGE_MODE="${arg#*=}" ;;
+    --instruction-backup=*) INSTRUCTION_BACKUP="${arg#*=}" ;;
+    --instruction-conflict-policy=*) INSTRUCTION_CONFLICT_POLICY="${arg#*=}" ;;
+    --instruction-sidecar-dir=*) INSTRUCTION_SIDECAR_DIR="${arg#*=}" ;;
     -*)
       echo "⚠️  Unknown flag: $arg"
       exit 1
@@ -111,11 +120,15 @@ install_adapter_assets() {
         --framework-dir "$FRAMEWORK_DIR" \
         --project-root "$PROJECT_ROOT" \
         --adapter "$ADAPTER" \
-        --instruction-mode if-missing >/dev/null
+        --instruction-mode if-missing \
+        --instruction-merge-mode "$INSTRUCTION_MERGE_MODE" \
+        --instruction-backup "$INSTRUCTION_BACKUP" \
+        --instruction-conflict-policy "$INSTRUCTION_CONFLICT_POLICY" \
+        --instruction-sidecar-dir "$INSTRUCTION_SIDECAR_DIR" >/dev/null
       echo "  ✅ $(find "$PROJECT_ROOT/$(adapter_skill_dest_rel "$ADAPTER")" -maxdepth 1 -type d -name 'office*' | wc -l | tr -d ' ') skills installed"
       if [[ -n "$instruction_target" ]]; then
         if [[ "$instruction_existed_before" == true ]]; then
-          echo "  ↩️  $instruction_target already exists, skipped"
+          echo "  ✅ $instruction_target preserved and AI Office instructions merged"
         else
           echo "  ✅ $instruction_target installed"
         fi
@@ -132,11 +145,15 @@ install_adapter_assets() {
         --framework-dir "$FRAMEWORK_DIR" \
         --project-root "$PROJECT_ROOT" \
         --adapter "$ADAPTER" \
-        --instruction-mode if-missing >/dev/null
+        --instruction-mode if-missing \
+        --instruction-merge-mode "$INSTRUCTION_MERGE_MODE" \
+        --instruction-backup "$INSTRUCTION_BACKUP" \
+        --instruction-conflict-policy "$INSTRUCTION_CONFLICT_POLICY" \
+        --instruction-sidecar-dir "$INSTRUCTION_SIDECAR_DIR" >/dev/null
       echo "  ✅ $(find "$PROJECT_ROOT/$(adapter_commands_dest_rel "$ADAPTER")" -maxdepth 1 -type f -name 'office*.md' | wc -l | tr -d ' ') commands installed"
       if [[ -n "$instruction_target" ]]; then
         if [[ "$instruction_existed_before" == true ]]; then
-          echo "  ↩️  $instruction_target already exists, skipped"
+          echo "  ✅ $instruction_target preserved and AI Office instructions merged"
         else
           echo "  ✅ $instruction_target installed"
         fi
@@ -153,12 +170,16 @@ install_adapter_assets() {
         --framework-dir "$FRAMEWORK_DIR" \
         --project-root "$PROJECT_ROOT" \
         --adapter "$ADAPTER" \
-        --instruction-mode if-missing >/dev/null
+        --instruction-mode if-missing \
+        --instruction-merge-mode "$INSTRUCTION_MERGE_MODE" \
+        --instruction-backup "$INSTRUCTION_BACKUP" \
+        --instruction-conflict-policy "$INSTRUCTION_CONFLICT_POLICY" \
+        --instruction-sidecar-dir "$INSTRUCTION_SIDECAR_DIR" >/dev/null
       echo "  ✅ $(find "$PROJECT_ROOT/$(adapter_workflows_dest_rel "$ADAPTER")" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') workflows installed"
       echo "  ✅ $(find "$PROJECT_ROOT/$(adapter_rules_dest_rel "$ADAPTER")" -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ') rules installed"
       if [[ -n "$instruction_target" ]]; then
         if [[ "$instruction_existed_before" == true ]]; then
-          echo "  ↩️  $instruction_target already exists, skipped"
+          echo "  ✅ $instruction_target preserved and AI Office instructions merged"
         else
           echo "  ✅ $instruction_target installed"
         fi
@@ -172,6 +193,19 @@ install_adapter_assets() {
 }
 
 validate_adapter
+
+case "$INSTRUCTION_MERGE_MODE" in
+  section|sidecar|append|skip|overwrite-explicit) ;;
+  *) echo "❌ Unknown instruction merge mode: $INSTRUCTION_MERGE_MODE"; exit 1 ;;
+esac
+case "$INSTRUCTION_BACKUP" in
+  yes|no) ;;
+  *) echo "❌ Unknown instruction backup value: $INSTRUCTION_BACKUP"; exit 1 ;;
+esac
+case "$INSTRUCTION_CONFLICT_POLICY" in
+  ask|keep-existing|prefer-ai-office|sidecar) ;;
+  *) echo "❌ Unknown instruction conflict policy: $INSTRUCTION_CONFLICT_POLICY"; exit 1 ;;
+esac
 
 echo "AI Office Framework v$VERSION"
 echo "Installing into: $PROJECT_ROOT"
@@ -205,7 +239,12 @@ for dir in \
   "$AI_OFFICE/tasks/ARCHIVED" \
   "$AI_OFFICE/docs/prd" \
   "$AI_OFFICE/docs/adr" \
+  "$AI_OFFICE/docs/context" \
   "$AI_OFFICE/docs/runbooks" \
+  "$AI_OFFICE/background" \
+  "$AI_OFFICE/intake" \
+  "$AI_OFFICE/instructions" \
+  "$AI_OFFICE/backups/instructions" \
   "$AI_OFFICE/agents" \
   "$AI_OFFICE/agencies" \
   "$AI_OFFICE/milestones" \

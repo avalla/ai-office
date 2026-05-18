@@ -3,6 +3,15 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "fs";
 import { basename, dirname, extname, isAbsolute, join, relative } from "path";
 import { ADAPTER_PROFILES, type AdapterHost } from "./adapter-manifest";
+import {
+  type InstructionConflictPolicy,
+  type InstructionMergeMode,
+  aiOfficeManagedBlock,
+  mergeInstructionFile,
+  scanAgentInstructions,
+  writeInstructionDiscoveryReport,
+  writeInstructionMergePolicy,
+} from "./instruction-discovery";
 
 const COLUMNS = ["BACKLOG", "TODO", "WIP", "REVIEW", "BLOCKED", "REJECTED", "DONE", "ARCHIVED"] as const;
 const VALID_STATES = [
@@ -31,7 +40,9 @@ type ValidateStage = (typeof VALID_VALIDATE_STAGES)[number];
 type InstalledAdapter = AdapterHost;
 
 type ProjectConfig = {
+  office: string;
   agency: string;
+  legacyAgencyPreset: string;
   officeMode: string;
   projectName: string;
   uiFramework: string;
@@ -56,6 +67,32 @@ type ProjectConfig = {
   tokenBudgetMaxStageArtifacts: number;
   tokenBudgetMaxReviewIterations: number;
   tokenBudgetSummarizeAfterStage: string;
+  agentOperatingMode: string;
+  backgroundWorkMode: string;
+  taskCommitTraceability: string;
+  taskCommitPolicy: string;
+  taskCommitLinkMode: string;
+  taskCommitRequireVerification: string;
+  taskCommitAllowNoCode: string;
+  taskCommitAllowMultiple: string;
+  taskCommitMessageTemplate: string;
+  githubIssueLinking: string;
+  githubCommitLinking: string;
+  commitReferenceStyle: string;
+  githubIssueIntake: string;
+  githubIssueAutoTriage: string;
+  githubIssueCreateTask: string;
+  githubIssueDefaultColumn: string;
+  githubIssueDefaultMilestone: string;
+  githubIssueLabelSync: string;
+  githubIssueCommentUpdates: string;
+  githubIssueCloseOnIntegration: string;
+  githubIssueSecurityPrivateMode: string;
+  agentInstructionDiscovery: string;
+  instructionMergeMode: string;
+  instructionBackup: string;
+  instructionConflictPolicy: string;
+  instructionSidecarDir: string;
 };
 
 type TaskCreateInput = {
@@ -249,7 +286,9 @@ function parseFrontmatter(content: string): Record<string, string> {
 
 function getProjectConfig(): ProjectConfig {
   const defaults: ProjectConfig = {
+    office: "custom-office",
     agency: "software-studio",
+    legacyAgencyPreset: "",
     officeMode: "custom",
     projectName: basename(cwd),
     uiFramework: "",
@@ -274,6 +313,32 @@ function getProjectConfig(): ProjectConfig {
     tokenBudgetMaxStageArtifacts: 3,
     tokenBudgetMaxReviewIterations: 2,
     tokenBudgetSummarizeAfterStage: "true",
+    agentOperatingMode: "review-first",
+    backgroundWorkMode: "simulated",
+    taskCommitTraceability: "yes",
+    taskCommitPolicy: "required-for-implementation",
+    taskCommitLinkMode: "detect-current-branch",
+    taskCommitRequireVerification: "yes",
+    taskCommitAllowNoCode: "yes",
+    taskCommitAllowMultiple: "yes",
+    taskCommitMessageTemplate: "{task_id}: {task_title}",
+    githubIssueLinking: "optional",
+    githubCommitLinking: "optional",
+    commitReferenceStyle: "task-and-issue",
+    githubIssueIntake: "enabled",
+    githubIssueAutoTriage: "suggested",
+    githubIssueCreateTask: "ask",
+    githubIssueDefaultColumn: "BACKLOG",
+    githubIssueDefaultMilestone: "M0",
+    githubIssueLabelSync: "yes",
+    githubIssueCommentUpdates: "ask",
+    githubIssueCloseOnIntegration: "no",
+    githubIssueSecurityPrivateMode: "true",
+    agentInstructionDiscovery: "enabled",
+    instructionMergeMode: "section",
+    instructionBackup: "yes",
+    instructionConflictPolicy: "keep-existing",
+    instructionSidecarDir: ".ai-office/instructions",
   };
 
   const configPath = join(aiOfficeDir, "project.config.md");
@@ -283,7 +348,9 @@ function getProjectConfig(): ProjectConfig {
 
   const frontmatter = parseFrontmatter(readText(configPath));
   return {
+    office: frontmatter.office || frontmatter.agency || defaults.office,
     agency: frontmatter.agency || defaults.agency,
+    legacyAgencyPreset: frontmatter.legacy_agency_preset || "",
     officeMode: frontmatter.office_mode || defaults.officeMode,
     projectName: frontmatter.project_name || defaults.projectName,
     uiFramework: frontmatter.ui_framework || defaults.uiFramework,
@@ -308,6 +375,32 @@ function getProjectConfig(): ProjectConfig {
     tokenBudgetMaxStageArtifacts: Number(frontmatter.token_budget_max_stage_artifacts || defaults.tokenBudgetMaxStageArtifacts),
     tokenBudgetMaxReviewIterations: Number(frontmatter.token_budget_max_review_iterations || defaults.tokenBudgetMaxReviewIterations),
     tokenBudgetSummarizeAfterStage: frontmatter.token_budget_summarize_after_stage || defaults.tokenBudgetSummarizeAfterStage,
+    agentOperatingMode: frontmatter.agent_operating_mode || defaults.agentOperatingMode,
+    backgroundWorkMode: frontmatter.background_work_mode || defaults.backgroundWorkMode,
+    taskCommitTraceability: frontmatter.task_commit_traceability || defaults.taskCommitTraceability,
+    taskCommitPolicy: frontmatter.task_commit_policy || defaults.taskCommitPolicy,
+    taskCommitLinkMode: frontmatter.task_commit_link_mode || defaults.taskCommitLinkMode,
+    taskCommitRequireVerification: frontmatter.task_commit_require_verification || defaults.taskCommitRequireVerification,
+    taskCommitAllowNoCode: frontmatter.task_commit_allow_no_code || defaults.taskCommitAllowNoCode,
+    taskCommitAllowMultiple: frontmatter.task_commit_allow_multiple || defaults.taskCommitAllowMultiple,
+    taskCommitMessageTemplate: frontmatter.task_commit_message_template || defaults.taskCommitMessageTemplate,
+    githubIssueLinking: frontmatter.github_issue_linking || defaults.githubIssueLinking,
+    githubCommitLinking: frontmatter.github_commit_linking || defaults.githubCommitLinking,
+    commitReferenceStyle: frontmatter.commit_reference_style || defaults.commitReferenceStyle,
+    githubIssueIntake: frontmatter.github_issue_intake || defaults.githubIssueIntake,
+    githubIssueAutoTriage: frontmatter.github_issue_auto_triage || defaults.githubIssueAutoTriage,
+    githubIssueCreateTask: frontmatter.github_issue_create_task || defaults.githubIssueCreateTask,
+    githubIssueDefaultColumn: frontmatter.github_issue_default_column || defaults.githubIssueDefaultColumn,
+    githubIssueDefaultMilestone: frontmatter.github_issue_default_milestone || defaults.githubIssueDefaultMilestone,
+    githubIssueLabelSync: frontmatter.github_issue_label_sync || defaults.githubIssueLabelSync,
+    githubIssueCommentUpdates: frontmatter.github_issue_comment_updates || defaults.githubIssueCommentUpdates,
+    githubIssueCloseOnIntegration: frontmatter.github_issue_close_on_integration || defaults.githubIssueCloseOnIntegration,
+    githubIssueSecurityPrivateMode: frontmatter.github_issue_security_private_mode || defaults.githubIssueSecurityPrivateMode,
+    agentInstructionDiscovery: frontmatter.agent_instruction_discovery || defaults.agentInstructionDiscovery,
+    instructionMergeMode: frontmatter.instruction_merge_mode || defaults.instructionMergeMode,
+    instructionBackup: frontmatter.instruction_backup || defaults.instructionBackup,
+    instructionConflictPolicy: frontmatter.instruction_conflict_policy || defaults.instructionConflictPolicy,
+    instructionSidecarDir: frontmatter.instruction_sidecar_dir || defaults.instructionSidecarDir,
   };
 }
 
@@ -506,6 +599,31 @@ ${deriveTaskDescription(input.title)}
 ## Acceptance Criteria
 
 - [ ]
+
+## Source
+
+AI Office
+
+## GitHub
+
+| Field | Value |
+|-------|-------|
+| Issue | — |
+| Issue URL | — |
+| PR | — |
+| PR URL | — |
+
+## Git Traceability
+
+| Field | Value |
+|-------|-------|
+| Branch | — |
+| Worktree | — |
+| Primary Commit | — |
+| Additional Commits | — |
+| Integration Commit | — |
+| Verification | — |
+| Status | uncommitted |
 
 ## History
 
@@ -1086,6 +1204,20 @@ function commandTaskMove(args: string[]): void {
 
   content = setField(content, "Status", targetColumn);
 
+  if ((targetColumn === "REVIEW" || targetColumn === "DONE") && config.taskCommitTraceability !== "no" && config.taskCommitPolicy !== "disabled") {
+    content = ensureTraceabilitySections(content);
+    const traceStatus = getTableValue(content, "Git Traceability", "Status");
+    const primaryCommit = getTableValue(content, "Git Traceability", "Primary Commit");
+    const satisfied = primaryCommit !== "—" || ["no-code", "docs-only", "superseded", "integrated"].includes(traceStatus);
+    const required = config.taskCommitPolicy === "required-for-all" || config.taskCommitPolicy === "required-for-implementation";
+    if (!satisfied && required && targetColumn === "DONE") {
+      fail(`❌ Task ${extractField(content, "ID") ?? query} cannot move to DONE without a linked commit or explicit no-code/docs-only/superseded status.\nUse: ai-office task commit ${query} --detect verification:"typecheck, lint, tests passed"\nOr: ai-office task commit ${query} status:no-code verification:"reason"`);
+    }
+    if (!satisfied) {
+      messages.push("Traceability: missing commit link or no-code/docs-only/superseded status");
+    }
+  }
+
   if (targetColumn === "WIP") {
     if (extractField(content, "Started") === "—") {
       content = setField(content, "Started", today);
@@ -1212,6 +1344,12 @@ function commandTaskIntegrate(args: string[]): void {
   if (commitResult.exitCode !== 0) {
     fail(`❌ Unable to create the squash commit.\n${(commitResult.stderr || commitResult.stdout).trim()}`);
   }
+  const integrationSha = getHeadSha().slice(0, 12);
+  content = ensureTraceabilitySections(readText(taskPath));
+  content = setTableValue(content, "Git Traceability", "Integration Commit", integrationSha);
+  content = setTableValue(content, "Git Traceability", "Status", "integrated");
+  content = appendHistory(content, `${today}: integration commit recorded — ${integrationSha}`);
+  writeText(taskPath, content);
 
   console.log(`Integrated ${taskId} into ${mergeTarget}`);
   console.log(`Branch: ${branchName}`);
@@ -1219,6 +1357,7 @@ function commandTaskIntegrate(args: string[]): void {
     console.log(`Worktree: ${worktreeValue}`);
   }
   console.log(`Commit: ${commitMessage}`);
+  console.log(`Integration SHA: ${integrationSha}`);
 }
 
 function commandTaskUpdate(args: string[]): void {
@@ -1260,6 +1399,448 @@ function commandTaskUpdate(args: string[]): void {
 
   const taskId = extractField(content, "ID") ?? basename(taskPath, ".md");
   console.log(`Updated ${taskId}: ${changes.join("; ")}`);
+}
+
+function parseTraceArgs(args: string[]): {
+  query: string;
+  commits: string[];
+  detect: boolean;
+  status: string;
+  verification: string;
+  issue: string;
+  pr: string;
+} {
+  const [query, ...rest] = args;
+  if (!query) {
+    fail("❌ Usage: ai-office task commit <task-id> [commit-sha] [status:committed|integrated|no-code|docs-only|superseded] [verification:<summary>] [issue:#123] [pr:#456] [--detect]");
+  }
+  const parsed = { query, commits: [] as string[], detect: false, status: "", verification: "", issue: "", pr: "" };
+  for (const arg of rest) {
+    if (arg === "--detect") {
+      parsed.detect = true;
+      continue;
+    }
+    const flag = arg.match(/^([a-z-]+):(.*)$/i);
+    if (flag) {
+      const key = flag[1].toLowerCase();
+      const value = flag[2];
+      if (key === "status") parsed.status = value;
+      else if (key === "verification") parsed.verification = value;
+      else if (key === "issue") parsed.issue = value;
+      else if (key === "pr") parsed.pr = value;
+      else fail(`❌ Unknown task commit flag: ${key}`);
+      continue;
+    }
+    if (["committed", "integrated", "no-code", "docs-only", "superseded"].includes(arg)) {
+      parsed.status = arg;
+      continue;
+    }
+    parsed.commits.push(arg);
+  }
+  return parsed;
+}
+
+function commandTaskCommit(args: string[]): void {
+  ensureAiOffice();
+  const parsed = parseTraceArgs(args);
+  const taskPath = findTaskFile(parsed.query);
+  let content = ensureTraceabilitySections(readText(taskPath));
+  const taskId = extractField(content, "ID") ?? basename(taskPath, ".md");
+  const commits = [...parsed.commits];
+
+  if (parsed.detect) {
+    if (!isGitRepository()) fail("❌ Cannot detect a commit because this is not a git repository.");
+    commits.push(getHeadSha());
+  }
+
+  for (const sha of commits) {
+    validateCommitSha(sha);
+  }
+
+  const existingPrimary = getTableValue(content, "Git Traceability", "Primary Commit");
+  for (const sha of commits) {
+    const shortSha = sha.slice(0, 12);
+    if (!existingPrimary || existingPrimary === "—") {
+      content = setTableValue(content, "Git Traceability", "Primary Commit", shortSha);
+    } else if (existingPrimary !== shortSha) {
+      content = setTableValue(content, "Git Traceability", "Additional Commits", appendCsvValue(getTableValue(content, "Git Traceability", "Additional Commits"), shortSha));
+    }
+  }
+
+  const branch = extractField(content, "Branch") || (isGitRepository() ? getCurrentGitBranch() : "—");
+  const worktree = extractField(content, "Worktree") || "—";
+  content = setTableValue(content, "Git Traceability", "Branch", branch);
+  content = setTableValue(content, "Git Traceability", "Worktree", worktree);
+  if (parsed.verification) content = setTableValue(content, "Git Traceability", "Verification", parsed.verification);
+  if (parsed.status) content = setTableValue(content, "Git Traceability", "Status", parsed.status);
+  else if (commits.length > 0) content = setTableValue(content, "Git Traceability", "Status", "committed");
+
+  if (parsed.issue) {
+    const issue = normalizeIssueRef(parsed.issue);
+    if (issue.number) {
+      content = setTableValue(content, "GitHub", "Issue", issue.issue);
+      content = setTableValue(content, "GitHub", "Issue URL", issue.url);
+      content = appendToSection(content, "Source", `GitHub Issue ${issue.issue}`);
+    }
+  }
+  if (parsed.pr) {
+    const pr = normalizePrRef(parsed.pr);
+    if (pr.number) {
+      content = setTableValue(content, "GitHub", "PR", pr.pr);
+      content = setTableValue(content, "GitHub", "PR URL", pr.url);
+    }
+  }
+
+  content = appendHistory(content, `${todayIso()}: Traceability updated — ${commits.length ? `commits ${commits.map((sha) => sha.slice(0, 12)).join(", ")}` : parsed.status || "metadata"}${parsed.verification ? `; verification: ${parsed.verification}` : ""}`);
+  writeText(taskPath, content);
+  console.log(`Traceability updated for ${taskId}`);
+}
+
+function commandTaskTrace(args: string[]): void {
+  ensureAiOffice();
+  const [query] = args;
+  if (!query) {
+    fail("❌ Usage: ai-office task trace <task-id|commit-sha|issue-number>");
+  }
+  const normalizedIssue = normalizeIssueRef(query);
+  const needle = query.toLowerCase().replace(/^#/, "");
+  const matches = listTaskFiles().filter((taskPath) => {
+    const content = readText(taskPath);
+    const taskId = (extractField(content, "ID") || "").toLowerCase();
+    const primary = getTableValue(content, "Git Traceability", "Primary Commit").toLowerCase();
+    const additional = getTableValue(content, "Git Traceability", "Additional Commits").toLowerCase();
+    const issue = getTableValue(content, "GitHub", "Issue").replace(/^#/, "");
+    return taskId === query.toLowerCase() || primary.includes(needle) || additional.includes(needle) || (normalizedIssue.number && issue === normalizedIssue.number);
+  });
+
+  if (matches.length === 0) {
+    console.log(`No traceability match for ${query}.`);
+    console.log(`Link it with: ai-office task commit <task-id> ${query}`);
+    return;
+  }
+
+  for (const taskPath of matches) {
+    const content = ensureTraceabilitySections(readText(taskPath));
+    const taskId = extractField(content, "ID") ?? basename(taskPath, ".md");
+    console.log(`Task: ${taskId}`);
+    console.log(`Title: ${extractHeading(content)}`);
+    console.log(`Status: ${extractField(content, "Status") ?? getTaskColumn(taskPath)}`);
+    console.log(`Issue: ${getTableValue(content, "GitHub", "Issue")}`);
+    console.log(`Issue URL: ${getTableValue(content, "GitHub", "Issue URL")}`);
+    console.log(`PR: ${getTableValue(content, "GitHub", "PR")}`);
+    console.log(`Primary Commit: ${getTableValue(content, "Git Traceability", "Primary Commit")}`);
+    console.log(`Additional Commits: ${getTableValue(content, "Git Traceability", "Additional Commits")}`);
+    console.log(`Integration Commit: ${getTableValue(content, "Git Traceability", "Integration Commit")}`);
+    console.log(`Verification: ${getTableValue(content, "Git Traceability", "Verification")}`);
+    console.log(`Trace Status: ${getTableValue(content, "Git Traceability", "Status")}`);
+    console.log("");
+  }
+}
+
+function issueSlug(number: string): string {
+  return `issue-${number}`;
+}
+
+function intakePathForIssue(number: string): string {
+  return join(aiOfficeDir, "intake", `${issueSlug(number)}.md`);
+}
+
+function findIntakeByIssue(raw: string): string {
+  const issue = normalizeIssueRef(raw);
+  if (!issue.number) fail(`❌ Invalid issue reference: ${raw}`);
+  const path = intakePathForIssue(issue.number);
+  if (!existsSync(path)) fail(`❌ No intake record found for ${issue.issue}. Run ai-office issue intake ${issue.issue}`);
+  return path;
+}
+
+function buildIssueIntake(issue: { issue: string; number: string; url: string }): string {
+  return `# GitHub Issue Intake: ${issue.issue}
+
+## Source
+
+| Field | Value |
+|-------|-------|
+| Issue | ${issue.issue} |
+| URL | ${issue.url} |
+| Author | — |
+| Created | — |
+| Labels | — |
+
+## Summary
+
+Manual intake stub. Add the user report summary before triage.
+
+## User-Reported Problem
+
+—
+
+## Expected Behavior
+
+—
+
+## Actual Behavior
+
+—
+
+## Reproduction Steps
+
+1. —
+
+## Environment
+
+- OS:
+- Browser:
+- Version:
+- Deployment:
+- Logs/screenshots:
+
+## Classification
+
+needs-info
+
+## Severity
+
+medium
+
+## Confidence
+
+low
+
+## Is Actionable?
+
+needs-info
+
+## Suggested AI Office Task
+
+—
+
+## Linked Task
+
+—
+
+## Linked Commits
+
+—
+
+## Linked PR
+
+—
+
+## Response Plan
+
+Ask for missing reproduction details.
+
+## Next Action
+
+ask-for-info
+`;
+}
+
+function commandIssueIntake(args: string[]): void {
+  ensureAiOffice();
+  const [rawIssue, ...rest] = args;
+  if (!rawIssue) fail("❌ Usage: ai-office issue intake <issue-number|issue-url> [--create-task] [--link-task=<task-id>]");
+  const issue = normalizeIssueRef(rawIssue);
+  if (!issue.number) fail(`❌ Invalid issue reference: ${rawIssue}`);
+  ensureDirectory(join(aiOfficeDir, "intake"));
+  const path = intakePathForIssue(issue.number);
+  if (!existsSync(path)) writeText(path, buildIssueIntake(issue));
+
+  const createTaskFlag = rest.includes("--create-task");
+  const linkTaskFlag = rest.find((arg) => arg.startsWith("--link-task="))?.slice("--link-task=".length) || "";
+  let linkedTask = linkTaskFlag;
+  if (createTaskFlag && !linkedTask) {
+    const result = createTask({
+      title: `Triage GitHub Issue ${issue.issue}`,
+      milestone: getProjectConfig().githubIssueDefaultMilestone,
+      priority: "MEDIUM",
+      column: getProjectConfig().githubIssueDefaultColumn as Column,
+      assignee: "Unassigned",
+      deps: "—",
+      estimate: "—",
+      labels: "github-issue,intake",
+      slug: issueSlug(issue.number),
+    });
+    linkedTask = result.taskId;
+  }
+  if (linkedTask) {
+    commandIssueLink([issue.issue, linkedTask]);
+  }
+  console.log(`Issue intake: ${issue.issue} -> ${displayPath(path)}`);
+}
+
+function commandIssueLink(args: string[]): void {
+  ensureAiOffice();
+  const [rawIssue, taskQuery] = args;
+  if (!rawIssue || !taskQuery) fail("❌ Usage: ai-office issue link <issue-number|issue-url> <task-id>");
+  const issue = normalizeIssueRef(rawIssue);
+  if (!issue.number) fail(`❌ Invalid issue reference: ${rawIssue}`);
+  const taskPath = findTaskFile(taskQuery);
+  let content = ensureTraceabilitySections(readText(taskPath));
+  content = setTableValue(content, "GitHub", "Issue", issue.issue);
+  content = setTableValue(content, "GitHub", "Issue URL", issue.url);
+  content = appendToSection(content, "Source", `GitHub Issue ${issue.issue}`);
+  content = appendHistory(content, `${todayIso()}: linked GitHub Issue ${issue.issue}`);
+  writeText(taskPath, content);
+  const intakePath = intakePathForIssue(issue.number);
+  if (existsSync(intakePath)) {
+    let intake = readText(intakePath);
+    intake = intake.replace(/## Linked Task\n\n[\s\S]*?(?=\n## )/, `## Linked Task\n\n${extractField(content, "ID") ?? taskQuery}\n`);
+    writeText(intakePath, intake);
+  }
+  console.log(`Linked ${issue.issue} to ${extractField(content, "ID") ?? taskQuery}`);
+}
+
+function commandIssueTriage(args: string[]): void {
+  ensureAiOffice();
+  const [raw] = args;
+  if (!raw) fail("❌ Usage: ai-office issue triage <issue-number|intake-file>");
+  const path = raw.endsWith(".md") ? (isAbsolute(raw) ? raw : join(cwd, raw)) : findIntakeByIssue(raw);
+  const content = readText(path);
+  console.log(`Triage: ${displayPath(path)}`);
+  console.log(`Classification: ${findSectionContent(content, "Classification") || "needs-info"}`);
+  console.log(`Severity: ${findSectionContent(content, "Severity") || "medium"}`);
+  console.log(`Actionable: ${findSectionContent(content, "Is Actionable") || "needs-info"}`);
+  console.log(`Next Action: ${findSectionContent(content, "Next Action") || "ask-for-info"}`);
+}
+
+function commandIssueResponse(args: string[]): void {
+  ensureAiOffice();
+  const [raw, kind = "needs-info"] = args;
+  if (!raw) fail("❌ Usage: ai-office issue response <issue-number|task-id> [accepted|needs-info|fixed|duplicate|not-planned]");
+  let taskContent = "";
+  let issue = normalizeIssueRef(raw);
+  const taskPath = findTaskPathOptional(raw);
+  if (taskPath) {
+    taskContent = ensureTraceabilitySections(readText(taskPath));
+    issue = normalizeIssueRef(getTableValue(taskContent, "GitHub", "Issue"));
+  }
+  const taskId = taskContent ? extractField(taskContent, "ID") ?? "—" : "—";
+  const commit = taskContent ? getTableValue(taskContent, "Git Traceability", "Primary Commit") : "—";
+  const pr = taskContent ? getTableValue(taskContent, "GitHub", "PR") : "—";
+  const verification = taskContent ? getTableValue(taskContent, "Git Traceability", "Verification") : "—";
+  const responses: Record<string, string> = {
+    "accepted": `Thanks, this is reproducible and has been linked to AI Office task \`${taskId}\`.`,
+    "needs-info": "Could you provide steps to reproduce, expected behavior, actual behavior, environment/version, and screenshots or logs if available?",
+    "fixed": `This has been addressed in ${pr !== "—" ? pr : commit}. Verification: ${verification}.`,
+    "duplicate": "Thanks, this appears to be covered by an existing issue. I am linking this there to keep the discussion in one place.",
+    "not-planned": "Thanks for the suggestion. This does not fit the current product direction at this time.",
+  };
+  console.log(`# Draft response${issue.number ? ` for ${issue.issue}` : ""}`);
+  console.log("");
+  console.log(responses[kind] || responses["needs-info"]);
+  console.log("");
+  console.log("Posting is not automatic by default. Review before commenting publicly, especially for security reports.");
+}
+
+function instructionBlockStatus(path: string): "missing" | "present" | "duplicate" {
+  if (!existsSync(path)) return "missing";
+  const content = readText(path);
+  if (path.endsWith(".json")) {
+    try {
+      const parsed = JSON.parse(content) as { aiOfficeManaged?: unknown; instructions?: unknown };
+      const instructions = Array.isArray(parsed.instructions) ? parsed.instructions : [];
+      return parsed.aiOfficeManaged === true || instructions.includes("AI-OFFICE.md") ? "present" : "missing";
+    } catch {
+      return "missing";
+    }
+  }
+  const matches = content.match(/<!-- AI-OFFICE:START -->/g) ?? [];
+  if (matches.length > 1) return "duplicate";
+  return matches.length === 1 ? "present" : "missing";
+}
+
+function parseInstructionMergeArgs(args: string[]): {
+  mode: InstructionMergeMode;
+  target: string;
+  backup: boolean;
+  conflictPolicy: InstructionConflictPolicy;
+} {
+  const config = getProjectConfig();
+  let mode = config.instructionMergeMode as InstructionMergeMode;
+  let target = "all";
+  let backup = config.instructionBackup !== "no";
+  let conflictPolicy = config.instructionConflictPolicy as InstructionConflictPolicy;
+  for (const arg of args) {
+    if (arg.startsWith("--mode=")) {
+      mode = arg.slice("--mode=".length) as InstructionMergeMode;
+    } else if (arg.startsWith("--target=")) {
+      target = arg.slice("--target=".length);
+    } else if (arg.startsWith("--backup=")) {
+      backup = arg.slice("--backup=".length) !== "no";
+    } else if (arg.startsWith("--conflict-policy=")) {
+      conflictPolicy = arg.slice("--conflict-policy=".length) as InstructionConflictPolicy;
+    }
+  }
+  return { mode, target, backup, conflictPolicy };
+}
+
+function commandInstructionScan(): void {
+  ensureAiOffice();
+  const config = getProjectConfig();
+  const entries = scanAgentInstructions(cwd);
+  writeInstructionMergePolicy(cwd);
+  writeInstructionDiscoveryReport(cwd, entries, {
+    mode: config.instructionMergeMode as InstructionMergeMode,
+    backup: config.instructionBackup !== "no",
+    conflictPolicy: config.instructionConflictPolicy as InstructionConflictPolicy,
+    sidecarDir: config.instructionSidecarDir,
+  });
+  console.log("Agent instruction files:");
+  for (const entry of entries) {
+    console.log(`- ${entry.file}: ${entry.tool} (${entry.action})`);
+  }
+  console.log("Discovery report: .ai-office/instruction-discovery.md");
+}
+
+function commandInstructionMerge(args: string[]): void {
+  ensureAiOffice();
+  const config = getProjectConfig();
+  const { mode, target, backup, conflictPolicy } = parseInstructionMergeArgs(args);
+  const adapter = detectAdapter();
+  const profile = getAdapterProfile(adapter);
+  const targets = target === "all"
+    ? [profile.instructionFileName || "AGENTS.md"].filter((value): value is string => Boolean(value))
+    : [target];
+  const entries = scanAgentInstructions(cwd);
+  for (const relPath of targets) {
+    try {
+      const generated = relPath.endsWith(".json")
+        ? `${JSON.stringify({ instructions: ["AI-OFFICE.md"] }, null, 2)}\n`
+        : `${aiOfficeManagedBlock()}\n`;
+      entries.push(mergeInstructionFile(cwd, relPath, generated, {
+        mode,
+        backup,
+        conflictPolicy,
+        sidecarDir: config.instructionSidecarDir,
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      fail(`❌ Instruction merge failed for ${relPath}: ${message}`);
+    }
+  }
+  writeInstructionMergePolicy(cwd);
+  writeInstructionDiscoveryReport(cwd, entries, {
+    mode,
+    backup,
+    conflictPolicy,
+    sidecarDir: config.instructionSidecarDir,
+  });
+  console.log(`Instruction merge complete (${mode}).`);
+  console.log("Discovery report: .ai-office/instruction-discovery.md");
+}
+
+function commandInstructionStatus(): void {
+  ensureAiOffice();
+  const config = getProjectConfig();
+  console.log("Instruction status:");
+  for (const entry of scanAgentInstructions(cwd)) {
+    const fullPath = join(cwd, entry.file);
+    const status = statSync(fullPath).isDirectory() ? "directory" : instructionBlockStatus(fullPath);
+    const sidecarName = `${entry.file.replace(/[/.]/g, "-").replace(/^-+|-+$/g, "")}.ai-office.md`;
+    const hasSidecar = existsSync(join(cwd, config.instructionSidecarDir, sidecarName));
+    console.log(`- ${entry.file}: ${entry.tool}, ${hasSidecar && status === "missing" ? "sidecar-only" : status}`);
+  }
 }
 
 type TaskSyncMode = "outbound" | "inbound";
@@ -1333,6 +1914,16 @@ function findTaskPathById(taskId: string): string {
   return "";
 }
 
+function findTaskPathOptional(query: string): string {
+  const needle = query.toLowerCase();
+  return listTaskFiles().find((filePath) => {
+    const name = basename(filePath).toLowerCase();
+    if (name.startsWith(needle) || name.includes(needle)) return true;
+    const content = readText(filePath);
+    return extractField(content, "ID")?.toLowerCase() === needle;
+  }) || "";
+}
+
 function appendToSection(content: string, sectionName: string, line: string): string {
   const heading = `## ${sectionName}`;
   const start = content.indexOf(heading);
@@ -1346,6 +1937,125 @@ function appendToSection(content: string, sectionName: string, line: string): st
   const before = content.slice(0, nextSection);
   const after = content.slice(nextSection);
   return `${before.trimEnd()}\n${line}\n\n${after.replace(/^\n+/, "")}`;
+}
+
+function ensureTableSection(content: string, sectionName: string, rows: Array<[string, string]>): string {
+  if (content.includes(`## ${sectionName}`)) {
+    return content;
+  }
+  const table = [
+    `## ${sectionName}`,
+    "",
+    "| Field | Value |",
+    "|-------|-------|",
+    ...rows.map(([field, value]) => `| ${field} | ${value} |`),
+    "",
+  ].join("\n");
+  if (content.includes("## History")) {
+    return content.replace("## History", `${table}\n## History`);
+  }
+  return `${content.trimEnd()}\n\n${table}`;
+}
+
+function ensureTraceabilitySections(content: string): string {
+  let next = ensureTableSection(content, "GitHub", [
+    ["Issue", "—"],
+    ["Issue URL", "—"],
+    ["PR", "—"],
+    ["PR URL", "—"],
+  ]);
+  next = ensureTableSection(next, "Git Traceability", [
+    ["Branch", extractField(next, "Branch") || "—"],
+    ["Worktree", extractField(next, "Worktree") || "—"],
+    ["Primary Commit", "—"],
+    ["Additional Commits", "—"],
+    ["Integration Commit", "—"],
+    ["Verification", "—"],
+    ["Status", "uncommitted"],
+  ]);
+  return next;
+}
+
+function getTableValue(content: string, sectionName: string, field: string): string {
+  const section = findSectionContent(content, sectionName);
+  const escaped = escapeRegExp(field);
+  const match = section.match(new RegExp(`^\\|\\s*${escaped}\\s*\\|\\s*(.*?)\\s*\\|$`, "m"));
+  return match?.[1]?.trim() || "—";
+}
+
+function setTableValue(content: string, sectionName: string, field: string, value: string): string {
+  let next = ensureTraceabilitySections(content);
+  const escaped = escapeRegExp(field);
+  const pattern = new RegExp(`^(\\|\\s*${escaped}\\s*\\|\\s*)(.*?)(\\s*\\|)$`, "m");
+  if (pattern.test(findSectionContent(next, sectionName))) {
+    return next.replace(pattern, `$1${value}$3`);
+  }
+  const heading = `## ${sectionName}`;
+  const start = next.indexOf(heading);
+  const nextSection = next.indexOf("\n## ", start + heading.length);
+  const row = `| ${field} | ${value} |`;
+  if (nextSection < 0) {
+    return `${next.trimEnd()}\n${row}\n`;
+  }
+  return `${next.slice(0, nextSection).trimEnd()}\n${row}\n${next.slice(nextSection)}`;
+}
+
+function appendCsvValue(existing: string, value: string): string {
+  if (!value || value === "—") return existing || "—";
+  const values = (existing && existing !== "—" ? existing.split(",") : []).map((item) => item.trim()).filter(Boolean);
+  if (!values.includes(value)) values.push(value);
+  return values.length ? values.join(", ") : "—";
+}
+
+function isGitRepository(): boolean {
+  return runGit(["rev-parse", "--is-inside-work-tree"]).exitCode === 0;
+}
+
+function getHeadSha(): string {
+  const result = runGit(["rev-parse", "HEAD"]);
+  if (result.exitCode !== 0) fail("❌ Unable to detect current HEAD. Is this a git repository with commits?");
+  return result.stdout.trim();
+}
+
+function validateCommitSha(sha: string): void {
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
+    fail(`❌ Invalid commit SHA: ${sha}`);
+  }
+  const result = runGit(["cat-file", "-e", `${sha}^{commit}`]);
+  if (result.exitCode !== 0) {
+    fail(`❌ Commit not found: ${sha}`);
+  }
+}
+
+function getCommitSubject(sha: string): string {
+  const result = runGit(["show", "-s", "--format=%s", sha]);
+  return result.exitCode === 0 ? result.stdout.trim() : "";
+}
+
+function normalizeIssueRef(raw: string): { issue: string; number: string; url: string } {
+  const trimmed = raw.trim();
+  const urlMatch = trimmed.match(/github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/);
+  const number = urlMatch?.[1] || trimmed.replace(/^#/, "").match(/^\d+$/)?.[0] || "";
+  if (!number) return { issue: "—", number: "", url: "—" };
+  const repo = resolveGitHubRepo();
+  return {
+    issue: `#${number}`,
+    number,
+    url: urlMatch ? trimmed : (repo ? `https://github.com/${repo}/issues/${number}` : "—"),
+  };
+}
+
+function normalizePrRef(raw: string): { pr: string; number: string; url: string } {
+  const trimmed = raw.trim();
+  const urlMatch = trimmed.match(/github\.com\/[^/]+\/[^/]+\/pull\/(\d+)/);
+  const number = urlMatch?.[1] || trimmed.replace(/^#/, "").match(/^\d+$/)?.[0] || "";
+  if (!number) return { pr: "—", number: "", url: "—" };
+  const repo = resolveGitHubRepo();
+  return {
+    pr: `#${number}`,
+    number,
+    url: urlMatch ? trimmed : (repo ? `https://github.com/${repo}/pull/${number}` : "—"),
+  };
 }
 
 function moveTaskFileToColumn(filePath: string, targetColumn: Column): string {
@@ -2204,12 +2914,19 @@ function commandDoctor(): void {
   ];
 
   if (hasProjectConfig) {
+    const config = getProjectConfig();
     checks.push(
       { ok: existsSync(officeProfilePath), message: ".ai-office/office-profile.md present" },
       { ok: existsSync(pipelinePath), message: ".ai-office/pipeline.md present" },
       { ok: existsSync(qualityGatesPath), message: ".ai-office/quality-gates.md present" },
-      { ok: hasRoleFiles, message: ".ai-office/roles/*.md present" }
+      { ok: existsSync(join(aiOfficeDir, "agent-operating-model.md")), message: ".ai-office/agent-operating-model.md present" },
+      { ok: existsSync(join(aiOfficeDir, "collaboration-gates.md")), message: ".ai-office/collaboration-gates.md present" },
+      { ok: existsSync(join(aiOfficeDir, "instruction-discovery.md")), message: ".ai-office/instruction-discovery.md present" },
+      { ok: existsSync(join(aiOfficeDir, "instruction-merge-policy.md")), message: ".ai-office/instruction-merge-policy.md present" }
     );
+    if (config.officeMode === "custom") {
+      checks.push({ ok: hasRoleFiles, message: ".ai-office/roles/*.md present" });
+    }
   }
 
   if (adapter !== "base") {
@@ -2217,6 +2934,12 @@ function commandDoctor(): void {
     const adapterChecks: Array<{ ok: boolean; message: string }> = [];
     if (profile.instructionFileName) {
       adapterChecks.push({ ok: adapterInstructionExists(adapter), message: `${profile.instructionFileName} present` });
+      const instructionPath = join(cwd, profile.instructionFileName);
+      const sidecarDir = hasProjectConfig ? getProjectConfig().instructionSidecarDir : ".ai-office/instructions";
+      const sidecarName = `${profile.instructionFileName.replace(/[/.]/g, "-").replace(/^-+|-+$/g, "")}.ai-office.md`;
+      const hasManagedBlock = existsSync(instructionPath) && instructionBlockStatus(instructionPath) === "present";
+      const hasSidecar = existsSync(join(cwd, sidecarDir, sidecarName));
+      adapterChecks.push({ ok: hasManagedBlock || hasSidecar, message: `${profile.instructionFileName} AI Office managed block or sidecar present` });
     }
     if (profile.installedSkillRoot) {
       adapterChecks.push({ ok: projectPathExists(profile.installedSkillRoot), message: `${profile.installedSkillRoot} present` });
@@ -2259,6 +2982,21 @@ function main(): void {
     return;
   }
 
+  if (command === "instruction" && subcommand === "scan") {
+    commandInstructionScan();
+    return;
+  }
+
+  if (command === "instruction" && subcommand === "merge") {
+    commandInstructionMerge(rest);
+    return;
+  }
+
+  if (command === "instruction" && subcommand === "status") {
+    commandInstructionStatus();
+    return;
+  }
+
   if (command === "task" && subcommand === "create") {
     commandTaskCreate(rest);
     return;
@@ -2279,8 +3017,38 @@ function main(): void {
     return;
   }
 
+  if (command === "task" && subcommand === "commit") {
+    commandTaskCommit(rest);
+    return;
+  }
+
+  if (command === "task" && subcommand === "trace") {
+    commandTaskTrace(rest);
+    return;
+  }
+
   if (command === "task" && subcommand === "sync") {
     commandTaskSyncGitHub(rest);
+    return;
+  }
+
+  if (command === "issue" && subcommand === "intake") {
+    commandIssueIntake(rest);
+    return;
+  }
+
+  if (command === "issue" && subcommand === "triage") {
+    commandIssueTriage(rest);
+    return;
+  }
+
+  if (command === "issue" && subcommand === "link") {
+    commandIssueLink(rest);
+    return;
+  }
+
+  if (command === "issue" && subcommand === "response") {
+    commandIssueResponse(rest);
     return;
   }
 

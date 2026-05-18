@@ -6,6 +6,7 @@ import {
   type AdapterHost,
 } from "./adapter-manifest";
 import { renderInstalledAdapter, renderShellMetadata } from "./adapter-renderer";
+import type { InstructionConflictPolicy, InstructionMergeMode } from "./instruction-discovery";
 
 type EmitShellMetadataCommand = {
   command: "emit-shell-metadata";
@@ -17,6 +18,10 @@ type InstallAdapterCommand = {
   projectRoot: string;
   adapterHost: AdapterHost;
   instructionMode: "always" | "if-missing" | "never";
+  instructionMergeMode: InstructionMergeMode;
+  instructionBackup: boolean;
+  instructionConflictPolicy: InstructionConflictPolicy;
+  instructionSidecarDir: string;
 };
 
 type CliCommand = EmitShellMetadataCommand | InstallAdapterCommand;
@@ -39,6 +44,10 @@ function parseArgs(argv: string[]): CliCommand {
   let projectRoot = "";
   let adapterHost: AdapterHost | null = null;
   let instructionMode: "always" | "if-missing" | "never" = "if-missing";
+  let instructionMergeMode: InstructionMergeMode = "section";
+  let instructionBackup = true;
+  let instructionConflictPolicy: InstructionConflictPolicy = "keep-existing";
+  let instructionSidecarDir = ".ai-office/instructions";
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
@@ -70,6 +79,38 @@ function parseArgs(argv: string[]): CliCommand {
       index += 1;
       continue;
     }
+    if (arg === "--instruction-merge-mode") {
+      const next = rest[index + 1] ?? "";
+      if (!["section", "sidecar", "append", "skip", "overwrite-explicit"].includes(next)) {
+        throw new Error(`Unknown instruction merge mode: ${next || "(missing)"}`);
+      }
+      instructionMergeMode = next as InstructionMergeMode;
+      index += 1;
+      continue;
+    }
+    if (arg === "--instruction-backup") {
+      const next = rest[index + 1] ?? "";
+      if (next !== "yes" && next !== "no") {
+        throw new Error(`Unknown instruction backup value: ${next || "(missing)"}`);
+      }
+      instructionBackup = next === "yes";
+      index += 1;
+      continue;
+    }
+    if (arg === "--instruction-conflict-policy") {
+      const next = rest[index + 1] ?? "";
+      if (!["ask", "keep-existing", "prefer-ai-office", "sidecar"].includes(next)) {
+        throw new Error(`Unknown instruction conflict policy: ${next || "(missing)"}`);
+      }
+      instructionConflictPolicy = next as InstructionConflictPolicy;
+      index += 1;
+      continue;
+    }
+    if (arg === "--instruction-sidecar-dir") {
+      instructionSidecarDir = rest[index + 1] ?? "";
+      index += 1;
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -93,6 +134,10 @@ function parseArgs(argv: string[]): CliCommand {
     projectRoot,
     adapterHost,
     instructionMode,
+    instructionMergeMode,
+    instructionBackup,
+    instructionConflictPolicy,
+    instructionSidecarDir,
   };
 }
 
@@ -109,6 +154,10 @@ function main(): void {
     projectRoot: parsed.projectRoot,
     adapterHost: parsed.adapterHost,
     instructionMode: parsed.instructionMode,
+    instructionMergeMode: parsed.instructionMergeMode,
+    instructionBackup: parsed.instructionBackup,
+    instructionConflictPolicy: parsed.instructionConflictPolicy,
+    instructionSidecarDir: parsed.instructionSidecarDir,
   });
 
   console.log(JSON.stringify(summary));

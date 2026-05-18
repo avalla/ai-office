@@ -21,11 +21,23 @@ Read `.ai-office/project.config.md` and extract:
 
 If the file doesn't exist, use the fallback values silently.
 
+Also read `.ai-office/agent-operating-model.md`, `.ai-office/collaboration-gates.md`, `.ai-office/office-profile.md`, and `.ai-office/pipeline.md` when present.
+
 ---
 
 ## Review Instructions
 
 Read the file at `<path>`. Then perform a review across each requested sector.
+
+Before sector scoring, check whether the change appears to solve the right problem:
+
+- Product fit: does the change match the project office profile and user intent?
+- Architecture fit: does it fit the generated pipeline and established repo patterns?
+- Naming/UX fit: would names, labels, or workflow concepts become misleading?
+- Complexity fit: is the implementation larger than the smallest safe path?
+- Gate fit: should an intent check or implementation plan exist before this change?
+
+Flag product/architecture mismatch even when the code itself looks correct.
 
 ---
 

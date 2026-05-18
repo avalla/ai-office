@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "bun:test";
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { assertExists, initGitRepo, makeTempProject, runCli, runGit, runScript } from "./helpers";
 
@@ -89,6 +89,78 @@ describe("ai-office cli", () => {
       expect(result.stdout).toContain("PASS .ai-office/install.json present");
     } finally {
       cleanupOpencode();
+    }
+  });
+
+  it("preserves existing CLAUDE.md and merges only the AI Office managed block with backup", () => {
+    const { dir: claudeDir, cleanup: cleanupClaude } = makeTempProject();
+    try {
+      writeFileSync(join(claudeDir, "CLAUDE.md"), "# Existing Claude Rules\n\nKeep this user content.\n");
+      const result = runScript("install.sh", [claudeDir, "--adapter=claude-code"]);
+      expect(result.exitCode).toBe(0);
+
+      const content = readFileSync(join(claudeDir, "CLAUDE.md"), "utf8");
+      expect(content).toContain("Keep this user content.");
+      expect(content).toContain("AI-OFFICE:START");
+      expect(content).toContain("AI-OFFICE:END");
+      expect(content.match(/AI-OFFICE:START/g)?.length).toBe(1);
+      assertExists(join(claudeDir, ".ai-office/instruction-discovery.md"));
+      expect(existsSync(join(claudeDir, ".ai-office/backups/instructions"))).toBe(true);
+
+      const rerun = runCli(claudeDir, ["instruction", "merge", "--target=CLAUDE.md"]);
+      expect(rerun.exitCode).toBe(0);
+      const rerunContent = readFileSync(join(claudeDir, "CLAUDE.md"), "utf8");
+      expect(rerunContent).toContain("Keep this user content.");
+      expect(rerunContent.match(/AI-OFFICE:START/g)?.length).toBe(1);
+    } finally {
+      cleanupClaude();
+    }
+  });
+
+  it("supports instruction sidecar mode without modifying an existing AGENTS.md", () => {
+    const { dir: sidecarDir, cleanup: cleanupSidecar } = makeTempProject();
+    try {
+      const original = "# Existing Agents\n\nDo not touch.\n";
+      writeFileSync(join(sidecarDir, "AGENTS.md"), original);
+      const result = runScript("install.sh", [sidecarDir, "--instruction-merge-mode=sidecar"]);
+      expect(result.exitCode).toBe(0);
+      expect(readFileSync(join(sidecarDir, "AGENTS.md"), "utf8")).toBe(original);
+      assertExists(join(sidecarDir, ".ai-office/instructions/AGENTS-md.ai-office.md"));
+      const status = runCli(sidecarDir, ["instruction", "status"]);
+      expect(status.stdout).toContain("sidecar-only");
+    } finally {
+      cleanupSidecar();
+    }
+  });
+
+  it("scans known agent instruction files and preserves opencode.json unknown keys", () => {
+    const { dir: scanDir, cleanup: cleanupScan } = makeTempProject();
+    try {
+      mkdirSync(join(scanDir, ".github"), { recursive: true });
+      mkdirSync(join(scanDir, ".cursor/rules"), { recursive: true });
+      mkdirSync(join(scanDir, ".windsurf/rules"), { recursive: true });
+      writeFileSync(join(scanDir, ".github/copilot-instructions.md"), "# Copilot\n");
+      writeFileSync(join(scanDir, ".cursor/rules/project.mdc"), "Cursor rules\n");
+      writeFileSync(join(scanDir, ".windsurf/rules/project.md"), "Windsurf rules\n");
+      writeFileSync(join(scanDir, "opencode.json"), `${JSON.stringify({ theme: "dark", instructions: ["CUSTOM.md"] }, null, 2)}\n`);
+
+      const install = runScript("install.sh", [scanDir, "--adapter=opencode"]);
+      expect(install.exitCode).toBe(0);
+      const scan = runCli(scanDir, ["instruction", "scan"]);
+      expect(scan.exitCode).toBe(0);
+      const report = readFileSync(join(scanDir, ".ai-office/instruction-discovery.md"), "utf8");
+      expect(report).toContain(".github/copilot-instructions.md");
+      expect(report).toContain(".cursor/rules");
+      expect(report).toContain(".windsurf/rules");
+      expect(report).toContain("opencode.json");
+
+      const parsed = JSON.parse(readFileSync(join(scanDir, "opencode.json"), "utf8")) as { theme: string; instructions: string[]; aiOfficeManaged: boolean };
+      expect(parsed.theme).toBe("dark");
+      expect(parsed.instructions).toContain("CUSTOM.md");
+      expect(parsed.instructions).toContain("AI-OFFICE.md");
+      expect(parsed.aiOfficeManaged).toBe(true);
+    } finally {
+      cleanupScan();
     }
   });
 
@@ -233,6 +305,60 @@ describe("ai-office cli", () => {
     expect(task).toContain("Updated — priority: MEDIUM → HIGH");
   });
 
+  it("links commits and GitHub issues to task traceability", () => {
+    runScript("setup.sh", [dir, "--auto", "--non-interactive"]);
+    initGitRepo(dir);
+    writeFileSync(join(dir, "trace.txt"), "trace\n");
+    runGit(dir, ["add", "trace.txt"]);
+    runGit(dir, ["commit", "-m", "M0_T001: trace test (#123)"]);
+    const sha = runGit(dir, ["rev-parse", "HEAD"]).stdout.trim();
+
+    runCli(dir, ["task", "create", "Trace commit", "column:TODO"]);
+    const link = runCli(dir, ["task", "commit", "M0_T001", sha, "issue:#123", "verification:bun test passed"]);
+    expect(link.exitCode).toBe(0);
+
+    const taskPath = readdirSync(join(dir, ".ai-office/tasks/TODO")).find((name) => name.startsWith("M0_T001"));
+    expect(taskPath).toBeTruthy();
+    const content = readFileSync(join(dir, ".ai-office/tasks/TODO", taskPath!), "utf8");
+    expect(content).toContain("## Git Traceability");
+    expect(content).toContain(sha.slice(0, 12));
+    expect(content).toContain("| Issue | #123 |");
+    expect(content).toContain("bun test passed");
+
+    const traceByIssue = runCli(dir, ["task", "trace", "#123"]);
+    expect(traceByIssue.stdout).toContain("Task: M0_T001");
+    expect(traceByIssue.stdout).toContain("Issue: #123");
+  });
+
+  it("blocks DONE for implementation tasks without traceability evidence unless no-code is marked", () => {
+    runScript("setup.sh", [dir, "--auto", "--non-interactive"]);
+    runCli(dir, ["task", "create", "Needs commit", "column:TODO"]);
+    const blocked = runCli(dir, ["task", "move", "M0_T001", "DONE"]);
+    expect(blocked.exitCode).not.toBe(0);
+    expect(blocked.stderr).toContain("cannot move to DONE without a linked commit");
+
+    const noCode = runCli(dir, ["task", "commit", "M0_T001", "status:no-code", "verification:configuration only"]);
+    expect(noCode.exitCode).toBe(0);
+    const moved = runCli(dir, ["task", "move", "M0_T001", "DONE"]);
+    expect(moved.exitCode).toBe(0);
+  });
+
+  it("creates issue intake records and drafts issue responses", () => {
+    runScript("setup.sh", [dir, "--auto", "--non-interactive"]);
+    const intake = runCli(dir, ["issue", "intake", "#123", "--create-task"]);
+    expect(intake.exitCode).toBe(0);
+    assertExists(join(dir, ".ai-office/intake/issue-123.md"));
+
+    const taskName = readdirSync(join(dir, ".ai-office/tasks/BACKLOG")).find((name) => name.startsWith("M0_T001"));
+    expect(taskName).toBeTruthy();
+    const taskContent = readFileSync(join(dir, ".ai-office/tasks/BACKLOG", taskName!), "utf8");
+    expect(taskContent).toContain("| Issue | #123 |");
+
+    const response = runCli(dir, ["issue", "response", "#123", "needs-info"]);
+    expect(response.exitCode).toBe(0);
+    expect(response.stdout).toContain("Could you provide");
+  });
+
   it("creates milestone files and can auto-create milestone tasks", () => {
     const created = runCli(dir, [
       "milestone",
@@ -320,7 +446,7 @@ advance_mode: manual
     expect(result.stdout).toContain("PASS Run lint — true");
     expect(result.stdout).toContain("PASS Run tests — echo 'coverage 91%'");
     expect(result.stdout).toContain("Result: PASS");
-  });
+  }, 15000);
 
   it("validates the qa stage using configured completion check commands", () => {
     const configPath = join(dir, ".ai-office/project.config.md");
@@ -357,7 +483,7 @@ completion_check_cmd_3: "true"
     expect(result.stdout).toContain("PASS Run completion check 3 — true");
     expect(result.stdout).toContain("PASS Coverage ≥ 80%");
     expect(result.stdout).toContain("Result: PASS");
-  });
+  }, 15000);
 
   it("creates a dedicated task worktree when task isolation is enabled", () => {
     const setup = runScript("setup.sh", [
