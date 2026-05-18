@@ -17,11 +17,19 @@ eval "$(bun run "$FRAMEWORK_DIR/src/adapter-runtime.ts" emit-shell-metadata)"
 PROJECT_ROOT_ARG=""
 ADAPTER_ARG=""
 PRUNE_LEGACY=false
+INSTRUCTION_MERGE_MODE_ARG=""
+INSTRUCTION_BACKUP_ARG=""
+INSTRUCTION_CONFLICT_POLICY_ARG=""
+INSTRUCTION_SIDECAR_DIR_ARG=""
 
 for arg in "$@"; do
   case "$arg" in
     --adapter=*) ADAPTER_ARG="${arg#*=}" ;;
     --prune-legacy) PRUNE_LEGACY=true ;;
+    --instruction-merge-mode=*) INSTRUCTION_MERGE_MODE_ARG="${arg#*=}" ;;
+    --instruction-backup=*) INSTRUCTION_BACKUP_ARG="${arg#*=}" ;;
+    --instruction-conflict-policy=*) INSTRUCTION_CONFLICT_POLICY_ARG="${arg#*=}" ;;
+    --instruction-sidecar-dir=*) INSTRUCTION_SIDECAR_DIR_ARG="${arg#*=}" ;;
     -*)
       echo "⚠️  Unknown flag: $arg"
       exit 1
@@ -57,6 +65,24 @@ validate_adapter() {
 json_value() {
   local key="$1" file="$2"
   sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" | head -n 1
+}
+
+config_value() {
+  local key="$1" file="$2"
+  [[ -f "$file" ]] || return 0
+  awk -v key="$key" '
+    BEGIN { in_frontmatter = 0 }
+    $0 == "---" {
+      if (in_frontmatter == 0) { in_frontmatter = 1; next }
+      exit
+    }
+    in_frontmatter == 1 && $0 ~ ("^" key ":") {
+      sub(/^[^:]+:[[:space:]]*/, "", $0)
+      gsub(/^"|"$/, "", $0)
+      print
+      exit
+    }
+  ' "$file"
 }
 
 adapter_project_abs() {
@@ -128,6 +154,29 @@ fi
 TARGET_ADAPTER="${ADAPTER_ARG:-$INSTALLED_ADAPTER}"
 validate_adapter "$TARGET_ADAPTER"
 
+PROJECT_CONFIG="$AI_OFFICE/project.config.md"
+INSTRUCTION_MERGE_MODE="${INSTRUCTION_MERGE_MODE_ARG:-$(config_value instruction_merge_mode "$PROJECT_CONFIG")}"
+INSTRUCTION_BACKUP="${INSTRUCTION_BACKUP_ARG:-$(config_value instruction_backup "$PROJECT_CONFIG")}"
+INSTRUCTION_CONFLICT_POLICY="${INSTRUCTION_CONFLICT_POLICY_ARG:-$(config_value instruction_conflict_policy "$PROJECT_CONFIG")}"
+INSTRUCTION_SIDECAR_DIR="${INSTRUCTION_SIDECAR_DIR_ARG:-$(config_value instruction_sidecar_dir "$PROJECT_CONFIG")}"
+[[ -z "$INSTRUCTION_MERGE_MODE" ]] && INSTRUCTION_MERGE_MODE="section"
+[[ -z "$INSTRUCTION_BACKUP" ]] && INSTRUCTION_BACKUP="yes"
+[[ -z "$INSTRUCTION_CONFLICT_POLICY" ]] && INSTRUCTION_CONFLICT_POLICY="keep-existing"
+[[ -z "$INSTRUCTION_SIDECAR_DIR" ]] && INSTRUCTION_SIDECAR_DIR=".ai-office/instructions"
+
+case "$INSTRUCTION_MERGE_MODE" in
+  section|sidecar|append|skip|overwrite-explicit) ;;
+  *) echo "❌ Unknown instruction merge mode: $INSTRUCTION_MERGE_MODE"; exit 1 ;;
+esac
+case "$INSTRUCTION_BACKUP" in
+  yes|no) ;;
+  *) echo "❌ Unknown instruction backup value: $INSTRUCTION_BACKUP"; exit 1 ;;
+esac
+case "$INSTRUCTION_CONFLICT_POLICY" in
+  ask|keep-existing|prefer-ai-office|sidecar) ;;
+  *) echo "❌ Unknown instruction conflict policy: $INSTRUCTION_CONFLICT_POLICY"; exit 1 ;;
+esac
+
 echo "AI Office Framework — Update"
 echo ""
 echo "  Installed version : ${INSTALLED:-unknown}"
@@ -172,7 +221,11 @@ update_adapter_assets() {
         --framework-dir "$FRAMEWORK_DIR" \
         --project-root "$PROJECT_ROOT" \
         --adapter "$adapter" \
-        --instruction-mode if-missing >/dev/null
+        --instruction-mode if-missing \
+        --instruction-merge-mode "$INSTRUCTION_MERGE_MODE" \
+        --instruction-backup "$INSTRUCTION_BACKUP" \
+        --instruction-conflict-policy "$INSTRUCTION_CONFLICT_POLICY" \
+        --instruction-sidecar-dir "$INSTRUCTION_SIDECAR_DIR" >/dev/null
       echo "  ✅ $adapter skills updated"
       ;;
     commands)
@@ -180,7 +233,11 @@ update_adapter_assets() {
         --framework-dir "$FRAMEWORK_DIR" \
         --project-root "$PROJECT_ROOT" \
         --adapter "$adapter" \
-        --instruction-mode if-missing >/dev/null
+        --instruction-mode if-missing \
+        --instruction-merge-mode "$INSTRUCTION_MERGE_MODE" \
+        --instruction-backup "$INSTRUCTION_BACKUP" \
+        --instruction-conflict-policy "$INSTRUCTION_CONFLICT_POLICY" \
+        --instruction-sidecar-dir "$INSTRUCTION_SIDECAR_DIR" >/dev/null
       echo "  ✅ $adapter commands updated"
       ;;
     rules-workflows)
@@ -188,7 +245,11 @@ update_adapter_assets() {
         --framework-dir "$FRAMEWORK_DIR" \
         --project-root "$PROJECT_ROOT" \
         --adapter "$adapter" \
-        --instruction-mode if-missing >/dev/null
+        --instruction-mode if-missing \
+        --instruction-merge-mode "$INSTRUCTION_MERGE_MODE" \
+        --instruction-backup "$INSTRUCTION_BACKUP" \
+        --instruction-conflict-policy "$INSTRUCTION_CONFLICT_POLICY" \
+        --instruction-sidecar-dir "$INSTRUCTION_SIDECAR_DIR" >/dev/null
       echo "  ✅ $adapter rules and workflows updated"
       ;;
     *)
@@ -402,8 +463,9 @@ echo "→ Checking .ai-office/ structure..."
 for dir in \
   "$AI_OFFICE/tasks/BACKLOG" "$AI_OFFICE/tasks/TODO" "$AI_OFFICE/tasks/WIP" \
   "$AI_OFFICE/tasks/REVIEW" "$AI_OFFICE/tasks/BLOCKED" "$AI_OFFICE/tasks/REJECTED" "$AI_OFFICE/tasks/DONE" "$AI_OFFICE/tasks/ARCHIVED" \
-  "$AI_OFFICE/docs/prd" "$AI_OFFICE/docs/adr" "$AI_OFFICE/docs/runbooks" \
-  "$AI_OFFICE/agents" "$AI_OFFICE/agencies" "$AI_OFFICE/milestones" "$AI_OFFICE/scripts" "$AI_OFFICE/memory"
+  "$AI_OFFICE/docs/prd" "$AI_OFFICE/docs/adr" "$AI_OFFICE/docs/context" "$AI_OFFICE/docs/runbooks" \
+  "$AI_OFFICE/background" "$AI_OFFICE/intake" "$AI_OFFICE/instructions" "$AI_OFFICE/backups/instructions" \
+  "$AI_OFFICE/roles" "$AI_OFFICE/templates" "$AI_OFFICE/agents" "$AI_OFFICE/agencies" "$AI_OFFICE/milestones" "$AI_OFFICE/scripts" "$AI_OFFICE/memory"
 do
   mkdir -p "$dir"
 done

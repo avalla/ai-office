@@ -1457,18 +1457,21 @@ function commandTaskCommit(args: string[]): void {
     validateCommitSha(sha);
   }
 
-  const existingPrimary = getTableValue(content, "Git Traceability", "Primary Commit");
   for (const sha of commits) {
     const shortSha = sha.slice(0, 12);
-    if (!existingPrimary || existingPrimary === "—") {
+    const currentPrimary = getTableValue(content, "Git Traceability", "Primary Commit");
+    const currentAdditional = getTableValue(content, "Git Traceability", "Additional Commits");
+    if (!currentPrimary || currentPrimary === "—") {
       content = setTableValue(content, "Git Traceability", "Primary Commit", shortSha);
-    } else if (existingPrimary !== shortSha) {
-      content = setTableValue(content, "Git Traceability", "Additional Commits", appendCsvValue(getTableValue(content, "Git Traceability", "Additional Commits"), shortSha));
+    } else if (currentPrimary !== shortSha && !currentAdditional.split(",").map((item) => item.trim()).includes(shortSha)) {
+      content = setTableValue(content, "Git Traceability", "Additional Commits", appendCsvValue(currentAdditional, shortSha));
     }
   }
 
-  const branch = extractField(content, "Branch") || (isGitRepository() ? getCurrentGitBranch() : "—");
-  const worktree = extractField(content, "Worktree") || "—";
+  const taskBranch = extractField(content, "Branch");
+  const taskWorktree = extractField(content, "Worktree");
+  const branch = taskBranch && taskBranch !== "—" ? taskBranch : (isGitRepository() ? getCurrentGitBranch() : "—");
+  const worktree = taskWorktree && taskWorktree !== "—" ? taskWorktree : "—";
   content = setTableValue(content, "Git Traceability", "Branch", branch);
   content = setTableValue(content, "Git Traceability", "Worktree", worktree);
   if (parsed.verification) content = setTableValue(content, "Git Traceability", "Verification", parsed.verification);
@@ -2302,15 +2305,34 @@ function commandTaskSyncGitHubOutbound(options: TaskSyncOptions): void {
     if (!existing) {
       logSync(options.jsonLogs, { action: "create", task_id: taskId, dry_run: options.dryRun });
       if (!options.dryRun) {
-        ghApi(repo, `/repos/${repo}/issues`, "POST", {
+        const created = ghApi(repo, `/repos/${repo}/issues`, "POST", {
           title: issueTitle,
           body,
           labels: managedLabels,
           ...(milestoneNumber ? { milestone: milestoneNumber } : {}),
           ...(desiredState === "closed" ? { state: "closed" } : {}),
-        });
+        }) as Record<string, unknown>;
+        const issueNumber = Number(created.number ?? 0);
+        const issueUrl = String(created.html_url ?? (issueNumber > 0 ? `https://github.com/${repo}/issues/${issueNumber}` : "—"));
+        if (issueNumber > 0) {
+          let nextTaskContent = ensureTraceabilitySections(taskContent);
+          nextTaskContent = setTableValue(nextTaskContent, "GitHub", "Issue", `#${issueNumber}`);
+          nextTaskContent = setTableValue(nextTaskContent, "GitHub", "Issue URL", issueUrl);
+          nextTaskContent = appendHistory(nextTaskContent, `${todayIso()}: linked GitHub Issue #${issueNumber}`);
+          writeText(taskPath, nextTaskContent);
+        }
       }
       continue;
+    }
+
+    const existingIssueUrl = `https://github.com/${repo}/issues/${existing.number}`;
+    const currentIssue = getTableValue(ensureTraceabilitySections(taskContent), "GitHub", "Issue");
+    if (!options.dryRun && currentIssue !== `#${existing.number}`) {
+      let nextTaskContent = ensureTraceabilitySections(taskContent);
+      nextTaskContent = setTableValue(nextTaskContent, "GitHub", "Issue", `#${existing.number}`);
+      nextTaskContent = setTableValue(nextTaskContent, "GitHub", "Issue URL", existingIssueUrl);
+      nextTaskContent = appendHistory(nextTaskContent, `${todayIso()}: linked existing GitHub Issue #${existing.number}`);
+      writeText(taskPath, nextTaskContent);
     }
 
     const unmanagedLabels = existing.labels.filter((label) => !isManagedAiOfficeLabel(label));

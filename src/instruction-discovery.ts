@@ -42,7 +42,17 @@ const KNOWN_DIRS: Array<{ path: string; tool: string }> = [
   { path: ".gemini", tool: "Gemini" },
 ];
 
-const EXCLUDED_DIRS = new Set([".git", "node_modules", "dist", "build", "coverage", ".ai-office"]);
+const EXCLUDED_DIRS = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  ".ai-office",
+  // Framework internals should not be treated as target-project agent prompts
+  // when AI Office is developed inside its own repository.
+  "skeleton",
+]);
 
 export function aiOfficeManagedBlock(): string {
   return [
@@ -72,13 +82,14 @@ function toPosix(path: string): string {
 }
 
 function classifyPath(path: string): string {
-  if (path === "CLAUDE.md" || path.startsWith(".claude/")) return "Claude Code";
-  if (path === "AGENTS.md" || path.startsWith(".codex/")) return path === "AGENTS.md" ? "generic/codex" : "Codex";
-  if (path.startsWith(".github/copilot-instructions.md")) return "GitHub Copilot";
-  if (path.startsWith(".cursor/") || path === ".cursorrules") return "Cursor";
-  if (path.startsWith(".windsurf/")) return "Windsurf";
-  if (path === "opencode.json" || path.startsWith(".opencode/")) return "OpenCode";
-  if (path === "GEMINI.md" || path.startsWith(".gemini/")) return "Gemini";
+  if (path === "CLAUDE.md" || path === ".claude" || path.startsWith(".claude/")) return "Claude Code";
+  if (path === "AGENTS.md") return "generic/codex";
+  if (path === ".codex" || path.startsWith(".codex/")) return "Codex";
+  if (path === ".github/copilot-instructions.md") return "GitHub Copilot";
+  if (path === ".cursor" || path.startsWith(".cursor/") || path === ".cursorrules") return "Cursor";
+  if (path === ".windsurf" || path.startsWith(".windsurf/")) return "Windsurf";
+  if (path === "opencode.json" || path === ".opencode" || path.startsWith(".opencode/")) return "OpenCode";
+  if (path === "GEMINI.md" || path === ".gemini" || path.startsWith(".gemini/")) return "Gemini";
   if (/(ruflo|gsd)/i.test(path)) return "unknown-agent-tool";
   if (/(agent|claude|codex|ai|prompt)/i.test(basename(path)) && path.endsWith(".md")) return "unknown-agent-instructions";
   return "unknown-agent-tool";
@@ -184,7 +195,9 @@ function mergeJsonInstruction(existing: string, generated: string): string {
     }
   }
 
-  return `${JSON.stringify({ ...current, ...next, instructions, aiOfficeManaged: true }, null, 2)}\n`;
+  // Generated defaults should fill gaps, not replace user-owned configuration.
+  // Keep current keys authoritative and update only AI Office owned metadata.
+  return `${JSON.stringify({ ...next, ...current, instructions, aiOfficeManaged: true }, null, 2)}\n`;
 }
 
 export function mergeInstructionFile(
