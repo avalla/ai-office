@@ -4,16 +4,21 @@ This project uses the **AI Office framework**.
 
 `AI-OFFICE.md` is the host-neutral contract for the framework. The source of truth lives in:
 
-1. `.ai-office/docs/`
-2. `.ai-office/project.config.md`
-3. `.ai-office/memory/`
-4. this conversation/session
+1. `.ai-office/office-profile.md`
+2. `.ai-office/pipeline.md`
+3. `.ai-office/quality-gates.md`
+4. `.ai-office/docs/`
+5. `.ai-office/project.config.md`
+6. `.ai-office/memory/`
+7. this conversation/session
 
 ## Core Rules
 
 - Start new work by routing the request before implementation.
-- Keep the pipeline explicit: requirements, architecture, plan, tasks, implementation, QA, review, release.
+- Follow the generated project pipeline in `.ai-office/pipeline.md` when present.
 - Treat `.ai-office/` artifacts as the operational state of the project.
+- When the user requests a code or documentation change, create an AI Office task before implementation.
+- If the requested change is truly tiny, ask whether to create a task or proceed with the immediate fix.
 - Record evidence before claiming work is complete.
 - Prefer the deterministic `ai-office` CLI for state changes.
 
@@ -37,7 +42,7 @@ ai-office validate feature-slug prd
 
 AI Office is split into:
 
-- `core`: `.ai-office/`, templates, agencies, agents, validation, CLI
+- `core`: `.ai-office/`, generated project office files, templates, legacy presets, validation, CLI
 - `adapter`: the files that expose AI Office inside a specific host
 
 Examples:
@@ -64,6 +69,10 @@ Examples:
 Read these files when present:
 
 - `.ai-office/project.config.md`
+- `.ai-office/office-profile.md`
+- `.ai-office/pipeline.md`
+- `.ai-office/quality-gates.md`
+- `.ai-office/roles/<role>.md`
 - `.ai-office/office-config.md`
 - `.ai-office/tasks/README.md`
 - `.ai-office/docs/runbooks/<slug>-status.md`

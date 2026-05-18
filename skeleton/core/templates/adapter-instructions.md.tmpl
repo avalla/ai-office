@@ -49,6 +49,8 @@ These rules are always active. Project-specific rules are in `.ai-office/project
 ## Reasoning & Scope Control
 
 - Before making changes, confirm your understanding of the problem.
+- When the user requests a code or documentation change, create an AI Office task before implementation.
+- If the requested change is truly tiny, ask whether to create a task or proceed with the immediate fix.
 - Read `pre_implementation_mode` from `.ai-office/project.config.md` when present and honor it before coding:
   - `minimal`: ask only the essential blocking questions, then proceed.
   - `confirm`: finish the analysis, propose one work plan, and wait for explicit user confirmation before implementation.

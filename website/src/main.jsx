@@ -3,140 +3,95 @@ import ReactDOM from 'react-dom/client'
 import './styles.css'
 
 function App() {
-  const agencies = [
+  const officeExamples = [
     {
       id: 'software-studio',
-      name: 'Software Studio',
+      name: 'TypeScript Web App',
       emoji: '💻',
-      description: 'Full-stack SaaS development with 13 specialized agents',
-      bestFor: 'Enterprise software teams',
-      agents: 13,
+      description: 'Generated pipeline for frontend, backend, tests, review, and release',
+      bestFor: 'SaaS and product teams',
+      roles: 'product, architect, developer, qa, reviewer',
       features: [
-        'Complete dev lifecycle',
-        'QA & testing',
-        'Code review pipeline',
-        'Release management',
-        'Security & compliance'
+        'Repo-specific PRD and plan',
+        'Typecheck, lint, and test gates',
+        'Focused role set',
+        'Release evidence',
+        'Token-efficient context'
       ]
     },
     {
       id: 'lean-startup',
-      name: 'Lean Startup',
+      name: 'Supabase/Postgres App',
       emoji: '🚀',
-      description: 'Rapid MVP development with 7 core agents',
-      bestFor: 'Startups & MVPs',
-      agents: 7,
+      description: 'Generated flow for data model, RLS design, migrations, tests, and QA',
+      bestFor: 'Apps with auth, data, and policies',
+      roles: 'product, architect, developer, qa, database-security',
       features: [
-        'Fast iteration',
-        'Minimal overhead',
-        'Quick deployment',
-        'Growth-focused',
-        'Flexible pipeline'
+        'RLS/security design',
+        'Migration plan',
+        'pgTAP-aware gates',
+        'Policy review',
+        'Rollback notes'
       ]
     },
     {
       id: 'game-studio',
-      name: 'Game Studio',
+      name: 'Frontend App',
       emoji: '🎮',
-      description: 'Game development with custom pipeline and tools',
-      bestFor: 'Game developers',
-      agents: 10,
+      description: 'Generated flow for UX notes, component plan, visual QA, and accessibility',
+      bestFor: 'React, Vue, Svelte, Vite, and Next.js projects',
+      roles: 'product, developer, qa, reviewer, ux',
       features: [
-        'Asset management',
-        'Game mechanics testing',
-        'Performance optimization',
-        'Build distribution',
-        'Player feedback loop'
+        'Component planning',
+        'Visual QA',
+        'Accessibility review',
+        'Design-system notes',
+        'User-flow checks'
       ]
     },
     {
       id: 'creative-agency',
-      name: 'Creative Agency',
+      name: 'Infra-Heavy Project',
       emoji: '🎨',
-      description: 'Media production with focus on creators',
-      bestFor: 'Creative teams',
-      agents: 8,
+      description: 'Generated flow for risk assessment, runbook, dry-run, validation, and rollback',
+      bestFor: 'Docker, CI, Cloudflare, Vercel, Netlify, and ops-heavy repos',
+      roles: 'architect, developer, qa, reviewer, ops',
       features: [
-        'Design & UX',
-        'Content creation',
-        'Audio/Video production',
-        'Brand management',
-        'Feedback loops'
+        'Risk assessment',
+        'Runbook',
+        'Dry-run gate',
+        'Validation evidence',
+        'Rollback plan'
       ]
     },
     {
       id: 'media-agency',
-      name: 'Media Agency',
+      name: 'Security-Sensitive App',
       emoji: '📹',
-      description: 'Video and film production pipeline',
-      bestFor: 'Media production',
-      agents: 9,
+      description: 'Generated gates for auth, payments, secrets, permissions, and sensitive paths',
+      bestFor: 'Auth, billing, PII, and permission-heavy products',
+      roles: 'product, architect, developer, qa, security',
       features: [
-        'Production planning',
-        'Scheduling',
-        'Video editing',
-        'Distribution',
-        'Analytics'
+        'Security review',
+        'Secrets checks',
+        'Permission boundaries',
+        'Payment risk gates',
+        'Audit trail'
       ]
     },
     {
       id: 'italian-legal-studio',
-      name: 'Italian Legal Studio',
+      name: 'Legacy Presets',
       emoji: '⚖️',
-      description: 'Italian law firm workflows with compliance',
-      bestFor: 'Italian legal practices',
-      agents: 6,
+      description: 'Older agency templates remain available as examples and optional presets',
+      bestFor: 'Teams that already rely on a preset workflow',
+      roles: 'preset-defined',
       features: [
-        'Case management',
-        'Italian law compliance',
-        'Document templates',
-        'Deadline tracking',
-        'Partner workflows'
-      ]
-    },
-    {
-      id: 'furniture-cad-studio',
-      name: 'Furniture CAD Studio',
-      emoji: '🪑',
-      description: 'Furniture design and CAD modeling with FreeCAD',
-      bestFor: 'Furniture designers & makers',
-      agents: 10,
-      features: [
-        'FreeCAD parametric modeling',
-        'STEP/STL export',
-        'Structural review',
-        'Materials specification',
-        'Manufacturing documentation'
-      ]
-    },
-    {
-      id: 'penetration-test-agency',
-      name: 'Penetration Test Agency',
-      emoji: '🔐',
-      description: 'Offensive security testing, vulnerability validation, and remediation assurance',
-      bestFor: 'Security teams & pentesters',
-      agents: 11,
-      features: [
-        'Web, API & infrastructure testing',
-        'Evidence-driven findings',
-        'Remediation validation',
-        'Risk scoring & reporting',
-        'CVE & OWASP coverage'
-      ]
-    },
-    {
-      id: 'crypto-scalping-studio',
-      name: 'Crypto Scalping Studio',
-      emoji: '📈',
-      description: 'Scalping strategy development, signal generation, and live trading operations',
-      bestFor: 'Crypto traders & signal services',
-      agents: 9,
-      features: [
-        'Signal design & backtesting',
-        'Scalping execution rules',
-        'Risk & drawdown management',
-        'Paper trade validation',
-        'Live deployment & monitoring'
+        'Optional preset selection',
+        'Backward compatibility',
+        'Example pipelines',
+        'Preset roles',
+        'Migration path'
       ]
     }
   ]
@@ -179,13 +134,13 @@ function App() {
   const features = [
     {
       icon: '📋',
-      title: 'File-based Agency',
-      description: 'Complete virtual agency system stored in version control'
+      title: 'Generated Project Office',
+      description: 'Repo-specific operating model stored in version control'
     },
     {
       icon: '👥',
-      title: '27 Agents',
-      description: 'Specialized agents with personalities, skills, and workflows'
+      title: 'Minimal Roles',
+      description: 'Only the roles needed for the detected project and risks'
     },
     {
       icon: '📊',
@@ -204,24 +159,20 @@ function App() {
     },
     {
       icon: '⚖️',
-      title: 'Legal Studio',
-      description: 'Italian law compliance built into framework'
+      title: 'Legacy Presets',
+      description: 'Existing presets remain available as examples'
     }
   ]
 
-  const agents = [
-    { name: 'Router', emoji: '🧭', role: 'Request classification' },
-    { name: 'CEO', emoji: '👔', role: 'Strategic decisions' },
-    { name: 'PM', emoji: '📋', role: 'Product management' },
+  const roles = [
+    { name: 'Product', emoji: '📋', role: 'Scope and acceptance criteria' },
     { name: 'Architect', emoji: '🏗️', role: 'System design' },
     { name: 'Developer', emoji: '👨‍💻', role: 'Implementation' },
-    { name: 'Designer', emoji: '🎨', role: 'UI/UX design' },
     { name: 'QA', emoji: '✅', role: 'Quality assurance' },
     { name: 'Reviewer', emoji: '👁️', role: 'Code review' },
-    { name: 'Security', emoji: '🔒', role: 'Security audit' },
-    { name: 'Ops', emoji: '⚙️', role: 'Operations' },
-    { name: 'Release Manager', emoji: '🚀', role: 'Deployments' },
-    { name: 'Audio Creator', emoji: '🎵', role: 'Audio production' }
+    { name: 'Database Security', emoji: '🔒', role: 'RLS, migrations, data access' },
+    { name: 'UX', emoji: '🎨', role: 'Visual QA and accessibility' },
+    { name: 'Ops', emoji: '⚙️', role: 'CI, deploy, rollback' }
   ]
 
   return (
@@ -234,8 +185,8 @@ function App() {
           </div>
           <ul className="nav-links">
             <li><a href="#features">Features</a></li>
-            <li><a href="#agencies">Agencies</a></li>
-            <li><a href="#agents">Agents</a></li>
+            <li><a href="#offices">Offices</a></li>
+            <li><a href="#roles">Roles</a></li>
             <li><a href="#commands">Commands</a></li>
             <li><a href="#github" target="_blank" rel="noopener noreferrer">GitHub</a></li>
           </ul>
@@ -246,9 +197,9 @@ function App() {
       <section className="hero">
         <div className="container">
           <h1>🎯 AI Office</h1>
-          <p>Multi-Agent Software Development Framework</p>
+          <p>Repo-Native Workflow Layer for AI Coding Agents</p>
           <p style={{ fontSize: '1rem', opacity: 0.9 }}>
-            Coordinate 27 specialized AI agents through complete software development pipelines
+            Generate a custom project office from your repository: pipeline, roles, artifacts, and quality gates
           </p>
           <div className="hero-buttons">
             <button className="btn btn-primary" onClick={() => {
@@ -268,12 +219,12 @@ function App() {
         <div className="container">
           <h2>What is AI Office?</h2>
           <p>
-            AI Office is a complete framework for coordinating multiple AI agents through your software development lifecycle.
-            It provides structure, governance, and automation while maintaining full version control and auditability.
+            AI Office is a repo-native workflow and memory layer for AI coding tools.
+            It inspects your project and generates a lightweight operating model while keeping everything in markdown and git.
           </p>
           <p>
-            Think of it as a virtual agency: a file-based system where agents have personalities, competencies, triggers,
-            and workflows. It works for software teams, law firms, creative agencies, and more.
+            It is not an agent runtime. It gives your existing assistant durable project memory, state, tasks,
+            quality gates, and role-specific instructions without a server, database, or SaaS dependency.
           </p>
         </div>
       </section>
@@ -294,29 +245,29 @@ function App() {
         </div>
       </section>
 
-      {/* Agencies */}
-      <section id="agencies">
+      {/* Offices */}
+      <section id="offices">
         <div className="container">
-          <h2>9 Pre-Built Agencies</h2>
-          <p>Each agency has a custom pipeline, roles, and templates optimized for its domain.</p>
+          <h2>Generated Project Offices</h2>
+          <p>Setup analyzes repo signals and generates the smallest useful pipeline, role set, artifacts, and quality gates.</p>
 
           <div className="agencies">
-            {agencies.map(agency => (
+            {officeExamples.map(office => (
               <div
-                key={agency.id}
+                key={office.id}
                 className="agency-card"
               >
                 <div className="agency-header">
-                  <span style={{ fontSize: '2.5rem' }}>{agency.emoji}</span>
-                  <h3>{agency.name}</h3>
-                  <span className="agency-badge">{agency.agents} agents</span>
+                  <span style={{ fontSize: '2.5rem' }}>{office.emoji}</span>
+                  <h3>{office.name}</h3>
+                  <span className="agency-badge">{office.roles}</span>
                 </div>
                 <div className="agency-body">
-                  <p><strong>{agency.description}</strong></p>
-                  <p style={{ fontSize: '0.9rem', color: '#6b7280' }}>Best for: {agency.bestFor}</p>
+                  <p><strong>{office.description}</strong></p>
+                  <p style={{ fontSize: '0.9rem', color: '#6b7280' }}>Best for: {office.bestFor}</p>
                   <h4 style={{ marginTop: '1rem', marginBottom: '0.5rem', fontSize: '0.95rem', fontWeight: '600' }}>Features:</h4>
                   <ul className="agency-features">
-                    {agency.features.map(feature => (
+                    {office.features.map(feature => (
                       <li key={feature}>{feature}</li>
                     ))}
                   </ul>
@@ -327,24 +278,24 @@ function App() {
         </div>
       </section>
 
-      {/* Agents */}
-      <section id="agents" className="alternate">
+      {/* Roles */}
+      <section id="roles" className="alternate">
         <div className="container">
-          <h2>27 Specialized Agents</h2>
-          <p>Each agent has personality, competencies, triggers, workflows, and skills. Mix and match for custom agencies.</p>
+          <h2>Minimal Generated Roles</h2>
+          <p>Roles are short operational markdown files under <code>.ai-office/roles/</code>. AI Office never needs to load every role for a task.</p>
 
           <div className="agents-grid">
-            {agents.map(agent => (
-              <div key={agent.name} className="agent-card">
-                <div className="agent-icon">{agent.emoji}</div>
-                <h4>{agent.name}</h4>
-                <p>{agent.role}</p>
+            {roles.map(role => (
+              <div key={role.name} className="agent-card">
+                <div className="agent-icon">{role.emoji}</div>
+                <h4>{role.name}</h4>
+                <p>{role.role}</p>
               </div>
             ))}
             <div className="agent-card" style={{ opacity: 0.6 }}>
               <div className="agent-icon">+</div>
-              <h4>15 More</h4>
-              <p>Plus many more specialized agents...</p>
+              <h4>Only When Needed</h4>
+              <p>Security, UX, ops, and database roles are added from repo signals.</p>
             </div>
           </div>
         </div>
@@ -380,7 +331,7 @@ function App() {
 
           <h3 style={{ marginTop: '2rem' }}>1️⃣ Install</h3>
           <pre><code>./install.sh [project-path]
-./setup.sh [project-path]</code></pre>
+./setup.sh [project-path] --auto</code></pre>
 
           <h3 style={{ marginTop: '2rem' }}>2️⃣ Start a Feature</h3>
           <pre><code>/office:route Add real-time notifications</code></pre>
@@ -399,41 +350,41 @@ function App() {
         </div>
       </section>
 
-      {/* v1.4.0 Highlights */}
+      {/* Current Highlights */}
       <section className="alternate">
         <div className="container">
-          <h2>What's New in v1.4.0</h2>
+          <h2>Custom Office Outputs</h2>
 
           <div className="features">
             <div className="feature-card">
               <div className="feature-icon">✅</div>
-              <h3>Task Slug Field</h3>
-              <p>Link tasks to parent features for better tracking and organization</p>
+              <h3>Office Profile</h3>
+              <p>Detected project type, stack, risks, roles, and token rules</p>
             </div>
             <div className="feature-card">
               <div className="feature-icon">🚫</div>
-              <h3>BLOCKED Column</h3>
-              <p>Tasks with blockers are tracked with explicit unblock criteria</p>
+              <h3>Pipeline</h3>
+              <p>Repo-specific stage flow based on frontend, backend, data, infra, and security signals</p>
             </div>
             <div className="feature-card">
               <div className="feature-icon">📊</div>
-              <h3>Velocity Reporting</h3>
-              <p>Track team throughput and metrics per milestone</p>
+              <h3>Roles</h3>
+              <p>Minimal role profiles with purpose, inputs, outputs, token budget, and stop conditions</p>
             </div>
             <div className="feature-card">
               <div className="feature-icon">⚖️</div>
-              <h3>Italian Legal Studio</h3>
-              <p>Complete agency for Italian law firms with compliance built-in</p>
+              <h3>Quality Gates</h3>
+              <p>Project-specific verification gates and commands</p>
             </div>
             <div className="feature-card">
               <div className="feature-icon">📝</div>
-              <h3>New Artifacts</h3>
-              <p>Discuss & Runbook artifacts for better documentation</p>
+              <h3>Markdown Artifacts</h3>
+              <p>Profile, pipeline, gates, docs, tasks, and status files stay version-controlled</p>
             </div>
             <div className="feature-card">
               <div className="feature-icon">🔒</div>
-              <h3>Loop Guards</h3>
-              <p>All status files include guards table to prevent infinite cycles</p>
+              <h3>Token Budget</h3>
+              <p>Context file caps, role limits, stage artifact limits, and review loop caps</p>
             </div>
           </div>
         </div>
@@ -442,8 +393,8 @@ function App() {
       {/* CTA */}
       <section className="cta">
         <div className="container">
-          <h2>Ready to Coordinate Your AI Agents?</h2>
-          <p>Start with the framework and customize for your team's workflow.</p>
+          <h2>Ready to Generate Your Project Office?</h2>
+          <p>Start with your repository. AI Office generates the workflow around the code that is already there.</p>
           <div className="hero-buttons" style={{ marginTop: '2rem' }}>
             <a href="https://github.com/avalla/ai-office-claude-code" target="_blank" rel="noopener noreferrer">
               <button className="btn btn-primary">View on GitHub</button>
@@ -463,8 +414,8 @@ function App() {
               <h4>AI Office</h4>
               <a href="#about">About</a>
               <a href="#features">Features</a>
-              <a href="#agencies">Agencies</a>
-              <a href="#agents">Agents</a>
+              <a href="#offices">Offices</a>
+              <a href="#roles">Roles</a>
             </div>
             <div className="footer-section">
               <h4>Resources</h4>

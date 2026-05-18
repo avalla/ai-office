@@ -1,18 +1,23 @@
-# AI Office — Multi-Agent Software Development Framework
+# AI Office - Repo-Native Workflow Layer for AI Coding Agents
 
-A file-based virtual agency system for AI-assisted software development. AI Office now ships as a host-neutral core plus thin adapters for Codex, Windsurf, Claude Code, OpenCode, or a base markdown+CLI workflow, with a single adapter source of truth in the neutral manifest plus shared command templates rendered on demand during install and update.
+AI Office is a repo-native workflow and memory layer for AI coding agents.
 
-## 🎯 What It Does
+It analyzes your repository and generates a custom project office: pipeline, roles, quality gates, artifacts, and task workflows. It works with Codex, Claude Code, Windsurf, OpenCode, or plain CLI/markdown.
 
-**AI Office** manages the complete software development lifecycle:
+No server. No database. No SaaS dependency. Everything is markdown-first, git-versioned, adapter-driven, token-efficient, and custom per repo.
 
-- 📋 **Pipeline stages**: discussion → requirements → architecture → planning → implementation → QA → review → UAT → release → postmortem
-- 👥 **22 specialized agents**: PM, architect, developer, designer, QA, security, reviewer, ops, and more
-- 🗂️ **9 pre-built agencies**: software, startup, game, creative, media, security, legal, CAD, and crypto trading workflows
-- 📊 **Kanban board**: backlog, TODO, WIP, review, blocked, rejected, done, archived
-- 🎯 **Milestone tracking**: auto-suggest tasks, measure velocity, track progress
-- 🛡️ **Loop guards**: prevent infinite QA/review/UAT cycles (hard limits with escalation)
-- 📝 **Artifacts**: PRD, ADR, runbooks, task board, status files—all markdown, all version-controlled
+## What It Does
+
+AI Office gives your existing AI coding assistant a durable operating model:
+
+- Custom project office generated from repository signals
+- Project-specific pipeline, roles, artifacts, and quality gates
+- Minimal role set based on the detected stack and risks
+- File-based task board, milestones, status files, PRDs, ADRs, and runbooks
+- Deterministic CLI for state changes
+- Task-first change workflow, with an explicit user choice for truly tiny fixes
+- Host-neutral adapters for Codex, Windsurf, Claude Code, OpenCode, and base markdown
+- Legacy agency presets kept as optional examples, not the default onboarding path
 
 ### Visual Overview
 
@@ -38,7 +43,7 @@ graph LR
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Install
 
@@ -64,8 +69,8 @@ Pick the adapter that matches your preferred host:
 ```
 
 The installer creates:
-- `AI-OFFICE.md` — host-neutral operating contract
-- `.ai-office/` — framework engine (agents, agencies, configs, task board)
+- `AI-OFFICE.md` - host-neutral operating contract
+- `.ai-office/` - project office, generated profile, pipeline, roles, quality gates, docs, and task board
 - Adapter-specific wrapper files such as `AGENTS.md` + `.codex/skills/`, `AGENTS.md` + `.windsurf/rules/` + `.windsurf/workflows/`, `CLAUDE.md` + `.claude/skills/`, or `opencode.json` + `.opencode/commands/`
 
 In an interactive terminal, `install.sh` now launches the setup wizard automatically after the files are installed. If the install is running non-interactively, or you pass `--skip-setup`, run `./setup.sh [project-root]` yourself afterward.
@@ -78,14 +83,56 @@ Those adapter wrapper files are generated at install/update time from the neutra
 # If setup did not auto-launch, start the interactive wizard manually
 ./setup.sh .
 
-# Or automatic with flags
-./setup.sh . --agency=software-studio --stack=node-react --non-interactive
+# Or generate a custom project office from repo inspection
+./setup.sh . --auto --non-interactive
 
 # Reconfigure an existing project.config.md from the terminal
-./setup.sh . --reconfigure --stack=node-react --advance-mode=auto
+./setup.sh . --reconfigure --auto --advance-mode=auto
+
+# Optional legacy preset path
+./setup.sh . --agency=software-studio --stack=node-react --non-interactive
 ```
 
 Adapter-specific setup shortcuts can wrap the same flow, but `setup.sh` is the neutral baseline.
+
+Setup generates:
+
+- `.ai-office/office-profile.md`
+- `.ai-office/pipeline.md`
+- `.ai-office/quality-gates.md`
+- `.ai-office/roles/*.md`
+- `.ai-office/project.config.md`
+
+## Why Not Just Use a Multi-Agent Framework?
+
+AI Office is not an agent runtime. It does not try to run autonomous agents forever.
+
+It gives your existing AI coding assistant a durable operating system: project memory, workflow state, task board, quality gates, and role-specific instructions.
+
+## Token Efficiency
+
+Generated project offices are intentionally small:
+
+- never load all roles
+- never load all historical docs
+- load only current stage artifacts
+- prefer summaries over full conversations
+- use deterministic CLI for state changes
+- summarize completed stages into status files
+- cap review/QA loops
+- ask for missing files only when necessary
+
+Default generated config:
+
+```yaml
+token_budget:
+  mode: conservative
+  max_context_files: 8
+  max_roles_per_task: 2
+  max_stage_artifacts: 3
+  max_review_iterations: 2
+  summarize_after_stage: true
+```
 
 ### 3. Start a Feature
 
@@ -134,7 +181,7 @@ This step is mainly for framework maintainers. Projects consuming AI Office do n
 - [Pipeline & Stages](#pipeline--stages)
 - [Milestone Workflow](#milestone-workflow)
 - [Loop Guards](#loop-guards)
-- [Agencies](#agencies)
+- [Legacy Presets](#legacy-presets)
 - [Project Configuration](#project-configuration)
 - [Host Adapters](#-host-adapters)
 - [Updating](#updating)
@@ -267,22 +314,22 @@ graph TD
 
 ---
 
-## ✨ What's New in v1.16.0
+## What's New in v1.17.0
 
-### Structured Decision Choices
-- **Configurable interaction style**: `interactive_choices_mode` can now keep decisions in plain text or prefer clickable quick choices when the host supports them
-- **Host-aware fallback**: the same plan confirmations, approach selections, and cleanup follow-up prompts automatically fall back to concise text when buttons are unavailable
-- **Codex-specific support**: generated Codex instructions now explicitly prefer `request_user_input` when the current collaboration mode exposes it
+### Custom Project Office
+- **Repo analysis by default**: setup now inspects the target project and generates a custom project office instead of asking users to pick a preset first
+- **Generated operating model**: AI Office writes project-specific profile, pipeline, role, and quality-gate artifacts into `.ai-office/`
+- **Legacy presets preserved**: old agencies remain available as optional presets and examples
 
-### Existing Workflow Controls
-- **Pre-implementation collaboration**: `pre_implementation_mode` still controls whether the agent proceeds immediately, asks for plan confirmation, or offers alternatives before coding
-- **Task-end cleanup proposals**: completed tasks still close with a short `Cleanup proposal`, now with support for quick-choice follow-up when available
-- **Task completion verification**: setup can still collect up to three ordered completion-check commands, such as DB reset, regression tests, and Playwright
+### Workflow Discipline
+- **Task-first changes**: prompts now require an AI Office task before code or documentation changes
+- **Tiny-fix exception**: for truly small changes, the assistant asks whether to create a task or proceed immediately
+- **Token efficiency**: generated config includes context, role, stage-artifact, and review-loop budget settings
 
 ### Why It Matters
-- Makes interactive checkpoints feel lighter when the client can render buttons
-- Preserves compatibility across adapters and collaboration modes without breaking text-only hosts
-- Keeps the neutral manifest and adapter wrappers aligned around one structured-choice policy
+- AI Office now feels like a repo-native operating layer rather than a generic preset catalog
+- Generated roles and gates stay smaller, more relevant, and easier for coding agents to load
+- Backward compatibility is preserved while the default onboarding path is simpler
 
 ---
 
@@ -310,8 +357,8 @@ graph TD
     AIOFFICE --> CONFIG["📋 Configs"]
     AIOFFICE --> TASKS["📊 Tasks<br/>(Kanban Board)"]
     AIOFFICE --> DOCS["📝 Docs<br/>(Artifacts)"]
-    AIOFFICE --> AGENTS["👥 Agents<br/>(22 profiles)"]
-    AIOFFICE --> AGENCIES["🏛️ Agencies<br/>(9 templates)"]
+    AIOFFICE --> ROLES["Roles<br/>(generated minimal set)"]
+    AIOFFICE --> AGENCIES["Legacy presets<br/>(examples)"]
     AIOFFICE --> ADDONS["🔌 Addons<br/>(opt-in rules)"]
 
     CONFIG --> PROJECTCFG["project.config.md"]
@@ -351,9 +398,12 @@ After install, your project always has:
 AI-OFFICE.md                     ← Host-neutral workflow contract
 
 .ai-office/
-├── office-config.md             ← Agency identity & base config
-├── project.config.md            ← Tech stack, thresholds, workflow modes, interactive choices
-├── agency.json                  ← Active agency selection metadata
+├── office-config.md             ← Base framework config
+├── project.config.md            ← Tech stack, thresholds, workflow modes, token budget
+├── office-profile.md            ← Generated repo profile and recommended operating model
+├── pipeline.md                  ← Generated project-specific pipeline
+├── quality-gates.md             ← Generated project-specific gates
+├── agency.json                  ← Legacy preset compatibility metadata
 │
 ├── milestones/                  ← M1.md, M2.md, … (milestone definitions)
 │
@@ -374,7 +424,10 @@ AI-OFFICE.md                     ← Host-neutral workflow contract
 │   ├── adr/                     ← Architecture decision records
 │   └── runbooks/                ← <slug>-plan.md, -tasks.md, -status.md, -review.md, -runbook.md
 │
-├── agents/                      ← 22 agent profiles
+├── roles/                       ← Minimal generated role profiles for this repo
+│   └── <role>.md
+│
+├── agents/                      ← Legacy bundled agent profiles
 │   └── <agent>/
 │       ├── personality.md
 │       ├── competencies.md
@@ -383,7 +436,7 @@ AI-OFFICE.md                     ← Host-neutral workflow contract
 │       ├── skills.md
 │       └── mcp-adapters.md
 │
-├── agencies/                    ← 9 pre-built + custom agencies
+├── agencies/                    ← Legacy preset examples
 │   └── <agency>/
 │       ├── config.md
 │       ├── pipeline.md
@@ -806,9 +859,9 @@ The owner (Planner) must explicitly unblock by setting a new stage or unblock cr
 
 ---
 
-## 🏛️ Agencies
+## Legacy Presets
 
-Nine pre-built agencies for different team structures and project types:
+Pre-built agencies remain available as optional legacy presets and examples. The default setup path is repo analysis plus generated custom project office.
 
 | Agency | Best for | Active agents | Key traits |
 |--------|----------|---------------|-----------|
@@ -822,15 +875,15 @@ Nine pre-built agencies for different team structures and project types:
 | **furniture-cad-studio** | Furniture design and CAD work | 10 (custom roles) | Design review, structural checks, manufacturing-ready outputs |
 | **crypto-scalping-studio** | Trading operations and signals | 8 (custom roles) | Signal generation, risk discipline, execution review |
 
-### Create Custom Agency
+### Create Legacy Preset
 
 ```bash
 ./create-agency.sh my-team --from=software-studio --name="My Custom Agency" --desc="Optimized for our team"
 
-# New agency appears in $office-setup menu automatically (dynamic discovery)
+# New preset appears in $office-setup legacy preset mode automatically
 ```
 
-### Italian Legal Studio — Example Agency
+### Italian Legal Studio - Example Legacy Preset
 
 ```mermaid
 graph LR

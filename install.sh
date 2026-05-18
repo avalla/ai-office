@@ -227,7 +227,7 @@ fi
 
 if [[ ! -f "$PROJECT_ROOT/.mcp.json" ]]; then
   cp "$CORE_SKELETON/.mcp.json" "$PROJECT_ROOT/.mcp.json"
-  echo "  ✅ .mcp.json created — fill in env vars for the adapters your agency needs"
+  echo "  ✅ .mcp.json created — fill in env vars for the adapters your project office needs"
 else
   echo "  ↩️  .mcp.json already exists, skipped"
 fi

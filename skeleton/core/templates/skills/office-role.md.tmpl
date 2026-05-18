@@ -1,23 +1,24 @@
 ---
 name: office-role
-description: Display role guidance for an agent in the current pipeline stage. Usage: {{CMD:office-role}} <agent-name>
+description: Display generated project-office role guidance for the current pipeline stage. Usage: {{CMD:office-role}} <role-name>
 disable-model-invocation: true
 
-$ARGUMENTS format: `<agent-name>`
+$ARGUMENTS format: `<role-name>`
 
-- **agent-name**: the agent whose role guidance to display (e.g. `developer`, `qa`, `reviewer`, `pm`, `architect`)
+- **role-name**: the generated role guidance to display (e.g. `developer`, `qa`, `reviewer`, `product`, `architect`)
 
 Accepted aliases:
 
 | Alias | Resolves to |
 |-------|-------------|
 | `dev`, `developer` | `developer` |
-| `pm`, `product-manager` | `pm` |
+| `pm`, `product-manager`, `product` | `product` |
 | `arch`, `architect` | `architect` |
 | `qa`, `tester` | `qa` |
 | `rev`, `reviewer` | `reviewer` |
-| `sec`, `security`, `security-specialist` | `security-specialist` |
-| `ux`, `ux-researcher` | `ux-researcher` |
+| `sec`, `security`, `security-specialist` | `security` |
+| `db`, `database`, `database-security` | `database-security` |
+| `ux`, `ux-researcher` | `ux` |
 | `design`, `designer` | `designer` |
 | `plan`, `planner` | `planner` |
 | `ops`, `devops` | `ops` |
@@ -28,27 +29,29 @@ Accepted aliases:
 
 ## Steps
 
-1. **Resolve agent name**: apply the alias table above.
+1. **Resolve role name**: apply the alias table above.
 
-2. **Read personality file**: read `.ai-office/agents/<agent-name>/personality.md`.
-   If it does not exist, try `.ai-office/agents/<agent-name>/`:
-   - List available agents in `.ai-office/agents/` and suggest the closest match.
-   - Output: `⚠️  Agent '<agent-name>' not found. Available agents: <list>`
+2. **Read generated role file first**: read `.ai-office/roles/<role-name>.md`.
+   If it does not exist, fall back to legacy `.ai-office/agents/<role-name>/personality.md`.
+   If neither exists:
+   - List available generated roles in `.ai-office/roles/` first.
+   - Then list available legacy agents in `.ai-office/agents/` if needed.
+   - Output: `⚠️  Role '<role-name>' not found. Available roles: <list>`
 
 3. **Read current pipeline state** (optional enrichment):
-   - Read `.ai-office/project.config.md` → `agency`, `project_name`
-   - List any `*-status.md` files in `.ai-office/docs/runbooks/` — if exactly one exists, read it and extract `State:`
+   - Read `.ai-office/project.config.md`, `.ai-office/office-profile.md`, and `.ai-office/pipeline.md` when present.
+   - List any `*-status.md` files in `.ai-office/docs/runbooks/` - if exactly one exists, read it and extract `State:`
 
 4. **Display role guidance**:
 
    ```
-   ## Role: <Agent Name>
-   **Project:** <project_name> (<agency>)
+   ## Role: <Role Name>
+   **Project:** <project_name>
    **Current stage:** <State> (from status file, or "unknown")
 
    ---
 
-   <full content of personality.md>
+   <full content of generated role file or legacy personality.md>
 
    ---
 
@@ -70,16 +73,16 @@ Accepted aliases:
    | `release` | Check rollback plan; verify feature flags; confirm monitoring in place |
    | `postmortem` | Blameless analysis; capture action items with owners and due dates |
 
-   If the current stage doesn't match this agent's primary stage, add:
+   If the current stage does not match this role's primary stage, add:
    ```
-   > ℹ️  You are viewing <agent-name>'s role but the current stage is `<state>`.
-   >    The active agent for `<state>` is `<responsible agent from office-advance mapping>`.
+   > You are viewing <role-name>'s role but the current stage is `<state>`.
+   > The active role for `<state>` should be inferred from `.ai-office/pipeline.md`.
    ```
 
 5. **Related commands**:
    ```
    Related:
-   - {{CMD:office-advance}} <slug> <evidence>   — move to next stage
-   - {{CMD:office-validate}} <slug> <stage>     — run stage gate checks
-   - {{CMD:office-task-list}}                   — see active tasks for this stage
+   - {{CMD:office-advance}} <slug> <evidence>   - move to next stage
+   - {{CMD:office-validate}} <slug> <stage>     - run stage gate checks
+   - {{CMD:office-task-list}}                   - see active tasks for this stage
    ```

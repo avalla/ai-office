@@ -32,6 +32,7 @@ type InstalledAdapter = AdapterHost;
 
 type ProjectConfig = {
   agency: string;
+  officeMode: string;
   projectName: string;
   uiFramework: string;
   advanceMode: string;
@@ -49,6 +50,12 @@ type ProjectConfig = {
   taskBaseBranch: string;
   taskMergeTarget: string;
   taskWorktreeRoot: string;
+  tokenBudgetMode: string;
+  tokenBudgetMaxContextFiles: number;
+  tokenBudgetMaxRolesPerTask: number;
+  tokenBudgetMaxStageArtifacts: number;
+  tokenBudgetMaxReviewIterations: number;
+  tokenBudgetSummarizeAfterStage: string;
 };
 
 type TaskCreateInput = {
@@ -95,6 +102,11 @@ const milestonesDir = join(aiOfficeDir, "milestones");
 const tasksReadmePath = join(tasksDir, "README.md");
 const milestonesReadmePath = join(milestonesDir, "README.md");
 const installMetaPath = join(aiOfficeDir, "install.json");
+const projectConfigPath = join(aiOfficeDir, "project.config.md");
+const officeProfilePath = join(aiOfficeDir, "office-profile.md");
+const pipelinePath = join(aiOfficeDir, "pipeline.md");
+const qualityGatesPath = join(aiOfficeDir, "quality-gates.md");
+const rolesDir = join(aiOfficeDir, "roles");
 const ADAPTER_PROFILE_BY_HOST = new Map(ADAPTER_PROFILES.map((profile) => [profile.host, profile]));
 const ADAPTER_EXCLUDE_DIRS = new Set([
   "node_modules",
@@ -238,6 +250,7 @@ function parseFrontmatter(content: string): Record<string, string> {
 function getProjectConfig(): ProjectConfig {
   const defaults: ProjectConfig = {
     agency: "software-studio",
+    officeMode: "custom",
     projectName: basename(cwd),
     uiFramework: "",
     advanceMode: "manual",
@@ -255,6 +268,12 @@ function getProjectConfig(): ProjectConfig {
     taskBaseBranch: "dev",
     taskMergeTarget: "dev",
     taskWorktreeRoot: ".ai-office/worktrees",
+    tokenBudgetMode: "conservative",
+    tokenBudgetMaxContextFiles: 8,
+    tokenBudgetMaxRolesPerTask: 2,
+    tokenBudgetMaxStageArtifacts: 3,
+    tokenBudgetMaxReviewIterations: 2,
+    tokenBudgetSummarizeAfterStage: "true",
   };
 
   const configPath = join(aiOfficeDir, "project.config.md");
@@ -265,6 +284,7 @@ function getProjectConfig(): ProjectConfig {
   const frontmatter = parseFrontmatter(readText(configPath));
   return {
     agency: frontmatter.agency || defaults.agency,
+    officeMode: frontmatter.office_mode || defaults.officeMode,
     projectName: frontmatter.project_name || defaults.projectName,
     uiFramework: frontmatter.ui_framework || defaults.uiFramework,
     advanceMode: frontmatter.advance_mode || defaults.advanceMode,
@@ -282,6 +302,12 @@ function getProjectConfig(): ProjectConfig {
     taskBaseBranch: frontmatter.task_base_branch || defaults.taskBaseBranch,
     taskMergeTarget: frontmatter.task_merge_target || defaults.taskMergeTarget,
     taskWorktreeRoot: frontmatter.task_worktree_root || defaults.taskWorktreeRoot,
+    tokenBudgetMode: frontmatter.token_budget_mode || defaults.tokenBudgetMode,
+    tokenBudgetMaxContextFiles: Number(frontmatter.token_budget_max_context_files || defaults.tokenBudgetMaxContextFiles),
+    tokenBudgetMaxRolesPerTask: Number(frontmatter.token_budget_max_roles_per_task || defaults.tokenBudgetMaxRolesPerTask),
+    tokenBudgetMaxStageArtifacts: Number(frontmatter.token_budget_max_stage_artifacts || defaults.tokenBudgetMaxStageArtifacts),
+    tokenBudgetMaxReviewIterations: Number(frontmatter.token_budget_max_review_iterations || defaults.tokenBudgetMaxReviewIterations),
+    tokenBudgetSummarizeAfterStage: frontmatter.token_budget_summarize_after_stage || defaults.tokenBudgetSummarizeAfterStage,
   };
 }
 
@@ -1236,6 +1262,458 @@ function commandTaskUpdate(args: string[]): void {
   console.log(`Updated ${taskId}: ${changes.join("; ")}`);
 }
 
+type TaskSyncMode = "outbound" | "inbound";
+type TaskSyncOptions = {
+  mode: TaskSyncMode;
+  dryRun: boolean;
+  jsonLogs: boolean;
+  eventPath: string;
+};
+
+type GitHubIssueIndexItem = {
+  number: number;
+  title: string;
+  body: string;
+  labels: string[];
+  milestoneNumber: number | null;
+  state: "open" | "closed";
+};
+
+function parseTaskSyncOptions(args: string[]): TaskSyncOptions {
+  if (args[0] !== "github") {
+    fail("❌ Usage: ai-office task sync github [--dry-run] [--json] [--inbound] [--event-path <path>]");
+  }
+
+  let mode: TaskSyncMode = "outbound";
+  let dryRun = false;
+  let jsonLogs = false;
+  let eventPath = process.env.GITHUB_EVENT_PATH || "";
+
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg === "--json") {
+      jsonLogs = true;
+      continue;
+    }
+    if (arg === "--inbound") {
+      mode = "inbound";
+      continue;
+    }
+    if (arg === "--event-path") {
+      eventPath = args[index + 1] ?? "";
+      index += 1;
+      continue;
+    }
+    fail(`❌ Unknown option: ${arg}`);
+  }
+
+  return { mode, dryRun, jsonLogs, eventPath };
+}
+
+function normalizeLabel(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function extractTaskIdFromIssueBody(issueBody: string): string {
+  const marker = issueBody.match(/ai-office-task-id:\s*([A-Z0-9_]+)/i);
+  return marker?.[1] ?? "";
+}
+
+function findTaskPathById(taskId: string): string {
+  for (const taskPath of listTaskFiles()) {
+    const id = extractField(readText(taskPath), "ID");
+    if (id === taskId) {
+      return taskPath;
+    }
+  }
+  return "";
+}
+
+function appendToSection(content: string, sectionName: string, line: string): string {
+  const heading = `## ${sectionName}`;
+  const start = content.indexOf(heading);
+  if (start < 0) {
+    return `${content.trimEnd()}\n\n${heading}\n${line}\n`;
+  }
+  const nextSection = content.indexOf("\n## ", start + heading.length);
+  if (nextSection < 0) {
+    return `${content.trimEnd()}\n${line}\n`;
+  }
+  const before = content.slice(0, nextSection);
+  const after = content.slice(nextSection);
+  return `${before.trimEnd()}\n${line}\n\n${after.replace(/^\n+/, "")}`;
+}
+
+function moveTaskFileToColumn(filePath: string, targetColumn: Column): string {
+  const currentColumn = getTaskColumn(filePath);
+  if (currentColumn === targetColumn) {
+    return filePath;
+  }
+  const targetPath = join(tasksDir, targetColumn, basename(filePath));
+  ensureDirectory(join(tasksDir, targetColumn));
+  renameSync(filePath, targetPath);
+  return targetPath;
+}
+
+function ghApi(repo: string, route: string, method: "GET" | "POST" | "PATCH", payload?: unknown): unknown {
+  const args = ["gh", "api", route, "--method", method, "--jq", "."];
+  if (payload !== undefined) {
+    args.push("--input", "-");
+  }
+  const proc = Bun.spawnSync(args, {
+    cwd,
+    env: process.env,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: payload === undefined ? "inherit" : "pipe",
+    input: payload === undefined ? undefined : JSON.stringify(payload),
+  });
+  if ((proc.exitCode ?? 1) !== 0) {
+    const stderr = new TextDecoder().decode(proc.stderr).trim();
+    fail(`❌ GitHub API call failed (${repo} ${route}): ${stderr || "unknown error"}`);
+  }
+  return JSON.parse(new TextDecoder().decode(proc.stdout));
+}
+
+function ghApiPaginated(route: string): unknown[] {
+  const proc = Bun.spawnSync(["gh", "api", "--paginate", route, "--jq", "."], {
+    cwd,
+    env: process.env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if ((proc.exitCode ?? 1) !== 0) {
+    const stderr = new TextDecoder().decode(proc.stderr).trim();
+    fail(`❌ GitHub API paginated call failed (${route}): ${stderr || "unknown error"}`);
+  }
+  const raw = new TextDecoder().decode(proc.stdout).trim();
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .flatMap((line) => {
+      const item = JSON.parse(line) as unknown;
+      return Array.isArray(item) ? item : [item];
+    });
+}
+
+function resolveGitHubRepo(): string {
+  const fromEnv = process.env.GITHUB_REPOSITORY?.trim();
+  if (fromEnv) {
+    return fromEnv;
+  }
+  const result = runGit(["remote", "get-url", "origin"]);
+  if (result.exitCode !== 0) {
+    return "";
+  }
+  const url = result.stdout.trim();
+  const ssh = url.match(/github\.com:([^/]+\/[^/.]+)(?:\.git)?$/);
+  if (ssh?.[1]) {
+    return ssh[1];
+  }
+  const https = url.match(/github\.com\/([^/]+\/[^/.]+)(?:\.git)?$/);
+  return https?.[1] ?? "";
+}
+
+function renderIssueBodyFromTask(taskPath: string, taskContent: string): string {
+  const id = extractField(taskContent, "ID") ?? "";
+  const status = extractField(taskContent, "Status") ?? getTaskColumn(taskPath);
+  const priority = extractField(taskContent, "Priority") ?? "MEDIUM";
+  const assignee = extractField(taskContent, "Assignee") ?? "Unassigned";
+  const created = extractField(taskContent, "Created") ?? "";
+  const dependencies = extractField(taskContent, "Dependencies") ?? "—";
+  const description = findSectionContent(taskContent, "Description");
+  const acceptance = findSectionContent(taskContent, "Acceptance Criteria");
+  const notes = findSectionContent(taskContent, "Notes");
+  const safeDeps = dependencies === "—" ? "None" : dependencies;
+  const lines = [
+    `<!-- ai-office-task-id: ${id} -->`,
+    `<!-- ai-office-source: ${taskPath.replace(`${cwd}/`, "")} -->`,
+    "",
+    `**AI Office Task:** \`${id}\``,
+    `**Status:** ${status}`,
+    `**Priority:** ${priority}`,
+    `**Assignee (AI Office):** ${assignee}`,
+    created ? `**Created:** ${created}` : "",
+    `**Dependencies:** ${safeDeps}`,
+    "",
+    "## Description",
+    description || "_No description provided._",
+    "",
+    "## Acceptance Criteria",
+    acceptance || "- [ ] Define acceptance criteria",
+    "",
+    "## Notes",
+    notes || "_No notes_",
+    "",
+    `Source: \`${taskPath.replace(`${cwd}/`, "")}\``,
+  ];
+  return lines.filter(Boolean).join("\n");
+}
+
+function buildManagedLabels(taskContent: string, taskPath: string): string[] {
+  const status = extractField(taskContent, "Status") ?? getTaskColumn(taskPath);
+  const priority = extractField(taskContent, "Priority") ?? "MEDIUM";
+  return ["ai-office", `ai-office:status:${normalizeLabel(status)}`, `ai-office:priority:${normalizeLabel(priority)}`];
+}
+
+function toIssueIndexItem(rawIssue: Record<string, unknown>): GitHubIssueIndexItem | null {
+  if ("pull_request" in rawIssue) {
+    return null;
+  }
+  const body = String(rawIssue.body ?? "");
+  if (!extractTaskIdFromIssueBody(body)) {
+    return null;
+  }
+  const labels = Array.isArray(rawIssue.labels)
+    ? rawIssue.labels
+      .map((label) => (typeof label === "string" ? label : String((label as Record<string, unknown>).name ?? "")))
+      .filter(Boolean)
+    : [];
+  return {
+    number: Number(rawIssue.number ?? 0),
+    title: String(rawIssue.title ?? ""),
+    body,
+    labels,
+    milestoneNumber: rawIssue.milestone && typeof rawIssue.milestone === "object"
+      ? Number((rawIssue.milestone as Record<string, unknown>).number ?? 0)
+      : null,
+    state: String(rawIssue.state ?? "open") === "closed" ? "closed" : "open",
+  };
+}
+
+function isManagedAiOfficeLabel(label: string): boolean {
+  return label === "ai-office" || label.startsWith("ai-office:");
+}
+
+function desiredIssueStateForTask(status: string): "open" | "closed" {
+  const normalized = status.toUpperCase();
+  return normalized === "DONE" || normalized === "ARCHIVED" || normalized === "REJECTED" ? "closed" : "open";
+}
+
+function logSync(jsonLogs: boolean, payload: Record<string, unknown>): void {
+  if (jsonLogs) {
+    console.log(JSON.stringify(payload));
+    return;
+  }
+  const action = String(payload.action ?? "sync");
+  const taskId = String(payload.task_id ?? "");
+  const issue = payload.issue_number ? ` issue#${payload.issue_number}` : "";
+  const status = payload.status ? ` ${payload.status}` : "";
+  console.log(`[${action}] ${taskId}${issue}${status}`.trim());
+}
+
+function commandTaskSyncGitHub(args: string[]): void {
+  ensureAiOffice();
+  const options = parseTaskSyncOptions(args);
+  if (options.mode === "inbound") {
+    commandTaskSyncGitHubInbound(options);
+    return;
+  }
+  commandTaskSyncGitHubOutbound(options);
+}
+
+function commandTaskSyncGitHubOutbound(options: TaskSyncOptions): void {
+  const hasToken = Boolean((process.env.GH_TOKEN || process.env.GITHUB_TOKEN || "").trim());
+  if (!hasToken) {
+    logSync(options.jsonLogs, { action: "skip", reason: "missing_github_token", mode: "outbound" });
+    return;
+  }
+
+  const repo = resolveGitHubRepo();
+  if (!repo) {
+    fail("❌ Unable to resolve GitHub repository. Set GITHUB_REPOSITORY or configure git origin.");
+  }
+
+  const taskPaths = listTaskFiles();
+  const milestonesNeeded = new Set<string>();
+  for (const taskPath of taskPaths) {
+    const milestone = extractField(readText(taskPath), "Milestone");
+    if (milestone && milestone !== "—") {
+      milestonesNeeded.add(milestone);
+    }
+  }
+
+  const milestoneMap = new Map<string, number>();
+  for (const milestone of ghApiPaginated(`/repos/${repo}/milestones?state=all&per_page=100`) as Array<Record<string, unknown>>) {
+    const title = String(milestone.title ?? "");
+    const number = Number(milestone.number ?? 0);
+    if (title && number > 0) {
+      milestoneMap.set(title, number);
+    }
+  }
+  for (const milestoneTitle of milestonesNeeded) {
+    if (milestoneMap.has(milestoneTitle)) {
+      continue;
+    }
+    logSync(options.jsonLogs, { action: "milestone_create", title: milestoneTitle, dry_run: options.dryRun });
+    if (options.dryRun) {
+      continue;
+    }
+    const created = ghApi(repo, `/repos/${repo}/milestones`, "POST", { title: milestoneTitle }) as Record<string, unknown>;
+    milestoneMap.set(milestoneTitle, Number(created.number ?? 0));
+  }
+
+  const issueIndex = new Map<string, GitHubIssueIndexItem>();
+  for (const issue of ghApiPaginated(`/repos/${repo}/issues?state=all&labels=${encodeURIComponent("ai-office")}&per_page=100`) as Array<Record<string, unknown>>) {
+    const item = toIssueIndexItem(issue);
+    if (!item) {
+      continue;
+    }
+    const taskId = extractTaskIdFromIssueBody(item.body);
+    if (!taskId) {
+      continue;
+    }
+    issueIndex.set(taskId, item);
+  }
+
+  for (const taskPath of taskPaths) {
+    const taskContent = readText(taskPath);
+    const taskId = extractField(taskContent, "ID") ?? "";
+    if (!taskId) {
+      continue;
+    }
+    const title = extractHeading(taskContent);
+    const issueTitle = `[${taskId}] ${title}`;
+    const body = renderIssueBodyFromTask(taskPath, taskContent);
+    const milestone = extractField(taskContent, "Milestone");
+    const milestoneNumber = milestone && milestone !== "—" ? (milestoneMap.get(milestone) ?? null) : null;
+    const managedLabels = buildManagedLabels(taskContent, taskPath);
+    const desiredState = desiredIssueStateForTask(extractField(taskContent, "Status") ?? getTaskColumn(taskPath));
+    const existing = issueIndex.get(taskId);
+
+    if (!existing) {
+      logSync(options.jsonLogs, { action: "create", task_id: taskId, dry_run: options.dryRun });
+      if (!options.dryRun) {
+        ghApi(repo, `/repos/${repo}/issues`, "POST", {
+          title: issueTitle,
+          body,
+          labels: managedLabels,
+          ...(milestoneNumber ? { milestone: milestoneNumber } : {}),
+          ...(desiredState === "closed" ? { state: "closed" } : {}),
+        });
+      }
+      continue;
+    }
+
+    const unmanagedLabels = existing.labels.filter((label) => !isManagedAiOfficeLabel(label));
+    const nextLabels = [...new Set([...unmanagedLabels, ...managedLabels])].sort();
+    const prevLabels = [...new Set(existing.labels)].sort();
+    const patch: Record<string, unknown> = {};
+    if (existing.title !== issueTitle) patch.title = issueTitle;
+    if (existing.body !== body) patch.body = body;
+    if ((existing.milestoneNumber ?? null) !== milestoneNumber) patch.milestone = milestoneNumber;
+    if (JSON.stringify(nextLabels) !== JSON.stringify(prevLabels)) patch.labels = nextLabels;
+    if (existing.state !== desiredState) patch.state = desiredState;
+
+    if (Object.keys(patch).length === 0) {
+      logSync(options.jsonLogs, { action: "skip", task_id: taskId, issue_number: existing.number, status: "unchanged" });
+      continue;
+    }
+
+    logSync(options.jsonLogs, { action: "update", task_id: taskId, issue_number: existing.number, dry_run: options.dryRun });
+    if (!options.dryRun) {
+      ghApi(repo, `/repos/${repo}/issues/${existing.number}`, "PATCH", patch);
+    }
+  }
+}
+
+function commandTaskSyncGitHubInbound(options: TaskSyncOptions): void {
+  if (!options.eventPath || !existsSync(options.eventPath)) {
+    logSync(options.jsonLogs, { action: "skip", reason: "missing_event_payload", mode: "inbound" });
+    return;
+  }
+  const payload = JSON.parse(readText(options.eventPath)) as Record<string, unknown>;
+  const eventName = process.env.GITHUB_EVENT_NAME || "";
+  const action = String(payload.action ?? "");
+  const issue = (payload.issue ?? null) as Record<string, unknown> | null;
+  if (!issue || "pull_request" in issue) {
+    logSync(options.jsonLogs, { action: "skip", reason: "not_issue_event", mode: "inbound" });
+    return;
+  }
+  const taskId = extractTaskIdFromIssueBody(String(issue.body ?? ""));
+  if (!taskId) {
+    logSync(options.jsonLogs, { action: "skip", reason: "missing_task_marker", mode: "inbound" });
+    return;
+  }
+  const taskPath = findTaskPathById(taskId);
+  if (!taskPath) {
+    logSync(options.jsonLogs, { action: "skip", reason: "task_not_found", task_id: taskId, mode: "inbound" });
+    return;
+  }
+
+  const date = todayIso();
+  if (eventName === "issues" && action === "reopened") {
+    let nextPath = moveTaskFileToColumn(taskPath, "TODO");
+    let content = readText(nextPath);
+    content = setField(content, "Status", "TODO");
+    content = appendToSection(content, "History", `- ${date}: ${getTaskColumn(taskPath)} → TODO — GitHub issue reopened`);
+    content = appendToSection(content, "Notes", `- ${date}: moved to TODO from GitHub issue reopened`);
+    writeText(nextPath, content);
+    updateTaskReadme();
+    logSync(options.jsonLogs, { action: "inbound_reopen", task_id: taskId, issue_number: Number(issue.number ?? 0) });
+    return;
+  }
+
+  if (eventName === "issues" && action === "closed") {
+    let nextPath = moveTaskFileToColumn(taskPath, "DONE");
+    let content = readText(nextPath);
+    content = setField(content, "Status", "DONE");
+    if ((extractField(content, "Completed") ?? "—") === "—") {
+      content = setField(content, "Completed", date);
+    }
+    content = appendToSection(content, "History", `- ${date}: ${getTaskColumn(taskPath)} → DONE — GitHub issue closed`);
+    content = appendToSection(content, "Notes", `- ${date}: moved to DONE from GitHub issue closed`);
+    writeText(nextPath, content);
+    updateTaskReadme();
+    logSync(options.jsonLogs, { action: "inbound_close", task_id: taskId, issue_number: Number(issue.number ?? 0) });
+    return;
+  }
+
+  if (eventName === "issue_comment" && action === "created") {
+    const commentBody = String((payload.comment as Record<string, unknown> | undefined)?.body ?? "").trim();
+    if (!commentBody.toLowerCase().startsWith("ai-office:")) {
+      logSync(options.jsonLogs, { action: "skip", reason: "missing_command_prefix", task_id: taskId, mode: "inbound" });
+      return;
+    }
+    const commandText = commentBody.slice("ai-office:".length).trim();
+    if (commandText.toLowerCase() === "reopen") {
+      let nextPath = moveTaskFileToColumn(taskPath, "TODO");
+      let content = readText(nextPath);
+      content = setField(content, "Status", "TODO");
+      content = appendToSection(content, "History", `- ${date}: ${getTaskColumn(taskPath)} → TODO — GitHub comment command: reopen`);
+      content = appendToSection(content, "Notes", `- ${date}: moved to TODO from GitHub comment command: reopen`);
+      writeText(nextPath, content);
+      updateTaskReadme();
+      logSync(options.jsonLogs, { action: "inbound_comment_reopen", task_id: taskId, issue_number: Number(issue.number ?? 0) });
+      return;
+    }
+    if (commandText.toLowerCase().startsWith("note ")) {
+      const noteText = commandText.slice(5).trim();
+      if (!noteText) {
+        logSync(options.jsonLogs, { action: "skip", reason: "empty_note", task_id: taskId, mode: "inbound" });
+        return;
+      }
+      let content = readText(taskPath);
+      content = appendToSection(content, "Notes", `- ${date}: GitHub note - ${noteText}`);
+      writeText(taskPath, content);
+      logSync(options.jsonLogs, { action: "inbound_comment_note", task_id: taskId, issue_number: Number(issue.number ?? 0) });
+      return;
+    }
+    logSync(options.jsonLogs, { action: "skip", reason: "unsupported_command", command: commandText, task_id: taskId, mode: "inbound" });
+    return;
+  }
+
+  logSync(options.jsonLogs, { action: "skip", reason: "unsupported_event_action", event: eventName, event_action: action, task_id: taskId });
+}
+
 function formatStatusTemplate(slug: string, state: StatusState, owner: string, notes: string): string {
   const today = todayIso();
   return `# ${slug} — Status
@@ -1715,6 +2193,8 @@ function commandValidate(slug: string, rawStage: string): void {
 
 function commandDoctor(): void {
   const adapter = detectAdapter();
+  const hasProjectConfig = existsSync(projectConfigPath);
+  const hasRoleFiles = existsSync(rolesDir) && readdirSync(rolesDir).some((name) => name.endsWith(".md"));
   const checks: Array<{ ok: boolean; message: string }> = [
     { ok: existsSync(join(cwd, "AI-OFFICE.md")), message: "AI-OFFICE.md present" },
     { ok: existsSync(aiOfficeDir), message: ".ai-office present" },
@@ -1722,6 +2202,15 @@ function commandDoctor(): void {
     { ok: existsSync(tasksReadmePath), message: ".ai-office/tasks/README.md present" },
     { ok: existsSync(join(aiOfficeDir, "office-config.md")), message: ".ai-office/office-config.md present" },
   ];
+
+  if (hasProjectConfig) {
+    checks.push(
+      { ok: existsSync(officeProfilePath), message: ".ai-office/office-profile.md present" },
+      { ok: existsSync(pipelinePath), message: ".ai-office/pipeline.md present" },
+      { ok: existsSync(qualityGatesPath), message: ".ai-office/quality-gates.md present" },
+      { ok: hasRoleFiles, message: ".ai-office/roles/*.md present" }
+    );
+  }
 
   if (adapter !== "base") {
     const profile = getAdapterProfile(adapter);
@@ -1787,6 +2276,11 @@ function main(): void {
 
   if (command === "task" && subcommand === "update") {
     commandTaskUpdate(rest);
+    return;
+  }
+
+  if (command === "task" && subcommand === "sync") {
+    commandTaskSyncGitHub(rest);
     return;
   }
 

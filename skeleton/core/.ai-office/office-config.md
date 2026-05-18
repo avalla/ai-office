@@ -1,21 +1,21 @@
 # AI Office Configuration
 
-> Virtual AI Agency structure, roles, and operational parameters
+> Repo-native project office settings, roles, and operational parameters
 
 ---
 trigger: always_on
 ---
 
-## Agency Identity
+## Office Identity
 
 **Name:** AI Office
-**Type:** Virtual Software Agency
-**Mission:** Deliver high-quality software projects through AI-driven multi-role collaboration
+**Type:** Repo-Native Project Office
+**Mission:** Generate lightweight, project-specific workflows for AI coding agents
 **Version:** 1.0
 
-## Default Agency
+## Default Office Mode
 
-Software Studio (full SDLC with all quality gates)
+Custom project office generated from repository analysis
 
 ## Quality Thresholds
 

@@ -168,12 +168,12 @@ describe("install.sh", () => {
     expect(after.mcpServers.fetch).toBeUndefined();
   });
 
-  it("creates .ai-office/office-config.md with Agency Identity section", () => {
+  it("creates .ai-office/office-config.md with Office Identity section", () => {
     runScript("install.sh", [dir]);
     const config = join(dir, ".ai-office/office-config.md");
     assertExists(config);
     const content = readFileSync(config, "utf8");
-    expect(content).toContain("Agency Identity");
+    expect(content).toContain("Office Identity");
   });
 
   it("does not overwrite existing office-config.md", () => {

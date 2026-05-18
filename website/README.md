@@ -1,11 +1,11 @@
 # AI Office Website
 
-Professional marketing and documentation website for the AI Office framework.
+Marketing and documentation website for the AI Office framework.
 
 ## Features
 
 - **Responsive Design** — Works on desktop, tablet, and mobile
-- **Interactive Agency Selector** — Click to compare 6 pre-built agencies
+- **Custom Office Positioning** — Explains repo analysis, generated roles, pipeline, and quality gates
 - **Complete Feature Overview** — All capabilities at a glance
 - **Quick Start Guide** — Installation and usage examples
 - **Modern UI** — Built with React and Vite for performance
@@ -93,8 +93,8 @@ Edit `src/main.jsx` to update:
 
 - Navigation links
 - Feature descriptions
-- Agency information
-- Agent roster
+- Generated office examples
+- Generated role model
 - Commands list
 - Quick start steps
 
@@ -105,7 +105,7 @@ All styles are in `src/styles.css`. Key sections:
 - Navigation and header
 - Hero section
 - Feature cards
-- Agency cards
+- Office cards
 - Commands grid
 - Footer
 
@@ -137,6 +137,6 @@ MIT License — Same as AI Office framework
 
 ## Related
 
-- [AI Office Framework](https://github.com/anthropics/ai-office)
+- [AI Office Framework](https://github.com/avalla/ai-office-claude-code)
 - [Presentation Slides](../spectacle-slides/)
-- [Documentation](https://github.com/anthropics/ai-office#readme)
+- [Documentation](https://github.com/avalla/ai-office-claude-code#readme)

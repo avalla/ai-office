@@ -1,115 +1,48 @@
 ---
 name: office-agency
-description: Inspect or re-profile your project agency. Usage: {{CMD:office-agency}} [list|get <name>|profile]
+description: Inspect legacy agency presets. Agencies are optional presets; the default setup path generates a custom project office. Usage: {{CMD:office-agency}} [list|get <name>]
 disable-model-invocation: true
 
-$ARGUMENTS format: `[list | get <name> | profile]`
+$ARGUMENTS format: `[list | get <name>]`
 
-- `list` (default if no args): show active agency and its agent roster
-- `get <name>`: show full config for a specific agency directory
-- `profile`: re-run the agency profiling interview and regenerate the agency config
+- `list` (default if no args): show the active legacy preset and point to the generated project office
+- `get <name>`: show full config for a specific legacy preset directory
 
-Agencies directory: `.ai-office/agencies/`
-Selection file: `.ai-office/agency.json`
+Generated office files: `.ai-office/office-profile.md`, `.ai-office/pipeline.md`, `.ai-office/roles/`, `.ai-office/quality-gates.md`
+Legacy presets directory: `.ai-office/agencies/`
+Legacy selection file: `.ai-office/agency.json`
 
 ---
 
 ## `list` (or no args)
 
-Read `.ai-office/agency.json` to find the active agency name. Read `.ai-office/agencies/<name>/config.md`.
+Read `.ai-office/office-profile.md` and `.ai-office/agency.json` when present. If `.ai-office/roles/` exists, list generated roles first. Then read `.ai-office/agencies/<name>/config.md` only for legacy preset details.
 
 Output:
 ```
-Active Agency: <name> (custom)
+Active Project Office: <project_name>
+Legacy preset: <name>
 
-| Agent | Role | Focus |
-|-------|------|-------|
-| developer | Implementation | <focus> |
-| qa | Quality assurance | <focus> |
+Generated roles:
+- product
+- architect
+- developer
+- qa
 ...
 
-Handoff rules: <from config>
-Quality gates: <from config>
+Pipeline: <from pipeline.md>
+Quality gates: <from quality-gates.md>
 
-To re-profile: {{CMD:office-agency}} profile
-To inspect raw config: {{CMD:office-agency}} get <name>
+To regenerate the project office: {{CMD:office-setup}} --auto --reconfigure
+To inspect raw preset config: {{CMD:office-agency}} get <name>
 ```
 
-If no agency is configured: "No agency configured. Run `{{CMD:office-setup}}` to create one."
+If no project office is configured: "No project office configured. Run `{{CMD:office-setup}} --auto` to generate one."
 
 ---
 
 ## `get <name>`
 
-Read all `.md` files inside `.ai-office/agencies/<name>/`. Display their contents separated by filename headings.
-
----
-
-## `profile`
-
-Re-run the agency profiling interview without touching other project settings.
-
-Ask these questions one at a time:
-
-### 1. Domain
-"What kind of project is this?
-
-1. Web app (frontend + backend, SaaS, dashboards)
-2. Mobile app (iOS / Android / React Native)
-3. API / backend service (no UI)
-4. Data pipeline / analytics
-5. CLI tool / developer tooling
-6. Game
-7. Content / media production
-8. Other — describe it"
-
-### 2. Team composition
-"Who is working on this project?
-
-1. Just me + AI (solo)
-2. Small team (2–5 people) + AI
-3. Larger team — AI assists specific roles"
-
-### 3. Quality concerns
-"What are the critical quality concerns? (pick all that apply, e.g. '1 3')
-
-1. Security-sensitive (auth, payments, PII, compliance)
-2. Performance-critical (latency, throughput, scale)
-3. High test coverage required
-4. Strong UX / accessibility standards
-5. Compliance or audit trail required (SOC2, HIPAA, GDPR)
-6. None in particular — standard quality"
-
-### 4. Release cadence
-"How do you ship?
-
-1. Continuous deploy (merge to main = ship)
-2. Sprint-based (weekly or biweekly releases)
-3. Milestone releases (explicit version tags)"
-
-**Agent selection rules:**
-
-| Condition | Include agent |
-|-----------|--------------|
-| Always | `developer`, `qa` |
-| Domain = web app or mobile | `designer` |
-| Domain = web app or mobile, team > solo | `pm` |
-| Quality concern = security, compliance | `security-specialist` |
-| Quality concern = performance | `reviewer` (performance focus) |
-| Team > solo OR milestone releases | `architect` |
-| Continuous deploy OR compliance | `ops` |
-
-Read the existing `project.config.md` for `project_name` and `agency` (slug). Overwrite `.ai-office/agencies/<slug>/config.md` with the new profile. Update `agency.json` timestamp.
-
-Confirm:
-```
-✅ Agency re-profiled: <slug>
-
-| Agent | Focus |
-|-------|-------|
-...
-
-Run {{CMD:office-agency}} list to review.
-```
+Read all `.md` files inside `.ai-office/agencies/<name>/`. Display their contents separated by filename headings and label them as legacy preset content.
 
 <!-- ai-office-version: {{FRAMEWORK_VERSION}} -->

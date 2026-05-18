@@ -1,7 +1,7 @@
 {
   "name": "ai-office-website",
-  "version": "1.16.0",
-  "description": "AI Office - Multi-Agent Software Development Framework Website",
+  "version": "1.17.0",
+  "description": "AI Office - Repo-native workflow layer for AI coding agents",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,8 @@
   },
   "keywords": [
     "ai-office",
-    "multi-agent",
+    "ai-coding",
+    "repo-native",
     "software-development",
     "framework"
   ],

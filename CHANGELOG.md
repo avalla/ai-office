@@ -1,3 +1,13 @@
+## 1.17.0 - 2026-05-18
+
+### Changed
+
+- Default setup now analyzes the repository and generates a custom project office instead of making preset agencies the primary onboarding path.
+- Base prompts now require task creation before code/doc changes, with an explicit choice for truly tiny fixes.
+- README and website positioning now describe AI Office as a repo-native workflow and memory layer for AI coding agents.
+- Legacy agencies remain available as optional presets and examples.
+- Package versions bumped to `1.17.0` across the framework, website, and slides packages.
+
 ## 1.16.0 — 2026-03-30
 
 ### Added

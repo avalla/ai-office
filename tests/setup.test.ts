@@ -37,6 +37,7 @@ describe("setup.sh", () => {
     assertExists(config);
     const content = readFileSync(config, "utf8");
     expect(content).toContain("agency: software-studio");
+    expect(content).toContain("office_mode: legacy-preset");
     expect(content).toContain("project_name: test-project");
     expect(content).toContain("typecheck_cmd:");
     expect(content).toContain("lint_cmd:");
@@ -53,6 +54,77 @@ describe("setup.sh", () => {
     expect(content).toContain("task_base_branch:");
     expect(content).toContain("task_merge_target:");
     expect(content).toContain("task_worktree_root:");
+    expect(content).toContain("enable_github_sync:");
+    expect(content).toContain("token_budget_mode: conservative");
+    expect(content).toContain("token_budget_max_context_files: 8");
+  });
+
+  it("generates a custom project office in auto mode", () => {
+    writeFileSync(join(dir, "bun.lock"), "");
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify(
+        {
+          name: "custom-office-app",
+          private: true,
+          scripts: {
+            lint: "eslint .",
+            test: "vitest run",
+            typecheck: "tsc --noEmit",
+          },
+          dependencies: {
+            "@supabase/supabase-js": "^2.0.0",
+            react: "^18.0.0",
+            stripe: "^16.0.0",
+          },
+          devDependencies: {
+            "@playwright/test": "^1.0.0",
+            typescript: "^5.0.0",
+            vitest: "^4.0.0",
+          },
+        },
+        null,
+        2
+      )
+    );
+    mkdirSync(join(dir, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(dir, "vercel.json"), "{}\n");
+
+    const { exitCode } = runScript("setup.sh", [dir, "--auto", "--non-interactive"]);
+
+    expect(exitCode).toBe(0);
+    const config = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(config).toContain("agency: custom-office");
+    expect(config).toContain("office_mode: custom");
+    expect(config).toContain('typecheck_cmd: "bun run typecheck"');
+    expect(config).toContain('lint_cmd: "bun run lint"');
+    expect(config).toContain('test_cmd: "bun run test"');
+
+    const profile = readFileSync(join(dir, ".ai-office/office-profile.md"), "utf8");
+    expect(profile).toContain("# Office Profile");
+    expect(profile).toContain("Supabase/Postgres application");
+    expect(profile).toContain("database-security");
+    expect(profile).toContain("security");
+    expect(profile).toContain("never load all roles");
+
+    const pipeline = readFileSync(join(dir, ".ai-office/pipeline.md"), "utf8");
+    expect(pipeline).toContain("RLS/security design");
+    expect(pipeline).toContain("pgTAP tests");
+
+    const gates = readFileSync(join(dir, ".ai-office/quality-gates.md"), "utf8");
+    expect(gates).toContain("RLS review");
+    expect(gates).toContain("security review");
+
+    const roles = readdirSync(join(dir, ".ai-office/roles")).sort();
+    expect(roles).toContain("developer.md");
+    expect(roles).toContain("database-security.md");
+    expect(roles).toContain("ux.md");
+    expect(roles).toContain("ops.md");
+    expect(roles).toContain("security.md");
+
+    const agencyJson = JSON.parse(readFileSync(join(dir, ".ai-office/agency.json"), "utf8"));
+    expect(agencyJson.name).toBe("custom-office");
+    expect(agencyJson.custom).toBe(true);
   });
 
   it("defaults advance_mode to manual", () => {
@@ -157,6 +229,46 @@ describe("setup.sh", () => {
     expect(content).toContain('task_base_branch: "development"');
     expect(content).toContain('task_merge_target: "development"');
     expect(content).toContain('task_worktree_root: ".ai-office/worktrees"');
+  });
+
+  it("defaults github sync workflows to disabled", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+    ]);
+
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("enable_github_sync: no");
+    expect(existsSync(join(dir, ".github/workflows/ai-office-sync.yml"))).toBe(false);
+    expect(existsSync(join(dir, ".github/workflows/ai-office-github-inbound.yml"))).toBe(false);
+  });
+
+  it("installs github sync workflows when enabled", () => {
+    runScript("setup.sh", [
+      dir,
+      "--non-interactive",
+      "--agency=software-studio",
+      "--name=test-project",
+      "--enable-github-sync=yes",
+    ]);
+
+    const content = readFileSync(join(dir, ".ai-office/project.config.md"), "utf8");
+    expect(content).toContain("enable_github_sync: yes");
+
+    const outbound = join(dir, ".github/workflows/ai-office-sync.yml");
+    const inbound = join(dir, ".github/workflows/ai-office-github-inbound.yml");
+    expect(existsSync(outbound)).toBe(true);
+    expect(existsSync(inbound)).toBe(true);
+
+    const outboundContent = readFileSync(outbound, "utf8");
+    expect(outboundContent).toContain("issues: write");
+    expect(outboundContent).toContain("task sync github");
+
+    const inboundContent = readFileSync(inbound, "utf8");
+    expect(inboundContent).toContain("contents: write");
+    expect(inboundContent).toContain("task sync github --inbound");
   });
 
   it("creates agency.json with the selected agency name", () => {

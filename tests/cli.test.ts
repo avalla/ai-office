@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach } from "bun:test";
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { assertExists, initGitRepo, makeTempProject, runCli, runGit, runScript } from "./helpers";
 
@@ -90,6 +90,18 @@ describe("ai-office cli", () => {
     } finally {
       cleanupOpencode();
     }
+  });
+
+  it("doctor warns when configured custom office artifacts are missing", () => {
+    const setup = runScript("setup.sh", [dir, "--auto", "--non-interactive"]);
+    expect(setup.exitCode).toBe(0);
+    rmSync(join(dir, ".ai-office/office-profile.md"));
+
+    const result = runCli(dir, ["doctor"]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("WARN .ai-office/office-profile.md present");
+    expect(result.stdout).toContain("PASS .ai-office/pipeline.md present");
   });
 
   it("creates a task deterministically and updates board counts", () => {
@@ -422,5 +434,76 @@ completion_check_cmd_3: "true"
     const task = readFileSync(taskPath, "utf8");
     expect(task).toContain("integrated into development from task/M0/T001-implement-billing-sync");
     expect(task).toContain("integrated into development — ready for UAT");
+  });
+
+  it("supports github outbound sync no-op when token is missing", () => {
+    runCli(dir, ["task", "create", "Sync", "candidate"]);
+    const result = runCli(dir, ["task", "sync", "github", "--dry-run", "--json"], { GH_TOKEN: "", GITHUB_TOKEN: "" });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('"reason":"missing_github_token"');
+  });
+
+  it("supports github inbound safe transitions and note command", () => {
+    runCli(dir, ["task", "create", "Inbound", "workflow", "assignee:Developer", "column:TODO"]);
+    const todoDir = join(dir, ".ai-office/tasks/TODO");
+    const [taskFile] = readdirSync(todoDir);
+    const taskPath = join(todoDir, taskFile);
+    const taskContent = readFileSync(taskPath, "utf8");
+    const taskId = (taskContent.match(/\*\*ID:\*\*\s*(\S+)/) ?? [])[1];
+    expect(taskId).toBeTruthy();
+
+    const issueClosedEventPath = join(dir, "issue-closed.json");
+    writeFileSync(
+      issueClosedEventPath,
+      JSON.stringify({
+        action: "closed",
+        issue: {
+          number: 42,
+          body: `<!-- ai-office-task-id: ${taskId} -->`,
+        },
+      }),
+      "utf8"
+    );
+
+    const closedResult = runCli(
+      dir,
+      ["task", "sync", "github", "--inbound", "--event-path", issueClosedEventPath, "--json"],
+      { GITHUB_EVENT_NAME: "issues" }
+    );
+    expect(closedResult.exitCode).toBe(0);
+    expect(closedResult.stdout).toContain('"action":"inbound_close"');
+
+    const doneDir = join(dir, ".ai-office/tasks/DONE");
+    const [doneTaskFile] = readdirSync(doneDir);
+    const movedContent = readFileSync(join(doneDir, doneTaskFile), "utf8");
+    expect(movedContent).toContain("**Status:** DONE");
+
+    const noteEventPath = join(dir, "issue-note.json");
+    writeFileSync(
+      noteEventPath,
+      JSON.stringify({
+        action: "created",
+        issue: {
+          number: 42,
+          body: `<!-- ai-office-task-id: ${taskId} -->`,
+        },
+        comment: {
+          body: "ai-office: note verified on staging",
+        },
+      }),
+      "utf8"
+    );
+
+    const noteResult = runCli(
+      dir,
+      ["task", "sync", "github", "--inbound", "--event-path", noteEventPath, "--json"],
+      { GITHUB_EVENT_NAME: "issue_comment" }
+    );
+    expect(noteResult.exitCode).toBe(0);
+    expect(noteResult.stdout).toContain('"action":"inbound_comment_note"');
+
+    const notedContent = readFileSync(join(doneDir, doneTaskFile), "utf8");
+    expect(notedContent).toContain("GitHub note - verified on staging");
   });
 });
