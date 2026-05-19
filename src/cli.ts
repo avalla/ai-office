@@ -1639,10 +1639,97 @@ ask-for-info
 `;
 }
 
+interface LlmReview {
+  verdict: "PASS" | "WARN" | "FAIL" | "ERROR";
+  findings: string[];
+  block: string;
+}
+
+function llmReviewIssue(title: string, body: string): LlmReview {
+  const { execFileSync } = require("child_process");
+  const prompt = [
+    "Review this GitHub issue for quality. Check for:",
+    "1. Typos or grammatical errors in the title or body",
+    "2. Vague or untestable acceptance criteria",
+    "3. Missing critical information (error states, edge cases, performance requirements)",
+    "4. Contradictory or unclear requirements",
+    "",
+    `Issue Title: ${title}`,
+    "",
+    "Issue Body:",
+    body || "(empty)",
+    "",
+    "Respond with ONLY this exact format (no preamble, no trailing text):",
+    "Verdict: PASS|WARN|FAIL",
+    "- <finding> (one per line; omit bullet lines entirely if verdict is PASS)",
+    "Prefix each finding with one of: Typo:, Missing:, Vague:, Contradictory:",
+  ].join("\n");
+
+  try {
+    const out = execFileSync("claude", ["-p", prompt], {
+      encoding: "utf8",
+      timeout: 60000,
+      cwd,
+      env: process.env,
+    }) as string;
+    const text = out.trim();
+    const lines = text.split("\n");
+    const verdictMatch = lines[0]?.match(/^Verdict:\s*(PASS|WARN|FAIL)/i);
+    const verdict = (verdictMatch?.[1]?.toUpperCase() ?? "ERROR") as LlmReview["verdict"];
+    const findings = lines.slice(1).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim());
+    return { verdict, findings, block: `\n## LLM Review\n\n${text}\n` };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const errText = `Verdict: ERROR\n- LLM check failed: ${msg.slice(0, 200)}`;
+    return { verdict: "ERROR", findings: [], block: `\n## LLM Review\n\n${errText}\n` };
+  }
+}
+
+function buildReviewComment(findings: string[]): string {
+  const typos = findings.filter((f) => /^typo:/i.test(f));
+  const missing = findings.filter((f) => /^missing:/i.test(f));
+  const vague = findings.filter((f) => /^vague:/i.test(f));
+  const contradictory = findings.filter((f) => /^contradictory:/i.test(f));
+  const other = findings.filter((f) => !typos.includes(f) && !missing.includes(f) && !vague.includes(f) && !contradictory.includes(f));
+
+  const strip = (prefix: RegExp, f: string) => f.replace(prefix, "").trim();
+  const lines: string[] = [
+    "Thanks for the request! We ran an automatic review and need a few clarifications before we can start implementation.",
+    "",
+  ];
+  if (typos.length > 0) {
+    lines.push("**Typos / grammar**");
+    typos.forEach((f) => lines.push(`- ${strip(/^typo:\s*/i, f)}`));
+    lines.push("");
+  }
+  if (missing.length > 0) {
+    lines.push("**Missing information**");
+    missing.forEach((f) => lines.push(`- ${strip(/^missing:\s*/i, f)}`));
+    lines.push("");
+  }
+  if (vague.length > 0) {
+    lines.push("**Needs clarification**");
+    vague.forEach((f) => lines.push(`- ${strip(/^vague:\s*/i, f)}`));
+    lines.push("");
+  }
+  if (contradictory.length > 0) {
+    lines.push("**Contradictions**");
+    contradictory.forEach((f) => lines.push(`- ${strip(/^contradictory:\s*/i, f)}`));
+    lines.push("");
+  }
+  if (other.length > 0) {
+    lines.push("**Other**");
+    other.forEach((f) => lines.push(`- ${f}`));
+    lines.push("");
+  }
+  lines.push("Please update the issue with the missing details and we will pick it up for implementation.");
+  return lines.join("\n");
+}
+
 function commandIssueIntake(args: string[]): void {
   ensureAiOffice();
   const [rawIssue, ...rest] = args;
-  if (!rawIssue) fail("❌ Usage: ai-office issue intake <issue-number|issue-url> [--create-task] [--link-task=<task-id>]");
+  if (!rawIssue) fail("❌ Usage: ai-office issue intake <issue-number|issue-url> [--create-task] [--link-task=<task-id>] [--no-llm-check]");
   const issue = normalizeIssueRef(rawIssue);
   if (!issue.number) fail(`❌ Invalid issue reference: ${rawIssue}`);
   ensureDirectory(join(aiOfficeDir, "intake"));
@@ -1650,6 +1737,7 @@ function commandIssueIntake(args: string[]): void {
   if (!existsSync(path)) writeText(path, buildIssueIntake(issue));
 
   const createTaskFlag = rest.includes("--create-task");
+  const skipLlmCheck = rest.includes("--no-llm-check");
   const linkTaskFlag = rest.find((arg) => arg.startsWith("--link-task="))?.slice("--link-task=".length) || "";
   let linkedTask = linkTaskFlag;
   if (createTaskFlag && !linkedTask) {
@@ -1669,6 +1757,38 @@ function commandIssueIntake(args: string[]): void {
   if (linkedTask) {
     commandIssueLink([issue.issue, linkedTask]);
   }
+
+  if (!skipLlmCheck) {
+    const repo = resolveGitHubRepo();
+    if (repo) {
+      const ghIssue = ghApi(repo, `/repos/${repo}/issues/${issue.number}`, "GET") as Record<string, unknown>;
+      const ghTitle = String(ghIssue?.title ?? "");
+      const ghBody = String(ghIssue?.body ?? "");
+      const review = llmReviewIssue(ghTitle, ghBody);
+      let intake = readText(path);
+      intake = intake.replace(/\n## LLM Review[\s\S]*$/, "").trimEnd() + review.block;
+      writeText(path, intake);
+      console.log(`LLM review (${review.verdict}) appended to ${displayPath(path)}`);
+      if (review.verdict === "WARN" || review.verdict === "FAIL") {
+        const { execSync } = require("child_process");
+        try {
+          execSync(`gh issue comment ${issue.number} --repo ${repo} --body -`, {
+            input: buildReviewComment(review.findings),
+            cwd,
+            env: process.env,
+            encoding: "utf8",
+          });
+          console.log(`Review comment posted to ${issue.issue}`);
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(`warning: failed to post review comment: ${msg.slice(0, 200)}`);
+        }
+      }
+    } else {
+      console.log("warning: LLM check skipped: unable to resolve GitHub repo");
+    }
+  }
+
   console.log(`Issue intake: ${issue.issue} -> ${displayPath(path)}`);
 }
 
@@ -2073,23 +2193,19 @@ function moveTaskFileToColumn(filePath: string, targetColumn: Column): string {
 }
 
 function ghApi(repo: string, route: string, method: "GET" | "POST" | "PATCH", payload?: unknown): unknown {
-  const args = ["gh", "api", route, "--method", method, "--jq", "."];
-  if (payload !== undefined) {
-    args.push("--input", "-");
+  // Bun.spawnSync does not reliably pipe stdin to gh via the `input` option.
+  // Use execSync with a shell pipe as a workaround.
+  const { execSync } = require("child_process");
+  const baseCmd = `gh api ${route} --method ${method} --jq .`;
+  try {
+    const out = payload === undefined
+      ? execSync(baseCmd, { cwd, env: process.env, encoding: "utf8" })
+      : execSync(`${baseCmd} --input -`, { cwd, env: process.env, encoding: "utf8", input: JSON.stringify(payload) });
+    return JSON.parse(out as string);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    fail(`❌ GitHub API call failed (${repo} ${route}): ${msg}`);
   }
-  const proc = Bun.spawnSync(args, {
-    cwd,
-    env: process.env,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: payload === undefined ? "inherit" : "pipe",
-    input: payload === undefined ? undefined : JSON.stringify(payload),
-  });
-  if ((proc.exitCode ?? 1) !== 0) {
-    const stderr = new TextDecoder().decode(proc.stderr).trim();
-    fail(`❌ GitHub API call failed (${repo} ${route}): ${stderr || "unknown error"}`);
-  }
-  return JSON.parse(new TextDecoder().decode(proc.stdout));
 }
 
 function ghApiPaginated(route: string): unknown[] {
