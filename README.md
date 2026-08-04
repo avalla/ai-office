@@ -1,10 +1,10 @@
 # AI Office Blueprint
 
-Base progettuale per un ufficio virtuale locale composto da più agenti coordinati da una singola istanza.
+MVP in TypeScript/Bun per un ufficio virtuale locale. La Milestone 1 rende operativo il vertical slice Project/Task su SQLite.
 
 ## Obiettivi
 
-- daemon locale unico;
+- daemon locale unico (dalla Milestone 2);
 - SQLite come source of truth;
 - task, milestone, ADR, agenti, run, eventi e costi strutturati;
 - memoria globale riutilizzabile tra progetti;
@@ -19,23 +19,42 @@ Base progettuale per un ufficio virtuale locale composto da più agenti coordina
 - TypeScript strict
 - `bun:sqlite`
 - Zod
-- Vitest
+- test runner di Bun
 - CLI e daemon nello stesso monorepo
 
 ## Avvio rapido
 
 ```bash
 bun install
-bun run db:migrate
-bun run dev:daemon
+bun run typecheck
+bun test
 ```
 
-In un secondo terminale:
+La CLI crea automaticamente `.ai-office/project.sqlite` nella directory corrente e applica le migration mancanti. Creare prima un progetto:
 
 ```bash
 bun run cli -- project:create "Demo"
-bun run cli -- task:create --project demo --title "Primo task"
-bun run cli -- task:list --project demo
+# Project created: <project-id>
+```
+
+Usare l'ID restituito per creare e leggere i task:
+
+```bash
+bun run cli -- task:create --project <project-id> --title "Primo task" --priority 10
+bun run cli -- task:list --project <project-id>
+```
+
+Output della lista:
+
+```text
+ID                                      STATUS   PRIORITY  TITLE
+<task-id>                               pending  10        Primo task
+```
+
+Le colonne dell'output effettivo sono separate da tab. Le descrizioni opzionali sono accettate con `--description`. Per applicare le migration senza eseguire un comando:
+
+```bash
+bun run db:migrate
 ```
 
 ## Struttura
@@ -59,7 +78,7 @@ docs/
 
 ## Database
 
-La base prevede tre database:
+L'architettura prevede tre database:
 
 ```text
 ~/.ai-office/global.sqlite
@@ -73,19 +92,30 @@ La base prevede tre database:
 
 `index.sqlite` contiene dati rigenerabili: simboli, relazioni, chunk, FTS ed embedding.
 
-## Comandi MVP previsti
+Nella Milestone 1 viene aperto e migrato soltanto `project.sqlite`. I database globale e di indice verranno collegati nelle milestone dedicate.
+
+## Vertical slice disponibile
 
 ```text
-ai-office init
-ai-office start
-ai-office status
+CLI
+  -> CreateProject / CreateTask / ListTasks
+  -> porte ProjectRepository / TaskRepository
+  -> repository bun:sqlite
+  -> .ai-office/project.sqlite
+  -> output CLI
+```
+
+Le migration SQL sono versionate in `migrations/project/` e registrate nella tabella `schema_migration`; rieseguire la CLI o `bun run db:migrate` è idempotente.
+
+## Comandi
+
+```text
 ai-office project:create
 ai-office task:create
 ai-office task:list
-ai-office task:start
-ai-office task:complete
-ai-office costs:show
 ```
+
+Gli altri comandi descritti nella roadmap appartengono alle milestone successive.
 
 ## Per Codex
 
