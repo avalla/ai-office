@@ -1,3 +1,5 @@
+import { DomainValidationError } from "../errors.ts";
+
 export type ProjectId = string;
 
 export interface ProjectProps {
@@ -20,7 +22,7 @@ export class Project {
     const name = input.name.trim();
 
     if (name.length === 0) {
-      throw new Error("Project name cannot be empty");
+      throw new DomainValidationError("Project name cannot be empty");
     }
 
     return new Project({
@@ -37,6 +39,10 @@ export class Project {
   }
 
   snapshot(): ProjectProps {
-    return { ...this.props };
+    return {
+      ...this.props,
+      createdAt: new Date(this.props.createdAt),
+      updatedAt: new Date(this.props.updatedAt)
+    };
   }
 }

@@ -1,4 +1,5 @@
 import { Task } from "@ai-office/domain/task/task.ts";
+import { ProjectNotFoundError } from "../errors.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
@@ -21,7 +22,7 @@ export class CreateTask {
     const project = await this.projects.findById(input.projectId);
 
     if (project === null) {
-      throw new Error(`Project ${input.projectId} not found`);
+      throw new ProjectNotFoundError(input.projectId);
     }
 
     const task = Task.create({
