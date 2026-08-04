@@ -1,0 +1,5 @@
+{
+  "name": "@ai-office/agent-runtime",
+  "private": true,
+  "type": "module"
+}

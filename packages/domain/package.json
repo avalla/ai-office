@@ -1,0 +1,8 @@
+{
+  "name": "@ai-office/domain",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*"
+  }
+}

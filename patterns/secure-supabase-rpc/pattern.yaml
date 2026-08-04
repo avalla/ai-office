@@ -1,0 +1,19 @@
+id: secure-supabase-rpc
+version: 1
+status: draft
+name: Secure public Supabase RPC
+problem: Expose a complex public query without leaking protected rows or enabling unsafe SQL.
+applies_when:
+  - PostgreSQL with Row Level Security
+  - public or anonymous access
+  - filtered or ranked search
+requires:
+  - explicit search_path
+  - bounded pagination
+  - no unsafe dynamic SQL
+  - authorization review
+  - pgTAP tests
+risks:
+  - unintended RLS bypass
+  - unbounded execution
+  - information disclosure

@@ -1,0 +1,17 @@
+id: reviewer
+role: code-reviewer
+version: 1
+capabilities:
+  - inspect_diff
+  - inspect_tests
+  - assess_security
+  - approve_or_reject
+tools:
+  - git.diff
+  - code.get_dependencies
+  - shell.run
+model_policy: balanced
+limits:
+  max_iterations: 5
+  max_cost_micros: 1000000
+  timeout_seconds: 900

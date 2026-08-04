@@ -1,0 +1,19 @@
+id: developer
+role: software-developer
+version: 1
+capabilities:
+  - inspect_code
+  - modify_code
+  - run_tests
+  - create_patch
+tools:
+  - project.search
+  - code.get_symbol
+  - code.get_dependencies
+  - git.diff
+  - shell.run
+model_policy: balanced
+limits:
+  max_iterations: 10
+  max_cost_micros: 2000000
+  timeout_seconds: 1800

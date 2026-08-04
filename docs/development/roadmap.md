@@ -1,0 +1,80 @@
+# Development roadmap
+
+## M0 — Repository health
+
+- install dependencies;
+- pass typecheck;
+- migration runner;
+- CI;
+- coding conventions.
+
+## M1 — Project and task vertical slice
+
+- create/list project;
+- create/list/start/complete task;
+- SQLite repositories;
+- event log;
+- integration tests;
+- functional CLI.
+
+## M2 — Local daemon
+
+- daemon lifecycle;
+- local API;
+- CLI client;
+- single-writer command queue;
+- health and status;
+- graceful shutdown.
+
+## M3 — Agent runtime
+
+- role and agent definitions;
+- agent runs;
+- scheduler;
+- mock executor;
+- task locking;
+- worktree abstraction.
+
+## M4 — LLM gateway and cost control
+
+- provider interface;
+- provider mock and one real provider;
+- usage normalization;
+- pricing versions;
+- cost events;
+- budgets and reservations;
+- fallback policy.
+
+## M5 — Governance
+
+- milestones;
+- ADR workflows;
+- requirements;
+- reviews and approvals;
+- Markdown export.
+
+## M6 — Reusable memory
+
+- global roles and patterns;
+- project pattern adoption;
+- lesson extraction;
+- validation and deprecation;
+- cross-project search.
+
+## M7 — Code intelligence
+
+- incremental file indexing;
+- TypeScript symbol extraction;
+- import and call edges;
+- FTS5;
+- change-impact query;
+- optional embeddings.
+
+## M8 — Productization
+
+- web UI;
+- plugin SDK;
+- MCP server;
+- packaged binaries;
+- backup/export/import;
+- security hardening.

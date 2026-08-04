@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.env
+.DS_Store
+*.log
+.ai-office/*.sqlite
+.ai-office/*.sqlite-shm
+.ai-office/*.sqlite-wal

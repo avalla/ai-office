@@ -1,0 +1,5 @@
+{
+  "name": "@ai-office/cli",
+  "private": true,
+  "type": "module"
+}

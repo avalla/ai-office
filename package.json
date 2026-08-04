@@ -1,0 +1,27 @@
+{
+  "name": "ai-office",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:daemon": "bun --watch apps/daemon/src/main.ts",
+    "cli": "bun apps/cli/src/main.ts",
+    "db:migrate": "bun scripts/migrate.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc -p tsconfig.json --noEmit",
+    "lint": "bunx eslint .",
+    "format": "bunx prettier --write ."
+  },
+  "dependencies": {
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.9.0"
+  }
+}

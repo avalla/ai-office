@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ai-office/domain/*": ["packages/domain/src/*"],
+      "@ai-office/application/*": ["packages/application/src/*"],
+      "@ai-office/storage-sqlite/*": ["packages/storage-sqlite/src/*"],
+      "@ai-office/agent-runtime/*": ["packages/agent-runtime/src/*"],
+      "@ai-office/llm-gateway/*": ["packages/llm-gateway/src/*"],
+      "@ai-office/orchestration/*": ["packages/orchestration/src/*"]
+    }
+  },
+  "include": ["apps/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+}

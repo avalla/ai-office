@@ -1,0 +1,18 @@
+id: architect
+role: software-architect
+version: 1
+capabilities:
+  - inspect_project
+  - propose_adr
+  - decompose_work
+  - assess_tradeoffs
+tools:
+  - project.search
+  - project.get_active_adrs
+  - code.get_dependencies
+  - tasks.create
+model_policy: high_reasoning
+limits:
+  max_iterations: 8
+  max_cost_micros: 3000000
+  timeout_seconds: 1800

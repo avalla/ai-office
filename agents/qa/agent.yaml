@@ -1,0 +1,16 @@
+id: qa
+role: quality-assurance
+version: 1
+capabilities:
+  - derive_test_cases
+  - run_tests
+  - report_regressions
+tools:
+  - project.get_task
+  - shell.run
+  - git.diff
+model_policy: economical
+limits:
+  max_iterations: 6
+  max_cost_micros: 750000
+  timeout_seconds: 1200

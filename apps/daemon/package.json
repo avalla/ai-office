@@ -1,0 +1,5 @@
+{
+  "name": "@ai-office/daemon",
+  "private": true,
+  "type": "module"
+}
