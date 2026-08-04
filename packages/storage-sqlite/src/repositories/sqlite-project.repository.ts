@@ -16,7 +16,11 @@ export class SqliteProjectRepository implements ProjectRepository {
 
   async findById(id: ProjectId): Promise<Project | null> {
     const row = this.database
-      .query<ProjectRow, [string]>("SELECT * FROM project WHERE id = ?")
+      .query<ProjectRow, [string]>(`
+        SELECT id, name, description, created_at, updated_at
+        FROM project
+        WHERE id = ?
+      `)
       .get(id);
 
     if (row === null) return null;

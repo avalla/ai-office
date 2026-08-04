@@ -1,0 +1,91 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Project } from "@ai-office/domain/project/project.ts";
+import { Task } from "@ai-office/domain/task/task.ts";
+import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
+import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
+import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
+import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+
+const migrationDirectory = join(import.meta.dir, "..", "..", "migrations", "project");
+const temporaryDirectories: string[] = [];
+
+function createTemporaryDatabase() {
+  const directory = mkdtempSync(join(tmpdir(), "ai-office-storage-"));
+  temporaryDirectories.push(directory);
+  return openDatabase(join(directory, "project.sqlite"));
+}
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+describe("project database migrations", () => {
+  test("applies pending migrations once", () => {
+    const database = createTemporaryDatabase();
+
+    expect(migrate(database, migrationDirectory).applied).toEqual(["0001_initial.sql"]);
+    expect(migrate(database, migrationDirectory).applied).toEqual([]);
+
+    const rows = database
+      .query<{ version: string }, []>("SELECT version FROM schema_migration ORDER BY version")
+      .all();
+
+    expect(rows).toEqual([{ version: "0001_initial.sql" }]);
+    database.close();
+  });
+});
+
+describe("SQLite project and task repositories", () => {
+  test("round-trips projects and lists tasks in deterministic priority order", async () => {
+    const database = createTemporaryDatabase();
+    migrate(database, migrationDirectory);
+    const projects = new SqliteProjectRepository(database);
+    const tasks = new SqliteTaskRepository(database);
+    const now = new Date("2026-08-05T00:00:00.000Z");
+    const project = Project.create({
+      id: "project-1",
+      name: "Demo",
+      description: "Vertical slice",
+      now
+    });
+
+    await projects.save(project);
+    await tasks.save(
+      Task.create({ id: "task-low", projectId: "project-1", title: "Low", priority: 1, now })
+    );
+    await tasks.save(
+      Task.create({ id: "task-high-b", projectId: "project-1", title: "High B", priority: 5, now })
+    );
+    await tasks.save(
+      Task.create({ id: "task-high-a", projectId: "project-1", title: "High A", priority: 5, now })
+    );
+
+    expect((await projects.findById("project-1"))?.snapshot()).toEqual(project.snapshot());
+    expect((await tasks.listByProject("project-1")).map((task) => task.snapshot().id)).toEqual([
+      "task-high-a",
+      "task-high-b",
+      "task-low"
+    ]);
+    database.close();
+  });
+
+  test("enforces project foreign keys", async () => {
+    const database = createTemporaryDatabase();
+    migrate(database, migrationDirectory);
+    const tasks = new SqliteTaskRepository(database);
+    const task = Task.create({
+      id: "task-1",
+      projectId: "missing",
+      title: "Orphan",
+      now: new Date("2026-08-05T00:00:00.000Z")
+    });
+
+    await expect(tasks.save(task)).rejects.toThrow("FOREIGN KEY constraint failed");
+    database.close();
+  });
+});

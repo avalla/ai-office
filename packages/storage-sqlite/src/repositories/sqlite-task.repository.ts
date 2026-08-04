@@ -33,7 +33,11 @@ export class SqliteTaskRepository implements TaskRepository {
 
   async findById(id: TaskId): Promise<Task | null> {
     const row = this.database
-      .query<TaskRow, [string]>("SELECT * FROM task WHERE id = ?")
+      .query<TaskRow, [string]>(`
+        SELECT id, project_id, title, description, status, priority, created_at, updated_at
+        FROM task
+        WHERE id = ?
+      `)
       .get(id);
 
     return row === null ? null : restore(row);
@@ -42,7 +46,10 @@ export class SqliteTaskRepository implements TaskRepository {
   async listByProject(projectId: ProjectId): Promise<Task[]> {
     return this.database
       .query<TaskRow, [string]>(
-        "SELECT * FROM task WHERE project_id = ? ORDER BY priority DESC, created_at ASC"
+        `SELECT id, project_id, title, description, status, priority, created_at, updated_at
+         FROM task
+         WHERE project_id = ?
+         ORDER BY priority DESC, created_at ASC, id ASC`
       )
       .all(projectId)
       .map(restore);

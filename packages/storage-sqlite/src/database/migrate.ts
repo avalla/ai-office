@@ -2,7 +2,11 @@ import type { Database } from "bun:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export function migrate(database: Database, directory: string): void {
+export interface MigrationResult {
+  applied: string[];
+}
+
+export function migrate(database: Database, directory: string): MigrationResult {
   database.exec(`
     CREATE TABLE IF NOT EXISTS schema_migration (
       version TEXT PRIMARY KEY,
@@ -10,10 +14,12 @@ export function migrate(database: Database, directory: string): void {
     );
   `);
 
-  const applied = database
+  const applied = new Set(
+    database
     .query<{ version: string }, []>("SELECT version FROM schema_migration")
     .all()
-    .map((row) => row.version);
+    .map((row) => row.version)
+  );
 
   const files = readdirSync(directory)
     .filter((file) => file.endsWith(".sql"))
@@ -22,9 +28,10 @@ export function migrate(database: Database, directory: string): void {
   const insertMigration = database.prepare(
     "INSERT INTO schema_migration(version, applied_at) VALUES (?, ?)"
   );
+  const newlyApplied: string[] = [];
 
   for (const file of files) {
-    if (applied.includes(file)) continue;
+    if (applied.has(file)) continue;
 
     const sql = readFileSync(join(directory, file), "utf8");
 
@@ -32,5 +39,9 @@ export function migrate(database: Database, directory: string): void {
       database.exec(sql);
       insertMigration.run(file, new Date().toISOString());
     })();
+
+    newlyApplied.push(file);
   }
+
+  return { applied: newlyApplied };
 }
