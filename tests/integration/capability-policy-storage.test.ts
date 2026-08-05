@@ -19,6 +19,7 @@ import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
 import type { CanonicalActionPayload } from "@ai-office/domain/capability/action-request.ts";
+import { fakeConnectorDescriptor } from "@ai-office/domain/capability/capability.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -445,6 +446,23 @@ describe("M6A capability persistence and services", () => {
     expect(hashCanonicalActionPayload(persistedPayload).hash).toBe(
       authorizedRow!.payload_hash,
     );
+    expect(authorizedRow).toMatchObject({
+      connector: fakeConnectorDescriptor.id,
+      connector_version: fakeConnectorDescriptor.version,
+    });
+    const deniedConnector = database
+      .query<{ connector: string; connector_version: string }, []>(
+        `SELECT connector, connector_version
+         FROM action_requests
+         WHERE decision='deny'
+         ORDER BY created_at, id
+         LIMIT 1`,
+      )
+      .get();
+    expect(deniedConnector).toEqual({
+      connector: fakeConnectorDescriptor.id,
+      connector_version: fakeConnectorDescriptor.version,
+    });
 
     const resources = await capabilities.listResources("project-1");
     expect(resources.map((value) => value.id)).toEqual(

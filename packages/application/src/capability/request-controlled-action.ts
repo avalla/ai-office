@@ -8,8 +8,8 @@ import {
   ActionRequest,
   type CanonicalActionPayload,
 } from "@ai-office/domain/capability/action-request.ts";
-import { fakeConnectorDescriptor } from "@ai-office/domain/capability/capability.ts";
 import { hashCanonicalActionPayload } from "./canonical-action.ts";
+import { connectorDescriptorForResource } from "./validation.ts";
 import { EvaluateActionPolicy } from "./evaluate-action-policy.ts";
 
 export type ControlledActionOutcome =
@@ -41,13 +41,14 @@ export class RequestControlledAction {
   }): Promise<{ request: ActionRequest; outcome: ControlledActionOutcome }> {
     return this.transactions.run(async () => {
       const evaluated = await this.evaluatePolicy.execute(input);
+      const connector = connectorDescriptorForResource(evaluated.resource);
       const payload: CanonicalActionPayload = {
         schemaVersion: 1,
         projectId: input.projectId,
         agentId: input.agentId,
         resourceId: evaluated.resource.id,
-        connector: evaluated.resource.provider,
-        connectorVersion: fakeConnectorDescriptor.version,
+        connector: connector.id,
+        connectorVersion: connector.version,
         operation: input.operation.trim(),
         normalizedArguments: evaluated.normalizedArguments,
         effectiveConstraints: evaluated.decision.effectiveConstraints,
@@ -59,8 +60,8 @@ export class RequestControlledAction {
         projectId: input.projectId,
         agentId: input.agentId,
         resourceId: evaluated.resource.id,
-        connector: evaluated.resource.provider,
-        connectorVersion: fakeConnectorDescriptor.version,
+        connector: connector.id,
+        connectorVersion: connector.version,
         operation: payload.operation,
         normalizedArguments: evaluated.normalizedArguments,
         effectiveConstraints: evaluated.decision.effectiveConstraints,

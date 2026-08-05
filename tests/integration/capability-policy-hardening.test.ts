@@ -4,16 +4,23 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate-action-policy.ts";
+import { RegisterResource } from "@ai-office/application/capability/register-resource.ts";
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import {
   CapabilityPrincipalNotFoundError,
   ConcurrentActionTransitionError,
 } from "@ai-office/application/capability-errors.ts";
+import { TransactionAlreadyActiveError } from "@ai-office/application/ports/transaction-runner.port.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import type { AuditEventRepository } from "@ai-office/application/ports/audit-event-repository.port.ts";
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { ActionRequest } from "@ai-office/domain/capability/action-request.ts";
+import type { PolicyDecisionKind } from "@ai-office/domain/capability/capability.ts";
+import {
+  UnsupportedConnectorProviderError,
+  UnsupportedConnectorResourceTypeError,
+} from "@ai-office/domain/capability/errors.ts";
 import type { AuditEvent } from "@ai-office/domain/event/audit-event.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
@@ -128,7 +135,11 @@ async function seedProjectsAndPrincipals(
   return { projects, runtime };
 }
 
-function requestedAction(id: string, projectId = "project-1"): ActionRequest {
+function requestedAction(
+  id: string,
+  projectId = "project-1",
+  decision: PolicyDecisionKind = "allow",
+): ActionRequest {
   return ActionRequest.create({
     id,
     projectId,
@@ -140,7 +151,7 @@ function requestedAction(id: string, projectId = "project-1"): ActionRequest {
     normalizedArguments: { target: "readme" },
     effectiveConstraints: { allowMutation: false, deniedTargets: [] },
     payloadHash: "a".repeat(64),
-    decision: "allow",
+    decision,
     riskLevel: "low",
     matchedGrantIds: ["grant"],
     reasons: ["operation risk is low"],
@@ -207,7 +218,9 @@ describe("M6A SQLite hardening", () => {
       updatedAt: new Date(now.getTime() + 4),
     });
 
-    await repository.insertActionRequest(requestedAction("deny-wins"));
+    await repository.insertActionRequest(
+      requestedAction("deny-wins", "project-1", "deny"),
+    );
     await expect(
       repository.transitionActionRequest({
         id: "deny-wins",
@@ -234,6 +247,36 @@ describe("M6A SQLite hardening", () => {
         )
         .run(),
     ).toThrow("invalid action request status transition");
+
+    await repository.insertActionRequest(
+      requestedAction("deny-mismatch", "project-1", "deny"),
+    );
+    await expect(
+      repository.transitionActionRequest({
+        id: "deny-mismatch",
+        projectId: "project-1",
+        expectedStatus: "requested",
+        status: "authorized",
+        updatedAt: new Date(now.getTime() + 1),
+      }),
+    ).rejects.toThrow("invalid action request status transition");
+    expect(
+      (await repository.findActionRequest("deny-mismatch"))?.snapshot().status,
+    ).toBe("requested");
+
+    await repository.insertActionRequest(requestedAction("allow-mismatch"));
+    await expect(
+      repository.transitionActionRequest({
+        id: "allow-mismatch",
+        projectId: "project-1",
+        expectedStatus: "requested",
+        status: "denied",
+        updatedAt: new Date(now.getTime() + 1),
+      }),
+    ).rejects.toThrow("invalid action request status transition");
+    expect(
+      (await repository.findActionRequest("allow-mismatch"))?.snapshot().status,
+    ).toBe("requested");
     expect(() =>
       database
         .prepare(
@@ -262,6 +305,73 @@ describe("M6A SQLite hardening", () => {
         )
         .run(),
     ).toThrow("action request must start requested");
+    database.close();
+  });
+
+  test("accepts only the fake filesystem descriptor during registration", async () => {
+    const database = createDatabase();
+    const { projects } = await seedProjectsAndPrincipals(database);
+    const repository = new SqliteCapabilityPolicyRepository(database);
+    const ids = new SequenceIds();
+    const clock = new FixedClock();
+    const register = new RegisterResource(
+      projects,
+      repository,
+      new RecordAuditEvent(
+        new SqliteAuditEventRepository(database),
+        ids,
+        clock,
+      ),
+      ids,
+      clock,
+      new SqliteTransactionRunner(database),
+    );
+
+    await expect(
+      register.execute({
+        projectId: "project-1",
+        type: "filesystem_scope",
+        provider: "fake",
+        displayName: "Supported fake resource",
+      }),
+    ).resolves.toMatchObject({ provider: "fake", type: "filesystem_scope" });
+    for (const provider of ["github", "shell"]) {
+      await expect(
+        register.execute({
+          projectId: "project-1",
+          type: "filesystem_scope",
+          provider,
+          displayName: "Unsupported resource",
+        }),
+      ).rejects.toBeInstanceOf(UnsupportedConnectorProviderError);
+    }
+    await expect(
+      register.execute({
+        projectId: "project-1",
+        type: "github_repository",
+        provider: "fake",
+        displayName: "Unsupported fake resource type",
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedConnectorResourceTypeError);
+
+    expect(
+      database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) count FROM resources WHERE display_name LIKE 'Unsupported%'",
+        )
+        .get()?.count,
+    ).toBe(0);
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO resources(
+            id, project_id, type, provider, display_name, configuration_json,
+            status, created_at, updated_at
+          ) VALUES ('bad-provider', 'project-1', 'filesystem_scope', 'github',
+            'Bad', '{}', 'active', ?, ?)`,
+        )
+        .run(now.toISOString(), now.toISOString()),
+    ).toThrow();
     database.close();
   });
 
@@ -466,6 +576,13 @@ describe("M6A SQLite hardening", () => {
         )
         .get()?.count,
     ).toBe(0);
+    expect(
+      database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) count FROM audit_event WHERE event_type LIKE 'action.%'",
+        )
+        .get()?.count,
+    ).toBe(0);
     database.close();
   });
 
@@ -519,6 +636,98 @@ describe("M6A SQLite hardening", () => {
         )
         .get()?.count,
     ).toBe(0);
+    database.close();
+  });
+
+  test("rejects nested transactions deterministically and rolls back the outer work", async () => {
+    const database = createDatabase();
+    await seedProjectsAndPrincipals(database);
+    const transactions = new SqliteTransactionRunner(database);
+    const nestedTransactions = new SqliteTransactionRunner(database);
+
+    await expect(
+      transactions.run(async () => {
+        database
+          .prepare("UPDATE project SET name='changed' WHERE id='project-1'")
+          .run();
+        await nestedTransactions.run(async () => undefined);
+      }),
+    ).rejects.toBeInstanceOf(TransactionAlreadyActiveError);
+    expect(
+      database
+        .query<{ name: string }, [string]>(
+          "SELECT name FROM project WHERE id=?",
+        )
+        .get("project-1")?.name,
+    ).toBe("project-1");
+    await expect(
+      transactions.run(async () => "runner remains usable"),
+    ).resolves.toBe("runner remains usable");
+    database.close();
+  });
+
+  test("rejects a concurrent controlled action on the same transaction runner", async () => {
+    const database = createDatabase();
+    const { runtime } = await seedProjectsAndPrincipals(database);
+    database
+      .prepare(
+        `INSERT INTO capability_grants(
+          id, project_id, principal_type, principal_id, resource_id,
+          actions_json, constraints_json, valid_from, granted_by, reason, created_at
+        ) VALUES ('grant-concurrent', 'project-1', 'agent', 'agent-project-1',
+          'resource-project-1', '["fake.read"]', '{}', ?, 'owner', 'test', ?)`,
+      )
+      .run(now.toISOString(), now.toISOString());
+    const repository = new SqliteCapabilityPolicyRepository(database);
+    const ids = new SequenceIds();
+    const clock = new FixedClock();
+    const transactions = new SqliteTransactionRunner(database);
+    const service = new RequestControlledAction(
+      new EvaluateActionPolicy(runtime, repository, clock),
+      repository,
+      new RecordAuditEvent(
+        new SqliteAuditEventRepository(database),
+        ids,
+        clock,
+      ),
+      ids,
+      clock,
+      transactions,
+    );
+    const input = {
+      projectId: "project-1",
+      agentId: "agent-project-1",
+      resourceId: "resource-project-1",
+      operation: "fake.read",
+      arguments: { target: "readme" },
+    } as const;
+
+    const results = await Promise.allSettled([
+      service.execute(input),
+      service.execute(input),
+    ]);
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    const rejected = results.find((result) => result.status === "rejected");
+    expect(rejected).toMatchObject({
+      status: "rejected",
+      reason: expect.any(TransactionAlreadyActiveError),
+    });
+    expect(
+      database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) count FROM action_requests",
+        )
+        .get()?.count,
+    ).toBe(1);
+    expect(
+      database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) count FROM audit_event WHERE event_type LIKE 'action.%'",
+        )
+        .get()?.count,
+    ).toBe(2);
     database.close();
   });
 });

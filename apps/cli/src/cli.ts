@@ -49,6 +49,7 @@ import {
   InvalidActionTimestampError,
 } from "@ai-office/domain/capability/errors.ts";
 import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
+import { TransactionAlreadyActiveError } from "@ai-office/application/ports/transaction-runner.port.ts";
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
@@ -223,7 +224,8 @@ function formatKnownError(error: unknown): string | null {
     error instanceof CapabilityValidationError ||
     error instanceof CanonicalSerializationError ||
     error instanceof InvalidActionTransitionError ||
-    error instanceof InvalidActionTimestampError
+    error instanceof InvalidActionTimestampError ||
+    error instanceof TransactionAlreadyActiveError
   )
     return error.message;
   return null;

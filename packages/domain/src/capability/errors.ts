@@ -12,6 +12,25 @@ export class InvalidCapabilityConstraintsError extends CapabilityValidationError
   }
 }
 
+export class UnsupportedConnectorProviderError extends CapabilityValidationError {
+  constructor(readonly provider: string) {
+    super(`Unsupported connector provider: ${provider}`);
+    this.name = "UnsupportedConnectorProviderError";
+  }
+}
+
+export class UnsupportedConnectorResourceTypeError extends CapabilityValidationError {
+  constructor(
+    readonly provider: string,
+    readonly resourceType: string,
+  ) {
+    super(
+      `Resource type ${resourceType} is not supported by connector ${provider}`,
+    );
+    this.name = "UnsupportedConnectorResourceTypeError";
+  }
+}
+
 export class CanonicalSerializationError extends Error {
   constructor(
     readonly path: string,

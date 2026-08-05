@@ -3,8 +3,13 @@ import { hashCanonicalActionPayload } from "@ai-office/application/capability/ca
 import { ActionRequest } from "@ai-office/domain/capability/action-request.ts";
 import type {
   CapabilityGrant,
+  PolicyDecisionKind,
   PolicyInput,
   Resource,
+} from "@ai-office/domain/capability/capability.ts";
+import {
+  fakeConnectorDescriptor,
+  getConnectorDescriptor,
 } from "@ai-office/domain/capability/capability.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import {
@@ -108,6 +113,35 @@ describe("capability policy", () => {
         now,
       ).decision,
     ).toBe("deny");
+  });
+
+  test("denies resources outside the trusted connector descriptor", () => {
+    expect(
+      engine.evaluate(
+        input({
+          resource: resource({ provider: "github" }),
+          grants: [grant()],
+        }),
+        now,
+      ),
+    ).toMatchObject({
+      decision: "deny",
+      reasons: ["unsupported connector: github"],
+    });
+    expect(
+      engine.evaluate(
+        input({
+          resource: resource({ type: "github_repository" }),
+          grants: [grant()],
+        }),
+        now,
+      ),
+    ).toMatchObject({
+      decision: "deny",
+      reasons: [
+        "resource type github_repository is not supported by connector fake",
+      ],
+    });
   });
 
   test("matches persisted role grants and ignores unrelated principals", () => {
@@ -447,7 +481,7 @@ describe("capability policy", () => {
 });
 
 describe("action lifecycle and canonical payload", () => {
-  const request = () =>
+  const request = (decision: PolicyDecisionKind = "allow_simulation_only") =>
     ActionRequest.create({
       id: "action-1",
       projectId: "project-1",
@@ -459,7 +493,7 @@ describe("action lifecycle and canonical payload", () => {
       normalizedArguments: { target: "a" },
       effectiveConstraints: { allowMutation: true },
       payloadHash: "a".repeat(64),
-      decision: "allow_simulation_only",
+      decision,
       riskLevel: "medium",
       matchedGrantIds: ["grant-1"],
       reasons: ["simulation is required"],
@@ -478,16 +512,20 @@ describe("action lifecycle and canonical payload", () => {
     expect(() => request().transition("completed", now)).toThrow(
       InvalidActionTransitionError,
     );
-    const denied = request();
+    const denied = request("deny");
     denied.transition("denied", authorizedAt);
     expect(() => denied.transition("authorized", authorizedAt)).toThrow(
+      InvalidActionTransitionError,
+    );
+    const authorized = request("allow");
+    authorized.transition("authorized", authorizedAt);
+    expect(() => authorized.transition("denied", authorizedAt)).toThrow(
       InvalidActionTransitionError,
     );
     expect(() =>
       request().transition("authorized", new Date(now.getTime() - 1)),
     ).toThrow(InvalidActionTimestampError);
     for (const status of [
-      "denied",
       "approval_pending",
       "approved",
       "rejected",
@@ -505,6 +543,48 @@ describe("action lifecycle and canonical payload", () => {
         InvalidActionTransitionError,
       );
     }
+  });
+
+  test("enforces decision and initial status compatibility", () => {
+    const denied = request("deny");
+    expect(() => denied.transition("authorized", now)).toThrow(
+      InvalidActionTransitionError,
+    );
+    denied.transition("denied", now);
+    expect(denied.snapshot().status).toBe("denied");
+
+    for (const decision of [
+      "allow",
+      "allow_simulation_only",
+      "allow_with_approval",
+    ] as const) {
+      const allowed = request(decision);
+      expect(() => allowed.transition("denied", now)).toThrow(
+        InvalidActionTransitionError,
+      );
+      allowed.transition("authorized", now);
+      expect(allowed.snapshot().status).toBe("authorized");
+    }
+
+    expect(() =>
+      ActionRequest.restore({
+        ...request("deny").snapshot(),
+        status: "authorized",
+      }),
+    ).toThrow(InvalidActionTransitionError);
+    expect(() =>
+      ActionRequest.restore({
+        ...request("allow").snapshot(),
+        status: "denied",
+      }),
+    ).toThrow(InvalidActionTransitionError);
+  });
+
+  test("resolves connector identity and version from one trusted descriptor", () => {
+    expect(getConnectorDescriptor("fake")).toBe(fakeConnectorDescriptor);
+    expect(getConnectorDescriptor("github")).toBeNull();
+    expect(getConnectorDescriptor("shell")).toBeNull();
+    expect(fakeConnectorDescriptor.resourceTypes).toEqual(["filesystem_scope"]);
   });
 
   test("serializes semantic equals identically and distinguishes absence from null", () => {

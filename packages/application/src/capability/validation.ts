@@ -1,11 +1,16 @@
 import type {
   CapabilityGrant,
+  ConnectorDescriptor,
   Resource,
   ResourceType,
 } from "@ai-office/domain/capability/capability.ts";
-import { fakeConnectorDescriptor } from "@ai-office/domain/capability/capability.ts";
+import { getConnectorDescriptor } from "@ai-office/domain/capability/capability.ts";
 import { normalizeCanonicalJson } from "@ai-office/domain/capability/canonical-json.ts";
-import { CapabilityValidationError } from "@ai-office/domain/capability/errors.ts";
+import {
+  CapabilityValidationError,
+  UnsupportedConnectorProviderError,
+  UnsupportedConnectorResourceTypeError,
+} from "@ai-office/domain/capability/errors.ts";
 import { validateFakeConnectorConstraints } from "@ai-office/domain/capability/fake-connector-policy.ts";
 
 export const resourceTypes: readonly ResourceType[] = [
@@ -73,7 +78,22 @@ export function validateResource(resource: Resource): void {
   requiredText(resource.displayName, "display name");
   if (!resourceTypes.includes(resource.type))
     throw new CapabilityValidationError("invalid resource type");
+  connectorDescriptorForResource(resource);
   canonicalRecord(resource.configuration, "resource configuration");
+}
+
+export function connectorDescriptorForResource(
+  resource: Pick<Resource, "provider" | "type">,
+): ConnectorDescriptor {
+  const descriptor = getConnectorDescriptor(resource.provider);
+  if (descriptor === null)
+    throw new UnsupportedConnectorProviderError(resource.provider);
+  if (!descriptor.resourceTypes.includes(resource.type))
+    throw new UnsupportedConnectorResourceTypeError(
+      descriptor.id,
+      resource.type,
+    );
+  return descriptor;
 }
 
 export function validateGrant(grant: CapabilityGrant, provider: string): void {
@@ -95,11 +115,14 @@ export function validateGrant(grant: CapabilityGrant, provider: string): void {
     !Number.isFinite(grant.expiresAt.getTime())
   )
     throw new CapabilityValidationError("grant expiresAt must be a valid date");
+  const descriptor = getConnectorDescriptor(provider);
+  if (descriptor === null)
+    throw new UnsupportedConnectorProviderError(provider);
   const supported = new Set(
-    fakeConnectorDescriptor.operations.map((operation) => operation.operation),
+    descriptor.operations.map((operation) => operation.operation),
   );
   for (const action of grant.actions) {
-    if (action !== `${provider}.*` && !supported.has(action))
+    if (action !== `${descriptor.id}.*` && !supported.has(action))
       throw new CapabilityValidationError(
         `unsupported or unsafe action pattern: ${action}`,
       );
@@ -109,7 +132,5 @@ export function validateGrant(grant: CapabilityGrant, provider: string): void {
     grant.expiresAt.getTime() <= grant.validFrom.getTime()
   )
     throw new CapabilityValidationError("grant expiry must be after validFrom");
-  if (provider !== "fake")
-    throw new CapabilityValidationError(`unsupported connector: ${provider}`);
   validateFakeConnectorConstraints(grant.constraints);
 }

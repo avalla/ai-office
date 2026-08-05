@@ -10,7 +10,7 @@ CREATE TABLE resources (
   type TEXT NOT NULL CHECK (type IN (
     'filesystem_scope', 'github_repository', 'sqlite_database', 'shell_environment'
   )),
-  provider TEXT NOT NULL CHECK (length(trim(provider)) > 0),
+  provider TEXT NOT NULL CHECK (provider = 'fake'),
   external_ref TEXT,
   display_name TEXT NOT NULL CHECK (length(trim(display_name)) > 0),
   configuration_json TEXT NOT NULL CHECK (
@@ -20,7 +20,8 @@ CREATE TABLE resources (
   status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  UNIQUE(project_id, id)
+  UNIQUE(project_id, id),
+  CHECK (provider <> 'fake' OR type = 'filesystem_scope')
 );
 
 CREATE INDEX resources_project_status_idx
@@ -226,8 +227,8 @@ CREATE TABLE action_requests (
   project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   agent_id TEXT NOT NULL,
   resource_id TEXT NOT NULL,
-  connector TEXT NOT NULL CHECK (length(trim(connector)) > 0),
-  connector_version TEXT NOT NULL CHECK (length(trim(connector_version)) > 0),
+  connector TEXT NOT NULL CHECK (connector = 'fake'),
+  connector_version TEXT NOT NULL CHECK (connector_version = '1'),
   operation TEXT NOT NULL CHECK (length(trim(operation)) > 0),
   normalized_arguments_json TEXT NOT NULL CHECK (
     json_valid(normalized_arguments_json) AND json_type(normalized_arguments_json) = 'object'
@@ -304,7 +305,10 @@ BEGIN SELECT RAISE(ABORT, 'action request payload is immutable'); END;
 CREATE TRIGGER action_request_status_transition
 BEFORE UPDATE OF status ON action_requests
 WHEN NEW.status <> OLD.status AND NOT (
-  (OLD.status = 'requested' AND NEW.status IN ('authorized', 'denied'))
+  (OLD.status = 'requested' AND OLD.decision = 'deny' AND NEW.status = 'denied')
+  OR (OLD.status = 'requested'
+    AND OLD.decision IN ('allow', 'allow_simulation_only', 'allow_with_approval')
+    AND NEW.status = 'authorized')
   OR (OLD.status = 'authorized' AND NEW.status = 'simulating')
   OR (OLD.status = 'simulating' AND NEW.status = 'simulated')
   OR (OLD.status = 'simulated' AND NEW.status = 'approval_pending')

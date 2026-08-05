@@ -5,7 +5,7 @@ import type {
   PolicyInput,
   RiskLevel,
 } from "./capability.ts";
-import { fakeConnectorDescriptor } from "./capability.ts";
+import { getConnectorDescriptor } from "./capability.ts";
 import { canonicalStringify } from "./canonical-json.ts";
 import { FakeConnectorConstraintHandler } from "./fake-connector-policy.ts";
 
@@ -69,9 +69,14 @@ export class PolicyEngine {
       return denied("resource belongs to a different project");
     if (input.resource.status === "disabled")
       return denied("resource is disabled");
-    if (input.resource.provider !== fakeConnectorDescriptor.id)
+    const connector = getConnectorDescriptor(input.resource.provider);
+    if (connector === null)
       return denied(`unsupported connector: ${input.resource.provider}`);
-    const descriptor = fakeConnectorDescriptor.operations.find(
+    if (!connector.resourceTypes.includes(input.resource.type))
+      return denied(
+        `resource type ${input.resource.type} is not supported by connector ${connector.id}`,
+      );
+    const descriptor = connector.operations.find(
       (candidate) => candidate.operation === input.operation,
     );
     if (descriptor === undefined)

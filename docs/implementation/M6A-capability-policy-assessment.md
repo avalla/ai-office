@@ -55,6 +55,15 @@ indexes. Existing projects upgrade in place from the full M5 schema. Composite
 indexes and triggers enforce same-project ownership in addition to ordinary
 foreign keys. JSON columns use `json_valid`; closed unions use `CHECK` clauses.
 
+The action decision is immutable and constrains the first lifecycle transition
+at both enforcement layers. A denied decision can move only from `requested` to
+`denied`; `allow`, `allow_simulation_only`, and `allow_with_approval` can move
+only from `requested` to `authorized`. The domain state machine rejects the
+opposite pairings, while the SQLite transition trigger independently enforces
+the same invariant when callers bypass the domain or repository port. Later M6A
+transitions remain `authorized` to `simulating`, `simulating` to `simulated`,
+and `simulated` to `approval_pending`; terminal states cannot be reopened.
+
 The migration runner continues to apply each file once in a transaction. Upgrade
 tests first build an M5 database through `0011_governance_hardening.sql`, insert
 existing project data, then apply `0012` and verify preservation and constraints.
@@ -137,6 +146,28 @@ configuration and action arguments. The reserved
 `credential_ref` storage column has no application or CLI write path and is
 excluded from all resource SELECTs, DTOs, hashes, audit events, and CLI output.
 
+M6A accepts exactly one connector descriptor: `fake`, version `1`, for the
+logical `filesystem_scope` resource type. This type is only a policy fixture and
+does not grant or perform filesystem access. Registration rejects all other
+providers and rejects every other resource-type/provider combination. A single
+trusted descriptor lookup supplies connector identity, version, supported
+resource types, operations, and risk metadata to resource validation, policy
+evaluation, and action payload construction. Neither CLI input nor agent
+arguments can provide the connector version. SQLite also constrains registered
+resources and persisted action connector metadata to this M6A descriptor.
+
+## Transaction behavior
+
+The SQLite transaction runner uses `BEGIN IMMEDIATE` and permits at most one
+active transaction per concrete database connection. M6A deliberately chooses
+an explicit rejection strategy rather than a queue, pool, nested savepoints, or
+unit of work: concurrent and nested calls, including calls through different
+runner instances wrapping the same connection, fail immediately with the typed
+`TransactionAlreadyActiveError`. The outer transaction rolls back if that error
+escapes its callback, and the runner becomes reusable afterward. The daemon's
+single-writer command queue remains the normal operating model; the connection
+guard makes direct and test use deterministic.
+
 ## Planned files
 
 - domain capability types, errors, fake constraint handler, policy engine, action
@@ -155,7 +186,8 @@ excluded from all resource SELECTs, DTOs, hashes, audit events, and CLI output.
 ## Deferred scope (M6B-M6D)
 
 M6A does not access or mutate any registered resource and does not expose stored
-credentials. M6B owns the connector SDK, real filesystem scope/path and symlink
+credentials. M6B owns the full connector registry and SDK, additional
+provider/resource-type combinations, real filesystem scope/path and symlink
 security, deterministic diffs, and atomic writes. M6C owns approval decisions,
 execution-time revalidation, real execution, replay prevention, batches, source
 preconditions, action cost dimensions, and the audit hash chain. M6D owns agent

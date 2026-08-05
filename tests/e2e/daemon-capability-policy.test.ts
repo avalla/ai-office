@@ -112,6 +112,23 @@ limits:
       expect(malformedConfiguration.stderr).toEqual([
         "Option --configuration must be a JSON object",
       ]);
+      for (const provider of ["github", "shell"]) {
+        const unsupportedProvider = await run([
+          "resource:create",
+          "--project",
+          projectId,
+          "--type",
+          "filesystem_scope",
+          "--provider",
+          provider,
+          "--name",
+          "Unsupported",
+        ]);
+        expect(unsupportedProvider.exitCode).toBe(1);
+        expect(unsupportedProvider.stderr).toEqual([
+          `Unsupported connector provider: ${provider}`,
+        ]);
+      }
       const credentialSecret = "cli-super-secret";
       const sensitiveConfiguration = await run([
         "resource:create",

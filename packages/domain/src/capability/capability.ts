@@ -88,13 +88,29 @@ export interface OperationDescriptor {
   riskLevel: RiskLevel;
 }
 
+export interface ConnectorDescriptor {
+  id: string;
+  version: string;
+  resourceTypes: readonly ResourceType[];
+  operations: readonly OperationDescriptor[];
+}
+
 export const fakeConnectorDescriptor = {
   id: "fake",
   version: "1",
+  resourceTypes: ["filesystem_scope"],
   operations: [
     { operation: "fake.read", riskLevel: "low" },
     { operation: "fake.write", riskLevel: "medium" },
     { operation: "fake.delete", riskLevel: "high" },
     { operation: "fake.admin", riskLevel: "critical" },
   ] satisfies readonly OperationDescriptor[],
-} as const;
+} as const satisfies ConnectorDescriptor;
+
+export function getConnectorDescriptor(
+  provider: string,
+): ConnectorDescriptor | null {
+  return provider === fakeConnectorDescriptor.id
+    ? fakeConnectorDescriptor
+    : null;
+}

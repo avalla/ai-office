@@ -69,6 +69,14 @@ const transitions: Record<ActionStatus, readonly ActionStatus[]> = {
   expired: [],
 };
 
+function isDecisionStatusCompatible(
+  decision: PolicyDecisionKind,
+  status: ActionStatus,
+): boolean {
+  if (decision === "deny") return status === "requested" || status === "denied";
+  return status !== "denied";
+}
+
 export class ActionRequest {
   private constructor(private props: ActionRequestProps) {}
 
@@ -104,6 +112,8 @@ export class ActionRequest {
   }
 
   static restore(props: ActionRequestProps): ActionRequest {
+    if (!isDecisionStatusCompatible(props.decision, props.status))
+      throw new InvalidActionTransitionError("requested", props.status);
     return new ActionRequest({
       ...props,
       normalizedArguments: normalizeCanonicalJson(props.normalizedArguments),
@@ -115,6 +125,8 @@ export class ActionRequest {
 
   transition(status: ActionStatus, now: Date): void {
     if (!transitions[this.props.status].includes(status))
+      throw new InvalidActionTransitionError(this.props.status, status);
+    if (!isDecisionStatusCompatible(this.props.decision, status))
       throw new InvalidActionTransitionError(this.props.status, status);
     if (
       !Number.isFinite(now.getTime()) ||
