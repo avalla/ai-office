@@ -25,12 +25,12 @@ export class SyncAgentDefinitions {
     const now = this.clock.now();
     await this.transactions.run(async () => {
       for (const item of loaded) {
-        const roleId = `role:${projectId}:${item.definition.id}`;
+        const roleId = `role:${projectId}:${item.definition.roleKey}`;
         await this.runtime.saveRole(
           Role.create({
             id: roleId,
             projectId,
-            key: item.definition.id,
+            key: item.definition.roleKey,
             name: item.definition.role,
             version: item.definition.version,
             capabilities: item.definition.capabilities,

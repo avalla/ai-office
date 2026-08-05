@@ -19,10 +19,16 @@ export class TaskNotFoundError extends Error {
     this.name = "TaskNotFoundError";
   }
 }
-export class TaskLockedError extends Error {
+export class TaskLockActiveError extends Error {
   constructor(id: string) {
     super(`Task ${id} is already locked by another run`);
-    this.name = "TaskLockedError";
+    this.name = "TaskLockActiveError";
+  }
+}
+export class TaskLockExpiredError extends Error {
+  constructor(runId: string) {
+    super(`Task lock owned by run ${runId} has expired`);
+    this.name = "TaskLockExpiredError";
   }
 }
 
@@ -58,7 +64,7 @@ export class ScheduleAgentRun {
         now,
         new Date(now.getTime() + 30 * 60_000),
       );
-      if (!locked) throw new TaskLockedError(input.taskId);
+      if (!locked) throw new TaskLockActiveError(input.taskId);
     });
     return run.snapshot().id;
   }

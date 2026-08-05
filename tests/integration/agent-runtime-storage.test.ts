@@ -8,7 +8,7 @@ import { InMemoryWorktreeManager } from "@ai-office/agent-runtime/worktree.ts";
 import { ExecuteAgentRun } from "@ai-office/application/commands/execute-agent-run.ts";
 import {
   ScheduleAgentRun,
-  TaskLockedError,
+  TaskLockActiveError,
 } from "@ai-office/application/commands/schedule-agent-run.ts";
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
@@ -104,7 +104,7 @@ describe("agent runtime SQLite integration", () => {
         taskId: "task",
         agentId: "agent",
       }),
-    ).rejects.toBeInstanceOf(TaskLockedError);
+    ).rejects.toBeInstanceOf(TaskLockActiveError);
     expect(await runtime.listRuns("project")).toHaveLength(1);
     const run = await runtime.findRun(runId);
     expect(run).not.toBeNull();

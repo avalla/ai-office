@@ -1,4 +1,5 @@
 id: reviewer
+role_key: code-reviewer
 role: code-reviewer
 version: 1
 capabilities:
@@ -13,5 +14,5 @@ tools:
 model_policy: balanced
 limits:
   max_iterations: 5
-  max_cost_micros: 1000000
+  max_cost_micros: "1000000"
   timeout_seconds: 900

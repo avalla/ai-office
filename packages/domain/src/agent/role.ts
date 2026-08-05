@@ -43,7 +43,11 @@ export class Role {
         "Role max iterations must be a positive integer",
       );
     }
-    if (input.limits.maxCostMicros < 0n || input.limits.timeoutSeconds < 1) {
+    if (
+      input.limits.maxCostMicros < 0n ||
+      !Number.isSafeInteger(input.limits.timeoutSeconds) ||
+      input.limits.timeoutSeconds < 1
+    ) {
       throw new DomainValidationError("Role limits must be non-negative");
     }
     return new Role({

@@ -1,5 +1,8 @@
 import type { Database } from "bun:sqlite";
-import type { AgentRuntimeRepository } from "@ai-office/application/ports/agent-runtime-repository.port.ts";
+import type {
+  AgentRunEvent,
+  AgentRuntimeRepository,
+} from "@ai-office/application/ports/agent-runtime-repository.port.ts";
 import type { Agent } from "@ai-office/domain/agent/agent.ts";
 import {
   AgentRun,
@@ -30,6 +33,12 @@ interface RunRow {
   started_at: string | null;
   completed_at: string | null;
   updated_at: string;
+}
+interface RunEventRow {
+  run_id: string;
+  status: AgentRunStatus;
+  payload_json: string;
+  occurred_at: string;
 }
 const agent = (row: AgentRow): Agent => ({
   id: row.id,
@@ -124,38 +133,46 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
   }
   async saveRun(value: AgentRun): Promise<void> {
     const v = value.snapshot();
-    this.database
-      .prepare(
-        `INSERT INTO agent_run(${runColumns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at`,
-      )
-      .run(
-        v.id,
-        v.projectId,
-        v.taskId,
-        v.agentId,
-        v.status,
-        v.worktreePath ?? null,
-        v.result === undefined ? null : JSON.stringify(v.result),
-        v.error === undefined ? null : JSON.stringify(v.error),
-        v.createdAt.toISOString(),
-        v.startedAt?.toISOString() ?? null,
-        v.completedAt?.toISOString() ?? null,
-        v.updatedAt.toISOString(),
-      );
-    this.database
-      .prepare(
-        "INSERT OR IGNORE INTO agent_run_event(id,run_id,status,payload_json,occurred_at) VALUES (?,?,?,?,?)",
-      )
-      .run(
-        `${v.id}:${v.status}:${v.updatedAt.toISOString()}`,
-        v.id,
-        v.status,
-        JSON.stringify({
-          hasResult: v.result !== undefined,
-          hasError: v.error !== undefined,
-        }),
-        v.updatedAt.toISOString(),
-      );
+    this.database.transaction(() => {
+      const previous = this.database
+        .query<{ status: AgentRunStatus }, [string]>(
+          "SELECT status FROM agent_run WHERE id=?",
+        )
+        .get(v.id);
+      this.database
+        .prepare(
+          `INSERT INTO agent_run(${runColumns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at`,
+        )
+        .run(
+          v.id,
+          v.projectId,
+          v.taskId,
+          v.agentId,
+          v.status,
+          v.worktreePath ?? null,
+          v.result === undefined ? null : JSON.stringify(v.result),
+          v.error === undefined ? null : JSON.stringify(v.error),
+          v.createdAt.toISOString(),
+          v.startedAt?.toISOString() ?? null,
+          v.completedAt?.toISOString() ?? null,
+          v.updatedAt.toISOString(),
+        );
+      if (previous?.status !== v.status)
+        this.database
+          .prepare(
+            "INSERT INTO agent_run_event(id,run_id,status,payload_json,occurred_at) VALUES (?,?,?,?,?)",
+          )
+          .run(
+            `${v.id}:${v.status}`,
+            v.id,
+            v.status,
+            JSON.stringify({
+              hasResult: v.result !== undefined,
+              hasError: v.error !== undefined,
+            }),
+            v.updatedAt.toISOString(),
+          );
+    })();
   }
   async findRun(id: string): Promise<AgentRun | null> {
     const row = this.database
@@ -179,23 +196,58 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
       .all(projectId, limit)
       .map(run);
   }
+  async listRecoverableRuns(projectId: string): Promise<AgentRun[]> {
+    return this.database
+      .query<RunRow, [string]>(
+        `SELECT ${runColumns} FROM agent_run WHERE project_id=? AND status IN ('preparing','running','reviewing') ORDER BY updated_at,id`,
+      )
+      .all(projectId)
+      .map(run);
+  }
+  async listRunEvents(runId: string): Promise<AgentRunEvent[]> {
+    return this.database
+      .query<RunEventRow, [string]>(
+        "SELECT run_id,status,payload_json,occurred_at FROM agent_run_event WHERE run_id=? ORDER BY rowid",
+      )
+      .all(runId)
+      .map((row) => ({
+        runId: row.run_id,
+        status: row.status,
+        payload: JSON.parse(row.payload_json) as AgentRunEvent["payload"],
+        occurredAt: new Date(row.occurred_at),
+      }));
+  }
   async acquireTaskLock(
     taskId: string,
     runId: string,
     acquiredAt: Date,
     expiresAt: Date,
   ): Promise<boolean> {
-    this.database
-      .prepare("DELETE FROM task_lock WHERE task_id=? AND expires_at <= ?")
-      .run(taskId, acquiredAt.toISOString());
-    const result = this.database
-      .prepare(
-        "INSERT OR IGNORE INTO task_lock(task_id, run_id, acquired_at, expires_at) VALUES (?, ?, ?, ?)",
+    const row = this.database
+      .query<{ run_id: string }, [string, string, string, string]>(
+        `INSERT INTO task_lock(task_id,run_id,acquired_at,expires_at) VALUES (?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET run_id=excluded.run_id,acquired_at=excluded.acquired_at,expires_at=excluded.expires_at WHERE task_lock.expires_at <= excluded.acquired_at RETURNING run_id`,
       )
-      .run(taskId, runId, acquiredAt.toISOString(), expiresAt.toISOString());
-    return result.changes === 1;
+      .get(taskId, runId, acquiredAt.toISOString(), expiresAt.toISOString());
+    return row?.run_id === runId;
   }
-  async releaseTaskLock(runId: string): Promise<void> {
-    this.database.prepare("DELETE FROM task_lock WHERE run_id=?").run(runId);
+  async renewTaskLock(
+    runId: string,
+    now: Date,
+    newExpiresAt: Date,
+  ): Promise<boolean> {
+    if (newExpiresAt.getTime() <= now.getTime()) return false;
+    return (
+      this.database
+        .prepare(
+          "UPDATE task_lock SET expires_at=? WHERE run_id=? AND expires_at>? ",
+        )
+        .run(newExpiresAt.toISOString(), runId, now.toISOString()).changes === 1
+    );
+  }
+  async releaseTaskLock(runId: string): Promise<boolean> {
+    return (
+      this.database.prepare("DELETE FROM task_lock WHERE run_id=?").run(runId)
+        .changes === 1
+    );
   }
 }
