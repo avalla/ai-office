@@ -7,6 +7,8 @@ import type { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repos
 import type { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
 import type { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import type { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import type { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
+import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 
 export interface CommandIo {
   stdout(message: string): void;
@@ -23,6 +25,8 @@ export interface CommandContext {
   runtime: SqliteAgentRuntimeRepository;
   costs: SqliteCostRepository;
   governance: SqliteGovernanceRepository;
+  capabilities: SqliteCapabilityPolicyRepository;
+  audit: RecordAuditEvent;
   ids: IdGenerator;
   clock: Clock;
   transactions: TransactionRunner;
