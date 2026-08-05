@@ -61,6 +61,8 @@ Status: implemented on `feat/llm-cost-control`; 87 tests across 18 files.
 
 ## M5 — Governance
 
+Status: implemented on `feat/governance`.
+
 - milestones;
 - ADR workflows;
 - requirements;

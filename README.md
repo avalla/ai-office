@@ -1,6 +1,6 @@
 # AI Office Blueprint
 
-TypeScript/Bun MVP for a local virtual office. Milestone 2 adds a single local daemon and a Unix-socket CLI client around the SQLite-backed Project/Task vertical slice.
+TypeScript/Bun MVP for a local virtual office. Milestones 3–5 add simulated agent execution, metered LLM provider boundaries, and database-backed governance to the local daemon foundation.
 
 ## Goals
 
@@ -179,7 +179,45 @@ ai-office project:profile
 ai-office project:export
 ai-office task:create
 ai-office task:list
+ai-office agent:sync
+ai-office agent:list
+ai-office run:schedule
+ai-office run:tick
+ai-office run:list
+ai-office pricing:set
+ai-office budget:set
+ai-office cost:list
+ai-office milestone:create
+ai-office milestone:set-status
+ai-office requirement:create
+ai-office requirement:set-status
+ai-office adr:create
+ai-office adr:set-status
+ai-office review:create
+ai-office review:decide
+ai-office governance:profile
+ai-office governance:export
 ```
+
+Synchronize the bundled YAML agent definitions, schedule a task, and execute it with the deterministic simulated executor:
+
+```bash
+bun run cli -- agent:sync --project <project-id> --directory agents
+bun run cli -- agent:list --project <project-id>
+bun run cli -- run:schedule --project <project-id> --task <task-id> --agent agent:<project-id>:developer
+bun run cli -- run:tick --project <project-id>
+bun run cli -- run:list --project <project-id>
+```
+
+Pricing is versioned and budgets include active reservations. Values are integer micros in the selected currency:
+
+```bash
+bun run cli -- pricing:set --provider mock --model model --currency USD --input 1000000 --cached-input 500000 --output 2000000 --reasoning 3000000
+bun run cli -- budget:set --project <project-id> --limit 10000000
+bun run cli -- cost:list --project <project-id> --group-by project
+```
+
+Governance data is authoritative in SQLite. `governance:export` regenerates `.ai-office/generated/governance.md`.
 
 ## For Codex
 
