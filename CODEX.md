@@ -1,101 +1,101 @@
-# Istruzioni operative per Codex
+# Operating instructions for Codex
 
-## Missione
+## Mission
 
-Trasformare questo blueprint in un MVP funzionante di AI Office.
+Turn this blueprint into a working AI Office MVP.
 
-AI Office è un daemon locale unico che coordina agenti software, conserva memoria strutturata in SQLite, monitora costi e genera viste Markdown.
+AI Office is a single local daemon that coordinates software agents, stores structured memory in SQLite, tracks costs, and generates Markdown views.
 
-## Vincoli
+## Constraints
 
 - Runtime: Bun.
-- Linguaggio: TypeScript strict.
-- Evitare `any`.
-- Preferire classi e interfacce per i confini applicativi.
+- Language: strict TypeScript.
+- Avoid `any`.
+- Prefer classes and interfaces for application boundaries.
 - DRY, KISS, YAGNI.
-- Nessun ORM nella prima milestone.
-- SQL esplicito e migration versionate.
-- Tutte le scritture passano dall'application layer.
-- Il dominio non deve importare Bun, SQLite, HTTP, provider LLM o Git.
-- Le transazioni non devono restare aperte durante chiamate LLM o subprocess lunghi.
-- Ogni modifica deve includere test pertinenti.
-- Non introdurre Rust nella prima milestone; mantenere però protocolli e porte estraibili.
+- No ORM in the first milestone.
+- Use explicit SQL and versioned migrations.
+- All writes must pass through the application layer.
+- The domain must not import Bun, SQLite, HTTP, LLM providers, or Git.
+- Transactions must not remain open during LLM calls or long-running subprocesses.
+- Every change must include relevant tests.
+- Do not introduce Rust in the first milestone, but keep protocols and ports extractable.
 
-## Ordine di lavoro
+## Work sequence
 
 ### Milestone 1 — Vertical slice
 
-Implementare:
+Implement:
 
-1. apertura di `project.sqlite`;
+1. opening `project.sqlite`;
 2. migration runner;
-3. entità `Project` e `Task`;
-4. repository SQLite;
-5. use case `CreateProject`, `CreateTask`, `ListTasks`;
-6. CLI funzionante;
-7. test unitari e integration;
-8. README aggiornato.
+3. `Project` and `Task` entities;
+4. SQLite repositories;
+5. `CreateProject`, `CreateTask`, and `ListTasks` use cases;
+6. working CLI;
+7. unit and integration tests;
+8. updated README.
 
 ### Milestone 2 — Daemon
 
-Implementare:
+Implement:
 
-1. server locale HTTP o Unix socket;
-2. CLI come client del daemon;
-3. lifecycle e shutdown pulito;
+1. local HTTP server or Unix socket;
+2. CLI as a daemon client;
+3. lifecycle and graceful shutdown;
 4. health endpoint;
 5. event log;
 6. command serialization.
 
-### Milestone 3 — Agenti e run
+### Milestone 3 — Agents and runs
 
-Implementare:
+Implement:
 
 1. `Role`, `Agent`, `AgentRun`;
-2. state machine dei run;
+2. run state machine;
 3. scheduler;
-4. executor simulato;
-5. agent definition caricata da YAML;
-6. audit completo.
+4. simulated executor;
+5. agent definitions loaded from YAML;
+6. complete audit trail.
 
-### Milestone 4 — LLM gateway e costi
+### Milestone 4 — LLM gateway and costs
 
-Implementare:
+Implement:
 
-1. interfaccia provider;
+1. provider interface;
 2. provider mock;
 3. model usage;
-4. catalogo prezzi versionato;
+4. versioned pricing catalog;
 5. cost event;
-6. budget e reservation;
-7. aggregazioni per task, agente e progetto.
+6. budgets and reservations;
+7. aggregations by task, agent, and project.
 
-### Milestone 5 — Memoria
+### Milestone 5 — Memory
 
-Implementare:
+Implement:
 
-1. ADR, milestone, requirement e pattern;
-2. memoria globale;
+1. ADRs, milestones, requirements, and patterns;
+2. global memory;
 3. export Markdown;
 4. FTS5;
-5. code index rigenerabile;
-6. retrieval ibrido iniziale.
+5. regenerable code index;
+6. initial hybrid retrieval.
 
-## Regole sui commit
+## Commit rules
 
-- un cambiamento coerente per commit;
-- messaggi Conventional Commits;
-- non mescolare refactoring ampi e nuove funzionalità;
-- riportare nel riepilogo test eseguiti e limitazioni residue.
+- one coherent change per commit;
+- Conventional Commits messages;
+- do not mix broad refactors with new features;
+- report executed tests and remaining limitations in the summary.
 
 ## Definition of done
 
-Un task è completato quando:
+A task is complete when:
 
-- acceptance criteria soddisfatti;
-- test passano;
-- migration idempotenti rispetto alla tabella di tracking;
-- errori tipizzati;
-- logging senza segreti;
-- documentazione aggiornata;
-- nessun TODO critico nascosto.
+- acceptance criteria are satisfied;
+- tests pass;
+- migrations are idempotent with respect to the tracking table;
+- errors are typed;
+- logs contain no secrets;
+- documentation is up to date;
+- no critical TODO is hidden.

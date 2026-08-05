@@ -1,28 +1,28 @@
 # AI Office Blueprint
 
-MVP in TypeScript/Bun per un ufficio virtuale locale. La Milestone 1 rende operativo il vertical slice Project/Task su SQLite.
+TypeScript/Bun MVP for a local virtual office. Milestone 1 delivers a working Project/Task vertical slice backed by SQLite.
 
-## Obiettivi
+## Goals
 
-- daemon locale unico (dalla Milestone 2);
-- SQLite come source of truth;
-- task, milestone, ADR, agenti, run, eventi e costi strutturati;
-- memoria globale riutilizzabile tra progetti;
-- memoria locale e indice del codice separati;
-- gateway unico verso i provider LLM;
-- cost accounting per chiamata, run, task, milestone e progetto;
-- confini architetturali compatibili con una futura estrazione del core in Rust.
+- a single local daemon (starting with Milestone 2);
+- SQLite as the source of truth;
+- structured tasks, milestones, ADRs, agents, runs, events, and costs;
+- reusable global memory across projects;
+- separate local memory and code index;
+- a single gateway to LLM providers;
+- cost accounting per call, run, task, milestone, and project;
+- architectural boundaries compatible with extracting the core to Rust in the future.
 
-## Stack iniziale
+## Initial stack
 
 - Bun
-- TypeScript strict
+- strict TypeScript
 - `bun:sqlite`
 - Zod
 - Vitest
-- CLI e daemon nello stesso monorepo
+- CLI and daemon in the same monorepo
 
-## Avvio rapido
+## Quick start
 
 ```bash
 bun install
@@ -30,46 +30,46 @@ bun run typecheck
 bun run test
 ```
 
-La CLI crea automaticamente `.ai-office/project.sqlite` nella directory corrente e applica le migration mancanti. Creare prima un progetto:
+The CLI automatically creates `.ai-office/project.sqlite` in the current directory and applies pending migrations. Start by creating a project:
 
 ```bash
 bun run cli -- project:create "Demo"
 # Project created: <project-id>
 ```
 
-Usare l'ID restituito per creare e leggere i task:
+Use the returned ID to create and list tasks:
 
 ```bash
-bun run cli -- task:create --project <project-id> --title "Primo task" --priority 10
+bun run cli -- task:create --project <project-id> --title "First task" --priority 10
 bun run cli -- task:list --project <project-id>
 ```
 
-Output della lista:
+List output:
 
 ```text
 ID                                      STATUS   PRIORITY  TITLE
-<task-id>                               pending  10        Primo task
+<task-id>                               pending  10        First task
 ```
 
-Le colonne dell'output effettivo sono separate da tab. Le descrizioni opzionali sono accettate con `--description`. Per applicare le migration senza eseguire un comando:
+Columns in the actual output are tab-separated. Optional descriptions are accepted through `--description`. To apply migrations without running a command:
 
 ```bash
 bun run db:migrate
 ```
 
-## Struttura
+## Structure
 
 ```text
 apps/
-  daemon/              processo centrale
-  cli/                 client locale
+  daemon/              central process
+  cli/                 local client
 packages/
-  domain/              entità, value object e regole
-  application/         use case e porte
-  storage-sqlite/      adapter SQLite
-  agent-runtime/       esecuzione degli agenti
-  llm-gateway/         provider, prezzi, budget e usage
-  orchestration/       scheduler e workflow
+  domain/              entities, value objects, and rules
+  application/         use cases and ports
+  storage-sqlite/      SQLite adapters
+  agent-runtime/       agent execution
+  llm-gateway/         providers, pricing, budgets, and usage
+  orchestration/       scheduler and workflows
 migrations/
 agents/
 patterns/
@@ -78,7 +78,7 @@ docs/
 
 ## Database
 
-L'architettura prevede tre database:
+The architecture defines three databases:
 
 ```text
 ~/.ai-office/global.sqlite
@@ -86,28 +86,28 @@ L'architettura prevede tre database:
 <repository>/.ai-office/index.sqlite
 ```
 
-`global.sqlite` conserva ruoli, template, pattern e lesson riutilizzabili.
+`global.sqlite` stores reusable roles, templates, patterns, and lessons.
 
-`project.sqlite` conserva lo stato autorevole del progetto.
+`project.sqlite` stores the authoritative project state.
 
-`index.sqlite` contiene dati rigenerabili: simboli, relazioni, chunk, FTS ed embedding.
+`index.sqlite` contains regenerable data: symbols, relationships, chunks, FTS, and embeddings.
 
-Nella Milestone 1 viene aperto e migrato soltanto `project.sqlite`. I database globale e di indice verranno collegati nelle milestone dedicate.
+Milestone 1 opens and migrates only `project.sqlite`. The global and index databases will be connected in their respective milestones.
 
-## Vertical slice disponibile
+## Available vertical slice
 
 ```text
 CLI
   -> CreateProject / CreateTask / ListTasks
-  -> porte ProjectRepository / TaskRepository
-  -> repository bun:sqlite
+  -> ProjectRepository / TaskRepository ports
+  -> bun:sqlite repositories
   -> .ai-office/project.sqlite
   -> output CLI
 ```
 
-Le migration SQL sono versionate in `migrations/project/` e registrate nella tabella `schema_migration`; rieseguire la CLI o `bun run db:migrate` è idempotente.
+SQL migrations are versioned in `migrations/project/` and recorded in the `schema_migration` table. Running the CLI or `bun run db:migrate` again is idempotent.
 
-## Comandi
+## Commands
 
 ```text
 ai-office project:create
@@ -115,18 +115,18 @@ ai-office task:create
 ai-office task:list
 ```
 
-Gli altri comandi descritti nella roadmap appartengono alle milestone successive.
+The other commands described in the roadmap belong to later milestones.
 
-## Per Codex
+## For Codex
 
-Aprire prima:
+Read these files first:
 
 1. `CODEX.md`
 2. `docs/architecture/overview.md`
 3. `docs/development/roadmap.md`
 4. `docs/adr/ADR-0001-sqlite.md`
 
-La milestone iniziale consiste nel rendere funzionante il vertical slice:
+The initial milestone delivers the following working vertical slice:
 
 ```text
 CLI → command → application service → repository → SQLite → query CLI
