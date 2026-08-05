@@ -100,6 +100,7 @@ describe("M3-M5 SQLite storage", () => {
           outputTokens: 5,
           reasoningTokens: 0,
         },
+        budgetScopeType: "project",
         budgetScopeId: "project",
       },
     );
@@ -115,15 +116,15 @@ describe("M3-M5 SQLite storage", () => {
 
     const governance = new SqliteGovernanceRepository(database);
     await expect(
-      governance.saveApproval({
+      governance.decideReview({
         id: "approval",
         projectId: "project",
         reviewId: "missing",
         decision: "approved",
-        actor: "owner",
+        actor: { type: "user", id: "owner" },
         createdAt: now,
       }),
-    ).rejects.toThrow("FOREIGN KEY constraint failed");
+    ).resolves.toBe("not_found");
     expect(
       database
         .query<{ count: number }, []>("SELECT COUNT(*) count FROM approval")

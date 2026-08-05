@@ -1,7 +1,17 @@
 export type MilestoneStatus = "planned" | "active" | "completed" | "cancelled";
 export type RequirementStatus =
   "proposed" | "accepted" | "implemented" | "verified" | "rejected";
-export type ReviewStatus = "pending" | "approved" | "changes_requested";
+export type AdrStatus =
+  "proposed" | "accepted" | "rejected" | "deprecated" | "superseded";
+export type ReviewStatus = "pending" | "approved" | "rejected";
+export type ReviewSubjectType =
+  "task" | "agent_run" | "requirement" | "adr" | "milestone";
+
+export interface GovernanceActor {
+  type: "user" | "agent" | "system";
+  id: string;
+  displayName?: string;
+}
 
 export interface MilestoneRecord {
   id: string;
@@ -30,7 +40,7 @@ export interface AdrRecord {
   context: string;
   decision: string;
   consequences: string;
-  status: "proposed" | "accepted" | "rejected" | "deprecated" | "superseded";
+  status: AdrStatus;
   supersededById?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -38,9 +48,9 @@ export interface AdrRecord {
 export interface ReviewRecord {
   id: string;
   projectId: string;
-  subjectType: "task" | "agent_run" | "requirement" | "adr" | "milestone";
+  subjectType: ReviewSubjectType;
   subjectId: string;
-  reviewer: string;
+  reviewer: GovernanceActor;
   status: ReviewStatus;
   summary?: string;
   createdAt: Date;
@@ -51,7 +61,7 @@ export interface ApprovalRecord {
   projectId: string;
   reviewId: string;
   decision: "approved" | "rejected";
-  actor: string;
+  actor: GovernanceActor;
   rationale?: string;
   createdAt: Date;
 }
@@ -81,10 +91,16 @@ const governanceTransitions = {
 
 export type GovernanceKind = keyof typeof governanceTransitions;
 
-export function isGovernanceTransitionAllowed(
-  kind: GovernanceKind,
-  from: string,
-  to: string,
+export interface GovernanceStatusByKind {
+  milestone: MilestoneStatus;
+  requirement: RequirementStatus;
+  adr: AdrStatus;
+}
+
+export function isGovernanceTransitionAllowed<K extends GovernanceKind>(
+  kind: K,
+  from: GovernanceStatusByKind[K],
+  to: GovernanceStatusByKind[K],
 ): boolean {
   const transitions = governanceTransitions[kind] as Record<
     string,

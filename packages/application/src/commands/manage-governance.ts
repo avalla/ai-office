@@ -1,12 +1,21 @@
 import type {
   ApprovalRecord,
   AdrRecord,
+  GovernanceActor,
+  GovernanceKind,
+  GovernanceStatusByKind,
   MilestoneRecord,
   RequirementRecord,
   ReviewRecord,
 } from "@ai-office/domain/governance/governance.ts";
 import { isGovernanceTransitionAllowed } from "@ai-office/domain/governance/governance.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
+import {
+  GovernanceCrossProjectReferenceError,
+  GovernanceSubjectNotFoundError,
+  ReviewAlreadyFinalizedError,
+  ReviewNotFoundError,
+} from "../governance-errors.ts";
 import { ProjectNotFoundError } from "../errors.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type { GovernanceRepository } from "../ports/governance-repository.port.ts";
@@ -28,6 +37,15 @@ export class ManageGovernance {
   private async project(projectId: string): Promise<void> {
     if ((await this.projects.findById(projectId)) === null)
       throw new ProjectNotFoundError(projectId);
+  }
+  private actor(value: GovernanceActor, name: string): GovernanceActor {
+    return {
+      type: value.type,
+      id: required(value.id, `${name} ID`),
+      ...(value.displayName === undefined
+        ? {}
+        : { displayName: required(value.displayName, `${name} display name`) }),
+    };
   }
   async createMilestone(input: {
     projectId: string;
@@ -59,6 +77,18 @@ export class ManageGovernance {
     milestoneId?: string;
   }): Promise<string> {
     await this.project(input.projectId);
+    if (input.milestoneId !== undefined) {
+      const milestoneProject = await this.governance.findMilestoneProject(
+        input.milestoneId,
+      );
+      if (milestoneProject === null)
+        throw new GovernanceSubjectNotFoundError(
+          "milestone",
+          input.milestoneId,
+        );
+      if (milestoneProject !== input.projectId)
+        throw new GovernanceCrossProjectReferenceError("Requirement milestone");
+    }
     const now = this.clock.now(),
       id = this.ids.generate();
     const v: RequirementRecord = {
@@ -105,9 +135,20 @@ export class ManageGovernance {
     projectId: string;
     subjectType: ReviewRecord["subjectType"];
     subjectId: string;
-    reviewer: string;
+    reviewer: GovernanceActor;
   }): Promise<string> {
     await this.project(input.projectId);
+    const subjectProject = await this.governance.findSubjectProject(
+      input.subjectType,
+      input.subjectId,
+    );
+    if (subjectProject === null)
+      throw new GovernanceSubjectNotFoundError(
+        input.subjectType,
+        input.subjectId,
+      );
+    if (subjectProject !== input.projectId)
+      throw new GovernanceCrossProjectReferenceError("Review subject");
     const now = this.clock.now(),
       id = this.ids.generate();
     await this.governance.saveReview({
@@ -115,7 +156,7 @@ export class ManageGovernance {
       projectId: input.projectId,
       subjectType: input.subjectType,
       subjectId: required(input.subjectId, "Review subject"),
-      reviewer: required(input.reviewer, "Reviewer"),
+      reviewer: this.actor(input.reviewer, "Reviewer"),
       status: "pending",
       createdAt: now,
     });
@@ -124,38 +165,31 @@ export class ManageGovernance {
   async approve(input: {
     projectId: string;
     reviewId: string;
-    actor: string;
+    actor: GovernanceActor;
     rationale?: string;
     decision?: ApprovalRecord["decision"];
   }): Promise<string> {
     await this.project(input.projectId);
-    const review = await this.governance.findReview(
-      input.reviewId,
-      input.projectId,
-    );
-    if (review === null)
-      throw new DomainValidationError(`Review ${input.reviewId} not found`);
-    if (review.status !== "pending")
-      throw new DomainValidationError(
-        `Review ${input.reviewId} is already finalized`,
-      );
     const id = this.ids.generate();
-    await this.governance.saveApproval({
+    const result = await this.governance.decideReview({
       id,
       projectId: input.projectId,
       reviewId: input.reviewId,
       decision: input.decision ?? "approved",
-      actor: required(input.actor, "Approval actor"),
+      actor: this.actor(input.actor, "Approval actor"),
       ...(input.rationale === undefined ? {} : { rationale: input.rationale }),
       createdAt: this.clock.now(),
     });
+    if (result === "not_found") throw new ReviewNotFoundError(input.reviewId);
+    if (result === "already_finalized")
+      throw new ReviewAlreadyFinalizedError(input.reviewId);
     return id;
   }
-  async setStatus(input: {
+  async setStatus<K extends GovernanceKind>(input: {
     projectId: string;
-    kind: "milestone" | "requirement" | "adr";
+    kind: K;
     id: string;
-    status: string;
+    status: GovernanceStatusByKind[K];
   }): Promise<void> {
     await this.project(input.projectId);
     const current = await this.governance.findStatus(
@@ -174,6 +208,7 @@ export class ManageGovernance {
       input.kind,
       input.id,
       input.projectId,
+      current,
       input.status,
       this.clock.now(),
     );

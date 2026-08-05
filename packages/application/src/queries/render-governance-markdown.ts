@@ -1,6 +1,20 @@
 import type { GovernanceSnapshot } from "../ports/governance-repository.port.ts";
 
-const value = (text: string | undefined): string => text?.trim() || "—";
+const inline = (text: string): string =>
+  text
+    .trim()
+    .replace(/[\r\n]+/g, " ")
+    .replace(/([\\`*_[\]#|])/g, "\\$1");
+
+const value = (text: string | undefined): string =>
+  text === undefined || text.trim() === "" ? "—" : inline(text);
+
+const quoted = (text: string): string[] => {
+  const normalized = text.trim().replace(/\r\n?/g, "\n");
+  return (normalized === "" ? ["—"] : normalized.split("\n")).map(
+    (line) => `> ${line}`,
+  );
+};
 export function renderGovernanceMarkdown(
   projectName: string,
   s: GovernanceSnapshot,
@@ -10,7 +24,8 @@ export function renderGovernanceMarkdown(
     ...(s.milestones.length === 0
       ? ["_None._"]
       : s.milestones.map(
-          (v) => `- **${v.title}** (${v.status}) — ${value(v.description)}`,
+          (v) =>
+            `- **${inline(v.title)}** (${v.status}) — ${value(v.description)}`,
         )),
     "",
     "## Requirements",
@@ -20,7 +35,8 @@ export function renderGovernanceMarkdown(
     ...(s.requirements.length === 0
       ? ["_None._"]
       : s.requirements.map(
-          (v) => `- **${v.key}: ${v.title}** (${v.status}) — ${v.description}`,
+          (v) =>
+            `- **${inline(v.key)}: ${inline(v.title)}** (${v.status}) — ${inline(v.description)}`,
         )),
     "",
     "## Architecture decisions",
@@ -30,15 +46,21 @@ export function renderGovernanceMarkdown(
     ...(s.adrs.length === 0
       ? ["_None._"]
       : s.adrs.flatMap((v) => [
-          `### ${v.title}`,
+          `### ${inline(v.title)}`,
           "",
           `Status: ${v.status}`,
           "",
-          `Context: ${v.context}`,
+          "**Context**",
           "",
-          `Decision: ${v.decision}`,
+          ...quoted(v.context),
           "",
-          `Consequences: ${v.consequences}`,
+          "**Decision**",
+          "",
+          ...quoted(v.decision),
+          "",
+          "**Consequences**",
+          "",
+          ...quoted(v.consequences),
         ])),
     "",
     "## Reviews and approvals",
@@ -49,7 +71,7 @@ export function renderGovernanceMarkdown(
     for (const review of s.reviews) {
       const approval = s.approvals.find((a) => a.reviewId === review.id);
       lines.push(
-        `- **${review.subjectType}:${review.subjectId}** — ${approval?.decision ?? review.status}; reviewer: ${review.reviewer}${approval === undefined ? "" : `; actor: ${approval.actor}`}`,
+        `- **${review.subjectType}:${inline(review.subjectId)}** — ${approval?.decision ?? review.status}; reviewer: ${inline(review.reviewer.displayName ?? review.reviewer.id)}${approval === undefined ? "" : `; actor: ${inline(approval.actor.displayName ?? approval.actor.id)}`}`,
       );
     }
   return `${lines.join("\n").trimEnd()}\n`;

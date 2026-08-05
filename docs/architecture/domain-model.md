@@ -52,7 +52,7 @@ Every transition is checked by the domain model and projected into the append-on
 - milestones: `planned -> active -> completed` (or `cancelled`);
 - requirements: `proposed -> accepted -> implemented -> verified` (or `rejected`);
 - ADRs: `proposed -> accepted`, with later `deprecated` or `superseded` states;
-- reviews: `pending -> approved | changes_requested`, finalized by an immutable approval decision.
+- reviews: `pending -> approved | rejected`, finalized by an immutable approval decision.
 
 ## Pattern scopes
 
