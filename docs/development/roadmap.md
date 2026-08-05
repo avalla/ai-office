@@ -38,6 +38,8 @@
 
 ## M3 — Agent runtime
 
+Status: implemented on `feat/agent-runtime`; 57 tests across 14 files.
+
 - role and agent definitions;
 - agent runs;
 - scheduler;

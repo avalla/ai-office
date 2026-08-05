@@ -30,6 +30,19 @@ bun run typecheck
 bun run test
 ```
 
+## Validation
+
+GitHub Actions runs frozen dependency installation, strict TypeScript
+typechecking, the Vitest suite, and a committed-diff whitespace check for every
+pull request and every push to `main`. The stacked milestone baselines are 57
+tests across 14 files for M3, 87 across 18 files for M4, and 110 across 26 files
+for M5.
+
+`bun run lint` is not part of CI yet because the repository does not have an
+ESLint 9 `eslint.config.*` configuration. The M3 executor and worktree manager
+remain deterministic simulations, M4 intentionally excludes milestone-scoped
+budgets, and no CLI command currently produces real provider usage.
+
 Start the local daemon from the repository root. It creates and migrates
 `.ai-office/project.sqlite`, then listens on `.ai-office/daemon.sock`:
 
