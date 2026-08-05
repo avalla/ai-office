@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { InvalidAgentDefinitionError } from "@ai-office/agent-runtime/agent-definition.ts";
+import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { AgentDefinitionDirectoryError } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
 import {
   AgentNotFoundError,
@@ -31,7 +32,24 @@ import {
   ReviewAlreadyFinalizedError,
   ReviewNotFoundError,
 } from "@ai-office/application/governance-errors.ts";
+import {
+  ActionRequestNotFoundError,
+  CapabilityGrantNotFoundError,
+  CapabilityGrantRevokedError,
+  CapabilityPrincipalNotFoundError,
+  CapabilityProjectMismatchError,
+  ConcurrentActionTransitionError,
+  ResourceDisabledError,
+  ResourceNotFoundError,
+} from "@ai-office/application/capability-errors.ts";
+import {
+  CapabilityValidationError,
+  CanonicalSerializationError,
+  InvalidActionTransitionError,
+  InvalidActionTimestampError,
+} from "@ai-office/domain/capability/errors.ts";
 import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
+import { TransactionAlreadyActiveError } from "@ai-office/application/ports/transaction-runner.port.ts";
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
@@ -43,6 +61,8 @@ import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositori
 import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
+import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
 import { handleAgentCommand } from "./commands/agent.ts";
 import { handleCostCommand } from "./commands/cost.ts";
 import { handleGovernanceCommand } from "./commands/governance.ts";
@@ -55,6 +75,7 @@ import {
   type CommandIo,
 } from "./commands/shared.ts";
 import { handleTaskCommand } from "./commands/task.ts";
+import { handleCapabilityCommand } from "./commands/capability.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -88,7 +109,16 @@ Commands:
   review:create --project <id> --subject-type <type> --subject <id> --reviewer <name>
   review:decide --project <id> --review <id> --actor <name> --decision <approved|rejected> [--rationale <text>]
   governance:profile --project <id>
-  governance:export --project <id>`;
+  governance:export --project <id>
+  resource:create --project <id> --type <type> --provider fake --name <name> [--external-ref <ref>] [--configuration <json>]
+  resource:list --project <id>
+  resource:disable --project <id> --resource <id>
+  capability:grant --project <id> --principal-type <type> --principal <id> --resource <id> --actions <csv> --granted-by <id> --reason <text> [--constraints <json>] [--valid-from <iso>] [--expires-at <iso>]
+  capability:list --project <id>
+  capability:revoke --project <id> --grant <id> --revoked-by <id>
+  action:request --project <id> --agent <id> --resource <id> --operation <name> [--arguments <json>]
+  action:list --project <id>
+  action:show --project <id> --action <id>`;
 
 const commands = [
   "project:create",
@@ -117,6 +147,15 @@ const commands = [
   "review:decide",
   "governance:profile",
   "governance:export",
+  "resource:create",
+  "resource:list",
+  "resource:disable",
+  "capability:grant",
+  "capability:list",
+  "capability:revoke",
+  "action:request",
+  "action:list",
+  "action:show",
 ] as const;
 
 type Command = (typeof commands)[number];
@@ -140,6 +179,7 @@ const handlers = [
   handleRunCommand,
   handleCostCommand,
   handleGovernanceCommand,
+  handleCapabilityCommand,
 ] as const;
 
 function isCommand(value: string): value is Command {
@@ -172,7 +212,20 @@ function formatKnownError(error: unknown): string | null {
     error instanceof GovernanceSubjectNotFoundError ||
     error instanceof ReviewNotFoundError ||
     error instanceof ReviewAlreadyFinalizedError ||
-    error instanceof DuplicateRequirementKeyError
+    error instanceof DuplicateRequirementKeyError ||
+    error instanceof ResourceNotFoundError ||
+    error instanceof ResourceDisabledError ||
+    error instanceof CapabilityGrantNotFoundError ||
+    error instanceof CapabilityGrantRevokedError ||
+    error instanceof CapabilityPrincipalNotFoundError ||
+    error instanceof CapabilityProjectMismatchError ||
+    error instanceof ActionRequestNotFoundError ||
+    error instanceof ConcurrentActionTransitionError ||
+    error instanceof CapabilityValidationError ||
+    error instanceof CanonicalSerializationError ||
+    error instanceof InvalidActionTransitionError ||
+    error instanceof InvalidActionTimestampError ||
+    error instanceof TransactionAlreadyActiveError
   )
     return error.message;
   return null;
@@ -207,6 +260,9 @@ export async function runCli(
       options.migrationDirectory ??
         join(sourceDirectory, "..", "..", "..", "migrations", "project"),
     );
+    const ids = new CryptoIdGenerator();
+    const clock = new SystemClock();
+    const capabilities = new SqliteCapabilityPolicyRepository(database);
     const context: CommandContext = {
       projectRoot: options.projectRoot,
       io,
@@ -216,8 +272,14 @@ export async function runCli(
       runtime: new SqliteAgentRuntimeRepository(database),
       costs: new SqliteCostRepository(database),
       governance: new SqliteGovernanceRepository(database),
-      ids: new CryptoIdGenerator(),
-      clock: new SystemClock(),
+      capabilities,
+      audit: new RecordAuditEvent(
+        new SqliteAuditEventRepository(database),
+        ids,
+        clock,
+      ),
+      ids,
+      clock,
       transactions: new SqliteTransactionRunner(database),
     };
     for (const handler of handlers) {
