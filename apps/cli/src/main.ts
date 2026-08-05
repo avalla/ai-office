@@ -1,3 +1,3 @@
-import { runCli } from "./cli.ts";
+import { runDaemonCli } from "./daemon-cli.ts";
 
-process.exitCode = await runCli(Bun.argv.slice(2), { projectRoot: process.cwd() });
+process.exitCode = await runDaemonCli(Bun.argv.slice(2), { projectRoot: process.cwd() });

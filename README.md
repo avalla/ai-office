@@ -1,10 +1,10 @@
 # AI Office Blueprint
 
-TypeScript/Bun MVP for a local virtual office. Milestone 1 delivers a working Project/Task vertical slice backed by SQLite.
+TypeScript/Bun MVP for a local virtual office. Milestone 2 adds a single local daemon and a Unix-socket CLI client around the SQLite-backed Project/Task vertical slice.
 
 ## Goals
 
-- a single local daemon (starting with Milestone 2);
+- a single local daemon;
 - SQLite as the source of truth;
 - structured tasks, milestones, ADRs, agents, runs, events, and costs;
 - reusable global memory across projects;
@@ -30,9 +30,17 @@ bun run typecheck
 bun run test
 ```
 
-The CLI automatically creates `.ai-office/project.sqlite` in the current directory and applies pending migrations. Start by creating a project:
+Start the local daemon from the repository root. It creates and migrates
+`.ai-office/project.sqlite`, then listens on `.ai-office/daemon.sock`:
 
 ```bash
+bun run daemon
+```
+
+In another terminal, verify the daemon and create a project through the CLI client:
+
+```bash
+bun run cli -- daemon:health
 bun run cli -- project:create "Demo"
 # Project created: <project-id>
 ```
@@ -125,24 +133,31 @@ The architecture defines three databases:
 
 `index.sqlite` contains regenerable data: symbols, relationships, chunks, FTS, and embeddings.
 
-Milestone 1 opens and migrates only `project.sqlite`. The global and index databases will be connected in their respective milestones.
+The current daemon opens and migrates `project.sqlite`. The global and index databases will be connected in their respective milestones.
 
 ## Available vertical slice
 
 ```text
-CLI
-  -> CreateProject / CreateTask / ListTasks
+CLI client
+  -> HTTP over .ai-office/daemon.sock
+  -> serialized daemon command queue
+  -> CreateProject / CreateTask / ListTasks / Project onboarding
   -> ProjectRepository / TaskRepository ports
   -> bun:sqlite repositories
   -> .ai-office/project.sqlite
-  -> output CLI
+  -> structured response and CLI output
 ```
 
 SQL migrations are versioned in `migrations/project/` and recorded in the `schema_migration` table. Running the CLI or `bun run db:migrate` again is idempotent.
 
+The daemon exposes `GET /health` and `POST /commands` only through its Unix
+domain socket. Commands are serialized, lifecycle and command events are
+appended to `audit_event`, and SIGINT/SIGTERM stop the listener gracefully.
+
 ## Commands
 
 ```text
+ai-office daemon:health
 ai-office project:create
 ai-office project:import
 ai-office project:onboard
@@ -162,8 +177,8 @@ Read these files first:
 3. `docs/development/roadmap.md`
 4. `docs/adr/ADR-0001-sqlite.md`
 
-The initial milestone delivers the following working vertical slice:
+The current implementation delivers the following working vertical slice:
 
 ```text
-CLI → command → application service → repository → SQLite → query CLI
+CLI → Unix socket → daemon queue → application service → SQLite → CLI response
 ```

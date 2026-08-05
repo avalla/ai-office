@@ -52,6 +52,10 @@ SQLite uses WAL mode. Long-running work happens outside transactions.
 
 The daemon serializes or batches short write transactions.
 
+The current TypeScript daemon exposes a versioned HTTP protocol over a Unix
+domain socket. The CLI does not open SQLite directly in production; it submits
+commands to a FIFO queue owned by the daemon.
+
 ## Rust migration path
 
 A future Rust daemon may implement the same application protocol.
