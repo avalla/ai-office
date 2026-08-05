@@ -12,7 +12,13 @@ import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/reposi
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
-const migrationDirectory = join(testDirectory, "..", "..", "migrations", "project");
+const migrationDirectory = join(
+  testDirectory,
+  "..",
+  "..",
+  "migrations",
+  "project",
+);
 const temporaryDirectories: string[] = [];
 
 function createTemporaryDatabase() {
@@ -36,12 +42,16 @@ describe("project database migrations", () => {
       "0002_project_import.sql",
       "0003_project_import_idempotency.sql",
       "0004_project_onboarding.sql",
-      "0005_audit_event.sql"
-    ]); 
+      "0005_audit_event.sql",
+      "0006_agent_runtime.sql",
+      "0009_agent_runtime_hardening.sql",
+    ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
     const rows = database
-      .query<{ version: string }, []>("SELECT version FROM schema_migration ORDER BY version")
+      .query<{ version: string }, []>(
+        "SELECT version FROM schema_migration ORDER BY version",
+      )
       .all();
 
     expect(rows).toEqual([
@@ -49,8 +59,10 @@ describe("project database migrations", () => {
       { version: "0002_project_import.sql" },
       { version: "0003_project_import_idempotency.sql" },
       { version: "0004_project_onboarding.sql" },
-      { version: "0005_audit_event.sql" }
-    ]);    
+      { version: "0005_audit_event.sql" },
+      { version: "0006_agent_runtime.sql" },
+      { version: "0009_agent_runtime_hardening.sql" },
+    ]);
     database.close();
   });
 });
@@ -66,26 +78,46 @@ describe("SQLite project and task repositories", () => {
       id: "project-1",
       name: "Demo",
       description: "Vertical slice",
-      now
+      now,
     });
 
     await projects.save(project);
     await tasks.save(
-      Task.create({ id: "task-low", projectId: "project-1", title: "Low", priority: 1, now })
+      Task.create({
+        id: "task-low",
+        projectId: "project-1",
+        title: "Low",
+        priority: 1,
+        now,
+      }),
     );
     await tasks.save(
-      Task.create({ id: "task-high-b", projectId: "project-1", title: "High B", priority: 5, now })
+      Task.create({
+        id: "task-high-b",
+        projectId: "project-1",
+        title: "High B",
+        priority: 5,
+        now,
+      }),
     );
     await tasks.save(
-      Task.create({ id: "task-high-a", projectId: "project-1", title: "High A", priority: 5, now })
+      Task.create({
+        id: "task-high-a",
+        projectId: "project-1",
+        title: "High A",
+        priority: 5,
+        now,
+      }),
     );
 
-    expect((await projects.findById("project-1"))?.snapshot()).toEqual(project.snapshot());
-    expect((await tasks.listByProject("project-1")).map((task) => task.snapshot().id)).toEqual([
-      "task-high-a",
-      "task-high-b",
-      "task-low"
-    ]);
+    expect((await projects.findById("project-1"))?.snapshot()).toEqual(
+      project.snapshot(),
+    );
+    expect(
+      (await tasks.listByProject("project-1")).map(
+        (task) => task.snapshot().id,
+      ),
+    ).toEqual(["task-high-a", "task-high-b", "task-low"]);
     database.close();
   });
 
@@ -97,10 +129,12 @@ describe("SQLite project and task repositories", () => {
       id: "task-1",
       projectId: "missing",
       title: "Orphan",
-      now: new Date("2026-08-05T00:00:00.000Z")
+      now: new Date("2026-08-05T00:00:00.000Z"),
     });
 
-    await expect(tasks.save(task)).rejects.toThrow("FOREIGN KEY constraint failed");
+    await expect(tasks.save(task)).rejects.toThrow(
+      "FOREIGN KEY constraint failed",
+    );
 
     const profiles = new SqliteProjectProfileRepository(database);
     await expect(
@@ -109,8 +143,8 @@ describe("SQLite project and task repositories", () => {
         projectId: "missing",
         sourceType: "local",
         localPath: "/missing/project",
-        createdAt: new Date("2026-08-05T00:00:00.000Z")
-      })
+        createdAt: new Date("2026-08-05T00:00:00.000Z"),
+      }),
     ).rejects.toThrow("FOREIGN KEY constraint failed");
     database.close();
   });

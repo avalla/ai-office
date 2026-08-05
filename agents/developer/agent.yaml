@@ -1,4 +1,5 @@
 id: developer
+role_key: software-developer
 role: software-developer
 version: 1
 capabilities:
@@ -15,5 +16,5 @@ tools:
 model_policy: balanced
 limits:
   max_iterations: 10
-  max_cost_micros: 2000000
+  max_cost_micros: "2000000"
   timeout_seconds: 1800

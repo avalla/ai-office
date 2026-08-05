@@ -1,9 +1,11 @@
-export type AgentId = string;
-
 export interface Agent {
   id: AgentId;
+  projectId: string;
   name: string;
   roleId: string;
-  modelPolicy: string;
   enabled: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
+
+export type AgentId = string;

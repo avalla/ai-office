@@ -1,4 +1,5 @@
 id: qa
+role_key: quality-assurance
 role: quality-assurance
 version: 1
 capabilities:
@@ -12,5 +13,5 @@ tools:
 model_policy: economical
 limits:
   max_iterations: 6
-  max_cost_micros: 750000
+  max_cost_micros: "750000"
   timeout_seconds: 1200
