@@ -6,6 +6,8 @@ export interface ModelRequest {
 }
 
 export interface ModelResponse {
+  providerId: string;
+  model: string;
   text: string;
   usage: ModelUsage;
   providerRequestId?: string;
@@ -13,6 +15,9 @@ export interface ModelResponse {
 
 export interface LlmProvider {
   readonly id: string;
+  pricingCandidates(
+    request: ModelRequest,
+  ): ReadonlyArray<{ providerId: string; model: string }>;
   complete(request: ModelRequest, signal?: AbortSignal): Promise<ModelResponse>;
 }
 
@@ -21,8 +26,75 @@ export class LlmProviderError extends Error {
     readonly providerId: string,
     message: string,
     readonly retryable: boolean,
+    readonly code:
+      | "CANCELLED"
+      | "TIMEOUT"
+      | "HTTP"
+      | "NETWORK"
+      | "INVALID_RESPONSE"
+      | "PROVIDER_ERROR" = "PROVIDER_ERROR",
   ) {
     super(message);
     this.name = "LlmProviderError";
+  }
+}
+
+export class InvalidProviderResponseError extends LlmProviderError {
+  constructor(providerId: string, message: string) {
+    super(providerId, message, false, "INVALID_RESPONSE");
+    this.name = "InvalidProviderResponseError";
+  }
+}
+export class ProviderCancelledError extends LlmProviderError {
+  constructor(providerId: string) {
+    super(providerId, "Provider request was cancelled", false, "CANCELLED");
+    this.name = "ProviderCancelledError";
+  }
+}
+
+export function validateModelResponse(
+  response: ModelResponse,
+  fallbackProviderId: string,
+): void {
+  const providerId =
+    typeof response.providerId === "string" && response.providerId.trim() !== ""
+      ? response.providerId
+      : fallbackProviderId;
+  if (
+    typeof response.providerId !== "string" ||
+    response.providerId.trim() === ""
+  )
+    throw new InvalidProviderResponseError(
+      providerId,
+      "providerId is required",
+    );
+  if (typeof response.model !== "string" || response.model.trim() === "")
+    throw new InvalidProviderResponseError(providerId, "model is required");
+  if (typeof response.text !== "string")
+    throw new InvalidProviderResponseError(providerId, "text must be a string");
+  if (
+    response.providerRequestId !== undefined &&
+    (typeof response.providerRequestId !== "string" ||
+      response.providerRequestId.trim() === "")
+  )
+    throw new InvalidProviderResponseError(
+      providerId,
+      "providerRequestId must be a non-empty string",
+    );
+  if (typeof response.usage !== "object" || response.usage === null)
+    throw new InvalidProviderResponseError(providerId, "usage is required");
+  const requiredUsageFields = [
+    "inputTokens",
+    "cachedInputTokens",
+    "outputTokens",
+    "reasoningTokens",
+  ] as const;
+  for (const field of requiredUsageFields) {
+    const value = response.usage[field];
+    if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+      throw new InvalidProviderResponseError(
+        providerId,
+        `usage.${field} must be a non-negative safe integer`,
+      );
   }
 }

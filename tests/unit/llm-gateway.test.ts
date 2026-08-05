@@ -7,10 +7,8 @@ import type {
   PricingVersion,
 } from "@ai-office/domain/cost/cost.ts";
 import { MockLlmProvider } from "@ai-office/llm-gateway/mock-provider.ts";
-import {
-  BudgetExceededError,
-  MeteredLlmGateway,
-} from "@ai-office/llm-gateway/metered-gateway.ts";
+import { MeteredLlmGateway } from "@ai-office/llm-gateway/metered-gateway.ts";
+import { BudgetExceededError } from "@ai-office/application/cost-errors.ts";
 import { OpenAiResponsesProvider } from "@ai-office/llm-gateway/openai-provider.ts";
 import { FallbackLlmProvider } from "@ai-office/llm-gateway/fallback-provider.ts";
 import { LlmProviderError } from "@ai-office/llm-gateway/provider.ts";
@@ -57,14 +55,35 @@ class Costs implements CostRepository {
   async findBudget() {
     return this.budget;
   }
-  async reserve(v: Parameters<CostRepository["reserve"]>[0]) {
+  async authorizeAndReserve(
+    v: Parameters<CostRepository["authorizeAndReserve"]>[0],
+  ) {
+    if (
+      this.budget.spentMicros + this.budget.reservedMicros + v.amountMicros >
+      this.budget.limitMicros
+    )
+      throw new BudgetExceededError();
     this.budget = { ...this.budget, reservedMicros: v.amountMicros };
+    return {
+      id: v.id,
+      budgetId: this.budget.id,
+      reservedMicros: v.amountMicros,
+      currency: v.currency,
+      status: "active" as const,
+      expiresAt: v.expiresAt,
+    };
   }
-  async releaseReservation() {}
+  async releaseReservation() {
+    return "released" as const;
+  }
+  async releaseExpiredReservations() {
+    return 0;
+  }
   async recordUsageAndCost(
     v: Parameters<CostRepository["recordUsageAndCost"]>[0],
   ) {
     this.recorded = v;
+    return "recorded" as const;
   }
   async aggregate() {
     return [];
@@ -99,6 +118,7 @@ describe("metered LLM gateway", () => {
           outputTokens: 10,
           reasoningTokens: 0,
         },
+        budgetScopeType: "project",
         budgetScopeId: "p",
       },
     );
@@ -128,6 +148,7 @@ describe("metered LLM gateway", () => {
             outputTokens: 10,
             reasoningTokens: 0,
           },
+          budgetScopeType: "project",
           budgetScopeId: "p",
         },
       ),
@@ -138,6 +159,7 @@ describe("metered LLM gateway", () => {
     const fake = async () =>
       Response.json({
         id: "resp-1",
+        model: "gpt-test",
         output: [
           {
             type: "message",
@@ -162,6 +184,8 @@ describe("metered LLM gateway", () => {
         messages: [{ role: "user", content: "hello" }],
       }),
     ).resolves.toEqual({
+      providerId: "openai",
+      model: "gpt-test",
       text: "done",
       providerRequestId: "resp-1",
       usage: {
@@ -175,6 +199,9 @@ describe("metered LLM gateway", () => {
   test("falls back only after retryable provider failures", async () => {
     const failing = {
       id: "primary",
+      pricingCandidates: (request: { model: string }) => [
+        { providerId: "primary", model: request.model },
+      ],
       complete: async () => {
         throw new LlmProviderError("primary", "busy", true);
       },

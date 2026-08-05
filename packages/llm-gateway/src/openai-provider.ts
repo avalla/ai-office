@@ -1,5 +1,7 @@
 import {
+  InvalidProviderResponseError,
   LlmProviderError,
+  ProviderCancelledError,
   type LlmProvider,
   type ModelRequest,
   type ModelResponse,
@@ -7,6 +9,7 @@ import {
 
 interface OpenAiResponse {
   id?: unknown;
+  model?: unknown;
   output_text?: unknown;
   output?: unknown;
   usage?: {
@@ -16,10 +19,20 @@ interface OpenAiResponse {
     output_tokens_details?: { reasoning_tokens?: unknown };
   };
 }
-const count = (value: unknown): number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
-    ? value
-    : 0;
+const count = (
+  value: unknown,
+  providerId: string,
+  field: string,
+  optional = false,
+): number => {
+  if (optional && value === undefined) return 0;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
+    throw new InvalidProviderResponseError(
+      providerId,
+      `${field} must be a non-negative safe integer`,
+    );
+  return value;
+};
 
 function responseText(value: OpenAiResponse): string | null {
   if (typeof value.output_text === "string") return value.output_text;
@@ -51,11 +64,16 @@ export class OpenAiResponsesProvider implements LlmProvider {
     if (apiKey.trim() === "")
       throw new LlmProviderError(this.id, "OpenAI API key is required", false);
   }
+  pricingCandidates(request: ModelRequest) {
+    return [{ providerId: this.id, model: request.model }];
+  }
   async complete(
     request: ModelRequest,
     signal?: AbortSignal,
   ): Promise<ModelResponse> {
+    const isAborted = () => signal?.aborted ?? false;
     let response: Response;
+    if (isAborted()) throw new ProviderCancelledError(this.id);
     try {
       response = await this.fetcher(this.endpoint, {
         method: "POST",
@@ -67,39 +85,95 @@ export class OpenAiResponsesProvider implements LlmProvider {
         ...(signal === undefined ? {} : { signal }),
       });
     } catch (error) {
+      if (
+        isAborted() ||
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof Error && error.name === "AbortError")
+      )
+        throw new ProviderCancelledError(this.id);
+      if (error instanceof Error && error.name === "TimeoutError")
+        throw new LlmProviderError(
+          this.id,
+          "OpenAI request timed out",
+          true,
+          "TIMEOUT",
+        );
       throw new LlmProviderError(
         this.id,
         error instanceof Error ? error.message : "OpenAI request failed",
         true,
+        "NETWORK",
       );
     }
     if (!response.ok)
       throw new LlmProviderError(
         this.id,
         `OpenAI returned HTTP ${response.status}`,
-        response.status === 429 || response.status >= 500,
+        response.status === 408 ||
+          response.status === 409 ||
+          response.status === 429 ||
+          response.status >= 500,
+        "HTTP",
       );
-    const value = (await response.json()) as OpenAiResponse;
+    let value: OpenAiResponse;
+    try {
+      value = (await response.json()) as OpenAiResponse;
+    } catch {
+      throw new InvalidProviderResponseError(
+        this.id,
+        "Provider response was not valid JSON",
+      );
+    }
+    if (typeof value.id !== "string" || value.id.trim() === "")
+      throw new InvalidProviderResponseError(
+        this.id,
+        "Provider response did not contain a request ID",
+      );
+    if (typeof value.model !== "string" || value.model.trim() === "")
+      throw new InvalidProviderResponseError(
+        this.id,
+        "Provider response did not contain the effective model",
+      );
+    if (typeof value.usage !== "object" || value.usage === null)
+      throw new InvalidProviderResponseError(
+        this.id,
+        "Provider response did not contain usage",
+      );
     const text = responseText(value);
     if (text === null)
-      throw new LlmProviderError(
+      throw new InvalidProviderResponseError(
         this.id,
-        "OpenAI response did not contain text output",
-        false,
+        "Provider response did not contain text output",
       );
     return {
+      providerId: this.id,
+      model: value.model,
       text,
       usage: {
-        inputTokens: count(value.usage?.input_tokens),
-        cachedInputTokens: count(
-          value.usage?.input_tokens_details?.cached_tokens,
+        inputTokens: count(
+          value.usage.input_tokens,
+          this.id,
+          "usage.input_tokens",
         ),
-        outputTokens: count(value.usage?.output_tokens),
+        cachedInputTokens: count(
+          value.usage.input_tokens_details?.cached_tokens,
+          this.id,
+          "usage.input_tokens_details.cached_tokens",
+          true,
+        ),
+        outputTokens: count(
+          value.usage.output_tokens,
+          this.id,
+          "usage.output_tokens",
+        ),
         reasoningTokens: count(
-          value.usage?.output_tokens_details?.reasoning_tokens,
+          value.usage.output_tokens_details?.reasoning_tokens,
+          this.id,
+          "usage.output_tokens_details.reasoning_tokens",
+          true,
         ),
       },
-      ...(typeof value.id === "string" ? { providerRequestId: value.id } : {}),
+      providerRequestId: value.id,
     };
   }
 }

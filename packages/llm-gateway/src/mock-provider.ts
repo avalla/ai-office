@@ -4,7 +4,8 @@ export class MockLlmProvider implements LlmProvider {
   readonly id = "mock";
   readonly requests: ModelRequest[] = [];
   constructor(
-    private readonly response: ModelResponse = {
+    private readonly response: Omit<ModelResponse, "providerId" | "model"> &
+      Partial<Pick<ModelResponse, "providerId" | "model">> = {
       text: "Mock response",
       usage: {
         inputTokens: 1,
@@ -14,8 +15,15 @@ export class MockLlmProvider implements LlmProvider {
       },
     },
   ) {}
+  pricingCandidates(request: ModelRequest) {
+    return [{ providerId: this.id, model: request.model }];
+  }
   async complete(request: ModelRequest): Promise<ModelResponse> {
     this.requests.push(request);
-    return this.response;
+    return {
+      ...this.response,
+      providerId: this.response.providerId ?? this.id,
+      model: this.response.model ?? request.model,
+    };
   }
 }

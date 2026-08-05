@@ -28,10 +28,21 @@ export interface PricingVersion {
 export interface BudgetSnapshot {
   id: string;
   projectId: string;
-  scopeType: "project" | "milestone" | "task" | "agent" | "agent_run";
+  scopeType: BudgetScopeType;
   scopeId: string;
   limitMicros: bigint;
   currency: Currency;
   spentMicros: bigint;
   reservedMicros: bigint;
+}
+
+export type BudgetScopeType = "project" | "task" | "agent" | "agent_run";
+
+export interface BudgetReservation {
+  id: string;
+  budgetId: string;
+  reservedMicros: bigint;
+  currency: Currency;
+  status: "active" | "consumed" | "released";
+  expiresAt: Date;
 }

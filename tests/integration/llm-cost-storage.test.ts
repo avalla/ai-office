@@ -99,6 +99,7 @@ describe("LLM cost SQLite integration", () => {
           outputTokens: 5,
           reasoningTokens: 0,
         },
+        budgetScopeType: "project",
         budgetScopeId: "project",
       },
     );
