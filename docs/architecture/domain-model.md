@@ -45,6 +45,15 @@ queued -> preparing -> running -> reviewing -> completed
                     \-> failed
 ```
 
+Every transition is checked by the domain model and projected into the append-only `agent_run_event` table. A task lock is acquired when a run is queued and released after completion, failure, or cancellation.
+
+## Governance lifecycles
+
+- milestones: `planned -> active -> completed` (or `cancelled`);
+- requirements: `proposed -> accepted -> implemented -> verified` (or `rejected`);
+- ADRs: `proposed -> accepted`, with later `deprecated` or `superseded` states;
+- reviews: `pending -> approved | rejected`, finalized by an immutable approval decision.
+
 ## Pattern scopes
 
 - project;

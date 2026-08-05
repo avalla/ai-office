@@ -1,31 +1,63 @@
-import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
-import { AnswerProjectQuestion } from "@ai-office/application/commands/answer-project-question.ts";
-import { CreateProject } from "@ai-office/application/commands/create-project.ts";
-import { ImportProject } from "@ai-office/application/commands/import-project.ts";
-import { CreateTask } from "@ai-office/application/commands/create-task.ts";
+import { InvalidAgentDefinitionError } from "@ai-office/agent-runtime/agent-definition.ts";
+import { AgentDefinitionDirectoryError } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
+import {
+  AgentNotFoundError,
+  TaskLockActiveError,
+  TaskLockExpiredError,
+  TaskNotFoundError,
+} from "@ai-office/application/commands/schedule-agent-run.ts";
+import {
+  BudgetExceededError,
+  BudgetNotFoundError,
+  DuplicateProviderUsageError,
+  MonetaryOverflowError,
+  PricingCurrencyMismatchError,
+  PricingNotFoundError,
+  PricingOverlapError,
+  ReservationExpiredError,
+} from "@ai-office/application/cost-errors.ts";
 import {
   InvalidProjectAnswerError,
   ProjectNotFoundError,
   ProjectQuestionAlreadyAnsweredError,
-  ProjectQuestionNotFoundError
+  ProjectQuestionNotFoundError,
 } from "@ai-office/application/errors.ts";
-import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
+import {
+  DuplicateRequirementKeyError,
+  GovernanceCrossProjectReferenceError,
+  GovernanceSubjectNotFoundError,
+  ReviewAlreadyFinalizedError,
+  ReviewNotFoundError,
+} from "@ai-office/application/governance-errors.ts";
 import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
-import { ListTasks } from "@ai-office/application/queries/list-tasks.ts";
-import { GetProjectProfile } from "@ai-office/application/queries/get-project-profile.ts";
-import { renderProjectProfileMarkdown } from "@ai-office/application/queries/render-project-profile-markdown.ts";
-import { agentOperations } from "@ai-office/domain/project/project-profile.ts";
+import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
-import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
+import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
+import { SqliteCostRepository } from "@ai-office/storage-sqlite/repositories/sqlite-cost.repository.ts";
+import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
 import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
-import { LocalProjectScanner } from "./local-project-scanner.ts";
+import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import { handleAgentCommand } from "./commands/agent.ts";
+import { handleCostCommand } from "./commands/cost.ts";
+import { handleGovernanceCommand } from "./commands/governance.ts";
+import { handleProjectCommand } from "./commands/project.ts";
+import { handleRunCommand } from "./commands/run.ts";
+import {
+  CliPromptRequiredError,
+  CliUsageError,
+  type CommandContext,
+  type CommandIo,
+} from "./commands/shared.ts";
+import { handleTaskCommand } from "./commands/task.ts";
+
+export { CliPromptRequiredError } from "./commands/shared.ts";
+export type CliIo = CommandIo;
 
 export const cliHelp = `AI Office CLI
 
@@ -38,7 +70,25 @@ Commands:
   project:profile --project <id>
   project:export --project <id>
   task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
-  task:list --project <id>`;
+  task:list --project <id>
+  agent:sync --project <id> [--directory <path>]
+  agent:list --project <id>
+  run:schedule --project <id> --task <id> --agent <id>
+  run:tick --project <id> [--capacity <integer>]
+  run:list --project <id>
+  pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
+  budget:set --project <id> --limit <micros> [--currency <USD|EUR>]
+  cost:list --project <id> [--group-by <project|task|agent|agent_run>]
+  milestone:create --project <id> --title <title> [--description <description>]
+  milestone:set-status --project <id> --milestone <id> --status <status>
+  requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]
+  requirement:set-status --project <id> --requirement <id> --status <status>
+  adr:create --project <id> --title <title> --context <text> --decision <text> --consequences <text>
+  adr:set-status --project <id> --adr <id> --status <status>
+  review:create --project <id> --subject-type <type> --subject <id> --reviewer <name>
+  review:decide --project <id> --review <id> --actor <name> --decision <approved|rejected> [--rationale <text>]
+  governance:profile --project <id>
+  governance:export --project <id>`;
 
 const commands = [
   "project:create",
@@ -48,16 +98,33 @@ const commands = [
   "project:profile",
   "project:export",
   "task:create",
-  "task:list"
+  "task:list",
+  "agent:sync",
+  "agent:list",
+  "run:schedule",
+  "run:tick",
+  "run:list",
+  "pricing:set",
+  "budget:set",
+  "cost:list",
+  "milestone:create",
+  "requirement:create",
+  "adr:create",
+  "milestone:set-status",
+  "requirement:set-status",
+  "adr:set-status",
+  "review:create",
+  "review:decide",
+  "governance:profile",
+  "governance:export",
 ] as const;
+
 type Command = (typeof commands)[number];
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
-
-export interface CliIo {
-  stdout(message: string): void;
-  stderr(message: string): void;
-  prompt?(message: string): Promise<string>;
-}
+const defaultIo: CliIo = {
+  stdout: (message) => console.log(message),
+  stderr: (message) => console.error(message),
+};
 
 export interface CliOptions {
   projectRoot: string;
@@ -66,70 +133,17 @@ export interface CliOptions {
   propagatePromptRequired?: boolean;
 }
 
-class CliUsageError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "CliUsageError";
-  }
-}
+const handlers = [
+  handleProjectCommand,
+  handleTaskCommand,
+  handleAgentCommand,
+  handleRunCommand,
+  handleCostCommand,
+  handleGovernanceCommand,
+] as const;
 
-export class CliPromptRequiredError extends Error {
-  constructor(readonly prompt: string) {
-    super("CLI input is required");
-    this.name = "CliPromptRequiredError";
-  }
-}
-
-interface ParsedArguments {
-  positionals: string[];
-  options: ReadonlyMap<string, string>;
-}
-
-const defaultIo: CliIo = {
-  stdout: (message) => console.log(message),
-  stderr: (message) => console.error(message)
-};
-
-function parseArguments(args: string[], allowedOptions: ReadonlySet<string>): ParsedArguments {
-  const positionals: string[] = [];
-  const options = new Map<string, string>();
-
-  for (let index = 0; index < args.length; index += 1) {
-    const argument = args[index];
-
-    if (argument === undefined) continue;
-
-    if (!argument.startsWith("--")) {
-      positionals.push(argument);
-      continue;
-    }
-
-    const name = argument.slice(2);
-    if (!allowedOptions.has(name)) {
-      throw new CliUsageError(`Unknown option --${name}`);
-    }
-    if (options.has(name)) {
-      throw new CliUsageError(`Option --${name} can only be provided once`);
-    }
-
-    const value = args[index + 1];
-    if (value === undefined || value.startsWith("--")) {
-      throw new CliUsageError(`Option --${name} requires a value`);
-    }
-
-    options.set(name, value);
-    index += 1;
-  }
-
-  return { positionals, options };
-}
-
-function requiredOption(arguments_: ParsedArguments, name: string): string {
-  const value = arguments_.options.get(name);
-  if (value === undefined) {
-    throw new CliUsageError(`Missing required option --${name}`);
-  }
-  return value;
+function isCommand(value: string): value is Command {
+  return commands.some((command) => command === value);
 }
 
 function formatKnownError(error: unknown): string | null {
@@ -139,266 +153,89 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ProjectNotFoundError ||
     error instanceof ProjectQuestionNotFoundError ||
     error instanceof ProjectQuestionAlreadyAnsweredError ||
-    error instanceof InvalidProjectAnswerError
-  ) {
+    error instanceof InvalidProjectAnswerError ||
+    error instanceof AgentNotFoundError ||
+    error instanceof TaskNotFoundError ||
+    error instanceof TaskLockActiveError ||
+    error instanceof TaskLockExpiredError ||
+    error instanceof InvalidAgentDefinitionError ||
+    error instanceof AgentDefinitionDirectoryError ||
+    error instanceof PricingNotFoundError ||
+    error instanceof PricingOverlapError ||
+    error instanceof PricingCurrencyMismatchError ||
+    error instanceof BudgetNotFoundError ||
+    error instanceof BudgetExceededError ||
+    error instanceof ReservationExpiredError ||
+    error instanceof DuplicateProviderUsageError ||
+    error instanceof MonetaryOverflowError ||
+    error instanceof GovernanceCrossProjectReferenceError ||
+    error instanceof GovernanceSubjectNotFoundError ||
+    error instanceof ReviewNotFoundError ||
+    error instanceof ReviewAlreadyFinalizedError ||
+    error instanceof DuplicateRequirementKeyError
+  )
     return error.message;
-  }
-
   return null;
 }
 
-function isCommand(value: string): value is Command {
-  return commands.some((command) => command === value);
-}
-
-export async function runCli(args: string[], options: CliOptions): Promise<number> {
+export async function runCli(
+  args: string[],
+  options: CliOptions,
+): Promise<number> {
   const io = options.io ?? defaultIo;
   const [command, ...commandArguments] = args;
-
-  if (command === undefined || command === "help" || command === "--help" || command === "-h") {
+  if (
+    command === undefined ||
+    command === "help" ||
+    command === "--help" ||
+    command === "-h"
+  ) {
     io.stdout(cliHelp);
     return 0;
   }
-
   if (!isCommand(command)) {
     io.stderr(`Unknown command: ${command}\n\n${cliHelp}`);
     return 1;
   }
 
-  const databasePath = join(options.projectRoot, ".ai-office", "project.sqlite");
-  const migrationDirectory =
-    options.migrationDirectory ??
-    join(sourceDirectory, "..", "..", "..", "migrations", "project");
-  const database = openDatabase(databasePath);
-
+  const database = openDatabase(
+    join(options.projectRoot, ".ai-office", "project.sqlite"),
+  );
   try {
-    migrate(database, migrationDirectory);
-
-    const projects = new SqliteProjectRepository(database);
-    const profiles = new SqliteProjectProfileRepository(database);
-    const tasks = new SqliteTaskRepository(database);
-    const ids = new CryptoIdGenerator();
-    const clock = new SystemClock();
-    const transactions = new SqliteTransactionRunner(database);
-
-    switch (command) {
-      case "project:create": {
-        const parsed = parseArguments(commandArguments, new Set(["description"]));
-        if (parsed.positionals.length !== 1) {
-          throw new CliUsageError("project:create requires exactly one project name");
-        }
-
-        const name = parsed.positionals[0];
-        if (name === undefined) {
-          throw new CliUsageError("project:create requires exactly one project name");
-        }
-
-        const createProject = new CreateProject(projects, ids, clock);
-        const description = parsed.options.get("description");
-        const projectId = await createProject.execute({
-          name,
-          ...(description === undefined ? {} : { description })
-        });
-
-        io.stdout(`Project created: ${projectId}`);
-        return 0;
-      }
-
-      case "project:import": {
-        const parsed = parseArguments(commandArguments, new Set(["name"]));
-        if (parsed.positionals.length > 1) {
-          throw new CliUsageError("project:import accepts at most one path");
-        }
-
-        const rootPath = parsed.positionals[0] ?? options.projectRoot;
-        const importProject = new ImportProject(
-          projects,
-          profiles,
-          new LocalProjectScanner(),
-          ids,
-          clock,
-          transactions
-        );
-        const result = await importProject.execute({
-          rootPath,
-          ...(parsed.options.get("name") === undefined
-            ? {}
-            : { name: parsed.options.get("name")! })
-        });
-
-        io.stdout(
-          result.created
-            ? `Project imported: ${result.projectId}`
-            : `Project already imported: ${result.projectId}`
-        );
-        io.stdout(`Path: ${result.scan.rootPath}`);
-        io.stdout(`Languages: ${result.scan.languages.join(", ") || "not detected"}`);
-        io.stdout(`Frameworks: ${result.scan.frameworks.join(", ") || "not detected"}`);
-        io.stdout(`Testing: ${result.scan.testing.join(", ") || "not detected"}`);
-        io.stdout("Onboarding questions:");
-        for (const question of result.questions) {
-          io.stdout(`- ${question}`);
-        }
-        return 0;
-      }
-
-      case "project:onboard": {
-        const parsed = parseArguments(commandArguments, new Set(["project"]));
-        if (parsed.positionals.length > 0) {
-          throw new CliUsageError("project:onboard only accepts named options");
-        }
-
-        const projectId = requiredOption(parsed, "project");
-        const profile = await new GetProjectProfile(projects, profiles).execute(projectId);
-        if (profile.openQuestions.length === 0) {
-          io.stdout(`No open onboarding questions for project ${projectId}.`);
-          return 0;
-        }
-
-        const reader = io.prompt === undefined
-          ? createInterface({ input: process.stdin, output: process.stdout })
-          : undefined;
-        const prompt = io.prompt ?? ((message: string) => reader!.question(message));
-        const answerQuestion = new AnswerProjectQuestion(
-          profiles,
-          ids,
-          clock,
-          transactions
-        );
-
-        try {
-          for (const question of profile.openQuestions) {
-            io.stdout(`[${question.answerCategory}] ${question.question}`);
-            if (question.answerCategory === "permission") {
-              io.stdout(`Supported operations: ${agentOperations.join(", ")}`);
-              io.stdout('Use a comma-separated list, "all", or "none".');
-            }
-            const value = await prompt("> ");
-            await answerQuestion.execute({ projectId, questionId: question.id, value });
-            io.stdout(`Answer saved: ${question.id}`);
-          }
-        } finally {
-          reader?.close();
-        }
-
-        return 0;
-      }
-
-      case "project:answer": {
-        const parsed = parseArguments(
-          commandArguments,
-          new Set(["project", "question", "answer"])
-        );
-        if (parsed.positionals.length > 0) {
-          throw new CliUsageError("project:answer only accepts named options");
-        }
-
-        const projectId = requiredOption(parsed, "project");
-        const questionId = requiredOption(parsed, "question");
-        const answer = await new AnswerProjectQuestion(
-          profiles,
-          ids,
-          clock,
-          transactions
-        ).execute({
-          projectId,
-          questionId,
-          value: requiredOption(parsed, "answer")
-        });
-        io.stdout(`Answer saved: ${questionId} (${answer.category})`);
-        return 0;
-      }
-
-      case "project:profile": {
-        const parsed = parseArguments(commandArguments, new Set(["project"]));
-        if (parsed.positionals.length > 0) {
-          throw new CliUsageError("project:profile only accepts named options");
-        }
-
-        const profile = await new GetProjectProfile(projects, profiles).execute(
-          requiredOption(parsed, "project")
-        );
-        io.stdout(renderProjectProfileMarkdown(profile).trimEnd());
-        return 0;
-      }
-
-      case "project:export": {
-        const parsed = parseArguments(commandArguments, new Set(["project"]));
-        if (parsed.positionals.length > 0) {
-          throw new CliUsageError("project:export only accepts named options");
-        }
-
-        const profile = await new GetProjectProfile(projects, profiles).execute(
-          requiredOption(parsed, "project")
-        );
-        const outputPath = join(
-          options.projectRoot,
-          ".ai-office",
-          "generated",
-          "project-profile.md"
-        );
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, renderProjectProfileMarkdown(profile), "utf8");
-        io.stdout(`Project profile exported: ${outputPath}`);
-        return 0;
-      }
-
-      case "task:create": {
-        const parsed = parseArguments(
-          commandArguments,
-          new Set(["project", "title", "description", "priority"])
-        );
-        if (parsed.positionals.length > 0) {
-          throw new CliUsageError("task:create only accepts named options");
-        }
-
-        const priorityValue = parsed.options.get("priority");
-        const priority = priorityValue === undefined ? undefined : Number(priorityValue);
-        const description = parsed.options.get("description");
-        const createTask = new CreateTask(projects, tasks, ids, clock);
-        const taskId = await createTask.execute({
-          projectId: requiredOption(parsed, "project"),
-          title: requiredOption(parsed, "title"),
-          ...(description === undefined ? {} : { description }),
-          ...(priority === undefined ? {} : { priority })
-        });
-
-        io.stdout(`Task created: ${taskId}`);
-        return 0;
-      }
-
-      case "task:list": {
-        const parsed = parseArguments(commandArguments, new Set(["project"]));
-        if (parsed.positionals.length > 0) {
-          throw new CliUsageError("task:list only accepts named options");
-        }
-
-        const projectId = requiredOption(parsed, "project");
-        const listedTasks = await new ListTasks(tasks).execute(projectId);
-
-        if (listedTasks.length === 0) {
-          io.stdout(`No tasks found for project ${projectId}.`);
-          return 0;
-        }
-
-        io.stdout("ID\tSTATUS\tPRIORITY\tTITLE");
-        for (const task of listedTasks) {
-          io.stdout(`${task.id}\t${task.status}\t${task.priority}\t${task.title}`);
-        }
-        return 0;
-      }
+    migrate(
+      database,
+      options.migrationDirectory ??
+        join(sourceDirectory, "..", "..", "..", "migrations", "project"),
+    );
+    const context: CommandContext = {
+      projectRoot: options.projectRoot,
+      io,
+      projects: new SqliteProjectRepository(database),
+      profiles: new SqliteProjectProfileRepository(database),
+      tasks: new SqliteTaskRepository(database),
+      runtime: new SqliteAgentRuntimeRepository(database),
+      costs: new SqliteCostRepository(database),
+      governance: new SqliteGovernanceRepository(database),
+      ids: new CryptoIdGenerator(),
+      clock: new SystemClock(),
+      transactions: new SqliteTransactionRunner(database),
+    };
+    for (const handler of handlers) {
+      const result = await handler(command, commandArguments, context);
+      if (result !== null) return result;
     }
+    throw new CliUsageError(`No handler is registered for ${command}`);
   } catch (error) {
-    if (error instanceof CliPromptRequiredError && options.propagatePromptRequired === true) {
+    if (
+      error instanceof CliPromptRequiredError &&
+      options.propagatePromptRequired === true
+    )
       throw error;
-    }
-
     const message = formatKnownError(error);
     if (message !== null) {
       io.stderr(message);
       return 1;
     }
-
     io.stderr("AI Office failed because of an unexpected error.");
     return 1;
   } finally {

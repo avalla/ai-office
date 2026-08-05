@@ -1,0 +1,165 @@
+import { createInterface } from "node:readline/promises";
+import { join } from "node:path";
+import { AnswerProjectQuestion } from "@ai-office/application/commands/answer-project-question.ts";
+import { CreateProject } from "@ai-office/application/commands/create-project.ts";
+import { ImportProject } from "@ai-office/application/commands/import-project.ts";
+import { GetProjectProfile } from "@ai-office/application/queries/get-project-profile.ts";
+import { renderProjectProfileMarkdown } from "@ai-office/application/queries/render-project-profile-markdown.ts";
+import { agentOperations } from "@ai-office/domain/project/project-profile.ts";
+import { writeTextFileAtomic } from "../atomic-file.ts";
+import { LocalProjectScanner } from "../local-project-scanner.ts";
+import {
+  CliUsageError,
+  type CommandContext,
+  parseArguments,
+  requiredOption,
+} from "./shared.ts";
+
+export async function handleProjectCommand(
+  command: string,
+  args: string[],
+  context: CommandContext,
+): Promise<number | null> {
+  const { projects, profiles, ids, clock, transactions, io } = context;
+  if (command === "project:create") {
+    const parsed = parseArguments(args, new Set(["description"]));
+    if (parsed.positionals.length !== 1)
+      throw new CliUsageError(
+        "project:create requires exactly one project name",
+      );
+    const name = parsed.positionals[0];
+    if (name === undefined)
+      throw new CliUsageError(
+        "project:create requires exactly one project name",
+      );
+    const description = parsed.options.get("description");
+    const id = await new CreateProject(projects, ids, clock).execute({
+      name,
+      ...(description === undefined ? {} : { description }),
+    });
+    io.stdout(`Project created: ${id}`);
+    return 0;
+  }
+  if (command === "project:import") {
+    const parsed = parseArguments(args, new Set(["name"]));
+    if (parsed.positionals.length > 1)
+      throw new CliUsageError("project:import accepts at most one path");
+    const result = await new ImportProject(
+      projects,
+      profiles,
+      new LocalProjectScanner(),
+      ids,
+      clock,
+      transactions,
+    ).execute({
+      rootPath: parsed.positionals[0] ?? context.projectRoot,
+      ...(parsed.options.get("name") === undefined
+        ? {}
+        : { name: parsed.options.get("name")! }),
+    });
+    io.stdout(
+      result.created
+        ? `Project imported: ${result.projectId}`
+        : `Project already imported: ${result.projectId}`,
+    );
+    io.stdout(`Path: ${result.scan.rootPath}`);
+    io.stdout(
+      `Languages: ${result.scan.languages.join(", ") || "not detected"}`,
+    );
+    io.stdout(
+      `Frameworks: ${result.scan.frameworks.join(", ") || "not detected"}`,
+    );
+    io.stdout(`Testing: ${result.scan.testing.join(", ") || "not detected"}`);
+    io.stdout("Onboarding questions:");
+    for (const question of result.questions) io.stdout(`- ${question}`);
+    return 0;
+  }
+  if (command === "project:onboard") {
+    const parsed = parseArguments(args, new Set(["project"]));
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError("project:onboard only accepts named options");
+    const projectId = requiredOption(parsed, "project");
+    const profile = await new GetProjectProfile(projects, profiles).execute(
+      projectId,
+    );
+    if (profile.openQuestions.length === 0) {
+      io.stdout(`No open onboarding questions for project ${projectId}.`);
+      return 0;
+    }
+    const reader =
+      io.prompt === undefined
+        ? createInterface({ input: process.stdin, output: process.stdout })
+        : undefined;
+    const prompt =
+      io.prompt ?? ((message: string) => reader!.question(message));
+    const answer = new AnswerProjectQuestion(
+      profiles,
+      ids,
+      clock,
+      transactions,
+    );
+    try {
+      for (const question of profile.openQuestions) {
+        io.stdout(`[${question.answerCategory}] ${question.question}`);
+        if (question.answerCategory === "permission") {
+          io.stdout(`Supported operations: ${agentOperations.join(", ")}`);
+          io.stdout('Use a comma-separated list, "all", or "none".');
+        }
+        await answer.execute({
+          projectId,
+          questionId: question.id,
+          value: await prompt("> "),
+        });
+        io.stdout(`Answer saved: ${question.id}`);
+      }
+    } finally {
+      reader?.close();
+    }
+    return 0;
+  }
+  if (command === "project:answer") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "question", "answer"]),
+    );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError("project:answer only accepts named options");
+    const projectId = requiredOption(parsed, "project");
+    const questionId = requiredOption(parsed, "question");
+    const answer = await new AnswerProjectQuestion(
+      profiles,
+      ids,
+      clock,
+      transactions,
+    ).execute({
+      projectId,
+      questionId,
+      value: requiredOption(parsed, "answer"),
+    });
+    io.stdout(`Answer saved: ${questionId} (${answer.category})`);
+    return 0;
+  }
+  if (command === "project:profile" || command === "project:export") {
+    const parsed = parseArguments(args, new Set(["project"]));
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError(`${command} only accepts named options`);
+    const profile = await new GetProjectProfile(projects, profiles).execute(
+      requiredOption(parsed, "project"),
+    );
+    const markdown = renderProjectProfileMarkdown(profile);
+    if (command === "project:profile") {
+      io.stdout(markdown.trimEnd());
+      return 0;
+    }
+    const outputPath = join(
+      context.projectRoot,
+      ".ai-office",
+      "generated",
+      "project-profile.md",
+    );
+    writeTextFileAtomic(outputPath, markdown);
+    io.stdout(`Project profile exported: ${outputPath}`);
+    return 0;
+  }
+  return null;
+}

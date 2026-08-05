@@ -45,8 +45,10 @@ describe("project database migrations", () => {
       "0005_audit_event.sql",
       "0006_agent_runtime.sql",
       "0007_llm_cost.sql",
+      "0008_governance.sql",
       "0009_agent_runtime_hardening.sql",
       "0010_llm_cost_hardening.sql",
+      "0011_governance_hardening.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -64,8 +66,10 @@ describe("project database migrations", () => {
       { version: "0005_audit_event.sql" },
       { version: "0006_agent_runtime.sql" },
       { version: "0007_llm_cost.sql" },
+      { version: "0008_governance.sql" },
       { version: "0009_agent_runtime_hardening.sql" },
       { version: "0010_llm_cost_hardening.sql" },
+      { version: "0011_governance_hardening.sql" },
     ]);
     database.close();
   });

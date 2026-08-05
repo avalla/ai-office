@@ -31,6 +31,9 @@ POST /commands
 Requests and responses carry `protocolVersion: 1` and a caller-generated
 `requestId`. The daemon validates requests before dispatch and returns captured
 stdout, stderr, exit status, and optional interactive prompt metadata.
+Requests are limited to 64 KiB, 64 arguments, and bounded argument/prompt sizes.
+Protocol errors carry a stable code and never expose stack traces. Commands have
+a server-side timeout in addition to the client timeout.
 
 The production CLI is a daemon client. Help remains available while the daemon
 is stopped; stateful commands return an actionable error instructing the user
@@ -38,8 +41,11 @@ to run `bun run daemon`.
 
 ## Serialization and audit
 
-All commands enter an in-memory FIFO promise queue. A failed command does not
-block later commands. SQLite writes remain inside the existing short
+Short commands enter an in-memory FIFO promise queue. `run:tick`, the current
+long-running execution boundary, is dispatched outside that global queue so it
+cannot structurally block unrelated commands. `run:schedule` remains a short
+queued command that creates the run and lock before returning its ID. A failed
+command does not block later commands. SQLite writes remain inside the existing short
 application transactions; filesystem scans and user input remain outside them.
 
 The append-only `audit_event` table records daemon lifecycle and command
@@ -51,3 +57,6 @@ payloads so secrets are not copied into the audit trail.
 - Unix domain sockets target macOS and Linux; Windows named pipes are not yet supported.
 - The daemon is foreground-only; service installation and background supervision are future work.
 - Authentication relies on local filesystem permissions and the owner-only socket mode.
+- Interrupted agent runs and expired budget reservations are discoverable and
+  recoverable, but recovery is explicit: restart does not silently retry runs,
+  remove worktrees, or finalize accounting records.

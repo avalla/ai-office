@@ -2,9 +2,10 @@ import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import {
+  daemonProtocolLimits,
   daemonProtocolVersion,
   isDaemonCommandRequest,
-  type DaemonHealthResponse
+  type DaemonHealthResponse,
 } from "@ai-office/application/protocol/daemon-protocol.ts";
 import { CommandQueue } from "./command-queue.ts";
 import type { DaemonCommandHandler } from "./local-command-handler.ts";
@@ -22,12 +23,13 @@ export interface OfficeDaemonOptions {
   events: RecordAuditEvent;
   now?: () => Date;
   onStopped?: () => void;
+  commandTimeoutMs?: number;
 }
 
 function json(value: unknown, status = 200): Response {
   return Response.json(value, {
     status,
-    headers: { "cache-control": "no-store" }
+    headers: { "cache-control": "no-store" },
   });
 }
 
@@ -42,7 +44,8 @@ export class OfficeDaemon {
   }
 
   async start(signal: AbortSignal): Promise<void> {
-    if (this.started) throw new Error("Office daemon instances can only be started once");
+    if (this.started)
+      throw new Error("Office daemon instances can only be started once");
     this.started = true;
     let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -52,13 +55,13 @@ export class OfficeDaemon {
       this.startedAt = this.now();
       server = Bun.serve({
         unix: this.options.socketPath,
-        fetch: (request) => this.route(request)
+        fetch: (request) => this.route(request),
       });
       chmodSync(this.options.socketPath, 0o600);
       await this.options.events.execute({
         eventType: "daemon.started",
         actorType: "daemon",
-        payload: { protocolVersion: daemonProtocolVersion }
+        payload: { protocolVersion: daemonProtocolVersion },
       });
       await new Promise<void>((resolve) => {
         if (signal.aborted) {
@@ -74,7 +77,7 @@ export class OfficeDaemon {
           await this.options.events.execute({
             eventType: "daemon.stopped",
             actorType: "daemon",
-            payload: {}
+            payload: {},
           });
         }
       } finally {
@@ -90,36 +93,78 @@ export class OfficeDaemon {
       const response: DaemonHealthResponse = {
         protocolVersion: daemonProtocolVersion,
         status: "ok",
-        startedAt: this.startedAt?.toISOString() ?? this.now().toISOString()
+        startedAt: this.startedAt?.toISOString() ?? this.now().toISOString(),
       };
       return json(response);
     }
 
     if (path !== "/commands") return json({ error: "Not found" }, 404);
-    if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
+    if (request.method !== "POST")
+      return json({ error: "Method not allowed" }, 405);
+
+    const contentLength = Number(request.headers.get("content-length") ?? "0");
+    if (
+      Number.isFinite(contentLength) &&
+      contentLength > daemonProtocolLimits.maxPayloadBytes
+    )
+      return this.errorResponse(
+        "",
+        "PAYLOAD_TOO_LARGE",
+        "Daemon command payload is too large",
+        413,
+      );
 
     let value: unknown;
     try {
-      value = await request.json();
+      const body = await request.text();
+      if (
+        new TextEncoder().encode(body).byteLength >
+        daemonProtocolLimits.maxPayloadBytes
+      )
+        return this.errorResponse(
+          "",
+          "PAYLOAD_TOO_LARGE",
+          "Daemon command payload is too large",
+          413,
+        );
+      value = JSON.parse(body) as unknown;
     } catch {
-      return json({ error: "Request body must be valid JSON" }, 400);
+      return this.errorResponse(
+        "",
+        "INVALID_REQUEST",
+        "Request body must be valid JSON",
+        400,
+      );
     }
     if (!isDaemonCommandRequest(value)) {
-      return json({ error: "Invalid daemon command request" }, 400);
+      const requestId =
+        typeof value === "object" &&
+        value !== null &&
+        typeof (value as Record<string, unknown>).requestId === "string"
+          ? ((value as Record<string, unknown>).requestId as string)
+          : "";
+      return this.errorResponse(
+        requestId,
+        "INVALID_REQUEST",
+        "Invalid daemon command request",
+        400,
+      );
     }
 
-    return this.queue.enqueue(async () => {
+    const execute = async () => {
       const command = value.args[0] ?? "help";
       const startedAt = this.now();
       await this.options.events.execute({
         eventType: "command.received",
         actorType: "cli",
         actorId: value.requestId,
-        payload: { command }
+        payload: { command },
       });
 
       try {
-        const response = await this.options.handler.execute(value);
+        const response = await this.withCommandTimeout(
+          this.options.handler.execute(value),
+        );
         await this.options.events.execute({
           eventType: "command.completed",
           actorType: "daemon",
@@ -128,23 +173,71 @@ export class OfficeDaemon {
             command,
             exitCode: response.exitCode,
             interactionRequired: response.prompt !== undefined,
-            durationMs: Math.max(0, this.now().getTime() - startedAt.getTime())
-          }
+            durationMs: Math.max(0, this.now().getTime() - startedAt.getTime()),
+          },
         });
         return json(response);
-      } catch {
+      } catch (error) {
         await this.options.events.execute({
           eventType: "command.failed",
           actorType: "daemon",
           actorId: value.requestId,
           payload: {
             command,
-            durationMs: Math.max(0, this.now().getTime() - startedAt.getTime())
-          }
+            durationMs: Math.max(0, this.now().getTime() - startedAt.getTime()),
+          },
         });
-        return json({ error: "Command execution failed" }, 500);
+        const timedOut = error instanceof DaemonCommandTimeoutError;
+        return this.errorResponse(
+          value.requestId,
+          timedOut ? "COMMAND_TIMEOUT" : "INTERNAL_ERROR",
+          timedOut ? "Daemon command timed out" : "Command execution failed",
+          timedOut ? 504 : 500,
+        );
       }
-    });
+    };
+
+    return value.args[0] === "run:tick"
+      ? execute()
+      : this.queue.enqueue(execute);
+  }
+
+  private async withCommandTimeout<T>(work: Promise<T>): Promise<T> {
+    const timeoutMs = this.options.commandTimeoutMs ?? 30_000;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<T>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new DaemonCommandTimeoutError()),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) clearTimeout(timeout);
+    }
+  }
+
+  private errorResponse(
+    requestId: string,
+    code:
+      | "INVALID_REQUEST"
+      | "PAYLOAD_TOO_LARGE"
+      | "COMMAND_TIMEOUT"
+      | "INTERNAL_ERROR",
+    message: string,
+    status: number,
+  ): Response {
+    return json(
+      {
+        protocolVersion: daemonProtocolVersion,
+        requestId,
+        error: { code, message },
+      },
+      status,
+    );
   }
 
   private async prepareSocket(): Promise<void> {
@@ -153,9 +246,10 @@ export class OfficeDaemon {
     try {
       const response = await fetch("http://localhost/health", {
         unix: this.options.socketPath,
-        signal: AbortSignal.timeout(500)
+        signal: AbortSignal.timeout(500),
       });
-      if (response.ok) throw new DaemonAlreadyRunningError(this.options.socketPath);
+      if (response.ok)
+        throw new DaemonAlreadyRunningError(this.options.socketPath);
     } catch (error) {
       if (error instanceof DaemonAlreadyRunningError) throw error;
     }
@@ -167,5 +261,12 @@ export class OfficeDaemon {
     if (existsSync(this.options.socketPath)) {
       rmSync(this.options.socketPath);
     }
+  }
+}
+
+class DaemonCommandTimeoutError extends Error {
+  constructor() {
+    super("Daemon command timed out");
+    this.name = "DaemonCommandTimeoutError";
   }
 }
