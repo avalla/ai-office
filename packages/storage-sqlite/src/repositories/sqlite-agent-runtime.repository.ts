@@ -9,7 +9,8 @@ import {
   type AgentRunProps,
   type AgentRunStatus,
 } from "@ai-office/domain/agent/agent-run.ts";
-import type { Role } from "@ai-office/domain/agent/role.ts";
+import { Role, type RoleLimits } from "@ai-office/domain/agent/role.ts";
+import { DomainValidationError } from "@ai-office/domain/errors.ts";
 
 interface AgentRow {
   id: string;
@@ -17,6 +18,20 @@ interface AgentRow {
   role_id: string;
   name: string;
   enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+interface RoleRow {
+  id: string;
+  project_id: string;
+  role_key: string;
+  name: string;
+  version: number;
+  capabilities_json: string;
+  tools_json: string;
+  model_policy: string;
+  limits_json: string;
+  source_path: string;
   created_at: string;
   updated_at: string;
 }
@@ -73,6 +88,55 @@ const run = (row: RunRow): AgentRun =>
 const runColumns =
   "id, project_id, task_id, agent_id, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at";
 
+function parseStoredStringArray(json: string, field: string): string[] {
+  const value = JSON.parse(json) as unknown;
+  if (!Array.isArray(value))
+    throw new DomainValidationError(
+      `Stored role ${field} must be a string array`,
+    );
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string")
+      throw new DomainValidationError(
+        `Stored role ${field} must be a string array`,
+      );
+    result.push(item);
+  }
+  return result;
+}
+
+function parseStoredRoleLimits(json: string): RoleLimits {
+  const value = JSON.parse(json) as unknown;
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new DomainValidationError("Stored role limits must be an object");
+  const record = value as Record<string, unknown>;
+  if (
+    !Number.isSafeInteger(record.maxIterations) ||
+    typeof record.maxIterations !== "number" ||
+    !Number.isSafeInteger(record.timeoutSeconds) ||
+    typeof record.timeoutSeconds !== "number" ||
+    typeof record.maxCostMicros !== "string"
+  )
+    throw new DomainValidationError("Stored role limits are invalid");
+  let maxCostMicros: bigint;
+  try {
+    maxCostMicros = BigInt(record.maxCostMicros);
+  } catch {
+    throw new DomainValidationError("Stored role max cost is invalid");
+  }
+  if (
+    record.maxIterations < 1 ||
+    record.timeoutSeconds < 1 ||
+    maxCostMicros < 0n
+  )
+    throw new DomainValidationError("Stored role limits are invalid");
+  return {
+    maxIterations: record.maxIterations,
+    maxCostMicros,
+    timeoutSeconds: record.timeoutSeconds,
+  };
+}
+
 export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
   constructor(private readonly database: Database) {}
   async saveRole(role: Role): Promise<void> {
@@ -99,6 +163,31 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
         v.createdAt.toISOString(),
         v.updatedAt.toISOString(),
       );
+  }
+  async findRole(id: string, projectId: string): Promise<Role | null> {
+    const row = this.database
+      .query<RoleRow, [string, string]>(
+        "SELECT id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy, limits_json, source_path, created_at, updated_at FROM role WHERE id=? AND project_id=?",
+      )
+      .get(id, projectId);
+    if (row === null) return null;
+    return Role.restore({
+      id: row.id,
+      projectId: row.project_id,
+      key: row.role_key,
+      name: row.name,
+      version: row.version,
+      capabilities: parseStoredStringArray(
+        row.capabilities_json,
+        "capabilities",
+      ),
+      tools: parseStoredStringArray(row.tools_json, "tools"),
+      modelPolicy: row.model_policy,
+      limits: parseStoredRoleLimits(row.limits_json),
+      sourcePath: row.source_path,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at),
+    });
   }
   async saveAgent(value: Agent): Promise<void> {
     this.database

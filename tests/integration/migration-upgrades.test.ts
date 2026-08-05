@@ -31,6 +31,7 @@ describe("migration upgrades", () => {
     ["M2", "0005_audit_event.sql"],
     ["M3", "0006_agent_runtime.sql"],
     ["M4", "0007_llm_cost.sql"],
+    ["M5", "0011_governance_hardening.sql"],
   ])(
     "upgrades an existing %s database without losing project data",
     (_, cutoff) => {
@@ -58,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0011_governance_hardening.sql",
+        "0012_capability_policy.sql",
       );
       expect(
         database

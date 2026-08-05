@@ -11,6 +11,7 @@ export interface AgentRunEvent {
 
 export interface AgentRuntimeRepository {
   saveRole(role: Role): Promise<void>;
+  findRole(roleId: string, projectId: string): Promise<Role | null>;
   saveAgent(agent: Agent): Promise<void>;
   listAgents(projectId: string): Promise<Agent[]>;
   findAgent(agentId: string): Promise<Agent | null>;
