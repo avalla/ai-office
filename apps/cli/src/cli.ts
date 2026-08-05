@@ -27,9 +27,10 @@ import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/reposi
 import { LocalProjectScanner } from "./local-project-scanner.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 
-const help = `AI Office CLI
+export const cliHelp = `AI Office CLI
 
 Commands:
+  daemon:health
   project:create <name> [--description <description>]
   project:import [path] [--name <name>]
   project:onboard --project <id>
@@ -62,12 +63,20 @@ export interface CliOptions {
   projectRoot: string;
   migrationDirectory?: string;
   io?: CliIo;
+  propagatePromptRequired?: boolean;
 }
 
 class CliUsageError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "CliUsageError";
+  }
+}
+
+export class CliPromptRequiredError extends Error {
+  constructor(readonly prompt: string) {
+    super("CLI input is required");
+    this.name = "CliPromptRequiredError";
   }
 }
 
@@ -147,12 +156,12 @@ export async function runCli(args: string[], options: CliOptions): Promise<numbe
   const [command, ...commandArguments] = args;
 
   if (command === undefined || command === "help" || command === "--help" || command === "-h") {
-    io.stdout(help);
+    io.stdout(cliHelp);
     return 0;
   }
 
   if (!isCommand(command)) {
-    io.stderr(`Unknown command: ${command}\n\n${help}`);
+    io.stderr(`Unknown command: ${command}\n\n${cliHelp}`);
     return 1;
   }
 
@@ -380,6 +389,10 @@ export async function runCli(args: string[], options: CliOptions): Promise<numbe
       }
     }
   } catch (error) {
+    if (error instanceof CliPromptRequiredError && options.propagatePromptRequired === true) {
+      throw error;
+    }
+
     const message = formatKnownError(error);
     if (message !== null) {
       io.stderr(message);

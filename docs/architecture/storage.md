@@ -47,3 +47,9 @@ Initial synchronization is one-way:
 ```text
 database -> Markdown
 ```
+
+## Audit events
+
+`project.sqlite.audit_event` is an append-only log. The daemon records lifecycle
+and sanitized command metadata through an application service. SQLite triggers
+reject updates and deletes; payloads never contain raw CLI arguments or answers.

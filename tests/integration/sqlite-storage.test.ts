@@ -35,7 +35,8 @@ describe("project database migrations", () => {
       "0001_initial.sql",
       "0002_project_import.sql",
       "0003_project_import_idempotency.sql",
-      "0004_project_onboarding.sql"
+      "0004_project_onboarding.sql",
+      "0005_audit_event.sql"
     ]); 
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -47,7 +48,8 @@ describe("project database migrations", () => {
       { version: "0001_initial.sql" },
       { version: "0002_project_import.sql" },
       { version: "0003_project_import_idempotency.sql" },
-      { version: "0004_project_onboarding.sql" }
+      { version: "0004_project_onboarding.sql" },
+      { version: "0005_audit_event.sql" }
     ]);    
     database.close();
   });

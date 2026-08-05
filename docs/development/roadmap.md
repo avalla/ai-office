@@ -28,12 +28,13 @@
 
 ## M2 — Local daemon
 
-- daemon lifecycle;
-- local API;
-- CLI client;
+- daemon lifecycle over an owner-only Unix domain socket;
+- versioned local HTTP API;
+- CLI daemon client with interactive prompt forwarding;
 - single-writer command queue;
-- health and status;
-- graceful shutdown.
+- health and status endpoint;
+- append-only lifecycle and command audit events;
+- graceful shutdown and stale socket recovery.
 
 ## M3 — Agent runtime
 
