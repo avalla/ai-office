@@ -1,5 +1,5 @@
 import { basename, join, resolve } from "node:path";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import type { ProjectScanner } from "@ai-office/application/ports/project-scanner.port.ts";
 import type { ProjectScanSummary } from "@ai-office/domain/project/project-profile.ts";
 
@@ -37,7 +37,7 @@ function collectFiles(rootPath: string, limit = 20_000): string[] {
     const directory = pending.pop();
     if (directory === undefined) break;
 
-    for (const entry of readdirSync(directory)) {
+    for (const entry of readdirSync(directory).sort()) {
       if (ignoredDirectories.has(entry)) continue;
       const absolutePath = join(directory, entry);
       const relativePath = absolutePath.slice(rootPath.length + 1);
@@ -68,12 +68,13 @@ function detectLanguages(files: string[]): string[] {
 
 export class LocalProjectScanner implements ProjectScanner {
   async scan(inputPath: string): Promise<ProjectScanSummary> {
-    const rootPath = resolve(inputPath);
+    const resolvedPath = resolve(inputPath);
+    const rootPath = existsSync(resolvedPath) ? realpathSync(resolvedPath) : resolvedPath;
     if (!existsSync(rootPath) || !statSync(rootPath).isDirectory()) {
       throw new Error(`Project path does not exist or is not a directory: ${rootPath}`);
     }
 
-    const files = collectFiles(rootPath);
+    const files = collectFiles(rootPath).sort();
     const fileSet = new Set(files);
     const packageJson = readText(join(rootPath, "package.json"));
     const manifest = packageJson === undefined

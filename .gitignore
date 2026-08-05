@@ -7,4 +7,5 @@ coverage/
 .ai-office/*.sqlite
 .ai-office/*.sqlite-shm
 .ai-office/*.sqlite-wal
+.ai-office/generated/
 .idea
