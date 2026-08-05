@@ -49,6 +49,8 @@ Status: implemented on `feat/agent-runtime`; 57 tests across 14 files.
 
 ## M4 — LLM gateway and cost control
 
+Status: implemented on `feat/llm-cost-control`; 87 tests across 18 files.
+
 - provider interface;
 - provider mock and one real provider;
 - usage normalization;
