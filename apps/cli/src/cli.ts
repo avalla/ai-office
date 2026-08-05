@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CreateProject } from "@ai-office/application/commands/create-project.ts";
 import { CreateTask } from "@ai-office/application/commands/create-task.ts";
 import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
@@ -20,6 +21,7 @@ Commands:
 
 const commands = ["project:create", "task:create", "task:list"] as const;
 type Command = (typeof commands)[number];
+const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 
 export interface CliIo {
   stdout(message: string): void;
@@ -123,7 +125,8 @@ export async function runCli(args: string[], options: CliOptions): Promise<numbe
 
   const databasePath = join(options.projectRoot, ".ai-office", "project.sqlite");
   const migrationDirectory =
-    options.migrationDirectory ?? join(import.meta.dir, "..", "..", "..", "migrations", "project");
+    options.migrationDirectory ??
+    join(sourceDirectory, "..", "..", "..", "migrations", "project");
   const database = openDatabase(databasePath);
 
   try {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,7 +43,7 @@ describe("Project/Task CLI vertical slice", () => {
     const projectId = projectOutput.stdout[0]?.replace("Project created: ", "");
 
     expect(projectExitCode).toBe(0);
-    expect(projectId).toBeString();
+    expect(typeof projectId).toBe("string");
     expect(existsSync(join(projectRoot, ".ai-office", "project.sqlite"))).toBe(true);
 
     const lowOutput = captureIo();
@@ -70,8 +70,8 @@ describe("Project/Task CLI vertical slice", () => {
       })
     ).toBe(0);
     expect(listOutput.stdout[0]).toBe("ID\tSTATUS\tPRIORITY\tTITLE");
-    expect(listOutput.stdout[1]).toEndWith("\tpending\t10\tHigh");
-    expect(listOutput.stdout[2]).toEndWith("\tpending\t1\tLow");
+    expect(listOutput.stdout[1]).toMatch(/\tpending\t10\tHigh$/);
+    expect(listOutput.stdout[2]).toMatch(/\tpending\t1\tLow$/);
     expect(listOutput.stderr).toEqual([]);
   });
 

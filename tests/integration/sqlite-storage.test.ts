@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
@@ -9,7 +10,8 @@ import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.t
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 
-const migrationDirectory = join(import.meta.dir, "..", "..", "migrations", "project");
+const testDirectory = dirname(fileURLToPath(import.meta.url));
+const migrationDirectory = join(testDirectory, "..", "..", "migrations", "project");
 const temporaryDirectories: string[] = [];
 
 function createTemporaryDatabase() {

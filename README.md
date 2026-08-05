@@ -19,7 +19,7 @@ MVP in TypeScript/Bun per un ufficio virtuale locale. La Milestone 1 rende opera
 - TypeScript strict
 - `bun:sqlite`
 - Zod
-- test runner di Bun
+- Vitest
 - CLI e daemon nello stesso monorepo
 
 ## Avvio rapido
@@ -27,7 +27,7 @@ MVP in TypeScript/Bun per un ufficio virtuale locale. La Milestone 1 rende opera
 ```bash
 bun install
 bun run typecheck
-bun test
+bun run test
 ```
 
 La CLI crea automaticamente `.ai-office/project.sqlite` nella directory corrente e applica le migration mancanti. Creare prima un progetto:
