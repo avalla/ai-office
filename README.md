@@ -57,6 +57,39 @@ Columns in the actual output are tab-separated. Optional descriptions are accept
 bun run db:migrate
 ```
 
+Import an existing repository with a deterministic local scan:
+
+```bash
+bun run cli -- project:import /path/to/repository
+```
+
+The importer canonicalizes the path, reuses the same project on later imports,
+updates detected facts, records every scan, and keeps onboarding questions in
+SQLite. Continue interactively or answer individual questions for automation:
+
+```bash
+bun run cli -- project:onboard --project <project-id>
+bun run cli -- project:answer \
+  --project <project-id> \
+  --question <question-id> \
+  --answer "<value>"
+```
+
+Permission answers accept `all`, `none`, or a comma-separated selection of
+`read_files`, `modify_files`, `run_tests`, `run_shell`,
+`install_dependencies`, `create_branches`, `create_commits`, and
+`network_access`.
+
+Inspect the structured profile or regenerate its Markdown projection:
+
+```bash
+bun run cli -- project:profile --project <project-id>
+bun run cli -- project:export --project <project-id>
+```
+
+The export is written to `.ai-office/generated/project-profile.md`. The project
+database remains the source of truth.
+
 ## Structure
 
 ```text
@@ -111,11 +144,14 @@ SQL migrations are versioned in `migrations/project/` and recorded in the `schem
 
 ```text
 ai-office project:create
+ai-office project:import
+ai-office project:onboard
+ai-office project:answer
+ai-office project:profile
+ai-office project:export
 ai-office task:create
 ai-office task:list
 ```
-
-The other commands described in the roadmap belong to later milestones.
 
 ## For Codex
 

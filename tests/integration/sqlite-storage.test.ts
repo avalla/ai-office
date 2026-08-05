@@ -8,6 +8,7 @@ import { Task } from "@ai-office/domain/task/task.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
+import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
@@ -30,14 +31,24 @@ describe("project database migrations", () => {
   test("applies pending migrations once", () => {
     const database = createTemporaryDatabase();
 
-    expect(migrate(database, migrationDirectory).applied).toEqual(["0001_initial.sql"]);
+    expect(migrate(database, migrationDirectory).applied).toEqual([
+      "0001_initial.sql",
+      "0002_project_import.sql",
+      "0003_project_import_idempotency.sql",
+      "0004_project_onboarding.sql"
+    ]); 
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
     const rows = database
       .query<{ version: string }, []>("SELECT version FROM schema_migration ORDER BY version")
       .all();
 
-    expect(rows).toEqual([{ version: "0001_initial.sql" }]);
+    expect(rows).toEqual([
+      { version: "0001_initial.sql" },
+      { version: "0002_project_import.sql" },
+      { version: "0003_project_import_idempotency.sql" },
+      { version: "0004_project_onboarding.sql" }
+    ]);    
     database.close();
   });
 });
@@ -88,6 +99,17 @@ describe("SQLite project and task repositories", () => {
     });
 
     await expect(tasks.save(task)).rejects.toThrow("FOREIGN KEY constraint failed");
+
+    const profiles = new SqliteProjectProfileRepository(database);
+    await expect(
+      profiles.saveSource({
+        id: "source-1",
+        projectId: "missing",
+        sourceType: "local",
+        localPath: "/missing/project",
+        createdAt: new Date("2026-08-05T00:00:00.000Z")
+      })
+    ).rejects.toThrow("FOREIGN KEY constraint failed");
     database.close();
   });
 });

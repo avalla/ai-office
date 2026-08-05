@@ -17,6 +17,15 @@
 - integration tests;
 - functional CLI.
 
+## M1.5 — Existing project onboarding
+
+- canonical, idempotent local repository import;
+- deterministic language, framework, database, test, and documentation scan;
+- timestamped scan history and refreshed detected profile facts;
+- persisted onboarding questions and structured answers;
+- interactive and automation-friendly onboarding commands;
+- categorized profile view and deterministic Markdown projection.
+
 ## M2 — Local daemon
 
 - daemon lifecycle;
