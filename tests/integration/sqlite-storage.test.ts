@@ -30,14 +30,20 @@ describe("project database migrations", () => {
   test("applies pending migrations once", () => {
     const database = createTemporaryDatabase();
 
-    expect(migrate(database, migrationDirectory).applied).toEqual(["0001_initial.sql"]);
+    expect(migrate(database, migrationDirectory).applied).toEqual([
+      "0001_initial.sql",
+      "0002_project_import.sql"
+    ]); 
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
     const rows = database
       .query<{ version: string }, []>("SELECT version FROM schema_migration ORDER BY version")
       .all();
 
-    expect(rows).toEqual([{ version: "0001_initial.sql" }]);
+    expect(rows).toEqual([
+      { version: "0001_initial.sql" },
+      { version: "0002_project_import.sql" }
+    ]);    
     database.close();
   });
 });

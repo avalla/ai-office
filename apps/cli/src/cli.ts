@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CreateProject } from "@ai-office/application/commands/create-project.ts";
+import { ImportProject } from "@ai-office/application/commands/import-project.ts";
 import { CreateTask } from "@ai-office/application/commands/create-task.ts";
 import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
@@ -10,16 +11,19 @@ import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
+import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
+import { LocalProjectScanner } from "./local-project-scanner.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 
 const help = `AI Office CLI
 
 Commands:
   project:create <name> [--description <description>]
+  project:import [path] [--name <name>]
   task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
   task:list --project <id>`;
 
-const commands = ["project:create", "task:create", "task:list"] as const;
+const commands = ["project:create", "project:import", "task:create", "task:list"] as const;
 type Command = (typeof commands)[number];
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 
@@ -133,6 +137,7 @@ export async function runCli(args: string[], options: CliOptions): Promise<numbe
     migrate(database, migrationDirectory);
 
     const projects = new SqliteProjectRepository(database);
+    const profiles = new SqliteProjectProfileRepository(database);
     const tasks = new SqliteTaskRepository(database);
     const ids = new CryptoIdGenerator();
     const clock = new SystemClock();
@@ -157,6 +162,40 @@ export async function runCli(args: string[], options: CliOptions): Promise<numbe
         });
 
         io.stdout(`Project created: ${projectId}`);
+        return 0;
+      }
+
+
+      case "project:import": {
+        const parsed = parseArguments(commandArguments, new Set(["name"]));
+        if (parsed.positionals.length > 1) {
+          throw new CliUsageError("project:import accepts at most one path");
+        }
+
+        const rootPath = parsed.positionals[0] ?? options.projectRoot;
+        const importProject = new ImportProject(
+          projects,
+          profiles,
+          new LocalProjectScanner(),
+          ids,
+          clock
+        );
+        const result = await importProject.execute({
+          rootPath,
+          ...(parsed.options.get("name") === undefined
+            ? {}
+            : { name: parsed.options.get("name")! })
+        });
+
+        io.stdout(`Project imported: ${result.projectId}`);
+        io.stdout(`Path: ${result.scan.rootPath}`);
+        io.stdout(`Languages: ${result.scan.languages.join(", ") || "not detected"}`);
+        io.stdout(`Frameworks: ${result.scan.frameworks.join(", ") || "not detected"}`);
+        io.stdout(`Testing: ${result.scan.testing.join(", ") || "not detected"}`);
+        io.stdout("Onboarding questions:");
+        for (const question of result.questions) {
+          io.stdout(`- ${question}`);
+        }
         return 0;
       }
 
