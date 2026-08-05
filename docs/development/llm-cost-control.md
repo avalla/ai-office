@@ -11,3 +11,7 @@ Supported budget scopes are `project`, `task`, `agent`, and `agent_run`, each wi
 Provider usage is idempotent by `provider + provider_request_id` when the provider supplies an ID. Pricing intervals use half-open boundaries (`effective_from <= at < effective_to`) and overlapping intervals for the same provider/model/currency are rejected.
 
 The OpenAI adapter requires an API key passed by its composition root. No environment variable is read inside the adapter, no key is persisted, and automated tests inject a fake `fetch` implementation.
+
+The M4 validation baseline is 87 tests across 18 files. The CLI exposes pricing,
+budget, and cost-report commands, but it does not yet invoke a real provider or
+produce real LLM usage.
