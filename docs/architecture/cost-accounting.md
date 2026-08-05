@@ -31,3 +31,7 @@ The system records:
 - actual cost when the provider exposes authoritative usage or billing data.
 
 Historical events retain the pricing version used at execution time.
+
+The gateway normalizes input, cached-input, output, and reasoning tokens before applying integer-micro pricing. A reservation is created before the provider call, consumed atomically with usage and cost recording on success, or released on failure. Aggregations are available by project, task, and agent.
+
+Provider failures are typed. The fallback chain advances only for retryable failures; configuration and invalid-response errors stop immediately.
