@@ -84,9 +84,13 @@ checks immediately before committing.
 
 - Create writes and fsyncs an exclusive unpredictable sibling staging file,
   then uses a no-overwrite hard-link commit and removes the reserved staging
-  name. This avoids Node's overwriting `rename` behavior for create.
+  name. Newly created files use an explicit `0600` mode; ACLs, ownership, and
+  extended attributes are not synthesized or preserved. This avoids Node's
+  overwriting `rename` behavior for create.
 - Write writes and fsyncs a sibling staging file, revalidates the source hash,
-  and atomically renames the staged file over the target.
+  applies the verified source's ordinary permission bits (`mode & 0777`) to the
+  staging file, and atomically renames it over the target. Setuid, setgid,
+  sticky bits, ACLs, ownership, and extended attributes are not preserved.
 - Move revalidates source hash and destination absence, then renames without a
   copy/delete fallback. `EXDEV` is a definite pre-mutation failure.
 - Delete revalidates source hash and unlinks the regular file directly. M6C-lite
@@ -114,6 +118,11 @@ A process crash after the first commit never causes automatic execution retry.
 If the process observes a post-commit error it records `execution_unknown`.
 If it crashes before outcome persistence, the action and ledger remain
 `executing` for later observation and future M6D-lite recovery tooling.
+If the normal outcome transaction fails while the process remains alive after
+a successful or potentially committed mutation, a separate best-effort
+transaction records `execution_unknown` with `OutcomePersistenceFailed`. If
+that fallback also fails, the one-shot ledger remains `executing`; the mutation
+is never retried automatically.
 
 ## Audit and data handling
 

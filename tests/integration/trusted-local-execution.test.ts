@@ -1,10 +1,12 @@
 import {
+  chmodSync,
   linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -33,12 +35,15 @@ import type { AuditEventRepository } from "@ai-office/application/ports/audit-ev
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
+import type { ConnectorDefinition } from "@ai-office/connector-sdk/connector.ts";
 import { ConnectorMutationExecutionError } from "@ai-office/connector-sdk/errors.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import type { AuditEvent } from "@ai-office/domain/event/audit-event.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import { filesystemConnectorDefinition } from "@ai-office/filesystem-connector/filesystem-connector.ts";
+import { parseEffectiveFilesystemConstraints } from "@ai-office/filesystem-connector/filesystem-constraints.ts";
+import { FilesystemSandbox } from "@ai-office/filesystem-connector/filesystem-sandbox.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
@@ -77,12 +82,18 @@ class TestIds implements IdGenerator {
 }
 
 class FailAuditEvent implements AuditEventRepository {
+  private readonly eventTypes: ReadonlySet<string>;
+
   constructor(
     private readonly delegate: AuditEventRepository,
-    private readonly eventType: string,
-  ) {}
+    eventTypes: string | readonly string[],
+  ) {
+    this.eventTypes = new Set(
+      typeof eventTypes === "string" ? [eventTypes] : eventTypes,
+    );
+  }
   async append(event: AuditEvent): Promise<void> {
-    if (event.snapshot().eventType === this.eventType)
+    if (this.eventTypes.has(event.snapshot().eventType))
       throw new Error("injected audit failure");
     await this.delegate.append(event);
   }
@@ -94,7 +105,7 @@ afterEach(() => {
 
 async function fixture(
   registry = createDefaultConnectorRegistry(),
-  failAuditEvent?: string,
+  failAuditEvents?: string | readonly string[],
 ) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "ai-office-m6c-lite-")));
   roots.push(directory);
@@ -111,9 +122,9 @@ async function fixture(
   const controlled = new SqliteControlledExecutionRepository(database);
   const auditStorage = new SqliteAuditEventRepository(database);
   const audit = new RecordAuditEvent(
-    failAuditEvent === undefined
+    failAuditEvents === undefined
       ? auditStorage
-      : new FailAuditEvent(auditStorage, failAuditEvent),
+      : new FailAuditEvent(auditStorage, failAuditEvents),
     ids,
     clock,
   );
@@ -286,6 +297,8 @@ describe("M6C-lite trusted local execution", () => {
       .resolves.toMatchObject({ status: "completed" });
     expect(readFileSync(join(createContext.workspace, "src", "new.ts"), "utf8"))
       .toBe("export const created = true;\n");
+    expect(statSync(join(createContext.workspace, "src", "new.ts")).mode & 0o777)
+      .toBe(0o600);
     createContext.database.close();
 
     const writeContext = await fixture();
@@ -320,6 +333,60 @@ describe("M6C-lite trusted local execution", () => {
     expect(() => readFileSync(join(deleteContext.workspace, "src", "index.ts")))
       .toThrow();
     deleteContext.database.close();
+  });
+
+  test("write preserves ordinary executable and non-executable permission bits", async () => {
+    const context = await fixture();
+    for (const item of [
+      { path: "src/tool.sh", mode: 0o755, content: "#!/bin/sh\nexit 0\n" },
+      { path: "src/private.txt", mode: 0o640, content: "before\n" },
+    ]) {
+      const absolute = join(context.workspace, item.path);
+      writeFileSync(absolute, item.content);
+      chmodSync(absolute, item.mode);
+      const actionRequestId = await simulate(context, "filesystem.write", {
+        path: item.path,
+        content: "replacement\n",
+      });
+      await approve(context, actionRequestId);
+      await expect(
+        context.execute.execute({ projectId: "project-1", actionRequestId }),
+      ).resolves.toMatchObject({ status: "completed" });
+      expect(readFileSync(absolute, "utf8")).toBe("replacement\n");
+      expect(statSync(absolute).mode & 0o777).toBe(item.mode);
+    }
+    context.database.close();
+  });
+
+  test("a zero-progress staging write fails closed without mutating the target", async () => {
+    const zeroProgressDefinition: ConnectorDefinition = {
+      ...filesystemConnectorDefinition,
+      executeMutation: async (input) => {
+        if (input.resource.externalRef === undefined)
+          throw new Error("missing test root");
+        return new FilesystemSandbox(
+          input.resource.externalRef,
+          parseEffectiveFilesystemConstraints(input.effectiveConstraints),
+          { writeStagedChunk: () => 0 },
+          input.signal,
+        ).executeMutation(input.operation, input.arguments, input.preconditions);
+      },
+    };
+    const context = await fixture(new ConnectorRegistry([zeroProgressDefinition]));
+    const actionRequestId = await simulate(context, "filesystem.write", {
+      path: "src/index.ts",
+      content: "replacement\n",
+    });
+    await approve(context, actionRequestId);
+    await expect(
+      context.execute.execute({ projectId: "project-1", actionRequestId }),
+    ).resolves.toMatchObject({
+      status: "failed",
+      failureCode: "FilesystemWriteProgressError",
+    });
+    expect(readFileSync(join(context.workspace, "src", "index.ts"), "utf8"))
+      .toBe("export const value = 1;\n");
+    context.database.close();
   });
 
   test("reject is terminal and execution without an approved binding is denied", async () => {
@@ -635,7 +702,7 @@ describe("M6C-lite trusted local execution", () => {
     context.database.close();
   });
 
-  test("audit failure rolls back leases, while post-mutation outcome failure leaves observable executing", async () => {
+  test("execution-start audit failure rolls back the lease before mutation", async () => {
     const startFailure = await fixture(
       createDefaultConnectorRegistry(),
       "action_execution_started",
@@ -655,7 +722,9 @@ describe("M6C-lite trusted local execution", () => {
     expect(() => readFileSync(join(startFailure.workspace, "src", "start-failure.ts")))
       .toThrow();
     startFailure.database.close();
+  });
 
+  test("completion persistence failure falls back to execution_unknown", async () => {
     const outcomeFailure = await fixture(
       createDefaultConnectorRegistry(),
       "action_execution_completed",
@@ -667,17 +736,56 @@ describe("M6C-lite trusted local execution", () => {
     await approve(outcomeFailure, outcomeId);
     await expect(
       outcomeFailure.execute.execute({ projectId: "project-1", actionRequestId: outcomeId }),
-    ).rejects.toThrow("injected audit failure");
+    ).resolves.toMatchObject({
+      status: "execution_unknown",
+      failureCode: "OutcomePersistenceFailed",
+    });
     expect(readFileSync(join(outcomeFailure.workspace, "src", "outcome-failure.ts"), "utf8"))
       .toBe("written\n");
     expect((await outcomeFailure.capabilities.findActionRequest(outcomeId))?.snapshot().status)
-      .toBe("executing");
-    expect((await outcomeFailure.controlled.findExecutionByAction(outcomeId, "project-1"))?.snapshot().status)
-      .toBe("executing");
+      .toBe("execution_unknown");
+    expect((await outcomeFailure.controlled.findExecutionByAction(outcomeId, "project-1"))?.snapshot())
+      .toMatchObject({
+        status: "execution_unknown",
+        failureCode: "OutcomePersistenceFailed",
+      });
+    expect(
+      outcomeFailure.database
+        .query<{ event_type: string }, []>(
+          "SELECT event_type FROM audit_event WHERE event_type LIKE 'action_execution_%' ORDER BY occurred_at, id",
+        )
+        .all()
+        .map((row) => row.event_type),
+    ).toEqual(["action_execution_started", "action_execution_unknown"]);
     await expect(
       outcomeFailure.execute.execute({ projectId: "project-1", actionRequestId: outcomeId }),
     ).rejects.toBeInstanceOf(InvalidActionExecutionStateError);
     outcomeFailure.database.close();
+  });
+
+  test("a failed outcome fallback leaves the one-shot execution observable as executing", async () => {
+    const context = await fixture(createDefaultConnectorRegistry(), [
+      "action_execution_completed",
+      "action_execution_unknown",
+    ]);
+    const actionRequestId = await simulate(context, "filesystem.create", {
+      path: "src/double-outcome-failure.ts",
+      content: "written\n",
+    });
+    await approve(context, actionRequestId);
+    await expect(
+      context.execute.execute({ projectId: "project-1", actionRequestId }),
+    ).rejects.toThrow("injected audit failure");
+    expect(readFileSync(join(context.workspace, "src", "double-outcome-failure.ts"), "utf8"))
+      .toBe("written\n");
+    expect((await context.capabilities.findActionRequest(actionRequestId))?.snapshot().status)
+      .toBe("executing");
+    expect((await context.controlled.findExecutionByAction(actionRequestId, "project-1"))?.snapshot().status)
+      .toBe("executing");
+    await expect(
+      context.execute.execute({ projectId: "project-1", actionRequestId }),
+    ).rejects.toBeInstanceOf(InvalidActionExecutionStateError);
+    context.database.close();
   });
 
   test("an extra current grant invalidates the approved effective authorization", async () => {

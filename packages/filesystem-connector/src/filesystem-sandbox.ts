@@ -1,6 +1,7 @@
 import {
   closeSync,
   constants,
+  fchmodSync,
   fstatSync,
   fsyncSync,
   linkSync,
@@ -41,6 +42,7 @@ import {
   FilesystemOutputTooLargeError,
   FilesystemSourceChangedError,
   FilesystemSymlinkDeniedError,
+  FilesystemWriteProgressError,
   InvalidRelativePathError,
   SensitiveFilesystemPathError,
   SourcePreconditionFailedError,
@@ -75,7 +77,15 @@ export interface FilesystemSandboxHooks {
   beforeMutationCommit?(operation: string): void;
   afterMutationCommit?(operation: string): void;
   beforeParentFsync?(operation: string): void;
+  writeStagedChunk?(
+    descriptor: number,
+    bytes: Uint8Array,
+    offset: number,
+    length: number,
+  ): number;
 }
+
+const DEFAULT_CREATED_FILE_MODE = 0o600;
 
 interface TraversalBudget {
   visitedEntries: number;
@@ -442,7 +452,7 @@ export class FilesystemSandbox {
     this.assertInlineContent(content);
     const bytes = Buffer.from(content, "utf8");
     const contentHash = sha256Bytes(bytes);
-    return this.withStagedFile(path, bytes, (temp, target, markCommitted) => {
+    return this.withStagedFile(path, bytes, DEFAULT_CREATED_FILE_MODE, (temp, target, markCommitted) => {
       this.verifyPreconditions(preconditions);
       this.hooks.beforeMutationCommit?.("filesystem.create");
       linkSync(temp, target);
@@ -467,7 +477,12 @@ export class FilesystemSandbox {
     this.assertInlineContent(content);
     const bytes = Buffer.from(content, "utf8");
     const contentHash = sha256Bytes(bytes);
-    return this.withStagedFile(path, bytes, (temp, target, markCommitted) => {
+    this.verifyPreconditions(preconditions);
+    const source = this.inspect(path);
+    if (!source.stats.isFile()) throw new FilesystemNotRegularFileError();
+    if (source.stats.nlink > 1) throw new FilesystemHardLinkDeniedError();
+    const sourcePermissionBits = source.stats.mode & 0o777;
+    return this.withStagedFile(path, bytes, sourcePermissionBits, (temp, target, markCommitted) => {
       this.verifyPreconditions(preconditions);
       this.hooks.beforeMutationCommit?.("filesystem.write");
       renameSync(temp, target);
@@ -563,6 +578,7 @@ export class FilesystemSandbox {
   private withStagedFile<T>(
     path: string,
     bytes: Uint8Array,
+    mode: number,
     commit: (
       tempAbsolute: string,
       targetAbsolute: string,
@@ -601,8 +617,16 @@ export class FilesystemSandbox {
       let offset = 0;
       while (offset < bytes.byteLength) {
         this.throwIfAborted();
-        offset += writeSync(descriptor, bytes, offset, bytes.byteLength - offset);
+        const written = this.hooks.writeStagedChunk?.(
+          descriptor,
+          bytes,
+          offset,
+          bytes.byteLength - offset,
+        ) ?? writeSync(descriptor, bytes, offset, bytes.byteLength - offset);
+        if (written <= 0) throw new FilesystemWriteProgressError();
+        offset += written;
       }
+      fchmodSync(descriptor, mode & 0o777);
       fsyncSync(descriptor);
       closeSync(descriptor);
       descriptor = undefined;

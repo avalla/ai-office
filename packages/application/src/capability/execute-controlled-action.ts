@@ -9,7 +9,7 @@ import {
   ConnectorMutationExecutionError,
 } from "@ai-office/connector-sdk/errors.ts";
 import { ActionExecution } from "@ai-office/domain/capability/action-execution.ts";
-import type { ActionRequest } from "@ai-office/domain/capability/action-request.ts";
+import { ActionRequest } from "@ai-office/domain/capability/action-request.ts";
 import type { ActionSimulation } from "@ai-office/domain/capability/action-simulation.ts";
 import type { Resource } from "@ai-office/domain/capability/capability.ts";
 import {
@@ -40,6 +40,8 @@ interface ExecutionLease {
   operation: ConnectorOperationDescriptor;
   resource: Resource;
 }
+
+const outcomePersistenceFailureCode = "OutcomePersistenceFailed";
 
 export interface ExecutedControlledAction {
   actionRequestId: string;
@@ -104,20 +106,32 @@ export class ExecuteControlledAction {
         error instanceof ConnectorMutationExecutionError
           ? error.code
           : "UnexpectedConnectorError";
-      await this.finish(lease, status, failureCode);
+      const persisted = await this.finishWithFallback(lease, status, failureCode);
       return {
         actionRequestId: input.actionRequestId,
         executionId: lease.execution.snapshot().id,
-        status,
-        failureCode,
+        status: persisted.status,
+        ...(persisted.failureCode === undefined
+          ? {}
+          : { failureCode: persisted.failureCode }),
       };
     }
-    await this.finish(lease, "completed", undefined, result);
+    const persisted = await this.finishWithFallback(
+      lease,
+      "completed",
+      undefined,
+      result,
+    );
     return {
       actionRequestId: input.actionRequestId,
       executionId: lease.execution.snapshot().id,
-      status: "completed",
-      ...(result.resultHash === undefined ? {} : { resultHash: result.resultHash }),
+      status: persisted.status,
+      ...(persisted.failureCode === undefined
+        ? {}
+        : { failureCode: persisted.failureCode }),
+      ...(persisted.status !== "completed" || result.resultHash === undefined
+        ? {}
+        : { resultHash: result.resultHash }),
     };
   }
 
@@ -281,15 +295,17 @@ export class ExecuteControlledAction {
   ): Promise<void> {
     const action = lease.request.snapshot();
     const finishedAt = this.clock.now();
+    const execution = ActionExecution.restore(lease.execution.snapshot());
+    const request = ActionRequest.restore(lease.request.snapshot());
     if (status === "completed")
-      lease.execution.complete(finishedAt, result?.resultHash);
-    else if (status === "failed") lease.execution.fail(finishedAt, failureCode!);
-    else lease.execution.markUnknown(finishedAt, failureCode!);
-    lease.request.transition(status, finishedAt, "mutation", true);
+      execution.complete(finishedAt, result?.resultHash);
+    else if (status === "failed") execution.fail(finishedAt, failureCode!);
+    else execution.markUnknown(finishedAt, failureCode!);
+    request.transition(status, finishedAt, "mutation", true);
     await this.transactions.run(async () => {
       if (
         !(await this.controlled.transitionExecution({
-          id: lease.execution.snapshot().id,
+          id: execution.snapshot().id,
           projectId: action.projectId,
           expectedStatus: "executing",
           status,
@@ -327,7 +343,7 @@ export class ExecuteControlledAction {
         actorType: "system",
         projectId: action.projectId,
         aggregateType: "action_execution",
-        aggregateId: lease.execution.snapshot().id,
+        aggregateId: execution.snapshot().id,
         payload: {
           actionRequestId: action.id,
           ...(failureCode === undefined ? {} : { failureCode }),
@@ -343,6 +359,103 @@ export class ExecuteControlledAction {
           ...(result?.audit.byteLength === undefined
             ? {}
             : { byteLength: result.audit.byteLength }),
+        },
+      });
+    });
+  }
+
+  private async finishWithFallback(
+    lease: ExecutionLease,
+    status: "completed" | "failed" | "execution_unknown",
+    failureCode?: string,
+    result?: ConnectorMutationExecutionResult,
+  ): Promise<{
+    status: "completed" | "failed" | "execution_unknown";
+    failureCode?: string;
+  }> {
+    try {
+      await this.finish(lease, status, failureCode, result);
+      return {
+        status,
+        ...(failureCode === undefined ? {} : { failureCode }),
+      };
+    } catch (error) {
+      if (status === "failed") throw error;
+      try {
+        await this.persistOutcomeFailureAsUnknown(lease);
+        return {
+          status: "execution_unknown",
+          failureCode: outcomePersistenceFailureCode,
+        };
+      } catch {
+        throw error;
+      }
+    }
+  }
+
+  private async persistOutcomeFailureAsUnknown(
+    lease: ExecutionLease,
+  ): Promise<void> {
+    const leasedAction = lease.request.snapshot();
+    await this.transactions.run(async () => {
+      const request = await this.repository.findActionRequest(leasedAction.id);
+      const execution = await this.controlled.findExecutionByAction(
+        leasedAction.id,
+        leasedAction.projectId,
+      );
+      if (request === null || execution === null)
+        throw new InvalidActionExecutionStateError(
+          "Execution outcome cannot be recovered",
+        );
+      const action = request.snapshot();
+      const currentExecution = execution.snapshot();
+      if (
+        action.projectId !== leasedAction.projectId ||
+        action.status !== "executing" ||
+        currentExecution.status !== "executing"
+      )
+        throw new InvalidActionExecutionStateError(
+          "Execution outcome cannot be recovered",
+        );
+      const finishedAt = this.clock.now();
+      execution.markUnknown(finishedAt, outcomePersistenceFailureCode);
+      request.transition("execution_unknown", finishedAt, "mutation", true);
+      if (
+        !(await this.controlled.transitionExecution({
+          id: currentExecution.id,
+          projectId: action.projectId,
+          expectedStatus: "executing",
+          status: "execution_unknown",
+          completedAt: finishedAt,
+          failureCode: outcomePersistenceFailureCode,
+        }))
+      )
+        throw new InvalidActionExecutionStateError(
+          "Execution outcome changed concurrently",
+        );
+      if (
+        !(await this.repository.transitionActionRequest({
+          id: action.id,
+          projectId: action.projectId,
+          expectedStatus: "executing",
+          status: "execution_unknown",
+          updatedAt: finishedAt,
+        }))
+      )
+        throw new ConcurrentActionTransitionError(
+          action.id,
+          "executing",
+          "execution_unknown",
+        );
+      await this.audit.execute({
+        eventType: "action_execution_unknown",
+        actorType: "system",
+        projectId: action.projectId,
+        aggregateType: "action_execution",
+        aggregateId: currentExecution.id,
+        payload: {
+          actionRequestId: action.id,
+          failureCode: outcomePersistenceFailureCode,
         },
       });
     });

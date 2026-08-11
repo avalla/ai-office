@@ -125,3 +125,10 @@ export class FilesystemOperationAbortedError extends FilesystemConnectorError {
     this.name = "FilesystemOperationAbortedError";
   }
 }
+
+export class FilesystemWriteProgressError extends FilesystemConnectorError {
+  constructor() {
+    super("Filesystem staging write made no progress");
+    this.name = "FilesystemWriteProgressError";
+  }
+}
