@@ -28,7 +28,7 @@ ADD COLUMN source TEXT NOT NULL DEFAULT 'deterministic'
 CHECK (source IN ('deterministic', 'llm'));
 
 ALTER TABLE project_question
-ADD COLUMN generation_id TEXT REFERENCES onboarding_generation(id) ON DELETE SET NULL;
+ADD COLUMN generation_id TEXT REFERENCES onboarding_generation(id) ON DELETE CASCADE;
 
 ALTER TABLE project_question
 ADD COLUMN answer_type TEXT NOT NULL DEFAULT 'text'

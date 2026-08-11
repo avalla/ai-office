@@ -266,8 +266,78 @@ describe("migration upgrades", () => {
         "generation-b-completed",
       ),
     ).not.toThrow();
+    expect(() =>
+      database
+        .prepare(
+          `UPDATE onboarding_generation
+           SET status='failed', batch_status=NULL, failure_code='ProviderError'
+           WHERE id='generation-b-completed'`,
+        )
+        .run(),
+    ).toThrow("generation update violates question ownership");
 
     expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(
+      database
+        .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
+        .get(),
+    ).toEqual({ integrity_check: "ok" });
+    database.close();
+  });
+
+  test("deletes generated LLM questions with their project and generation", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-onboarding-delete-"));
+    roots.push(root);
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, migrations);
+    const createdAt = "2026-08-05T00:00:00.000Z";
+    database
+      .prepare(
+        `INSERT INTO project(id,name,description,created_at,updated_at)
+         VALUES ('project','Project',NULL,?,?)`,
+      )
+      .run(createdAt, createdAt);
+    database
+      .prepare(
+        `INSERT INTO onboarding_generation(
+           id, project_id, provider, model, prompt_version, input_hash, round,
+           status, batch_status, failure_code, created_at
+         ) VALUES ('generation','project','mock','model','project-onboarding-v1',?,1,
+                   'completed','needs_more_context',NULL,?)`,
+      )
+      .run("d".repeat(64), createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_question(
+           id, project_id, key, question, normalized_question, reason,
+           answer_category, answer_type, priority, source, generation_id
+         ) VALUES (
+           'question','project','question','Question?','goal:question?',
+           'Generated question','goal','text',50,'llm','generation'
+         )`,
+      )
+      .run();
+
+    expect(() =>
+      database.prepare("DELETE FROM project WHERE id='project'").run(),
+    ).not.toThrow();
+    expect(
+      database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM onboarding_generation",
+        )
+        .get()?.count,
+    ).toBe(0);
+    expect(
+      database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM project_question",
+        )
+        .get()?.count,
+    ).toBe(0);
+    expect(
+      database.query<{ id: string }, []>("PRAGMA foreign_key_check").all(),
+    ).toEqual([]);
     expect(
       database
         .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
