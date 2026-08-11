@@ -39,6 +39,9 @@ import {
   CapabilityPrincipalNotFoundError,
   CapabilityProjectMismatchError,
   ConcurrentActionTransitionError,
+  ActionSimulationConflictError,
+  InvalidConnectorInvocationStateError,
+  StaleActionAuthorizationError,
   ResourceDisabledError,
   ResourceNotFoundError,
 } from "@ai-office/application/capability-errors.ts";
@@ -63,6 +66,14 @@ import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
+import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
+import {
+  ConnectorRegistryError,
+  UnsupportedConnectorError,
+  UnsupportedConnectorOperationError,
+  ConnectorExecutionUnavailableError,
+} from "@ai-office/connector-sdk/errors.ts";
+import { FilesystemConnectorError } from "@ai-office/filesystem-connector/errors.ts";
 import { handleAgentCommand } from "./commands/agent.ts";
 import { handleCostCommand } from "./commands/cost.ts";
 import { handleGovernanceCommand } from "./commands/governance.ts";
@@ -110,13 +121,14 @@ Commands:
   review:decide --project <id> --review <id> --actor <name> --decision <approved|rejected> [--rationale <text>]
   governance:profile --project <id>
   governance:export --project <id>
-  resource:create --project <id> --type <type> --provider fake --name <name> [--external-ref <ref>] [--configuration <json>]
+  resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>
   resource:disable --project <id> --resource <id>
   capability:grant --project <id> --principal-type <type> --principal <id> --resource <id> --actions <csv> --granted-by <id> --reason <text> [--constraints <json>] [--valid-from <iso>] [--expires-at <iso>]
   capability:list --project <id>
   capability:revoke --project <id> --grant <id> --revoked-by <id>
   action:request --project <id> --agent <id> --resource <id> --operation <name> [--arguments <json>]
+  action:invoke --project <id> (--action <id> | --agent <id> --resource <id> --operation <name> [--arguments <json>])
   action:list --project <id>
   action:show --project <id> --action <id>`;
 
@@ -154,6 +166,7 @@ const commands = [
   "capability:list",
   "capability:revoke",
   "action:request",
+  "action:invoke",
   "action:list",
   "action:show",
 ] as const;
@@ -221,11 +234,19 @@ function formatKnownError(error: unknown): string | null {
     error instanceof CapabilityProjectMismatchError ||
     error instanceof ActionRequestNotFoundError ||
     error instanceof ConcurrentActionTransitionError ||
+    error instanceof ActionSimulationConflictError ||
+    error instanceof InvalidConnectorInvocationStateError ||
+    error instanceof StaleActionAuthorizationError ||
     error instanceof CapabilityValidationError ||
     error instanceof CanonicalSerializationError ||
     error instanceof InvalidActionTransitionError ||
     error instanceof InvalidActionTimestampError ||
-    error instanceof TransactionAlreadyActiveError
+    error instanceof TransactionAlreadyActiveError ||
+    error instanceof ConnectorRegistryError ||
+    error instanceof UnsupportedConnectorError ||
+    error instanceof UnsupportedConnectorOperationError ||
+    error instanceof ConnectorExecutionUnavailableError ||
+    error instanceof FilesystemConnectorError
   )
     return error.message;
   return null;
@@ -281,6 +302,7 @@ export async function runCli(
       ids,
       clock,
       transactions: new SqliteTransactionRunner(database),
+      connectors: createDefaultConnectorRegistry(),
     };
     for (const handler of handlers) {
       const result = await handler(command, commandArguments, context);

@@ -4,6 +4,7 @@ import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate
 import { ListCapabilityRecords } from "@ai-office/application/capability/list-capability-records.ts";
 import { RegisterResource } from "@ai-office/application/capability/register-resource.ts";
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
+import { InvokeControlledConnectorAction } from "@ai-office/application/capability/invoke-controlled-connector-action.ts";
 import { RevokeCapabilityGrant } from "@ai-office/application/capability/revoke-capability-grant.ts";
 import type {
   CapabilityPrincipalType,
@@ -65,6 +66,19 @@ function optionalDate(
   return date;
 }
 
+function publicActionArguments(operation: string, value: unknown): unknown {
+  if (
+    (operation === "filesystem.create" || operation === "filesystem.write") &&
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  ) {
+    const record = value as Readonly<Record<string, unknown>>;
+    return { ...record, content: "[REDACTED]" };
+  }
+  return value;
+}
+
 export async function handleCapabilityCommand(
   command: string,
   args: string[],
@@ -78,6 +92,7 @@ export async function handleCapabilityCommand(
     ids,
     clock,
     transactions,
+    connectors,
     io,
   } = context;
   const records = new ListCapabilityRecords(capabilities);
@@ -102,6 +117,7 @@ export async function handleCapabilityCommand(
       ids,
       clock,
       transactions,
+      connectors,
     ).execute({
       projectId: requiredOption(parsed, "project"),
       type,
@@ -176,6 +192,7 @@ export async function handleCapabilityCommand(
       ids,
       clock,
       transactions,
+      connectors,
     ).execute({
       projectId: requiredOption(parsed, "project"),
       principalType,
@@ -224,7 +241,12 @@ export async function handleCapabilityCommand(
       args,
       new Set(["project", "agent", "resource", "operation", "arguments"]),
     );
-    const evaluator = new EvaluateActionPolicy(runtime, capabilities, clock);
+    const evaluator = new EvaluateActionPolicy(
+      runtime,
+      capabilities,
+      clock,
+      connectors,
+    );
     const result = await new RequestControlledAction(
       evaluator,
       capabilities,
@@ -241,6 +263,81 @@ export async function handleCapabilityCommand(
     });
     io.stdout(`Action request: ${result.request.snapshot().id}`);
     io.stdout(`Decision: ${result.outcome}`);
+    return result.outcome === "denied" ? 2 : 0;
+  }
+  if (command === "action:invoke") {
+    const parsed = parseArguments(
+      args,
+      new Set([
+        "project",
+        "action",
+        "agent",
+        "resource",
+        "operation",
+        "arguments",
+      ]),
+    );
+    const projectId = requiredOption(parsed, "project");
+    const evaluator = new EvaluateActionPolicy(
+      runtime,
+      capabilities,
+      clock,
+      connectors,
+    );
+    const requestAction = new RequestControlledAction(
+      evaluator,
+      capabilities,
+      audit,
+      ids,
+      clock,
+      transactions,
+    );
+    const service = new InvokeControlledConnectorAction(
+      requestAction,
+      capabilities,
+      audit,
+      ids,
+      clock,
+      transactions,
+      connectors,
+      evaluator,
+    );
+    const actionRequestId = parsed.options.get("action");
+    if (
+      actionRequestId !== undefined &&
+      ["agent", "resource", "operation", "arguments"].some((name) =>
+        parsed.options.has(name),
+      )
+    )
+      throw new CliUsageError(
+        "Option --action cannot be combined with action request options",
+      );
+    const result =
+      actionRequestId === undefined
+        ? await service.execute({
+            projectId,
+            agentId: requiredOption(parsed, "agent"),
+            resourceId: requiredOption(parsed, "resource"),
+            operation: requiredOption(parsed, "operation"),
+            arguments: jsonObject(parsed.options.get("arguments"), "arguments"),
+          })
+        : await service.invokeAuthorized({ projectId, actionRequestId });
+    io.stdout(`Action request: ${result.requestId}`);
+    io.stdout(`Status: ${result.status}`);
+    if (result.result !== undefined)
+      io.stdout(`Result: ${canonicalStringify(result.result)}`);
+    if (result.simulation !== undefined) {
+      const simulation = result.simulation.snapshot();
+      io.stdout(
+        `Simulation: ${canonicalStringify({
+          id: simulation.id,
+          preconditions: simulation.preconditions,
+          diff: simulation.diff,
+          diffSha256: simulation.diffSha256,
+          artifactSha256: simulation.artifactSha256,
+        })}`,
+      );
+    }
     return result.outcome === "denied" ? 2 : 0;
   }
   if (command === "action:list") {
@@ -268,6 +365,10 @@ export async function handleCapabilityCommand(
     io.stdout(
       canonicalStringify({
         ...value,
+        normalizedArguments: publicActionArguments(
+          value.operation,
+          value.normalizedArguments,
+        ),
         createdAt: value.createdAt.toISOString(),
         updatedAt: value.updatedAt.toISOString(),
       }),
