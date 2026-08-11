@@ -13,11 +13,11 @@ export type ActionStatus =
   | "simulating"
   | "simulated"
   | "approval_pending"
-  | "approved"
   | "rejected"
   | "executing"
   | "completed"
   | "failed"
+  | "execution_unknown"
   | "cancelled"
   | "expired";
 
@@ -61,12 +61,12 @@ const transitions: Record<ActionStatus, readonly ActionStatus[]> = {
   denied: [],
   simulating: ["simulated", "failed"],
   simulated: ["approval_pending"],
-  approval_pending: [],
-  approved: [],
+  approval_pending: ["executing", "rejected"],
   rejected: [],
-  executing: ["completed", "failed"],
+  executing: ["completed", "failed", "execution_unknown"],
   completed: [],
   failed: [],
+  execution_unknown: [],
   cancelled: [],
   expired: [],
 };
@@ -77,8 +77,13 @@ function isDecisionStatusCompatible(
 ): boolean {
   if (decision === "deny") return status === "requested" || status === "denied";
   if (status === "denied") return false;
-  if (status === "executing" || status === "completed")
-    return decision === "allow";
+  if (status === "failed") return true;
+  if (
+    status === "executing" ||
+    status === "completed" ||
+    status === "execution_unknown"
+  )
+    return decision === "allow" || decision === "allow_with_approval";
   if (status === "simulating" || status === "simulated")
     return (
       decision === "allow_simulation_only" || decision === "allow_with_approval"
@@ -164,6 +169,20 @@ export class ActionRequest {
       (this.props.decision !== "allow_with_approval" || !requiresApproval)
     )
       throw new InvalidActionTransitionError(this.props.status, status);
+    if (this.props.status === "approval_pending") {
+      const validExecutionLease =
+        status === "executing" &&
+        operationMode === "mutation" &&
+        requiresApproval &&
+        this.props.decision === "allow_with_approval";
+      const validRejection =
+        status === "rejected" &&
+        operationMode === "mutation" &&
+        requiresApproval &&
+        this.props.decision === "allow_with_approval";
+      if (!validExecutionLease && !validRejection)
+        throw new InvalidActionTransitionError(this.props.status, status);
+    }
     if (
       !Number.isFinite(now.getTime()) ||
       now.getTime() < this.props.updatedAt.getTime()
