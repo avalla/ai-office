@@ -21,6 +21,8 @@ export type ActionStatus =
   | "cancelled"
   | "expired";
 
+export type ActionOperationMode = "read" | "mutation";
+
 export interface CanonicalActionPayload {
   schemaVersion: 1;
   projectId: string;
@@ -55,14 +57,14 @@ export interface ActionRequestProps {
 
 const transitions: Record<ActionStatus, readonly ActionStatus[]> = {
   requested: ["authorized", "denied"],
-  authorized: ["simulating"],
+  authorized: ["simulating", "executing"],
   denied: [],
-  simulating: ["simulated"],
+  simulating: ["simulated", "failed"],
   simulated: ["approval_pending"],
   approval_pending: [],
   approved: [],
   rejected: [],
-  executing: [],
+  executing: ["completed", "failed"],
   completed: [],
   failed: [],
   cancelled: [],
@@ -74,7 +76,15 @@ function isDecisionStatusCompatible(
   status: ActionStatus,
 ): boolean {
   if (decision === "deny") return status === "requested" || status === "denied";
-  return status !== "denied";
+  if (status === "denied") return false;
+  if (status === "executing" || status === "completed")
+    return decision === "allow";
+  if (status === "simulating" || status === "simulated")
+    return (
+      decision === "allow_simulation_only" || decision === "allow_with_approval"
+    );
+  if (status === "approval_pending") return decision === "allow_with_approval";
+  return true;
 }
 
 export class ActionRequest {
@@ -123,10 +133,36 @@ export class ActionRequest {
     });
   }
 
-  transition(status: ActionStatus, now: Date): void {
+  transition(
+    status: ActionStatus,
+    now: Date,
+    operationMode?: ActionOperationMode,
+    requiresApproval = false,
+  ): void {
     if (!transitions[this.props.status].includes(status))
       throw new InvalidActionTransitionError(this.props.status, status);
     if (!isDecisionStatusCompatible(this.props.decision, status))
+      throw new InvalidActionTransitionError(this.props.status, status);
+    if (this.props.status === "authorized") {
+      const validReadLease =
+        status === "executing" &&
+        operationMode === "read" &&
+        !requiresApproval &&
+        this.props.decision === "allow";
+      const validMutationLease =
+        status === "simulating" &&
+        operationMode === "mutation" &&
+        (requiresApproval
+          ? this.props.decision === "allow_with_approval"
+          : this.props.decision === "allow_simulation_only");
+      if (!validReadLease && !validMutationLease)
+        throw new InvalidActionTransitionError(this.props.status, status);
+    }
+    if (
+      this.props.status === "simulated" &&
+      status === "approval_pending" &&
+      (this.props.decision !== "allow_with_approval" || !requiresApproval)
+    )
       throw new InvalidActionTransitionError(this.props.status, status);
     if (
       !Number.isFinite(now.getTime()) ||

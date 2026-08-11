@@ -5,6 +5,10 @@ import {
   type ActionRequestProps,
   type ActionStatus,
 } from "@ai-office/domain/capability/action-request.ts";
+import {
+  ActionSimulation,
+  normalizeFilePreconditions,
+} from "@ai-office/domain/capability/action-simulation.ts";
 import type {
   CapabilityGrant,
   CapabilityPrincipalType,
@@ -63,6 +67,21 @@ interface ActionRow {
   status: ActionStatus;
   created_at: string;
   updated_at: string;
+}
+
+interface SimulationRow {
+  id: string;
+  project_id: string;
+  action_request_id: string;
+  authorization_payload_hash: string;
+  connector: string;
+  connector_version: string;
+  operation: string;
+  preconditions_json: string;
+  diff: string;
+  diff_sha256: string;
+  artifact_sha256: string;
+  created_at: string;
 }
 
 const resourceColumns =
@@ -154,6 +173,26 @@ function action(row: ActionRow): ActionRequest {
     updatedAt: new Date(row.updated_at),
   };
   return ActionRequest.restore(props);
+}
+
+function simulation(row: SimulationRow): ActionSimulation {
+  const preconditions = JSON.parse(row.preconditions_json) as unknown;
+  if (!Array.isArray(preconditions))
+    throw new Error("Stored simulation preconditions are not an array");
+  return ActionSimulation.create({
+    id: row.id,
+    projectId: row.project_id,
+    actionRequestId: row.action_request_id,
+    authorizationPayloadHash: row.authorization_payload_hash,
+    connector: row.connector,
+    connectorVersion: row.connector_version,
+    operation: row.operation,
+    preconditions: normalizeFilePreconditions(preconditions),
+    diff: row.diff,
+    diffSha256: row.diff_sha256,
+    artifactSha256: row.artifact_sha256,
+    createdAt: new Date(row.created_at),
+  });
 }
 
 export class SqliteCapabilityPolicyRepository implements CapabilityPolicyRepository {
@@ -334,6 +373,50 @@ export class SqliteCapabilityPolicyRepository implements CapabilityPolicyReposit
           input.expectedStatus,
         ).changes === 1
     );
+  }
+
+  async insertActionSimulation(value: ActionSimulation): Promise<boolean> {
+    const simulation = value.snapshot();
+    return (
+      this.database
+        .prepare(
+          `INSERT OR IGNORE INTO action_simulations(
+            id, project_id, action_request_id, authorization_payload_hash,
+            connector, connector_version, operation, preconditions_json, diff,
+            diff_sha256, artifact_sha256, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          simulation.id,
+          simulation.projectId,
+          simulation.actionRequestId,
+          simulation.authorizationPayloadHash,
+          simulation.connector,
+          simulation.connectorVersion,
+          simulation.operation,
+          JSON.stringify(simulation.preconditions),
+          simulation.diff,
+          simulation.diffSha256,
+          simulation.artifactSha256,
+          simulation.createdAt.toISOString(),
+        ).changes === 1
+    );
+  }
+
+  async findActionSimulationByAction(
+    actionRequestId: string,
+    projectId: string,
+  ): Promise<ActionSimulation | null> {
+    const row = this.database
+      .query<SimulationRow, [string, string]>(
+        `SELECT id, project_id, action_request_id, authorization_payload_hash,
+          connector, connector_version, operation, preconditions_json, diff,
+          diff_sha256, artifact_sha256, created_at
+         FROM action_simulations
+         WHERE action_request_id=? AND project_id=?`,
+      )
+      .get(actionRequestId, projectId);
+    return row === null ? null : simulation(row);
   }
 
   async findActionRequest(id: string): Promise<ActionRequest | null> {

@@ -2,6 +2,7 @@ import type {
   ActionRequest,
   ActionStatus,
 } from "@ai-office/domain/capability/action-request.ts";
+import type { ActionSimulation } from "@ai-office/domain/capability/action-simulation.ts";
 import type {
   CapabilityGrant,
   Resource,
@@ -27,6 +28,11 @@ export interface CapabilityPolicyRepository {
     status: ActionStatus;
     updatedAt: Date;
   }): Promise<boolean>;
+  insertActionSimulation(simulation: ActionSimulation): Promise<boolean>;
+  findActionSimulationByAction(
+    actionRequestId: string,
+    projectId: string,
+  ): Promise<ActionSimulation | null>;
   findActionRequest(id: string): Promise<ActionRequest | null>;
   listActionRequests(projectId: string): Promise<ActionRequest[]>;
 }
