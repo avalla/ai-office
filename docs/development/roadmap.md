@@ -2,6 +2,8 @@
 
 ## M0 — Repository health
 
+Status: implemented on `main`.
+
 - install dependencies;
 - pass typecheck;
 - migration runner;
@@ -10,14 +12,18 @@
 
 ## M1 — Project and task vertical slice
 
-- create/list project;
-- create/list/start/complete task;
+Status: implemented on `main`.
+
+- create/list projects;
+- create/list tasks, with task lifecycle rules in the domain;
 - SQLite repositories;
 - event log;
 - integration tests;
 - functional CLI.
 
 ## M1.5 — Existing project onboarding
+
+Status: implemented on `main`.
 
 - canonical, idempotent local repository import;
 - deterministic language, framework, database, test, and documentation scan;
@@ -27,6 +33,8 @@
 - categorized profile view and deterministic Markdown projection.
 
 ## M2 — Local daemon
+
+Status: implemented on `main`.
 
 - daemon lifecycle over an owner-only Unix domain socket;
 - versioned local HTTP API;
@@ -38,7 +46,7 @@
 
 ## M3 — Agent runtime
 
-Status: implemented on `main`; 57 tests across 14 files at milestone completion.
+Status: implemented on `main`.
 
 - role and agent definitions;
 - agent runs;
@@ -49,7 +57,7 @@ Status: implemented on `main`; 57 tests across 14 files at milestone completion.
 
 ## M4 — LLM gateway and cost control
 
-Status: implemented on `main`; 87 tests across 18 files at milestone completion.
+Status: implemented on `main`.
 
 - provider interface;
 - provider mock and one real provider;
@@ -61,7 +69,7 @@ Status: implemented on `main`; 87 tests across 18 files at milestone completion.
 
 ## M5 — Governance
 
-Status: implemented on `main`; 110 tests across 26 files at milestone completion.
+Status: implemented on `main`.
 
 - milestones;
 - ADR workflows;
@@ -74,6 +82,8 @@ Status: implemented on `main`; 110 tests across 26 files at milestone completion
 Goal: agents must never access local or external resources directly. All real operations pass through deterministic authorization, connector boundaries, simulation, approval when required, execution-time revalidation, and audit.
 
 ### M6A — Capability model and policy engine
+
+Status: implemented on `main`.
 
 - project-scoped resource registry;
 - explicit capability grants for users, agents, roles, workflows, and applications;
@@ -97,6 +107,8 @@ Exit criteria:
 
 ### M6B — Connector SDK and filesystem sandbox
 
+Status: implemented on `main`.
+
 - common connector contract and registry;
 - operation descriptors for risk, simulation, reversibility, and approval requirements;
 - filesystem resource scopes with canonical roots;
@@ -108,17 +120,18 @@ Exit criteria:
 - binary, file-size, and output-size limits;
 - deterministic unified diff generation;
 - source hashes and execution preconditions;
-- atomic writes using temporary files and rename;
 - filesystem security and integration tests.
 
 Exit criteria:
 
 - simulations never modify real files;
-- approved writes fail when the source changes after simulation;
+- simulation artifacts deterministically capture source hashes and destination-absence preconditions for later execution;
 - paths cannot escape an allowed root through traversal or symlinks;
 - agents cannot obtain credentials or sensitive files through the connector.
 
 ### M6C-lite — Trusted local controlled execution
+
+Status: implemented on `main`.
 
 Threat model: AI Office is a local, single-user application in the user's trust
 domain. It prevents accidental or unauthorized agent access, path escape, stale
@@ -147,6 +160,8 @@ Exit criteria:
 
 ### M6D-lite — Agent controlled-action integration
 
+Status: future.
+
 - controlled-action gateway exposed to agent executors;
 - no direct filesystem or infrastructure adapter dependency in agent runtime;
 - scheduling returns run and action identifiers without blocking the daemon command FIFO;
@@ -173,6 +188,8 @@ Deferred until after M6:
 
 ## M7 — Reusable memory
 
+Status: future.
+
 - global roles and patterns;
 - project pattern adoption;
 - lesson extraction;
@@ -181,6 +198,8 @@ Deferred until after M6:
 
 ## M8 — Code intelligence
 
+Status: future.
+
 - incremental file indexing;
 - TypeScript symbol extraction;
 - import and call edges;
@@ -188,19 +207,38 @@ Deferred until after M6:
 - change-impact query;
 - optional embeddings.
 
+## M8.5 — Intelligent context assembly
+
+Status: future.
+
+- task-aware context builder;
+- memory and code retrieval;
+- dependency-aware context;
+- token-budgeted context packing;
+- provenance for assembled context.
+
 ## M9 — Productization
+
+Status: future.
+
+Focus: user-facing product surfaces, packaging, and operability.
 
 - web UI;
 - plugin SDK;
 - MCP server;
 - packaged binaries;
-- backup/export/import;
-- security review and deployment hardening.
+- backup/export/import.
 
 ## M10 — Security hardening
 
+Status: future.
+
+Focus: stronger security boundaries and hostile-local-process resilience. This
+scope is separate from M9 productization.
+
 The hardened M6C assessment, ADRs, and native spike remain the research baseline
-for this future milestone. M10 includes:
+for this future milestone. They are not production components and are not
+requirements for M6D-lite. M10 includes:
 
 - Rust/openat2 production filesystem boundary;
 - cryptographic or hardware user-presence approvals;

@@ -1,18 +1,18 @@
 # Cost accounting
 
-Every external paid operation emits a cost event.
+The LLM gateway meters provider usage and records successful calls as cost events. The CLI currently manages pricing, budgets, and reports; agent execution is still simulated and does not produce real provider usage.
 
-## Required dimensions
+## Accounting context
 
-- workspace;
-- project;
-- task;
-- agent;
-- agent run;
-- provider;
-- model;
-- purpose;
-- pricing version.
+Every metered request has:
+
+- a project;
+- a purpose;
+- provider and model identity;
+- the pricing version used;
+- optional task, agent, and agent-run dimensions.
+
+Budget scopes currently supported are project, task, agent, and agent run. Workspace and milestone budgets are not accepted by the current application.
 
 ## Cost lifecycle
 
@@ -20,19 +20,10 @@ Every external paid operation emits a cost event.
 authorize -> reserve -> execute -> measure -> consume -> release
 ```
 
-Budget checks must account for active reservations, not only historical spending.
+Budget checks account for active reservations, not only historical spending. Pricing and budget values use integer micros; floating-point money is not accepted.
 
-## Estimates and actuals
+Before a provider call, the gateway prices all fallback candidates and atomically reserves the maximum candidate estimate. Provider work happens outside the transaction. On success, the gateway normalizes input, cached-input, output, and reasoning tokens, then atomically persists usage and actual cost for the provider/model that answered. Unused reservation is not spend; actual cost above the reservation is recorded as explicit overage.
 
-The system records:
-
-- estimated cost immediately;
-- actual cost when the provider exposes authoritative usage or billing data.
-
-Historical events retain the pricing version used at execution time.
-
-The gateway normalizes input, cached-input, output, and reasoning tokens before applying integer-micro pricing. For fallback, it reserves the maximum priced candidate estimate and records the identity of the provider that actually answered. A reservation is created atomically with the budget check before the provider call, consumed atomically with usage and cost recording on success, or released on failure. Aggregations are available by project, task, agent, and agent run.
-
-Milestone budgets are deferred: the schema does not yet have a reliable milestone-to-task/run accounting relation, so the application must not claim or accept that scope.
+On failure or cancellation, the reservation is released. Provider usage is idempotent by provider plus provider request ID when that ID is available. Historical cost rows retain the pricing version used at execution time.
 
 Provider failures are typed. The fallback chain advances only for retryable failures; configuration and invalid-response errors stop immediately.

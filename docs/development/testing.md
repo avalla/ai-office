@@ -1,33 +1,30 @@
 # Testing strategy
 
-## Unit tests
+AI Office tests behavior at the narrowest useful boundary and adds integration coverage wherever transactions, persistence, transport, or side effects matter.
 
-Cover:
+## Test categories
 
-- domain state transitions;
-- cost calculation;
-- budget policy;
-- task prioritization;
-- pattern applicability.
+- **Unit:** domain transitions, policies, canonical serialization, pricing and budget math, protocol validation, and deterministic connector components.
+- **Integration:** application services with real adapters, repository round trips, transaction rollback, event/aggregate consistency, onboarding, costs, governance, capabilities, and controlled execution.
+- **SQLite and migration upgrades:** fresh migration order, schema constraints, idempotent reruns, compatibility upgrades from earlier milestone schemas, and preservation of existing project data.
+- **Security and adversarial connector:** traversal, absolute paths, symlinks, hard links, sensitive paths, binary/size limits, stale hashes, destination races, revoked grants, disabled resources, and replay attempts.
+- **Fault injection:** audit, transaction, connector, and outcome-persistence failures, including rollback and `execution_unknown` behavior around filesystem side effects.
+- **Daemon/CLI E2E:** the real Unix-socket path from CLI through daemon dispatch, application services, SQLite or connectors, and rendered CLI output.
 
-## Integration tests
+## Isolation and determinism
 
-Use temporary SQLite files and real migrations.
+Tests use deterministic clocks, IDs, providers, executors, and mocks where appropriate. Files, directories, sockets, and SQLite databases are created in temporary isolated locations and cleaned up after each test.
 
-Cover:
+Standard CI makes no paid provider calls and requires no real API credentials. Provider behavior is exercised with deterministic mocks or injected fake transport.
 
-- repository round trips;
-- transaction rollback;
-- migration order;
-- foreign keys;
-- event and aggregate consistency.
+## CI
 
-## End-to-end tests
+Pull requests and pushes to `main` run:
 
-Cover:
-
-```text
-CLI -> daemon -> application -> SQLite -> CLI output
+```bash
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
 ```
 
-Do not call paid providers in standard CI. Use deterministic mocks.
+CI also checks the committed diff for whitespace errors. Local changes should pass the same commands plus the relevant `git diff --check` comparison before review.

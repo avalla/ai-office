@@ -1,235 +1,229 @@
-# AI Office Blueprint
+# AI Office
 
-TypeScript/Bun MVP for a local virtual office. Milestones 3–5 add simulated agent execution, metered LLM provider boundaries, and database-backed governance to the local daemon foundation.
+AI Office is a local AI software office that coordinates agents, keeps structured state in SQLite, manages tasks, runs, governance, budgets, and costs, and mediates agent access to resources through capabilities and controlled actions.
 
-## Goals
+## What AI Office is
 
-- a single local daemon;
-- SQLite as the source of truth;
-- structured tasks, milestones, ADRs, agents, runs, events, and costs;
-- reusable global memory across projects;
-- separate local memory and code index;
-- a single gateway to LLM providers;
-- cost accounting per call, run, task, milestone, and project;
-- architectural boundaries compatible with extracting the core to Rust in the future.
+AI Office is a Bun and strict TypeScript monorepo built around one local daemon. The daemon owns project state, exposes a versioned HTTP protocol over an owner-only Unix socket, and routes commands through application services and explicit infrastructure ports.
 
-## Initial stack
+The product is local-first and auditable: SQLite is authoritative, generated Markdown is a projection, LLM usage is metered through a gateway, and protected resource operations are authorized through capability policy and connector boundaries.
 
-- Bun
-- strict TypeScript
-- `bun:sqlite`
-- Zod
-- Vitest
-- CLI and daemon in the same monorepo
+## Current status
+
+The current implementation on `main` includes:
+
+- a local daemon and daemon-backed CLI;
+- project creation, deterministic repository import, and onboarding;
+- tasks, agent definitions, scheduled runs, locking, and persisted run events;
+- an LLM gateway with mock and opt-in OpenAI providers;
+- versioned pricing, budgets, reservations, usage normalization, and cost accounting;
+- structured milestones, requirements, ADRs, reviews, approvals, and Markdown export;
+- deny-by-default capability policy and a project-scoped resource registry;
+- a filesystem connector with scoped reads, search, mutation simulation, and sandbox checks;
+- local approval plus trusted-local create, write, move, and delete execution;
+- SQLite persistence, migrations, audit events, and daemon/CLI workflows.
+
+Agent runs still use a deterministic simulated executor. The automatic `agent runtime -> controlled actions` integration belongs to M6D-lite and is not implemented, so AI Office is not yet autonomous end to end.
+
+## How it works
+
+```text
+CLI
+  -> HTTP over .ai-office/daemon.sock
+  -> local daemon command dispatch
+  -> application services and domain rules
+  -> SQLite repositories / LLM gateway / controlled connectors
+```
+
+Stateful CLI commands go through the daemon. Short writes use application-level transactions; provider calls, scans, simulated agent work, and filesystem side effects do not run inside an open SQLite transaction.
 
 ## Quick start
 
+Install and validate the repository:
+
 ```bash
-bun install
+bun install --frozen-lockfile
 bun run typecheck
 bun run test
 ```
 
-## Validation
-
-GitHub Actions runs frozen dependency installation, strict TypeScript
-typechecking, the Vitest suite, and a committed-diff whitespace check for every
-pull request and every push to `main`. The stacked milestone baselines are 57
-tests across 14 files for M3, 87 across 18 files for M4, and 110 across 26 files
-for M5.
-
-`bun run lint` is not part of CI yet because the repository does not have an
-ESLint 9 `eslint.config.*` configuration. The M3 executor and worktree manager
-remain deterministic simulations, M4 intentionally excludes milestone-scoped
-budgets, and no CLI command currently produces real provider usage.
-
-Start the local daemon from the repository root. It creates and migrates
-`.ai-office/project.sqlite`, then listens on `.ai-office/daemon.sock`:
+Start the daemon from the repository root:
 
 ```bash
 bun run daemon
 ```
 
-In another terminal, verify the daemon and create a project through the CLI client:
+In another terminal, check its health:
 
 ```bash
 bun run cli -- daemon:health
-bun run cli -- project:create "Demo"
-# Project created: <project-id>
 ```
 
-Use the returned ID to create and list tasks:
+The daemon creates and migrates `.ai-office/project.sqlite` and listens on `.ai-office/daemon.sock`.
+
+## Example workflow
+
+Import an existing repository, then inspect its structured profile:
 
 ```bash
+bun run cli -- project:import /path/to/repository
+# Project imported: <project-id>
+
+bun run cli -- project:profile --project <project-id>
+```
+
+For a new project without an import scan:
+
+```bash
+bun run cli -- project:create "Demo"
 bun run cli -- task:create --project <project-id> --title "First task" --priority 10
 bun run cli -- task:list --project <project-id>
 ```
 
-List output:
-
-```text
-ID                                      STATUS   PRIORITY  TITLE
-<task-id>                               pending  10        First task
-```
-
-Columns in the actual output are tab-separated. Optional descriptions are accepted through `--description`. To apply migrations without running a command:
+Run interactive onboarding with `project:onboard`, or answer persisted questions individually with `project:answer`. For current command syntax and the complete command list, use:
 
 ```bash
-bun run db:migrate
+bun run cli -- --help
 ```
 
-Import an existing repository with a deterministic local scan:
+## Architecture
 
-```bash
-bun run cli -- project:import /path/to/repository
-```
-
-The importer canonicalizes the path, reuses the same project on later imports,
-updates detected facts, records every scan, and keeps onboarding questions in
-SQLite. Continue interactively or answer individual questions for automation:
-
-```bash
-bun run cli -- project:onboard --project <project-id>
-bun run cli -- project:answer \
-  --project <project-id> \
-  --question <question-id> \
-  --answer "<value>"
-```
-
-Permission answers accept `all`, `none`, or a comma-separated selection of
-`read_files`, `modify_files`, `run_tests`, `run_shell`,
-`install_dependencies`, `create_branches`, `create_commits`, and
-`network_access`.
-
-Inspect the structured profile or regenerate its Markdown projection:
-
-```bash
-bun run cli -- project:profile --project <project-id>
-bun run cli -- project:export --project <project-id>
-```
-
-The export is written to `.ai-office/generated/project-profile.md`. The project
-database remains the source of truth.
-
-## Structure
+The implemented interface is the CLI. Web, IDE, and MCP are target interfaces, not current product surfaces.
 
 ```text
-apps/
-  daemon/              central process
-  cli/                 local client
-packages/
-  domain/              entities, value objects, and rules
-  application/         use cases and ports
-  storage-sqlite/      SQLite adapters
-  agent-runtime/       agent execution
-  llm-gateway/         providers, pricing, budgets, and usage
-  orchestration/       scheduler and workflows
-migrations/
-agents/
-patterns/
-docs/
+CLI                         Web / IDE / MCP (targets)
+  \                                   /
+   +---------- local daemon ---------+
+                    |
+           application services
+          /          |           \
+ agent runtime     memory       LLM gateway
+                         \          |
+                   controlled     providers
+                    actions
+                       |
+                capability policy
+                       |
+               connector registry
+                       |
+                resource adapters
 ```
 
-## Database
+The domain does not depend on Bun, SQLite, HTTP, Git, MCP, connector implementations, or provider SDKs. See the [architecture overview](docs/architecture/overview.md) for current boundaries and implementation notes.
 
-The architecture defines three databases:
+## Controlled actions
+
+Filesystem mutations use this explicit workflow:
 
 ```text
-~/.ai-office/global.sqlite
-<repository>/.ai-office/project.sqlite
-<repository>/.ai-office/index.sqlite
+request -> simulate -> inspect -> approve -> execute
 ```
 
-`global.sqlite` stores reusable roles, templates, patterns, and lessons.
-
-`project.sqlite` stores the authoritative project state.
-
-`index.sqlite` contains regenerable data: symbols, relationships, chunks, FTS, and embeddings.
-
-The current daemon opens and migrates `project.sqlite`. The global and index databases will be connected in their respective milestones.
-
-## Available vertical slice
-
-```text
-CLI client
-  -> HTTP over .ai-office/daemon.sock
-  -> serialized daemon command queue
-  -> CreateProject / CreateTask / ListTasks / Project onboarding
-  -> ProjectRepository / TaskRepository ports
-  -> bun:sqlite repositories
-  -> .ai-office/project.sqlite
-  -> structured response and CLI output
-```
-
-SQL migrations are versioned in `migrations/project/` and recorded in the `schema_migration` table. Running the CLI or `bun run db:migrate` again is idempotent.
-
-The daemon exposes `GET /health` and `POST /commands` only through its Unix
-domain socket. Commands are serialized, lifecycle and command events are
-appended to `audit_event`, and SIGINT/SIGTERM stop the listener gracefully.
-
-## Commands
-
-```text
-ai-office daemon:health
-ai-office project:create
-ai-office project:import
-ai-office project:onboard
-ai-office project:answer
-ai-office project:profile
-ai-office project:export
-ai-office task:create
-ai-office task:list
-ai-office agent:sync
-ai-office agent:list
-ai-office run:schedule
-ai-office run:tick
-ai-office run:list
-ai-office pricing:set
-ai-office budget:set
-ai-office cost:list
-ai-office milestone:create
-ai-office milestone:set-status
-ai-office requirement:create
-ai-office requirement:set-status
-ai-office adr:create
-ai-office adr:set-status
-ai-office review:create
-ai-office review:decide
-ai-office governance:profile
-ai-office governance:export
-```
-
-Synchronize the bundled YAML agent definitions, schedule a task, and execute it with the deterministic simulated executor:
+After creating or importing a project, synchronize agents and use the returned agent ID:
 
 ```bash
 bun run cli -- agent:sync --project <project-id> --directory agents
 bun run cli -- agent:list --project <project-id>
-bun run cli -- run:schedule --project <project-id> --task <task-id> --agent agent:<project-id>:developer
-bun run cli -- run:tick --project <project-id>
-bun run cli -- run:list --project <project-id>
+
+bun run cli -- resource:create \
+  --project <project-id> \
+  --type filesystem_scope \
+  --provider filesystem \
+  --name Workspace \
+  --external-ref /absolute/path/to/workspace
+
+bun run cli -- capability:grant \
+  --project <project-id> \
+  --principal-type agent \
+  --principal <agent-id> \
+  --resource <resource-id> \
+  --actions filesystem.create \
+  --constraints '{"allowMutation":true}' \
+  --granted-by local-owner \
+  --reason "Create files in this workspace"
+
+bun run cli -- action:request \
+  --project <project-id> \
+  --agent <agent-id> \
+  --resource <resource-id> \
+  --operation filesystem.create \
+  --arguments '{"path":"notes/example.txt","content":"Created by AI Office\n"}'
+
+bun run cli -- action:invoke --project <project-id> --action <action-id>
+bun run cli -- action:show --project <project-id> --action <action-id>
+bun run cli -- action:approve --project <project-id> --action <action-id> --actor local-user
+bun run cli -- action:execute --project <project-id> --action <action-id>
 ```
 
-Pricing is versioned and budgets include active reservations. Values are integer micros in the selected currency:
+Simulation is not mutation. Every filesystem v2 mutation requires approval, execution performs fresh authorization and precondition checks, and one action can obtain at most one execution attempt. `action:show` redacts create/write content.
 
-```bash
-bun run cli -- pricing:set --provider mock --model model --currency USD --input 1000000 --cached-input 500000 --output 2000000 --reasoning 3000000
-bun run cli -- budget:set --project <project-id> --limit 10000000
-bun run cli -- cost:list --project <project-id> --group-by project
-```
+## Storage model
 
-Governance data is authoritative in SQLite. `governance:export` regenerates `.ai-office/generated/governance.md`.
+The architecture separates three kinds of state:
 
-## For Codex
+- `<repository>/.ai-office/project.sqlite` is authoritative project state. It is implemented and currently stores projects, tasks, onboarding, agents, runs, costs, governance, capabilities, controlled actions, and audit events.
+- `~/.ai-office/global.sqlite` is intended for reusable roles, patterns, and lessons across projects. An initial schema exists, but the daemon does not yet open or manage this database.
+- `<repository>/.ai-office/index.sqlite` is intended for regenerable code intelligence such as files, symbols, edges, chunks, and FTS. An initial schema exists, but indexing and daemon integration are future work.
 
-Read these files first:
+Project migrations are versioned under `migrations/project/` and tracked in `schema_migration`. Reapplying the migration runner is idempotent with respect to that tracking table.
 
-1. `CODEX.md`
-2. `docs/architecture/overview.md`
-3. `docs/development/roadmap.md`
-4. `docs/adr/ADR-0001-sqlite.md`
-
-The current implementation delivers the following working vertical slice:
+## Repository structure
 
 ```text
-CLI → Unix socket → daemon queue → application service → SQLite → CLI response
+apps/
+  daemon/                 local process and protocol boundary
+  cli/                    daemon-backed command-line client
+packages/
+  domain/                 entities, value objects, and rules
+  application/            use cases and ports
+  storage-sqlite/         SQLite adapters and migration runner
+  agent-runtime/          agent definitions and simulated execution
+  llm-gateway/            providers, pricing, budgets, and usage
+  orchestration/          scheduling abstractions
+  connector-sdk/          connector contracts and registry
+  filesystem-connector/   scoped filesystem adapter and sandbox
+migrations/               project, global, and index SQL migrations
+agents/                    bundled YAML agent definitions
+patterns/                  reusable pattern source material
+docs/                      architecture, development, ADRs, and history
+spikes/                    research prototypes; not production code
+tests/                     unit, integration, security, and daemon/CLI E2E tests
 ```
+
+The Rust/native filesystem work under `spikes/` is research evidence for future hardening. It is not linked into the production connector.
+
+## Development
+
+Primary local validation is:
+
+```bash
+bun run typecheck
+bun run test
+git diff --check
+```
+
+CI installs dependencies with the frozen lockfile, runs strict TypeScript typechecking and the deterministic Vitest suite, and checks the committed diff for whitespace errors. Standard CI does not make paid provider calls.
+
+Read [CODEX.md](CODEX.md) before changing code. It defines the operating contract, invariants, scope rules, and definition of done.
+
+## Documentation
+
+The [documentation index](docs/README.md) explains which documents are current architectural truth and which preserve milestone-specific or historical research. In short:
+
+- README: product overview and getting started;
+- CODEX: development operating contract;
+- architecture docs: current architectural truth;
+- roadmap: milestone scope and status;
+- accepted ADRs: architectural decisions;
+- implementation docs: historical and milestone detail;
+- `bun run cli -- --help`: command syntax.
+
+## Roadmap
+
+The authoritative [development roadmap](docs/development/roadmap.md) records completed and future milestones. The next controlled-action milestone is M6D-lite, which will connect agent execution to the controlled-action gateway. Reusable memory, code intelligence, context assembly, productization, and hostile-local security hardening remain future work.
+
+## Security and current trust model
+
+M6C-lite assumes a local, single-user deployment in the user's trust domain. It protects against accidental or unauthorized agent access, path escape, sensitive-path access, stale simulations and capabilities, replay, and unapproved filesystem mutation.
+
+It does not defend against a hostile process running with the same Unix credentials and concurrently mutating the same filesystem namespace. Local approval records an operator-supplied audit identity; it is not cryptographic proof of human presence. Rust/`openat2`, authenticated approvals, tamper-evident audit, and stronger crash reconciliation are M10 research and roadmap items, not production claims today.
