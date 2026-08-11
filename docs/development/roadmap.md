@@ -158,6 +158,19 @@ Exit criteria:
 - create/write/move/delete work end-to-end through the daemon CLI;
 - same-user concurrent-writer races and the SQLite/filesystem crash gap are documented residual risks.
 
+### M6C.5 — LLM-assisted adaptive project onboarding
+
+Status: implemented.
+
+- deterministic, offline `project:import` scan and persisted detected facts;
+- progressive LLM-generated onboarding batches through the existing metered gateway;
+- strict structured-output validation, generation provenance, prompt version, round, and semantic input hash;
+- structured answers projected into the project profile without creating capability grants;
+- at most five questions per round and three generated rounds;
+- daemon-backed interactive and automation-friendly CLI flows.
+
+This milestone does not connect the agent runtime to controlled actions and does not add reusable memory, code indexing, RAG, or autonomous permission changes.
+
 ### M6D-lite — Agent controlled-action integration
 
 Status: future.

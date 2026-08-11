@@ -13,7 +13,7 @@ The product is local-first and auditable: SQLite is authoritative, generated Mar
 The current implementation on `main` includes:
 
 - a local daemon and daemon-backed CLI;
-- project creation, deterministic repository import, and onboarding;
+- project creation, deterministic offline repository import, and LLM-assisted adaptive onboarding;
 - tasks, agent definitions, scheduled runs, locking, and persisted run events;
 - an LLM gateway with mock and opt-in OpenAI providers;
 - versioned pricing, budgets, reservations, usage normalization, and cost accounting;
@@ -80,7 +80,22 @@ bun run cli -- task:create --project <project-id> --title "First task" --priorit
 bun run cli -- task:list --project <project-id>
 ```
 
-Run interactive onboarding with `project:onboard`, or answer persisted questions individually with `project:answer`. For current command syntax and the complete command list, use:
+`project:import` never calls a provider: its repository scan remains deterministic, idempotent, and usable offline. `project:onboard` uses the configured LLM gateway to generate at most five validated questions per round. Run it interactively, use `project:onboard --project <id> --generate` to persist one round without prompting, or answer persisted questions individually with `project:answer`.
+
+For a real OpenAI-backed smoke test, opt in at the daemon composition root (never commit the key), configure pricing for the same model, and optionally set a project budget:
+
+```bash
+export AI_OFFICE_LLM_PROVIDER=openai
+export AI_OFFICE_LLM_MODEL=<model-with-configured-pricing>
+export OPENAI_API_KEY=<your-key>
+
+bun run daemon
+bun run cli -- pricing:set --provider openai --model "$AI_OFFICE_LLM_MODEL" --currency USD --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
+```
+
+If the provider or model is not configured, onboarding fails explicitly without changing existing questions or answers. Scanner facts and user answers are sent as bounded structured data; repository text is not treated as instructions. Onboarding permission answers are project knowledge only and never create capability grants.
+
+For current command syntax and the complete command list, use:
 
 ```bash
 bun run cli -- --help

@@ -12,6 +12,8 @@ Provider usage is idempotent by `provider + provider_request_id` when the provid
 
 The OpenAI adapter requires an API key passed by its composition root. No environment variable is read inside the adapter, no key is persisted, and automated tests inject a fake `fetch` implementation.
 
-The CLI exposes pricing, budget, and cost-report commands, but it does not yet
-invoke a real provider or produce real LLM usage. Standard tests use
-deterministic providers and injected transports rather than paid calls.
+The CLI exposes pricing, budget, and cost-report commands. Adaptive
+`project:onboard` is the first real consumer: it records purpose
+`project_onboarding` with the project dimension and automatically honors a
+configured hard project budget. Standard tests use deterministic providers and
+injected transports rather than paid calls.
