@@ -125,4 +125,154 @@ describe("migration upgrades", () => {
     });
     database.close();
   });
+
+  test("enforces generation ownership and completed status for LLM questions", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-onboarding-integrity-"));
+    roots.push(root);
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, migrations);
+    const insertProject = database.prepare(
+      `INSERT INTO project(id,name,description,created_at,updated_at)
+       VALUES (?,?,NULL,?,?)`,
+    );
+    const createdAt = "2026-08-05T00:00:00.000Z";
+    insertProject.run("project-a", "Project A", createdAt, createdAt);
+    insertProject.run("project-b", "Project B", createdAt, createdAt);
+
+    const insertGeneration = database.prepare(
+      `INSERT INTO onboarding_generation(
+         id, project_id, provider, model, prompt_version, input_hash, round,
+         status, batch_status, failure_code, created_at
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    insertGeneration.run(
+      "generation-a",
+      "project-a",
+      "mock",
+      "model",
+      "project-onboarding-v1",
+      "a".repeat(64),
+      1,
+      "completed",
+      "needs_more_context",
+      null,
+      createdAt,
+    );
+    insertGeneration.run(
+      "generation-b-failed",
+      "project-b",
+      "mock",
+      "model",
+      "project-onboarding-v1",
+      "b".repeat(64),
+      1,
+      "failed",
+      null,
+      "ProviderError",
+      createdAt,
+    );
+    insertGeneration.run(
+      "generation-b-completed",
+      "project-b",
+      "mock",
+      "model",
+      "project-onboarding-v1",
+      "c".repeat(64),
+      1,
+      "completed",
+      "needs_more_context",
+      null,
+      createdAt,
+    );
+
+    const insertQuestion = database.prepare(
+      `INSERT INTO project_question(
+         id, project_id, key, question, normalized_question, reason,
+         answer_category, answer_type, priority, source, generation_id
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    expect(() =>
+      insertQuestion.run(
+        "cross-project",
+        "project-b",
+        "cross-project",
+        "Cross-project question?",
+        "goal:cross-project question?",
+        "Must be rejected",
+        "goal",
+        "text",
+        50,
+        "llm",
+        "generation-a",
+      ),
+    ).toThrow("question source and generation do not match");
+    expect(() =>
+      insertQuestion.run(
+        "failed-generation",
+        "project-b",
+        "failed-generation",
+        "Failed generation question?",
+        "goal:failed generation question?",
+        "Must be rejected",
+        "goal",
+        "text",
+        50,
+        "llm",
+        "generation-b-failed",
+      ),
+    ).toThrow("question source and generation do not match");
+    expect(() =>
+      insertQuestion.run(
+        "llm-without-generation",
+        "project-b",
+        "llm-without-generation",
+        "Missing generation question?",
+        "goal:missing generation question?",
+        "Must be rejected",
+        "goal",
+        "text",
+        50,
+        "llm",
+        null,
+      ),
+    ).toThrow("question source and generation do not match");
+    expect(() =>
+      insertQuestion.run(
+        "deterministic-with-generation",
+        "project-b",
+        "deterministic-with-generation",
+        "Deterministic question?",
+        "goal:deterministic question?",
+        "Must be rejected",
+        "goal",
+        "text",
+        50,
+        "deterministic",
+        "generation-b-completed",
+      ),
+    ).toThrow("question source and generation do not match");
+    expect(() =>
+      insertQuestion.run(
+        "valid-question",
+        "project-b",
+        "valid-question",
+        "Valid question?",
+        "goal:valid question?",
+        "Accepted",
+        "goal",
+        "text",
+        50,
+        "llm",
+        "generation-b-completed",
+      ),
+    ).not.toThrow();
+
+    expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(
+      database
+        .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
+        .get(),
+    ).toEqual({ integrity_check: "ok" });
+    database.close();
+  });
 });

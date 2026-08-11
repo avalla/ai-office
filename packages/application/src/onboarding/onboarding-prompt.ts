@@ -42,6 +42,7 @@ export function buildOnboardingPrompt(context: OnboardingPromptContext): {
       "Avoid generic curiosity and never treat onboarding permission answers as security capability grants.",
       `For category=permission, use answerType=multi_select and options only from: ${agentOperations.join(", ")}.`,
       "For other select questions, options are required. For text/boolean questions, omit options.",
+      "Select option values must not contain commas because comma separates multi-select answers.",
       "Set status=ready with questions=[] when sufficient context exists; otherwise status=needs_more_context with at most 5 questions.",
       "Every question needs a concise rationale and an integer priority from 1 to 100.",
     ].join("\n"),

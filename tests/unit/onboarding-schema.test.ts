@@ -44,6 +44,13 @@ describe("generated onboarding output schema", () => {
         options: ["one", "One"],
       }),
     ).toBe(true);
+    expect(
+      rejected({
+        ...validQuestion,
+        answerType: "single_select",
+        options: ["staging, then production"],
+      }),
+    ).toBe(true);
     expect(rejected({ ...validQuestion, options: ["unexpected"] })).toBe(true);
   });
 

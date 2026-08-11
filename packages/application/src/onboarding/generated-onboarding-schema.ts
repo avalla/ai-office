@@ -57,6 +57,16 @@ const generatedQuestionSchema = z
         message: "Non-select questions cannot define options",
       });
     }
+    if (
+      isSelect &&
+      (question.options ?? []).some((option) => option.includes(","))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["options"],
+        message: "Select question options cannot contain commas",
+      });
+    }
     const normalizedOptions = (question.options ?? []).map((option) =>
       option.toLowerCase(),
     );

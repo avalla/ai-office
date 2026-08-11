@@ -60,12 +60,47 @@ ON project_question(generation_id, priority, id);
 
 CREATE TRIGGER project_question_llm_generation_required_insert
 BEFORE INSERT ON project_question
-WHEN (NEW.source = 'llm' AND NEW.generation_id IS NULL)
-  OR (NEW.source = 'deterministic' AND NEW.generation_id IS NOT NULL)
+WHEN (NEW.source = 'deterministic' AND NEW.generation_id IS NOT NULL)
+  OR (
+    NEW.source = 'llm'
+    AND (
+      NEW.generation_id IS NULL
+      OR NOT EXISTS (
+        SELECT 1 FROM onboarding_generation generation
+        WHERE generation.id = NEW.generation_id
+          AND generation.project_id = NEW.project_id
+          AND generation.status = 'completed'
+      )
+    )
+  )
 BEGIN SELECT RAISE(ABORT, 'question source and generation do not match'); END;
 
 CREATE TRIGGER project_question_llm_generation_required_update
-BEFORE UPDATE OF source, generation_id ON project_question
-WHEN (NEW.source = 'llm' AND NEW.generation_id IS NULL)
-  OR (NEW.source = 'deterministic' AND NEW.generation_id IS NOT NULL)
+BEFORE UPDATE OF project_id, source, generation_id ON project_question
+WHEN (NEW.source = 'deterministic' AND NEW.generation_id IS NOT NULL)
+  OR (
+    NEW.source = 'llm'
+    AND (
+      NEW.generation_id IS NULL
+      OR NOT EXISTS (
+        SELECT 1 FROM onboarding_generation generation
+        WHERE generation.id = NEW.generation_id
+          AND generation.project_id = NEW.project_id
+          AND generation.status = 'completed'
+      )
+    )
+  )
 BEGIN SELECT RAISE(ABORT, 'question source and generation do not match'); END;
+
+CREATE TRIGGER onboarding_generation_question_ownership_update
+BEFORE UPDATE OF project_id, status ON onboarding_generation
+WHEN EXISTS (
+  SELECT 1 FROM project_question question
+  WHERE question.generation_id = NEW.id
+    AND question.source = 'llm'
+    AND (
+      question.project_id <> NEW.project_id
+      OR NEW.status <> 'completed'
+    )
+)
+BEGIN SELECT RAISE(ABORT, 'generation update violates question ownership'); END;

@@ -102,14 +102,18 @@ export class MeteredLlmGateway {
       budgetScopeId === undefined &&
       context.useProjectBudgetIfConfigured === true
     ) {
-      const projectBudget = await this.costs.findBudget(
+      const projectBudgetCurrencies = await this.costs.listBudgetCurrencies(
         context.projectId,
         "project",
         context.projectId,
-        currency,
-        now,
       );
-      if (projectBudget !== null) {
+      if (
+        projectBudgetCurrencies.length > 0 &&
+        !projectBudgetCurrencies.some((value) => value === currency)
+      ) {
+        throw new PricingCurrencyMismatchError();
+      }
+      if (projectBudgetCurrencies.some((value) => value === currency)) {
         budgetScopeType = "project";
         budgetScopeId = context.projectId;
       }

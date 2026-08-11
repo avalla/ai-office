@@ -234,6 +234,20 @@ export class SqliteCostRepository implements CostRepository {
           reservedMicros: this.reservedMicros(row.id, now),
         };
   }
+  async listBudgetCurrencies(
+    projectId: string,
+    scopeType: BudgetScopeType,
+    scopeId: string,
+  ): Promise<Currency[]> {
+    return this.database
+      .query<{ currency: Currency }, [string, string, string]>(
+        `SELECT currency FROM budget
+         WHERE project_id=? AND scope_type=? AND scope_id=?
+         ORDER BY currency`,
+      )
+      .all(projectId, scopeType, scopeId)
+      .map((row) => row.currency);
+  }
   async authorizeAndReserve(
     v: AuthorizeReservationInput,
   ): Promise<BudgetReservation> {
