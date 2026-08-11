@@ -8,6 +8,7 @@ import type { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/r
 import type { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import type { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 import type { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
+import type { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
 
@@ -27,6 +28,7 @@ export interface CommandContext {
   costs: SqliteCostRepository;
   governance: SqliteGovernanceRepository;
   capabilities: SqliteCapabilityPolicyRepository;
+  controlled: SqliteControlledExecutionRepository;
   audit: RecordAuditEvent;
   ids: IdGenerator;
   clock: Clock;
