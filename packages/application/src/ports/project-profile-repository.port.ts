@@ -1,9 +1,11 @@
 import type {
+  OnboardingAnswerType,
+  OnboardingQuestionSource,
   ProjectAnswer,
   ProjectAnswerCategory,
   ProjectProfileEntry,
   ProjectQuestion,
-  ProjectScanSummary
+  ProjectScanSummary,
 } from "@ai-office/domain/project/project-profile.ts";
 
 export interface ProjectSource {
@@ -30,11 +32,31 @@ export interface ProjectScan {
 export interface NewProjectQuestion {
   id: string;
   projectId: string;
-  scanId: string;
+  scanId?: string;
+  generationId?: string;
   key: string;
   question: string;
+  normalizedQuestion: string;
   reason: string;
   answerCategory: ProjectAnswerCategory;
+  answerType: OnboardingAnswerType;
+  options?: string[];
+  priority: number;
+  source: OnboardingQuestionSource;
+}
+
+export interface OnboardingGeneration {
+  id: string;
+  projectId: string;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  inputHash: string;
+  round: number;
+  status: "completed" | "failed";
+  batchStatus?: "needs_more_context" | "ready";
+  failureCode?: string;
+  createdAt: Date;
 }
 
 export interface ProjectProfileRepository {
@@ -43,9 +65,23 @@ export interface ProjectProfileRepository {
   saveScan(scan: ProjectScan): Promise<void>;
   replaceDetected(entries: ProjectProfileEntry[]): Promise<void>;
   ensureQuestions(questions: NewProjectQuestion[]): Promise<void>;
-  findQuestion(projectId: string, questionId: string): Promise<ProjectQuestion | null>;
+  saveOnboardingGeneration(generation: OnboardingGeneration): Promise<void>;
+  findCompletedOnboardingGeneration(
+    projectId: string,
+    inputHash: string,
+  ): Promise<OnboardingGeneration | null>;
+  listOnboardingGenerations(projectId: string): Promise<OnboardingGeneration[]>;
+  findQuestion(
+    projectId: string,
+    questionId: string,
+  ): Promise<ProjectQuestion | null>;
   listOpenQuestions(projectId: string): Promise<ProjectQuestion[]>;
-  answerQuestion(questionId: string, answer: ProjectAnswer, answeredAt: Date): Promise<void>;
+  listQuestions(projectId: string): Promise<ProjectQuestion[]>;
+  answerQuestion(
+    questionId: string,
+    answer: ProjectAnswer,
+    answeredAt: Date,
+  ): Promise<void>;
   saveProfileEntry(entry: ProjectProfileEntry): Promise<void>;
   listActiveProfileEntries(projectId: string): Promise<ProjectProfileEntry[]>;
 }

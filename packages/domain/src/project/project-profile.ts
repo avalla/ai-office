@@ -1,6 +1,12 @@
 export type ProjectProfileOrigin = "detected" | "inferred" | "user";
 
-export type ProjectAnswerCategory = "goal" | "preference" | "constraint" | "permission";
+export type ProjectAnswerCategory =
+  "goal" | "preference" | "constraint" | "permission";
+
+export type OnboardingQuestionSource = "deterministic" | "llm";
+
+export type OnboardingAnswerType =
+  "text" | "boolean" | "single_select" | "multi_select";
 
 export const agentOperations = [
   "read_files",
@@ -10,7 +16,7 @@ export const agentOperations = [
   "install_dependencies",
   "create_branches",
   "create_commits",
-  "network_access"
+  "network_access",
 ] as const;
 
 export type AgentOperation = (typeof agentOperations)[number];
@@ -20,6 +26,16 @@ export interface TextProjectAnswer {
   value: string;
 }
 
+export interface BooleanProjectAnswer {
+  category: Exclude<ProjectAnswerCategory, "permission">;
+  value: boolean;
+}
+
+export interface SelectProjectAnswer {
+  category: Exclude<ProjectAnswerCategory, "permission">;
+  value: string | string[];
+}
+
 export interface PermissionProjectAnswer {
   category: "permission";
   value: {
@@ -27,7 +43,11 @@ export interface PermissionProjectAnswer {
   };
 }
 
-export type ProjectAnswer = TextProjectAnswer | PermissionProjectAnswer;
+export type ProjectAnswer =
+  | TextProjectAnswer
+  | BooleanProjectAnswer
+  | SelectProjectAnswer
+  | PermissionProjectAnswer;
 
 export interface ProjectProfileEntry {
   id: string;
@@ -50,6 +70,11 @@ export interface ProjectQuestion {
   question: string;
   reason: string;
   answerCategory: ProjectAnswerCategory;
+  answerType: OnboardingAnswerType;
+  options?: string[];
+  priority: number;
+  source: OnboardingQuestionSource;
+  generationId?: string;
   answer?: ProjectAnswer;
   answeredAt?: Date;
 }
@@ -66,6 +91,7 @@ export interface ProjectProfileSnapshot {
   goals: ProjectProfileEntry[];
   permissions: ProjectProfileEntry[];
   openQuestions: ProjectQuestion[];
+  generatedOnboardingQuestions: ProjectQuestion[];
 }
 
 export interface ProjectScanSummary {

@@ -1,28 +1,33 @@
 import type {
   ProjectProfileEntry,
-  ProjectProfileSnapshot
+  ProjectProfileSnapshot,
 } from "@ai-office/domain/project/project-profile.ts";
 import { ProjectNotFoundError } from "../errors.ts";
 import type { ProjectProfileRepository } from "../ports/project-profile-repository.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 
-function userEntries(entries: ProjectProfileEntry[], category: string): ProjectProfileEntry[] {
-  return entries.filter((entry) => entry.origin === "user" && entry.category === category);
+function userEntries(
+  entries: ProjectProfileEntry[],
+  category: string,
+): ProjectProfileEntry[] {
+  return entries.filter(
+    (entry) => entry.origin === "user" && entry.category === category,
+  );
 }
 
 export class GetProjectProfile {
   constructor(
     private readonly projects: ProjectRepository,
-    private readonly profiles: ProjectProfileRepository
+    private readonly profiles: ProjectProfileRepository,
   ) {}
 
   async execute(projectId: string): Promise<ProjectProfileSnapshot> {
     const project = await this.projects.findById(projectId);
     if (project === null) throw new ProjectNotFoundError(projectId);
 
-    const [entries, openQuestions] = await Promise.all([
+    const [entries, questions] = await Promise.all([
       this.profiles.listActiveProfileEntries(projectId),
-      this.profiles.listOpenQuestions(projectId)
+      this.profiles.listQuestions(projectId),
     ]);
     const snapshot = project.snapshot();
 
@@ -34,7 +39,12 @@ export class GetProjectProfile {
       constraints: userEntries(entries, "constraint"),
       goals: userEntries(entries, "goal"),
       permissions: userEntries(entries, "permission"),
-      openQuestions
+      openQuestions: questions.filter(
+        (question) => question.answer === undefined,
+      ),
+      generatedOnboardingQuestions: questions.filter(
+        (question) => question.source === "llm",
+      ),
     };
   }
 }

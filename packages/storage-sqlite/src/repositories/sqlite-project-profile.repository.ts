@@ -1,16 +1,19 @@
 import type { Database } from "bun:sqlite";
 import type {
   NewProjectQuestion,
+  OnboardingGeneration,
   ProjectProfileRepository,
   ProjectScan,
-  ProjectSource
+  ProjectSource,
 } from "@ai-office/application/ports/project-profile-repository.port.ts";
 import type {
   ProjectAnswer,
   ProjectAnswerCategory,
+  OnboardingAnswerType,
+  OnboardingQuestionSource,
   ProjectProfileEntry,
   ProjectProfileOrigin,
-  ProjectQuestion
+  ProjectQuestion,
 } from "@ai-office/domain/project/project-profile.ts";
 
 interface ProjectIdRow {
@@ -25,8 +28,27 @@ interface ProjectQuestionRow {
   question: string;
   reason: string;
   answer_category: ProjectAnswerCategory;
+  answer_type: OnboardingAnswerType;
+  options_json: string | null;
+  priority: number;
+  source: OnboardingQuestionSource;
+  generation_id: string | null;
   answer_json: string | null;
   answered_at: string | null;
+}
+
+interface OnboardingGenerationRow {
+  id: string;
+  project_id: string;
+  provider: string;
+  model: string;
+  prompt_version: string;
+  input_hash: string;
+  round: number;
+  status: "completed" | "failed";
+  batch_status: "needs_more_context" | "ready" | null;
+  failure_code: string | null;
+  created_at: string;
 }
 
 interface ProjectProfileEntryRow {
@@ -51,10 +73,35 @@ function restoreQuestion(row: ProjectQuestionRow): ProjectQuestion {
     question: row.question,
     reason: row.reason,
     answerCategory: row.answer_category,
+    answerType: row.answer_type,
+    ...(row.options_json === null
+      ? {}
+      : { options: JSON.parse(row.options_json) as string[] }),
+    priority: row.priority,
+    source: row.source,
+    ...(row.generation_id === null ? {} : { generationId: row.generation_id }),
     ...(row.answer_json === null
       ? {}
       : { answer: JSON.parse(row.answer_json) as ProjectAnswer }),
-    ...(row.answered_at === null ? {} : { answeredAt: new Date(row.answered_at) })
+    ...(row.answered_at === null
+      ? {}
+      : { answeredAt: new Date(row.answered_at) }),
+  };
+}
+
+function restoreGeneration(row: OnboardingGenerationRow): OnboardingGeneration {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    provider: row.provider,
+    model: row.model,
+    promptVersion: row.prompt_version,
+    inputHash: row.input_hash,
+    round: row.round,
+    status: row.status,
+    ...(row.batch_status === null ? {} : { batchStatus: row.batch_status }),
+    ...(row.failure_code === null ? {} : { failureCode: row.failure_code }),
+    createdAt: new Date(row.created_at),
   };
 }
 
@@ -67,9 +114,13 @@ function restoreProfileEntry(row: ProjectProfileEntryRow): ProjectProfileEntry {
     value: JSON.parse(row.value_json) as unknown,
     origin: row.origin,
     confidence: row.confidence,
-    ...(row.source_reference === null ? {} : { sourceReference: row.source_reference }),
-    ...(row.confirmed_at === null ? {} : { confirmedAt: new Date(row.confirmed_at) }),
-    createdAt: new Date(row.created_at)
+    ...(row.source_reference === null
+      ? {}
+      : { sourceReference: row.source_reference }),
+    ...(row.confirmed_at === null
+      ? {}
+      : { confirmedAt: new Date(row.confirmed_at) }),
+    createdAt: new Date(row.created_at),
   };
 }
 
@@ -83,7 +134,7 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
          FROM project_source
          WHERE local_path = ?
          ORDER BY created_at ASC, id ASC
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(localPath);
 
@@ -97,7 +148,7 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
            AND key = 'root_path'
            AND json_extract(value_json, '$') = ?
          ORDER BY created_at ASC, id ASC
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(localPath);
 
@@ -109,7 +160,7 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
          FROM project
          WHERE description = 'Imported from ' || ?
          ORDER BY created_at ASC, id ASC
-         LIMIT 1`
+         LIMIT 1`,
       )
       .get(localPath);
 
@@ -124,7 +175,7 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
          ) VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(local_path) WHERE local_path IS NOT NULL DO UPDATE SET
            remote_url = excluded.remote_url,
-           default_branch = excluded.default_branch`
+           default_branch = excluded.default_branch`,
       )
       .run(
         source.id,
@@ -133,7 +184,7 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
         source.localPath,
         source.remoteUrl ?? null,
         source.defaultBranch ?? null,
-        source.createdAt.toISOString()
+        source.createdAt.toISOString(),
       );
   }
 
@@ -143,7 +194,7 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
         `INSERT INTO project_scan(
            id, project_id, scan_type, status, started_at, completed_at,
            source_revision, summary_json, error_json
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
       )
       .run(
         scan.id,
@@ -153,7 +204,7 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
         scan.startedAt.toISOString(),
         scan.completedAt.toISOString(),
         scan.sourceRevision ?? null,
-        JSON.stringify(scan.summary)
+        JSON.stringify(scan.summary),
       );
   }
 
@@ -164,7 +215,7 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
     this.database
       .prepare(
         `DELETE FROM project_profile_entry
-         WHERE project_id = ? AND origin = 'detected'`
+         WHERE project_id = ? AND origin = 'detected'`,
       )
       .run(projectId);
 
@@ -176,36 +227,100 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
   async ensureQuestions(questions: NewProjectQuestion[]): Promise<void> {
     const insert = this.database.prepare(
       `INSERT INTO project_question(
-         id, project_id, scan_id, key, question, reason, answer_category
-       )
-       SELECT ?, ?, ?, ?, ?, ?, ?
-       WHERE NOT EXISTS (
-         SELECT 1 FROM project_question WHERE project_id = ? AND key = ?
-       )`
+         id, project_id, scan_id, generation_id, key, question,
+         normalized_question, reason, answer_category, answer_type,
+         options_json, priority, source
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
     for (const question of questions) {
       insert.run(
         question.id,
         question.projectId,
-        question.scanId,
+        question.scanId ?? null,
+        question.generationId ?? null,
         question.key,
         question.question,
+        question.normalizedQuestion,
         question.reason,
         question.answerCategory,
-        question.projectId,
-        question.key
+        question.answerType,
+        question.options === undefined
+          ? null
+          : JSON.stringify(question.options),
+        question.priority,
+        question.source,
       );
     }
   }
 
-  async findQuestion(projectId: string, questionId: string): Promise<ProjectQuestion | null> {
+  async saveOnboardingGeneration(
+    generation: OnboardingGeneration,
+  ): Promise<void> {
+    this.database
+      .prepare(
+        `INSERT INTO onboarding_generation(
+           id, project_id, provider, model, prompt_version, input_hash,
+           round, status, batch_status, failure_code, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        generation.id,
+        generation.projectId,
+        generation.provider,
+        generation.model,
+        generation.promptVersion,
+        generation.inputHash,
+        generation.round,
+        generation.status,
+        generation.batchStatus ?? null,
+        generation.failureCode ?? null,
+        generation.createdAt.toISOString(),
+      );
+  }
+
+  async findCompletedOnboardingGeneration(
+    projectId: string,
+    inputHash: string,
+  ): Promise<OnboardingGeneration | null> {
+    const row = this.database
+      .query<OnboardingGenerationRow, [string, string]>(
+        `SELECT id, project_id, provider, model, prompt_version, input_hash,
+                round, status, batch_status, failure_code, created_at
+         FROM onboarding_generation
+         WHERE project_id = ? AND input_hash = ? AND status = 'completed'
+         LIMIT 1`,
+      )
+      .get(projectId, inputHash);
+    return row === null ? null : restoreGeneration(row);
+  }
+
+  async listOnboardingGenerations(
+    projectId: string,
+  ): Promise<OnboardingGeneration[]> {
+    return this.database
+      .query<OnboardingGenerationRow, [string]>(
+        `SELECT id, project_id, provider, model, prompt_version, input_hash,
+                round, status, batch_status, failure_code, created_at
+         FROM onboarding_generation
+         WHERE project_id = ?
+         ORDER BY round, created_at, id`,
+      )
+      .all(projectId)
+      .map(restoreGeneration);
+  }
+
+  async findQuestion(
+    projectId: string,
+    questionId: string,
+  ): Promise<ProjectQuestion | null> {
     const row = this.database
       .query<ProjectQuestionRow, [string, string]>(
-        `SELECT id, project_id, scan_id, key, question, reason,
-                answer_category, answer_json, answered_at
+        `SELECT id, project_id, scan_id, generation_id, key, question, reason,
+                answer_category, answer_type, options_json, priority, source,
+                answer_json, answered_at
          FROM project_question
-         WHERE project_id = ? AND id = ?`
+         WHERE project_id = ? AND id = ?`,
       )
       .get(projectId, questionId);
 
@@ -215,18 +330,26 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
   async listOpenQuestions(projectId: string): Promise<ProjectQuestion[]> {
     return this.database
       .query<ProjectQuestionRow, [string]>(
-        `SELECT id, project_id, scan_id, key, question, reason,
-                answer_category, answer_json, answered_at
+        `SELECT id, project_id, scan_id, generation_id, key, question, reason,
+                answer_category, answer_type, options_json, priority, source,
+                answer_json, answered_at
          FROM project_question
          WHERE project_id = ? AND answer_json IS NULL
-         ORDER BY CASE key
-           WHEN 'next_outcome' THEN 1
-           WHEN 'agent_permissions' THEN 2
-           WHEN 'architecture_constraints' THEN 3
-           WHEN 'testing_strategy' THEN 4
-           WHEN 'documentation_location' THEN 5
-           ELSE 100
-         END, key, id`
+         ORDER BY priority DESC, key, id`,
+      )
+      .all(projectId)
+      .map(restoreQuestion);
+  }
+
+  async listQuestions(projectId: string): Promise<ProjectQuestion[]> {
+    return this.database
+      .query<ProjectQuestionRow, [string]>(
+        `SELECT id, project_id, scan_id, generation_id, key, question, reason,
+                answer_category, answer_type, options_json, priority, source,
+                answer_json, answered_at
+         FROM project_question
+         WHERE project_id = ?
+         ORDER BY answered_at IS NOT NULL, priority DESC, key, id`,
       )
       .all(projectId)
       .map(restoreQuestion);
@@ -235,13 +358,13 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
   async answerQuestion(
     questionId: string,
     answer: ProjectAnswer,
-    answeredAt: Date
+    answeredAt: Date,
   ): Promise<void> {
     this.database
       .prepare(
         `UPDATE project_question
          SET answer_json = ?, answered_at = ?
-         WHERE id = ? AND answer_json IS NULL`
+         WHERE id = ? AND answer_json IS NULL`,
       )
       .run(JSON.stringify(answer), answeredAt.toISOString(), questionId);
   }
@@ -252,7 +375,7 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
         `INSERT INTO project_profile_entry(
            id, project_id, category, key, value_json, origin, confidence,
            source_reference, confirmed_at, superseded_at, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
       )
       .run(
         entry.id,
@@ -264,18 +387,20 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
         entry.confidence,
         entry.sourceReference ?? null,
         entry.confirmedAt?.toISOString() ?? null,
-        entry.createdAt.toISOString()
+        entry.createdAt.toISOString(),
       );
   }
 
-  async listActiveProfileEntries(projectId: string): Promise<ProjectProfileEntry[]> {
+  async listActiveProfileEntries(
+    projectId: string,
+  ): Promise<ProjectProfileEntry[]> {
     return this.database
       .query<ProjectProfileEntryRow, [string]>(
         `SELECT id, project_id, category, key, value_json, origin, confidence,
                 source_reference, confirmed_at, created_at
          FROM project_profile_entry
          WHERE project_id = ? AND superseded_at IS NULL
-         ORDER BY category, key, created_at, id`
+         ORDER BY category, key, created_at, id`,
       )
       .all(projectId)
       .map(restoreProfileEntry);
