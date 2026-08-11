@@ -60,7 +60,7 @@ Use `docs/README.md` to distinguish current guidance from historical implementat
 - Capability policy is deny by default. Authorization is deterministic and never delegated to an LLM.
 - Resource, operation, normalized arguments, connector identity/version, effective constraints, and grant state participate in controlled-action authorization.
 - Filesystem mutation follows `request -> simulate -> inspect -> approve -> execute`. Simulation never mutates the target.
-- Every filesystem v2 mutation requires a fresh local approval. Execution revalidates authorization, resource state, grants, constraints, descriptor, simulation artifact, and preconditions.
+- Every filesystem v2 mutation requires an explicit local approval bound to the action and simulation artifact. Execution then performs fresh authorization and revalidates resource state, grants, constraints, descriptor, simulation artifact, and preconditions.
 - One action has at most one execution attempt. Terminal and ambiguous states must not be replayed automatically.
 - The current execution boundary is trusted-local and path based. It does not defend against a hostile same-user process concurrently mutating the namespace.
 - `spikes/m6c-native-filesystem/`, ADR-0003, ADR-0004, and the hardened M6C assessment are future M10 hardening baselines, not production components or M6D-lite requirements.

@@ -61,9 +61,13 @@ Governance review decisions are distinct from controlled-action approvals.
 Capability policy is deny by default. An action request records the resource, agent, operation, normalized arguments, effective grants and constraints, and authorization hash. Reads may execute after authorization. Filesystem mutations require simulation and local approval before execution.
 
 ```text
-requested -> authorized -> simulating -> approval_pending
-                                      -> executing
-                                      -> completed | failed | execution_unknown
+requested
+  -> authorized
+  -> simulating
+  -> simulated
+  -> approval_pending
+  -> executing
+  -> completed | failed | execution_unknown
 ```
 
 The exact paths vary for denial, read-only operations, rejection, and simulation failures. Every filesystem v2 mutation uses a separate immutable simulation artifact and `ActionApproval`; a separate `ActionExecution` ledger allows at most one execution attempt.
