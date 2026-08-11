@@ -539,16 +539,16 @@ describe("action lifecycle and canonical payload", () => {
     ).toThrow(InvalidActionTimestampError);
     for (const status of [
       "approval_pending",
-      "approved",
       "rejected",
       "executing",
       "completed",
       "failed",
+      "execution_unknown",
       "cancelled",
       "expired",
     ] as const) {
       const restoredDecision =
-        status === "approval_pending"
+        status === "approval_pending" || status === "execution_unknown"
           ? "allow_with_approval"
           : status === "executing" || status === "completed"
             ? "allow"
