@@ -27,8 +27,8 @@ export class InvalidProjectAnswerError extends Error {
 }
 
 export class OnboardingProviderUnavailableError extends Error {
-  constructor() {
-    super("LLM provider unavailable for onboarding");
+  constructor(message = "LLM provider unavailable for onboarding") {
+    super(message);
     this.name = "OnboardingProviderUnavailableError";
   }
 }

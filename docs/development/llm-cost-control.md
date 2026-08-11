@@ -1,6 +1,39 @@
-# LLM gateway and cost control
+# LLM providers, gateway, and cost control
 
-M4 provides a provider port, deterministic mock, OpenAI Responses HTTP adapter, retry-aware fallback chain, and metered gateway. Callers must supply an estimated token envelope and accounting context.
+The LLM gateway provides a normalized provider port, provider registry, deterministic mock, infrastructure-only LangChain compatibility adapter, existing OpenAI Responses HTTP adapter, retry-aware fallback chain, and metered gateway. The default registry supports OpenAI and Anthropic. Callers must supply an estimated token envelope and accounting context.
+
+## Provider configuration
+
+Use one canonical model reference in `<provider>:<model>` form:
+
+```bash
+AI_OFFICE_LLM_MODEL=openai:gpt-5.4
+OPENAI_API_KEY=...
+```
+
+```bash
+AI_OFFICE_LLM_MODEL=anthropic:claude-sonnet-4-6
+ANTHROPIC_API_KEY=...
+```
+
+The registry derives the provider from the prefix, validates the model and required credential before constructing an adapter, and returns the bare model name to the gateway. Pricing therefore remains keyed by `provider=openai, model=gpt-5.4` or `provider=anthropic, model=claude-sonnet-4-6`.
+
+For backwards compatibility, a bare `AI_OFFICE_LLM_MODEL=<model>` is accepted only when `AI_OFFICE_LLM_PROVIDER=<provider>` is also set. This compatibility form is deprecated. When the model is prefixed, its prefix is authoritative and the compatibility variable is ignored.
+
+Provider-native credentials remain infrastructure concerns. The current registry reads only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`; keys are never passed through domain or application objects. Missing configuration errors list environment-variable names, never their values.
+
+## Dependency and execution boundary
+
+```text
+Onboarding
+    -> MeteredLlmGateway
+    -> LlmProvider port
+    -> ModelProviderRegistry
+    -> LangChainModelProvider
+    -> OpenAI or Anthropic
+```
+
+LangChain is a compatibility adapter only. It does not own agents, tools orchestration, memory, retries, policy, task execution, pricing, or budgets. Provider retries are disabled in the registered LangChain chat models so retry and fallback behavior remains explicit in AI Office.
 
 Pricing values and budgets use integer micros, bounded by JavaScript's safe-integer range when stored in SQLite (`0..9,007,199,254,740,991`). Floating-point monetary values are never accepted.
 
@@ -10,7 +43,9 @@ Supported budget scopes are `project`, `task`, `agent`, and `agent_run`, each wi
 
 Provider usage is idempotent by `provider + provider_request_id` when the provider supplies an ID. Pricing intervals use half-open boundaries (`effective_from <= at < effective_to`) and overlapping intervals for the same provider/model/currency are rejected.
 
-The OpenAI adapter requires an API key passed by its composition root. No environment variable is read inside the adapter, no key is persisted, and automated tests inject a fake `fetch` implementation.
+The existing native OpenAI adapter still requires an API key passed by its composition root. The registry's provider builders read native environment variables and pass keys directly to the corresponding LangChain integration; no key is persisted. Automated tests use fake chat models or transports and never call live provider APIs.
+
+The LangChain adapter maps text, effective model, provider request ID, standard usage metadata, provider response metadata, and measured latency into the normalized response. The cost contract requires numeric cached-input and reasoning token counts, so unavailable optional detail maps to zero, matching the existing native OpenAI adapter. The adapter does not infer or fabricate non-zero provider-specific usage fields. If total input or output usage is absent, the response is rejected instead of being guessed.
 
 The CLI exposes pricing, budget, and cost-report commands. Adaptive
 `project:onboard` is the first real consumer: it records purpose

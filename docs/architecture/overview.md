@@ -59,7 +59,7 @@ Daemon lifecycle and sanitized command outcomes are appended to `audit_event`. A
 
 Agent definitions are validated from YAML and synchronized into project storage. Scheduling validates project, task, and agent, acquires a task lock, persists a queued run, and records state transitions. The executor and worktree manager are currently deterministic simulations.
 
-The LLM gateway separates provider invocation from pricing and accounting. It supports deterministic mocks and an opt-in OpenAI Responses adapter. Versioned prices, reservations, normalized usage, cost events, and budget checks retain their project/task/agent/run dimensions. Standard tests do not call paid providers.
+The LLM gateway separates provider invocation from pricing and accounting. A registry resolves prefixed model references into the normalized provider port; the default infrastructure adapter uses LangChain for OpenAI and Anthropic compatibility, while the native OpenAI Responses adapter remains available. LangChain does not cross into application/domain code or own orchestration. Versioned prices, reservations, normalized usage, cost events, and budget checks retain their project/task/agent/run dimensions. Standard tests do not call paid providers.
 
 Governance stores milestones, requirements, ADRs, reviews, and approval decisions as structured project state. This M5 governance approval model is separate from M6C-lite `ActionApproval`, which binds a controlled filesystem mutation to its authorization and simulation artifact.
 

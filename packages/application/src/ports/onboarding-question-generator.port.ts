@@ -23,8 +23,10 @@ export class UnavailableOnboardingQuestionGenerator implements OnboardingQuestio
   readonly targetProvider = "unavailable";
   readonly targetModel = "unavailable";
 
+  constructor(private readonly message?: string) {}
+
   async generate(): Promise<OnboardingGenerationResponse> {
-    throw new OnboardingProviderUnavailableError();
+    throw new OnboardingProviderUnavailableError(this.message);
   }
 }
 import { OnboardingProviderUnavailableError } from "../errors.ts";

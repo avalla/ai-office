@@ -1,5 +1,10 @@
 {
   "name": "@ai-office/llm-gateway",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@langchain/anthropic": "^1.5.4",
+    "@langchain/core": "^1.2.5",
+    "@langchain/openai": "^1.5.6"
+  }
 }

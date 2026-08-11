@@ -66,13 +66,15 @@ This milestone does not add embeddings, vector search, RAG, a code/symbol index,
 
 ## Manual smoke test
 
-1. Export `AI_OFFICE_LLM_PROVIDER=openai`, `AI_OFFICE_LLM_MODEL=<model>`, and `OPENAI_API_KEY=<secret>` in the daemon environment.
+1. Export either `AI_OFFICE_LLM_MODEL=openai:gpt-5.4` with `OPENAI_API_KEY=<secret>`, or `AI_OFFICE_LLM_MODEL=anthropic:claude-sonnet-4-6` with `ANTHROPIC_API_KEY=<secret>`, in the daemon environment.
 2. Start the daemon with `bun run daemon`.
 3. Import a repository and retain the returned project ID.
-4. Configure an active `pricing:set` entry for provider `openai` and the selected model. Optionally configure `budget:set --project <id>`; insufficient hard budget fails before provider invocation.
+4. Configure an active `pricing:set` entry for the selected provider and its bare model name (`gpt-5.4` or `claude-sonnet-4-6`, without the provider prefix). Optionally configure `budget:set --project <id>`; insufficient hard budget fails before provider invocation.
 5. Run `project:onboard --project <id>` and answer the generated questions.
 6. Rerun onboarding to request a follow-up round, or use `--generate` plus `project:answer`.
 7. Inspect `project:profile --project <id>` and optionally regenerate deterministic Markdown with `project:export`.
 8. Inspect metered spend with `cost:list --project <id>`.
 
 No provider secret, raw prompt, full provider response, or hidden reasoning is persisted or projected.
+
+The CLI resolves provider configuration through the LLM gateway's registry. The onboarding application service and `GatewayOnboardingQuestionGenerator` remain provider-neutral and always invoke `MeteredLlmGateway` before the selected adapter. A bare `AI_OFFICE_LLM_MODEL` can still be paired with `AI_OFFICE_LLM_PROVIDER` for compatibility, but this two-variable form is deprecated; prefixed model references are authoritative when present.
