@@ -1,64 +1,73 @@
 # Domain model
 
-## Main aggregates
+## Implemented model
 
-- Project
-- Milestone
-- Task
-- ArchitectureDecision
-- Role
-- Agent
-- AgentRun
-- Review
-- Budget
-- Pattern
-- Lesson
+The current domain and application model includes:
 
-## Traceability
+- projects, project profiles, and tasks;
+- roles, agents, agent runs, and task locks;
+- pricing versions, budgets, reservations, normalized usage, and costs;
+- milestones, requirements, architecture-decision records, reviews, and governance decisions;
+- resources, capability grants, action requests, simulation artifacts, action approvals, and action executions;
+- append-only audit and agent-run events.
+
+Patterns, lessons, global reusable memory, code-index entities, and fully assembled task context are future M7–M8.5 concerns. Initial global and index schemas do not make those product behaviors implemented.
+
+## Ownership and references
+
+Project-scoped records carry a project identity. Application services validate project ownership and cross-record references before persistence; foreign keys and unique constraints reinforce those rules in SQLite.
+
+The intended long-term traceability chain is:
 
 ```text
-Requirement
-  -> Architecture decision
-  -> Task
-  -> Agent run
-  -> Artifact / commit
-  -> Review
-  -> Test result
+requirement -> architecture decision -> task -> agent run -> artifact -> review
 ```
+
+Governance and run records exist today, but every link in this chain is not yet modeled as an automatic end-to-end workflow.
 
 ## Task states
 
+The task status type recognizes `pending`, `assigned`, `running`, `blocked`, `waiting_review`, `completed`, `failed`, and `cancelled`. Current domain methods implement these transitions:
+
 ```text
-pending -> assigned -> running -> waiting_review -> completed
-                       |             |
-                       v             v
-                     blocked       failed
+pending | assigned -> running
+running | waiting_review -> completed
 ```
 
-Transitions must be validated in the domain layer.
+The current CLI creates and lists tasks; it does not expose a general task-transition command.
 
-## Agent run states
+## Agent-run states
 
 ```text
 queued -> preparing -> running -> reviewing -> completed
-                    \-> cancelled
-                    \-> failed
+   |         |           |           |
+   +---------+-----------+-----------+-> cancelled
+             +-----------+-----------+-> failed
 ```
 
-Every transition is checked by the domain model and projected into the append-only `agent_run_event` table. A task lock is acquired when a run is queued and released after completion, failure, or cancellation.
+Every transition is checked by the domain model and projected into the append-only `agent_run_event` table. A task lock is acquired when a run is queued and released after completion, failure, or cancellation. The current executor and worktree manager are deterministic simulations.
 
 ## Governance lifecycles
 
-- milestones: `planned -> active -> completed` (or `cancelled`);
-- requirements: `proposed -> accepted -> implemented -> verified` (or `rejected`);
-- ADRs: `proposed -> accepted`, with later `deprecated` or `superseded` states;
-- reviews: `pending -> approved | rejected`, finalized by an immutable approval decision.
+- milestones: `planned -> active -> completed`, with cancellation from planned or active;
+- requirements: `proposed -> accepted -> implemented -> verified`, with rejection from proposed or accepted;
+- ADR records: `proposed -> accepted -> deprecated | superseded`, or proposed to rejected;
+- reviews: `pending -> approved | rejected`, finalized by an immutable governance decision.
 
-## Pattern scopes
+Governance review decisions are distinct from controlled-action approvals.
 
-- project;
-- workspace;
-- user/global.
+## Controlled-action lifecycle
 
-A project-specific decision must not automatically become a global pattern.
-Promotion requires a deliberate extraction step and evidence.
+Capability policy is deny by default. An action request records the resource, agent, operation, normalized arguments, effective grants and constraints, and authorization hash. Reads may execute after authorization. Filesystem mutations require simulation and local approval before execution.
+
+```text
+requested
+  -> authorized
+  -> simulating
+  -> simulated
+  -> approval_pending
+  -> executing
+  -> completed | failed | execution_unknown
+```
+
+The exact paths vary for denial, read-only operations, rejection, and simulation failures. Every filesystem v2 mutation uses a separate immutable simulation artifact and `ActionApproval`; a separate `ActionExecution` ledger allows at most one execution attempt.

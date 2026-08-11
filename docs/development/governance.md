@@ -14,4 +14,5 @@ The lifecycle state machines are:
 
 Creation and status changes append one immutable governance event containing IDs and minimal metadata. `governance:profile` renders current state, while `governance:export` atomically regenerates `.ai-office/generated/governance.md` through a temporary file and rename. Rendering has stable ordering/newlines and protects its structure from user-authored Markdown headings. The generated file is never read as authoritative input.
 
-The M5 validation baseline is 110 tests across 26 files.
+Unit, integration, migration, and daemon/CLI tests cover governance state,
+ownership, concurrency, audit, and deterministic export behavior.

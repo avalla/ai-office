@@ -10,6 +10,6 @@ The state sequence is `queued -> preparing -> running -> reviewing -> completed`
 
 At restart, `preparing`, `running`, and `reviewing` runs are discoverable through `listRecoverableRuns`. Recovery is deliberately operator/scheduler driven: expired locks can be reacquired, but non-terminal runs are not silently retried and abandoned worktrees are not deleted automatically. No subprocess, Git mutation, LLM call, or long-running transaction is used by the simulator.
 
-The M3 validation baseline is 57 tests across 14 files. The executor and
-worktree manager remain deterministic simulations; real subprocess and Git
-integration are deliberately outside this milestone.
+The executor and worktree manager remain deterministic simulations; real
+subprocess and Git integration are not implemented. Automatic access from the
+agent runtime to controlled actions is deferred to M6D-lite.
