@@ -19,7 +19,8 @@ import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
 import type { CanonicalActionPayload } from "@ai-office/domain/capability/action-request.ts";
-import { fakeConnectorDescriptor } from "@ai-office/domain/capability/capability.ts";
+import { fakeConnectorDescriptor } from "@ai-office/connector-sdk/fake-connector.ts";
+import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -68,6 +69,7 @@ describe("M6A capability persistence and services", () => {
     const projects = new SqliteProjectRepository(database);
     const runtime = new SqliteAgentRuntimeRepository(database);
     const capabilities = new SqliteCapabilityPolicyRepository(database);
+    const connectors = createDefaultConnectorRegistry();
     const transactions = new SqliteTransactionRunner(database);
     const audit = new RecordAuditEvent(
       new SqliteAuditEventRepository(database),
@@ -111,6 +113,7 @@ describe("M6A capability persistence and services", () => {
       ids,
       clock,
       transactions,
+      connectors,
     );
     const first = await register.execute({
       projectId: "project-1",
@@ -153,7 +156,12 @@ describe("M6A capability persistence and services", () => {
         clock.now().toISOString(),
         clock.now().toISOString(),
       );
-    const evaluate = new EvaluateActionPolicy(runtime, capabilities, clock);
+    const evaluate = new EvaluateActionPolicy(
+      runtime,
+      capabilities,
+      clock,
+      connectors,
+    );
     const request = new RequestControlledAction(
       evaluate,
       capabilities,
@@ -183,6 +191,7 @@ describe("M6A capability persistence and services", () => {
       ids,
       clock,
       transactions,
+      connectors,
     );
     await grantService.execute({
       projectId: "project-1",

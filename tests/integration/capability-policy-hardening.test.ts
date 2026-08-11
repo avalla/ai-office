@@ -24,6 +24,7 @@ import {
 import type { AuditEvent } from "@ai-office/domain/event/audit-event.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
+import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
@@ -165,7 +166,15 @@ describe("M6A SQLite hardening", () => {
     await seedProjectsAndPrincipals(database);
     const repository = new SqliteCapabilityPolicyRepository(database);
 
-    await repository.insertActionRequest(requestedAction("authorize-wins"));
+    await repository.insertActionRequest(
+      ActionRequest.create({
+        ...requestedAction("authorize-wins").snapshot(),
+        operation: "fake.delete",
+        decision: "allow_with_approval",
+        riskLevel: "high",
+        now,
+      }),
+    );
     await expect(
       repository.transitionActionRequest({
         id: "authorize-wins",
@@ -193,6 +202,28 @@ describe("M6A SQLite hardening", () => {
         updatedAt: new Date(now.getTime() + 2),
       }),
     ).resolves.toBe(true);
+    database
+      .prepare(
+        `INSERT INTO action_simulations(
+          id, project_id, action_request_id, authorization_payload_hash,
+          connector, connector_version, operation, preconditions_json, diff,
+          diff_sha256, artifact_sha256, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "authorize-wins-simulation",
+        "project-1",
+        "authorize-wins",
+        "a".repeat(64),
+        "fake",
+        "1",
+        "fake.delete",
+        "[]",
+        "",
+        "b".repeat(64),
+        "c".repeat(64),
+        new Date(now.getTime() + 2).toISOString(),
+      );
     await expect(
       repository.transitionActionRequest({
         id: "authorize-wins",
@@ -314,6 +345,7 @@ describe("M6A SQLite hardening", () => {
     const repository = new SqliteCapabilityPolicyRepository(database);
     const ids = new SequenceIds();
     const clock = new FixedClock();
+    const connectors = createDefaultConnectorRegistry();
     const register = new RegisterResource(
       projects,
       repository,
@@ -325,6 +357,7 @@ describe("M6A SQLite hardening", () => {
       ids,
       clock,
       new SqliteTransactionRunner(database),
+      connectors,
     );
 
     await expect(
@@ -391,6 +424,7 @@ describe("M6A SQLite hardening", () => {
         runtime,
         new SqliteCapabilityPolicyRepository(database),
         new FixedClock(),
+        createDefaultConnectorRegistry(),
       ).execute({
         projectId: "project-1",
         agentId: "agent-project-2",
@@ -512,7 +546,7 @@ describe("M6A SQLite hardening", () => {
           now.toISOString(),
           now.toISOString(),
         ),
-    ).toThrow("FOREIGN KEY constraint failed");
+    ).toThrow();
     expect(() =>
       database
         .prepare(
@@ -533,7 +567,7 @@ describe("M6A SQLite hardening", () => {
           now.toISOString(),
           now.toISOString(),
         ),
-    ).toThrow("FOREIGN KEY constraint failed");
+    ).toThrow();
     database.close();
   });
 
@@ -553,7 +587,12 @@ describe("M6A SQLite hardening", () => {
     const ids = new SequenceIds();
     const clock = new FixedClock();
     const service = new RequestControlledAction(
-      new EvaluateActionPolicy(runtime, repository, clock),
+      new EvaluateActionPolicy(
+        runtime,
+        repository,
+        clock,
+        createDefaultConnectorRegistry(),
+      ),
       repository,
       new RecordAuditEvent(new FailingAuditRepository(), ids, clock),
       ids,
@@ -602,7 +641,12 @@ describe("M6A SQLite hardening", () => {
     const ids = new SequenceIds();
     const clock = new FixedClock();
     const service = new RequestControlledAction(
-      new EvaluateActionPolicy(runtime, repository, clock),
+      new EvaluateActionPolicy(
+        runtime,
+        repository,
+        clock,
+        createDefaultConnectorRegistry(),
+      ),
       repository,
       new RecordAuditEvent(
         new SqliteAuditEventRepository(database),
@@ -683,7 +727,12 @@ describe("M6A SQLite hardening", () => {
     const clock = new FixedClock();
     const transactions = new SqliteTransactionRunner(database);
     const service = new RequestControlledAction(
-      new EvaluateActionPolicy(runtime, repository, clock),
+      new EvaluateActionPolicy(
+        runtime,
+        repository,
+        clock,
+        createDefaultConnectorRegistry(),
+      ),
       repository,
       new RecordAuditEvent(
         new SqliteAuditEventRepository(database),

@@ -7,10 +7,11 @@ import type {
   PolicyInput,
   Resource,
 } from "@ai-office/domain/capability/capability.ts";
+import { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
 import {
+  fakeConnectorDefinition,
   fakeConnectorDescriptor,
-  getConnectorDescriptor,
-} from "@ai-office/domain/capability/capability.ts";
+} from "@ai-office/connector-sdk/fake-connector.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import {
   CanonicalSerializationError,
@@ -22,6 +23,7 @@ import { PolicyEngine } from "@ai-office/domain/capability/policy-engine.ts";
 import { validateFakeConnectorConstraints } from "@ai-office/domain/capability/fake-connector-policy.ts";
 
 const now = new Date("2026-08-05T12:00:00.000Z");
+const connectors = new ConnectorRegistry([fakeConnectorDefinition]);
 const resource = (overrides: Partial<Resource> = {}): Resource => ({
   id: "resource-1",
   projectId: "project-1",
@@ -60,7 +62,7 @@ const input = (overrides: Partial<PolicyInput> = {}): PolicyInput => ({
 });
 
 describe("capability policy", () => {
-  const engine = new PolicyEngine();
+  const engine = new PolicyEngine(connectors);
 
   test("denies by default and permits a valid agent grant", () => {
     expect(engine.evaluate(input(), now).decision).toBe("deny");
@@ -501,12 +503,22 @@ describe("action lifecycle and canonical payload", () => {
     });
 
   test("enforces the M6A state machine with typed errors", () => {
-    const action = request();
+    const action = request("allow_with_approval");
     const authorizedAt = new Date(now.getTime() + 1);
     action.transition("authorized", authorizedAt);
-    action.transition("simulating", new Date(now.getTime() + 2));
+    action.transition(
+      "simulating",
+      new Date(now.getTime() + 2),
+      "mutation",
+      true,
+    );
     action.transition("simulated", new Date(now.getTime() + 3));
-    action.transition("approval_pending", new Date(now.getTime() + 4));
+    action.transition(
+      "approval_pending",
+      new Date(now.getTime() + 4),
+      "mutation",
+      true,
+    );
     expect(action.snapshot().status).toBe("approval_pending");
     expect(action.snapshot().updatedAt).toEqual(new Date(now.getTime() + 4));
     expect(() => request().transition("completed", now)).toThrow(
@@ -535,14 +547,95 @@ describe("action lifecycle and canonical payload", () => {
       "cancelled",
       "expired",
     ] as const) {
+      const restoredDecision =
+        status === "approval_pending"
+          ? "allow_with_approval"
+          : status === "executing" || status === "completed"
+            ? "allow"
+            : "allow_simulation_only";
       const terminal = ActionRequest.restore({
-        ...request().snapshot(),
+        ...request(restoredDecision).snapshot(),
         status,
       });
       expect(() => terminal.transition("authorized", authorizedAt)).toThrow(
         InvalidActionTransitionError,
       );
     }
+  });
+
+  test("supports the M6B controlled failure and completion transitions", () => {
+    const executingCompleted = request("allow");
+    executingCompleted.transition("authorized", new Date(now.getTime() + 1));
+    executingCompleted.transition(
+      "executing",
+      new Date(now.getTime() + 2),
+      "read",
+    );
+    executingCompleted.transition(
+      "completed",
+      new Date(now.getTime() + 3),
+      "read",
+    );
+    expect(executingCompleted.snapshot().status).toBe("completed");
+
+    const executingFailed = request("allow");
+    executingFailed.transition("authorized", new Date(now.getTime() + 1));
+    executingFailed.transition(
+      "executing",
+      new Date(now.getTime() + 2),
+      "read",
+    );
+    executingFailed.transition("failed", new Date(now.getTime() + 3), "read");
+    expect(executingFailed.snapshot().status).toBe("failed");
+
+    const simulatingFailed = request();
+    simulatingFailed.transition("authorized", new Date(now.getTime() + 1));
+    simulatingFailed.transition(
+      "simulating",
+      new Date(now.getTime() + 2),
+      "mutation",
+    );
+    simulatingFailed.transition(
+      "failed",
+      new Date(now.getTime() + 3),
+      "mutation",
+    );
+    expect(simulatingFailed.snapshot().status).toBe("failed");
+  });
+
+  test("binds authorization leases to decision and trusted operation mode", () => {
+    const transition = (
+      decision: PolicyDecisionKind,
+      status: "executing" | "simulating",
+      mode: "read" | "mutation",
+      requiresApproval: boolean,
+    ) => {
+      const action = request(decision);
+      action.transition("authorized", new Date(now.getTime() + 1));
+      return () =>
+        action.transition(
+          status,
+          new Date(now.getTime() + 2),
+          mode,
+          requiresApproval,
+        );
+    };
+    expect(transition("allow", "executing", "read", false)).not.toThrow();
+    expect(
+      transition("allow_simulation_only", "executing", "read", false),
+    ).toThrow(InvalidActionTransitionError);
+    expect(
+      transition("allow_simulation_only", "simulating", "mutation", false),
+    ).not.toThrow();
+    expect(
+      transition("allow_with_approval", "simulating", "mutation", true),
+    ).not.toThrow();
+    expect(
+      transition("allow_with_approval", "simulating", "mutation", false),
+    ).toThrow(InvalidActionTransitionError);
+    expect(
+      transition("allow_simulation_only", "simulating", "mutation", true),
+    ).toThrow(InvalidActionTransitionError);
   });
 
   test("enforces decision and initial status compatibility", () => {
@@ -581,10 +674,16 @@ describe("action lifecycle and canonical payload", () => {
   });
 
   test("resolves connector identity and version from one trusted descriptor", () => {
-    expect(getConnectorDescriptor("fake")).toBe(fakeConnectorDescriptor);
-    expect(getConnectorDescriptor("github")).toBeNull();
-    expect(getConnectorDescriptor("shell")).toBeNull();
-    expect(fakeConnectorDescriptor.resourceTypes).toEqual(["filesystem_scope"]);
+    expect(connectors.get("fake")).toMatchObject({
+      id: fakeConnectorDescriptor.id,
+      version: fakeConnectorDescriptor.version,
+      supportedResourceTypes: ["filesystem_scope"],
+    });
+    expect(connectors.get("github")).toBeNull();
+    expect(connectors.get("shell")).toBeNull();
+    expect(fakeConnectorDescriptor.supportedResourceTypes).toEqual([
+      "filesystem_scope",
+    ]);
   });
 
   test("serializes semantic equals identically and distinguishes absence from null", () => {

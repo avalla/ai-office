@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -392,6 +393,261 @@ limits:
         )
         .get()?.count,
     ).toBe(0);
+    database.close();
+  });
+
+  test("invokes filesystem reads and mutation simulations through the daemon", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-m6b-daemon-"));
+    roots.push(root);
+    const agentDirectory = join(root, "agents", "developer");
+    const workspace = join(root, "workspace");
+    mkdirSync(agentDirectory, { recursive: true });
+    mkdirSync(workspace);
+    writeFileSync(
+      join(agentDirectory, "agent.yaml"),
+      `id: developer
+role_key: developer
+role: Developer
+version: 1
+capabilities: []
+tools: []
+model_policy: mock
+limits:
+  max_iterations: 1
+  max_cost_micros: "0"
+  timeout_seconds: 60
+`,
+    );
+    writeFileSync(join(workspace, "note.txt"), "literal needle\n");
+    writeFileSync(join(workspace, ".env"), "TOKEN=must-not-leak\n");
+    const socketPath = join(root, ".ai-office", "daemon.sock");
+    const daemon = await bootstrap({ projectRoot: root, socketPath });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const run = async (args: string[]) => {
+      const output = captured();
+      const exitCode = await runDaemonCli(args, {
+        projectRoot: root,
+        socketPath,
+        io: output.io,
+      });
+      return { ...output, exitCode };
+    };
+    try {
+      await waitForDaemon(socketPath);
+      const project = await run(["project:create", "M6B"]);
+      const projectId = project.stdout[0]!.replace("Project created: ", "");
+      expect((await run(["agent:sync", "--project", projectId])).exitCode).toBe(
+        0,
+      );
+      const agentId = (
+        await run(["agent:list", "--project", projectId])
+      ).stdout[1]!.split("\t")[0]!;
+      const created = await run([
+        "resource:create",
+        "--project",
+        projectId,
+        "--type",
+        "filesystem_scope",
+        "--provider",
+        "filesystem",
+        "--name",
+        "Workspace",
+        "--external-ref",
+        workspace,
+      ]);
+      expect(created.exitCode).toBe(0);
+      expect(created.stdout.join("\n")).not.toContain(workspace);
+      const resourceId = created.stdout[0]!.replace("Resource created: ", "");
+      const malformed = await run([
+        "action:invoke",
+        "--project",
+        projectId,
+        "--agent",
+        agentId,
+        "--resource",
+        resourceId,
+        "--operation",
+        "filesystem.read",
+        "--arguments",
+        "{",
+      ]);
+      expect(malformed).toMatchObject({
+        exitCode: 1,
+        stderr: ["Option --arguments must be a JSON object"],
+      });
+      const denied = await run([
+        "action:invoke",
+        "--project",
+        projectId,
+        "--agent",
+        agentId,
+        "--resource",
+        resourceId,
+        "--operation",
+        "filesystem.read",
+        "--arguments",
+        JSON.stringify({ path: "note.txt" }),
+      ]);
+      expect(denied.exitCode).toBe(2);
+      expect(denied.stdout).toContain("Status: denied");
+      const granted = await run([
+        "capability:grant",
+        "--project",
+        projectId,
+        "--principal-type",
+        "agent",
+        "--principal",
+        agentId,
+        "--resource",
+        resourceId,
+        "--actions",
+        "filesystem.read,filesystem.search,filesystem.write",
+        "--constraints",
+        JSON.stringify({ allowMutation: true }),
+        "--granted-by",
+        "owner",
+        "--reason",
+        "M6B daemon test",
+      ]);
+      expect(granted.exitCode).toBe(0);
+      const authorizedRead = await run([
+        "action:request",
+        "--project",
+        projectId,
+        "--agent",
+        agentId,
+        "--resource",
+        resourceId,
+        "--operation",
+        "filesystem.read",
+        "--arguments",
+        JSON.stringify({ path: "note.txt" }),
+      ]);
+      expect(authorizedRead.stdout).toContain("Decision: allowed");
+      const authorizedReadId = authorizedRead.stdout[0]!.replace(
+        "Action request: ",
+        "",
+      );
+      const read = await run([
+        "action:invoke",
+        "--project",
+        projectId,
+        "--action",
+        authorizedReadId,
+      ]);
+      expect(read.exitCode).toBe(0);
+      expect(read.stdout).toContain("Status: completed");
+      expect(read.stdout.join("\n")).toContain("literal needle");
+      expect(read.stdout.join("\n")).not.toContain(workspace);
+      const repeatedRead = await run([
+        "action:invoke",
+        "--project",
+        projectId,
+        "--action",
+        authorizedReadId,
+      ]);
+      expect(repeatedRead.exitCode).toBe(1);
+      expect(repeatedRead.stderr).toEqual([
+        "Action request must be authorized before invocation: completed",
+      ]);
+      const search = await run([
+        "action:invoke",
+        "--project",
+        projectId,
+        "--agent",
+        agentId,
+        "--resource",
+        resourceId,
+        "--operation",
+        "filesystem.search",
+        "--arguments",
+        JSON.stringify({ query: "needle" }),
+      ]);
+      expect(search.stderr).toEqual([]);
+      expect(search.exitCode).toBe(0);
+      expect(search.stdout.join("\n")).toContain('"line":1');
+      const secret = await run([
+        "action:invoke",
+        "--project",
+        projectId,
+        "--agent",
+        agentId,
+        "--resource",
+        resourceId,
+        "--operation",
+        "filesystem.read",
+        "--arguments",
+        JSON.stringify({ path: ".env" }),
+      ]);
+      expect(secret.exitCode).toBe(1);
+      expect(secret.stderr).toEqual(["Filesystem path is unavailable"]);
+      expect(secret.stderr.join("\n")).not.toContain(".env");
+      expect(secret.stderr.join("\n")).not.toContain("must-not-leak");
+      const mutationSecret = "mutation-content-must-not-leak";
+      const failedMutation = await run([
+        "action:invoke",
+        "--project",
+        projectId,
+        "--agent",
+        agentId,
+        "--resource",
+        resourceId,
+        "--operation",
+        "filesystem.write",
+        "--arguments",
+        JSON.stringify({ path: "missing.txt", content: mutationSecret }),
+      ]);
+      expect(failedMutation.exitCode).toBe(1);
+      expect(failedMutation.stderr).toEqual([
+        "Filesystem entry is unavailable",
+      ]);
+      expect(failedMutation.stderr.join("\n")).not.toContain(mutationSecret);
+      const simulation = await run([
+        "action:invoke",
+        "--project",
+        projectId,
+        "--agent",
+        agentId,
+        "--resource",
+        resourceId,
+        "--operation",
+        "filesystem.write",
+        "--arguments",
+        JSON.stringify({ path: "note.txt", content: "changed\n" }),
+      ]);
+      expect(simulation.exitCode).toBe(0);
+      expect(simulation.stdout).toContain("Status: simulated");
+      expect(simulation.stdout.join("\n")).toContain("artifactSha256");
+      expect(readFileSync(join(workspace, "note.txt"), "utf8")).toBe(
+        "literal needle\n",
+      );
+      const actionId = simulation.stdout[0]!.replace("Action request: ", "");
+      const shown = await run([
+        "action:show",
+        "--project",
+        projectId,
+        "--action",
+        actionId,
+      ]);
+      expect(shown.stdout.join("\n")).toContain('"content":"[REDACTED]"');
+      expect(shown.stdout.join("\n")).not.toContain('"content":"changed');
+    } finally {
+      controller.abort();
+      await running;
+    }
+    const database = openDatabase(join(root, ".ai-office", "project.sqlite"));
+    const audit = database
+      .query<{ payload_json: string }, []>(
+        "SELECT payload_json FROM audit_event",
+      )
+      .all()
+      .map((row) => row.payload_json)
+      .join("\n");
+    expect(audit).not.toContain("literal needle");
+    expect(audit).not.toContain("must-not-leak");
+    expect(audit).not.toContain("mutation-content-must-not-leak");
+    expect(audit).not.toContain(workspace);
     database.close();
   });
 });
