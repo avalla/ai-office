@@ -12,6 +12,7 @@ import { BudgetExceededError } from "@ai-office/application/cost-errors.ts";
 import { OpenAiResponsesProvider } from "@ai-office/llm-gateway/openai-provider.ts";
 import { FallbackLlmProvider } from "@ai-office/llm-gateway/fallback-provider.ts";
 import { LlmProviderError } from "@ai-office/llm-gateway/provider.ts";
+import { LangChainModelProvider } from "@ai-office/llm-gateway/langchain-model-provider.ts";
 
 class FixedClock implements Clock {
   now() {
@@ -157,6 +158,56 @@ describe("metered LLM gateway", () => {
       ),
     ).rejects.toBeInstanceOf(BudgetExceededError);
     expect(provider.requests).toHaveLength(0);
+  });
+  test("records normalized usage returned through the LangChain adapter", async () => {
+    const costs = new Costs();
+    costs.pricing = { ...costs.pricing, provider: "anthropic" };
+    const provider = new LangChainModelProvider("anthropic", "model", {
+      invoke: async () =>
+        ({
+          id: "request-langchain",
+          text: "ok",
+          usage_metadata: {
+            input_tokens: 10,
+            output_tokens: 5,
+            total_tokens: 15,
+            input_token_details: { cache_read: 2 },
+            output_token_details: { reasoning: 1 },
+          },
+          response_metadata: { model: "model" },
+        }) as never,
+    });
+    const response = await new MeteredLlmGateway(
+      provider,
+      costs,
+      new Ids(),
+      new FixedClock(),
+    ).complete(
+      { model: "model", messages: [{ role: "user", content: "hello" }] },
+      {
+        projectId: "p",
+        purpose: "test",
+        estimatedUsage: {
+          inputTokens: 10,
+          cachedInputTokens: 0,
+          outputTokens: 10,
+          reasoningTokens: 0,
+        },
+      },
+    );
+
+    expect(response.providerId).toBe("anthropic");
+    expect(costs.recorded).toMatchObject({
+      provider: "anthropic",
+      model: "model",
+      providerRequestId: "request-langchain",
+      usage: {
+        inputTokens: 10,
+        cachedInputTokens: 2,
+        outputTokens: 5,
+        reasoningTokens: 1,
+      },
+    });
   });
   test("normalizes a Responses API result without making a network call", async () => {
     const fake = async () =>

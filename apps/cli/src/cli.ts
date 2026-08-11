@@ -81,8 +81,11 @@ import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/
 import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import { UnavailableOnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import { MeteredLlmGateway } from "@ai-office/llm-gateway/metered-gateway.ts";
-import { OpenAiResponsesProvider } from "@ai-office/llm-gateway/openai-provider.ts";
 import { GatewayOnboardingQuestionGenerator } from "@ai-office/llm-gateway/onboarding-question-generator.ts";
+import {
+  createDefaultModelProviderRegistry,
+  ModelProviderConfigurationError,
+} from "@ai-office/llm-gateway/model-provider-registry.ts";
 import {
   ConnectorRegistryError,
   UnsupportedConnectorError,
@@ -213,25 +216,18 @@ function configuredOnboardingGenerator(
   ids: CryptoIdGenerator,
   clock: SystemClock,
 ): OnboardingQuestionGenerator {
-  if (process.env.AI_OFFICE_LLM_PROVIDER !== "openai") {
-    return new UnavailableOnboardingQuestionGenerator();
+  try {
+    const resolved = createDefaultModelProviderRegistry().resolve(process.env);
+    return new GatewayOnboardingQuestionGenerator(
+      new MeteredLlmGateway(resolved.provider, costs, ids, clock),
+      resolved.providerId,
+      resolved.model,
+    );
+  } catch (error) {
+    if (error instanceof ModelProviderConfigurationError)
+      return new UnavailableOnboardingQuestionGenerator(error.message);
+    throw error;
   }
-  const apiKey = process.env.OPENAI_API_KEY;
-  const model = process.env.AI_OFFICE_LLM_MODEL;
-  if (
-    apiKey === undefined ||
-    apiKey.trim() === "" ||
-    model === undefined ||
-    model.trim() === ""
-  ) {
-    return new UnavailableOnboardingQuestionGenerator();
-  }
-  const provider = new OpenAiResponsesProvider(apiKey);
-  return new GatewayOnboardingQuestionGenerator(
-    new MeteredLlmGateway(provider, costs, ids, clock),
-    provider.id,
-    model,
-  );
 }
 
 const handlers = [

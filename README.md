@@ -82,18 +82,29 @@ bun run cli -- task:list --project <project-id>
 
 `project:import` never calls a provider: its repository scan remains deterministic, idempotent, and usable offline. `project:onboard` uses the configured LLM gateway to generate at most five validated questions per round. Run it interactively, use `project:onboard --project <id> --generate` to persist one round without prompting, or answer persisted questions individually with `project:answer`.
 
-For a real OpenAI-backed smoke test, opt in at the daemon composition root (never commit the key), configure pricing for the same model, and optionally set a project budget:
+For a real provider-backed smoke test, opt in at the daemon composition root (never commit keys), configure pricing for the provider's bare model name, and optionally set a project budget. OpenAI and Anthropic are supported through the infrastructure-only LangChain compatibility adapter:
 
 ```bash
-export AI_OFFICE_LLM_PROVIDER=openai
-export AI_OFFICE_LLM_MODEL=<model-with-configured-pricing>
+export AI_OFFICE_LLM_MODEL=openai:gpt-5.4
 export OPENAI_API_KEY=<your-key>
 
 bun run daemon
-bun run cli -- pricing:set --provider openai --model "$AI_OFFICE_LLM_MODEL" --currency USD --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
+bun run cli -- pricing:set --provider openai --model gpt-5.4 --currency USD --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
 ```
 
-If the provider or model is not configured, onboarding fails explicitly without changing existing questions or answers. Scanner facts and user answers are sent as bounded structured data; repository text is not treated as instructions. Onboarding permission answers are project knowledge only and never create capability grants.
+Or use Anthropic with the same onboarding and metering path:
+
+```bash
+export AI_OFFICE_LLM_MODEL=anthropic:claude-sonnet-4-6
+export ANTHROPIC_API_KEY=<your-key>
+
+bun run daemon
+bun run cli -- pricing:set --provider anthropic --model claude-sonnet-4-6 --currency USD --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
+```
+
+The model prefix selects the provider; it is not part of the pricing model key. The legacy combination `AI_OFFICE_LLM_PROVIDER=openai` plus `AI_OFFICE_LLM_MODEL=<bare-model>` remains temporarily supported, but new configuration should use the single prefixed model reference.
+
+If the provider, model, or required provider credential is not configured, onboarding fails with the configured model and missing environment-variable names, without displaying secret values or changing existing questions or answers. Scanner facts and user answers are sent as bounded structured data; repository text is not treated as instructions. Onboarding permission answers are project knowledge only and never create capability grants.
 
 For current command syntax and the complete command list, use:
 

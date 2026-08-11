@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   existsSync,
   mkdtempSync,
@@ -64,6 +64,7 @@ function prepareExistingProjectRoot(): string {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const directory of temporaryDirectories.splice(0)) {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -337,5 +338,29 @@ describe("Project/Task CLI vertical slice", () => {
       }),
     ).toBe(1);
     expect(output.stderr).toEqual(["LLM provider unavailable for onboarding"]);
+  });
+
+  test("reports the configured model and missing credential without a network call", async () => {
+    vi.stubEnv("AI_OFFICE_LLM_MODEL", "anthropic:claude-sonnet-4-6");
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    const projectRoot = prepareExistingProjectRoot();
+    const importedOutput = captureIo();
+    await runCli(["project:import", "."], {
+      projectRoot,
+      io: importedOutput.io,
+    });
+    const projectId =
+      importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
+    const output = captureIo();
+
+    expect(
+      await runCli(["project:onboard", "--project", projectId, "--generate"], {
+        projectRoot,
+        io: output.io,
+      }),
+    ).toBe(1);
+    expect(output.stderr).toEqual([
+      "No usable LLM provider configuration found.\n\nConfigured model:\n  anthropic:claude-sonnet-4-6\n\nMissing:\n  ANTHROPIC_API_KEY",
+    ]);
   });
 });

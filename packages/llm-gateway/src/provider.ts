@@ -11,6 +11,8 @@ export interface ModelResponse {
   text: string;
   usage: ModelUsage;
   providerRequestId?: string;
+  latencyMs?: number;
+  providerMetadata?: Record<string, unknown>;
 }
 
 export interface LlmProvider {
@@ -80,6 +82,24 @@ export function validateModelResponse(
     throw new InvalidProviderResponseError(
       providerId,
       "providerRequestId must be a non-empty string",
+    );
+  if (
+    response.latencyMs !== undefined &&
+    (!Number.isFinite(response.latencyMs) || response.latencyMs < 0)
+  )
+    throw new InvalidProviderResponseError(
+      providerId,
+      "latencyMs must be a non-negative finite number",
+    );
+  if (
+    response.providerMetadata !== undefined &&
+    (typeof response.providerMetadata !== "object" ||
+      response.providerMetadata === null ||
+      Array.isArray(response.providerMetadata))
+  )
+    throw new InvalidProviderResponseError(
+      providerId,
+      "providerMetadata must be an object",
     );
   if (typeof response.usage !== "object" || response.usage === null)
     throw new InvalidProviderResponseError(providerId, "usage is required");
