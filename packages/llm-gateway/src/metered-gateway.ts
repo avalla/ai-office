@@ -33,6 +33,7 @@ export interface MeteredRequestContext extends UsageContext {
   budgetScopeType?: BudgetScopeType;
   budgetScopeId?: string;
   reservationTtlMs?: number;
+  useProjectBudgetIfConfigured?: boolean;
 }
 
 export class MeteredLlmGateway {
@@ -94,18 +95,38 @@ export class MeteredLlmGateway {
         context.budgetScopeId === undefined)
     )
       throw new BudgetNotFoundError();
-    let reservationId: string | undefined;
+    let budgetScopeType = context.budgetScopeType;
+    let budgetScopeId = context.budgetScopeId;
     if (
-      context.budgetScopeType !== undefined &&
-      context.budgetScopeId !== undefined
+      budgetScopeType === undefined &&
+      budgetScopeId === undefined &&
+      context.useProjectBudgetIfConfigured === true
     ) {
+      const projectBudgetCurrencies = await this.costs.listBudgetCurrencies(
+        context.projectId,
+        "project",
+        context.projectId,
+      );
+      if (
+        projectBudgetCurrencies.length > 0 &&
+        !projectBudgetCurrencies.some((value) => value === currency)
+      ) {
+        throw new PricingCurrencyMismatchError();
+      }
+      if (projectBudgetCurrencies.some((value) => value === currency)) {
+        budgetScopeType = "project";
+        budgetScopeId = context.projectId;
+      }
+    }
+    let reservationId: string | undefined;
+    if (budgetScopeType !== undefined && budgetScopeId !== undefined) {
       reservationId = this.ids.generate();
       const ttl = context.reservationTtlMs ?? 15 * 60_000;
       await this.costs.authorizeAndReserve({
         id: reservationId,
         projectId: context.projectId,
-        scopeType: context.budgetScopeType,
-        scopeId: context.budgetScopeId,
+        scopeType: budgetScopeType,
+        scopeId: budgetScopeId,
         currency,
         amountMicros: reservedMicros,
         ...(context.agentRunId === undefined

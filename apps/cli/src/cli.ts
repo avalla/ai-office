@@ -21,6 +21,9 @@ import {
 } from "@ai-office/application/cost-errors.ts";
 import {
   InvalidProjectAnswerError,
+  InvalidOnboardingGenerationError,
+  OnboardingProviderUnavailableError,
+  OnboardingRoundLimitError,
   ProjectNotFoundError,
   ProjectQuestionAlreadyAnsweredError,
   ProjectQuestionNotFoundError,
@@ -75,6 +78,11 @@ import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositori
 import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
 import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
+import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
+import { UnavailableOnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
+import { MeteredLlmGateway } from "@ai-office/llm-gateway/metered-gateway.ts";
+import { OpenAiResponsesProvider } from "@ai-office/llm-gateway/openai-provider.ts";
+import { GatewayOnboardingQuestionGenerator } from "@ai-office/llm-gateway/onboarding-question-generator.ts";
 import {
   ConnectorRegistryError,
   UnsupportedConnectorError,
@@ -105,7 +113,7 @@ Commands:
   daemon:health
   project:create <name> [--description <description>]
   project:import [path] [--name <name>]
-  project:onboard --project <id>
+  project:onboard --project <id> [--generate]
   project:answer --project <id> --question <id> --answer <value>
   project:profile --project <id>
   project:export --project <id>
@@ -197,6 +205,33 @@ export interface CliOptions {
   migrationDirectory?: string;
   io?: CliIo;
   propagatePromptRequired?: boolean;
+  onboardingGenerator?: OnboardingQuestionGenerator;
+}
+
+function configuredOnboardingGenerator(
+  costs: SqliteCostRepository,
+  ids: CryptoIdGenerator,
+  clock: SystemClock,
+): OnboardingQuestionGenerator {
+  if (process.env.AI_OFFICE_LLM_PROVIDER !== "openai") {
+    return new UnavailableOnboardingQuestionGenerator();
+  }
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = process.env.AI_OFFICE_LLM_MODEL;
+  if (
+    apiKey === undefined ||
+    apiKey.trim() === "" ||
+    model === undefined ||
+    model.trim() === ""
+  ) {
+    return new UnavailableOnboardingQuestionGenerator();
+  }
+  const provider = new OpenAiResponsesProvider(apiKey);
+  return new GatewayOnboardingQuestionGenerator(
+    new MeteredLlmGateway(provider, costs, ids, clock),
+    provider.id,
+    model,
+  );
 }
 
 const handlers = [
@@ -221,6 +256,9 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ProjectQuestionNotFoundError ||
     error instanceof ProjectQuestionAlreadyAnsweredError ||
     error instanceof InvalidProjectAnswerError ||
+    error instanceof InvalidOnboardingGenerationError ||
+    error instanceof OnboardingProviderUnavailableError ||
+    error instanceof OnboardingRoundLimitError ||
     error instanceof AgentNotFoundError ||
     error instanceof TaskNotFoundError ||
     error instanceof TaskLockActiveError ||
@@ -306,6 +344,7 @@ export async function runCli(
     const clock = new SystemClock();
     const capabilities = new SqliteCapabilityPolicyRepository(database);
     const controlled = new SqliteControlledExecutionRepository(database);
+    const costs = new SqliteCostRepository(database);
     const context: CommandContext = {
       projectRoot: options.projectRoot,
       io,
@@ -313,7 +352,7 @@ export async function runCli(
       profiles: new SqliteProjectProfileRepository(database),
       tasks: new SqliteTaskRepository(database),
       runtime: new SqliteAgentRuntimeRepository(database),
-      costs: new SqliteCostRepository(database),
+      costs,
       governance: new SqliteGovernanceRepository(database),
       capabilities,
       controlled,
@@ -326,6 +365,9 @@ export async function runCli(
       clock,
       transactions: new SqliteTransactionRunner(database),
       connectors: createDefaultConnectorRegistry(),
+      onboardingGenerator:
+        options.onboardingGenerator ??
+        configuredOnboardingGenerator(costs, ids, clock),
     };
     for (const handler of handlers) {
       const result = await handler(command, commandArguments, context);

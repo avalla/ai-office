@@ -27,7 +27,10 @@ describe("ImportProject", () => {
     const databaseRoot = mkdtempSync(join(tmpdir(), "ai-office-database-"));
     temporaryDirectories.push(repositoryRoot, databaseRoot);
 
-    writeFileSync(join(repositoryRoot, "package.json"), JSON.stringify({ name: "demo" }));
+    writeFileSync(
+      join(repositoryRoot, "package.json"),
+      JSON.stringify({ name: "demo" }),
+    );
     writeFileSync(join(repositoryRoot, "index.ts"), "export const value = 1;");
 
     const database = openDatabase(join(databaseRoot, "project.sqlite"));
@@ -39,7 +42,7 @@ describe("ImportProject", () => {
       new LocalProjectScanner(),
       new CryptoIdGenerator(),
       new SystemClock(),
-      new SqliteTransactionRunner(database)
+      new SqliteTransactionRunner(database),
     );
 
     const first = await command.execute({ rootPath: repositoryRoot });
@@ -54,44 +57,48 @@ describe("ImportProject", () => {
       .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM project")
       .get();
     const sources = database
-      .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM project_source")
+      .query<{ count: number }, []>(
+        "SELECT COUNT(*) AS count FROM project_source",
+      )
       .get();
     const scans = database
-      .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM project_scan")
+      .query<{ count: number }, []>(
+        "SELECT COUNT(*) AS count FROM project_scan",
+      )
       .get();
     const questions = database
       .query<{ count: number }, []>(
-        "SELECT COUNT(*) AS count FROM project_question WHERE answer_json IS NULL"
+        "SELECT COUNT(*) AS count FROM project_question WHERE answer_json IS NULL",
       )
       .get();
 
     expect(projects?.count).toBe(1);
     expect(sources?.count).toBe(1);
     expect(scans?.count).toBe(2);
-    expect(questions?.count).toBe(5);
+    expect(questions?.count).toBe(0);
     expect(second.scan.languages).toEqual(["Python", "TypeScript"]);
 
     const storedLanguages = database
       .query<{ value_json: string }, []>(
         `SELECT value_json
          FROM project_profile_entry
-         WHERE category = 'stack' AND key = 'languages' AND origin = 'detected'`
+         WHERE category = 'stack' AND key = 'languages' AND origin = 'detected'`,
       )
       .all();
     expect(storedLanguages).toEqual([
-      { value_json: JSON.stringify(["Python", "TypeScript"]) }
+      { value_json: JSON.stringify(["Python", "TypeScript"]) },
     ]);
 
     const scanRows = database
       .query<{ status: string; started_at: string; summary_json: string }, []>(
-        "SELECT status, started_at, summary_json FROM project_scan ORDER BY rowid"
+        "SELECT status, started_at, summary_json FROM project_scan ORDER BY rowid",
       )
       .all();
     expect(scanRows.every((row) => row.status === "completed")).toBe(true);
     expect(scanRows.every((row) => row.started_at.length > 0)).toBe(true);
     expect(scanRows.map((row) => JSON.parse(row.summary_json))).toEqual([
       first.scan,
-      second.scan
+      second.scan,
     ]);
 
     database.close();
@@ -113,23 +120,27 @@ describe("ImportProject", () => {
       new LocalProjectScanner(),
       new CryptoIdGenerator(),
       new SystemClock(),
-      new SqliteTransactionRunner(database)
+      new SqliteTransactionRunner(database),
     );
 
     const direct = await command.execute({ rootPath: repositoryRoot });
     const withParentSegment = await command.execute({
-      rootPath: join(repositoryRoot, "..", "demo")
+      rootPath: join(repositoryRoot, "..", "demo"),
     });
 
     expect(withParentSegment.projectId).toBe(direct.projectId);
     expect(withParentSegment.scan.rootPath).toBe(direct.scan.rootPath);
     expect(
-      database.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM project").get()?.count
+      database
+        .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM project")
+        .get()?.count,
     ).toBe(1);
     expect(
       database
-        .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM project_source")
-        .get()?.count
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM project_source",
+        )
+        .get()?.count,
     ).toBe(1);
     database.close();
   });
@@ -155,11 +166,11 @@ describe("ImportProject", () => {
       new LocalProjectScanner(),
       new CryptoIdGenerator(),
       new SystemClock(),
-      new SqliteTransactionRunner(database)
+      new SqliteTransactionRunner(database),
     );
 
     await expect(command.execute({ rootPath: repositoryRoot })).rejects.toThrow(
-      "simulated scan persistence failure"
+      "simulated scan persistence failure",
     );
 
     for (const table of [
@@ -167,19 +178,26 @@ describe("ImportProject", () => {
       "project_source",
       "project_scan",
       "project_profile_entry",
-      "project_question"
+      "project_question",
     ]) {
       expect(
-        database.query<{ count: number }, []>(`SELECT COUNT(*) AS count FROM ${table}`).get()
-          ?.count
+        database
+          .query<{ count: number }, []>(
+            `SELECT COUNT(*) AS count FROM ${table}`,
+          )
+          .get()?.count,
       ).toBe(0);
     }
     database.close();
   });
 
   test("reuses the oldest legacy import without deleting duplicate projects", async () => {
-    const repositoryRoot = mkdtempSync(join(tmpdir(), "ai-office-legacy-repository-"));
-    const databaseRoot = mkdtempSync(join(tmpdir(), "ai-office-legacy-database-"));
+    const repositoryRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-legacy-repository-"),
+    );
+    const databaseRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-legacy-database-"),
+    );
     temporaryDirectories.push(repositoryRoot, databaseRoot);
     writeFileSync(join(repositoryRoot, "index.ts"), "export const value = 1;");
 
@@ -188,19 +206,19 @@ describe("ImportProject", () => {
     const canonicalPath = await new LocalProjectScanner().scan(repositoryRoot);
     const insert = database.prepare(
       `INSERT INTO project(id, name, description, created_at, updated_at)
-       VALUES (?, 'Legacy', ?, ?, ?)`
+       VALUES (?, 'Legacy', ?, ?, ?)`,
     );
     insert.run(
       "legacy-oldest",
       `Imported from ${canonicalPath.rootPath}`,
       "2026-01-01T00:00:00.000Z",
-      "2026-01-01T00:00:00.000Z"
+      "2026-01-01T00:00:00.000Z",
     );
     insert.run(
       "legacy-newest",
       `Imported from ${canonicalPath.rootPath}`,
       "2026-02-01T00:00:00.000Z",
-      "2026-02-01T00:00:00.000Z"
+      "2026-02-01T00:00:00.000Z",
     );
 
     const imported = await new ImportProject(
@@ -209,17 +227,21 @@ describe("ImportProject", () => {
       new LocalProjectScanner(),
       new CryptoIdGenerator(),
       new SystemClock(),
-      new SqliteTransactionRunner(database)
+      new SqliteTransactionRunner(database),
     ).execute({ rootPath: repositoryRoot });
 
     expect(imported.projectId).toBe("legacy-oldest");
     expect(
-      database.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM project").get()?.count
+      database
+        .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM project")
+        .get()?.count,
     ).toBe(2);
     expect(
       database
-        .query<{ project_id: string }, []>("SELECT project_id FROM project_source")
-        .get()?.project_id
+        .query<{ project_id: string }, []>(
+          "SELECT project_id FROM project_source",
+        )
+        .get()?.project_id,
     ).toBe("legacy-oldest");
     database.close();
   });

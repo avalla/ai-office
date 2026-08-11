@@ -6,6 +6,10 @@ import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "../../apps/cli/src/cli.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import {
+  ScriptedOnboardingGenerator,
+  textQuestion,
+} from "../helpers/onboarding-generator.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -25,11 +29,11 @@ function captureIo(answers: string[] = []): {
       prompt: async (message) => {
         prompts.push(message);
         return answers.shift() ?? "";
-      }
+      },
     },
     stdout,
     stderr,
-    prompts
+    prompts,
   };
 }
 
@@ -60,10 +64,42 @@ describe("CLI to daemon end-to-end", () => {
     writeFileSync(join(projectRoot, "index.ts"), "export const value = 1;");
     writeFileSync(
       join(projectRoot, "package.json"),
-      JSON.stringify({ name: "existing", devDependencies: { vitest: "latest" } })
+      JSON.stringify({
+        name: "existing",
+        devDependencies: { vitest: "latest" },
+      }),
     );
     const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
-    const daemon = await bootstrap({ projectRoot, socketPath });
+    const generator = new ScriptedOnboardingGenerator([
+      {
+        status: "needs_more_context",
+        questions: [
+          textQuestion({
+            category: "goal",
+            question: "What outcome is next?",
+            priority: 100,
+          }),
+          {
+            category: "permission",
+            question: "Which operations may agents perform?",
+            rationale: "Records preferences only.",
+            answerType: "multi_select",
+            options: ["read_files", "modify_files", "run_tests"],
+            priority: 90,
+          },
+          textQuestion({
+            category: "constraint",
+            question: "What must remain unchanged?",
+            priority: 80,
+          }),
+        ],
+      },
+    ]);
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath,
+      onboardingGenerator: generator,
+    });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);
 
@@ -74,8 +110,8 @@ describe("CLI to daemon end-to-end", () => {
         await runDaemonCli(["daemon:health"], {
           projectRoot,
           socketPath,
-          io: healthOutput.io
-        })
+          io: healthOutput.io,
+        }),
       ).toBe(0);
       expect(healthOutput.stdout[0]).toBe("Daemon status: ok");
 
@@ -84,41 +120,47 @@ describe("CLI to daemon end-to-end", () => {
         await runDaemonCli(["project:import", "."], {
           projectRoot,
           socketPath,
-          io: importOutput.io
-        })
+          io: importOutput.io,
+        }),
       ).toBe(0);
-      const projectId = importOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
+      const projectId =
+        importOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
 
       const onboardingOutput = captureIo([
         "Ship M2",
         "read_files,modify_files,run_tests",
-        "Keep strict TypeScript"
+        "Keep strict TypeScript",
       ]);
       expect(
         await runDaemonCli(["project:onboard", "--project", projectId], {
           projectRoot,
           socketPath,
-          io: onboardingOutput.io
-        })
+          io: onboardingOutput.io,
+        }),
       ).toBe(0);
       expect(onboardingOutput.prompts).toEqual(["> ", "> ", "> "]);
       expect(
-        onboardingOutput.stdout.filter((line) => line.startsWith("[goal]"))
+        onboardingOutput.stdout.filter((line) => line.startsWith("[goal/")),
       ).toHaveLength(1);
       expect(
-        onboardingOutput.stdout.filter((line) => line.startsWith("[permission]"))
+        onboardingOutput.stdout.filter((line) =>
+          line.startsWith("[permission/"),
+        ),
       ).toHaveLength(1);
       expect(
-        onboardingOutput.stdout.filter((line) => line.startsWith("[constraint]"))
+        onboardingOutput.stdout.filter((line) =>
+          line.startsWith("[constraint/"),
+        ),
       ).toHaveLength(1);
+      expect(generator.prompts).toHaveLength(1);
 
       const profileOutput = captureIo();
       expect(
         await runDaemonCli(["project:profile", "--project", projectId], {
           projectRoot,
           socketPath,
-          io: profileOutput.io
-        })
+          io: profileOutput.io,
+        }),
       ).toBe(0);
       expect(profileOutput.stdout[0]).toContain("Ship M2");
       expect(profileOutput.stderr).toEqual([]);
@@ -134,12 +176,17 @@ describe("CLI to daemon end-to-end", () => {
     const output = captureIo();
 
     expect(
-      await runDaemonCli(["project:create", "Demo"], { projectRoot, io: output.io })
+      await runDaemonCli(["project:create", "Demo"], {
+        projectRoot,
+        io: output.io,
+      }),
     ).toBe(1);
-    expect(output.stderr[0]).toContain("Start it with \"bun run daemon\"");
+    expect(output.stderr[0]).toContain('Start it with "bun run daemon"');
 
     const helpOutput = captureIo();
-    expect(await runDaemonCli(["--help"], { projectRoot, io: helpOutput.io })).toBe(0);
+    expect(
+      await runDaemonCli(["--help"], { projectRoot, io: helpOutput.io }),
+    ).toBe(0);
     expect(helpOutput.stdout[0]).toContain("daemon:health");
     expect(helpOutput.stderr).toEqual([]);
   });

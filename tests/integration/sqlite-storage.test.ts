@@ -52,6 +52,7 @@ describe("project database migrations", () => {
       "0012_capability_policy.sql",
       "0013_filesystem_connector.sql",
       "0014_trusted_local_execution.sql",
+      "0015_llm_assisted_onboarding.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -76,6 +77,7 @@ describe("project database migrations", () => {
       { version: "0012_capability_policy.sql" },
       { version: "0013_filesystem_connector.sql" },
       { version: "0014_trusted_local_execution.sql" },
+      { version: "0015_llm_assisted_onboarding.sql" },
     ]);
     database.close();
   });

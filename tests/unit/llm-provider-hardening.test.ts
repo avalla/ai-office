@@ -8,6 +8,7 @@ import type {
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import type {
   BudgetSnapshot,
+  Currency,
   PricingVersion,
 } from "@ai-office/domain/cost/cost.ts";
 import { FallbackLlmProvider } from "@ai-office/llm-gateway/fallback-provider.ts";
@@ -60,6 +61,9 @@ class MemoryCosts implements CostRepository {
   }
   async findBudget(): Promise<BudgetSnapshot | null> {
     return null;
+  }
+  async listBudgetCurrencies(): Promise<Currency[]> {
+    return [];
   }
   async authorizeAndReserve(input: AuthorizeReservationInput) {
     this.reserved = input;

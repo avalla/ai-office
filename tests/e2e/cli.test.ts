@@ -1,9 +1,20 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli, type CliIo } from "../../apps/cli/src/cli.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
+import { UnavailableOnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
+import {
+  ScriptedOnboardingGenerator,
+  textQuestion,
+} from "../helpers/onboarding-generator.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -30,11 +41,11 @@ function captureIo(answers: string[] = []): {
       prompt: async (message) => {
         prompts.push(message);
         return answers.shift() ?? "";
-      }
+      },
     },
     stdout,
     stderr,
-    prompts
+    prompts,
   };
 }
 
@@ -44,7 +55,10 @@ function prepareExistingProjectRoot(): string {
   writeFileSync(join(root, "index.ts"), "export const value = 1;");
   writeFileSync(
     join(root, "package.json"),
-    JSON.stringify({ name: "existing-project", devDependencies: { vitest: "latest" } })
+    JSON.stringify({
+      name: "existing-project",
+      devDependencies: { vitest: "latest" },
+    }),
   );
   return root;
 }
@@ -61,36 +75,54 @@ describe("Project/Task CLI vertical slice", () => {
     const projectOutput = captureIo();
     const projectExitCode = await runCli(["project:create", "Demo"], {
       projectRoot,
-      io: projectOutput.io
+      io: projectOutput.io,
     });
     const projectId = projectOutput.stdout[0]?.replace("Project created: ", "");
 
     expect(projectExitCode).toBe(0);
     expect(typeof projectId).toBe("string");
-    expect(existsSync(join(projectRoot, ".ai-office", "project.sqlite"))).toBe(true);
+    expect(existsSync(join(projectRoot, ".ai-office", "project.sqlite"))).toBe(
+      true,
+    );
 
     const lowOutput = captureIo();
     expect(
       await runCli(
-        ["task:create", "--project", projectId ?? "", "--title", "Low", "--priority", "1"],
-        { projectRoot, io: lowOutput.io }
-      )
+        [
+          "task:create",
+          "--project",
+          projectId ?? "",
+          "--title",
+          "Low",
+          "--priority",
+          "1",
+        ],
+        { projectRoot, io: lowOutput.io },
+      ),
     ).toBe(0);
 
     const highOutput = captureIo();
     expect(
       await runCli(
-        ["task:create", "--project", projectId ?? "", "--title", "High", "--priority", "10"],
-        { projectRoot, io: highOutput.io }
-      )
+        [
+          "task:create",
+          "--project",
+          projectId ?? "",
+          "--title",
+          "High",
+          "--priority",
+          "10",
+        ],
+        { projectRoot, io: highOutput.io },
+      ),
     ).toBe(0);
 
     const listOutput = captureIo();
     expect(
       await runCli(["task:list", "--project", projectId ?? ""], {
         projectRoot,
-        io: listOutput.io
-      })
+        io: listOutput.io,
+      }),
     ).toBe(0);
     expect(listOutput.stdout[0]).toBe("ID\tSTATUS\tPRIORITY\tTITLE");
     expect(listOutput.stdout[1]).toMatch(/\tpending\t10\tHigh$/);
@@ -103,7 +135,7 @@ describe("Project/Task CLI vertical slice", () => {
 
     const exitCode = await runCli(
       ["task:create", "--project", "missing", "--title", "Orphan"],
-      { projectRoot: createProjectRoot(), io: output.io }
+      { projectRoot: createProjectRoot(), io: output.io },
     );
 
     expect(exitCode).toBe(1);
@@ -114,13 +146,37 @@ describe("Project/Task CLI vertical slice", () => {
   test("answers a question, displays the categorized profile, and exports deterministically", async () => {
     const projectRoot = prepareExistingProjectRoot();
     const importedOutput = captureIo();
-    expect(await runCli(["project:import", "."], { projectRoot, io: importedOutput.io })).toBe(0);
-    const projectId = importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
+    expect(
+      await runCli(["project:import", "."], {
+        projectRoot,
+        io: importedOutput.io,
+      }),
+    ).toBe(0);
+    const projectId =
+      importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
 
-    const database = openDatabase(join(projectRoot, ".ai-office", "project.sqlite"));
+    const generator = new ScriptedOnboardingGenerator([
+      {
+        status: "needs_more_context",
+        questions: [
+          textQuestion({ question: "What outcome should be published?" }),
+        ],
+      },
+    ]);
+    expect(
+      await runCli(["project:onboard", "--project", projectId, "--generate"], {
+        projectRoot,
+        io: captureIo().io,
+        onboardingGenerator: generator,
+      }),
+    ).toBe(0);
+
+    const database = openDatabase(
+      join(projectRoot, ".ai-office", "project.sqlite"),
+    );
     const goalQuestion = database
       .query<{ id: string }, []>(
-        "SELECT id FROM project_question WHERE key = 'next_outcome' AND answer_json IS NULL"
+        "SELECT id FROM project_question WHERE source = 'llm' AND answer_json IS NULL",
       )
       .get();
     database.close();
@@ -135,10 +191,10 @@ describe("Project/Task CLI vertical slice", () => {
           "--question",
           goalQuestion?.id ?? "",
           "--answer",
-          "Publish the onboarding milestone"
+          "Publish the onboarding milestone",
         ],
-        { projectRoot, io: answerOutput.io }
-      )
+        { projectRoot, io: answerOutput.io },
+      ),
     ).toBe(0);
     expect(answerOutput.stdout[0]).toContain("(goal)");
 
@@ -146,28 +202,38 @@ describe("Project/Task CLI vertical slice", () => {
     expect(
       await runCli(["project:profile", "--project", projectId], {
         projectRoot,
-        io: profileOutput.io
-      })
+        io: profileOutput.io,
+      }),
     ).toBe(0);
     expect(profileOutput.stdout[0]).toContain("## Detected facts");
     expect(profileOutput.stdout[0]).toContain("## Goals");
-    expect(profileOutput.stdout[0]).toContain("Publish the onboarding milestone");
+    expect(profileOutput.stdout[0]).toContain(
+      "## LLM-generated onboarding questions",
+    );
+    expect(profileOutput.stdout[0]).toContain(
+      "Publish the onboarding milestone",
+    );
 
     const exportOutput = captureIo();
     expect(
       await runCli(["project:export", "--project", projectId], {
         projectRoot,
-        io: exportOutput.io
-      })
+        io: exportOutput.io,
+      }),
     ).toBe(0);
-    const outputPath = join(projectRoot, ".ai-office", "generated", "project-profile.md");
+    const outputPath = join(
+      projectRoot,
+      ".ai-office",
+      "generated",
+      "project-profile.md",
+    );
     const firstExport = readFileSync(outputPath, "utf8");
 
     expect(
       await runCli(["project:export", "--project", projectId], {
         projectRoot,
-        io: captureIo().io
-      })
+        io: captureIo().io,
+      }),
     ).toBe(0);
     expect(readFileSync(outputPath, "utf8")).toBe(firstExport);
     expect(firstExport).toBe(`${profileOutput.stdout[0]}\n`);
@@ -176,42 +242,100 @@ describe("Project/Task CLI vertical slice", () => {
   test("runs interactive onboarding one open question at a time", async () => {
     const projectRoot = prepareExistingProjectRoot();
     const importedOutput = captureIo();
-    expect(await runCli(["project:import", "."], { projectRoot, io: importedOutput.io })).toBe(0);
-    const projectId = importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
+    expect(
+      await runCli(["project:import", "."], {
+        projectRoot,
+        io: importedOutput.io,
+      }),
+    ).toBe(0);
+    const projectId =
+      importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
     const onboardingOutput = captureIo([
       "Ship M1.5",
       "read_files,modify_files,run_tests",
-      "Keep strict TypeScript"
+      "Keep strict TypeScript",
+    ]);
+    const generator = new ScriptedOnboardingGenerator([
+      {
+        status: "needs_more_context",
+        questions: [
+          textQuestion({
+            category: "goal",
+            question: "What concrete outcome is next?",
+            priority: 100,
+          }),
+          {
+            category: "permission",
+            question: "Which operations may agents perform?",
+            rationale:
+              "Records project preferences without granting capabilities.",
+            answerType: "multi_select",
+            options: ["read_files", "modify_files", "run_tests"],
+            priority: 90,
+          },
+          textQuestion({
+            category: "constraint",
+            question: "What must remain unchanged?",
+            priority: 80,
+          }),
+        ],
+      },
     ]);
 
     expect(
       await runCli(["project:onboard", "--project", projectId], {
         projectRoot,
-        io: onboardingOutput.io
-      })
+        io: onboardingOutput.io,
+        onboardingGenerator: generator,
+      }),
     ).toBe(0);
     expect(onboardingOutput.prompts).toEqual(["> ", "> ", "> "]);
-    expect(onboardingOutput.stdout.filter((line) => line.startsWith("["))).toEqual([
-      "[goal] Qual è il prossimo risultato concreto che vuoi ottenere?",
-      "[permission] Quali operazioni possono eseguire autonomamente gli agenti?",
-      "[constraint] Quali vincoli architetturali o tecnologici non devono essere modificati?"
+    expect(
+      onboardingOutput.stdout.filter((line) => line.startsWith("[")),
+    ).toEqual([
+      "[goal/text/llm] What concrete outcome is next?",
+      "[permission/multi_select/llm] Which operations may agents perform?",
+      "[constraint/text/llm] What must remain unchanged?",
     ]);
 
-    const database = openDatabase(join(projectRoot, ".ai-office", "project.sqlite"));
+    const database = openDatabase(
+      join(projectRoot, ".ai-office", "project.sqlite"),
+    );
     expect(
       database
         .query<{ count: number }, []>(
-          "SELECT COUNT(*) AS count FROM project_question WHERE answer_json IS NULL"
+          "SELECT COUNT(*) AS count FROM project_question WHERE answer_json IS NULL",
         )
-        .get()?.count
+        .get()?.count,
     ).toBe(0);
     expect(
       database
         .query<{ count: number }, []>(
-          "SELECT COUNT(*) AS count FROM project_profile_entry WHERE origin = 'user'"
+          "SELECT COUNT(*) AS count FROM project_profile_entry WHERE origin = 'user'",
         )
-        .get()?.count
+        .get()?.count,
     ).toBe(3);
     database.close();
+  });
+
+  test("fails clearly when onboarding has no configured provider", async () => {
+    const projectRoot = prepareExistingProjectRoot();
+    const importedOutput = captureIo();
+    await runCli(["project:import", "."], {
+      projectRoot,
+      io: importedOutput.io,
+    });
+    const projectId =
+      importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
+    const output = captureIo();
+
+    expect(
+      await runCli(["project:onboard", "--project", projectId, "--generate"], {
+        projectRoot,
+        io: output.io,
+        onboardingGenerator: new UnavailableOnboardingQuestionGenerator(),
+      }),
+    ).toBe(1);
+    expect(output.stderr).toEqual(["LLM provider unavailable for onboarding"]);
   });
 });

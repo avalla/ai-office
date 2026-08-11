@@ -4,7 +4,7 @@ import { cliHelp, type CliIo } from "./cli.ts";
 import {
   DaemonClient,
   DaemonUnavailableError,
-  InvalidDaemonResponseError
+  InvalidDaemonResponseError,
 } from "./daemon-client.ts";
 
 export interface DaemonCliOptions {
@@ -15,7 +15,7 @@ export interface DaemonCliOptions {
 
 const defaultIo: CliIo = {
   stdout: (message) => console.log(message),
-  stderr: (message) => console.error(message)
+  stderr: (message) => console.error(message),
 };
 
 function promptContext(lines: string[]): string[] {
@@ -30,16 +30,24 @@ function promptContext(lines: string[]): string[] {
 }
 
 function withoutRepeatedPrefix(lines: string[], prefix: string[]): string[] {
-  if (prefix.length === 0 || prefix.some((line, index) => lines[index] !== line)) return lines;
-  return lines.slice(prefix.length);
+  const maximumOverlap = Math.min(lines.length, prefix.length);
+  for (let overlap = maximumOverlap; overlap > 0; overlap -= 1) {
+    const previousSuffix = prefix.slice(prefix.length - overlap);
+    if (previousSuffix.every((line, index) => lines[index] === line)) {
+      return lines.slice(overlap);
+    }
+  }
+  return lines;
 }
 
 export async function runDaemonCli(
   args: string[],
-  options: DaemonCliOptions
+  options: DaemonCliOptions,
 ): Promise<number> {
   const io = options.io ?? defaultIo;
-  const socketPath = options.socketPath ?? join(options.projectRoot, ".ai-office", "daemon.sock");
+  const socketPath =
+    options.socketPath ??
+    join(options.projectRoot, ".ai-office", "daemon.sock");
   const client = new DaemonClient(socketPath);
 
   try {
@@ -60,17 +68,22 @@ export async function runDaemonCli(
       return 0;
     }
 
-    const reader = io.prompt === undefined
-      ? createInterface({ input: process.stdin, output: process.stdout })
-      : undefined;
-    const prompt = io.prompt ?? ((message: string) => reader!.question(message));
+    const reader =
+      io.prompt === undefined
+        ? createInterface({ input: process.stdin, output: process.stdout })
+        : undefined;
+    const prompt =
+      io.prompt ?? ((message: string) => reader!.question(message));
     let answer: string | undefined;
     let previousPromptContext: string[] = [];
 
     try {
       while (true) {
         const response = await client.execute(args, answer);
-        const stdout = withoutRepeatedPrefix(response.stdout, previousPromptContext);
+        const stdout = withoutRepeatedPrefix(
+          response.stdout,
+          previousPromptContext,
+        );
         for (const line of stdout) io.stdout(line);
         for (const line of response.stderr) io.stderr(line);
 
@@ -82,7 +95,10 @@ export async function runDaemonCli(
       reader?.close();
     }
   } catch (error) {
-    if (error instanceof DaemonUnavailableError || error instanceof InvalidDaemonResponseError) {
+    if (
+      error instanceof DaemonUnavailableError ||
+      error instanceof InvalidDaemonResponseError
+    ) {
       io.stderr(error.message);
       return 1;
     }

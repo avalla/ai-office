@@ -29,11 +29,14 @@ const migrationSource = join(
 const now = new Date("2026-08-11T00:00:00.000Z");
 
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0))
+    rmSync(root, { recursive: true, force: true });
 });
 
 function root(): string {
-  const value = realpathSync(mkdtempSync(join(tmpdir(), "ai-office-m6c-migration-")));
+  const value = realpathSync(
+    mkdtempSync(join(tmpdir(), "ai-office-m6c-migration-")),
+  );
   roots.push(value);
   return value;
 }
@@ -48,7 +51,9 @@ function migrationsThrough(directory: string, last: string): string {
   return target;
 }
 
-async function seedM6B(database: ReturnType<typeof openDatabase>): Promise<void> {
+async function seedM6B(
+  database: ReturnType<typeof openDatabase>,
+): Promise<void> {
   const projects = new SqliteProjectRepository(database);
   const runtime = new SqliteAgentRuntimeRepository(database);
   await projects.save(Project.create({ id: "project-1", name: "M6B", now }));
@@ -131,10 +136,14 @@ async function seedM6B(database: ReturnType<typeof openDatabase>): Promise<void>
         now.toISOString(),
       );
     database
-      .prepare("UPDATE action_requests SET status='authorized', updated_at=? WHERE id=?")
+      .prepare(
+        "UPDATE action_requests SET status='authorized', updated_at=? WHERE id=?",
+      )
       .run(now.toISOString(), item.id);
     database
-      .prepare("UPDATE action_requests SET status='simulating', updated_at=? WHERE id=?")
+      .prepare(
+        "UPDATE action_requests SET status='simulating', updated_at=? WHERE id=?",
+      )
       .run(now.toISOString(), item.id);
     database
       .prepare(
@@ -156,11 +165,15 @@ async function seedM6B(database: ReturnType<typeof openDatabase>): Promise<void>
         now.toISOString(),
       );
     database
-      .prepare("UPDATE action_requests SET status='simulated', updated_at=? WHERE id=?")
+      .prepare(
+        "UPDATE action_requests SET status='simulated', updated_at=? WHERE id=?",
+      )
       .run(now.toISOString(), item.id);
     if (item.status === "approval_pending")
       database
-        .prepare("UPDATE action_requests SET status='approval_pending', updated_at=? WHERE id=?")
+        .prepare(
+          "UPDATE action_requests SET status='approval_pending', updated_at=? WHERE id=?",
+        )
         .run(now.toISOString(), item.id);
   }
   database
@@ -178,7 +191,7 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "fresh.sqlite"));
     expect(migrate(database, migrationSource).applied.at(-1)).toBe(
-      "0014_trusted_local_execution.sql",
+      "0015_llm_assisted_onboarding.sql",
     );
     expect(
       database
@@ -206,7 +219,10 @@ describe("M6C-lite migration", () => {
   test("preserves populated M6B v1 history and refuses to make it executable", async () => {
     const directory = root();
     const database = openDatabase(join(directory, "upgrade.sqlite"));
-    migrate(database, migrationsThrough(directory, "0013_filesystem_connector.sql"));
+    migrate(
+      database,
+      migrationsThrough(directory, "0013_filesystem_connector.sql"),
+    );
     expect(
       database
         .query<{ name: string }, []>(
@@ -220,6 +236,7 @@ describe("M6C-lite migration", () => {
       .all();
     expect(migrate(database, migrationSource).applied).toEqual([
       "0014_trusted_local_execution.sql",
+      "0015_llm_assisted_onboarding.sql",
     ]);
     expect(
       database
@@ -228,18 +245,25 @@ describe("M6C-lite migration", () => {
         )
         .all(),
     ).toEqual([]);
-    expect(database.query("SELECT * FROM action_requests ORDER BY id").all()).toEqual(before);
+    expect(
+      database.query("SELECT * FROM action_requests ORDER BY id").all(),
+    ).toEqual(before);
     const repository = new SqliteCapabilityPolicyRepository(database);
-    expect((await repository.findActionRequest("action-simulated"))?.snapshot())
-      .toMatchObject({ connectorVersion: "1", status: "simulated" });
-    expect((await repository.findActionRequest("action-pending"))?.snapshot())
-      .toMatchObject({ connectorVersion: "1", status: "approval_pending" });
-    expect(database.query("SELECT id FROM action_simulations ORDER BY id").all())
-      .toEqual([
-        { id: "simulation-action-pending" },
-        { id: "simulation-action-simulated" },
-      ]);
-    expect(database.query("SELECT id FROM audit_event").all()).toEqual([{ id: "audit-1" }]);
+    expect(
+      (await repository.findActionRequest("action-simulated"))?.snapshot(),
+    ).toMatchObject({ connectorVersion: "1", status: "simulated" });
+    expect(
+      (await repository.findActionRequest("action-pending"))?.snapshot(),
+    ).toMatchObject({ connectorVersion: "1", status: "approval_pending" });
+    expect(
+      database.query("SELECT id FROM action_simulations ORDER BY id").all(),
+    ).toEqual([
+      { id: "simulation-action-pending" },
+      { id: "simulation-action-simulated" },
+    ]);
+    expect(database.query("SELECT id FROM audit_event").all()).toEqual([
+      { id: "audit-1" },
+    ]);
     expect(() =>
       database
         .prepare(

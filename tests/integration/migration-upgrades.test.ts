@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0014_trusted_local_execution.sql",
+        "0015_llm_assisted_onboarding.sql",
       );
       expect(
         database
@@ -72,4 +72,277 @@ describe("migration upgrades", () => {
       database.close();
     },
   );
+
+  test("preserves legacy deterministic onboarding questions with explicit provenance", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-onboarding-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0014_trusted_local_execution.sql") {
+        copyFileSync(join(migrations, file), join(partial, file));
+      }
+    }
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    database
+      .prepare(
+        `INSERT INTO project(id,name,description,created_at,updated_at)
+         VALUES ('project','Legacy',NULL,?,?)`,
+      )
+      .run("2026-08-05T00:00:00.000Z", "2026-08-05T00:00:00.000Z");
+    database
+      .prepare(
+        `INSERT INTO project_question(
+           id, project_id, scan_id, key, question, reason, answer_json,
+           answered_at, answer_category
+         ) VALUES ('question','project',NULL,'agent_permissions',?,?,NULL,NULL,'permission')`,
+      )
+      .run("Which operations?", "Legacy deterministic question");
+
+    expect(migrate(database, migrations).applied).toEqual([
+      "0015_llm_assisted_onboarding.sql",
+    ]);
+    expect(
+      database
+        .query<
+          {
+            source: string;
+            generation_id: string | null;
+            answer_type: string;
+            options_json: string;
+          },
+          []
+        >(
+          `SELECT source, generation_id, answer_type, options_json
+           FROM project_question WHERE id = 'question'`,
+        )
+        .get(),
+    ).toMatchObject({
+      source: "deterministic",
+      generation_id: null,
+      answer_type: "multi_select",
+    });
+    database.close();
+  });
+
+  test("enforces generation ownership and completed status for LLM questions", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-onboarding-integrity-"));
+    roots.push(root);
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, migrations);
+    const insertProject = database.prepare(
+      `INSERT INTO project(id,name,description,created_at,updated_at)
+       VALUES (?,?,NULL,?,?)`,
+    );
+    const createdAt = "2026-08-05T00:00:00.000Z";
+    insertProject.run("project-a", "Project A", createdAt, createdAt);
+    insertProject.run("project-b", "Project B", createdAt, createdAt);
+
+    const insertGeneration = database.prepare(
+      `INSERT INTO onboarding_generation(
+         id, project_id, provider, model, prompt_version, input_hash, round,
+         status, batch_status, failure_code, created_at
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    insertGeneration.run(
+      "generation-a",
+      "project-a",
+      "mock",
+      "model",
+      "project-onboarding-v1",
+      "a".repeat(64),
+      1,
+      "completed",
+      "needs_more_context",
+      null,
+      createdAt,
+    );
+    insertGeneration.run(
+      "generation-b-failed",
+      "project-b",
+      "mock",
+      "model",
+      "project-onboarding-v1",
+      "b".repeat(64),
+      1,
+      "failed",
+      null,
+      "ProviderError",
+      createdAt,
+    );
+    insertGeneration.run(
+      "generation-b-completed",
+      "project-b",
+      "mock",
+      "model",
+      "project-onboarding-v1",
+      "c".repeat(64),
+      1,
+      "completed",
+      "needs_more_context",
+      null,
+      createdAt,
+    );
+
+    const insertQuestion = database.prepare(
+      `INSERT INTO project_question(
+         id, project_id, key, question, normalized_question, reason,
+         answer_category, answer_type, priority, source, generation_id
+       ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    expect(() =>
+      insertQuestion.run(
+        "cross-project",
+        "project-b",
+        "cross-project",
+        "Cross-project question?",
+        "goal:cross-project question?",
+        "Must be rejected",
+        "goal",
+        "text",
+        50,
+        "llm",
+        "generation-a",
+      ),
+    ).toThrow("question source and generation do not match");
+    expect(() =>
+      insertQuestion.run(
+        "failed-generation",
+        "project-b",
+        "failed-generation",
+        "Failed generation question?",
+        "goal:failed generation question?",
+        "Must be rejected",
+        "goal",
+        "text",
+        50,
+        "llm",
+        "generation-b-failed",
+      ),
+    ).toThrow("question source and generation do not match");
+    expect(() =>
+      insertQuestion.run(
+        "llm-without-generation",
+        "project-b",
+        "llm-without-generation",
+        "Missing generation question?",
+        "goal:missing generation question?",
+        "Must be rejected",
+        "goal",
+        "text",
+        50,
+        "llm",
+        null,
+      ),
+    ).toThrow("question source and generation do not match");
+    expect(() =>
+      insertQuestion.run(
+        "deterministic-with-generation",
+        "project-b",
+        "deterministic-with-generation",
+        "Deterministic question?",
+        "goal:deterministic question?",
+        "Must be rejected",
+        "goal",
+        "text",
+        50,
+        "deterministic",
+        "generation-b-completed",
+      ),
+    ).toThrow("question source and generation do not match");
+    expect(() =>
+      insertQuestion.run(
+        "valid-question",
+        "project-b",
+        "valid-question",
+        "Valid question?",
+        "goal:valid question?",
+        "Accepted",
+        "goal",
+        "text",
+        50,
+        "llm",
+        "generation-b-completed",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      database
+        .prepare(
+          `UPDATE onboarding_generation
+           SET status='failed', batch_status=NULL, failure_code='ProviderError'
+           WHERE id='generation-b-completed'`,
+        )
+        .run(),
+    ).toThrow("generation update violates question ownership");
+
+    expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    expect(
+      database
+        .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
+        .get(),
+    ).toEqual({ integrity_check: "ok" });
+    database.close();
+  });
+
+  test("deletes generated LLM questions with their project and generation", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-onboarding-delete-"));
+    roots.push(root);
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, migrations);
+    const createdAt = "2026-08-05T00:00:00.000Z";
+    database
+      .prepare(
+        `INSERT INTO project(id,name,description,created_at,updated_at)
+         VALUES ('project','Project',NULL,?,?)`,
+      )
+      .run(createdAt, createdAt);
+    database
+      .prepare(
+        `INSERT INTO onboarding_generation(
+           id, project_id, provider, model, prompt_version, input_hash, round,
+           status, batch_status, failure_code, created_at
+         ) VALUES ('generation','project','mock','model','project-onboarding-v1',?,1,
+                   'completed','needs_more_context',NULL,?)`,
+      )
+      .run("d".repeat(64), createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_question(
+           id, project_id, key, question, normalized_question, reason,
+           answer_category, answer_type, priority, source, generation_id
+         ) VALUES (
+           'question','project','question','Question?','goal:question?',
+           'Generated question','goal','text',50,'llm','generation'
+         )`,
+      )
+      .run();
+
+    expect(() =>
+      database.prepare("DELETE FROM project WHERE id='project'").run(),
+    ).not.toThrow();
+    expect(
+      database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM onboarding_generation",
+        )
+        .get()?.count,
+    ).toBe(0);
+    expect(
+      database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM project_question",
+        )
+        .get()?.count,
+    ).toBe(0);
+    expect(
+      database.query<{ id: string }, []>("PRAGMA foreign_key_check").all(),
+    ).toEqual([]);
+    expect(
+      database
+        .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
+        .get(),
+    ).toEqual({ integrity_check: "ok" });
+    database.close();
+  });
 });

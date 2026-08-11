@@ -1,7 +1,7 @@
 import type {
   ProjectProfileEntry,
   ProjectProfileSnapshot,
-  ProjectQuestion
+  ProjectQuestion,
 } from "@ai-office/domain/project/project-profile.ts";
 
 function formatValue(value: unknown): string {
@@ -12,16 +12,29 @@ function formatValue(value: unknown): string {
 function entryLines(entries: ProjectProfileEntry[]): string[] {
   if (entries.length === 0) return ["- None"];
   return entries.map(
-    (entry) => `- \`${entry.category}/${entry.key}\`: ${formatValue(entry.value)}`
+    (entry) =>
+      `- \`${entry.category}/${entry.key}\`: ${formatValue(entry.value)}`,
   );
 }
 
 function questionLines(questions: ProjectQuestion[]): string[] {
   if (questions.length === 0) return ["- None"];
-  return questions.map((question) => `- \`${question.id}\`: ${question.question}`);
+  return questions.map(
+    (question) => `- \`${question.id}\`: ${question.question}`,
+  );
 }
 
-export function renderProjectProfileMarkdown(profile: ProjectProfileSnapshot): string {
+function generatedQuestionLines(questions: ProjectQuestion[]): string[] {
+  if (questions.length === 0) return ["- None"];
+  return questions.map(
+    (question) =>
+      `- \`${question.id}\` (${question.answerCategory}, ${question.answerType}, ${question.answer === undefined ? "open" : "answered"}): ${question.question}`,
+  );
+}
+
+export function renderProjectProfileMarkdown(
+  profile: ProjectProfileSnapshot,
+): string {
   return [
     `# Project profile: ${profile.project.name}`,
     "",
@@ -51,9 +64,13 @@ export function renderProjectProfileMarkdown(profile: ProjectProfileSnapshot): s
     "",
     ...entryLines(profile.permissions),
     "",
+    "## LLM-generated onboarding questions",
+    "",
+    ...generatedQuestionLines(profile.generatedOnboardingQuestions),
+    "",
     "## Open questions",
     "",
     ...questionLines(profile.openQuestions),
-    ""
+    "",
   ].join("\n");
 }

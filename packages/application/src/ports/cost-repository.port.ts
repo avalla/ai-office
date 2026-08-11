@@ -59,6 +59,11 @@ export interface CostRepository {
     currency: Currency,
     now: Date,
   ): Promise<BudgetSnapshot | null>;
+  listBudgetCurrencies(
+    projectId: string,
+    scopeType: BudgetScopeType,
+    scopeId: string,
+  ): Promise<Currency[]>;
   authorizeAndReserve(
     input: AuthorizeReservationInput,
   ): Promise<BudgetReservation>;

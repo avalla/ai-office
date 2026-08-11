@@ -55,6 +55,9 @@ class Costs implements CostRepository {
   async findBudget() {
     return this.budget;
   }
+  async listBudgetCurrencies() {
+    return [this.budget.currency];
+  }
   async authorizeAndReserve(
     v: Parameters<CostRepository["authorizeAndReserve"]>[0],
   ) {
