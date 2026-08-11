@@ -11,6 +11,7 @@ import {
   fakeConnectorDescriptor,
 } from "@ai-office/connector-sdk/fake-connector.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
+import { filesystemConnectorDefinition } from "@ai-office/filesystem-connector/filesystem-connector.ts";
 import { UnsupportedConnectorResourceTypeError } from "@ai-office/domain/capability/errors.ts";
 import type { ConnectorConstraintHandler } from "@ai-office/domain/capability/capability.ts";
 
@@ -30,7 +31,7 @@ describe("connector registry", () => {
     });
     expect(registry.get("filesystem")).toMatchObject({
       id: "filesystem",
-      version: "1",
+      version: "2",
       supportedResourceTypes: ["filesystem_scope"],
     });
     expect(registry.get("github")).toBeNull();
@@ -119,12 +120,30 @@ describe("connector registry", () => {
       mode: "mutation",
       riskLevel: "high",
       supportsSimulation: true,
-      supportsExecution: false,
+      supportsExecution: true,
       requiresApproval: true,
     });
     expect(registry.requireDefinition("filesystem").descriptor.version).toBe(
-      "1",
+      "2",
     );
+  });
+
+  test("requires a trusted execution boundary for executable mutations", () => {
+    const { executeMutation: _executeMutation, ...withoutExecution } =
+      filesystemConnectorDefinition;
+    expect(
+      () =>
+        new ConnectorRegistry([withoutExecution]),
+    ).toThrow("executable mutations without an execution boundary");
+    expect(
+      () =>
+        new ConnectorRegistry([
+          {
+            ...fakeConnectorDefinition,
+            executeMutation: async () => ({ audit: {} }),
+          },
+        ]),
+    ).toThrow("unused mutation execution boundary");
   });
 
   test("defensively captures a mutable constraint handler", () => {

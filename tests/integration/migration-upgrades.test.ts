@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0013_filesystem_connector.sql",
+        "0014_trusted_local_execution.sql",
       );
       expect(
         database

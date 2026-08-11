@@ -51,6 +51,7 @@ describe("project database migrations", () => {
       "0011_governance_hardening.sql",
       "0012_capability_policy.sql",
       "0013_filesystem_connector.sql",
+      "0014_trusted_local_execution.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -74,6 +75,7 @@ describe("project database migrations", () => {
       { version: "0011_governance_hardening.sql" },
       { version: "0012_capability_policy.sql" },
       { version: "0013_filesystem_connector.sql" },
+      { version: "0014_trusted_local_execution.sql" },
     ]);
     database.close();
   });

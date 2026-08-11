@@ -51,6 +51,7 @@ import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqli
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
+import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 
 const roots: string[] = [];
@@ -172,6 +173,7 @@ async function fixture(options: FixtureOptions = {}) {
     clock,
   );
   const transactions = new SqliteTransactionRunner(database);
+  const controlled = new SqliteControlledExecutionRepository(database);
   const connectors = options.connectors ?? createDefaultConnectorRegistry();
   await projects.save(
     Project.create({ id: "project-1", name: "M6B", now: clock.now() }),
@@ -249,6 +251,7 @@ async function fixture(options: FixtureOptions = {}) {
     transactions,
     connectors,
     evaluator,
+    controlled,
   );
   return {
     database,
@@ -265,6 +268,7 @@ async function fixture(options: FixtureOptions = {}) {
     connectors,
     runtime,
     ids,
+    controlled,
   };
 }
 
@@ -300,6 +304,7 @@ function invokeWithHooks(
     context.transactions,
     context.connectors,
     context.evaluator,
+    context.controlled,
     hooks,
   );
 }
@@ -336,7 +341,7 @@ describe("M6B controlled filesystem invocation", () => {
     );
     expect(persisted?.snapshot()).toMatchObject({
       connector: "filesystem",
-      connectorVersion: "1",
+      connectorVersion: "2",
       operation: "filesystem.read",
       status: "completed",
     });
@@ -442,8 +447,8 @@ describe("M6B controlled filesystem invocation", () => {
       }),
     );
     expect(result).toMatchObject({
-      outcome: "simulation_required",
-      status: "simulated",
+      outcome: "approval_required",
+      status: "approval_pending",
     });
     expect(
       readFileSync(join(context.workspace, "src", "index.ts"), "utf8"),
@@ -458,7 +463,7 @@ describe("M6B controlled filesystem invocation", () => {
     expect(simulation?.snapshot()).toMatchObject({
       actionRequestId: result.requestId,
       connector: "filesystem",
-      connectorVersion: "1",
+      connectorVersion: "2",
       operation: "filesystem.write",
     });
     expect(simulation?.snapshot().artifactSha256).not.toBe(
@@ -1183,6 +1188,7 @@ describe("M6B fresh authorization before invocation", () => {
       context.transactions,
       emptyRegistry,
       emptyEvaluator,
+      context.controlled,
     );
     await expect(
       withoutConnector.invokeAuthorized({
@@ -1204,7 +1210,7 @@ describe("M6B fresh authorization before invocation", () => {
       ...filesystemConnectorDefinition,
       descriptor: {
         ...filesystemConnectorDefinition.descriptor,
-        version: "2",
+        version: "3",
       },
     };
     const replacementRegistry = new ConnectorRegistry([replacement]);
@@ -1223,6 +1229,7 @@ describe("M6B fresh authorization before invocation", () => {
       context.transactions,
       replacementRegistry,
       replacementEvaluator,
+      context.controlled,
     );
 
     await expect(

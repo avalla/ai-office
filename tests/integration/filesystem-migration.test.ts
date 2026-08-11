@@ -253,7 +253,12 @@ describe("M6B filesystem migration", () => {
     const root = temporaryRoot();
     const database = openDatabase(join(root, "empty.sqlite"));
     migrate(database, migrationSubset(root, "0012_capability_policy.sql"));
-    expect(migrate(database, migrationSource).applied).toEqual([
+    expect(
+      migrate(
+        database,
+        migrationSubset(root, "0013_filesystem_connector.sql", "m6b-upgrade"),
+      ).applied,
+    ).toEqual([
       "0013_filesystem_connector.sql",
     ]);
     expect(
@@ -270,7 +275,12 @@ describe("M6B filesystem migration", () => {
     const database = openDatabase(join(root, "populated.sqlite"));
     migrate(database, migrationSubset(root, "0012_capability_policy.sql"));
     await seedM6A(database);
-    expect(migrate(database, migrationSource).applied).toEqual([
+    expect(
+      migrate(
+        database,
+        migrationSubset(root, "0013_filesystem_connector.sql", "m6b-upgrade"),
+      ).applied,
+    ).toEqual([
       "0013_filesystem_connector.sql",
     ]);
     expect(
@@ -409,7 +419,12 @@ describe("M6B filesystem migration", () => {
         operation: entry.operation,
         decision: entry.decision,
       });
-      expect(migrate(database, migrationSource).applied).toEqual([
+      expect(
+        migrate(
+          database,
+          migrationSubset(root, "0013_filesystem_connector.sql", "m6b-upgrade"),
+        ).applied,
+      ).toEqual([
         "0013_filesystem_connector.sql",
       ]);
       const restored = await new SqliteCapabilityPolicyRepository(
@@ -466,7 +481,12 @@ describe("M6B filesystem migration", () => {
         decision: entry.decision,
       });
       const before = snapshotM6ASchemaAndData(database);
-      expect(() => migrate(database, migrationSource)).toThrow(
+      expect(() =>
+        migrate(
+          database,
+          migrationSubset(root, "0013_filesystem_connector.sql", "m6b-upgrade"),
+        ),
+      ).toThrow(
         "M6B upgrade requires remediation of legacy simulated action requests",
       );
       expect(snapshotM6ASchemaAndData(database)).toBe(before);
