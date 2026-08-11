@@ -7,6 +7,7 @@ import type {
 import { ConnectorExecutionUnavailableError } from "@ai-office/connector-sdk/errors.ts";
 import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
 import {
+  ActionApprovalConflictError,
   ActionSimulationConflictError,
   ConcurrentActionTransitionError,
   InvalidConnectorInvocationStateError,
@@ -19,12 +20,14 @@ import type { CapabilityPolicyRepository } from "../ports/capability-policy-repo
 import type { Clock } from "../ports/clock.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import type { ControlledExecutionRepository } from "../ports/controlled-execution-repository.port.ts";
 import type {
   ActionOperationMode,
   ActionRequestProps,
   ActionStatus,
 } from "@ai-office/domain/capability/action-request.ts";
 import { ActionRequest } from "@ai-office/domain/capability/action-request.ts";
+import { ActionApproval } from "@ai-office/domain/capability/action-approval.ts";
 import type { Resource } from "@ai-office/domain/capability/capability.ts";
 import {
   ActionSimulation,
@@ -109,6 +112,7 @@ export class InvokeControlledConnectorAction {
     private readonly transactions: TransactionRunner,
     private readonly connectors: ConnectorRegistry,
     private readonly evaluatePolicy: EvaluateActionPolicy,
+    private readonly controlledExecution: ControlledExecutionRepository,
     private readonly leaseHooks: AuthorizationLeaseHooks = {},
   ) {}
 
@@ -238,6 +242,20 @@ export class InvokeControlledConnectorAction {
       const beforeSimulation = request.snapshot();
       const simulatedAt = this.clock.now();
       const approvalPendingAt = this.clock.now();
+      const approval = operation.requiresApproval
+        ? ActionApproval.request({
+            id: this.ids.generate(),
+            projectId: beforeSimulation.projectId,
+            actionRequestId: beforeSimulation.id,
+            simulationId: simulation.snapshot().id,
+            actionPayloadHash: beforeSimulation.payloadHash,
+            simulationArtifactHash: simulation.snapshot().artifactSha256,
+            connector: beforeSimulation.connector,
+            connectorVersion: beforeSimulation.connectorVersion,
+            operation: beforeSimulation.operation,
+            now: approvalPendingAt,
+          })
+        : undefined;
       await this.transactions.run(async () => {
         if (!(await this.repository.insertActionSimulation(simulation)))
           throw new ActionSimulationConflictError(request.snapshot().id);
@@ -269,6 +287,24 @@ export class InvokeControlledConnectorAction {
           },
         });
         if (operation.requiresApproval) {
+          if (
+            approval === undefined ||
+            !(await this.controlledExecution.insertApproval(approval))
+          )
+            throw new ActionApprovalConflictError(beforeSimulation.id);
+          await this.audit.execute({
+            eventType: "action_approval_requested",
+            actorType: "system",
+            actorId: snapshot.agentId,
+            projectId: snapshot.projectId,
+            aggregateType: "action_approval",
+            aggregateId: approval.snapshot().id,
+            payload: {
+              actionRequestId: beforeSimulation.id,
+              simulationId: simulation.snapshot().id,
+              artifactSha256: simulation.snapshot().artifactSha256,
+            },
+          });
           if (
             !(await this.repository.transitionActionRequest({
               id: beforeSimulation.id,

@@ -2,7 +2,7 @@ import type { ConnectorDescriptor } from "@ai-office/connector-sdk/connector.ts"
 
 export const filesystemConnectorDescriptor = {
   id: "filesystem",
-  version: "1",
+  version: "2",
   supportedResourceTypes: ["filesystem_scope"],
   operations: [
     {
@@ -34,15 +34,15 @@ export const filesystemConnectorDescriptor = {
       mode: "mutation" as const,
       riskLevel: "medium" as const,
       supportsSimulation: true,
-      supportsExecution: false,
-      requiresApproval: false,
+      supportsExecution: true,
+      requiresApproval: true,
     })),
     {
       operation: "filesystem.delete",
       mode: "mutation",
       riskLevel: "high",
       supportsSimulation: true,
-      supportsExecution: false,
+      supportsExecution: true,
       requiresApproval: true,
     },
   ],

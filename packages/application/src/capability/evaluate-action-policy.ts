@@ -46,6 +46,9 @@ export class EvaluateActionPolicy {
     const agent = await this.runtime.findAgent(input.agentId);
     if (agent === null || agent.projectId !== input.projectId || !agent.enabled)
       throw new CapabilityPrincipalNotFoundError("agent", input.agentId);
+    const role = await this.runtime.findRole(agent.roleId, input.projectId);
+    if (role === null)
+      throw new CapabilityPrincipalNotFoundError("role", agent.roleId);
     const definition = this.connectors.requireDefinition(resource.provider);
     const normalizedArguments = definition.normalizeArguments(
       requiredText(input.operation, "operation"),
@@ -55,7 +58,7 @@ export class EvaluateActionPolicy {
       {
         projectId: input.projectId,
         agentId: agent.id,
-        roleIds: [agent.roleId],
+        roleIds: [role.snapshot().id],
         resource,
         operation: requiredText(input.operation, "operation"),
         arguments: normalizedArguments,

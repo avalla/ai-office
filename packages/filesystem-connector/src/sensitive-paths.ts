@@ -25,6 +25,7 @@ const sensitiveExtensions = [".pem", ".key", ".p12", ".pfx"];
 export function isSensitiveFilesystemSegment(segment: string): boolean {
   const lower = segment.toLowerCase();
   return (
+    lower.startsWith(".ai-office-txn-") ||
     sensitiveSegments.has(lower) ||
     lower === ".env" ||
     lower.startsWith(".env.") ||

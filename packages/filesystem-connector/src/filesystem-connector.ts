@@ -89,4 +89,27 @@ export const filesystemConnectorDefinition: ConnectorDefinition = {
       input.signal,
     ).invoke(input.operation, input.arguments);
   },
+  executeMutation: async (input) => {
+    assertFilesystemPlatform();
+    if (input.resource.provider !== "filesystem")
+      throw new UnsupportedConnectorError(input.resource.provider);
+    if (input.resource.type !== "filesystem_scope")
+      throw new UnsupportedConnectorResourceTypeError(
+        "filesystem",
+        input.resource.type,
+      );
+    if (input.resource.externalRef === undefined)
+      throw new CapabilityValidationError(
+        "Filesystem resource has no canonical root",
+      );
+    const constraints = parseEffectiveFilesystemConstraints(
+      input.effectiveConstraints,
+    );
+    return new FilesystemSandbox(
+      input.resource.externalRef,
+      constraints,
+      {},
+      input.signal,
+    ).executeMutation(input.operation, input.arguments, input.preconditions);
+  },
 };

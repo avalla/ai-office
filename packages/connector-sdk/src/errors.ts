@@ -28,4 +28,17 @@ export class ConnectorExecutionUnavailableError extends Error {
     this.name = "ConnectorExecutionUnavailableError";
   }
 }
+
+export class ConnectorMutationExecutionError extends Error {
+  constructor(
+    readonly code: string,
+    readonly certainty:
+      | "definite_no_mutation"
+      | "mutation_may_have_occurred",
+    message = "Controlled connector mutation failed",
+  ) {
+    super(message);
+    this.name = "ConnectorMutationExecutionError";
+  }
+}
 import { UnsupportedConnectorProviderError } from "@ai-office/domain/capability/errors.ts";
