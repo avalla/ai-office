@@ -1,20 +1,11 @@
 import type {
   CapabilityGrant,
-  ConnectorConstraintHandler,
+  ConnectorPolicyRegistry,
   PolicyDecision,
   PolicyInput,
   RiskLevel,
 } from "./capability.ts";
-import { getConnectorDescriptor } from "./capability.ts";
 import { canonicalStringify } from "./canonical-json.ts";
-import { FakeConnectorConstraintHandler } from "./fake-connector-policy.ts";
-
-const riskOrder: Record<RiskLevel, number> = {
-  low: 0,
-  medium: 1,
-  high: 2,
-  critical: 3,
-};
 
 function denied(
   reason: string,
@@ -52,27 +43,20 @@ function actionMatches(
 }
 
 export class PolicyEngine {
-  private readonly handlers: ReadonlyMap<string, ConnectorConstraintHandler>;
-
-  constructor(
-    handlers: readonly ConnectorConstraintHandler[] = [
-      new FakeConnectorConstraintHandler(),
-    ],
-  ) {
-    this.handlers = new Map(
-      handlers.map((handler) => [handler.connector, handler]),
-    );
-  }
+  constructor(private readonly registry: ConnectorPolicyRegistry) {}
 
   evaluate(input: PolicyInput, evaluatedAt: Date): PolicyDecision {
     if (input.projectId !== input.resource.projectId)
       return denied("resource belongs to a different project");
     if (input.resource.status === "disabled")
       return denied("resource is disabled");
-    const connector = getConnectorDescriptor(input.resource.provider);
-    if (connector === null)
+    const definition = this.registry.getPolicyDefinition(
+      input.resource.provider,
+    );
+    if (definition === null)
       return denied(`unsupported connector: ${input.resource.provider}`);
-    if (!connector.resourceTypes.includes(input.resource.type))
+    const connector = definition.descriptor;
+    if (!connector.supportedResourceTypes.includes(input.resource.type))
       return denied(
         `resource type ${input.resource.type} is not supported by connector ${connector.id}`,
       );
@@ -123,13 +107,11 @@ export class PolicyEngine {
     if (matching.length === 0)
       return denied("no valid grant permits the operation", riskLevel);
 
-    const handler = this.handlers.get(input.resource.provider);
-    if (handler === undefined)
-      return denied("connector has no constraint handler", riskLevel);
-    const constraintResult = handler.combineAndValidate(
+    const constraintResult = definition.constraintHandler.combineAndValidate(
       input.operation,
       input.arguments,
       matching.map((grant) => grant.constraints),
+      input.resource.configuration,
     );
     const matchedGrantIds = matching.map((grant) => grant.id).sort();
     if (!constraintResult.ok) {
@@ -142,14 +124,11 @@ export class PolicyEngine {
       };
     }
 
-    const decision =
-      riskOrder[riskLevel] >= riskOrder.critical
-        ? "allow_with_approval"
-        : riskOrder[riskLevel] >= riskOrder.high
-          ? "allow_with_approval"
-          : riskOrder[riskLevel] >= riskOrder.medium
-            ? "allow_simulation_only"
-            : "allow";
+    const decision = descriptor.requiresApproval
+      ? "allow_with_approval"
+      : descriptor.supportsSimulation && descriptor.mode === "mutation"
+        ? "allow_simulation_only"
+        : "allow";
     return {
       decision,
       riskLevel,

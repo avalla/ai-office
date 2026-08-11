@@ -74,43 +74,40 @@ export interface ConnectorConstraintResult {
   reasons: readonly string[];
 }
 
+export type ConnectorConstraintEvaluator = (
+  this: void,
+  operation: string,
+  arguments_: Readonly<Record<string, unknown>>,
+  constraints: readonly Readonly<Record<string, unknown>>[],
+  resourceConfiguration: Readonly<Record<string, unknown>>,
+) => ConnectorConstraintResult;
+
 export interface ConnectorConstraintHandler {
   readonly connector: string;
-  combineAndValidate(
-    operation: string,
-    arguments_: Readonly<Record<string, unknown>>,
-    constraints: readonly Readonly<Record<string, unknown>>[],
-  ): ConnectorConstraintResult;
+  readonly combineAndValidate: ConnectorConstraintEvaluator;
 }
 
-export interface OperationDescriptor {
+export interface PolicyOperationDescriptor {
   operation: string;
+  mode: "read" | "mutation";
   riskLevel: RiskLevel;
+  supportsSimulation: boolean;
+  supportsExecution: boolean;
+  requiresApproval: boolean;
 }
 
-export interface ConnectorDescriptor {
+export interface PolicyConnectorDescriptor {
   id: string;
   version: string;
-  resourceTypes: readonly ResourceType[];
-  operations: readonly OperationDescriptor[];
+  supportedResourceTypes: readonly ResourceType[];
+  operations: readonly PolicyOperationDescriptor[];
 }
 
-export const fakeConnectorDescriptor = {
-  id: "fake",
-  version: "1",
-  resourceTypes: ["filesystem_scope"],
-  operations: [
-    { operation: "fake.read", riskLevel: "low" },
-    { operation: "fake.write", riskLevel: "medium" },
-    { operation: "fake.delete", riskLevel: "high" },
-    { operation: "fake.admin", riskLevel: "critical" },
-  ] satisfies readonly OperationDescriptor[],
-} as const satisfies ConnectorDescriptor;
+export interface ConnectorPolicyDefinition {
+  descriptor: PolicyConnectorDescriptor;
+  constraintHandler: ConnectorConstraintHandler;
+}
 
-export function getConnectorDescriptor(
-  provider: string,
-): ConnectorDescriptor | null {
-  return provider === fakeConnectorDescriptor.id
-    ? fakeConnectorDescriptor
-    : null;
+export interface ConnectorPolicyRegistry {
+  getPolicyDefinition(provider: string): ConnectorPolicyDefinition | null;
 }

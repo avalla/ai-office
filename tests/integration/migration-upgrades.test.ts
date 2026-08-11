@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0012_capability_policy.sql",
+        "0013_filesystem_connector.sql",
       );
       expect(
         database

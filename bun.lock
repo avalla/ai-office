@@ -27,8 +27,14 @@
     "packages/application": {
       "name": "@ai-office/application",
     },
+    "packages/connector-sdk": {
+      "name": "@ai-office/connector-sdk",
+    },
     "packages/domain": {
       "name": "@ai-office/domain",
+    },
+    "packages/filesystem-connector": {
+      "name": "@ai-office/filesystem-connector",
     },
     "packages/llm-gateway": {
       "name": "@ai-office/llm-gateway",
@@ -47,9 +53,13 @@
 
     "@ai-office/cli": ["@ai-office/cli@workspace:apps/cli"],
 
+    "@ai-office/connector-sdk": ["@ai-office/connector-sdk@workspace:packages/connector-sdk"],
+
     "@ai-office/daemon": ["@ai-office/daemon@workspace:apps/daemon"],
 
     "@ai-office/domain": ["@ai-office/domain@workspace:packages/domain"],
+
+    "@ai-office/filesystem-connector": ["@ai-office/filesystem-connector@workspace:packages/filesystem-connector"],
 
     "@ai-office/llm-gateway": ["@ai-office/llm-gateway@workspace:packages/llm-gateway"],
 

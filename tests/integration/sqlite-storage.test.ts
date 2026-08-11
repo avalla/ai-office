@@ -50,6 +50,7 @@ describe("project database migrations", () => {
       "0010_llm_cost_hardening.sql",
       "0011_governance_hardening.sql",
       "0012_capability_policy.sql",
+      "0013_filesystem_connector.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -72,6 +73,7 @@ describe("project database migrations", () => {
       { version: "0010_llm_cost_hardening.sql" },
       { version: "0011_governance_hardening.sql" },
       { version: "0012_capability_policy.sql" },
+      { version: "0013_filesystem_connector.sql" },
     ]);
     database.close();
   });

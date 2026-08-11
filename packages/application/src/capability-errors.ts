@@ -55,3 +55,24 @@ export class ConcurrentActionTransitionError extends Error {
     this.name = "ConcurrentActionTransitionError";
   }
 }
+
+export class ActionSimulationConflictError extends Error {
+  constructor(id: string) {
+    super(`Action request already has a simulation: ${id}`);
+    this.name = "ActionSimulationConflictError";
+  }
+}
+
+export class InvalidConnectorInvocationStateError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidConnectorInvocationStateError";
+  }
+}
+
+export class StaleActionAuthorizationError extends Error {
+  constructor() {
+    super("Action authorization is no longer current");
+    this.name = "StaleActionAuthorizationError";
+  }
+}

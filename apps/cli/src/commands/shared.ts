@@ -9,6 +9,7 @@ import type { SqliteProjectRepository } from "@ai-office/storage-sqlite/reposito
 import type { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 import type { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
+import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
 
 export interface CommandIo {
   stdout(message: string): void;
@@ -30,6 +31,7 @@ export interface CommandContext {
   ids: IdGenerator;
   clock: Clock;
   transactions: TransactionRunner;
+  connectors: ConnectorRegistry;
 }
 
 export class CliUsageError extends Error {

@@ -1,0 +1,5 @@
+{
+  "name": "@ai-office/connector-sdk",
+  "private": true,
+  "type": "module"
+}
