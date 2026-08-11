@@ -1,0 +1,20 @@
+[package]
+name = "m6c-native-filesystem-spike"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+libc = "0.2"
+napi = { version = "3", default-features = false, features = ["napi8", "dyn-symbols"] }
+napi-derive = "3"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+
+[build-dependencies]
+napi-build = "2"

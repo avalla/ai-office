@@ -118,35 +118,40 @@ Exit criteria:
 - paths cannot escape an allowed root through traversal or symlinks;
 - agents cannot obtain credentials or sensitive files through the connector.
 
-### M6C — Approval and controlled execution
+### M6C-lite — Trusted local controlled execution
 
-- approval requests bound to immutable payload hashes;
-- execution-time revalidation of grants, constraints, resource status, and budget;
-- approval rejection, expiry, and invalidation;
-- one-shot execution and replay prevention;
-- revocation blocking already approved but unexecuted actions;
-- deterministic action batches and dependency ordering;
-- stop-on-failure behavior for required dependencies;
-- simulated resource identifiers and real-resource resolution;
-- local tamper-evident audit hash chain;
-- extension of existing usage and cost accounting with connector and action dimensions;
-- hard-budget denial and soft-budget warning events.
+Threat model: AI Office is a local, single-user application in the user's trust
+domain. It prevents accidental or unauthorized agent access, path escape, stale
+simulation, replay, and unapproved mutation. It does not yet defend against a
+hostile process with the same Unix privileges concurrently mutating the same
+filesystem namespace.
+
+- dedicated local `ActionApproval` bound to immutable action and simulation hashes;
+- approval required for every real filesystem mutation;
+- execution-time revalidation of grants, constraints, resource, action, and artifact;
+- one-shot execution record and database-enforced replay prevention;
+- `execution_unknown` for an ambiguous filesystem/SQLite outcome;
+- pragmatic create/write/move/delete using the M6B sandbox and Node/Bun APIs;
+- source-hash and destination-absence precondition checks immediately before mutation;
+- sanitized append-only events in the existing audit log;
+- daemon-backed approve, reject, execute, show, and list flows.
 
 Exit criteria:
 
-- high-risk actions cannot execute without approval;
-- modified payloads and replay attempts are rejected;
-- the exact simulated and approved payload is the only payload executed;
-- audit-chain integrity can be validated;
-- existing cost, budget, and audit models are extended rather than duplicated.
+- every real filesystem mutation requires an explicit local approval;
+- revoked/expired grants and disabled resources block unexecuted actions;
+- changed source, path escape, symlink, hard link, and sensitive paths fail closed;
+- one action obtains at most one execution attempt;
+- create/write/move/delete work end-to-end through the daemon CLI;
+- same-user concurrent-writer races and the SQLite/filesystem crash gap are documented residual risks.
 
-### M6D — Agent runtime integration
+### M6D-lite — Agent controlled-action integration
 
 - controlled-action gateway exposed to agent executors;
 - no direct filesystem or infrastructure adapter dependency in agent runtime;
 - scheduling returns run and action identifiers without blocking the daemon command FIFO;
-- action status and approval state available through daemon-backed CLI commands;
-- crash-recovery queries for pending approvals and interrupted executions;
+- action and approval state available through daemon-backed CLI commands;
+- interrupted `executing` and `execution_unknown` actions remain observable without automatic replay;
 - end-to-end flow from agent intent to controlled filesystem modification.
 
 Exit criteria:
@@ -191,3 +196,17 @@ Deferred until after M6:
 - packaged binaries;
 - backup/export/import;
 - security review and deployment hardening.
+
+## M10 — Security hardening
+
+The hardened M6C assessment, ADRs, and native spike remain the research baseline
+for this future milestone. M10 includes:
+
+- Rust/openat2 production filesystem boundary;
+- cryptographic or hardware user-presence approvals;
+- hardened hostile-local-process threat model;
+- tamper-evident audit chain and optional external anchoring;
+- advanced crash recovery and reconciliation;
+- durable filesystem mutation journal;
+- native artifact build, signing, and supply-chain hardening;
+- multi-platform hardened execution and capability qualification.
