@@ -1,3 +1,5 @@
+DROP TRIGGER IF EXISTS m6b_legacy_simulation_upgrade_guard;
+
 CREATE TABLE action_requests_m6c_lite (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,

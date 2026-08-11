@@ -189,6 +189,13 @@ describe("M6C-lite migration", () => {
     expect(
       database
         .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_temp_master WHERE type='trigger' AND name='m6b_legacy_simulation_upgrade_guard'",
+        )
+        .all(),
+    ).toEqual([]);
+    expect(
+      database
+        .query<{ name: string }, []>(
           "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('action_approvals','action_executions') ORDER BY name",
         )
         .all(),
@@ -200,6 +207,13 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "upgrade.sqlite"));
     migrate(database, migrationsThrough(directory, "0013_filesystem_connector.sql"));
+    expect(
+      database
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_temp_master WHERE type='trigger' AND name='m6b_legacy_simulation_upgrade_guard'",
+        )
+        .all(),
+    ).toEqual([{ name: "m6b_legacy_simulation_upgrade_guard" }]);
     await seedM6B(database);
     const before = database
       .query("SELECT * FROM action_requests ORDER BY id")
@@ -207,6 +221,13 @@ describe("M6C-lite migration", () => {
     expect(migrate(database, migrationSource).applied).toEqual([
       "0014_trusted_local_execution.sql",
     ]);
+    expect(
+      database
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_temp_master WHERE type='trigger' AND name='m6b_legacy_simulation_upgrade_guard'",
+        )
+        .all(),
+    ).toEqual([]);
     expect(database.query("SELECT * FROM action_requests ORDER BY id").all()).toEqual(before);
     const repository = new SqliteCapabilityPolicyRepository(database);
     expect((await repository.findActionRequest("action-simulated"))?.snapshot())
