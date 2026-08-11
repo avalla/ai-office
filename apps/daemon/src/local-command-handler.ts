@@ -1,13 +1,14 @@
 import type {
   DaemonCommandRequest,
-  DaemonCommandResponse
+  DaemonCommandResponse,
 } from "@ai-office/application/protocol/daemon-protocol.ts";
 import { daemonProtocolVersion } from "@ai-office/application/protocol/daemon-protocol.ts";
 import {
   CliPromptRequiredError,
   runCli,
-  type CliIo
+  type CliIo,
 } from "../../cli/src/cli.ts";
+import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 
 export interface DaemonCommandHandler {
   execute(request: DaemonCommandRequest): Promise<DaemonCommandResponse>;
@@ -16,7 +17,8 @@ export interface DaemonCommandHandler {
 export class LocalCommandHandler implements DaemonCommandHandler {
   constructor(
     private readonly projectRoot: string,
-    private readonly migrationDirectory?: string
+    private readonly migrationDirectory?: string,
+    private readonly onboardingGenerator?: OnboardingQuestionGenerator,
   ) {}
 
   async execute(request: DaemonCommandRequest): Promise<DaemonCommandResponse> {
@@ -32,7 +34,7 @@ export class LocalCommandHandler implements DaemonCommandHandler {
         }
         promptAnswerConsumed = true;
         return request.promptAnswer;
-      }
+      },
     };
 
     try {
@@ -41,8 +43,11 @@ export class LocalCommandHandler implements DaemonCommandHandler {
         ...(this.migrationDirectory === undefined
           ? {}
           : { migrationDirectory: this.migrationDirectory }),
+        ...(this.onboardingGenerator === undefined
+          ? {}
+          : { onboardingGenerator: this.onboardingGenerator }),
         io,
-        propagatePromptRequired: true
+        propagatePromptRequired: true,
       });
 
       return {
@@ -50,7 +55,7 @@ export class LocalCommandHandler implements DaemonCommandHandler {
         requestId: request.requestId,
         exitCode,
         stdout,
-        stderr
+        stderr,
       };
     } catch (error) {
       if (error instanceof CliPromptRequiredError) {
@@ -60,7 +65,7 @@ export class LocalCommandHandler implements DaemonCommandHandler {
           exitCode: null,
           stdout,
           stderr,
-          prompt: { message: error.prompt }
+          prompt: { message: error.prompt },
         };
       }
       throw error;

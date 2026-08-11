@@ -11,6 +11,7 @@ import type { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite
 import type { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
+import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 
 export interface CommandIo {
   stdout(message: string): void;
@@ -34,6 +35,7 @@ export interface CommandContext {
   clock: Clock;
   transactions: TransactionRunner;
   connectors: ConnectorRegistry;
+  onboardingGenerator: OnboardingQuestionGenerator;
 }
 
 export class CliUsageError extends Error {
@@ -53,14 +55,17 @@ export class CliPromptRequiredError extends Error {
 export interface ParsedArguments {
   positionals: string[];
   options: ReadonlyMap<string, string>;
+  flags: ReadonlySet<string>;
 }
 
 export function parseArguments(
   args: string[],
   allowedOptions: ReadonlySet<string>,
+  allowedFlags: ReadonlySet<string> = new Set(),
 ): ParsedArguments {
   const positionals: string[] = [];
   const options = new Map<string, string>();
+  const flags = new Set<string>();
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === undefined) continue;
@@ -69,6 +74,12 @@ export function parseArguments(
       continue;
     }
     const name = argument.slice(2);
+    if (allowedFlags.has(name)) {
+      if (flags.has(name))
+        throw new CliUsageError(`Flag --${name} can only be provided once`);
+      flags.add(name);
+      continue;
+    }
     if (!allowedOptions.has(name))
       throw new CliUsageError(`Unknown option --${name}`);
     if (options.has(name))
@@ -79,7 +90,7 @@ export function parseArguments(
     options.set(name, value);
     index += 1;
   }
-  return { positionals, options };
+  return { positionals, options, flags };
 }
 
 export function requiredOption(
