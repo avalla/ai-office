@@ -9,7 +9,6 @@ import {
   type CanonicalActionPayload,
 } from "@ai-office/domain/capability/action-request.ts";
 import { hashCanonicalActionPayload } from "./canonical-action.ts";
-import { connectorDescriptorForResource } from "./validation.ts";
 import { EvaluateActionPolicy } from "./evaluate-action-policy.ts";
 
 export type ControlledActionOutcome =
@@ -41,7 +40,7 @@ export class RequestControlledAction {
   }): Promise<{ request: ActionRequest; outcome: ControlledActionOutcome }> {
     return this.transactions.run(async () => {
       const evaluated = await this.evaluatePolicy.execute(input);
-      const connector = connectorDescriptorForResource(evaluated.resource);
+      const connector = evaluated.connector;
       const payload: CanonicalActionPayload = {
         schemaVersion: 1,
         projectId: input.projectId,

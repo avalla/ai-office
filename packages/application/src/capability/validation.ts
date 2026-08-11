@@ -1,17 +1,14 @@
 import type {
   CapabilityGrant,
-  ConnectorDescriptor,
+  PolicyConnectorDescriptor,
   Resource,
   ResourceType,
 } from "@ai-office/domain/capability/capability.ts";
-import { getConnectorDescriptor } from "@ai-office/domain/capability/capability.ts";
 import { normalizeCanonicalJson } from "@ai-office/domain/capability/canonical-json.ts";
 import {
   CapabilityValidationError,
-  UnsupportedConnectorProviderError,
   UnsupportedConnectorResourceTypeError,
 } from "@ai-office/domain/capability/errors.ts";
-import { validateFakeConnectorConstraints } from "@ai-office/domain/capability/fake-connector-policy.ts";
 
 export const resourceTypes: readonly ResourceType[] = [
   "filesystem_scope",
@@ -71,32 +68,28 @@ function assertNoSensitiveFields(value: unknown, path: string): void {
   }
 }
 
-export function validateResource(resource: Resource): void {
+export function validateResource(
+  resource: Resource,
+  descriptor: PolicyConnectorDescriptor,
+): void {
   requiredText(resource.id, "resource id");
   requiredText(resource.projectId, "project id");
   requiredText(resource.provider, "provider");
   requiredText(resource.displayName, "display name");
   if (!resourceTypes.includes(resource.type))
     throw new CapabilityValidationError("invalid resource type");
-  connectorDescriptorForResource(resource);
-  canonicalRecord(resource.configuration, "resource configuration");
-}
-
-export function connectorDescriptorForResource(
-  resource: Pick<Resource, "provider" | "type">,
-): ConnectorDescriptor {
-  const descriptor = getConnectorDescriptor(resource.provider);
-  if (descriptor === null)
-    throw new UnsupportedConnectorProviderError(resource.provider);
-  if (!descriptor.resourceTypes.includes(resource.type))
+  if (!descriptor.supportedResourceTypes.includes(resource.type))
     throw new UnsupportedConnectorResourceTypeError(
       descriptor.id,
       resource.type,
     );
-  return descriptor;
+  canonicalRecord(resource.configuration, "resource configuration");
 }
 
-export function validateGrant(grant: CapabilityGrant, provider: string): void {
+export function validateGrant(
+  grant: CapabilityGrant,
+  descriptor: PolicyConnectorDescriptor,
+): void {
   for (const [value, field] of [
     [grant.id, "grant id"],
     [grant.projectId, "project id"],
@@ -115,9 +108,6 @@ export function validateGrant(grant: CapabilityGrant, provider: string): void {
     !Number.isFinite(grant.expiresAt.getTime())
   )
     throw new CapabilityValidationError("grant expiresAt must be a valid date");
-  const descriptor = getConnectorDescriptor(provider);
-  if (descriptor === null)
-    throw new UnsupportedConnectorProviderError(provider);
   const supported = new Set(
     descriptor.operations.map((operation) => operation.operation),
   );
@@ -132,5 +122,4 @@ export function validateGrant(grant: CapabilityGrant, provider: string): void {
     grant.expiresAt.getTime() <= grant.validFrom.getTime()
   )
     throw new CapabilityValidationError("grant expiry must be after validFrom");
-  validateFakeConnectorConstraints(grant.constraints);
 }

@@ -5,6 +5,7 @@ import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { CapabilityPolicyRepository } from "../ports/capability-policy-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
 import type {
   Resource,
   ResourceType,
@@ -23,6 +24,7 @@ export class RegisterResource {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
+    private readonly connectors: ConnectorRegistry,
   ) {}
 
   async execute(input: {
@@ -35,25 +37,34 @@ export class RegisterResource {
   }): Promise<Resource> {
     if ((await this.projects.findById(input.projectId)) === null)
       throw new ProjectNotFoundError(input.projectId);
+    const provider = requiredText(input.provider, "provider");
+    const definition = this.connectors.requireDefinition(provider);
+    const prepared = await definition.prepareResource({
+      type: input.type,
+      ...(input.externalRef === undefined
+        ? {}
+        : { externalRef: requiredText(input.externalRef, "external ref") }),
+      configuration: canonicalRecord(
+        input.configuration ?? {},
+        "resource configuration",
+      ),
+    });
     const now = this.clock.now();
     const resource: Resource = {
       id: this.ids.generate(),
       projectId: requiredText(input.projectId, "project id"),
       type: input.type,
-      provider: requiredText(input.provider, "provider"),
-      ...(input.externalRef === undefined
+      provider: definition.descriptor.id,
+      ...(prepared.externalRef === undefined
         ? {}
-        : { externalRef: requiredText(input.externalRef, "external ref") }),
+        : { externalRef: prepared.externalRef }),
       displayName: requiredText(input.displayName, "display name"),
-      configuration: canonicalRecord(
-        input.configuration ?? {},
-        "resource configuration",
-      ),
+      configuration: prepared.configuration,
       status: "active",
       createdAt: now,
       updatedAt: now,
     };
-    validateResource(resource);
+    validateResource(resource, definition.descriptor);
     await this.transactions.run(async () => {
       await this.repository.saveResource(resource);
       await this.audit.execute({

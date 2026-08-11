@@ -11,6 +11,7 @@ import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { CapabilityPolicyRepository } from "../ports/capability-policy-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
 import type {
   CapabilityGrant,
   CapabilityPrincipalType,
@@ -26,6 +27,7 @@ export class CreateCapabilityGrant {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
+    private readonly connectors: ConnectorRegistry,
   ) {}
 
   async execute(input: {
@@ -46,6 +48,7 @@ export class CreateCapabilityGrant {
     if (resource === null) throw new ResourceNotFoundError(input.resourceId);
     if (resource.projectId !== input.projectId)
       throw new CapabilityProjectMismatchError();
+    const definition = this.connectors.requireDefinition(resource.provider);
     if (input.principalType === "agent") {
       const agent = await this.runtime.findAgent(input.principalId);
       if (agent === null || agent.projectId !== input.projectId)
@@ -69,9 +72,8 @@ export class CreateCapabilityGrant {
       actions: Object.freeze(
         [...new Set(input.actions.map((action) => action.trim()))].sort(),
       ),
-      constraints: canonicalRecord(
-        input.constraints ?? {},
-        "grant constraints",
+      constraints: definition.normalizeConstraints(
+        canonicalRecord(input.constraints ?? {}, "grant constraints"),
       ),
       validFrom: input.validFrom ?? now,
       ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
@@ -79,7 +81,7 @@ export class CreateCapabilityGrant {
       reason: requiredText(input.reason, "reason"),
       createdAt: now,
     };
-    validateGrant(grant, resource.provider);
+    validateGrant(grant, definition.descriptor);
     await this.transactions.run(async () => {
       await this.repository.saveGrant(grant);
       await this.audit.execute({
