@@ -20,8 +20,17 @@
       "@ai-office/storage-sqlite/*": ["packages/storage-sqlite/src/*"],
       "@ai-office/agent-runtime/*": ["packages/agent-runtime/src/*"],
       "@ai-office/llm-gateway/*": ["packages/llm-gateway/src/*"],
-      "@ai-office/orchestration/*": ["packages/orchestration/src/*"]
+      "@ai-office/orchestration/*": ["packages/orchestration/src/*"],
+      "@ai-office/connector-sdk/*": ["packages/connector-sdk/src/*"],
+      "@ai-office/filesystem-connector/*": [
+        "packages/filesystem-connector/src/*"
+      ]
     }
   },
-  "include": ["apps/**/*.ts", "packages/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts"]
+  "include": [
+    "apps/**/*.ts",
+    "packages/**/*.ts",
+    "scripts/**/*.ts",
+    "tests/**/*.ts"
+  ]
 }
