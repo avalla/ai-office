@@ -76,6 +76,23 @@ export interface ConnectorSimulationResult {
 export type ConnectorInvocationResult =
   ConnectorReadResult | ConnectorSimulationResult;
 
+export type ConnectorMutationCertainty =
+  | "definite_no_mutation"
+  | "mutation_may_have_occurred";
+
+export interface ConnectorMutationInvocation extends ConnectorInvocation {
+  preconditions: readonly ConnectorFilePrecondition[];
+}
+
+export interface ConnectorMutationExecutionResult {
+  resultHash?: string;
+  audit: {
+    relativePath?: string;
+    destinationPath?: string;
+    byteLength?: number;
+  };
+}
+
 /** Connector callbacks are context-free and must not depend on `this` or mutable receiver state. */
 export type NormalizeConnectorArguments = (
   this: void,
@@ -98,6 +115,11 @@ export type InvokeConnector = (
   input: ConnectorInvocation,
 ) => Promise<ConnectorInvocationResult>;
 
+export type ExecuteConnectorMutation = (
+  this: void,
+  input: ConnectorMutationInvocation,
+) => Promise<ConnectorMutationExecutionResult>;
+
 export interface ConnectorDefinition {
   readonly descriptor: ConnectorDescriptor;
   readonly constraintHandler: ConnectorConstraintHandler;
@@ -105,6 +127,7 @@ export interface ConnectorDefinition {
   readonly normalizeConstraints: NormalizeConnectorConstraints;
   readonly prepareResource: PrepareConnectorResource;
   readonly invoke?: InvokeConnector;
+  readonly executeMutation?: ExecuteConnectorMutation;
 }
 
 export function asPolicyDescriptor(

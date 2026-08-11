@@ -1,22 +1,33 @@
 import {
   closeSync,
   constants,
+  fchmodSync,
   fstatSync,
+  fsyncSync,
+  linkSync,
   lstatSync,
   openSync,
   opendirSync,
   readSync,
   realpathSync,
+  renameSync,
+  unlinkSync,
+  writeSync,
 } from "node:fs";
 import type { Dirent, Stats } from "node:fs";
-import { dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { basename, dirname } from "node:path";
 import type {
   ConnectorFilePrecondition,
   ConnectorInvocationResult,
+  ConnectorMutationExecutionResult,
   ConnectorReadResult,
   ConnectorSimulationResult,
 } from "@ai-office/connector-sdk/connector.ts";
-import { UnsupportedConnectorOperationError } from "@ai-office/connector-sdk/errors.ts";
+import {
+  ConnectorMutationExecutionError,
+  UnsupportedConnectorOperationError,
+} from "@ai-office/connector-sdk/errors.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import type { EffectiveFilesystemConstraints } from "./filesystem-constraints.ts";
 import {
@@ -31,6 +42,7 @@ import {
   FilesystemOutputTooLargeError,
   FilesystemSourceChangedError,
   FilesystemSymlinkDeniedError,
+  FilesystemWriteProgressError,
   InvalidRelativePathError,
   SensitiveFilesystemPathError,
   SourcePreconditionFailedError,
@@ -62,7 +74,18 @@ export interface FilesystemSandboxHooks {
   afterFileClose?(path: string): void;
   onDirectoryEntry?(directoryPath: string, name: string, visited: number): void;
   hashBytes?(bytes: Uint8Array): string;
+  beforeMutationCommit?(operation: string): void;
+  afterMutationCommit?(operation: string): void;
+  beforeParentFsync?(operation: string): void;
+  writeStagedChunk?(
+    descriptor: number,
+    bytes: Uint8Array,
+    offset: number,
+    length: number,
+  ): number;
 }
+
+const DEFAULT_CREATED_FILE_MODE = 0o600;
 
 interface TraversalBudget {
   visitedEntries: number;
@@ -146,6 +169,30 @@ export class FilesystemSandbox {
         file.bytes.byteLength !== precondition.size
       )
         throw new SourcePreconditionFailedError();
+    }
+  }
+
+  executeMutation(
+    operation: string,
+    arguments_: Readonly<Record<string, unknown>>,
+    preconditions: readonly ConnectorFilePrecondition[],
+  ): ConnectorMutationExecutionResult {
+    try {
+      this.throwIfAborted();
+      this.assertMutationPermitted();
+      this.assertExecutionPreconditions(operation, arguments_, preconditions);
+      this.verifyPreconditions(preconditions);
+      if (operation === "filesystem.create")
+        return this.executeCreate(arguments_, preconditions);
+      if (operation === "filesystem.write")
+        return this.executeWrite(arguments_, preconditions);
+      if (operation === "filesystem.move")
+        return this.executeMove(arguments_, preconditions);
+      if (operation === "filesystem.delete")
+        return this.executeDelete(arguments_, preconditions);
+      throw new UnsupportedConnectorOperationError("filesystem", operation);
+    } catch (error) {
+      throw this.mutationError(error, false);
     }
   }
 
@@ -351,6 +398,289 @@ export class FilesystemSandbox {
     const normalizedParent = parent === "." ? "" : parent;
     const inspected = this.inspect(normalizedParent);
     if (!inspected.stats.isDirectory()) throw new FilesystemNotDirectoryError();
+  }
+
+  private parentPath(path: string): string {
+    const parent = dirname(path).replaceAll("\\", "/");
+    return parent === "." ? "" : parent;
+  }
+
+  private assertExecutionPreconditions(
+    operation: string,
+    arguments_: Readonly<Record<string, unknown>>,
+    preconditions: readonly ConnectorFilePrecondition[],
+  ): void {
+    const path =
+      typeof arguments_.path === "string"
+        ? this.assertEffectivePath(arguments_.path, false)
+        : undefined;
+    const sourcePath =
+      typeof arguments_.sourcePath === "string"
+        ? this.assertEffectivePath(arguments_.sourcePath, false)
+        : undefined;
+    const destinationPath =
+      typeof arguments_.destinationPath === "string"
+        ? this.assertEffectivePath(arguments_.destinationPath, false)
+        : undefined;
+    const matches = (
+      value: ConnectorFilePrecondition | undefined,
+      kind: "absent" | "file",
+      expectedPath: string | undefined,
+    ) => value?.kind === kind && value.path === expectedPath;
+    const valid =
+      (operation === "filesystem.create" &&
+        preconditions.length === 1 &&
+        matches(preconditions[0], "absent", path)) ||
+      ((operation === "filesystem.write" ||
+        operation === "filesystem.delete") &&
+        preconditions.length === 1 &&
+        matches(preconditions[0], "file", path)) ||
+      (operation === "filesystem.move" &&
+        preconditions.length === 2 &&
+        matches(preconditions[0], "file", sourcePath) &&
+        matches(preconditions[1], "absent", destinationPath));
+    if (!valid) throw new SourcePreconditionFailedError();
+  }
+
+  private executeCreate(
+    arguments_: Readonly<Record<string, unknown>>,
+    preconditions: readonly ConnectorFilePrecondition[],
+  ): ConnectorMutationExecutionResult {
+    const path = this.assertEffectivePath(arguments_.path, false);
+    const content = arguments_.content as string;
+    this.assertInsideAllowed(path);
+    this.assertInlineContent(content);
+    const bytes = Buffer.from(content, "utf8");
+    const contentHash = sha256Bytes(bytes);
+    return this.withStagedFile(path, bytes, DEFAULT_CREATED_FILE_MODE, (temp, target, markCommitted) => {
+      this.verifyPreconditions(preconditions);
+      this.hooks.beforeMutationCommit?.("filesystem.create");
+      linkSync(temp, target);
+      markCommitted();
+      this.hooks.afterMutationCommit?.("filesystem.create");
+      unlinkSync(temp);
+      this.fsyncParent(path, "filesystem.create");
+      return {
+        resultHash: contentHash,
+        audit: { relativePath: path, byteLength: bytes.byteLength },
+      };
+    });
+  }
+
+  private executeWrite(
+    arguments_: Readonly<Record<string, unknown>>,
+    preconditions: readonly ConnectorFilePrecondition[],
+  ): ConnectorMutationExecutionResult {
+    const path = this.assertEffectivePath(arguments_.path, false);
+    const content = arguments_.content as string;
+    this.assertInsideAllowed(path);
+    this.assertInlineContent(content);
+    const bytes = Buffer.from(content, "utf8");
+    const contentHash = sha256Bytes(bytes);
+    this.verifyPreconditions(preconditions);
+    const source = this.inspect(path);
+    if (!source.stats.isFile()) throw new FilesystemNotRegularFileError();
+    if (source.stats.nlink > 1) throw new FilesystemHardLinkDeniedError();
+    const sourcePermissionBits = source.stats.mode & 0o777;
+    return this.withStagedFile(path, bytes, sourcePermissionBits, (temp, target, markCommitted) => {
+      this.verifyPreconditions(preconditions);
+      this.hooks.beforeMutationCommit?.("filesystem.write");
+      renameSync(temp, target);
+      markCommitted();
+      this.hooks.afterMutationCommit?.("filesystem.write");
+      this.fsyncParent(path, "filesystem.write");
+      return {
+        resultHash: contentHash,
+        audit: { relativePath: path, byteLength: bytes.byteLength },
+      };
+    });
+  }
+
+  private executeMove(
+    arguments_: Readonly<Record<string, unknown>>,
+    preconditions: readonly ConnectorFilePrecondition[],
+  ): ConnectorMutationExecutionResult {
+    const sourcePath = this.assertEffectivePath(arguments_.sourcePath, false);
+    const destinationPath = this.assertEffectivePath(
+      arguments_.destinationPath,
+      false,
+    );
+    this.assertInsideAllowed(sourcePath);
+    this.assertInsideAllowed(destinationPath);
+    let committed = false;
+    try {
+      this.verifyPreconditions(preconditions);
+      const source = this.inspect(sourcePath);
+      const destinationParent = this.inspect(this.parentPath(destinationPath));
+      if (!source.stats.isFile()) throw new FilesystemNotRegularFileError();
+      if (source.stats.nlink > 1) throw new FilesystemHardLinkDeniedError();
+      if (!destinationParent.stats.isDirectory())
+        throw new FilesystemNotDirectoryError();
+      this.hooks.beforeMutationCommit?.("filesystem.move");
+      renameSync(source.absolute, resolveContainedPath(this.root, destinationPath));
+      committed = true;
+      this.hooks.afterMutationCommit?.("filesystem.move");
+      this.fsyncParent(sourcePath, "filesystem.move");
+      if (this.parentPath(sourcePath) !== this.parentPath(destinationPath))
+        this.fsyncParent(destinationPath, "filesystem.move");
+      const sourcePrecondition = preconditions[0]!;
+      return {
+        ...(sourcePrecondition.sha256 === undefined
+          ? {}
+          : { resultHash: sourcePrecondition.sha256 }),
+        audit: {
+          relativePath: sourcePath,
+          destinationPath,
+          ...(sourcePrecondition.size === undefined
+            ? {}
+            : { byteLength: sourcePrecondition.size }),
+        },
+      };
+    } catch (error) {
+      throw this.mutationError(error, committed);
+    }
+  }
+
+  private executeDelete(
+    arguments_: Readonly<Record<string, unknown>>,
+    preconditions: readonly ConnectorFilePrecondition[],
+  ): ConnectorMutationExecutionResult {
+    const path = this.assertEffectivePath(arguments_.path, false);
+    this.assertInsideAllowed(path);
+    let committed = false;
+    try {
+      this.verifyPreconditions(preconditions);
+      const source = this.inspect(path);
+      if (!source.stats.isFile()) throw new FilesystemNotRegularFileError();
+      if (source.stats.nlink > 1) throw new FilesystemHardLinkDeniedError();
+      this.hooks.beforeMutationCommit?.("filesystem.delete");
+      unlinkSync(source.absolute);
+      committed = true;
+      this.hooks.afterMutationCommit?.("filesystem.delete");
+      this.fsyncParent(path, "filesystem.delete");
+      const sourcePrecondition = preconditions[0]!;
+      return {
+        ...(sourcePrecondition.sha256 === undefined
+          ? {}
+          : { resultHash: sourcePrecondition.sha256 }),
+        audit: {
+          relativePath: path,
+          ...(sourcePrecondition.size === undefined
+            ? {}
+            : { byteLength: sourcePrecondition.size }),
+        },
+      };
+    } catch (error) {
+      throw this.mutationError(error, committed);
+    }
+  }
+
+  private withStagedFile<T>(
+    path: string,
+    bytes: Uint8Array,
+    mode: number,
+    commit: (
+      tempAbsolute: string,
+      targetAbsolute: string,
+      markCommitted: () => void,
+    ) => T,
+  ): T {
+    this.validateParent(path);
+    const parent = this.inspect(this.parentPath(path));
+    if (!parent.stats.isDirectory()) throw new FilesystemNotDirectoryError();
+    const target = resolveContainedPath(this.root, path);
+    let descriptor: number | undefined;
+    let temp: string | undefined;
+    let committed = false;
+    try {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        temp = resolveContainedPath(
+          parent.absolute,
+          `.ai-office-txn-${randomUUID()}`,
+        );
+        try {
+          descriptor = openSync(
+            temp,
+            constants.O_WRONLY |
+              constants.O_CREAT |
+              constants.O_EXCL |
+              constants.O_NOFOLLOW,
+            0o600,
+          );
+          break;
+        } catch (error) {
+          if (errorCode(error) !== "EEXIST" || attempt === 2) throw error;
+        }
+      }
+      if (descriptor === undefined || temp === undefined)
+        throw new FilesystemSourceChangedError();
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        this.throwIfAborted();
+        const written = this.hooks.writeStagedChunk?.(
+          descriptor,
+          bytes,
+          offset,
+          bytes.byteLength - offset,
+        ) ?? writeSync(descriptor, bytes, offset, bytes.byteLength - offset);
+        if (written <= 0) throw new FilesystemWriteProgressError();
+        offset += written;
+      }
+      fchmodSync(descriptor, mode & 0o777);
+      fsyncSync(descriptor);
+      closeSync(descriptor);
+      descriptor = undefined;
+      const result = commit(temp, target, () => {
+        committed = true;
+      });
+      return result;
+    } catch (error) {
+      throw this.mutationError(error, committed);
+    } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
+      if (temp !== undefined) {
+        try {
+          unlinkSync(temp);
+        } catch (error) {
+          if (errorCode(error) !== "ENOENT") {
+            // Reserved staging entries are never exposed; cleanup is best effort.
+          }
+        }
+      }
+    }
+  }
+
+  private fsyncParent(path: string, operation: string): void {
+    this.hooks.beforeParentFsync?.(operation);
+    const parent = this.inspect(this.parentPath(path));
+    const directoryFlag = constants.O_DIRECTORY;
+    if (typeof directoryFlag !== "number")
+      throw new FilesystemSourceChangedError();
+    const descriptor = openSync(
+      parent.absolute,
+      constants.O_RDONLY | directoryFlag | constants.O_NOFOLLOW,
+    );
+    try {
+      fsyncSync(descriptor);
+    } finally {
+      closeSync(descriptor);
+    }
+  }
+
+  private mutationError(
+    error: unknown,
+    committed: boolean,
+  ): ConnectorMutationExecutionError {
+    if (error instanceof ConnectorMutationExecutionError) return error;
+    const code =
+      errorCode(error) ??
+      (error instanceof Error && error.name.length > 0
+        ? error.name
+        : "FilesystemMutationFailed");
+    return new ConnectorMutationExecutionError(
+      code,
+      committed ? "mutation_may_have_occurred" : "definite_no_mutation",
+    );
   }
 
   private isAbsent(path: string): boolean {

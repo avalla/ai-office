@@ -396,7 +396,7 @@ limits:
     database.close();
   });
 
-  test("invokes filesystem reads and mutation simulations through the daemon", async () => {
+  test("invokes reads and approved trusted-local mutations through the daemon", async () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-m6b-daemon-"));
     roots.push(root);
     const agentDirectory = join(root, "agents", "developer");
@@ -502,7 +502,7 @@ limits:
         "--resource",
         resourceId,
         "--actions",
-        "filesystem.read,filesystem.search,filesystem.write",
+        "filesystem.read,filesystem.search,filesystem.create,filesystem.write,filesystem.move,filesystem.delete",
         "--constraints",
         JSON.stringify({ allowMutation: true }),
         "--granted-by",
@@ -617,7 +617,7 @@ limits:
         JSON.stringify({ path: "note.txt", content: "changed\n" }),
       ]);
       expect(simulation.exitCode).toBe(0);
-      expect(simulation.stdout).toContain("Status: simulated");
+      expect(simulation.stdout).toContain("Status: approval_pending");
       expect(simulation.stdout.join("\n")).toContain("artifactSha256");
       expect(readFileSync(join(workspace, "note.txt"), "utf8")).toBe(
         "literal needle\n",
@@ -632,6 +632,101 @@ limits:
       ]);
       expect(shown.stdout.join("\n")).toContain('"content":"[REDACTED]"');
       expect(shown.stdout.join("\n")).not.toContain('"content":"changed');
+      expect(shown.stdout.join("\n")).toContain('"status":"pending"');
+      const approved = await run([
+        "action:approve",
+        "--project",
+        projectId,
+        "--action",
+        actionId,
+        "--actor",
+        "local-user",
+      ]);
+      expect(approved).toMatchObject({ exitCode: 0, stderr: [] });
+      expect(approved.stdout).toContain("Approval: approved");
+      const executed = await run([
+        "action:execute",
+        "--project",
+        projectId,
+        "--action",
+        actionId,
+      ]);
+      expect(executed).toMatchObject({ exitCode: 0, stderr: [] });
+      expect(executed.stdout).toContain("Status: completed");
+      expect(readFileSync(join(workspace, "note.txt"), "utf8")).toBe(
+        "changed\n",
+      );
+      const replay = await run([
+        "action:execute",
+        "--project",
+        projectId,
+        "--action",
+        actionId,
+      ]);
+      expect(replay.exitCode).toBe(1);
+      expect(replay.stderr).toEqual(["Action request is not executable"]);
+
+      const invokeApproveExecute = async (
+        operation: string,
+        arguments_: Readonly<Record<string, unknown>>,
+      ) => {
+        const invoked = await run([
+          "action:invoke",
+          "--project",
+          projectId,
+          "--agent",
+          agentId,
+          "--resource",
+          resourceId,
+          "--operation",
+          operation,
+          "--arguments",
+          JSON.stringify(arguments_),
+        ]);
+        expect(invoked.exitCode).toBe(0);
+        expect(invoked.stdout).toContain("Status: approval_pending");
+        const id = invoked.stdout[0]!.replace("Action request: ", "");
+        expect(
+          (
+            await run([
+              "action:approve",
+              "--project",
+              projectId,
+              "--action",
+              id,
+              "--actor",
+              "local-user",
+            ])
+          ).exitCode,
+        ).toBe(0);
+        const executedAction = await run([
+          "action:execute",
+          "--project",
+          projectId,
+          "--action",
+          id,
+        ]);
+        expect(executedAction.exitCode).toBe(0);
+        expect(executedAction.stdout).toContain("Status: completed");
+      };
+
+      await invokeApproveExecute("filesystem.create", {
+        path: "created.txt",
+        content: "created\n",
+      });
+      expect(readFileSync(join(workspace, "created.txt"), "utf8")).toBe(
+        "created\n",
+      );
+      await invokeApproveExecute("filesystem.move", {
+        sourcePath: "created.txt",
+        destinationPath: "moved.txt",
+      });
+      expect(existsSync(join(workspace, "created.txt"))).toBe(false);
+      expect(readFileSync(join(workspace, "moved.txt"), "utf8")).toBe(
+        "created\n",
+      );
+      await invokeApproveExecute("filesystem.delete", { path: "moved.txt" });
+      expect(existsSync(join(workspace, "moved.txt"))).toBe(false);
     } finally {
       controller.abort();
       await running;
@@ -647,7 +742,24 @@ limits:
     expect(audit).not.toContain("literal needle");
     expect(audit).not.toContain("must-not-leak");
     expect(audit).not.toContain("mutation-content-must-not-leak");
+    expect(audit).not.toContain("changed\\n");
     expect(audit).not.toContain(workspace);
+    const events = database
+      .query<{ event_type: string }, []>(
+        `SELECT event_type FROM audit_event
+         WHERE event_type LIKE 'action_%'
+         ORDER BY occurred_at, id`,
+      )
+      .all()
+      .map((row) => row.event_type);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        "action_approval_requested",
+        "action_approved",
+        "action_execution_started",
+        "action_execution_completed",
+      ]),
+    );
     database.close();
   });
 });

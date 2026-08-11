@@ -81,9 +81,13 @@ function freezeDefinition(
       throw new ConnectorRegistryError(
         `Read operation cannot require simulation: ${operation.operation}`,
       );
-    if (operation.mode === "mutation" && operation.supportsExecution)
+    if (
+      operation.mode === "mutation" &&
+      operation.supportsExecution &&
+      !operation.requiresApproval
+    )
       throw new ConnectorRegistryError(
-        `M6B mutation operation cannot support execution: ${operation.operation}`,
+        `Executable mutation operation must require approval: ${operation.operation}`,
       );
     if (operation.mode === "mutation" && !operation.supportsSimulation)
       throw new ConnectorRegistryError(
@@ -97,6 +101,17 @@ function freezeDefinition(
   }
   if (operations.length === 0)
     throw new ConnectorRegistryError(`Connector ${id} has no operations`);
+  const hasExecutableMutation = operations.some(
+    (operation) => operation.mode === "mutation" && operation.supportsExecution,
+  );
+  if (hasExecutableMutation && definition.executeMutation === undefined)
+    throw new ConnectorRegistryError(
+      `Connector ${id} has executable mutations without an execution boundary`,
+    );
+  if (!hasExecutableMutation && definition.executeMutation !== undefined)
+    throw new ConnectorRegistryError(
+      `Connector ${id} exposes an unused mutation execution boundary`,
+    );
   const supportedResourceTypes = Object.freeze(
     [...new Set(definition.descriptor.supportedResourceTypes)].sort(
       compareText,
@@ -136,6 +151,7 @@ function freezeDefinition(
   const sourceNormalizeConstraints = definition.normalizeConstraints;
   const sourcePrepareResource = definition.prepareResource;
   const sourceInvoke = definition.invoke;
+  const sourceExecuteMutation = definition.executeMutation;
   const normalizeArguments: ConnectorDefinition["normalizeArguments"] = (
     operation,
     value,
@@ -149,6 +165,10 @@ function freezeDefinition(
     sourceInvoke === undefined
       ? undefined
       : (input) => sourceInvoke.call(undefined, input);
+  const executeMutation: ConnectorDefinition["executeMutation"] =
+    sourceExecuteMutation === undefined
+      ? undefined
+      : (input) => sourceExecuteMutation.call(undefined, input);
   return Object.freeze({
     descriptor,
     constraintHandler,
@@ -156,6 +176,7 @@ function freezeDefinition(
     normalizeConstraints,
     prepareResource,
     ...(invoke === undefined ? {} : { invoke }),
+    ...(executeMutation === undefined ? {} : { executeMutation }),
   });
 }
 

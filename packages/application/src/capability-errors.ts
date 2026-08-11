@@ -76,3 +76,52 @@ export class StaleActionAuthorizationError extends Error {
     this.name = "StaleActionAuthorizationError";
   }
 }
+
+export class ActionApprovalNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Action approval not found for action: ${id}`);
+    this.name = "ActionApprovalNotFoundError";
+  }
+}
+
+export class ActionApprovalConflictError extends Error {
+  constructor(id: string) {
+    super(`Action request already has an approval record: ${id}`);
+    this.name = "ActionApprovalConflictError";
+  }
+}
+
+export class InvalidActionApprovalStateError extends Error {
+  constructor(message = "Action approval is not valid for this operation") {
+    super(message);
+    this.name = "InvalidActionApprovalStateError";
+  }
+}
+
+export class ActionExecutionConflictError extends Error {
+  constructor(id: string) {
+    super(`Action request already has an execution attempt: ${id}`);
+    this.name = "ActionExecutionConflictError";
+  }
+}
+
+export class ActionExecutionNotFoundError extends Error {
+  constructor(id: string) {
+    super(`Action execution not found for action: ${id}`);
+    this.name = "ActionExecutionNotFoundError";
+  }
+}
+
+export class InvalidActionExecutionStateError extends Error {
+  constructor(message = "Action request is not executable") {
+    super(message);
+    this.name = "InvalidActionExecutionStateError";
+  }
+}
+
+export class StaleActionSimulationError extends Error {
+  constructor() {
+    super("Action simulation is no longer valid");
+    this.name = "StaleActionSimulationError";
+  }
+}

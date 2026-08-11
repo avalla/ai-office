@@ -40,6 +40,13 @@ import {
   CapabilityProjectMismatchError,
   ConcurrentActionTransitionError,
   ActionSimulationConflictError,
+  ActionApprovalNotFoundError,
+  ActionApprovalConflictError,
+  InvalidActionApprovalStateError,
+  ActionExecutionConflictError,
+  ActionExecutionNotFoundError,
+  InvalidActionExecutionStateError,
+  StaleActionSimulationError,
   InvalidConnectorInvocationStateError,
   StaleActionAuthorizationError,
   ResourceDisabledError,
@@ -66,6 +73,7 @@ import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
+import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import {
   ConnectorRegistryError,
@@ -129,6 +137,9 @@ Commands:
   capability:revoke --project <id> --grant <id> --revoked-by <id>
   action:request --project <id> --agent <id> --resource <id> --operation <name> [--arguments <json>]
   action:invoke --project <id> (--action <id> | --agent <id> --resource <id> --operation <name> [--arguments <json>])
+  action:approve --project <id> --action <id> --actor <audit-identity>
+  action:reject --project <id> --action <id> --actor <audit-identity>
+  action:execute --project <id> --action <id>
   action:list --project <id>
   action:show --project <id> --action <id>`;
 
@@ -167,6 +178,9 @@ const commands = [
   "capability:revoke",
   "action:request",
   "action:invoke",
+  "action:approve",
+  "action:reject",
+  "action:execute",
   "action:list",
   "action:show",
 ] as const;
@@ -235,6 +249,13 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ActionRequestNotFoundError ||
     error instanceof ConcurrentActionTransitionError ||
     error instanceof ActionSimulationConflictError ||
+    error instanceof ActionApprovalNotFoundError ||
+    error instanceof ActionApprovalConflictError ||
+    error instanceof InvalidActionApprovalStateError ||
+    error instanceof ActionExecutionConflictError ||
+    error instanceof ActionExecutionNotFoundError ||
+    error instanceof InvalidActionExecutionStateError ||
+    error instanceof StaleActionSimulationError ||
     error instanceof InvalidConnectorInvocationStateError ||
     error instanceof StaleActionAuthorizationError ||
     error instanceof CapabilityValidationError ||
@@ -284,6 +305,7 @@ export async function runCli(
     const ids = new CryptoIdGenerator();
     const clock = new SystemClock();
     const capabilities = new SqliteCapabilityPolicyRepository(database);
+    const controlled = new SqliteControlledExecutionRepository(database);
     const context: CommandContext = {
       projectRoot: options.projectRoot,
       io,
@@ -294,6 +316,7 @@ export async function runCli(
       costs: new SqliteCostRepository(database),
       governance: new SqliteGovernanceRepository(database),
       capabilities,
+      controlled,
       audit: new RecordAuditEvent(
         new SqliteAuditEventRepository(database),
         ids,

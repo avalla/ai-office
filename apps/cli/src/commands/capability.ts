@@ -5,6 +5,8 @@ import { ListCapabilityRecords } from "@ai-office/application/capability/list-ca
 import { RegisterResource } from "@ai-office/application/capability/register-resource.ts";
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import { InvokeControlledConnectorAction } from "@ai-office/application/capability/invoke-controlled-connector-action.ts";
+import { DecideControlledAction } from "@ai-office/application/capability/decide-controlled-action.ts";
+import { ExecuteControlledAction } from "@ai-office/application/capability/execute-controlled-action.ts";
 import { RevokeCapabilityGrant } from "@ai-office/application/capability/revoke-capability-grant.ts";
 import type {
   CapabilityPrincipalType,
@@ -88,6 +90,7 @@ export async function handleCapabilityCommand(
     projects,
     runtime,
     capabilities,
+    controlled,
     audit,
     ids,
     clock,
@@ -301,6 +304,7 @@ export async function handleCapabilityCommand(
       transactions,
       connectors,
       evaluator,
+      controlled,
     );
     const actionRequestId = parsed.options.get("action");
     if (
@@ -354,6 +358,61 @@ export async function handleCapabilityCommand(
     }
     return 0;
   }
+  if (command === "action:approve" || command === "action:reject") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "action", "actor"]),
+    );
+    const input = {
+      projectId: requiredOption(parsed, "project"),
+      actionRequestId: requiredOption(parsed, "action"),
+      actor: requiredOption(parsed, "actor"),
+    };
+    const service = new DecideControlledAction(
+      capabilities,
+      controlled,
+      audit,
+      clock,
+      transactions,
+    );
+    const result =
+      command === "action:approve"
+        ? await service.approve(input)
+        : await service.reject(input);
+    io.stdout(`Action request: ${input.actionRequestId}`);
+    io.stdout(`Approval: ${result.approval.snapshot().status}`);
+    io.stdout(`Status: ${result.actionStatus}`);
+    return 0;
+  }
+  if (command === "action:execute") {
+    const parsed = parseArguments(args, new Set(["project", "action"]));
+    const projectId = requiredOption(parsed, "project");
+    const actionRequestId = requiredOption(parsed, "action");
+    const evaluator = new EvaluateActionPolicy(
+      runtime,
+      capabilities,
+      clock,
+      connectors,
+    );
+    const result = await new ExecuteControlledAction(
+      capabilities,
+      controlled,
+      audit,
+      ids,
+      clock,
+      transactions,
+      connectors,
+      evaluator,
+    ).execute({ projectId, actionRequestId });
+    io.stdout(`Action request: ${result.actionRequestId}`);
+    io.stdout(`Execution: ${result.executionId}`);
+    io.stdout(`Status: ${result.status}`);
+    if (result.resultHash !== undefined)
+      io.stdout(`Result hash: ${result.resultHash}`);
+    if (result.failureCode !== undefined)
+      io.stdout(`Failure code: ${result.failureCode}`);
+    return result.status === "completed" ? 0 : 2;
+  }
   if (command === "action:show") {
     const parsed = parseArguments(args, new Set(["project", "action"]));
     const value = (
@@ -362,6 +421,16 @@ export async function handleCapabilityCommand(
         requiredOption(parsed, "project"),
       )
     ).snapshot();
+    const approval = await controlled.findApprovalByAction(
+      value.id,
+      value.projectId,
+    );
+    const execution = await controlled.findExecutionByAction(
+      value.id,
+      value.projectId,
+    );
+    const approvalSnapshot = approval?.snapshot();
+    const executionSnapshot = execution?.snapshot();
     io.stdout(
       canonicalStringify({
         ...value,
@@ -371,6 +440,42 @@ export async function handleCapabilityCommand(
         ),
         createdAt: value.createdAt.toISOString(),
         updatedAt: value.updatedAt.toISOString(),
+        ...(approvalSnapshot === undefined
+          ? {}
+          : {
+              approval: {
+                id: approvalSnapshot.id,
+                status: approvalSnapshot.status,
+                requestedAt: approvalSnapshot.requestedAt.toISOString(),
+                ...(approvalSnapshot.decidedAt === undefined
+                  ? {}
+                  : { decidedAt: approvalSnapshot.decidedAt.toISOString() }),
+                ...(approvalSnapshot.actor === undefined
+                  ? {}
+                  : { actor: approvalSnapshot.actor }),
+              },
+            }),
+        ...(executionSnapshot === undefined
+          ? {}
+          : {
+              execution: {
+                id: executionSnapshot.id,
+                status: executionSnapshot.status,
+                startedAt: executionSnapshot.startedAt.toISOString(),
+                ...(executionSnapshot.completedAt === undefined
+                  ? {}
+                  : {
+                      completedAt:
+                        executionSnapshot.completedAt.toISOString(),
+                    }),
+                ...(executionSnapshot.failureCode === undefined
+                  ? {}
+                  : { failureCode: executionSnapshot.failureCode }),
+                ...(executionSnapshot.resultHash === undefined
+                  ? {}
+                  : { resultHash: executionSnapshot.resultHash }),
+              },
+            }),
       }),
     );
     return 0;
