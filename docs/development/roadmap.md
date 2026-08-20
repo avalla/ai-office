@@ -1,5 +1,42 @@
 # Development roadmap
 
+## Long-term product direction
+
+AI Office is intended to evolve from coordinating individual agent runs into a
+local, auditable **virtual engineering organization**. AI Office defines the
+organization and governs the process; a coding client or model runtime is a
+replaceable worker, not the source of role behavior or workflow authority.
+
+```text
+AI Office
+  |-- organization and roles
+  |-- agent pipeline engine
+  |-- policy and capabilities
+  |-- connectors
+  |     `-- GitHub
+  `-- worker runtimes
+        |-- Codex
+        |-- Claude Code
+        |-- Gemini CLI
+        |-- OpenCode
+        `-- local or future runtimes
+```
+
+Two boundaries govern this direction:
+
+1. A generic, client-agnostic Agent Pipeline Engine owns pipeline and stage
+   orchestration, assignment, policy gates, transitions, retries, controlled
+   loops, approvals, artifacts, and audit.
+2. GitHub remains an external system behind connector and application ports. A
+   GitHub connector exposes repository resources and operations; it never
+   decides which role works next, whether a review is independent, or whether
+   policy permits merge.
+
+The M6E office manifest is the configuration precursor for this direction. It
+currently stores roles and ordered pipeline descriptions, while the active host
+follows their stages. It is not yet a durable pipeline executor. The milestones
+below preserve that distinction and do not change the scope or status of M0-M10.
+
 ## M0 — Repository health
 
 Status: implemented.
@@ -303,3 +340,274 @@ requirements for M6D-lite. M10 includes:
 - durable filesystem mutation journal;
 - native artifact build, signing, and supply-chain hardening;
 - multi-platform hardened execution and capability qualification.
+
+## M11 — Agent Pipeline Engine
+
+Status: future.
+
+Goal: add a durable, generic orchestration layer that executes validated office
+pipelines without embedding software-development or GitHub-specific business
+logic in the runtime, a connector, or a host skill.
+
+Conceptual primitives, subject to design assessment before implementation:
+
+- `Pipeline`: a versioned declarative workflow definition;
+- `PipelineStage`: one stage definition and its responsibility boundary;
+- `PipelineRun`: one durable execution of a pinned pipeline definition;
+- `StageRun`: one durable stage execution or attempt within a pipeline run.
+
+A future pipeline definition must be able to describe:
+
+- responsible role and deterministic agent assignment rules;
+- task, inputs, outputs, and typed or structured artifacts;
+- required capabilities and applicable policy references, without granting
+  those capabilities merely by declaring them;
+- conditions, dependencies, transitions, branching, and bounded cycles such as
+  `review -> fix -> review`;
+- retries, timeouts, cancellation, failure handling, compensation or escalation
+  where meaningful;
+- workflow approval gates and human checkpoints;
+- complete, sanitized provenance and audit.
+
+The daemon and application services remain authoritative for orchestration
+state. Domain rules own legal transitions and invariants; infrastructure ports
+invoke workers and connectors. No SQLite transaction may remain open while a
+worker, provider, subprocess, Git operation, connector call, or human approval
+is pending. Recovery must be explicit and replay-safe, especially where an
+external effect has an ambiguous outcome.
+
+Pipeline policy must be able to enforce separation of duties from actual agent
+and stage-run provenance. Role labels alone are not sufficient evidence of
+independence. Workflow approval gates remain separate from M5 governance
+reviews and M6 controlled-action approvals; none substitutes for another.
+
+This milestone should also establish a provisional structured-artifact contract
+for machine-interpretable stage outcomes, while avoiding a prematurely stable
+public schema.
+
+Depends on: M3 agent/run foundations, M5 governance concepts, M6A capability
+policy, M6D-lite controlled-action integration, M6E office manifests, and M8.5
+context assembly. Its placement after M10 preserves the already planned M7-M10
+sequence and does not pull this work into an active milestone.
+
+Exit direction:
+
+- a pipeline run pins the definition and policy inputs needed for reproducible
+  decisions;
+- stage state survives restart and produces an end-to-end audit trail;
+- branching, bounded review/fix cycles, failure, cancellation, and approval
+  gates have deterministic semantics;
+- stage execution cannot create authority outside the capability system;
+- the engine contains no GitHub-, Codex-, Claude-, Gemini-, or OpenCode-specific
+  workflow logic.
+
+## M12 — Worker runtime adapters and organization profiles
+
+Status: future.
+
+Goal: make worker execution replaceable and extend onboarding from office
+description to an explicit, reviewable organization-to-runtime mapping.
+
+- define a worker-runtime application port for starting, observing, cancelling,
+  and collecting normalized stage results;
+- add adapters incrementally for evidenced runtimes such as Codex, Claude Code,
+  Gemini CLI, OpenCode, and local or CI-backed workers;
+- derive architect, developer, reviewer, QA, security, and other behavior from
+  the agent profile, pipeline stage, effective context, policy, and capability
+  set rather than hardcoding it in a client adapter;
+- keep provider/model invocation behind the LLM gateway and coding-worker
+  execution behind the runtime port; these are related infrastructure choices,
+  not one abstraction;
+- keep M6F project instruction integration distinct from worker execution:
+  configuring a client to consume project instructions does not make it an
+  authenticated or authorized pipeline worker;
+- record runner identity, adapter/version, assigned agent identity, inputs,
+  outputs, and outcome provenance without exposing credentials or hidden model
+  reasoning.
+
+Future onboarding may:
+
+1. detect available coding runtimes and supported versions;
+2. detect configured external integrations such as GitHub installations;
+3. propose mappings from organization roles to runners;
+4. plan and, after explicit confirmation, configure the required adapters;
+5. propose initial capability requests and constraints without silently granting
+   them;
+6. offer pipeline templates and client-specific instruction integration.
+
+An illustrative result could map Architect to Codex, Developer to Claude Code,
+Reviewer to Codex, and QA to a local or CI worker. Such a mapping never weakens
+independence policy: using the same runtime product for two roles does not imply
+that the same agent identity or execution may implement and independently
+review one change.
+
+Depends on: M11, M6F external client integration, and M8.5 effective context
+assembly.
+
+## M13 — GitHub connector and GitHub App
+
+Status: future.
+
+Goal: expose GitHub as a protected external resource through the connector
+model, with GitHub App authentication and controlled inbound and outbound
+integration.
+
+- GitHub App installation and repository authorization, with credentials kept
+  behind infrastructure credential references and never exposed to agents;
+- signed webhook ingestion with delivery deduplication, replay handling,
+  project/repository ownership validation, and sanitized audit;
+- project-scoped repository resources and controlled operations for issues,
+  branches, commits and push, pull requests, reviews, review comments, checks,
+  and merge;
+- trusted operation descriptors, constraints, risk, simulation or preview where
+  possible, approval requirements, execution-time revalidation, and outcome
+  handling consistent with the M6 connector boundary;
+- correlation between external GitHub identities/events and internal pipeline,
+  stage, artifact, action, and audit identities;
+- GitHub Actions evaluated as an optional execution backend, check producer, or
+  integration point, never as AI Office's primary orchestrator.
+
+Webhook adapters translate authenticated external deliveries into application
+commands or facts. They do not choose the next role or directly bypass pipeline
+and policy evaluation. The connector performs authorized GitHub operations but
+does not decide who develops, who reviews, when QA or security is required, or
+whether merge policy is satisfied.
+
+The implementation assessment must decide the exact boundary between local Git
+worktree/commit operations, remote Git transport, and GitHub API operations.
+That split must preserve the current rule that agents do not receive direct
+repository, shell, credential, or connector authority.
+
+Depends on: M6 connector and controlled-action foundations and M11 pipeline
+orchestration. M12 workers may consume the connector through those boundaries;
+they must not depend on GitHub SDK objects directly.
+
+## M14 — Software development pipelines
+
+Status: future.
+
+Goal: build reusable, policy-governed software delivery workflows on the generic
+engine, worker-runtime ports, and GitHub connector.
+
+Initial role responsibilities should remain configurable but preserve these
+default boundaries:
+
+- **Architect:** request analysis, assessment, design, implementation plan,
+  risks, and acceptance criteria; normally no implementation capability for the
+  same change;
+- **Developer:** branch/worktree implementation, tests, commits, and requested
+  fixes; no authority to approve the developer's own work;
+- **Reviewer:** independent correctness, maintainability, and architectural
+  review, with changes requested or approval; ideally no capability to mutate
+  the branch under review;
+- **QA:** builds, automated and acceptance testing, failure-path and regression
+  verification;
+- **Security:** risk- or policy-triggered security review with only the
+  capabilities required for that assessment.
+
+Separation of duties is a policy invariant, not a prompt convention. For one
+change, an implementing agent must not also act as its independent reviewer,
+approve its own pull request, bypass required gates, or merge when policy
+requires a distinct reviewer, security reviewer, or human. The Policy Engine
+must evaluate agent identity, role, stage provenance, artifact subject, and
+required approvals before advancing or permitting merge.
+
+Reusable declarative templates may cover feature, bugfix, hotfix,
+dependency-update, and release workflows. A possible project layout is shown
+only to communicate direction; no path or file format is selected yet:
+
+```text
+.ai-office/
+|-- office.yml
+|-- agents/
+|     |-- architect.yml
+|     |-- developer.yml
+|     |-- reviewer.yml
+|     |-- qa.yml
+|     `-- security.yml
+|-- pipelines/
+|     |-- feature.yml
+|     |-- bugfix.yml
+|     |-- hotfix.yml
+|     |-- dependency-update.yml
+|     `-- release.yml
+`-- policies/
+      |-- repository.yml
+      |-- reviews.yml
+      `-- merge.yml
+```
+
+A software-delivery pipeline may coordinate assessment, plan approval,
+branch/worktree preparation, implementation, test, push, pull request, structured
+review, bounded fix loops, QA, conditional security review, human approval, and
+merge. The engine owns this lifecycle; GitHub only reflects and performs the
+external repository operations it is authorized to expose.
+
+Agent reviews should be able to return machine-interpretable artifacts in
+addition to human-readable text. A provisional shape may contain `decision` and
+`findings`, with each finding carrying severity, category, file, line, message,
+and suggestion. The pipeline can then apply policy, publish GitHub comments,
+start a fix loop, or block/allow later stages. Exact schema, diff anchoring, and
+versioning remain design work.
+
+Risk-based routing should integrate with, but not silently redefine, the
+existing trusted operation risk model. An illustrative change-risk policy could
+route low-risk work through tests and independent review with optional
+autonomous merge, medium-risk work through mandatory independent review,
+high-risk work through review plus security review and human approval, and
+critical work through mandatory human approval and merge. These levels and
+gates are examples, not a finalized classification.
+
+Depends on: M11 Agent Pipeline Engine, M12 worker runtime adapters, M13 GitHub
+integration, M6A policy/capability enforcement, and the relevant M8/M8.5 code
+intelligence and context foundations.
+
+Exit direction:
+
+- feature and fix workflows complete through branch, pull request, independent
+  review, bounded remediation, QA, policy approval, and merge;
+- structured review findings drive deterministic gates without trusting free
+  text as authorization;
+- separation-of-duties violations fail closed;
+- merge is impossible until all effective policy gates are satisfied;
+- changing the selected worker runtime does not change workflow semantics.
+
+## M11-M14 dependency summary and open design questions
+
+```text
+M6E office definitions + M6 policy/actions + M8.5 context
+                         |
+                         v
+                M11 Pipeline Engine
+                  |             |
+                  v             v
+       M12 Runtime adapters   M13 GitHub connector
+                  \             /
+                   v           v
+              M14 Software development pipelines
+```
+
+These milestones intentionally defer:
+
+- the stable pipeline file format, public API, storage schema, and whether
+  definitions remain inside an evolved office manifest or use separately
+  versioned project files;
+- how a running pipeline behaves when its source definition or organization
+  profile changes;
+- the canonical change-risk model and its composition with connector-operation
+  risk, where untrusted input must never lower effective risk;
+- the precise independence rule across agent identities, runtime sessions,
+  models, providers, and human actors;
+- structured review artifact versioning and durable anchoring to changing diffs;
+- local Git versus GitHub API ownership of branch, commit, push, worktree, and
+  precondition semantics;
+- webhook ordering, installation lifecycle, delivery reconciliation, and
+  external identity mapping;
+- runner isolation, credential delegation, cancellation, crash recovery, and
+  ambiguous external outcomes;
+- the policy thresholds for autonomous merge and the authentication required for
+  human workflow approvals.
+
+These questions require milestone-specific assessments and, where a durable
+architectural choice is ready, an ADR. This roadmap direction does not itself
+select an implementation or authorize work on M11-M14.

@@ -152,3 +152,109 @@ It does not defend against a hostile process with the same Unix credentials conc
 ## Evolution boundaries
 
 The daemon protocol and application ports keep future interface, provider, storage, and native-security changes replaceable. TypeScript remains the production implementation. A future Rust boundary is justified only for scoped hardening work accepted by the roadmap and ADR process; the existing native filesystem spike is research, not a production adapter.
+
+## Planned virtual engineering organization
+
+The post-M10 roadmap extends the current virtual-office configuration into an
+auditable engineering organization. This is a planned boundary, not a claim
+about the current runtime: M6E stores and resolves ordered pipeline definitions,
+but the active host still follows those stages and no durable multi-stage
+pipeline executor exists.
+
+```text
+                         AI Office authority
+  +-------------------------------------------------------------+
+  | organization -> pipeline engine -> policy/capability gates  |
+  |                         |                  |                  |
+  |                    stage runs         controlled actions     |
+  +-------------------------+------------------+------------------+
+                            |                  |
+                    worker runtime ports   connector ports
+                    /       |       \           |
+               Codex   Claude Code   ...      GitHub
+```
+
+AI Office owns role definitions, responsibility boundaries, pipeline state,
+assignment, transition policy, separation of duties, approval chains, and audit.
+Codex, Claude Code, Gemini CLI, OpenCode, local executors, and future runtimes are
+replaceable workers behind an application port. A worker does not define what an
+architect, developer, reviewer, QA, or security agent is allowed or required to
+do.
+
+This future worker-runtime port is distinct from both existing provider and
+client-integration boundaries:
+
+- the LLM gateway normalizes provider calls, usage, pricing, and budgets;
+- M6F client adapters configure how external tools consume project instructions;
+- worker adapters execute assigned pipeline stages and return normalized results.
+
+Detecting or configuring a client does not authenticate it as a pipeline worker
+and does not grant it capabilities.
+
+### Generic pipeline authority
+
+The future Agent Pipeline Engine belongs to the domain/application side of AI
+Office. Conceptual `Pipeline`, `PipelineStage`, `PipelineRun`, and `StageRun`
+models describe versioned definitions, responsible roles, agent assignments,
+inputs, artifacts, dependencies, conditions, branching, retry and failure
+semantics, workflow approvals, and bounded cycles such as review/fix/review.
+Their exact API and persistence shape remain open until M11 assessment.
+
+Pipeline configuration never creates authority by itself. Before a stage or
+transition proceeds, application policy evaluates the assigned principal,
+stage/run provenance, effective capabilities, conditions, required independent
+actors, approvals, and relevant risk. Separation of duties must be enforced
+from stable identities and provenance, not inferred from different role names or
+prompts.
+
+External work remains outside SQLite transactions. The engine persists authority
+and intent before dispatch, observes the worker or connector through a port, and
+records the result afterward. Timeouts, crashes, ambiguous outcomes, retries,
+and definition changes must have explicit fail-closed semantics rather than
+implicitly replaying side effects.
+
+Workflow gates remain separate from existing approval concepts:
+
+- M5 governance reviews record project governance decisions;
+- pipeline approvals allow a workflow transition when its policy is satisfied;
+- M6 action approvals authorize one exact protected side effect after simulation
+  and revalidation.
+
+No one approval type substitutes for another.
+
+### GitHub connector boundary
+
+GitHub is a protected external system, not an orchestration engine. A future
+GitHub App and connector expose project-scoped repository resources plus
+authorized operations for issues, branches, commits/push, pull requests,
+reviews, comments, checks, and merge. Installation credentials remain behind
+infrastructure credential references and are never passed to agents.
+
+Signed webhook ingestion is an inbound infrastructure adapter. It authenticates,
+deduplicates, validates ownership, and translates deliveries into application
+facts or commands. Neither a webhook nor an outbound connector response chooses
+the next stage or makes a merge-policy decision. Those decisions remain in the
+Pipeline Engine and Policy Engine.
+
+GitHub Actions may later act as a worker backend, check producer, or integration
+point. It is not the authoritative workflow orchestrator. The implementation
+assessment must still decide the boundary between local Git/worktree operations,
+remote Git transport, and GitHub API operations without exposing raw repository,
+shell, network, or credential access to workers.
+
+### Structured outcomes and risk-based policy
+
+Stages may produce typed artifacts in addition to human-readable output. In
+particular, a review artifact can carry a decision and structured findings with
+severity, category, source location, message, and suggestion. Pipeline policy
+can use that data to request fixes, require another reviewer, trigger QA or
+security, publish connector comments, or block merge. Free-form review text is
+never authorization by itself.
+
+Change-risk routing may eventually select stronger pipeline gates, including
+independent review, security review, human approval, or human merge. This must be
+designed alongside the existing connector-operation risk model rather than
+silently equating the two. Caller-controlled data may not reduce either risk.
+
+The detailed sequencing, dependencies, and open questions are recorded in the
+[development roadmap](../development/roadmap.md#long-term-product-direction).

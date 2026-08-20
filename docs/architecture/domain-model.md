@@ -53,6 +53,64 @@ goal may therefore conflict legitimately. `office:context` returns both with
 distinct semantics instead of resolving the conflict. A future context builder
 may consume both only while preserving their separate provenance.
 
+## Planned pipeline execution model
+
+M11 is intended to evolve the current descriptive pipeline configuration into a
+durable execution model. The following names communicate aggregate
+responsibilities; they do not yet define stable TypeScript APIs or SQLite tables:
+
+- `Pipeline` is a versioned declarative workflow definition;
+- `PipelineStage` defines one responsibility boundary, its inputs, outputs,
+  dependencies, conditions, policy gates, and failure behavior;
+- `PipelineRun` binds a task to one effective pipeline definition and records
+  end-to-end state and provenance;
+- `StageRun` records an assigned agent identity, attempt, effective inputs,
+  produced artifacts, outcome, and transition evidence.
+
+A pipeline run must not reinterpret a role or a stage declaration as an
+authorization grant. The assigned agent still needs effective capabilities for
+every protected operation, and the controlled-action lifecycle remains the only
+authority for those effects. Pipeline approval, M5 governance review, and M6
+action approval remain different concepts.
+
+Separation of duties is a future policy invariant over stable identities and
+run provenance. For example, a developer's `StageRun` must be linkable to the
+artifact or pull request it produced so policy can reject that same agent as an
+independent reviewer, approver, or merger when the pipeline requires distinct
+actors. Different role labels or separate runtime processes are not sufficient
+proof of independence.
+
+Stage outputs may include structured artifacts. A provisional review result
+could have this shape:
+
+```json
+{
+  "decision": "changes_requested",
+  "findings": [
+    {
+      "severity": "high",
+      "category": "security",
+      "file": "src/example.ts",
+      "line": 42,
+      "message": "...",
+      "suggestion": "..."
+    }
+  ]
+}
+```
+
+This shape is illustrative, not a stable contract. A future design must decide
+artifact versioning, validation, diff anchoring, provenance, redaction, and how
+structured findings relate to existing governance reviews and external GitHub
+comments.
+
+The future design must also reconcile pipeline, task, agent-run,
+controlled-action, and governance lifecycles rather than create competing
+sources of truth.
+In particular, a `StageRun` may coordinate one or more agent runs and controlled
+actions, but cannot collapse their independent replay, approval, cost, and audit
+semantics into one status field.
+
 ## Task states
 
 The task status type recognizes `pending`, `assigned`, `running`, `blocked`, `waiting_review`, `completed`, `failed`, and `cancelled`. Current domain methods implement these transitions:
