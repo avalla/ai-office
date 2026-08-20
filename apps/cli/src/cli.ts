@@ -112,6 +112,10 @@ import {
 import { handleTaskCommand } from "./commands/task.ts";
 import { handleCapabilityCommand } from "./commands/capability.ts";
 import { handleOfficeCommand } from "./commands/office.ts";
+import { handleClientCommand } from "./commands/client.ts";
+import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
+import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
+import { InvalidProjectInstructionContractError } from "@ai-office/domain/agent/project-instruction-contract.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -131,6 +135,11 @@ Commands:
   office:apply --project <id> (--file <path> | --manifest <json>)
   office:show --project <id>
   office:pipeline --project <id> --task-kind <feature|bugfix|maintenance|research|release>
+  client:detect [--client <codex|claude>]
+  client:inspect --client <codex|claude> --root <path>
+  client:plan --client <codex|claude> --root <path> --contract <file>
+  client:apply --client <codex|claude> --root <path> --contract <file> --approve <plan-hash>
+  client:validate --client <codex|claude> --root <path>
   task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
   task:list --project <id>
   agent:sync --project <id> [--directory <path>]
@@ -178,6 +187,11 @@ const commands = [
   "office:apply",
   "office:show",
   "office:pipeline",
+  "client:detect",
+  "client:inspect",
+  "client:plan",
+  "client:apply",
+  "client:validate",
   "task:create",
   "task:list",
   "agent:sync",
@@ -251,6 +265,7 @@ function configuredOnboardingGenerator(
 const handlers = [
   handleProjectCommand,
   handleOfficeCommand,
+  handleClientCommand,
   handleTaskCommand,
   handleAgentCommand,
   handleRunCommand,
@@ -324,7 +339,9 @@ function formatKnownError(error: unknown): string | null {
     error instanceof UnsupportedConnectorOperationError ||
     error instanceof ConnectorExecutionUnavailableError ||
     error instanceof FilesystemConnectorError ||
-    error instanceof LlmProviderError
+    error instanceof LlmProviderError ||
+    error instanceof AgentClientIntegrationError ||
+    error instanceof InvalidProjectInstructionContractError
   )
     return error.message;
   return null;
@@ -388,6 +405,7 @@ export async function runCli(
       onboardingGenerator:
         options.onboardingGenerator ??
         configuredOnboardingGenerator(costs, ids, clock),
+      agentClients: new DefaultAgentClientCatalog(),
     };
     for (const handler of handlers) {
       const result = await handler(command, commandArguments, context);

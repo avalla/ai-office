@@ -23,6 +23,9 @@
     "apps/daemon": {
       "name": "@ai-office/daemon",
     },
+    "packages/agent-client-integrations": {
+      "name": "@ai-office/agent-client-integrations",
+    },
     "packages/agent-runtime": {
       "name": "@ai-office/agent-runtime",
     },
@@ -54,6 +57,8 @@
     },
   },
   "packages": {
+    "@ai-office/agent-client-integrations": ["@ai-office/agent-client-integrations@workspace:packages/agent-client-integrations"],
+
     "@ai-office/agent-runtime": ["@ai-office/agent-runtime@workspace:packages/agent-runtime"],
 
     "@ai-office/application": ["@ai-office/application@workspace:packages/application"],

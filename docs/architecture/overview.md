@@ -38,6 +38,13 @@ connector registry
 resource adapters
 ```
 
+External coding clients use a separate application port. AI Office compiles a
+tool-independent operating policy and project instruction contract into the
+canonical `AGENTS.md` artifact; Codex consumes it natively and Claude uses a
+minimal managed import bridge. Detection and filesystem/configuration knowledge
+remain in infrastructure adapters. Client integration does not grant runtime
+capabilities or move host reasoning into runtime authority.
+
 The M6D-lite bridge routes a structured action intent from an agent run through
 an executor-facing gateway. The agent-runtime package depends on the gateway
 contract, not filesystem, connector, SQLite, or daemon implementations. Runs
@@ -118,6 +125,11 @@ direct filesystem or infrastructure dependency in the runtime. Mutation intents
 stop at `approval_pending`; the existing approval and execution commands retain
 authority. Directly wiring the runtime to filesystem or infrastructure adapters
 would violate this boundary.
+
+Owner-invoked client configuration is not an agent controlled action. Its safety
+boundary is passive inspection, a deterministic plan, explicit approval of the
+exact plan hash, file-hash preconditions, ownership-aware updates, and atomic
+writes. No database transaction spans those filesystem operations.
 
 ## Storage responsibilities and implementation status
 

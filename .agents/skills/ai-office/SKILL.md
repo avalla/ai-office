@@ -1,6 +1,6 @@
 ---
 name: ai-office
-description: Onboard a software project into AI Office, design or revise its virtual office and default task pipelines, and operate tasks through the local audited runtime. Use when the user wants to set up, configure, inspect, or run AI Office. Do not use for ordinary repository work that does not involve AI Office.
+description: Onboard a software project into AI Office, integrate Codex CLI or Claude Code, design or revise its virtual office and default task pipelines, and operate tasks through the local audited runtime. Use when the user wants to set up, configure, inspect, integrate, or run AI Office. Do not use for ordinary repository work that does not involve AI Office.
 ---
 
 # AI Office
@@ -27,6 +27,7 @@ Do not configure `AI_OFFICE_LLM_MODEL`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`
 - For changes to roles, goals, constraints, or pipelines, follow **Revise the office**.
 - For a new task or request to execute work, follow **Operate a task**.
 - For status questions, read `office:context`, task, run, action, and cost state as relevant; do not mutate anything.
+- For Codex or Claude project integration, follow **Integrate a coding client**; keep it separate from onboarding.
 
 Read [references/manifest-contract.md](references/manifest-contract.md) when creating or revising a manifest. Read [references/task-operation.md](references/task-operation.md) only when operating a task.
 
@@ -59,6 +60,16 @@ bun run cli -- office:pipeline --project <projectId> --task-kind <kind>
 Follow the returned stages in order and use the named virtual-office role as the responsibility boundary. Persist tasks and runs through AI Office commands. Protected operations must continue through controlled actions; an approval stage in the pipeline is a workflow gate and never substitutes for controlled-action authorization.
 
 Stop and explain the missing setup when no manifest, default pipeline, matching runtime agent, resource, or capability exists. Do not silently bypass the runtime to make a protected change.
+
+## Integrate a coding client
+
+Use `client:detect` and `client:inspect` first. Create a schema-version `1`
+project instruction contract inside the target repository, then run
+`client:plan`. Present its affected paths, ownership, issues, and plan hash.
+Only after explicit user confirmation, pass that exact hash to `client:apply`
+and run `client:validate`. Never bypass a conflict, overwrite user-owned
+`AGENTS.md`, edit client files directly, or treat integration as part of
+`project:onboard`.
 
 ## Boundaries
 

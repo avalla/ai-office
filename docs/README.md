@@ -5,7 +5,8 @@ AI Office keeps different kinds of documentation separate so current product tru
 ## Current project direction
 
 - [Project README](../README.md): product overview, current status, quick start, and concise examples.
-- [Operating instructions](../CODEX.md): evergreen development contract for Codex and other contributors.
+- [Operating instructions](../AGENTS.md): canonical evergreen development contract for coding clients and contributors.
+- [Agent client integration](development/agent-client-integration.md): current Codex/Claude detection, planning, ownership, apply, and validation contract.
 - [Architecture overview](architecture/overview.md): current system boundaries, implemented surfaces, storage responsibilities, and trust model.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
@@ -47,7 +48,7 @@ The M6C hardened assessment, native filesystem spike report, ADR-0003, ADR-0004,
 
 ```text
 README         product overview and getting started
-CODEX          development operating contract
+AGENTS         development operating contract
 architecture   current architectural truth
 roadmap        milestone scope and status
 accepted ADRs  architectural decisions
@@ -55,4 +56,7 @@ implementation historical and milestone detail
 CLI --help     current command syntax
 ```
 
-When documents disagree, first use this ownership model and each ADR's status. Update the authoritative document for the concept instead of copying the same truth into every file.
+`CODEX.md` and `CLAUDE.md` are compatibility bridges, not independent sources of
+project truth. When documents disagree, first use this ownership model and each
+ADR's status. Update the authoritative document for the concept instead of
+copying the same truth into every file.

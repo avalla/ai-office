@@ -23,6 +23,7 @@ The current implementation on `main` includes:
 - a filesystem connector with scoped reads, search, mutation simulation, and sandbox checks;
 - local approval plus trusted-local create, write, move, and delete execution;
 - structured agent-run action intents routed through the controlled-action gateway;
+- tool-independent project instruction contracts with safe Codex CLI and Claude Code integration;
 - SQLite persistence, migrations, audit events, and daemon/CLI workflows.
 
 Runs without an action intent still use the deterministic simulated executor.
@@ -270,6 +271,7 @@ packages/
   application/            use cases and ports
   storage-sqlite/         SQLite adapters and migration runner
   agent-runtime/          agent definitions and simulated execution
+  agent-client-integrations/ Codex and Claude detection/config adapters
   llm-gateway/            providers, pricing, budgets, and usage
   orchestration/          scheduling abstractions
   connector-sdk/          connector contracts and registry
@@ -299,14 +301,37 @@ typechecking, ESLint, and the deterministic Vitest suite, and checks the
 committed diff for whitespace errors. Standard CI does not make paid provider
 calls.
 
-Read [CODEX.md](CODEX.md) before changing code. It defines the operating contract, invariants, scope rules, and definition of done.
+## Coding client integration
+
+AI Office uses `AGENTS.md` as the canonical project operating contract. Codex
+loads it natively; Claude Code can use a minimal `CLAUDE.md` import bridge. Client
+detection and inspection are passive, and configuration mutation requires an
+explicit hash from the exact proposed plan:
+
+```bash
+bun run cli -- client:detect
+bun run cli -- client:inspect --client claude --root /path/to/project
+bun run cli -- client:plan --client claude --root /path/to/project \
+  --contract .ai-office/agent-instructions.json
+bun run cli -- client:apply --client claude --root /path/to/project \
+  --contract .ai-office/agent-instructions.json --approve <plan-hash>
+bun run cli -- client:validate --client claude --root /path/to/project
+```
+
+AI Office never overwrites user-owned `AGENTS.md`. Existing Claude instructions
+are preserved and only an identifiable managed bridge is maintained. These
+commands do not modify global Codex/Claude configuration and remain separate
+from project onboarding. See the [client integration guide](docs/development/agent-client-integration.md).
+
+Read [AGENTS.md](AGENTS.md) before changing code. It defines the canonical
+operating contract, invariants, scope rules, and definition of done.
 
 ## Documentation
 
 The [documentation index](docs/README.md) explains which documents are current architectural truth and which preserve milestone-specific or historical research. In short:
 
 - README: product overview and getting started;
-- CODEX: development operating contract;
+- AGENTS: development operating contract;
 - architecture docs: current architectural truth;
 - roadmap: milestone scope and status;
 - accepted ADRs: architectural decisions;
@@ -318,8 +343,9 @@ The [documentation index](docs/README.md) explains which documents are current a
 The authoritative [development roadmap](docs/development/roadmap.md) records
 completed and future milestones. M6D-lite connects structured run intents to the
 controlled-action gateway. Skill-first onboarding adds a provider-neutral host
-experience plus versioned office and pipeline configuration. Reusable memory,
-code intelligence, autonomous
+experience plus versioned office and pipeline configuration. Agent client
+integration adds a canonical instruction contract plus Codex and Claude
+adapters. Reusable memory, code intelligence, autonomous
 context/tool selection, productization, and hostile-local security hardening
 remain future work.
 
