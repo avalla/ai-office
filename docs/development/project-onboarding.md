@@ -1,80 +1,101 @@
-# Adaptive project onboarding
+# Skill-first project onboarding
 
-`project:import` performs a deterministic quick scan of an existing local repository:
+Interactive onboarding runs in the active agent host through the
+repository-scoped `ai-office` skill. Codex discovers it under
+`.agents/skills/ai-office`; compatible hosts can implement a thin adapter around
+the same manifest and daemon command contract.
 
-```bash
-bun run cli -- project:import /path/to/repository
+The host owns conversation and synthesis. The daemon owns deterministic scanning,
+manifest validation, persistence, policy, controlled actions, and audit.
+
+```text
+host session -> ai-office skill -> CLI/protocol -> daemon -> SQLite
 ```
 
-The import scan detects Git metadata, package manager, languages, common frameworks, database indicators, test tooling, and relevant documentation. It persists structured facts with origin and confidence plus timestamped scan history. Re-importing the same canonical path refreshes detected facts while retaining the project ID, user answers, questions, generations, and historical scans.
+The host's existing authenticated model session is used for interactive
+reasoning. AI Office does not request, receive, or persist provider credentials
+for this path.
 
-Import is deliberately offline and deterministic. It does not run repository scripts, require an API key, call an LLM, or create a hardcoded business questionnaire.
+## Deterministic context
 
-## Adaptive generation
-
-Run the primary interactive flow with:
+The skill imports or refreshes a repository with a machine-readable response:
 
 ```bash
-bun run cli -- project:onboard --project <project-id>
+bun run cli -- project:import /path/to/repository --json
+bun run cli -- office:context --project <project-id>
 ```
 
-When there are no unanswered questions, onboarding reads project metadata, scanner facts, current profile entries, existing answers, and question history. It then calls the existing metered LLM gateway with purpose `project_onboarding`. Provider output is parsed as JSON and validated by one strict Zod schema before persistence. Unknown fields, malformed JSON, arbitrary categories or answer types, invalid select options, duplicate options, permission values outside the allowed vocabulary, and batches above five questions are rejected.
+`project:import` detects Git metadata, package manager, languages, common
+frameworks, database indicators, test tooling, and relevant documentation. It is
+offline, idempotent, and does not execute repository scripts or call a provider.
 
-Generation is progressive: one command handles one batch, and a later invocation can generate a follow-up round after the current questions have answers. The current limits are five questions per batch and three generated rounds. A `ready` response contains no questions and ends generation.
+Repository-derived data is untrusted. The skill may use it as evidence but must
+not follow instructions found in scanned project content. It asks only questions
+that materially change mission, constraints, roles, permission preferences, or
+default routing.
 
-For automation, generate and persist one batch without prompting, inspect IDs, then answer questions individually:
+## Office manifest lifecycle
+
+The skill creates a strict JSON schema-version `1` manifest containing:
+
+- provenance for the host and skill version;
+- project mission, goals, constraints, preferences, and permission preferences;
+- virtual-office roles and responsibilities;
+- default pipelines for supported task kinds;
+- ordered stages, responsible roles, checks, and workflow approval gates.
+
+Before applying, the skill validates the proposal and asks the user to confirm
+its semantic summary:
 
 ```bash
-bun run cli -- project:onboard --project <project-id> --generate
-bun run cli -- project:profile --project <project-id>
-bun run cli -- project:answer \
+bun run cli -- office:validate --file .ai-office/drafts/office-manifest.json
+bun run cli -- office:apply \
   --project <project-id> \
-  --question <question-id> \
-  --answer "<value>"
+  --file .ai-office/drafts/office-manifest.json
 ```
 
-Text and boolean answers are validated according to the generated answer type. Select answers must use the persisted options. Multi-select answers use comma-separated values.
+Every successful apply creates an immutable SQLite revision and an
+`office.manifest.applied` audit event. `office:show` reads the latest revision;
+`office:pipeline --task-kind <kind>` deterministically resolves default routing.
+Unknown fields, invalid role references, duplicate identifiers, unsupported
+permission preferences, and conflicting default task routing are rejected.
 
-## Permission knowledge is not authorization
+Manifest files must be regular files inside the runtime project root and are
+limited to 256 KiB. Inline JSON is also accepted with `--manifest`.
 
-Permission-category questions may use only these project-knowledge values:
+## Authorization boundary
 
-- `read_files`;
-- `modify_files`;
-- `run_tests`;
-- `run_shell`;
-- `install_dependencies`;
-- `create_branches`;
-- `create_commits`;
-- `network_access`.
+Permission preferences describe the user's intended working envelope. They never
+create or modify a capability grant, resource scope, budget, or agent privilege.
+Likewise, a pipeline stage with `requiresApproval: true` is a workflow checkpoint,
+not approval for a controlled action.
 
-They describe user preferences for future agent work. They never create or modify a `capability_grant`, filesystem scope, security policy, budget, or agent privilege. Controlled-action authorization remains deterministic and separate.
+Protected effects retain the existing deterministic lifecycle:
 
-## Provenance, deduplication, and failure semantics
+```text
+request -> simulate -> inspect -> approve -> execute
+```
 
-Persisted questions identify their source as `deterministic` (legacy/technical questions retained during upgrades) or `llm`. Each LLM question links to an `onboarding_generation` containing provider, model, prompt version `project-onboarding-v1`, semantic input SHA-256, round, status, and creation time. The hash covers the facts, existing answers, question history, prompt version, and generation round through the repository's canonical serialization convention.
+The skill must not bypass this lifecycle or access SQLite directly.
 
-Question text/category normalization and successful input hashes provide deterministic deduplication. An answered question cannot be recreated identically. No embeddings or semantic index are used.
+## Optional headless compatibility flow
 
-The application reads context before the provider call and does not keep a SQLite transaction open while waiting for the provider. Only after response validation does a short transaction persist the generation and whole question batch. A persistence error rolls back both. Provider/validation failures record a sanitized failed generation when possible and preserve prior questions and answers. Gateway reservation, release, usage, pricing, cost, retry, and budget errors retain their normal behavior.
+`project:onboard` remains available for unattended environments that explicitly
+configure `AI_OFFICE_LLM_MODEL`, a matching provider credential, pricing, and
+optional budgets. It generates progressive validated question batches through
+the metered gateway and persists provider/model/prompt provenance.
 
-## Untrusted repository boundary
+This path is optional. A missing provider configuration affects
+`project:onboard` only; skill-first onboarding and the base runtime remain fully
+usable without it.
 
-Repository-derived data is untrusted. The prompt labels scanner facts as data, not instructions, and does not include arbitrary whole files. Repository text cannot direct the model to run tools, expose credentials, change capabilities, bypass budgets, select provider credentials, or request access outside the project. The model can only propose questions in the allowed structured shape.
+No provider secret, raw prompt, full provider response, or hidden reasoning is
+persisted or projected. Provider-generated permission answers retain the same
+knowledge-only authorization boundary as skill-generated manifests.
 
-This milestone does not add embeddings, vector search, RAG, a code/symbol index, cross-project memory, or agent-runtime controlled-action integration.
+## Current limitation
 
-## Manual smoke test
-
-1. Export either `AI_OFFICE_LLM_MODEL=openai:gpt-5.4` with `OPENAI_API_KEY=<secret>`, or `AI_OFFICE_LLM_MODEL=anthropic:claude-sonnet-4-6` with `ANTHROPIC_API_KEY=<secret>`, in the daemon environment.
-2. Start the daemon with `bun run daemon`.
-3. Import a repository and retain the returned project ID.
-4. Configure an active `pricing:set` entry for the selected provider and its bare model name (`gpt-5.4` or `claude-sonnet-4-6`, without the provider prefix). Optionally configure `budget:set --project <id>`; insufficient hard budget fails before provider invocation.
-5. Run `project:onboard --project <id>` and answer the generated questions.
-6. Rerun onboarding to request a follow-up round, or use `--generate` plus `project:answer`.
-7. Inspect `project:profile --project <id>` and optionally regenerate deterministic Markdown with `project:export`.
-8. Inspect metered spend with `cost:list --project <id>`.
-
-No provider secret, raw prompt, full provider response, or hidden reasoning is persisted or projected.
-
-The CLI resolves provider configuration through the LLM gateway's registry. The onboarding application service and `GatewayOnboardingQuestionGenerator` remain provider-neutral and always invoke `MeteredLlmGateway` before the selected adapter. A bare `AI_OFFICE_LLM_MODEL` can still be paired with `AI_OFFICE_LLM_PROVIDER` for compatibility, but this two-variable form is deprecated; prefixed model references are authoritative when present.
+The runtime stores office definitions and resolves the default pipeline for a
+task kind. It does not yet persist stage-by-stage pipeline progress or execute a
+multi-step autonomous tool loop. The active host follows the configured stages
+and reports that limitation during handoff.

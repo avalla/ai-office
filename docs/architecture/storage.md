@@ -6,7 +6,7 @@ AI Office separates authoritative project state, global reusable memory, and reg
 
 `<repository>/.ai-office/project.sqlite` currently stores:
 
-- projects, imported-source metadata, onboarding questions, and profile facts;
+- projects, imported-source metadata, onboarding questions, profile facts, and immutable office-manifest revisions;
 - tasks, roles, agents, agent runs, task locks, and run events;
 - pricing, budgets, reservations, normalized usage, and costs;
 - milestones, requirements, ADR records, reviews, and governance decisions;

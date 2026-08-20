@@ -48,3 +48,26 @@ export class OnboardingRoundLimitError extends Error {
     this.name = "OnboardingRoundLimitError";
   }
 }
+
+export class InvalidOfficeManifestError extends Error {
+  constructor(message: string) {
+    super(`Invalid office manifest: ${message}`);
+    this.name = "InvalidOfficeManifestError";
+  }
+}
+
+export class OfficeManifestNotFoundError extends Error {
+  constructor(projectId: string) {
+    super(`No office manifest is configured for project ${projectId}`);
+    this.name = "OfficeManifestNotFoundError";
+  }
+}
+
+export class OfficePipelineNotFoundError extends Error {
+  constructor(projectId: string, taskKind: string) {
+    super(
+      `No default ${taskKind} pipeline is configured for project ${projectId}`,
+    );
+    this.name = "OfficePipelineNotFoundError";
+  }
+}

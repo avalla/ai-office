@@ -54,6 +54,7 @@ describe("project database migrations", () => {
       "0014_trusted_local_execution.sql",
       "0015_llm_assisted_onboarding.sql",
       "0016_agent_controlled_actions.sql",
+      "0017_skill_first_office.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -80,6 +81,7 @@ describe("project database migrations", () => {
       { version: "0014_trusted_local_execution.sql" },
       { version: "0015_llm_assisted_onboarding.sql" },
       { version: "0016_agent_controlled_actions.sql" },
+      { version: "0017_skill_first_office.sql" },
     ]);
     database.close();
   });
