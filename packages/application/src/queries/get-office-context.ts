@@ -15,6 +15,8 @@ import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import { GetProjectProfile } from "./get-project-profile.ts";
 
 export interface OfficeContext {
+  profileSemantics: "evidence";
+  currentOfficeSemantics: "approved_configuration";
   profile: ProjectProfileSnapshot;
   current: OfficeManifestRevision | null;
 }
@@ -31,7 +33,12 @@ export class GetOfficeContext {
       new GetProjectProfile(this.projects, this.profiles).execute(projectId),
       this.manifests.findLatest(projectId),
     ]);
-    return { profile, current };
+    return {
+      profileSemantics: "evidence",
+      currentOfficeSemantics: "approved_configuration",
+      profile,
+      current,
+    };
   }
 
   async resolvePipeline(

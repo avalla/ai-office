@@ -23,8 +23,21 @@ Pull requests and pushes to `main` run:
 
 ```bash
 bun install --frozen-lockfile
-bun run typecheck
-bun run test
+bun run check
 ```
 
-CI also checks the committed diff for whitespace errors. Local changes should pass the same commands plus the relevant `git diff --check` comparison before review.
+`bun run check` validates the repository-scoped AI Office skill, then runs
+typecheck, lint, and the full test suite. The skill check is deterministic,
+requires no secret or network access, validates `SKILL.md` and
+`agents/openai.yaml` structure, verifies required linked resources, and parses
+the default manifest through the production manifest schema.
+
+OpenAI documents the skill directory and required `SKILL.md` metadata but does
+not publish a pinned validator CLI as a repository dependency. The bundled
+Codex skill-creator validator also depends on its host installation and Python
+YAML environment. CI therefore uses this repository-contract check and does not
+claim equivalence with that host-internal validator.
+
+CI also checks the committed diff for whitespace errors. Local changes should
+pass the same commands plus the relevant `git diff --check` comparison before
+review.

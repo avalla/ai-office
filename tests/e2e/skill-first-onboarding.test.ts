@@ -13,6 +13,10 @@ import type { CliIo } from "../../apps/cli/src/cli.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
+import {
+  ScriptedOnboardingGenerator,
+  textQuestion,
+} from "../helpers/onboarding-generator.ts";
 
 const roots: string[] = [];
 
@@ -48,7 +52,7 @@ afterEach(() => {
 });
 
 describe("skill-first onboarding through the daemon", () => {
-  test("imports scan context and applies immutable office revisions without a provider", async () => {
+  test("preserves profile evidence while applying immutable office revisions without provider credentials", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-skill-first-"));
     roots.push(projectRoot);
     writeFileSync(join(projectRoot, "README.md"), "# Skill-first project");
@@ -68,10 +72,25 @@ describe("skill-first onboarding through the daemon", () => {
       "default-office-manifest.json",
     );
     const manifestPath = join(draftDirectory, "office-manifest.json");
-    writeFileSync(manifestPath, readFileSync(sourceTemplate, "utf8"));
+    const manifest = JSON.parse(readFileSync(sourceTemplate, "utf8")) as {
+      project: { goals: string[]; mission: string };
+    };
+    manifest.project.goals = ["Approved office goal B"];
+    writeFileSync(manifestPath, JSON.stringify(manifest));
 
     const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
-    const daemon = await bootstrap({ projectRoot, socketPath });
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath,
+      onboardingGenerator: new ScriptedOnboardingGenerator([
+        {
+          status: "needs_more_context",
+          questions: [
+            textQuestion({ question: "What historical goal was recorded?" }),
+          ],
+        },
+      ]),
+    });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);
 
@@ -93,6 +112,60 @@ describe("skill-first onboarding through the daemon", () => {
       expect(importResult.created).toBe(true);
       expect(importResult.scan.languages).toContain("TypeScript");
 
+      expect(
+        await runDaemonCli(
+          [
+            "project:onboard",
+            "--project",
+            importResult.projectId,
+            "--generate",
+          ],
+          { projectRoot, socketPath, io: captureIo().io },
+        ),
+      ).toBe(0);
+      const profileDatabase = openDatabase(
+        join(projectRoot, ".ai-office", "project.sqlite"),
+      );
+      const goalQuestion = profileDatabase
+        .query<{ id: string }, []>(
+          "SELECT id FROM project_question WHERE source = 'llm' AND answer_json IS NULL",
+        )
+        .get()!;
+      profileDatabase.close();
+      expect(
+        await runDaemonCli(
+          [
+            "project:answer",
+            "--project",
+            importResult.projectId,
+            "--question",
+            goalQuestion.id,
+            "--answer",
+            "Historical evidence goal A",
+          ],
+          { projectRoot, socketPath, io: captureIo().io },
+        ),
+      ).toBe(0);
+      const beforeApplyDatabase = openDatabase(
+        join(projectRoot, ".ai-office", "project.sqlite"),
+      );
+      const profileRowsBefore = beforeApplyDatabase
+        .query<
+          {
+            id: string;
+            category: string;
+            key: string;
+            value_json: string;
+            origin: string;
+          },
+          []
+        >(
+          `SELECT id, category, key, value_json, origin
+           FROM project_profile_entry ORDER BY id`,
+        )
+        .all();
+      beforeApplyDatabase.close();
+
       const before = captureIo();
       expect(
         await runDaemonCli(
@@ -102,10 +175,14 @@ describe("skill-first onboarding through the daemon", () => {
       ).toBe(0);
       const initialContext = JSON.parse(before.stdout[0]!) as {
         contractVersion: number;
+        profileSemantics: string;
+        currentOfficeSemantics: string;
         current: unknown;
       };
       expect(initialContext).toMatchObject({
         contractVersion: 1,
+        profileSemantics: "evidence",
+        currentOfficeSemantics: "approved_configuration",
         current: null,
       });
 
@@ -155,9 +232,6 @@ describe("skill-first onboarding through the daemon", () => {
       ).toBe(0);
       expect(JSON.parse(pipeline.stdout[0]!)).toMatchObject({ id: "bugfix" });
 
-      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-        project: { mission: string };
-      };
       manifest.project.mission = "Ship a provider-neutral onboarding flow";
       writeFileSync(manifestPath, JSON.stringify(manifest));
       const secondApply = captureIo();
@@ -175,6 +249,34 @@ describe("skill-first onboarding through the daemon", () => {
       ).toBe(0);
       expect(JSON.parse(secondApply.stdout[0]!)).toMatchObject({ revision: 2 });
 
+      const contextOutput = captureIo();
+      expect(
+        await runDaemonCli(
+          ["office:context", "--project", importResult.projectId],
+          { projectRoot, socketPath, io: contextOutput.io },
+        ),
+      ).toBe(0);
+      const context = JSON.parse(contextOutput.stdout[0]!) as {
+        profileSemantics: string;
+        currentOfficeSemantics: string;
+        profile: { goals: Array<{ value: unknown }> };
+        current: {
+          revision: number;
+          manifest: { project: { goals: string[] } };
+        };
+      };
+      expect(context).toMatchObject({
+        profileSemantics: "evidence",
+        currentOfficeSemantics: "approved_configuration",
+        current: { revision: 2 },
+      });
+      expect(context.profile.goals.map((goal) => goal.value)).toContain(
+        "Historical evidence goal A",
+      );
+      expect(context.current.manifest.project.goals).toEqual([
+        "Approved office goal B",
+      ]);
+
       const database = openDatabase(
         join(projectRoot, ".ai-office", "project.sqlite"),
       );
@@ -185,6 +287,30 @@ describe("skill-first onboarding through the daemon", () => {
           )
           .get()?.count,
       ).toBe(2);
+      expect(
+        database
+          .query<
+            {
+              id: string;
+              category: string;
+              key: string;
+              value_json: string;
+              origin: string;
+            },
+            []
+          >(
+            `SELECT id, category, key, value_json, origin
+             FROM project_profile_entry ORDER BY id`,
+          )
+          .all(),
+      ).toEqual(profileRowsBefore);
+      expect(
+        database
+          .query<{ count: number }, []>(
+            "SELECT COUNT(*) AS count FROM capability_grants",
+          )
+          .get()!.count,
+      ).toBe(0);
       expect(
         database
           .query<{ count: number }, []>(
@@ -200,10 +326,7 @@ describe("skill-first onboarding through the daemon", () => {
           .run(),
       ).toThrow("office manifest revisions are immutable");
       const latest = database
-        .query<
-          { id: string; manifest_json: string; applied_at: string },
-          []
-        >(
+        .query<{ id: string; manifest_json: string; applied_at: string }, []>(
           `SELECT id, manifest_json, applied_at
            FROM office_manifest_revision ORDER BY revision DESC LIMIT 1`,
         )

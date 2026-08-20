@@ -3,6 +3,7 @@ import {
   normalizeCanonicalJson,
   type CanonicalJsonValue,
 } from "../capability/canonical-json.ts";
+import { assertNoSensitiveFields } from "../capability/sensitive-fields.ts";
 
 export type AgentRunStatus =
   | "queued"
@@ -41,7 +42,9 @@ export interface AgentActionIntentInput {
   arguments: Readonly<Record<string, unknown>>;
 }
 
-function normalizeActionIntent(intent: AgentActionIntentInput): AgentActionIntent {
+function normalizeActionIntent(
+  intent: AgentActionIntentInput,
+): AgentActionIntent {
   const resourceId = intent.resourceId.trim();
   const operation = intent.operation.trim();
   if (resourceId === "" || operation === "")
@@ -55,6 +58,7 @@ function normalizeActionIntent(intent: AgentActionIntentInput): AgentActionInten
     Array.isArray(arguments_)
   )
     throw new DomainValidationError("Agent action arguments must be an object");
+  assertNoSensitiveFields(arguments_, "Agent action arguments");
   return Object.freeze({
     resourceId,
     operation,

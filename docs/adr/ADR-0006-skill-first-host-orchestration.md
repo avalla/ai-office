@@ -34,6 +34,12 @@ permission preferences are descriptive project knowledge only. They never
 create capability grants. Pipeline approval gates never replace controlled-action
 authorization or approval.
 
+Keep the project profile as an evidence and history layer. Treat the latest
+manifest as the approved current office configuration. Do not project manifest
+fields back into profile entries: conflicting historical evidence remains
+available with its own provenance, while the manifest defines the office model
+currently in operation.
+
 Retain the metered provider-backed onboarding path as an optional headless
 compatibility flow. It is not required for base installation or interactive
 onboarding.

@@ -129,6 +129,8 @@ export async function handleOfficeCommand(
       context.io.stdout(
         JSON.stringify({
           contractVersion: 1,
+          profileSemantics: result.profileSemantics,
+          currentOfficeSemantics: result.currentOfficeSemantics,
           profile: result.profile,
           current:
             result.current === null

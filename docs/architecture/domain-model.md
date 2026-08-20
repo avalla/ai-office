@@ -39,6 +39,20 @@ Permission preferences do not create capability grants, and pipeline approval
 gates do not replace controlled-action approval. The current runtime resolves a
 default pipeline but does not yet persist stage-by-stage pipeline progress.
 
+Project profiles and office manifests have different authority. The project
+profile is the knowledge/evidence layer: detected or imported facts, onboarding
+answers, inferences, provenance, and historical atomic user knowledge.
+`GetProjectProfile` exposes that evidence; it is not necessarily the current
+organizational configuration.
+
+The latest office manifest is the approved current office configuration for
+mission, goals, constraints, preferences, permission preferences, roles, and
+pipelines. Applying a manifest creates a new immutable revision without copying,
+rewriting, or deleting profile entries. A profile goal and a current manifest
+goal may therefore conflict legitimately. `office:context` returns both with
+distinct semantics instead of resolving the conflict. A future context builder
+may consume both only while preserving their separate provenance.
+
 ## Task states
 
 The task status type recognizes `pending`, `assigned`, `running`, `blocked`, `waiting_review`, `completed`, `failed`, and `cancelled`. Current domain methods implement these transitions:

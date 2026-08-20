@@ -520,6 +520,95 @@ limits:
         "Create an agent artifact",
       ]);
       const taskId = task.stdout[0]!.replace("Task created: ", "");
+      const databasePath = join(root, ".ai-office", "project.sqlite");
+      const beforeInvalidIntents = openDatabase(databasePath);
+      const actionCountBefore = beforeInvalidIntents
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM action_requests",
+        )
+        .get()!.count;
+      const actionAuditCountBefore = beforeInvalidIntents
+        .query<{ count: number }, []>(
+          `SELECT COUNT(*) AS count FROM audit_event
+           WHERE event_type LIKE 'agent.%' OR event_type LIKE 'action.%'`,
+        )
+        .get()!.count;
+      beforeInvalidIntents.close();
+
+      const sentinel = "SHOULD_NEVER_BE_PERSISTED_123";
+      for (const [field, arguments_] of [
+        ["token", { token: sentinel }],
+        ["credentialRef", { request: { credentialRef: sentinel } }],
+        ["api_key", { api_key: sentinel }],
+      ] as const) {
+        const rejected = await run([
+          "run:schedule",
+          "--project",
+          projectId,
+          "--task",
+          taskId,
+          "--agent",
+          agentId,
+          "--resource",
+          resourceId,
+          "--operation",
+          "filesystem.create",
+          "--arguments",
+          JSON.stringify(arguments_),
+        ]);
+        expect(rejected.exitCode).toBe(1);
+        expect(rejected.stderr.join("\n")).toContain(
+          `cannot contain sensitive field ${field}`,
+        );
+        expect(rejected.stderr.join("\n")).not.toContain(sentinel);
+      }
+
+      const afterInvalidIntents = openDatabase(databasePath);
+      for (const table of ["agent_run", "task_lock", "agent_run_event"])
+        expect(
+          afterInvalidIntents
+            .query<{ count: number }, []>(
+              `SELECT COUNT(*) AS count FROM ${table}`,
+            )
+            .get()!.count,
+        ).toBe(0);
+      expect(
+        afterInvalidIntents
+          .query<{ count: number }, []>(
+            "SELECT COUNT(*) AS count FROM action_requests",
+          )
+          .get()!.count,
+      ).toBe(actionCountBefore);
+      expect(
+        afterInvalidIntents
+          .query<{ count: number }, []>(
+            `SELECT COUNT(*) AS count FROM audit_event
+             WHERE event_type LIKE 'agent.%' OR event_type LIKE 'action.%'`,
+          )
+          .get()!.count,
+      ).toBe(actionAuditCountBefore);
+      expect(
+        afterInvalidIntents
+          .query<{ count: number }, [string]>(
+            `SELECT COUNT(*) AS count FROM (
+               SELECT action_intent_json AS value FROM agent_run
+               UNION ALL SELECT payload_json FROM agent_run_event
+               UNION ALL SELECT normalized_arguments_json FROM action_requests
+               UNION ALL SELECT payload_json FROM audit_event
+             ) WHERE instr(COALESCE(value, ''), ?) > 0`,
+          )
+          .get(sentinel)!.count,
+      ).toBe(0);
+      expect(
+        afterInvalidIntents.query("PRAGMA foreign_key_check").all(),
+      ).toEqual([]);
+      expect(
+        afterInvalidIntents
+          .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
+          .get(),
+      ).toEqual({ integrity_check: "ok" });
+      afterInvalidIntents.close();
+
       const scheduled = await run([
         "run:schedule",
         "--project",

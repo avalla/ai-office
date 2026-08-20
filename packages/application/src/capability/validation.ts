@@ -9,6 +9,7 @@ import {
   CapabilityValidationError,
   UnsupportedConnectorResourceTypeError,
 } from "@ai-office/domain/capability/errors.ts";
+import { assertNoSensitiveFields } from "@ai-office/domain/capability/sensitive-fields.ts";
 
 export const resourceTypes: readonly ResourceType[] = [
   "filesystem_scope",
@@ -37,35 +38,6 @@ export function canonicalRecord(
     throw new CapabilityValidationError(`${field} must be an object`);
   assertNoSensitiveFields(normalized, field);
   return normalized as Readonly<Record<string, unknown>>;
-}
-
-const sensitiveConfigurationKeys = new Set([
-  "apikey",
-  "authorization",
-  "credential",
-  "credentialref",
-  "credentials",
-  "password",
-  "secret",
-  "token",
-]);
-
-function assertNoSensitiveFields(value: unknown, path: string): void {
-  if (Array.isArray(value)) {
-    value.forEach((item, index) =>
-      assertNoSensitiveFields(item, `${path}[${index}]`),
-    );
-    return;
-  }
-  if (typeof value !== "object" || value === null) return;
-  for (const [key, item] of Object.entries(value)) {
-    const normalizedKey = key.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
-    if (sensitiveConfigurationKeys.has(normalizedKey))
-      throw new CapabilityValidationError(
-        `${path} cannot contain sensitive field ${key}`,
-      );
-    assertNoSensitiveFields(item, `${path}.${key}`);
-  }
 }
 
 export function validateResource(
