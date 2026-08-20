@@ -12,6 +12,7 @@ import type { SqliteControlledExecutionRepository } from "@ai-office/storage-sql
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
 import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
+import type { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 
 export interface CommandIo {
   stdout(message: string): void;
@@ -24,6 +25,7 @@ export interface CommandContext {
   io: CommandIo;
   projects: SqliteProjectRepository;
   profiles: SqliteProjectProfileRepository;
+  officeManifests: SqliteOfficeManifestRepository;
   tasks: SqliteTaskRepository;
   runtime: SqliteAgentRuntimeRepository;
   costs: SqliteCostRepository;

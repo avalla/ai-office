@@ -5,6 +5,7 @@
 The current domain and application model includes:
 
 - projects, project profiles, and tasks;
+- immutable virtual-office manifest revisions, roles, and default task pipelines;
 - roles, agents, agent runs, and task locks;
 - pricing versions, budgets, reservations, normalized usage, and costs;
 - milestones, requirements, architecture-decision records, reviews, and governance decisions;
@@ -24,6 +25,19 @@ requirement -> architecture decision -> task -> agent run -> artifact -> review
 ```
 
 Governance and run records exist today, but every link in this chain is not yet modeled as an automatic end-to-end workflow.
+
+## Virtual office manifests
+
+Schema-versioned office manifests describe project mission, goals, constraints,
+preferences, virtual roles, and default pipelines for feature, bugfix,
+maintenance, research, and release work. Pipeline stage role references and
+default routing are validated before persistence. Every apply creates a new
+immutable revision.
+
+The manifest is organizational configuration, not execution authority.
+Permission preferences do not create capability grants, and pipeline approval
+gates do not replace controlled-action approval. The current runtime resolves a
+default pipeline but does not yet persist stage-by-stage pipeline progress.
 
 ## Task states
 

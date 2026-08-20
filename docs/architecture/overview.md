@@ -2,19 +2,28 @@
 
 ## Product boundary
 
-AI Office presents one logical local office to the user. The CLI is implemented today. Web, IDE, and MCP are target interfaces that may use the same daemon protocol in future milestones; they are not current product surfaces.
+AI Office presents one logical local office to the user. A repository-scoped
+skill is the primary conversational interface in supported agent hosts. The CLI
+is the stable machine interface used by that skill and automation. Web and MCP
+may use the same daemon protocol in future milestones.
 
 ```text
-CLI (current) / Web / IDE / MCP (targets)
-                    |
-                    v
-              local daemon
+Codex / compatible host
+          |
+          v
+ repository-scoped skill       Web / MCP (targets)
+          |                           |
+          +------ CLI / protocol -----+
+                      |
+                      v
+                local daemon
                     |
                     v
           application services
        +------------+-------------+
        |            |             |
- agent runtime    memory      LLM gateway
+ agent runtime    office      LLM gateway
+                  manifests
        |                          |
        v                          v
 controlled actions            providers
@@ -68,7 +77,19 @@ The controlled-action executor invokes only its gateway contract and persists
 the returned action ID and status in the run result. The fallback executor and
 worktree manager remain deterministic simulations.
 
-The LLM gateway separates provider invocation from pricing and accounting. A registry resolves prefixed model references into the normalized provider port; the default infrastructure adapter uses LangChain for OpenAI and Anthropic compatibility, while the native OpenAI Responses adapter remains available. LangChain does not cross into application/domain code or own orchestration. Versioned prices, reservations, normalized usage, cost events, and budget checks retain their project/task/agent/run dimensions. Standard tests do not call paid providers.
+The host skill owns interactive onboarding synthesis and uses the host's existing
+authenticated model session. It submits a strict versioned manifest to the
+daemon, which validates role references and default task routing before storing
+an immutable revision. No host model may grant capabilities or bypass controlled
+actions.
+
+The optional LLM gateway separates provider invocation from pricing and
+accounting. A registry resolves prefixed model references into the normalized
+provider port; the default infrastructure adapter uses LangChain for OpenAI and
+Anthropic compatibility, while the native OpenAI Responses adapter remains
+available. It supports headless workflows but is not required for interactive
+skill-first onboarding. LangChain does not cross into application/domain code
+or own orchestration.
 
 Governance stores milestones, requirements, ADRs, reviews, and approval decisions as structured project state. This M5 governance approval model is separate from M6C-lite `ActionApproval`, which binds a controlled filesystem mutation to its authorization and simulation artifact.
 
@@ -96,11 +117,11 @@ would violate this boundary.
 
 The architecture distinguishes three databases by authority and rebuildability:
 
-| Database | Responsibility | Current implementation |
-| --- | --- | --- |
-| `<repository>/.ai-office/project.sqlite` | Authoritative project state: projects, onboarding, tasks, agents/runs, costs, governance, capabilities, controlled actions, and audit | Implemented, opened and migrated by the daemon and project migration command |
-| `~/.ai-office/global.sqlite` | Global reusable memory: roles, patterns, playbooks, and lessons shared across projects | Initial schema only; not opened or managed by the daemon |
-| `<repository>/.ai-office/index.sqlite` | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings | Initial schema only; indexing and daemon integration are future work |
+| Database                                 | Responsibility                                                                                                                                                   | Current implementation                                                       |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `<repository>/.ai-office/project.sqlite` | Authoritative project state: projects, office-manifest revisions, onboarding, tasks, agents/runs, costs, governance, capabilities, controlled actions, and audit | Implemented, opened and migrated by the daemon and project migration command |
+| `~/.ai-office/global.sqlite`             | Global reusable memory: roles, patterns, playbooks, and lessons shared across projects                                                                           | Initial schema only; not opened or managed by the daemon                     |
+| `<repository>/.ai-office/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                 | Initial schema only; indexing and daemon integration are future work         |
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
 

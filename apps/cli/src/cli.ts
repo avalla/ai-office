@@ -24,6 +24,9 @@ import {
   InvalidOnboardingGenerationError,
   OnboardingProviderUnavailableError,
   OnboardingRoundLimitError,
+  InvalidOfficeManifestError,
+  OfficeManifestNotFoundError,
+  OfficePipelineNotFoundError,
   ProjectNotFoundError,
   ProjectQuestionAlreadyAnsweredError,
   ProjectQuestionNotFoundError,
@@ -77,6 +80,7 @@ import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sql
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
 import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
+import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import { UnavailableOnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
@@ -107,6 +111,7 @@ import {
 } from "./commands/shared.ts";
 import { handleTaskCommand } from "./commands/task.ts";
 import { handleCapabilityCommand } from "./commands/capability.ts";
+import { handleOfficeCommand } from "./commands/office.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -115,12 +120,17 @@ export const cliHelp = `AI Office CLI
 
 Commands:
   daemon:health
-  project:create <name> [--description <description>]
-  project:import [path] [--name <name>]
-  project:onboard --project <id> [--generate]
+  project:create <name> [--description <description>] [--json]
+  project:import [path] [--name <name>] [--json]
+  project:onboard --project <id> [--generate]  # optional headless fallback
   project:answer --project <id> --question <id> --answer <value>
   project:profile --project <id>
   project:export --project <id>
+  office:context --project <id>
+  office:validate (--file <path> | --manifest <json>)
+  office:apply --project <id> (--file <path> | --manifest <json>)
+  office:show --project <id>
+  office:pipeline --project <id> --task-kind <feature|bugfix|maintenance|research|release>
   task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
   task:list --project <id>
   agent:sync --project <id> [--directory <path>]
@@ -163,6 +173,11 @@ const commands = [
   "project:answer",
   "project:profile",
   "project:export",
+  "office:context",
+  "office:validate",
+  "office:apply",
+  "office:show",
+  "office:pipeline",
   "task:create",
   "task:list",
   "agent:sync",
@@ -235,6 +250,7 @@ function configuredOnboardingGenerator(
 
 const handlers = [
   handleProjectCommand,
+  handleOfficeCommand,
   handleTaskCommand,
   handleAgentCommand,
   handleRunCommand,
@@ -258,6 +274,9 @@ function formatKnownError(error: unknown): string | null {
     error instanceof InvalidOnboardingGenerationError ||
     error instanceof OnboardingProviderUnavailableError ||
     error instanceof OnboardingRoundLimitError ||
+    error instanceof InvalidOfficeManifestError ||
+    error instanceof OfficeManifestNotFoundError ||
+    error instanceof OfficePipelineNotFoundError ||
     error instanceof AgentNotFoundError ||
     error instanceof TaskNotFoundError ||
     error instanceof TaskLockActiveError ||
@@ -350,6 +369,7 @@ export async function runCli(
       io,
       projects: new SqliteProjectRepository(database),
       profiles: new SqliteProjectProfileRepository(database),
+      officeManifests: new SqliteOfficeManifestRepository(database),
       tasks: new SqliteTaskRepository(database),
       runtime: new SqliteAgentRuntimeRepository(database),
       costs,

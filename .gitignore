@@ -9,4 +9,5 @@ coverage/
 .ai-office/*.sqlite-wal
 .ai-office/*.sock
 .ai-office/generated/
+.ai-office/drafts/
 .idea

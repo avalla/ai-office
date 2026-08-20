@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0016_agent_controlled_actions.sql",
+        "0017_skill_first_office.sql",
       );
       expect(
         database
@@ -103,6 +103,7 @@ describe("migration upgrades", () => {
     expect(migrate(database, migrations).applied).toEqual([
       "0015_llm_assisted_onboarding.sql",
       "0016_agent_controlled_actions.sql",
+      "0017_skill_first_office.sql",
     ]);
     expect(
       database
@@ -124,6 +125,45 @@ describe("migration upgrades", () => {
       generation_id: null,
       answer_type: "multi_select",
     });
+    database.close();
+  });
+
+  test("adds immutable office manifest revisions to an existing M6D database", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-office-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0016_agent_controlled_actions.sql") {
+        copyFileSync(join(migrations, file), join(partial, file));
+      }
+    }
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    database
+      .prepare(
+        `INSERT INTO project(id,name,description,created_at,updated_at)
+         VALUES ('project','Existing',NULL,?,?)`,
+      )
+      .run("2026-08-20T00:00:00.000Z", "2026-08-20T00:00:00.000Z");
+
+    expect(migrate(database, migrations).applied).toEqual([
+      "0017_skill_first_office.sql",
+    ]);
+    expect(
+      database
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='office_manifest_revision'",
+        )
+        .get()?.name,
+    ).toBe("office_manifest_revision");
+    expect(
+      database
+        .query<{ name: string }, []>(
+          "SELECT name FROM project WHERE id='project'",
+        )
+        .get()?.name,
+    ).toBe("Existing");
     database.close();
   });
 

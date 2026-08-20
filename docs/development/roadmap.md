@@ -193,6 +193,25 @@ intent retain the deterministic simulator. Autonomous LLM tool selection,
 multi-step tool loops, subprocess execution, and real Git worktrees remain
 future work.
 
+### M6E — Skill-first office onboarding
+
+Status: implemented.
+
+- repository-scoped `ai-office` skill as the primary conversational interface;
+- host-authenticated onboarding without provider credentials in AI Office;
+- strict schema-versioned office manifests with mission, roles, preferences,
+  constraints, and provenance;
+- default pipelines for feature, bugfix, maintenance, research, and release
+  tasks;
+- deterministic context, validation, apply, show, and pipeline-resolution
+  commands for host adapters;
+- immutable SQLite revisions and sanitized apply audit events;
+- permission preferences kept separate from capability authorization.
+
+The runtime resolves pipeline definitions but does not yet persist or execute a
+multi-stage pipeline state machine. The provider-backed `project:onboard` path
+remains an optional headless compatibility flow.
+
 Deferred until after M6:
 
 - GitHub write connector;

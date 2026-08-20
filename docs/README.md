@@ -11,6 +11,7 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
 - Accepted documents under [`adr/`](adr/): architectural decisions that govern the current design. Each ADR's status is authoritative for whether it applies now or is deferred.
+- [Skill-first host orchestration](adr/ADR-0006-skill-first-host-orchestration.md): interactive host/runtime responsibility boundary.
 
 The CLI itself is the syntax authority for current commands:
 

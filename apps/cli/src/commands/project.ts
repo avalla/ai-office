@@ -31,7 +31,11 @@ export async function handleProjectCommand(
     io,
   } = context;
   if (command === "project:create") {
-    const parsed = parseArguments(args, new Set(["description"]));
+    const parsed = parseArguments(
+      args,
+      new Set(["description"]),
+      new Set(["json"]),
+    );
     if (parsed.positionals.length !== 1)
       throw new CliUsageError(
         "project:create requires exactly one project name",
@@ -46,11 +50,15 @@ export async function handleProjectCommand(
       name,
       ...(description === undefined ? {} : { description }),
     });
-    io.stdout(`Project created: ${id}`);
+    io.stdout(
+      parsed.flags.has("json")
+        ? JSON.stringify({ projectId: id, created: true })
+        : `Project created: ${id}`,
+    );
     return 0;
   }
   if (command === "project:import") {
-    const parsed = parseArguments(args, new Set(["name"]));
+    const parsed = parseArguments(args, new Set(["name"]), new Set(["json"]));
     if (parsed.positionals.length > 1)
       throw new CliUsageError("project:import accepts at most one path");
     const result = await new ImportProject(
@@ -66,6 +74,16 @@ export async function handleProjectCommand(
         ? {}
         : { name: parsed.options.get("name")! }),
     });
+    if (parsed.flags.has("json")) {
+      io.stdout(
+        JSON.stringify({
+          projectId: result.projectId,
+          created: result.created,
+          scan: result.scan,
+        }),
+      );
+      return 0;
+    }
     io.stdout(
       result.created
         ? `Project imported: ${result.projectId}`
@@ -80,7 +98,7 @@ export async function handleProjectCommand(
     );
     io.stdout(`Testing: ${result.scan.testing.join(", ") || "not detected"}`);
     io.stdout(
-      "Repository scan completed offline; run project:onboard to generate adaptive questions.",
+      "Repository scan completed offline; use the ai-office skill for conversational onboarding.",
     );
     return 0;
   }

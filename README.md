@@ -13,7 +13,8 @@ The product is local-first and auditable: SQLite is authoritative, generated Mar
 The current implementation on `main` includes:
 
 - a local daemon and daemon-backed CLI;
-- project creation, deterministic offline repository import, and LLM-assisted adaptive onboarding;
+- project creation, deterministic offline repository import, and host-skill conversational onboarding without runtime provider credentials;
+- versioned virtual-office manifests with roles and default task pipelines;
 - tasks, agent definitions, scheduled runs, locking, and persisted run events;
 - an LLM gateway with mock and opt-in OpenAI providers;
 - versioned pricing, budgets, reservations, usage normalization, and cost accounting;
@@ -33,7 +34,9 @@ to end.
 ## How it works
 
 ```text
-CLI
+Codex / compatible host
+  -> repository-scoped ai-office skill
+  -> machine-oriented CLI
   -> HTTP over .ai-office/daemon.sock
   -> local daemon command dispatch
   -> application services and domain rules
@@ -51,16 +54,11 @@ bun install --frozen-lockfile
 bun run check
 ```
 
-Offline project import, task management, governance, and simulated agent runs do
-not require an LLM credential. To use adaptive onboarding, copy the example
-environment file and configure one provider before starting the daemon:
-
-```bash
-cp .env.example .env
-# Edit .env and set the credential matching AI_OFFICE_LLM_MODEL.
-```
-
-Do not commit `.env`; it is ignored by Git.
+Interactive onboarding, offline project import, task management, governance,
+and simulated agent runs do not require an LLM credential in AI Office. The
+repository-scoped `ai-office` skill uses the model session already authenticated
+by the host. Provider configuration in `.env.example` is an optional headless
+fallback only; never commit `.env`.
 
 Start the daemon from the repository root:
 
@@ -76,15 +74,34 @@ bun run cli -- daemon:health
 
 The daemon creates and migrates `.ai-office/project.sqlite` and listens on `.ai-office/daemon.sock`.
 
-## Example workflow
+## Conversational onboarding
+
+Open this repository in Codex and ask:
+
+```text
+Use $ai-office to onboard /path/to/repository
+```
+
+The skill scans the repository offline, reads the resulting structured context,
+asks only material project questions, proposes a virtual office and default task
+pipelines, validates the manifest, and asks for confirmation before applying it.
+The runtime stores each accepted manifest as an immutable revision and records a
+sanitized audit event. Permission preferences remain project knowledge; they do
+not create capability grants.
+
+The skill is checked in at `.agents/skills/ai-office`. Its default manifest is a
+starting point, not an automatic grant or fixed organization.
+
+## Machine interface
 
 Import an existing repository, then inspect its structured profile:
 
 ```bash
-bun run cli -- project:import /path/to/repository
-# Project imported: <project-id>
+bun run cli -- project:import /path/to/repository --json
+# Read projectId from the JSON result.
 
 bun run cli -- project:profile --project <project-id>
+bun run cli -- office:context --project <project-id>
 ```
 
 For a new project without an import scan:
@@ -95,9 +112,16 @@ bun run cli -- task:create --project <project-id> --title "First task" --priorit
 bun run cli -- task:list --project <project-id>
 ```
 
-`project:import` never calls a provider: its repository scan remains deterministic, idempotent, and usable offline. `project:onboard` uses the configured LLM gateway to generate at most five validated questions per round. Run it interactively, use `project:onboard --project <id> --generate` to persist one round without prompting, or answer persisted questions individually with `project:answer`.
+`project:import` never calls a provider: its repository scan remains
+deterministic, idempotent, and usable offline. `office:validate`, `office:apply`,
+`office:show`, and `office:pipeline` form the versioned machine contract used by
+the skill. `project:onboard` remains available as an optional provider-backed
+headless compatibility flow; it is no longer the primary interactive UX.
 
-For a real provider-backed smoke test, opt in at the daemon composition root (never commit keys), configure pricing for the provider's bare model name, and optionally set a project budget. OpenAI and Anthropic are supported through the infrastructure-only LangChain compatibility adapter:
+For the optional headless compatibility flow, opt in at the daemon composition
+root, configure pricing for the provider's bare model name, and optionally set a
+project budget. OpenAI and Anthropic remain supported through the
+infrastructure-only LangChain compatibility adapter:
 
 ```bash
 export AI_OFFICE_LLM_MODEL=openai:gpt-5.4
@@ -119,7 +143,10 @@ bun run cli -- pricing:set --provider anthropic --model claude-sonnet-4-6 --curr
 
 The model prefix selects the provider; it is not part of the pricing model key. The legacy combination `AI_OFFICE_LLM_PROVIDER=openai` plus `AI_OFFICE_LLM_MODEL=<bare-model>` remains temporarily supported, but new configuration should use the single prefixed model reference.
 
-If the provider, model, or required provider credential is not configured, onboarding fails with the configured model and missing environment-variable names, without displaying secret values or changing existing questions or answers. Scanner facts and user answers are sent as bounded structured data; repository text is not treated as instructions. Onboarding permission answers are project knowledge only and never create capability grants.
+If the optional provider, model, or required credential is not configured, only
+the legacy `project:onboard` command fails. Skill-first onboarding and the rest
+of the base runtime remain usable. Provider errors do not display secret values
+or change existing questions or answers.
 
 For current command syntax and the complete command list, use:
 
@@ -129,12 +156,15 @@ bun run cli -- --help
 
 ## Architecture
 
-The implemented interface is the CLI. Web, IDE, and MCP are target interfaces, not current product surfaces.
+The primary interactive interface is the repository-scoped skill. The CLI is a
+machine interface to the daemon. Web and MCP are future product surfaces.
 
 ```text
-CLI                         Web / IDE / MCP (targets)
-  \                                   /
-   +---------- local daemon ---------+
+Host agent + ai-office skill          Web / MCP (targets)
+               \                         /
+                +-- CLI / protocol --+
+                          |
+                    local daemon
                     |
            application services
           /          |           \
@@ -223,7 +253,7 @@ Simulation is not mutation. Every filesystem v2 mutation requires approval, exec
 
 The architecture separates three kinds of state:
 
-- `<repository>/.ai-office/project.sqlite` is authoritative project state. It is implemented and currently stores projects, tasks, onboarding, agents, runs, costs, governance, capabilities, controlled actions, and audit events.
+- `<repository>/.ai-office/project.sqlite` is authoritative project state. It is implemented and currently stores projects, office-manifest revisions, tasks, onboarding, agents, runs, costs, governance, capabilities, controlled actions, and audit events.
 - `~/.ai-office/global.sqlite` is intended for reusable roles, patterns, and lessons across projects. An initial schema exists, but the daemon does not yet open or manage this database.
 - `<repository>/.ai-office/index.sqlite` is intended for regenerable code intelligence such as files, symbols, edges, chunks, and FTS. An initial schema exists, but indexing and daemon integration are future work.
 
@@ -246,6 +276,7 @@ packages/
   filesystem-connector/   scoped filesystem adapter and sandbox
 migrations/               project, global, and index SQL migrations
 agents/                    bundled YAML agent definitions
+.agents/skills/ai-office/  conversational product workflow
 patterns/                  reusable pattern source material
 docs/                      architecture, development, ADRs, and history
 spikes/                    research prototypes; not production code
@@ -286,7 +317,9 @@ The [documentation index](docs/README.md) explains which documents are current a
 
 The authoritative [development roadmap](docs/development/roadmap.md) records
 completed and future milestones. M6D-lite connects structured run intents to the
-controlled-action gateway. Reusable memory, code intelligence, autonomous
+controlled-action gateway. Skill-first onboarding adds a provider-neutral host
+experience plus versioned office and pipeline configuration. Reusable memory,
+code intelligence, autonomous
 context/tool selection, productization, and hostile-local security hardening
 remain future work.
 
