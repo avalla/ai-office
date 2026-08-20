@@ -10,6 +10,9 @@ function sourceDirectory(packageName: string): string {
 export default defineConfig({
   resolve: {
     alias: {
+      "@ai-office/agent-client-integrations": sourceDirectory(
+        "agent-client-integrations",
+      ),
       "@ai-office/agent-runtime": sourceDirectory("agent-runtime"),
       "@ai-office/application": sourceDirectory("application"),
       "@ai-office/connector-sdk": sourceDirectory("connector-sdk"),

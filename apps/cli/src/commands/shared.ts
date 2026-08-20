@@ -13,6 +13,7 @@ import type { RecordAuditEvent } from "@ai-office/application/commands/record-au
 import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
 import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import type { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
+import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 
 export interface CommandIo {
   stdout(message: string): void;
@@ -38,6 +39,7 @@ export interface CommandContext {
   transactions: TransactionRunner;
   connectors: ConnectorRegistry;
   onboardingGenerator: OnboardingQuestionGenerator;
+  agentClients: AgentClientCatalog;
 }
 
 export class CliUsageError extends Error {

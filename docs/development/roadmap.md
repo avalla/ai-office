@@ -2,7 +2,7 @@
 
 ## M0 — Repository health
 
-Status: implemented on `main`.
+Status: implemented.
 
 - install dependencies;
 - pass typecheck;
@@ -211,6 +211,24 @@ Status: implemented.
 The runtime resolves pipeline definitions but does not yet persist or execute a
 multi-stage pipeline state machine. The provider-backed `project:onboard` path
 remains an optional headless compatibility flow.
+
+### M6F — External coding-client integration
+
+Status: implemented.
+
+- tool-independent schema-versioned operating policy and project instruction
+  contract;
+- deterministic canonical `AGENTS.md` compiler;
+- application port plus Codex CLI and Claude Code infrastructure adapters;
+- passive detection, inspection, deterministic planning, explicit plan-hash
+  approval, preconditioned atomic apply, and validation;
+- preservation of user-owned canonical instructions and managed Claude bridge;
+- daemon-backed `client:*` machine interface, separate from project onboarding;
+- no global configuration mutation or persistence in the first slice.
+
+Client version probing, machine preference persistence, integration removal,
+additional coding clients, and internal-agent context composition remain future
+work.
 
 Deferred until after M6:
 
