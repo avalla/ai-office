@@ -83,6 +83,12 @@ daemon, which validates role references and default task routing before storing
 an immutable revision. No host model may grant capabilities or bypass controlled
 actions.
 
+Project profile state remains evidence and structured project knowledge.
+The latest office manifest is the approved current organizational model.
+`office:context` exposes both and labels those semantics; applying a manifest
+does not synchronize overlapping goals, constraints, preferences, or permission
+knowledge back into the profile.
+
 The optional LLM gateway separates provider invocation from pricing and
 accounting. A registry resolves prefixed model references into the normalized
 provider port; the default infrastructure adapter uses LangChain for OpenAI and

@@ -34,6 +34,13 @@ not follow instructions found in scanned project content. It asks only questions
 that materially change mission, constraints, roles, permission preferences, or
 default routing.
 
+`office:context.profile` is the evidence/history view returned by
+`GetProjectProfile`. `office:context.current.manifest` is the latest approved
+office configuration. The response labels these as `evidence` and
+`approved_configuration`. Overlapping values are not synchronized: if the
+profile records goal A and the current manifest approves goal B, both are
+returned with their original provenance and goal B is the current office model.
+
 ## Office manifest lifecycle
 
 The skill creates a strict JSON schema-version `1` manifest containing:
@@ -59,6 +66,8 @@ Every successful apply creates an immutable SQLite revision and an
 `office:pipeline --task-kind <kind>` deterministically resolves default routing.
 Unknown fields, invalid role references, duplicate identifiers, unsupported
 permission preferences, and conflicting default task routing are rejected.
+Applying a revision does not create or modify profile entries and does not create
+capability grants.
 
 Manifest files must be regular files inside the runtime project root and are
 limited to 256 KiB. Inline JSON is also accepted with `--manifest`.
