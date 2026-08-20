@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { LangChainModelProvider } from "@ai-office/llm-gateway/langchain-model-provider.ts";
 import {
   createDefaultModelProviderRegistry,
@@ -12,6 +12,8 @@ import {
   InvalidProviderResponseError,
   ProviderCancelledError,
 } from "@ai-office/llm-gateway/provider.ts";
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("model provider registry", () => {
   test("resolves an OpenAI model ref through the LangChain adapter", () => {
@@ -44,6 +46,57 @@ describe("model provider registry", () => {
     });
     expect(resolved.provider).toBeInstanceOf(LangChainModelProvider);
     expect(resolved.provider.id).toBe("anthropic");
+  });
+
+  test("does not emit configuration diagnostics when LLM debug is off", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    createDefaultModelProviderRegistry().resolve({
+      AI_OFFICE_LLM_MODEL: "openai:gpt-5.4",
+      OPENAI_API_KEY: "diagnostic-openai-key",
+    });
+
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  test("emits deterministic redacted configuration diagnostics when enabled", () => {
+    const apiKey = "diagnostic-openai-key";
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const environment = {
+      AI_OFFICE_DEBUG_LLM: "1",
+      AI_OFFICE_LLM_MODEL: "openai:gpt-5.4",
+      OPENAI_API_KEY: apiKey,
+    };
+
+    createDefaultModelProviderRegistry().resolve(environment);
+    createDefaultModelProviderRegistry().resolve(environment);
+
+    const logs = error.mock.calls.flatMap((call) => call.map(String));
+    expect(logs).toHaveLength(4);
+    expect(logs[0]).toBe(
+      `[llm:config] pid=${process.pid} provider=openai model=gpt-5.4`,
+    );
+    expect(logs[1]).toBe(
+      "[llm:config] api_key_present=true api_key_length=21 api_key_fingerprint=0756f8d6f3fa",
+    );
+    expect(logs[3]).toBe(logs[1]);
+    expect(logs.join("\n")).not.toContain(apiKey);
+  });
+
+  test("reports an absent API key without changing configuration validation", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(() =>
+      createDefaultModelProviderRegistry().resolve({
+        AI_OFFICE_DEBUG_LLM: "1",
+        AI_OFFICE_LLM_MODEL: "openai:gpt-5.4",
+      }),
+    ).toThrow("OPENAI_API_KEY");
+
+    expect(error.mock.calls.flatMap((call) => call.map(String))).toEqual([
+      `[llm:config] pid=${process.pid} provider=openai model=gpt-5.4`,
+      "[llm:config] api_key_present=false api_key_length=0 api_key_fingerprint=e3b0c44298fc",
+    ]);
   });
 
   test("fails clearly for an unsupported provider", () => {
@@ -141,6 +194,125 @@ describe("model provider registry", () => {
 });
 
 describe("LangChain model provider", () => {
+  test("does not emit request or error diagnostics when LLM debug is off", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const provider = new LangChainModelProvider("openai", "gpt-test", {
+      invoke: async () => {
+        throw Object.assign(new Error("provider detail"), {
+          status: 401,
+          code: "invalid_api_key",
+        });
+      },
+    });
+
+    await expect(
+      provider.complete({
+        model: "gpt-requested",
+        messages: [{ role: "user", content: "secret prompt" }],
+      }),
+    ).rejects.toMatchObject({ message: "openai returned HTTP 401" });
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  test("logs only request dimensions immediately before invocation", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const provider = new LangChainModelProvider(
+      "openai",
+      "gpt-configured",
+      {
+        invoke: async () =>
+          ({
+            text: "done",
+            usage_metadata: {
+              input_tokens: 1,
+              output_tokens: 1,
+              total_tokens: 2,
+            },
+            response_metadata: {},
+          }) as never,
+      },
+      undefined,
+      true,
+    );
+
+    await provider.complete({
+      model: "gpt-requested",
+      messages: [
+        { role: "system", content: "private-system" },
+        { role: "user", content: "private-user" },
+      ],
+    });
+
+    const logs = error.mock.calls.flatMap((call) => call.map(String));
+    expect(logs).toEqual([
+      "[llm:request] provider=openai configured_model=gpt-configured requested_model=gpt-requested message_count=2 message_character_count=26",
+    ]);
+    expect(logs.join("\n")).not.toContain("private-system");
+    expect(logs.join("\n")).not.toContain("private-user");
+  });
+
+  test("logs selected provider error fields without raw sensitive objects", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const rawKey = "sk-proj-rawapikeymustnotappear";
+    const providerError = Object.assign(
+      new Error(`Incorrect API key ${rawKey} provided`),
+      {
+        name: "AuthenticationError",
+        status: 401,
+        code: "invalid_api_key",
+        type: "invalid_request_error",
+        request_id: "req_diagnostic",
+        authorization: `Bearer ${rawKey}`,
+        apiKey: rawKey,
+        headers: { authorization: `Bearer ${rawKey}` },
+        body: { raw: rawKey },
+        cause: Object.assign(new Error("upstream rejected request"), {
+          statusCode: 502,
+          code: "ECONNRESET",
+          requestID: "req_cause",
+          authorization: `Bearer ${rawKey}`,
+        }),
+      },
+    );
+    const provider = new LangChainModelProvider(
+      "openai",
+      "gpt-test",
+      {
+        invoke: async () => {
+          throw providerError;
+        },
+      },
+      undefined,
+      true,
+    );
+
+    await expect(
+      provider.complete({ model: "gpt-test", messages: [] }),
+    ).rejects.toMatchObject({
+      message: "openai returned HTTP 401",
+      retryable: false,
+      code: "HTTP",
+    });
+
+    const logs = error.mock.calls
+      .flatMap((call) => call.map(String))
+      .join("\n");
+    expect(logs).toContain(
+      "[llm:error] provider=openai name=AuthenticationError status=401 code=invalid_api_key type=invalid_request_error request_id=req_diagnostic",
+    );
+    expect(logs).toContain(
+      '[llm:error] message="Incorrect API key [REDACTED] provided"',
+    );
+    expect(logs).toContain(
+      "[llm:error] cause name=Error status=502 code=ECONNRESET request_id=req_cause",
+    );
+    expect(logs).not.toContain(rawKey);
+    expect(logs).not.toContain("authorization");
+    expect(logs).not.toContain("headers");
+    expect(logs).not.toContain("body");
+    expect(logs).not.toContain("stack");
+  });
+
   test("normalizes messages, usage, metadata, request ID, and latency", async () => {
     let input: unknown[] = [];
     const ticks = [100, 142];

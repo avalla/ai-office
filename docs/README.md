@@ -9,6 +9,7 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Architecture overview](architecture/overview.md): current system boundaries, implemented surfaces, storage responsibilities, and trust model.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
+- [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
 - Accepted documents under [`adr/`](adr/): architectural decisions that govern the current design. Each ADR's status is authoritative for whether it applies now or is deferred.
 
 The CLI itself is the syntax authority for current commands:

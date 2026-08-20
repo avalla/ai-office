@@ -11,6 +11,7 @@
     "dev:daemon": "bun --watch apps/daemon/src/main.ts",
     "cli": "bun apps/cli/src/main.ts",
     "db:migrate": "bun scripts/migrate.ts",
+    "check": "bun run typecheck && bun run lint && bun run test",
     "test": "bunx --bun vitest run",
     "typecheck": "bunx tsc -p tsconfig.json --noEmit",
     "lint": "bunx eslint .",
@@ -20,10 +21,12 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.3",
     "@types/bun": "latest",
     "eslint": "^9.0.0",
     "prettier": "^3.0.0",
     "typescript": "^5.9.0",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.6"
   }
 }

@@ -57,6 +57,26 @@ describe("M3-M5 CLI", () => {
       await run(["agent:sync", "--project", projectId, "--directory", agents]),
     ).toEqual(["Agent definitions synchronized: 4"]);
     const agentId = `agent:${projectId}:developer`;
+    const incompleteIntent = io();
+    expect(
+      await runCli(
+        [
+          "run:schedule",
+          "--project",
+          projectId,
+          "--task",
+          taskId,
+          "--agent",
+          agentId,
+          "--resource",
+          "workspace",
+        ],
+        { projectRoot: root, io: incompleteIntent.io },
+      ),
+    ).toBe(1);
+    expect(incompleteIntent.stderr).toEqual([
+      "Controlled runs require both --resource and --operation",
+    ]);
     const runId =
       (
         await run([
@@ -91,6 +111,11 @@ describe("M3-M5 CLI", () => {
     expect((await run(["run:list", "--project", projectId]))[1]).toContain(
       `${runId}\tcompleted`,
     );
+    expect(
+      (await run(["run:show", "--project", projectId, "--run", runId])).join(
+        "\n",
+      ),
+    ).toContain("Simulated execution completed");
     const milestone =
       (
         await run([

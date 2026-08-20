@@ -126,7 +126,7 @@ export class InvokeControlledConnectorAction {
   }): Promise<InvokedControlledAction> {
     const requested = await this.requestAction.execute(input);
     const request = requested.request;
-    let snapshot = request.snapshot();
+    const snapshot = request.snapshot();
     if (requested.outcome === "denied")
       return {
         requestId: snapshot.id,

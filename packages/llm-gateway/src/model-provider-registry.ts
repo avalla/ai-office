@@ -1,5 +1,6 @@
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatOpenAI } from "@langchain/openai";
+import { createHash } from "node:crypto";
 import { LangChainModelProvider } from "./langchain-model-provider.ts";
 import type { LlmProvider } from "./provider.ts";
 
@@ -10,6 +11,7 @@ export type ModelProviderEnvironment = Readonly<
 export interface ModelProviderRegistration {
   readonly providerId: string;
   readonly requiredEnvironmentVariables: readonly string[];
+  readonly apiKeyEnvironmentVariable?: string;
   create(model: string, environment: ModelProviderEnvironment): LlmProvider;
 }
 
@@ -123,6 +125,15 @@ export class ModelProviderRegistry {
         parsed.modelRef,
       );
     }
+    if (
+      llmDebugEnabled(environment) &&
+      registration.apiKeyEnvironmentVariable !== undefined
+    )
+      logProviderConfiguration(
+        parsed.providerId,
+        parsed.model,
+        nonEmpty(environment[registration.apiKeyEnvironmentVariable]) ?? "",
+      );
     const missing = registration.requiredEnvironmentVariables.filter(
       (name) => nonEmpty(environment[name]) === undefined,
     );
@@ -139,35 +150,68 @@ const required = (
   name: string,
 ): string => nonEmpty(environment[name])!;
 
+function llmDebugEnabled(environment: ModelProviderEnvironment): boolean {
+  return environment.AI_OFFICE_DEBUG_LLM === "1";
+}
+
+function logProviderConfiguration(
+  providerId: string,
+  model: string,
+  apiKey: string,
+): void {
+  const fingerprint = createHash("sha256")
+    .update(apiKey)
+    .digest("hex")
+    .slice(0, 12);
+  console.error(
+    `[llm:config] pid=${process.pid} provider=${providerId} model=${model}`,
+  );
+  console.error(
+    `[llm:config] api_key_present=${apiKey.length > 0} api_key_length=${apiKey.length} api_key_fingerprint=${fingerprint}`,
+  );
+}
+
 export function createDefaultModelProviderRegistry(): ModelProviderRegistry {
   return new ModelProviderRegistry([
     {
       providerId: "openai",
       requiredEnvironmentVariables: ["OPENAI_API_KEY"],
-      create: (model, environment) =>
-        new LangChainModelProvider(
+      apiKeyEnvironmentVariable: "OPENAI_API_KEY",
+      create: (model, environment) => {
+        const apiKey = required(environment, "OPENAI_API_KEY");
+        const debug = llmDebugEnabled(environment);
+        return new LangChainModelProvider(
           "openai",
           model,
           new ChatOpenAI({
             model,
-            apiKey: required(environment, "OPENAI_API_KEY"),
+            apiKey,
             maxRetries: 0,
           }),
-        ),
+          undefined,
+          debug,
+        );
+      },
     },
     {
       providerId: "anthropic",
       requiredEnvironmentVariables: ["ANTHROPIC_API_KEY"],
-      create: (model, environment) =>
-        new LangChainModelProvider(
+      apiKeyEnvironmentVariable: "ANTHROPIC_API_KEY",
+      create: (model, environment) => {
+        const apiKey = required(environment, "ANTHROPIC_API_KEY");
+        const debug = llmDebugEnabled(environment);
+        return new LangChainModelProvider(
           "anthropic",
           model,
           new ChatAnthropic({
             model,
-            apiKey: required(environment, "ANTHROPIC_API_KEY"),
+            apiKey,
             maxRetries: 0,
           }),
-        ),
+          undefined,
+          debug,
+        );
+      },
     },
   ]);
 }

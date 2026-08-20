@@ -16,6 +16,7 @@ import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.
 import {
   CliUsageError,
   type CommandContext,
+  jsonObject,
   parseArguments,
   requiredOption,
 } from "./shared.ts";
@@ -40,21 +41,6 @@ function isResourceType(value: string): value is ResourceType {
 
 function isPrincipalType(value: string): value is CapabilityPrincipalType {
   return principalTypes.some((candidate) => candidate === value);
-}
-
-function jsonObject(
-  value: string | undefined,
-  name: string,
-): Readonly<Record<string, unknown>> {
-  if (value === undefined) return {};
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-      throw new Error();
-    return parsed as Readonly<Record<string, unknown>>;
-  } catch {
-    throw new CliUsageError(`Option --${name} must be a JSON object`);
-  }
 }
 
 function optionalDate(

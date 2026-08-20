@@ -16,7 +16,6 @@ import type {
   BudgetReservation,
   BudgetScopeType,
   BudgetSnapshot,
-  CostAmount,
   Currency,
   PricingVersion,
 } from "@ai-office/domain/cost/cost.ts";

@@ -1,4 +1,7 @@
-import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
+import {
+  AgentRun,
+  type AgentActionIntentInput,
+} from "@ai-office/domain/agent/agent-run.ts";
 import { ProjectNotFoundError } from "../errors.ts";
 import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
@@ -45,6 +48,7 @@ export class ScheduleAgentRun {
     projectId: string;
     taskId: string;
     agentId: string;
+    actionIntent?: AgentActionIntentInput;
   }): Promise<string> {
     if ((await this.projects.findById(input.projectId)) === null)
       throw new ProjectNotFoundError(input.projectId);

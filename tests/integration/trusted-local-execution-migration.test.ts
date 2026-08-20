@@ -191,7 +191,7 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "fresh.sqlite"));
     expect(migrate(database, migrationSource).applied.at(-1)).toBe(
-      "0015_llm_assisted_onboarding.sql",
+      "0016_agent_controlled_actions.sql",
     );
     expect(
       database
@@ -237,6 +237,7 @@ describe("M6C-lite migration", () => {
     expect(migrate(database, migrationSource).applied).toEqual([
       "0014_trusted_local_execution.sql",
       "0015_llm_assisted_onboarding.sql",
+      "0016_agent_controlled_actions.sql",
     ]);
     expect(
       database

@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0015_llm_assisted_onboarding.sql",
+        "0016_agent_controlled_actions.sql",
       );
       expect(
         database
@@ -102,6 +102,7 @@ describe("migration upgrades", () => {
 
     expect(migrate(database, migrations).applied).toEqual([
       "0015_llm_assisted_onboarding.sql",
+      "0016_agent_controlled_actions.sql",
     ]);
     expect(
       database

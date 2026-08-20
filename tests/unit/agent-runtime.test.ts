@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { YamlAgentDefinitionLoader } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
+import { ControlledActionAgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 
 describe("agent runtime domain", () => {
   test("loads deterministic validated YAML definitions", () => {
@@ -42,5 +43,73 @@ describe("agent runtime domain", () => {
       status: "completed",
       result: { ok: true },
     });
+  });
+
+  test("normalizes immutable controlled-action intent", () => {
+    const run = AgentRun.create({
+      id: "run",
+      projectId: "project",
+      taskId: "task",
+      agentId: "agent",
+      actionIntent: {
+        resourceId: " workspace ",
+        operation: " filesystem.create ",
+        arguments: { content: "hello", path: "notes/hello.txt" },
+      },
+      now: new Date("2026-08-05T00:00:00Z"),
+    });
+    expect(run.snapshot().actionIntent).toEqual({
+      resourceId: "workspace",
+      operation: "filesystem.create",
+      arguments: { content: "hello", path: "notes/hello.txt" },
+    });
+    expect(Object.isFrozen(run.snapshot().actionIntent?.arguments)).toBe(true);
+  });
+
+  test("routes run intent through the controlled-action gateway", async () => {
+    const calls: unknown[] = [];
+    const executor = new ControlledActionAgentExecutor({
+      invoke: async (input) => {
+        calls.push(input);
+        return {
+          requestId: "action-1",
+          outcome: "approval_required",
+          status: "approval_pending",
+        };
+      },
+    });
+    const run = AgentRun.create({
+      id: "run",
+      projectId: "project",
+      taskId: "task",
+      agentId: "agent",
+      actionIntent: {
+        resourceId: "workspace",
+        operation: "filesystem.create",
+        arguments: { path: "notes/hello.txt", content: "hello" },
+      },
+      now: new Date("2026-08-05T00:00:00Z"),
+    });
+
+    await expect(executor.execute(run)).resolves.toEqual({
+      summary: "Controlled action action-1 reached approval_pending",
+      artifacts: ["action:action-1"],
+      actions: [
+        {
+          requestId: "action-1",
+          outcome: "approval_required",
+          status: "approval_pending",
+        },
+      ],
+    });
+    expect(calls).toEqual([
+      {
+        projectId: "project",
+        agentId: "agent",
+        resourceId: "workspace",
+        operation: "filesystem.create",
+        arguments: { content: "hello", path: "notes/hello.txt" },
+      },
+    ]);
   });
 });

@@ -103,6 +103,21 @@ export function requiredOption(
   return value;
 }
 
+export function jsonObject(
+  value: string | undefined,
+  name: string,
+): Readonly<Record<string, unknown>> {
+  if (value === undefined) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+      throw new Error();
+    return parsed as Readonly<Record<string, unknown>>;
+  } catch {
+    throw new CliUsageError(`Option --${name} must be a JSON object`);
+  }
+}
+
 export function nonNegativeBigInt(value: string, name: string): bigint {
   try {
     const parsed = BigInt(value);

@@ -511,6 +511,90 @@ limits:
         "M6B daemon test",
       ]);
       expect(granted.exitCode).toBe(0);
+
+      const task = await run([
+        "task:create",
+        "--project",
+        projectId,
+        "--title",
+        "Create an agent artifact",
+      ]);
+      const taskId = task.stdout[0]!.replace("Task created: ", "");
+      const scheduled = await run([
+        "run:schedule",
+        "--project",
+        projectId,
+        "--task",
+        taskId,
+        "--agent",
+        agentId,
+        "--resource",
+        resourceId,
+        "--operation",
+        "filesystem.create",
+        "--arguments",
+        JSON.stringify({
+          path: "agent-created.txt",
+          content: "created through controlled runtime\n",
+        }),
+      ]);
+      expect(scheduled).toMatchObject({ exitCode: 0, stderr: [] });
+      const runId = scheduled.stdout[0]!.replace("Agent run scheduled: ", "");
+      const ticked = await run([
+        "run:tick",
+        "--project",
+        projectId,
+        "--capacity",
+        "1",
+      ]);
+      expect(ticked).toMatchObject({ exitCode: 0, stderr: [] });
+      const actionLine = ticked.stdout.find((line) =>
+        line.startsWith(`Run ${runId} action: `),
+      );
+      expect(actionLine).toContain("(approval_pending)");
+      const runActionId = actionLine!
+        .replace(`Run ${runId} action: `, "")
+        .replace(" (approval_pending)", "");
+      const shownRun = await run([
+        "run:show",
+        "--project",
+        projectId,
+        "--run",
+        runId,
+      ]);
+      expect(shownRun.stdout.join("\n")).toContain(runActionId);
+      expect(shownRun.stdout.join("\n")).not.toContain(
+        "created through controlled runtime",
+      );
+      expect(existsSync(join(workspace, "agent-created.txt"))).toBe(false);
+      expect(
+        (
+          await run([
+            "action:approve",
+            "--project",
+            projectId,
+            "--action",
+            runActionId,
+            "--actor",
+            "local-user",
+          ])
+        ).exitCode,
+      ).toBe(0);
+      expect(
+        (
+          await run([
+            "action:execute",
+            "--project",
+            projectId,
+            "--action",
+            runActionId,
+          ])
+        ).exitCode,
+      ).toBe(0);
+      expect(readFileSync(join(workspace, "agent-created.txt"), "utf8")).toBe(
+        "created through controlled runtime\n",
+      );
+
       const authorizedRead = await run([
         "action:request",
         "--project",
