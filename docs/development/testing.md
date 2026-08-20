@@ -10,7 +10,7 @@ AI Office tests behavior at the narrowest useful boundary and adds integration c
 - **Security and adversarial connector:** traversal, absolute paths, symlinks, hard links, sensitive paths, binary/size limits, stale hashes, destination races, revoked grants, disabled resources, and replay attempts.
 - **Fault injection:** audit, transaction, connector, and outcome-persistence failures, including rollback and `execution_unknown` behavior around filesystem side effects.
 - **Daemon/CLI E2E:** the real Unix-socket path from CLI through daemon dispatch, application services, SQLite or connectors, and rendered CLI output.
-- **Agent client integration:** isolated PATH and project roots, passive inspection, deterministic plan hashes, ownership-preserving updates, malformed markers, stale approvals, atomic cleanup, idempotence, and daemon CLI flows. Tests never use the developer's real client configuration.
+- **Agent client integration:** isolated PATH and project roots, passive inspection, deterministic plan hashes, ownership-preserving updates, unmanaged canonical status, operational validation semantics, malformed markers, stale approvals, atomic cleanup, idempotence, and daemon CLI flows. Tests never use the developer's real client configuration.
 
 ## Isolation and determinism
 

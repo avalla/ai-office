@@ -28,12 +28,14 @@
 - Search an injected PATH for `codex` and `claude` without launching either CLI.
 - Resolve and validate target roots and inspect only regular instruction files.
 - Plan canonical `AGENTS.md` creation/update only when absent or AI Office-owned;
-  preserve user-owned canonical files.
+  preserve user-owned canonical files and report them as unmanaged with an
+  actionable reconciliation warning.
 - For Claude, create or maintain one managed `@AGENTS.md` bridge while preserving
   all unrelated `CLAUDE.md` content.
 - Apply operations atomically with file-hash preconditions and clean temporary
   files after failures.
-- Validate native Codex loading prerequisites and Claude import state.
+- Validate native Codex loading prerequisites and Claude import state while
+  keeping operational wiring distinct from AI Office contract management.
 
 ## 4. CLI vertical slice
 
@@ -58,7 +60,8 @@
 
 - Unit-test contract validation/compiler and adapter edge cases.
 - Integration-test detection, passive inspection, plans, ownership, conflicts,
-  idempotence, stale hashes, atomic failure cleanup, and validation.
+  unmanaged canonical instructions, idempotence, stale hashes, atomic failure
+  cleanup, and validation semantics.
 - E2E-test the daemon CLI plan/hash/apply flow in isolated HOME/project roots.
 - Run skill validation, strict typecheck, lint, full tests, formatting/diff
   checks, and review dependency direction manually.

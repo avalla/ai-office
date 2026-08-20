@@ -88,12 +88,18 @@ contract.
 - AI Office-owned canonical files carry an ownership header and may be replaced
   atomically by later approved plans.
 - Existing user-owned `AGENTS.md` is authoritative and is never overwritten.
+- User-owned canonical instructions are reported as `unmanaged` with a warning:
+  their presence makes client wiring possible but does not prove that the
+  supplied AI Office contract was installed.
 - Existing `CLAUDE.md` is preserved; AI Office appends or updates only a marked
   bridge section. An existing direct `@AGENTS.md` import needs no change.
 - Malformed or duplicated managed markers are conflicts and fail closed.
 - Existing `CODEX.md` is assessed but never rewritten by the adapter.
 - Plans, errors, command audit, and output contain no credentials or raw external
   configuration beyond generated project instructions.
+- Validation answers whether client wiring is operational. It does not attest
+  management or contract installation; callers inspect canonical ownership,
+  status, and warnings separately.
 
 ## Recommended architecture
 

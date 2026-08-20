@@ -41,6 +41,12 @@ plan at apply time, verify file preconditions, preserve user-owned content, and
 write atomically. Do not persist installed-client detection or copies of
 external configuration.
 
+Treat client wiring and canonical-contract ownership as separate facts. A
+user-owned `AGENTS.md` can make Codex usable, and a Claude bridge can import it,
+without making the supplied AI Office contract installed or managed. Report that
+canonical file as `unmanaged` with an actionable warning. Validation remains an
+operational wiring check; warnings do not make it fail.
+
 ## Consequences
 
 - Adding a client requires a new infrastructure adapter, not domain changes to
@@ -48,6 +54,9 @@ external configuration.
 - Codex and Claude share one project instruction source.
 - User-owned `AGENTS.md` is never overwritten; Claude integration changes only
   its identifiable managed bridge section or creates a missing bridge.
+- A user-owned canonical file is consumable but remains `unmanaged`; neither a
+  successful Claude bridge nor `validation.valid` attests that the AI Office
+  contract is represented in it.
 - Plans become stale when relevant files change and must be approved again.
 - Machine preference persistence, global client configuration, removal, version
   probing, and internal-agent prompt composition remain future work.

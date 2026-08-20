@@ -19,6 +19,12 @@ Use this small, stable read order:
 
 Use `docs/README.md` to distinguish current guidance from historical implementation material. Do not treat every milestone assessment as a standing requirement.
 
+## Operating mode
+
+For non-trivial work, do not translate a request directly into file changes. First determine the underlying objective, relevant existing architecture, affected constraints and invariants, credible alternatives and trade-offs, and the smallest coherent solution. Then decide, plan, implement, and review the resulting diff from both an architectural and reviewer perspective.
+
+A proposed mechanism is not automatically an architectural decision. When repository evidence shows that it conflicts with the current architecture, surface the conflict and choose the smallest coherent solution. Scope discipline prevents unrelated work; it does not justify a locally convenient change that damages conceptual integrity.
+
 ## Architectural invariants
 
 - Runtime is Bun; application code is strict TypeScript and avoids `any`.

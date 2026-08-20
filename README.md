@@ -319,9 +319,11 @@ bun run cli -- client:validate --client claude --root /path/to/project
 ```
 
 AI Office never overwrites user-owned `AGENTS.md`. Existing Claude instructions
-are preserved and only an identifiable managed bridge is maintained. These
-commands do not modify global Codex/Claude configuration and remain separate
-from project onboarding. See the [client integration guide](docs/development/agent-client-integration.md).
+are preserved and only an identifiable managed bridge is maintained. A
+user-owned canonical file remains `unmanaged`: the client can consume it, but AI
+Office does not claim that the supplied contract was installed. These commands
+do not modify global Codex/Claude configuration and remain separate from project
+onboarding. See the [client integration guide](docs/development/agent-client-integration.md).
 
 Read [AGENTS.md](AGENTS.md) before changing code. It defines the canonical
 operating contract, invariants, scope rules, and definition of done.

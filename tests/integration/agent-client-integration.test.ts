@@ -127,6 +127,48 @@ describe("agent client integrations", () => {
     ).toMatchObject({ changes: [] });
   });
 
+  test("keeps user-owned Codex instructions operational but unmanaged", async () => {
+    const root = temporaryRoot("ai-office-client-codex-user-");
+    writeFileSync(join(root, "AGENTS.md"), "# User instructions\n");
+    const integration = service();
+
+    const inspection = await integration.inspect("codex", root);
+    expect(inspection.canonicalInstructions).toMatchObject({
+      ownership: "user_owned",
+      integrationStatus: "unmanaged",
+    });
+    expect(inspection.issues).toContainEqual(
+      expect.objectContaining({
+        severity: "warning",
+        code: "canonical_instructions_unmanaged",
+      }),
+    );
+
+    const plan = await integration.plan({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    expect(plan.changes).toEqual([]);
+    expect(plan.issues).toContainEqual(
+      expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
+    );
+
+    const validation = await integration.apply({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: plan.planHash,
+    });
+    expect(validation).toMatchObject({ valid: true });
+    expect(validation.issues).toContainEqual(
+      expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
+    );
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(
+      "# User instructions\n",
+    );
+  });
+
   test("preserves user AGENTS and merges only the Claude managed bridge", async () => {
     const root = temporaryRoot("ai-office-client-claude-");
     writeFileSync(join(root, "AGENTS.md"), "# User canonical contract\n");
@@ -136,6 +178,15 @@ describe("agent client integrations", () => {
       "# User Claude notes\n\nKeep this.\n",
     );
     const integration = service();
+    const before = await integration.inspect("claude", root);
+    expect(before.canonicalInstructions).toMatchObject({
+      ownership: "user_owned",
+      integrationStatus: "unmanaged",
+    });
+    expect(before.clientInstructions).toMatchObject({
+      ownership: "user_owned",
+      integrationStatus: "unmanaged",
+    });
     const plan = await integration.plan({
       clientId: "claude",
       rootPath: root,
@@ -147,8 +198,11 @@ describe("agent client integrations", () => {
         ownershipAfter: "merged",
       }),
     ]);
+    expect(plan.issues).toContainEqual(
+      expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
+    );
 
-    await integration.apply({
+    const validation = await integration.apply({
       clientId: "claude",
       rootPath: root,
       contract: projectInstructionContract,
@@ -164,7 +218,16 @@ describe("agent client integrations", () => {
     expect(claude).toContain("Keep this.");
     expect(claude).toContain(claudeManagedStart);
     expect(claude).toContain("@AGENTS.md");
-    expect((await integration.validate("claude", root)).valid).toBe(true);
+    expect(validation.valid).toBe(true);
+    expect(validation.issues).toContainEqual(
+      expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
+    );
+    const after = await integration.inspect("claude", root);
+    expect(after.canonicalInstructions).toMatchObject({
+      ownership: "user_owned",
+      integrationStatus: "unmanaged",
+    });
+    expect(after.clientInstructions?.integrationStatus).toBe("integrated");
     writeFileSync(
       join(root, "CLAUDE.md"),
       claude.replace("@AGENTS.md", "@OBSOLETE.md"),
@@ -202,6 +265,16 @@ describe("agent client integrations", () => {
     writeFileSync(join(root, "CLAUDE.md"), "# Claude notes\n\n@AGENTS.md\n");
     const integration = service();
 
+    const inspection = await integration.inspect("claude", root);
+    expect(inspection.canonicalInstructions).toMatchObject({
+      ownership: "user_owned",
+      integrationStatus: "unmanaged",
+    });
+    expect(inspection.clientInstructions).toMatchObject({
+      ownership: "user_owned",
+      integrationStatus: "integrated",
+    });
+
     expect(
       await integration.plan({
         clientId: "claude",
@@ -209,7 +282,11 @@ describe("agent client integrations", () => {
         contract: projectInstructionContract,
       }),
     ).toMatchObject({ changes: [] });
-    expect((await integration.validate("claude", root)).valid).toBe(true);
+    const validation = await integration.validate("claude", root);
+    expect(validation.valid).toBe(true);
+    expect(validation.issues).toContainEqual(
+      expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
+    );
     expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(
       "# Claude notes\n\n@AGENTS.md\n",
     );

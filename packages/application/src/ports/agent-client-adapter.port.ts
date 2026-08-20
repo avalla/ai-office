@@ -16,6 +16,7 @@ export interface AgentClientFileState {
   exists: boolean;
   ownership: AgentClientFileOwnership;
   sha256?: string;
+  /** Integration state at this file's boundary; see the client integration contract. */
   integrationStatus: "missing" | "integrated" | "unmanaged" | "conflict";
 }
 
@@ -54,6 +55,7 @@ export interface AgentClientIntegrationDraft {
 export interface AgentClientValidation {
   clientId: AgentClientId;
   rootPath: string;
+  /** True when client wiring can consume project instructions without a conflict. */
   valid: boolean;
   issues: readonly AgentClientIntegrationIssue[];
 }

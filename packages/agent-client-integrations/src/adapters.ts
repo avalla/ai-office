@@ -37,14 +37,17 @@ function fileState(
   };
 }
 
+function isCanonicalManaged(file: LocalInstructionFile): boolean {
+  return file.content?.startsWith(managedProjectInstructionsHeader) === true;
+}
+
 function canonicalState(file: LocalInstructionFile): AgentClientFileState {
   if (!file.exists) return fileState(file, "absent", "missing");
-  const owned =
-    file.content?.startsWith(managedProjectInstructionsHeader) === true;
+  const owned = isCanonicalManaged(file);
   return fileState(
     file,
     owned ? "ai_office_owned" : "user_owned",
-    "integrated",
+    owned ? "integrated" : "unmanaged",
   );
 }
 
@@ -114,6 +117,13 @@ function baseIssues(
       message:
         "AGENTS.md is missing and can be created from the approved contract",
     });
+  else if (!isCanonicalManaged(canonical))
+    issues.push({
+      severity: "warning",
+      code: "canonical_instructions_unmanaged",
+      message:
+        "AGENTS.md is user-owned: the client can consume it, but AI Office will not overwrite it or attest that its instruction contract is installed; reconcile it manually if needed",
+    });
   if (legacy.exists)
     issues.push({
       severity: "warning",
@@ -139,10 +149,7 @@ function canonicalOperations(
         summary: "Create canonical AI Office-managed project instructions",
       },
     ];
-  if (
-    canonical.content?.startsWith(managedProjectInstructionsHeader) === true &&
-    canonical.content !== nextContent
-  )
+  if (isCanonicalManaged(canonical) && canonical.content !== nextContent)
     return [
       {
         kind: "update",
@@ -231,7 +238,9 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
     const issues = inspection.canonicalInstructions.exists
       ? inspection.issues
       : [
-          ...inspection.issues,
+          ...inspection.issues.filter(
+            (issue) => issue.code !== "canonical_instructions_missing",
+          ),
           {
             severity: "conflict" as const,
             code: "codex_canonical_instructions_unavailable",
@@ -331,7 +340,11 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
 
   async validate(rootPath: string): Promise<AgentClientValidation> {
     const inspection = await this.inspect(rootPath);
-    const issues = [...inspection.issues];
+    const issues = inspection.canonicalInstructions.exists
+      ? [...inspection.issues]
+      : inspection.issues.filter(
+          (issue) => issue.code !== "canonical_instructions_missing",
+        );
     if (!inspection.canonicalInstructions.exists)
       issues.push({
         severity: "conflict",
@@ -339,7 +352,10 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
         message:
           "Claude cannot import canonical instructions because AGENTS.md is missing",
       });
-    if (inspection.clientInstructions?.integrationStatus !== "integrated")
+    if (
+      inspection.clientInstructions?.integrationStatus !== "integrated" &&
+      inspection.clientInstructions?.integrationStatus !== "conflict"
+    )
       issues.push({
         severity: "conflict",
         code: "claude_bridge_unavailable",

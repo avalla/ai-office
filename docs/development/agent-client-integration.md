@@ -83,12 +83,37 @@ bun run cli -- client:validate --client claude --root /path/to/project
 The contract file must be a regular JSON file inside the integration root and is
 limited to 256 KiB.
 
+## Status and validation semantics
+
+File ownership and integration status answer different questions. For canonical
+instructions:
+
+| `integrationStatus` | Meaning                                                                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `missing`           | `AGENTS.md` does not exist.                                                                                                                    |
+| `integrated`        | `AGENTS.md` carries the AI Office ownership header and is managed. A contract-aware plan proposes an update when its compiled content differs. |
+| `unmanaged`         | `AGENTS.md` exists and is user-owned. The client can consume it, but AI Office does not attest that the supplied contract is represented.      |
+| `conflict`          | Safe integration is blocked and requires intervention.                                                                                         |
+
+For a client-specific instruction file such as `CLAUDE.md`, `integrated` means
+the client bridge is operational; `unmanaged` means the file exists but the
+bridge is absent or stale. The accompanying `ownership` field independently
+identifies AI Office-owned, user-owned, or merged content.
+
+`validation.valid` answers only whether the selected client can consume project
+instructions without a blocking conflict. For Codex, an existing `AGENTS.md` is
+operational regardless of ownership. For Claude, both `AGENTS.md` and an
+operational `CLAUDE.md` import are required. `valid: true` does not mean that the
+supplied AI Office contract was installed; callers must inspect the canonical
+status and warnings for that fact.
+
 ## Ownership and conflicts
 
 - A missing `AGENTS.md` may be created as AI Office-owned compiled output.
 - An AI Office-owned `AGENTS.md` may be updated by a newly approved plan.
 - An existing user-owned `AGENTS.md` remains authoritative and is never
-  overwritten.
+  overwritten. It is reported as `unmanaged`, and plans include an actionable
+  warning because manual reconciliation may be needed.
 - A missing `CLAUDE.md` may be created with the bridge.
 - Existing user Claude instructions are preserved; AI Office appends or updates
   only its marked bridge.
@@ -98,6 +123,10 @@ limited to 256 KiB.
   rewritten automatically.
 - Any relevant concurrent edit changes the plan hash or file precondition and
   prevents apply.
+
+When the canonical file is user-owned, planning never mutates it. Claude may
+still plan or maintain a bridge to that file, but doing so does not change its
+canonical ownership or status.
 
 These commands are separate from `project:onboard`. Project import may detect
 instruction files, but passive scanning never mutates them.
