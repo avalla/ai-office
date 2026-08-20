@@ -1,4 +1,8 @@
 import { DomainValidationError } from "../errors.ts";
+import {
+  normalizeCanonicalJson,
+  type CanonicalJsonValue,
+} from "../capability/canonical-json.ts";
 
 export type AgentRunStatus =
   | "queued"
@@ -14,6 +18,7 @@ export interface AgentRunProps {
   projectId: string;
   taskId: string;
   agentId: string;
+  actionIntent?: AgentActionIntent;
   status: AgentRunStatus;
   worktreePath?: string;
   result?: unknown;
@@ -22,6 +27,39 @@ export interface AgentRunProps {
   startedAt?: Date;
   completedAt?: Date;
   updatedAt: Date;
+}
+
+export interface AgentActionIntent {
+  resourceId: string;
+  operation: string;
+  arguments: Readonly<Record<string, CanonicalJsonValue>>;
+}
+
+export interface AgentActionIntentInput {
+  resourceId: string;
+  operation: string;
+  arguments: Readonly<Record<string, unknown>>;
+}
+
+function normalizeActionIntent(intent: AgentActionIntentInput): AgentActionIntent {
+  const resourceId = intent.resourceId.trim();
+  const operation = intent.operation.trim();
+  if (resourceId === "" || operation === "")
+    throw new DomainValidationError(
+      "Agent action resource and operation cannot be empty",
+    );
+  const arguments_ = normalizeCanonicalJson(intent.arguments);
+  if (
+    typeof arguments_ !== "object" ||
+    arguments_ === null ||
+    Array.isArray(arguments_)
+  )
+    throw new DomainValidationError("Agent action arguments must be an object");
+  return Object.freeze({
+    resourceId,
+    operation,
+    arguments: arguments_ as Readonly<Record<string, CanonicalJsonValue>>,
+  });
 }
 
 const transitions: Record<AgentRunStatus, readonly AgentRunStatus[]> = {
@@ -42,6 +80,7 @@ export class AgentRun {
     projectId: string;
     taskId: string;
     agentId: string;
+    actionIntent?: AgentActionIntentInput;
     now: Date;
   }): AgentRun {
     for (const value of [
@@ -55,16 +94,25 @@ export class AgentRun {
           "Agent run identifiers cannot be empty",
         );
     }
+    const { now, actionIntent, ...identifiers } = input;
     return new AgentRun({
-      ...input,
+      ...identifiers,
+      ...(actionIntent === undefined
+        ? {}
+        : { actionIntent: normalizeActionIntent(actionIntent) }),
       status: "queued",
-      createdAt: input.now,
-      updatedAt: input.now,
+      createdAt: now,
+      updatedAt: now,
     });
   }
 
   static restore(props: AgentRunProps): AgentRun {
-    return new AgentRun(props);
+    return new AgentRun({
+      ...props,
+      ...(props.actionIntent === undefined
+        ? {}
+        : { actionIntent: normalizeActionIntent(props.actionIntent) }),
+    });
   }
 
   transition(
@@ -79,6 +127,9 @@ export class AgentRun {
     }
     this.props = {
       ...this.props,
+      ...(this.props.actionIntent === undefined
+        ? {}
+        : { actionIntent: this.props.actionIntent }),
       ...details,
       status,
       ...(status === "running" && this.props.startedAt === undefined

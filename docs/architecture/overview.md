@@ -29,7 +29,11 @@ connector registry
 resource adapters
 ```
 
-This diagram describes the intended boundary between agent execution and protected resources. The controlled-action services and connectors exist, but the agent runtime does not yet call them automatically. That integration is M6D-lite. Current agent runs use a deterministic simulated executor.
+The M6D-lite bridge routes a structured action intent from an agent run through
+an executor-facing gateway. The agent-runtime package depends on the gateway
+contract, not filesystem, connector, SQLite, or daemon implementations. Runs
+without an intent retain the deterministic simulator; autonomous LLM tool
+selection is future work.
 
 ## Application and domain boundaries
 
@@ -57,7 +61,12 @@ Daemon lifecycle and sanitized command outcomes are appended to `audit_event`. A
 
 ## Runtime, gateway, and governance
 
-Agent definitions are validated from YAML and synchronized into project storage. Scheduling validates project, task, and agent, acquires a task lock, persists a queued run, and records state transitions. The executor and worktree manager are currently deterministic simulations.
+Agent definitions are validated from YAML and synchronized into project storage.
+Scheduling validates project, task, and agent, acquires a task lock, persists a
+queued run and optional immutable action intent, and records state transitions.
+The controlled-action executor invokes only its gateway contract and persists
+the returned action ID and status in the run result. The fallback executor and
+worktree manager remain deterministic simulations.
 
 The LLM gateway separates provider invocation from pricing and accounting. A registry resolves prefixed model references into the normalized provider port; the default infrastructure adapter uses LangChain for OpenAI and Anthropic compatibility, while the native OpenAI Responses adapter remains available. LangChain does not cross into application/domain code or own orchestration. Versioned prices, reservations, normalized usage, cost events, and budget checks retain their project/task/agent/run dimensions. Standard tests do not call paid providers.
 
@@ -77,7 +86,11 @@ Agents do not directly access protected local or external resources. Side effect
 
 The filesystem connector implements scoped list/read/search plus simulated and trusted-local create/write/move/delete. Every filesystem v2 mutation requires approval. Simulation never mutates the target. Revoked or expired grants, disabled resources, changed preconditions, stale artifacts, and replay attempts fail closed.
 
-Automatic `agent runtime -> controlled actions` orchestration is not implemented until M6D-lite. Directly wiring the runtime to filesystem or infrastructure adapters would violate the intended boundary.
+The M6D-lite gateway implements `agent runtime -> controlled actions` without a
+direct filesystem or infrastructure dependency in the runtime. Mutation intents
+stop at `approval_pending`; the existing approval and execution commands retain
+authority. Directly wiring the runtime to filesystem or infrastructure adapters
+would violate this boundary.
 
 ## Storage responsibilities and implementation status
 

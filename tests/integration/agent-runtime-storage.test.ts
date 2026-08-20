@@ -97,6 +97,11 @@ describe("agent runtime SQLite integration", () => {
       projectId: "project",
       taskId: "task",
       agentId: "agent",
+      actionIntent: {
+        resourceId: "workspace",
+        operation: "filesystem.create",
+        arguments: { path: "notes/result.txt", content: "done" },
+      },
     });
     await expect(
       schedule.execute({
@@ -108,6 +113,16 @@ describe("agent runtime SQLite integration", () => {
     expect(await runtime.listRuns("project")).toHaveLength(1);
     const run = await runtime.findRun(runId);
     expect(run).not.toBeNull();
+    expect(run?.snapshot().actionIntent).toEqual({
+      resourceId: "workspace",
+      operation: "filesystem.create",
+      arguments: { content: "done", path: "notes/result.txt" },
+    });
+    expect(() =>
+      database
+        .prepare("UPDATE agent_run SET action_intent_json=NULL WHERE id=?")
+        .run(runId),
+    ).toThrow("agent run action intent is immutable");
     await new ExecuteAgentRun(
       runtime,
       new SimulatedAgentExecutor(),

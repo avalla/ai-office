@@ -6,7 +6,7 @@ import type {
 import type { Agent } from "@ai-office/domain/agent/agent.ts";
 import {
   AgentRun,
-  type AgentRunProps,
+  type AgentActionIntent,
   type AgentRunStatus,
 } from "@ai-office/domain/agent/agent-run.ts";
 import { Role, type RoleLimits } from "@ai-office/domain/agent/role.ts";
@@ -40,6 +40,7 @@ interface RunRow {
   project_id: string;
   task_id: string;
   agent_id: string;
+  action_intent_json: string | null;
   status: AgentRunStatus;
   worktree_path: string | null;
   result_json: string | null;
@@ -70,6 +71,13 @@ const run = (row: RunRow): AgentRun =>
     projectId: row.project_id,
     taskId: row.task_id,
     agentId: row.agent_id,
+    ...(row.action_intent_json === null
+      ? {}
+      : {
+          actionIntent: JSON.parse(
+            row.action_intent_json,
+          ) as AgentActionIntent,
+        }),
     status: row.status,
     ...(row.worktree_path === null ? {} : { worktreePath: row.worktree_path }),
     ...(row.result_json === null
@@ -86,7 +94,7 @@ const run = (row: RunRow): AgentRun =>
     updatedAt: new Date(row.updated_at),
   });
 const runColumns =
-  "id, project_id, task_id, agent_id, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at";
+  "id, project_id, task_id, agent_id, action_intent_json, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at";
 
 function parseStoredStringArray(json: string, field: string): string[] {
   const value = JSON.parse(json) as unknown;
@@ -230,13 +238,16 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
         .get(v.id);
       this.database
         .prepare(
-          `INSERT INTO agent_run(${runColumns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at`,
+          `INSERT INTO agent_run(${runColumns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at`,
         )
         .run(
           v.id,
           v.projectId,
           v.taskId,
           v.agentId,
+          v.actionIntent === undefined
+            ? null
+            : JSON.stringify(v.actionIntent),
           v.status,
           v.worktreePath ?? null,
           v.result === undefined ? null : JSON.stringify(v.result),

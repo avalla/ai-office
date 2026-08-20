@@ -173,11 +173,11 @@ This milestone does not connect the agent runtime to controlled actions and does
 
 ### M6D-lite — Agent controlled-action integration
 
-Status: future.
+Status: implemented.
 
 - controlled-action gateway exposed to agent executors;
 - no direct filesystem or infrastructure adapter dependency in agent runtime;
-- scheduling returns run and action identifiers without blocking the daemon command FIFO;
+- controlled scheduling returns a run ID and `run:tick` returns its action ID without blocking the daemon command FIFO;
 - action and approval state available through daemon-backed CLI commands;
 - interrupted `executing` and `execution_unknown` actions remain observable without automatic replay;
 - end-to-end flow from agent intent to controlled filesystem modification.
@@ -187,6 +187,11 @@ Exit criteria:
 - the simulated executor can be replaced incrementally without granting direct resource access;
 - capability revocation takes effect immediately;
 - a complete read, simulate, approve, execute, and audit workflow passes end to end.
+
+M6D-lite accepts one structured action intent at scheduling time. Runs without an
+intent retain the deterministic simulator. Autonomous LLM tool selection,
+multi-step tool loops, subprocess execution, and real Git worktrees remain
+future work.
 
 Deferred until after M6:
 

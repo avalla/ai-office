@@ -12,6 +12,10 @@ import { runCli, type CliIo } from "../../apps/cli/src/cli.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { UnavailableOnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import {
+  InvalidProviderResponseError,
+  LlmProviderError,
+} from "@ai-office/llm-gateway/provider.ts";
+import {
   ScriptedOnboardingGenerator,
   textQuestion,
 } from "../helpers/onboarding-generator.ts";
@@ -338,6 +342,41 @@ describe("Project/Task CLI vertical slice", () => {
       }),
     ).toBe(1);
     expect(output.stderr).toEqual(["LLM provider unavailable for onboarding"]);
+  });
+
+  test.each([
+    new LlmProviderError(
+      "openai",
+      "openai returned HTTP 401",
+      false,
+      "HTTP",
+    ),
+    new InvalidProviderResponseError(
+      "openai",
+      "Provider response did not contain usage metadata",
+    ),
+  ])("reports %s as a known CLI error", async (providerError) => {
+    const projectRoot = prepareExistingProjectRoot();
+    const importedOutput = captureIo();
+    await runCli(["project:import", "."], {
+      projectRoot,
+      io: importedOutput.io,
+    });
+    const projectId =
+      importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
+    const output = captureIo();
+
+    const exitCode = await runCli(
+      ["project:onboard", "--project", projectId, "--generate"],
+      {
+        projectRoot,
+        io: output.io,
+        onboardingGenerator: new ScriptedOnboardingGenerator([providerError]),
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(output.stderr).toEqual([providerError.message]);
   });
 
   test("reports the configured model and missing credential without a network call", async () => {

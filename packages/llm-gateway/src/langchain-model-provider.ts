@@ -37,24 +37,135 @@ function count(
 }
 
 function statusFrom(error: unknown): number | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const value = error as Record<string, unknown>;
-  if (typeof value.status === "number") return value.status;
-  if (typeof value.statusCode === "number") return value.statusCode;
+  const status = propertyFrom(error, "status");
+  if (typeof status === "number") return status;
+  const statusCode = propertyFrom(error, "statusCode");
+  if (typeof statusCode === "number") return statusCode;
   return undefined;
 }
 
-function codeFrom(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const value = error as Record<string, unknown>;
-  if (typeof value.code === "string") return value.code;
-  return codeFrom(value.cause);
+function propertyFrom(error: unknown, key: string): unknown {
+  if (
+    (typeof error !== "object" && typeof error !== "function") ||
+    error === null
+  )
+    return undefined;
+  try {
+    return Reflect.get(error, key);
+  } catch {
+    return undefined;
+  }
+}
+
+function stringPropertyFrom(
+  error: unknown,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = propertyFrom(error, key);
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return undefined;
+}
+
+function codeFrom(
+  error: unknown,
+  seen: ReadonlySet<unknown> = new Set(),
+): string | undefined {
+  if (seen.has(error)) return undefined;
+  const code = stringPropertyFrom(error, "code");
+  if (code !== undefined) return code;
+  const cause = propertyFrom(error, "cause");
+  return codeFrom(cause, new Set([...seen, error]));
 }
 
 function nameFrom(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const name = (error as Record<string, unknown>).name;
-  return typeof name === "string" ? name : undefined;
+  return stringPropertyFrom(error, "name");
+}
+
+interface ProviderErrorDiagnostics {
+  readonly name?: string;
+  readonly message?: string;
+  readonly status?: number;
+  readonly code?: string;
+  readonly type?: string;
+  readonly requestId?: string;
+}
+
+function providerErrorDiagnostics(error: unknown): ProviderErrorDiagnostics {
+  const name = nameFrom(error);
+  const message = stringPropertyFrom(error, "message");
+  const status = statusFrom(error);
+  const code = stringPropertyFrom(error, "code");
+  const type = stringPropertyFrom(error, "type");
+  const requestId = stringPropertyFrom(
+    error,
+    "request_id",
+    "requestId",
+    "requestID",
+  );
+  return {
+    ...(name === undefined ? {} : { name }),
+    ...(message === undefined ? {} : { message }),
+    ...(status === undefined ? {} : { status }),
+    ...(code === undefined ? {} : { code }),
+    ...(type === undefined ? {} : { type }),
+    ...(requestId === undefined ? {} : { requestId }),
+  };
+}
+
+function safeDiagnosticToken(value: string): string {
+  return safeDiagnosticMessage(value)
+    .replaceAll("\\", "\\\\")
+    .replaceAll(/\s/g, "_");
+}
+
+function safeDiagnosticMessage(value: string): string {
+  return value
+    .replace(/\bBearer\s+\S+/gi, "Bearer [REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]");
+}
+
+function logProviderError(providerId: string, error: unknown): void {
+  const details = providerErrorDiagnostics(error);
+  const fields = [`provider=${safeDiagnosticToken(providerId)}`];
+  if (details.name !== undefined)
+    fields.push(`name=${safeDiagnosticToken(details.name)}`);
+  if (details.status !== undefined) fields.push(`status=${details.status}`);
+  if (details.code !== undefined)
+    fields.push(`code=${safeDiagnosticToken(details.code)}`);
+  if (details.type !== undefined)
+    fields.push(`type=${safeDiagnosticToken(details.type)}`);
+  if (details.requestId !== undefined)
+    fields.push(`request_id=${safeDiagnosticToken(details.requestId)}`);
+  console.error(`[llm:error] ${fields.join(" ")}`);
+  if (details.message !== undefined)
+    console.error(
+      `[llm:error] message=${JSON.stringify(safeDiagnosticMessage(details.message))}`,
+    );
+
+  const cause = propertyFrom(error, "cause");
+  if (cause === undefined || cause === error) return;
+  const causeDetails = providerErrorDiagnostics(cause);
+  const causeFields: string[] = [];
+  if (causeDetails.name !== undefined)
+    causeFields.push(`name=${safeDiagnosticToken(causeDetails.name)}`);
+  if (causeDetails.status !== undefined)
+    causeFields.push(`status=${causeDetails.status}`);
+  if (causeDetails.code !== undefined)
+    causeFields.push(`code=${safeDiagnosticToken(causeDetails.code)}`);
+  if (causeDetails.type !== undefined)
+    causeFields.push(`type=${safeDiagnosticToken(causeDetails.type)}`);
+  if (causeDetails.requestId !== undefined)
+    causeFields.push(
+      `request_id=${safeDiagnosticToken(causeDetails.requestId)}`,
+    );
+  if (causeFields.length > 0)
+    console.error(`[llm:error] cause ${causeFields.join(" ")}`);
+  if (causeDetails.message !== undefined)
+    console.error(
+      `[llm:error] cause_message=${JSON.stringify(safeDiagnosticMessage(causeDetails.message))}`,
+    );
 }
 
 function isAbort(error: unknown): boolean {
@@ -109,6 +220,7 @@ export class LangChainModelProvider implements LlmProvider {
     readonly configuredModel: string,
     private readonly model: LangChainChatModel,
     private readonly now: () => number = () => performance.now(),
+    private readonly debug = false,
   ) {}
 
   pricingCandidates(request: ModelRequest) {
@@ -123,11 +235,22 @@ export class LangChainModelProvider implements LlmProvider {
     const startedAt = this.now();
     let response: AIMessage;
     try {
+      const normalizedMessages = messages(request);
+      if (this.debug) {
+        const characterCount = request.messages.reduce(
+          (total, message) => total + message.content.length,
+          0,
+        );
+        console.error(
+          `[llm:request] provider=${this.id} configured_model=${this.configuredModel} requested_model=${request.model} message_count=${request.messages.length} message_character_count=${characterCount}`,
+        );
+      }
       response = await this.model.invoke(
-        messages(request),
+        normalizedMessages,
         signal === undefined ? undefined : { signal },
       );
     } catch (error) {
+      if (this.debug) logProviderError(this.id, error);
       if (signal?.aborted || isAbort(error))
         throw new ProviderCancelledError(this.id);
       if (isTimeout(error))

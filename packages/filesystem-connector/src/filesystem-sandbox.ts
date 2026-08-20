@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import type { Dirent, Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { basename, dirname } from "node:path";
+import { dirname } from "node:path";
 import type {
   ConnectorFilePrecondition,
   ConnectorInvocationResult,

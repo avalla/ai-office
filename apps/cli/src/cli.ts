@@ -86,6 +86,7 @@ import {
   createDefaultModelProviderRegistry,
   ModelProviderConfigurationError,
 } from "@ai-office/llm-gateway/model-provider-registry.ts";
+import { LlmProviderError } from "@ai-office/llm-gateway/provider.ts";
 import {
   ConnectorRegistryError,
   UnsupportedConnectorError,
@@ -124,9 +125,10 @@ Commands:
   task:list --project <id>
   agent:sync --project <id> [--directory <path>]
   agent:list --project <id>
-  run:schedule --project <id> --task <id> --agent <id>
+  run:schedule --project <id> --task <id> --agent <id> [--resource <id> --operation <name> [--arguments <json>]]
   run:tick --project <id> [--capacity <integer>]
   run:list --project <id>
+  run:show --project <id> --run <id>
   pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
   budget:set --project <id> --limit <micros> [--currency <USD|EUR>]
   cost:list --project <id> [--group-by <project|task|agent|agent_run>]
@@ -168,6 +170,7 @@ const commands = [
   "run:schedule",
   "run:tick",
   "run:list",
+  "run:show",
   "pricing:set",
   "budget:set",
   "cost:list",
@@ -301,7 +304,8 @@ function formatKnownError(error: unknown): string | null {
     error instanceof UnsupportedConnectorError ||
     error instanceof UnsupportedConnectorOperationError ||
     error instanceof ConnectorExecutionUnavailableError ||
-    error instanceof FilesystemConnectorError
+    error instanceof FilesystemConnectorError ||
+    error instanceof LlmProviderError
   )
     return error.message;
   return null;

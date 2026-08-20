@@ -21,9 +21,14 @@ The current implementation on `main` includes:
 - deny-by-default capability policy and a project-scoped resource registry;
 - a filesystem connector with scoped reads, search, mutation simulation, and sandbox checks;
 - local approval plus trusted-local create, write, move, and delete execution;
+- structured agent-run action intents routed through the controlled-action gateway;
 - SQLite persistence, migrations, audit events, and daemon/CLI workflows.
 
-Agent runs still use a deterministic simulated executor. The automatic `agent runtime -> controlled actions` integration belongs to M6D-lite and is not implemented, so AI Office is not yet autonomous end to end.
+Runs without an action intent still use the deterministic simulated executor.
+Controlled runs can request or simulate an authorized connector action and return
+its action ID for inspection, approval, and execution. A real LLM tool loop and
+Git worktree manager are not implemented, so AI Office is not yet autonomous end
+to end.
 
 ## How it works
 
@@ -43,9 +48,19 @@ Install and validate the repository:
 
 ```bash
 bun install --frozen-lockfile
-bun run typecheck
-bun run test
+bun run check
 ```
+
+Offline project import, task management, governance, and simulated agent runs do
+not require an LLM credential. To use adaptive onboarding, copy the example
+environment file and configure one provider before starting the daemon:
+
+```bash
+cp .env.example .env
+# Edit .env and set the credential matching AI_OFFICE_LLM_MODEL.
+```
+
+Do not commit `.env`; it is ignored by Git.
 
 Start the daemon from the repository root:
 
@@ -139,6 +154,27 @@ The domain does not depend on Bun, SQLite, HTTP, Git, MCP, connector implementat
 
 ## Controlled actions
 
+An agent run can carry one structured controlled-action intent. After creating a
+task, synchronizing agents, registering a resource, and granting the agent a
+capability, schedule and execute the bridge with:
+
+```bash
+bun run cli -- run:schedule \
+  --project <project-id> \
+  --task <task-id> \
+  --agent <agent-id> \
+  --resource <resource-id> \
+  --operation filesystem.create \
+  --arguments '{"path":"notes/from-agent.txt","content":"Created through M6D-lite\n"}'
+
+bun run cli -- run:tick --project <project-id>
+bun run cli -- run:show --project <project-id> --run <run-id>
+```
+
+`run:tick` returns the action ID. Mutations remain simulations until the operator
+uses `action:approve` and `action:execute`; scheduling a run never grants a
+capability or bypasses approval.
+
 Filesystem mutations use this explicit workflow:
 
 ```text
@@ -223,12 +259,14 @@ The Rust/native filesystem work under `spikes/` is research evidence for future 
 Primary local validation is:
 
 ```bash
-bun run typecheck
-bun run test
+bun run check
 git diff --check
 ```
 
-CI installs dependencies with the frozen lockfile, runs strict TypeScript typechecking and the deterministic Vitest suite, and checks the committed diff for whitespace errors. Standard CI does not make paid provider calls.
+CI installs dependencies with the frozen lockfile, runs strict TypeScript
+typechecking, ESLint, and the deterministic Vitest suite, and checks the
+committed diff for whitespace errors. Standard CI does not make paid provider
+calls.
 
 Read [CODEX.md](CODEX.md) before changing code. It defines the operating contract, invariants, scope rules, and definition of done.
 
@@ -246,7 +284,11 @@ The [documentation index](docs/README.md) explains which documents are current a
 
 ## Roadmap
 
-The authoritative [development roadmap](docs/development/roadmap.md) records completed and future milestones. The next controlled-action milestone is M6D-lite, which will connect agent execution to the controlled-action gateway. Reusable memory, code intelligence, context assembly, productization, and hostile-local security hardening remain future work.
+The authoritative [development roadmap](docs/development/roadmap.md) records
+completed and future milestones. M6D-lite connects structured run intents to the
+controlled-action gateway. Reusable memory, code intelligence, autonomous
+context/tool selection, productization, and hostile-local security hardening
+remain future work.
 
 ## Security and current trust model
 
