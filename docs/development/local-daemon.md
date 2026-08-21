@@ -4,7 +4,8 @@ Milestone M2 moves authoritative project access behind one local process.
 
 ## Lifecycle
 
-Start the daemon from the project root:
+Start the daemon from the intended runtime root. In a simple setup this may be
+the repository being managed, but that is not required:
 
 ```bash
 bun run daemon
@@ -18,6 +19,13 @@ The daemon:
 - creates the Unix socket with owner-only permissions;
 - stops accepting new requests on SIGINT or SIGTERM;
 - drains active requests before removing the socket and closing SQLite.
+
+The production command derives the runtime root from its current working
+directory; it has no public data-directory flag. Importing a different source
+repository does not move the database or socket into that repository. Coding
+client commands independently target their explicit `--root`; client
+integration files there do not belong to the daemon runtime root unless the two
+paths coincide.
 
 ## Local protocol
 

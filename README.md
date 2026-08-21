@@ -61,7 +61,8 @@ repository-scoped `ai-office` skill uses the model session already authenticated
 by the host. Provider configuration in `.env.example` is an optional headless
 fallback only; never commit `.env`.
 
-Start the daemon from the repository root:
+Start the daemon from the directory that should act as its runtime root (for
+this checkout, the repository root):
 
 ```bash
 bun run daemon
@@ -73,7 +74,10 @@ In another terminal, check its health:
 bun run cli -- daemon:health
 ```
 
-The daemon creates and migrates `.ai-office/project.sqlite` and listens on `.ai-office/daemon.sock`.
+The daemon creates and migrates `.ai-office/project.sqlite` relative to the
+directory where it starts and listens on `.ai-office/daemon.sock`. See
+[Local storage and state](#local-storage-and-state) before deleting or resetting
+that directory.
 
 ## Conversational onboarding
 
@@ -250,15 +254,245 @@ bun run cli -- action:execute --project <project-id> --action <action-id>
 
 Simulation is not mutation. Every filesystem v2 mutation requires approval, execution performs fresh authorization and precondition checks, and one action can obtain at most one execution attempt. `action:show` redacts create/write content.
 
-## Storage model
+## Local storage and state
 
-The architecture separates three kinds of state:
+AI Office is primarily local to the directory where its daemon runs today. In
+the current implementation, the production daemon and CLI derive this **runtime
+root** from their current working directory; there is no public data-directory
+flag or environment setting. Starting the daemon creates and migrates
+`<runtime-root>/.ai-office/project.sqlite` before opening the socket. The
+production CLI is only a daemon client (except for local help), so the daemon
+owns operational access to that database. `bun run db:migrate` can also migrate
+the same current-working-directory database directly.
 
-- `<repository>/.ai-office/project.sqlite` is authoritative project state. It is implemented and currently stores projects, office-manifest revisions, tasks, onboarding, agents, runs, costs, governance, capabilities, controlled actions, and audit events.
-- `~/.ai-office/global.sqlite` is intended for reusable roles, patterns, and lessons across projects. An initial schema exists, but the daemon does not yet open or manage this database.
-- `<repository>/.ai-office/index.sqlite` is intended for regenerable code intelligence such as files, symbols, edges, chunks, and FTS. An initial schema exists, but indexing and daemon integration are future work.
+Three path roles are independent in the current implementation:
 
-Project migrations are versioned under `migrations/project/` and tracked in `schema_migration`. Reapplying the migration runner is idempotent with respect to that tracking table.
+- **Runtime root:** the daemon's operational location, selected by its current
+  working directory. It owns `.ai-office/project.sqlite`, SQLite sidecars,
+  `.ai-office/daemon.sock`, onboarding drafts, and generated Markdown.
+- **Source/import root:** the repository scanned by `project:import <path>`. The
+  scan records its canonical path in the current runtime database but does not
+  move or create that database under the imported repository.
+- **Integration root:** the target repository supplied explicitly to
+  `client:inspect`, `client:plan`, `client:apply`, and `client:validate` with
+  `--root <path>`. The instruction contract must be inside this root, and
+  `AGENTS.md` plus `CLAUDE.md` are inspected or managed there.
+
+These roots often coincide in a simple setup, but they are not required to do
+so. One runtime database can contain more than one imported project ID, and an
+integration root can differ from both the runtime root and the source/import
+root. When paths differ, back up each kind of state at the root that owns it.
+
+The intended three-database layout is:
+
+```text
+~/.ai-office/
+└── global.sqlite                 # schema exists; not created or used by the daemon
+
+<runtime-root>/
+└── .ai-office/
+    ├── project.sqlite            # active, authoritative operational state
+    ├── project.sqlite-wal        # SQLite sidecar while the database is open
+    ├── project.sqlite-shm        # SQLite sidecar while the database is open
+    ├── daemon.sock               # ephemeral local daemon IPC socket
+    ├── index.sqlite              # schema exists; not created or used by the daemon
+    ├── drafts/                   # optional onboarding proposals
+    └── generated/                # regenerable Markdown projections
+
+<integration-root>/
+├── .ai-office/
+│   └── agent-instructions.json   # optional coding-client contract input
+├── AGENTS.md                     # canonical project instructions
+└── CLAUDE.md                     # optional Claude import bridge
+```
+
+Only `project.sqlite` and its live SQLite sidecars plus `daemon.sock` are
+created by normal daemon operation today. Runtime-root drafts and generated
+files appear only when their corresponding workflow is used. Integration
+artifacts appear only under the separately selected integration root.
+`global.sqlite` and `index.sqlite` are shown to explain the planned boundary;
+production code does not currently open or create either file.
+
+For example, suppose AI Office starts from `/Users/alice/dev/ai-office`, then
+imports and integrates `/Users/alice/dev/my-product`:
+
+```bash
+bun run cli -- project:import /Users/alice/dev/my-product
+bun run cli -- client:inspect --client claude --root /Users/alice/dev/my-product
+```
+
+The resulting path ownership can be:
+
+```text
+/Users/alice/dev/ai-office/
+└── .ai-office/
+    ├── project.sqlite            # authoritative runtime database
+    └── daemon.sock
+
+/Users/alice/dev/my-product/
+├── .ai-office/
+│   └── agent-instructions.json   # integration contract input
+├── AGENTS.md
+└── CLAUDE.md
+```
+
+`my-product` is the source/import root and, for the client commands, the
+integration root. The runtime database remains under `ai-office`; importing or
+integrating `my-product` does not relocate it.
+
+| Path                                       | Scope and purpose                                                     | Current status                            | Authority and deletion impact                                                                                     |
+| ------------------------------------------ | --------------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `<runtime-root>/.ai-office/project.sqlite` | Projects known to this runtime and their operational state            | Active; opened and migrated by the daemon | **Authoritative, not a cache.** Deleting it removes persisted AI Office knowledge and history from this runtime.  |
+| `~/.ai-office/global.sqlite`               | Future user-level roles, patterns, and lessons shared across projects | Initial migration only; M7 is future      | Intended to be durable global knowledge, but AI Office writes no production data there today.                     |
+| `<runtime-root>/.ai-office/index.sqlite`   | Future per-project derived code intelligence                          | Initial migration only; M8 is future      | Intended to be regenerable from source and authoritative metadata; there is no populated index to preserve today. |
+
+Project migrations are versioned under `migrations/project/`, applied
+transactionally, and tracked in `schema_migration`. SQLite runs in WAL mode;
+while the daemon is running, committed data may still be represented by the
+`-wal` file, so do not copy or delete the main database in isolation.
+
+### Authoritative project state
+
+`project.sqlite` stores the information AI Office cannot reconstruct merely by
+scanning source code. In user-facing groups, that currently includes:
+
+- project records, imported-source metadata, scan history, detected and
+  user-supplied profile knowledge, onboarding state, and immutable office
+  manifest revisions;
+- tasks, roles, agents, scheduled runs, run results and events, and task locks;
+- project budgets and reservations, normalized model usage, costs, and the
+  pricing versions used to calculate them;
+- milestones, requirements, ADR records, reviews, and governance approvals;
+- registered resource metadata and credential references (not raw
+  credentials), capability grants, controlled-action requests and simulations,
+  local action approvals, execution records, and audit events.
+
+Deleting `<runtime-root>/.ai-office/project.sqlite` is therefore effectively a
+reset of the AI Office state held by that runtime. Deleting the entire
+`<runtime-root>/.ai-office/` also removes that database and may discard drafts
+or generated projections. It does not delete the source repository outside
+`.ai-office/`, but it can remove authoritative state for every project imported
+into that runtime database. Client-contract inputs are affected only when the
+integration root is the same directory as the runtime root.
+
+For example, if AI Office is run separately with each repository as its runtime
+root, the databases are independent:
+
+```text
+/Users/alice/dev/my-project/
+└── .ai-office/
+    └── project.sqlite            # state in the my-project runtime
+
+/Users/alice/dev/project-b/
+└── .ai-office/
+    └── project.sqlite            # independent project-b runtime
+```
+
+By contrast, `~/.ai-office/global.sqlite` is user-scoped rather than
+repository-scoped. Its initial schema defines reusable roles, patterns, and
+lessons, but the daemon does not use it and reusable memory remains future M7
+work. No production AI Office state is currently written under the user's home
+directory by this storage subsystem.
+
+### Regenerable, generated, and ephemeral files
+
+- `index.sqlite` is the future M8 code-intelligence boundary. Its initial schema
+  covers indexed files, symbols, code edges, chunks, and FTS. No production
+  indexer opens or populates it today. Once implemented, it is designed to be
+  derived data, unlike `project.sqlite`.
+- `daemon.sock` is an ephemeral owner-only Unix socket. A clean daemon shutdown
+  removes it; startup replaces an unreachable stale socket. It is not backup
+  data.
+- `project.sqlite-wal` and `project.sqlite-shm` are SQLite runtime sidecars, not
+  independent databases. Never remove them while the daemon is running.
+- `drafts/office-manifest.json` is an optional skill-created proposal. After
+  `office:apply`, the accepted manifest revision is authoritative in SQLite;
+  deleting an unapplied draft still loses that proposal.
+- `generated/project-profile.md` and `generated/governance.md` are
+  deterministic, one-way projections. They can be recreated with the
+  corresponding export commands and are never read back as authoritative
+  state.
+- The current worktree manager only simulates paths such as
+  `.ai-office/worktrees/<run-id>`; normal production runs do not create those
+  directories yet.
+
+### Runtime state versus coding-client files
+
+The runtime root's `.ai-office/` is daemon operational material and is
+conceptually separate from source such as `src/` and `docs/`. Coding-client
+integration is another concern and may target a different repository. Relative
+to the explicit `client:* --root`, the workflow may use
+`.ai-office/agent-instructions.json` as its contract input, create an
+AI Office-owned `AGENTS.md` when none exists, or maintain a marked import bridge
+inside `CLAUDE.md`.
+
+AI Office never blindly overwrites a user-owned `AGENTS.md`; it reports that
+file as unmanaged. Existing Claude instructions are preserved and only the
+identifiable managed bridge is created or updated after approval of the exact
+plan hash. These files configure how a client consumes project instructions;
+they are not SQLite runtime state, an office manifest, a capability grant, or
+agent authorization. Inspect their ownership and Git status before removing
+them. See the [client integration guide](docs/development/agent-client-integration.md)
+for the complete ownership and validation contract.
+
+This repository's `.gitignore` deliberately ignores local SQLite files and
+sidecars, sockets, `generated/`, and `drafts/` under `.ai-office/`; it does not
+ignore the entire directory. The optional `agent-instructions.json` contract is
+not ignored by that rule. Repository-owned `AGENTS.md`, `CLAUDE.md`, and
+`.agents/skills/` may intentionally be versioned. Treat runtime database files
+as local state and decide separately which client-integration artifacts belong
+in source control.
+
+### Backup, reset, and re-onboarding
+
+There is no built-in backup/restore or legacy-state import command yet; those
+remain future productization work. Before a reset, inspect the current runtime
+with the relevant `project:*`, `office:*`, `task:*`, `run:*`, `cost:*`,
+governance, capability, and action commands. Then stop the foreground daemon
+with `Ctrl-C` so it closes SQLite and removes the socket. From the verified
+runtime root, make a filesystem backup:
+
+```bash
+cp -R .ai-office ../my-project-ai-office-backup
+```
+
+At minimum preserve `project.sqlite`. Copying the whole runtime directory after
+a clean shutdown also preserves unapplied office drafts and generated
+projections. It preserves the optional client contract only when the integration
+root and runtime root coincide; otherwise inspect and back up
+`<integration-root>/.ai-office/agent-instructions.json`, `AGENTS.md`, and
+`CLAUDE.md` separately according to their ownership. Do not copy only
+`project.sqlite` while the daemon is running because its WAL may contain
+committed state. Keep the backup outside the `.ai-office/` directory you intend
+to reset, verify that the copy exists, and only then remove or replace the
+original local state.
+
+A clean re-onboarding sequence is conceptually:
+
+```text
+inspect existing AI Office state
+  -> stop the daemon
+  -> back up the runtime root's .ai-office/
+  -> reset only that local runtime state
+  -> start the current AI Office version
+  -> project:import
+  -> office onboarding
+  -> coding-client integration, if desired
+```
+
+`project:import` rescans the source repository and recreates detected project
+facts in the current database. It does **not** recover previous tasks, runs,
+manifest revisions, budgets or costs, governance history, capability grants,
+controlled-action approvals or executions, or audit events. Re-importing source
+and restoring operational state are different operations.
+
+Likewise, re-onboarding and authorization are separate. AI Office has no legacy
+state migrator today, and a future migration must not treat an archived
+capability grant, action approval/execution authorization, credential reference,
+or ephemeral authorization state as trusted merely because it appeared in an
+old database. Restore old operational state only through a future documented
+compatibility path; otherwise retain the backup as the historical record and
+re-establish current authorization explicitly.
 
 ## Repository structure
 
@@ -303,19 +537,20 @@ calls.
 
 ## Coding client integration
 
-AI Office uses `AGENTS.md` as the canonical project operating contract. Codex
-loads it natively; Claude Code can use a minimal `CLAUDE.md` import bridge. Client
-detection and inspection are passive, and configuration mutation requires an
-explicit hash from the exact proposed plan:
+Within the selected integration root, AI Office uses `AGENTS.md` as the
+canonical project operating contract. Codex loads it natively; Claude Code can
+use a minimal `CLAUDE.md` import bridge. Client detection and inspection are
+passive, and configuration mutation requires an explicit hash from the exact
+proposed plan:
 
 ```bash
 bun run cli -- client:detect
-bun run cli -- client:inspect --client claude --root /path/to/project
-bun run cli -- client:plan --client claude --root /path/to/project \
+bun run cli -- client:inspect --client claude --root /path/to/integration-root
+bun run cli -- client:plan --client claude --root /path/to/integration-root \
   --contract .ai-office/agent-instructions.json
-bun run cli -- client:apply --client claude --root /path/to/project \
+bun run cli -- client:apply --client claude --root /path/to/integration-root \
   --contract .ai-office/agent-instructions.json --approve <plan-hash>
-bun run cli -- client:validate --client claude --root /path/to/project
+bun run cli -- client:validate --client claude --root /path/to/integration-root
 ```
 
 AI Office never overwrites user-owned `AGENTS.md`. Existing Claude instructions
