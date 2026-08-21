@@ -135,13 +135,20 @@ writes. No database transaction spans those filesystem operations.
 
 The architecture distinguishes three databases by authority and rebuildability:
 
-| Database                                 | Responsibility                                                                                                                                                   | Current implementation                                                       |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `<repository>/.ai-office/project.sqlite` | Authoritative project state: projects, office-manifest revisions, onboarding, tasks, agents/runs, costs, governance, capabilities, controlled actions, and audit | Implemented, opened and migrated by the daemon and project migration command |
-| `~/.ai-office/global.sqlite`             | Global reusable memory: roles, patterns, playbooks, and lessons shared across projects                                                                           | Initial schema only; not opened or managed by the daemon                     |
-| `<repository>/.ai-office/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                 | Initial schema only; indexing and daemon integration are future work         |
+| Database                                   | Responsibility                                                                                                                                                           | Current implementation                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `<runtime-root>/.ai-office/project.sqlite` | Authoritative state for the projects known to that daemon runtime: office manifests, onboarding, tasks, agents/runs, costs, governance, capabilities, actions, and audit | Implemented, opened and migrated by the daemon and project migration command |
+| `~/.ai-office/global.sqlite`               | Global reusable memory: roles, patterns, and lessons shared across projects                                                                                              | Initial schema only; not opened, created, or managed by the daemon           |
+| `<runtime-root>/.ai-office/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                         | Initial schema only; indexing and daemon integration are future work         |
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
+
+The production daemon derives `runtime-root` from its current working directory;
+there is no public data-directory option. An imported repository path may differ
+from that root, and `project:import` stores the result in the current daemon's
+database rather than creating a database under the imported repository. See the
+[storage design](storage.md) and the README's
+[local storage guide](../../README.md#local-storage-and-state).
 
 ## Current trust model
 
