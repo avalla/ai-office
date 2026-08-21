@@ -61,7 +61,8 @@ repository-scoped `ai-office` skill uses the model session already authenticated
 by the host. Provider configuration in `.env.example` is an optional headless
 fallback only; never commit `.env`.
 
-Start the daemon from the repository root:
+Start the daemon from the directory that should act as its runtime root (for
+this checkout, the repository root):
 
 ```bash
 bun run daemon
@@ -264,13 +265,23 @@ production CLI is only a daemon client (except for local help), so the daemon
 owns operational access to that database. `bun run db:migrate` can also migrate
 the same current-working-directory database directly.
 
-This runtime root is often the repository whose office is being managed, but
-the two paths are not forced to match. In particular,
-`project:import /path/to/other-repository` scans that repository and stores its
-project record in the **current daemon's** `project.sqlite`; it does not create
-a database under the imported path. One runtime database can therefore contain
-more than one imported project ID. When the paths differ, back up the runtime
-root's `.ai-office/`, not merely the imported source repository.
+Three path roles are independent in the current implementation:
+
+- **Runtime root:** the daemon's operational location, selected by its current
+  working directory. It owns `.ai-office/project.sqlite`, SQLite sidecars,
+  `.ai-office/daemon.sock`, onboarding drafts, and generated Markdown.
+- **Source/import root:** the repository scanned by `project:import <path>`. The
+  scan records its canonical path in the current runtime database but does not
+  move or create that database under the imported repository.
+- **Integration root:** the target repository supplied explicitly to
+  `client:inspect`, `client:plan`, `client:apply`, and `client:validate` with
+  `--root <path>`. The instruction contract must be inside this root, and
+  `AGENTS.md` plus `CLAUDE.md` are inspected or managed there.
+
+These roots often coincide in a simple setup, but they are not required to do
+so. One runtime database can contain more than one imported project ID, and an
+integration root can differ from both the runtime root and the source/import
+root. When paths differ, back up each kind of state at the root that owns it.
 
 The intended three-database layout is:
 
@@ -286,15 +297,48 @@ The intended three-database layout is:
     ├── daemon.sock               # ephemeral local daemon IPC socket
     ├── index.sqlite              # schema exists; not created or used by the daemon
     ├── drafts/                   # optional onboarding proposals
-    ├── generated/                # regenerable Markdown projections
-    └── agent-instructions.json   # optional coding-client contract input
+    └── generated/                # regenerable Markdown projections
+
+<integration-root>/
+├── .ai-office/
+│   └── agent-instructions.json   # optional coding-client contract input
+├── AGENTS.md                     # canonical project instructions
+└── CLAUDE.md                     # optional Claude import bridge
 ```
 
 Only `project.sqlite` and its live SQLite sidecars plus `daemon.sock` are
-created by normal daemon operation today. The remaining project-local entries
-appear only when their corresponding workflow is used. `global.sqlite` and
-`index.sqlite` are shown to explain the planned boundary; production code does
-not currently open or create either file.
+created by normal daemon operation today. Runtime-root drafts and generated
+files appear only when their corresponding workflow is used. Integration
+artifacts appear only under the separately selected integration root.
+`global.sqlite` and `index.sqlite` are shown to explain the planned boundary;
+production code does not currently open or create either file.
+
+For example, suppose AI Office starts from `/Users/alice/dev/ai-office`, then
+imports and integrates `/Users/alice/dev/my-product`:
+
+```bash
+bun run cli -- project:import /Users/alice/dev/my-product
+bun run cli -- client:inspect --client claude --root /Users/alice/dev/my-product
+```
+
+The resulting path ownership can be:
+
+```text
+/Users/alice/dev/ai-office/
+└── .ai-office/
+    ├── project.sqlite            # authoritative runtime database
+    └── daemon.sock
+
+/Users/alice/dev/my-product/
+├── .ai-office/
+│   └── agent-instructions.json   # integration contract input
+├── AGENTS.md
+└── CLAUDE.md
+```
+
+`my-product` is the source/import root and, for the client commands, the
+integration root. The runtime database remains under `ai-office`; importing or
+integrating `my-product` does not relocate it.
 
 | Path                                       | Scope and purpose                                                     | Current status                            | Authority and deletion impact                                                                                     |
 | ------------------------------------------ | --------------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -326,9 +370,10 @@ scanning source code. In user-facing groups, that currently includes:
 Deleting `<runtime-root>/.ai-office/project.sqlite` is therefore effectively a
 reset of the AI Office state held by that runtime. Deleting the entire
 `<runtime-root>/.ai-office/` also removes that database and may discard drafts
-or client-contract inputs. It does not delete the source repository outside
+or generated projections. It does not delete the source repository outside
 `.ai-office/`, but it can remove authoritative state for every project imported
-into that runtime database.
+into that runtime database. Client-contract inputs are affected only when the
+integration root is the same directory as the runtime root.
 
 For example, if AI Office is run separately with each repository as its runtime
 root, the databases are independent:
@@ -373,9 +418,10 @@ directory by this storage subsystem.
 
 ### Runtime state versus coding-client files
 
-`.ai-office/` is AI Office runtime/project material and is conceptually separate
-from source such as `src/` and `docs/`. Coding-client integration is another
-separate concern: an integration workflow may use
+The runtime root's `.ai-office/` is daemon operational material and is
+conceptually separate from source such as `src/` and `docs/`. Coding-client
+integration is another concern and may target a different repository. Relative
+to the explicit `client:* --root`, the workflow may use
 `.ai-office/agent-instructions.json` as its contract input, create an
 AI Office-owned `AGENTS.md` when none exists, or maintain a marked import bridge
 inside `CLAUDE.md`.
@@ -410,12 +456,16 @@ runtime root, make a filesystem backup:
 cp -R .ai-office ../my-project-ai-office-backup
 ```
 
-At minimum preserve `project.sqlite`. Copying the whole directory after a clean
-shutdown also preserves any unapplied drafts and optional client contract. Do
-not copy only `project.sqlite` while the daemon is running because its WAL may
-contain committed state. Keep the backup outside the `.ai-office/` directory
-you intend to reset, verify that the copy exists, and only then remove or
-replace the original local state.
+At minimum preserve `project.sqlite`. Copying the whole runtime directory after
+a clean shutdown also preserves unapplied office drafts and generated
+projections. It preserves the optional client contract only when the integration
+root and runtime root coincide; otherwise inspect and back up
+`<integration-root>/.ai-office/agent-instructions.json`, `AGENTS.md`, and
+`CLAUDE.md` separately according to their ownership. Do not copy only
+`project.sqlite` while the daemon is running because its WAL may contain
+committed state. Keep the backup outside the `.ai-office/` directory you intend
+to reset, verify that the copy exists, and only then remove or replace the
+original local state.
 
 A clean re-onboarding sequence is conceptually:
 
@@ -487,19 +537,20 @@ calls.
 
 ## Coding client integration
 
-AI Office uses `AGENTS.md` as the canonical project operating contract. Codex
-loads it natively; Claude Code can use a minimal `CLAUDE.md` import bridge. Client
-detection and inspection are passive, and configuration mutation requires an
-explicit hash from the exact proposed plan:
+Within the selected integration root, AI Office uses `AGENTS.md` as the
+canonical project operating contract. Codex loads it natively; Claude Code can
+use a minimal `CLAUDE.md` import bridge. Client detection and inspection are
+passive, and configuration mutation requires an explicit hash from the exact
+proposed plan:
 
 ```bash
 bun run cli -- client:detect
-bun run cli -- client:inspect --client claude --root /path/to/project
-bun run cli -- client:plan --client claude --root /path/to/project \
+bun run cli -- client:inspect --client claude --root /path/to/integration-root
+bun run cli -- client:plan --client claude --root /path/to/integration-root \
   --contract .ai-office/agent-instructions.json
-bun run cli -- client:apply --client claude --root /path/to/project \
+bun run cli -- client:apply --client claude --root /path/to/integration-root \
   --contract .ai-office/agent-instructions.json --approve <plan-hash>
-bun run cli -- client:validate --client claude --root /path/to/project
+bun run cli -- client:validate --client claude --root /path/to/integration-root
 ```
 
 AI Office never overwrites user-owned `AGENTS.md`. Existing Claude instructions

@@ -2,7 +2,7 @@
 
 AI Office separates authoritative project state, global reusable memory, and regenerable code intelligence. See the [architecture overview](overview.md) for the system-level boundary.
 
-## Runtime-root resolution
+## Runtime, import, and integration roots
 
 The production daemon and CLI use their current working directory as the
 runtime root. There is no public data-directory flag or environment setting.
@@ -12,11 +12,21 @@ The active database path is therefore:
 <runtime-root>/.ai-office/project.sqlite
 ```
 
-The runtime root and an imported source repository are usually conceptually
-related, but current code does not require them to be the same path.
-`project:import /other/repository` records that repository in the current
-daemon's database; it does not create `/other/repository/.ai-office/`. A single
-runtime database may contain several imported project IDs.
+The current path model has three independent roles:
+
+- the **runtime root** above owns the daemon database, socket, onboarding drafts,
+  and generated Markdown;
+- the **source/import root** is the canonical repository path scanned by
+  `project:import <path>` and recorded in the current runtime database;
+- the **integration root** is supplied separately through `client:* --root` and
+  contains the project instruction contract plus any `AGENTS.md` and
+  `CLAUDE.md` inspected or managed by that workflow.
+
+The three roots often coincide, but current code does not require that.
+`project:import /other/repository` does not create
+`/other/repository/.ai-office/project.sqlite`, and a single runtime database may
+contain several imported project IDs. Likewise, client integration never moves
+the runtime database into its integration root.
 
 ## `project.sqlite` — implemented and authoritative
 
@@ -73,16 +83,22 @@ clean shutdown, and replaces an unreachable stale socket. SQLite may maintain
 files must not be deleted or separated from the main database during live
 operation.
 
-Onboarding may use `.ai-office/drafts/office-manifest.json`, while project and
-governance exports write deterministic Markdown under `.ai-office/generated/`.
-Applied manifest revisions and the data behind those projections remain
-authoritative in SQLite. Coding-client integration may consume
-`.ai-office/agent-instructions.json`, but that contract plus repository-level
-`AGENTS.md` and `CLAUDE.md` are integration artifacts governed by their own
-ownership rules, not database state or runtime authorization.
+Onboarding may use
+`<runtime-root>/.ai-office/drafts/office-manifest.json`, while project and
+governance exports write deterministic Markdown under
+`<runtime-root>/.ai-office/generated/`. Applied manifest revisions and the data
+behind those projections remain authoritative in SQLite.
+
+Coding-client integration instead consumes an optional
+`<integration-root>/.ai-office/agent-instructions.json` contract and inspects or
+manages `<integration-root>/AGENTS.md` and `<integration-root>/CLAUDE.md`. These
+are integration artifacts governed by their own ownership rules, not database
+state or runtime authorization.
 
 There is no built-in backup/restore or legacy-state import command. A filesystem
 backup should be taken after a clean daemon shutdown so SQLite and its WAL are
 consistent. Re-running `project:import` rebuilds detected repository facts; it
 does not restore tasks, runs, manifests, governance, costs, capabilities,
-controlled actions, approvals, executions, or audit history.
+controlled actions, approvals, executions, or audit history. When the
+integration root differs, its contract and instruction files require a separate
+ownership-aware backup decision.

@@ -40,10 +40,13 @@ resource adapters
 
 External coding clients use a separate application port. AI Office compiles a
 tool-independent operating policy and project instruction contract into the
-canonical `AGENTS.md` artifact; Codex consumes it natively and Claude uses a
-minimal managed import bridge. Detection and filesystem/configuration knowledge
-remain in infrastructure adapters. Client integration does not grant runtime
-capabilities or move host reasoning into runtime authority.
+canonical `AGENTS.md` artifact inside the explicitly supplied integration root;
+Codex consumes it natively and Claude uses a minimal managed import bridge in
+that same root. Detection and filesystem/configuration knowledge remain in
+infrastructure adapters. The integration root may differ from both the daemon
+runtime root and the repository scanned by `project:import`. Client integration
+does not grant runtime capabilities or move host reasoning into runtime
+authority.
 
 The M6D-lite bridge routes a structured action intent from an agent run through
 an executor-facing gateway. The agent-runtime package depends on the gateway
@@ -144,10 +147,13 @@ The architecture distinguishes three databases by authority and rebuildability:
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
 
 The production daemon derives `runtime-root` from its current working directory;
-there is no public data-directory option. An imported repository path may differ
-from that root, and `project:import` stores the result in the current daemon's
-database rather than creating a database under the imported repository. See the
-[storage design](storage.md) and the README's
+there is no public data-directory option. The source/import root is the
+repository path passed to `project:import`; importing stores scan state in the
+current daemon's database rather than creating a database under that repository.
+The independently supplied `client:* --root` is the integration root containing
+the instruction contract and any managed `AGENTS.md` or `CLAUDE.md`. These three
+roots may coincide but do not have to. See the [storage design](storage.md) and
+the README's
 [local storage guide](../../README.md#local-storage-and-state).
 
 ## Current trust model

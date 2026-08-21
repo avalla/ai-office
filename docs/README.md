@@ -9,7 +9,7 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Agent client integration](development/agent-client-integration.md): current Codex/Claude detection, planning, ownership, apply, and validation contract.
 - [Architecture overview](architecture/overview.md): current system boundaries, implemented surfaces, storage responsibilities, and trust model.
 - [Storage design](architecture/storage.md): current database ownership,
-  authority, rebuildability, and runtime-root path semantics.
+  authority, rebuildability, and runtime/import/integration-root path semantics.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
