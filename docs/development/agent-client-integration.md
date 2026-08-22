@@ -80,6 +80,21 @@ bun run cli -- client:apply \
 bun run cli -- client:validate --client claude --root /path/to/project
 ```
 
+Removal follows the same plan-hash approval contract without requiring the
+original installation contract:
+
+```bash
+bun run cli -- client:uninstall --client claude --root /path/to/project
+bun run cli -- client:uninstall --client claude --root /path/to/project \
+  --approve <plan-hash>
+```
+
+Claude removal deletes an AI Office-owned bridge file or removes only the
+marked block from a merged `CLAUDE.md`. A user-owned direct `@AGENTS.md` import
+is preserved. Codex removal deletes `AGENTS.md` only when it carries the AI
+Office ownership header. Because the canonical file is shared, uninstall
+Claude before Codex when removing both integrations.
+
 The contract file must be a regular JSON file inside the integration root and is
 limited to 256 KiB.
 
@@ -133,7 +148,7 @@ instruction files, but passive scanning never mutates them.
 
 ## Deliberate limitations
 
-The first slice does not modify `~/.codex/config.toml`, user Claude settings, or
-the developer's real home in tests. It does not launch clients to probe versions,
-persist setup choices, remove integrations, support other clients, or assemble
+The implementation does not modify `~/.codex/config.toml`, user Claude
+settings, or the developer's real home in tests. It does not launch clients to
+probe versions, persist setup choices, support other clients, or assemble
 internal-agent prompts. Those concerns require separate evidence and authority.

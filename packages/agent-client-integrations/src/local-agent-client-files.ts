@@ -104,6 +104,29 @@ export class LocalAgentClientFiles {
           `Agent client instruction changed after planning: ${operation.relativePath}`,
         );
 
+      if (operation.kind === "delete") {
+        this.hooks.beforeCommit?.(operation.relativePath);
+        const latest = this.read(rootPath, operation.relativePath);
+        if ((latest.sha256 ?? null) !== operation.expectedSha256)
+          throw new AgentClientIntegrationError(
+            `Agent client instruction changed during apply: ${operation.relativePath}`,
+          );
+        try {
+          unlinkSync(targetPath);
+        } catch (error) {
+          if (
+            error instanceof Error &&
+            "code" in error &&
+            (error.code === "ENOENT" || error.code === "EISDIR")
+          )
+            throw new AgentClientIntegrationError(
+              `Agent client instruction changed during apply: ${operation.relativePath}`,
+            );
+          throw error;
+        }
+        continue;
+      }
+
       const temporaryPath = join(
         dirname(targetPath),
         `.${basename(operation.relativePath)}.ai-office-${randomUUID()}.tmp`,

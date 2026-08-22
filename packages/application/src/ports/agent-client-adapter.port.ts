@@ -35,7 +35,7 @@ export interface AgentClientInspection {
   issues: readonly AgentClientIntegrationIssue[];
 }
 
-export interface AgentClientFileOperation {
+interface AgentClientFileWriteOperation {
   kind: "create" | "update";
   relativePath: string;
   expectedSha256: string | null;
@@ -44,8 +44,28 @@ export interface AgentClientFileOperation {
   summary: string;
 }
 
+interface AgentClientFileDeleteOperation {
+  kind: "delete";
+  relativePath: string;
+  expectedSha256: string;
+  ownershipAfter: "absent";
+  summary: string;
+}
+
+export type AgentClientFileOperation =
+  AgentClientFileWriteOperation | AgentClientFileDeleteOperation;
+
+export interface AgentClientFileChange {
+  kind: AgentClientFileOperation["kind"];
+  relativePath: string;
+  expectedSha256: string | null;
+  ownershipAfter: "absent" | "ai_office_owned" | "merged";
+  summary: string;
+}
+
 export interface AgentClientIntegrationDraft {
   contractVersion: 1;
+  action: "install" | "uninstall";
   clientId: AgentClientId;
   rootPath: string;
   operations: readonly AgentClientFileOperation[];
@@ -68,6 +88,7 @@ export interface AgentClientAdapter {
     rootPath: string;
     canonicalInstructions: string;
   }): Promise<AgentClientIntegrationDraft>;
+  planUninstall(rootPath: string): Promise<AgentClientIntegrationDraft>;
   apply(plan: AgentClientIntegrationDraft): Promise<void>;
   validate(rootPath: string): Promise<AgentClientValidation>;
 }

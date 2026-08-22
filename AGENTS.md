@@ -32,7 +32,7 @@ A proposed mechanism is not automatically an architectural decision. When reposi
 - The domain must not import Bun, SQLite, HTTP, Git, MCP, connector implementations, LLM providers, or provider SDKs.
 - Application services own use-case orchestration. Infrastructure adapters implement application ports.
 - Authoritative project state lives in SQLite; generated Markdown is a deterministic, one-way projection.
-- Stateful product commands go through the local daemon. The CLI is a daemon client, except for local help output.
+- Stateful product commands go through the local daemon. The CLI is a daemon client, except for local help output and the explicitly offline `runtime:purge` lifecycle command, which refuses to run while the daemon is reachable.
 - Protected local or external resources are never exposed directly to agents. Side effects cross controlled application and connector boundaries.
 - Errors at domain and application boundaries are typed. External output must not expose secrets, raw credentials, or internal stack traces.
 

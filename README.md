@@ -44,7 +44,11 @@ Codex / compatible host
   -> SQLite repositories / LLM gateway / controlled connectors
 ```
 
-Stateful CLI commands go through the daemon. Short writes use application-level transactions; provider calls, scans, simulated agent work, and filesystem side effects do not run inside an open SQLite transaction.
+Stateful product commands go through the daemon. Short writes use
+application-level transactions; provider calls, scans, simulated agent work,
+and filesystem side effects do not run inside an open SQLite transaction. Help
+and the destructive `runtime:purge` lifecycle command run locally; purge is
+available only while the daemon is stopped.
 
 ## Quick start
 
@@ -443,10 +447,10 @@ not ignored by that rule. Repository-owned `AGENTS.md`, `CLAUDE.md`, and
 as local state and decide separately which client-integration artifacts belong
 in source control.
 
-### Backup, reset, and re-onboarding
+### Backup, purge, and re-onboarding
 
 There is no built-in backup/restore or legacy-state import command yet; those
-remain future productization work. Before a reset, inspect the current runtime
+remain future productization work. Before a purge, inspect the current runtime
 with the relevant `project:*`, `office:*`, `task:*`, `run:*`, `cost:*`,
 governance, capability, and action commands. Then stop the foreground daemon
 with `Ctrl-C` so it closes SQLite and removes the socket. From the verified
@@ -464,8 +468,21 @@ root and runtime root coincide; otherwise inspect and back up
 `CLAUDE.md` separately according to their ownership. Do not copy only
 `project.sqlite` while the daemon is running because its WAL may contain
 committed state. Keep the backup outside the `.ai-office/` directory you intend
-to reset, verify that the copy exists, and only then remove or replace the
-original local state.
+to purge and verify that the copy exists. Then generate and inspect the local
+purge plan while the daemon remains stopped:
+
+```bash
+bun run cli -- runtime:purge
+bun run cli -- runtime:purge --approve <plan-hash>
+```
+
+The plan hash binds the current runtime artifacts. A concurrent change makes
+the approval stale. Purge removes only known runtime-owned SQLite files and
+sidecars, a stale daemon socket, drafts, and generated projections. It preserves
+unknown `.ai-office/` entries, including an integration contract, and removes
+the state directory only when it becomes empty. It does not remove source,
+`node_modules`, Bun, global user configuration, or files in a distinct
+integration root.
 
 A clean re-onboarding sequence is conceptually:
 
@@ -473,7 +490,7 @@ A clean re-onboarding sequence is conceptually:
 inspect existing AI Office state
   -> stop the daemon
   -> back up the runtime root's .ai-office/
-  -> reset only that local runtime state
+  -> purge only that local runtime state
   -> start the current AI Office version
   -> project:import
   -> office onboarding
@@ -559,6 +576,22 @@ user-owned canonical file remains `unmanaged`: the client can consume it, but AI
 Office does not claim that the supplied contract was installed. These commands
 do not modify global Codex/Claude configuration and remain separate from project
 onboarding. See the [client integration guide](docs/development/agent-client-integration.md).
+
+Uninstallation uses the same inspect-plan-approve discipline. Running the
+command without `--approve` returns the exact removal plan and hash; passing
+that hash applies only ownership-safe changes:
+
+```bash
+bun run cli -- client:uninstall --client claude --root /path/to/integration-root
+bun run cli -- client:uninstall --client claude --root /path/to/integration-root \
+  --approve <plan-hash>
+```
+
+Claude uninstall removes only its managed bridge. Codex uninstall removes an
+AI Office-owned canonical `AGENTS.md`; user-owned direct imports and instruction
+files are preserved. To remove both managed integrations, uninstall Claude
+first and Codex second so Claude is never left pointing at a removed canonical
+file.
 
 Read [AGENTS.md](AGENTS.md) before changing code. It defines the canonical
 operating contract, invariants, scope rules, and definition of done.

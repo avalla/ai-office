@@ -80,6 +80,8 @@ Status: implemented on `main`.
 - health and status endpoint;
 - append-only lifecycle and command audit events;
 - graceful shutdown and stale socket recovery.
+- deterministic offline runtime purge with exact plan-hash approval and
+  preservation of foreign `.ai-office/` entries.
 
 ## M3 — Agent runtime
 
@@ -260,12 +262,12 @@ Status: implemented.
 - passive detection, inspection, deterministic planning, explicit plan-hash
   approval, preconditioned atomic apply, and validation;
 - preservation of user-owned canonical instructions and managed Claude bridge;
+- ownership-aware, plan-hash-approved client integration removal;
 - daemon-backed `client:*` machine interface, separate from project onboarding;
 - no global configuration mutation or persistence in the first slice.
 
-Client version probing, machine preference persistence, integration removal,
-additional coding clients, and internal-agent context composition remain future
-work.
+Client version probing, machine preference persistence, additional coding
+clients, and internal-agent context composition remain future work.
 
 Deferred until after M6:
 

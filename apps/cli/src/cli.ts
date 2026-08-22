@@ -140,6 +140,8 @@ Commands:
   client:plan --client <codex|claude> --root <path> --contract <file>
   client:apply --client <codex|claude> --root <path> --contract <file> --approve <plan-hash>
   client:validate --client <codex|claude> --root <path>
+  client:uninstall --client <codex|claude> --root <path> [--approve <plan-hash>]
+  runtime:purge [--approve <plan-hash>]  # local; daemon must be stopped
   task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
   task:list --project <id>
   agent:sync --project <id> [--directory <path>]
@@ -175,6 +177,8 @@ Commands:
   action:list --project <id>
   action:show --project <id> --action <id>`;
 
+// runtime:purge is intentionally absent: the daemon client handles that
+// destructive offline lifecycle boundary before protocol dispatch.
 const commands = [
   "project:create",
   "project:import",
@@ -192,6 +196,7 @@ const commands = [
   "client:plan",
   "client:apply",
   "client:validate",
+  "client:uninstall",
   "task:create",
   "task:list",
   "agent:sync",
