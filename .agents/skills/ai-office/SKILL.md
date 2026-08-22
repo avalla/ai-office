@@ -77,8 +77,11 @@ and run `client:validate`. Never bypass a conflict, overwrite user-owned
 For a coding-client integration, run `client:uninstall` without `--approve`,
 present the affected paths, ownership outcomes, warnings, and plan hash, and
 obtain explicit confirmation before rerunning it with that exact hash. Preserve
-all user-owned files and sections. When removing both integrations, uninstall
-Claude before Codex because `AGENTS.md` is shared.
+all user-owned files and sections. Codex uninstall must preserve managed
+`AGENTS.md` while either a managed Claude bridge or a user-owned direct import
+still depends on it. When removing both managed integrations, uninstall Claude
+before Codex because `AGENTS.md` is shared; never rewrite a user-owned direct
+import automatically.
 
 For runtime state, first ensure the user understands that `project.sqlite` is
 authoritative and that purge is not restoreable without a filesystem backup.

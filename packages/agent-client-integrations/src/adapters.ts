@@ -10,6 +10,7 @@ import type {
   AgentClientValidation,
 } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import { managedProjectInstructionsHeader } from "@ai-office/application/agent-client/instruction-compiler.ts";
+import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import {
   LocalAgentClientFiles,
   PathExecutableLocator,
@@ -280,6 +281,7 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
   async planUninstall(rootPath: string): Promise<AgentClientIntegrationDraft> {
     const { root, canonical } = this.inspectBase(rootPath);
     const issues: AgentClientIntegrationIssue[] = [];
+    let canonicalRequiredByClaude = false;
     if (canonical.exists && !isCanonicalManaged(canonical))
       issues.push(
         preservedIssue(
@@ -291,20 +293,23 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
     if (isCanonicalManaged(canonical)) {
       const claude = this.files.read(root, "CLAUDE.md");
       const bridge = analyzeClaudeBridge(claude);
-      if (bridge.kind === "managed" || bridge.kind === "direct_import")
+      if (bridge.kind === "managed" || bridge.kind === "direct_import") {
+        canonicalRequiredByClaude = true;
         issues.push(
           preservedIssue(
             "claude_canonical_dependency_preserved",
-            "CLAUDE.md imports AGENTS.md and will be preserved; uninstall the Claude integration first to avoid a broken import",
+            "CLAUDE.md imports AGENTS.md, so the managed canonical file remains required and will be preserved; remove the Claude dependency before retrying Codex uninstall",
           ),
         );
-      else if (bridge.kind === "conflict")
+      } else if (bridge.kind === "conflict") {
+        canonicalRequiredByClaude = true;
         issues.push({
           severity: "conflict",
           code: "claude_managed_section_malformed",
           message:
             "CLAUDE.md contains malformed or duplicated AI Office markers",
         });
+      }
     }
 
     return {
@@ -312,9 +317,32 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
       action: "uninstall",
       clientId: this.id,
       rootPath: root,
-      operations: canonicalUninstallOperations(canonical),
+      operations: canonicalRequiredByClaude
+        ? []
+        : canonicalUninstallOperations(canonical),
       issues,
     };
+  }
+
+  override async apply(plan: AgentClientIntegrationDraft): Promise<void> {
+    const root = this.files.resolveRoot(plan.rootPath);
+    this.files.apply(root, plan.operations, (operation) => {
+      if (
+        plan.action !== "uninstall" ||
+        operation.kind !== "delete" ||
+        operation.relativePath !== "AGENTS.md"
+      )
+        return;
+      const bridge = analyzeClaudeBridge(this.files.read(root, "CLAUDE.md"));
+      if (
+        bridge.kind === "managed" ||
+        bridge.kind === "direct_import" ||
+        bridge.kind === "conflict"
+      )
+        throw new AgentClientIntegrationError(
+          "CLAUDE.md changed during apply and still requires AGENTS.md; canonical removal was stopped",
+        );
+    });
   }
 
   async validate(rootPath: string): Promise<AgentClientValidation> {
@@ -449,7 +477,7 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
             bridge.start!,
             bridge.end!,
           ),
-          ownershipAfter: "merged",
+          ownershipAfter: "user_owned",
           summary: "Remove only the AI Office-managed bridge from CLAUDE.md",
         });
     } else if (bridge.kind === "direct_import" || bridge.kind === "unmanaged")

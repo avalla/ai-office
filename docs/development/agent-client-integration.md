@@ -92,8 +92,11 @@ bun run cli -- client:uninstall --client claude --root /path/to/project \
 Claude removal deletes an AI Office-owned bridge file or removes only the
 marked block from a merged `CLAUDE.md`. A user-owned direct `@AGENTS.md` import
 is preserved. Codex removal deletes `AGENTS.md` only when it carries the AI
-Office ownership header. Because the canonical file is shared, uninstall
-Claude before Codex when removing both integrations.
+Office ownership header and `CLAUDE.md` does not import it. A managed bridge or
+user-owned direct import causes the Codex uninstall preview to preserve the
+canonical file and explain the remaining dependency. Uninstall Claude before
+Codex when removing both managed integrations; remove or rewrite a user-owned
+direct import manually before removing the canonical file.
 
 The contract file must be a regular JSON file inside the integration root and is
 limited to 256 KiB.

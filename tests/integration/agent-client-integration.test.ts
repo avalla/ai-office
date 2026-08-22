@@ -445,7 +445,11 @@ describe("agent client integrations", () => {
       rootPath: root,
     });
     expect(uninstallPlan.changes).toEqual([
-      expect.objectContaining({ kind: "update", relativePath: "CLAUDE.md" }),
+      expect.objectContaining({
+        kind: "update",
+        relativePath: "CLAUDE.md",
+        ownershipAfter: "user_owned",
+      }),
     ]);
     await integration.uninstall({
       clientId: "claude",
@@ -458,6 +462,93 @@ describe("agent client integrations", () => {
     expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(
       "# User Claude notes\n",
     );
+    expect(
+      (await integration.inspect("claude", root)).clientInstructions?.ownership,
+    ).toBe("user_owned");
+  });
+
+  test("Codex uninstall preserves managed canonical instructions required by a managed Claude bridge", async () => {
+    const root = temporaryRoot("ai-office-client-codex-claude-managed-");
+    const integration = service();
+    const installPlan = await integration.plan({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    await integration.apply({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: installPlan.planHash,
+    });
+    const canonicalBefore = readFileSync(join(root, "AGENTS.md"), "utf8");
+    const claudeBefore = readFileSync(join(root, "CLAUDE.md"), "utf8");
+
+    const uninstallPlan = await integration.planUninstall({
+      clientId: "codex",
+      rootPath: root,
+    });
+    expect(uninstallPlan.changes).toEqual([]);
+    expect(uninstallPlan.issues).toContainEqual(
+      expect.objectContaining({
+        severity: "warning",
+        code: "claude_canonical_dependency_preserved",
+        message: expect.stringContaining(
+          "remains required and will be preserved",
+        ),
+      }),
+    );
+    await integration.uninstall({
+      clientId: "codex",
+      rootPath: root,
+      approvedPlanHash: uninstallPlan.planHash,
+    });
+
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(canonicalBefore);
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(claudeBefore);
+    expect(await integration.validate("claude", root)).toMatchObject({
+      valid: true,
+    });
+  });
+
+  test("Codex uninstall preserves managed canonical instructions required by a user-owned Claude import", async () => {
+    const root = temporaryRoot("ai-office-client-codex-claude-user-");
+    const integration = service();
+    const installPlan = await integration.plan({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    await integration.apply({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: installPlan.planHash,
+    });
+    const userClaude = "# User Claude instructions\n\n@AGENTS.md\n";
+    writeFileSync(join(root, "CLAUDE.md"), userClaude);
+
+    const uninstallPlan = await integration.planUninstall({
+      clientId: "codex",
+      rootPath: root,
+    });
+    expect(uninstallPlan.changes).toEqual([]);
+    expect(uninstallPlan.issues).toContainEqual(
+      expect.objectContaining({
+        severity: "warning",
+        code: "claude_canonical_dependency_preserved",
+      }),
+    );
+    await integration.uninstall({
+      clientId: "codex",
+      rootPath: root,
+      approvedPlanHash: uninstallPlan.planHash,
+    });
+
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
+      "<!-- ai-office:managed project-instructions v1 -->",
+    );
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(userClaude);
   });
 
   test("deletes an AI Office-owned Claude bridge but leaves canonical instructions", async () => {
@@ -559,6 +650,45 @@ describe("agent client integrations", () => {
     expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(
       "# Last-moment user edit\n",
     );
+  });
+
+  test("stops Codex uninstall when a Claude dependency appears immediately before delete", async () => {
+    const root = temporaryRoot("ai-office-client-uninstall-dependency-race-");
+    const installing = service();
+    const installPlan = await installing.plan({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    await installing.apply({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: installPlan.planHash,
+    });
+    const userClaude = "# Concurrent Claude instructions\n\n@AGENTS.md\n";
+    const uninstalling = service({
+      beforeCommit: (path) => {
+        if (path === "AGENTS.md")
+          writeFileSync(join(root, "CLAUDE.md"), userClaude);
+      },
+    });
+    const uninstallPlan = await uninstalling.planUninstall({
+      clientId: "codex",
+      rootPath: root,
+    });
+
+    await expect(
+      uninstalling.uninstall({
+        clientId: "codex",
+        rootPath: root,
+        approvedPlanHash: uninstallPlan.planHash,
+      }),
+    ).rejects.toThrow("still requires AGENTS.md");
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
+      "<!-- ai-office:managed project-instructions v1 -->",
+    );
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(userClaude);
   });
 
   test("leaves a multi-file failure valid and repairable", async () => {

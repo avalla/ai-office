@@ -69,6 +69,7 @@ describe("offline runtime purge CLI", () => {
       preservedPaths: string[];
     };
     expect(plan.artifacts.map((artifact) => artifact.relativePath)).toEqual([
+      ".ai-office/generated/profile.md",
       ".ai-office/generated",
       ".ai-office/project.sqlite",
     ]);
@@ -88,7 +89,11 @@ describe("offline runtime purge CLI", () => {
     expect(JSON.parse(appliedOutput.stdout[0]!)).toMatchObject({
       purged: true,
       stateDirectoryRemoved: false,
-      removedPaths: [".ai-office/generated", ".ai-office/project.sqlite"],
+      removedPaths: [
+        ".ai-office/generated/profile.md",
+        ".ai-office/generated",
+        ".ai-office/project.sqlite",
+      ],
       preservedPaths: [
         ".ai-office/agent-instructions.json",
         ".ai-office/notes.txt",
@@ -211,6 +216,39 @@ describe("offline runtime purge CLI", () => {
       service.apply({ runtimeRoot: root, approvedPlanHash: plan.planHash }),
     ).rejects.toBeInstanceOf(LocalRuntimePurgeError);
     expect(readFileSync(database, "utf8")).toBe("last-moment change");
+  });
+
+  test("preserves an unexpected file introduced before planned directory cleanup", async () => {
+    const root = temporaryRoot("ai-office-runtime-purge-directory-race-");
+    const state = join(root, ".ai-office");
+    const generated = join(state, "generated");
+    mkdirSync(generated, { recursive: true });
+    writeFileSync(join(generated, "a.md"), "a");
+    writeFileSync(join(generated, "b.md"), "b");
+    writeFileSync(join(state, "project.sqlite"), "authoritative state");
+    const unexpected = join(generated, "new-file.txt");
+    const service = new ManageRuntimePurge(
+      new LocalRuntimePurgeAdapter({
+        beforeRemove: (relativePath) => {
+          if (relativePath === ".ai-office/generated")
+            writeFileSync(unexpected, "arrived during apply");
+        },
+      }),
+    );
+    const plan = await service.plan(root);
+    expect(plan.artifacts.map((artifact) => artifact.relativePath)).toEqual([
+      ".ai-office/generated/a.md",
+      ".ai-office/generated/b.md",
+      ".ai-office/generated",
+      ".ai-office/project.sqlite",
+    ]);
+
+    await expect(
+      service.apply({ runtimeRoot: root, approvedPlanHash: plan.planHash }),
+    ).rejects.toBeInstanceOf(LocalRuntimePurgeError);
+    expect(readFileSync(unexpected, "utf8")).toBe("arrived during apply");
+    expect(existsSync(generated)).toBe(true);
+    expect(existsSync(join(state, "project.sqlite"))).toBe(true);
   });
 
   test("preserves a known runtime path when its filesystem kind is unexpected", async () => {

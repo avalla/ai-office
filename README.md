@@ -476,13 +476,15 @@ bun run cli -- runtime:purge
 bun run cli -- runtime:purge --approve <plan-hash>
 ```
 
-The plan hash binds the current runtime artifacts. A concurrent change makes
-the approval stale. Purge removes only known runtime-owned SQLite files and
-sidecars, a stale daemon socket, drafts, and generated projections. It preserves
-unknown `.ai-office/` entries, including an integration contract, and removes
-the state directory only when it becomes empty. It does not remove source,
-`node_modules`, Bun, global user configuration, or files in a distinct
-integration root.
+The plan hash binds every current runtime entry that may be removed. A
+concurrent change makes the approval stale. Purge removes only planned and
+revalidated runtime-owned SQLite files and sidecars, a stale daemon socket,
+drafts, and generated projections. Directory cleanup is non-recursive, so an
+unexpected entry introduced during apply survives and keeps its directory from
+being removed. Purge preserves unknown top-level `.ai-office/` entries,
+including an integration contract, and removes the state directory only when it
+becomes empty. It does not remove source, `node_modules`, Bun, global user
+configuration, or files in a distinct integration root.
 
 A clean re-onboarding sequence is conceptually:
 
@@ -588,10 +590,12 @@ bun run cli -- client:uninstall --client claude --root /path/to/integration-root
 ```
 
 Claude uninstall removes only its managed bridge. Codex uninstall removes an
-AI Office-owned canonical `AGENTS.md`; user-owned direct imports and instruction
-files are preserved. To remove both managed integrations, uninstall Claude
-first and Codex second so Claude is never left pointing at a removed canonical
-file.
+AI Office-owned canonical `AGENTS.md` only when `CLAUDE.md` does not still
+import it. A managed Claude bridge or user-owned direct `@AGENTS.md` import
+keeps the canonical file in place and is explained in the preview. To remove
+both managed integrations, uninstall Claude first and Codex second. A
+user-owned direct import remains untouched and must be removed or rewritten by
+its owner before Codex uninstall can remove the shared canonical file.
 
 Read [AGENTS.md](AGENTS.md) before changing code. It defines the canonical
 operating contract, invariants, scope rules, and definition of done.

@@ -40,7 +40,7 @@ interface AgentClientFileWriteOperation {
   relativePath: string;
   expectedSha256: string | null;
   nextContent: string;
-  ownershipAfter: "ai_office_owned" | "merged";
+  ownershipAfter: "user_owned" | "ai_office_owned" | "merged";
   summary: string;
 }
 
@@ -59,7 +59,7 @@ export interface AgentClientFileChange {
   kind: AgentClientFileOperation["kind"];
   relativePath: string;
   expectedSha256: string | null;
-  ownershipAfter: "absent" | "ai_office_owned" | "merged";
+  ownershipAfter: AgentClientFileOwnership;
   summary: string;
 }
 

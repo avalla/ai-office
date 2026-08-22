@@ -90,6 +90,7 @@ export class LocalAgentClientFiles {
   apply(
     rootPath: string,
     operations: readonly AgentClientFileOperation[],
+    beforeMutation: (operation: AgentClientFileOperation) => void = () => {},
   ): void {
     for (const operation of operations) {
       const targetPath = resolve(rootPath, operation.relativePath);
@@ -111,6 +112,7 @@ export class LocalAgentClientFiles {
           throw new AgentClientIntegrationError(
             `Agent client instruction changed during apply: ${operation.relativePath}`,
           );
+        beforeMutation(operation);
         try {
           unlinkSync(targetPath);
         } catch (error) {
@@ -144,6 +146,7 @@ export class LocalAgentClientFiles {
           throw new AgentClientIntegrationError(
             `Agent client instruction changed during apply: ${operation.relativePath}`,
           );
+        beforeMutation(operation);
         if (operation.expectedSha256 === null) {
           linkSync(temporaryPath, targetPath);
           unlinkSync(temporaryPath);
