@@ -44,8 +44,11 @@ Protocol errors carry a stable code and never expose stack traces. Commands have
 a server-side timeout in addition to the client timeout.
 
 The production CLI is a daemon client. Help remains available while the daemon
-is stopped; stateful commands return an actionable error instructing the user
-to run `bun run daemon`.
+is stopped; stateful product commands return an actionable error instructing
+the user to run `bun run daemon`. `runtime:purge` is the narrow lifecycle
+exception: it runs locally because it destroys the database that normally owns
+command authority, refuses to operate while a healthy daemon is reachable, and
+requires approval of the exact current purge-plan hash.
 
 ## Serialization and audit
 

@@ -93,7 +93,8 @@ export async function handleClientCommand(
     command !== "client:inspect" &&
     command !== "client:validate" &&
     command !== "client:plan" &&
-    command !== "client:apply"
+    command !== "client:apply" &&
+    command !== "client:uninstall"
   )
     return null;
 
@@ -102,7 +103,9 @@ export async function handleClientCommand(
       ? new Set(["client", "root"])
       : command === "client:plan"
         ? new Set(["client", "root", "contract"])
-        : new Set(["client", "root", "contract", "approve"]);
+        : command === "client:apply"
+          ? new Set(["client", "root", "contract", "approve"])
+          : new Set(["client", "root", "approve"]);
   const parsed = parseArguments(args, allowedOptions);
   if (parsed.positionals.length > 0)
     throw new CliUsageError(`${command} only accepts named options`);
@@ -145,6 +148,24 @@ export async function handleClientCommand(
     });
     context.io.stdout(JSON.stringify({ applied: true, validation }));
     return validation.valid ? 0 : 1;
+  }
+  if (command === "client:uninstall") {
+    const approvedPlanHash = parsed.options.get("approve");
+    if (approvedPlanHash === undefined) {
+      context.io.stdout(
+        JSON.stringify(
+          await service.planUninstall({ clientId: selected, rootPath }),
+        ),
+      );
+      return 0;
+    }
+    const inspection = await service.uninstall({
+      clientId: selected,
+      rootPath,
+      approvedPlanHash,
+    });
+    context.io.stdout(JSON.stringify({ uninstalled: true, inspection }));
+    return 0;
   }
   return null;
 }

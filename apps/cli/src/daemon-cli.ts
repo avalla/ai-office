@@ -6,11 +6,14 @@ import {
   DaemonUnavailableError,
   InvalidDaemonResponseError,
 } from "./daemon-client.ts";
+import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
+import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
 
 export interface DaemonCliOptions {
   projectRoot: string;
   socketPath?: string;
   io?: CliIo;
+  runtimePurgeAdapter?: RuntimePurgeAdapter;
 }
 
 const defaultIo: CliIo = {
@@ -67,6 +70,16 @@ export async function runDaemonCli(
       io.stdout(`Started at: ${health.startedAt}`);
       return 0;
     }
+
+    if (args[0] === "runtime:purge")
+      return runRuntimePurgeCli(args.slice(1), {
+        runtimeRoot: options.projectRoot,
+        daemonClient: client,
+        io,
+        ...(options.runtimePurgeAdapter === undefined
+          ? {}
+          : { adapter: options.runtimePurgeAdapter }),
+      });
 
     const reader =
       io.prompt === undefined

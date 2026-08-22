@@ -102,3 +102,21 @@ does not restore tasks, runs, manifests, governance, costs, capabilities,
 controlled actions, approvals, executions, or audit history. When the
 integration root differs, its contract and instruction files require a separate
 ownership-aware backup decision.
+
+## Offline purge
+
+`runtime:purge` is an explicitly offline lifecycle operation. It first returns
+a deterministic plan without mutating state. Applying the exact plan hash is
+allowed only while the daemon is unreachable and re-plans before deletion, so a
+changed database, sidecar, draft, projection, or socket invalidates approval.
+
+The purge owns only the known runtime artifacts under the selected runtime
+root: `project.sqlite` and its sidecars, future `index.sqlite` files if present,
+`daemon.sock`, `drafts/`, and `generated/`. Unknown entries are reported and
+preserved; this includes `.ai-office/agent-instructions.json` when runtime and
+integration roots coincide. The `.ai-office/` directory is removed only if it
+is empty afterward. Global state, source files, dependencies, and distinct
+integration roots are outside this lifecycle boundary. Removal is not a
+cross-file atomic transaction, so derived files and SQLite sidecars are removed
+before the authoritative `project.sqlite`; any failure stops the purge and
+requires a fresh plan for the remaining state.

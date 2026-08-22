@@ -72,7 +72,11 @@ Application services orchestrate use cases through ports. Composition roots in t
 
 ## Local daemon and concurrency
 
-The TypeScript daemon exposes protocol version 1 as HTTP over `.ai-office/daemon.sock`; it does not open a TCP listener. The production CLI sends stateful commands to that socket. Help is rendered locally so it remains available while the daemon is stopped.
+The TypeScript daemon exposes protocol version 1 as HTTP over
+`.ai-office/daemon.sock`; it does not open a TCP listener. The production CLI
+sends stateful product commands to that socket. Help and the explicitly offline
+`runtime:purge` lifecycle command are local; purge refuses to run while a
+healthy daemon is reachable and requires approval of its exact plan hash.
 
 Short commands enter a FIFO queue. Long-running run execution is dispatched outside that global queue. SQLite runs in WAL mode, and transactions remain short: repository scans, prompts, LLM calls, simulated agent work, and filesystem mutations happen outside open transactions.
 

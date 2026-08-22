@@ -4,7 +4,7 @@ import type { ProjectInstructionContract } from "@ai-office/domain/agent/project
 import type {
   AgentClientCatalog,
   AgentClientDetection,
-  AgentClientFileOperation,
+  AgentClientFileChange,
   AgentClientId,
   AgentClientInspection,
   AgentClientIntegrationDraft,
@@ -18,10 +18,11 @@ import {
 
 export interface AgentClientIntegrationPlan {
   contractVersion: 1;
+  action: "install" | "uninstall";
   clientId: AgentClientId;
   rootPath: string;
   planHash: string;
-  changes: ReadonlyArray<Omit<AgentClientFileOperation, "nextContent">>;
+  changes: readonly AgentClientFileChange[];
   issues: AgentClientIntegrationDraft["issues"];
 }
 
@@ -36,12 +37,17 @@ function publicPlan(
 ): AgentClientIntegrationPlan {
   return {
     contractVersion: 1,
+    action: draft.action,
     clientId: draft.clientId,
     rootPath: draft.rootPath,
     planHash: hashDraft(draft),
-    changes: draft.operations.map(
-      ({ nextContent: _, ...operation }) => operation,
-    ),
+    changes: draft.operations.map((operation) => ({
+      kind: operation.kind,
+      relativePath: operation.relativePath,
+      expectedSha256: operation.expectedSha256,
+      ownershipAfter: operation.ownershipAfter,
+      summary: operation.summary,
+    })),
     issues: draft.issues,
   };
 }
@@ -93,6 +99,30 @@ export class ManageAgentClientIntegration {
       throw new AgentClientPlanApprovalError();
     await client.apply(draft);
     return client.validate(input.rootPath);
+  }
+
+  async planUninstall(input: {
+    clientId: AgentClientId;
+    rootPath: string;
+  }): Promise<AgentClientIntegrationPlan> {
+    return publicPlan(
+      await this.clients.get(input.clientId).planUninstall(input.rootPath),
+    );
+  }
+
+  async uninstall(input: {
+    clientId: AgentClientId;
+    rootPath: string;
+    approvedPlanHash: string;
+  }): Promise<AgentClientInspection> {
+    const client = this.clients.get(input.clientId);
+    const draft = await client.planUninstall(input.rootPath);
+    if (draft.issues.some((issue) => issue.severity === "conflict"))
+      throw new AgentClientPlanConflictError();
+    if (hashDraft(draft) !== input.approvedPlanHash)
+      throw new AgentClientPlanApprovalError();
+    await client.apply(draft);
+    return client.inspect(input.rootPath);
   }
 
   validate(

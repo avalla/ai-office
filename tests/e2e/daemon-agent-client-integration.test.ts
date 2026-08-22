@@ -146,6 +146,44 @@ describe("daemon-backed agent client integration", () => {
         (await run(["client:validate", "--client", "claude", "--root", root]))
           .exitCode,
       ).toBe(0);
+
+      const uninstallPlanned = await run([
+        "client:uninstall",
+        "--client",
+        "claude",
+        "--root",
+        root,
+      ]);
+      const uninstallPlan = JSON.parse(uninstallPlanned.stdout[0]!) as {
+        planHash: string;
+        action: string;
+        changes: Array<{ kind: string; relativePath: string }>;
+      };
+      expect(uninstallPlan).toMatchObject({
+        action: "uninstall",
+        changes: [{ kind: "delete", relativePath: "CLAUDE.md" }],
+      });
+      const uninstalled = await run([
+        "client:uninstall",
+        "--client",
+        "claude",
+        "--root",
+        root,
+        "--approve",
+        uninstallPlan.planHash,
+      ]);
+      expect(uninstalled.exitCode).toBe(0);
+      expect(JSON.parse(uninstalled.stdout[0]!)).toMatchObject({
+        uninstalled: true,
+        inspection: {
+          clientInstructions: { integrationStatus: "missing" },
+          canonicalInstructions: { integrationStatus: "integrated" },
+        },
+      });
+      expect(() => readFileSync(join(root, "CLAUDE.md"), "utf8")).toThrow();
+      expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
+        "ai-office:managed",
+      );
     } finally {
       controller.abort();
       await running;

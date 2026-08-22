@@ -13,7 +13,7 @@ AI Office remains authoritative for stored configuration, policy, controlled act
 
 Resolve the AI Office repository root from this skill's location: it is three directories above `.agents/skills/ai-office`. Run all `bun run cli -- ...` and daemon commands from that root.
 
-Before a stateful workflow:
+Before a stateful workflow other than offline `runtime:purge`:
 
 1. Check `bun run cli -- daemon:health`.
 2. If dependencies are absent, ask before installing them with `bun install --frozen-lockfile`.
@@ -28,6 +28,7 @@ Do not configure `AI_OFFICE_LLM_MODEL`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`
 - For a new task or request to execute work, follow **Operate a task**.
 - For status questions, read `office:context`, task, run, action, and cost state as relevant; do not mutate anything.
 - For Codex or Claude project integration, follow **Integrate a coding client**; keep it separate from onboarding.
+- For removal, follow **Uninstall safely**; runtime and integration roots remain separate scopes.
 
 Read [references/manifest-contract.md](references/manifest-contract.md) when creating or revising a manifest. Read [references/task-operation.md](references/task-operation.md) only when operating a task.
 
@@ -70,6 +71,24 @@ Only after explicit user confirmation, pass that exact hash to `client:apply`
 and run `client:validate`. Never bypass a conflict, overwrite user-owned
 `AGENTS.md`, edit client files directly, or treat integration as part of
 `project:onboard`.
+
+## Uninstall safely
+
+For a coding-client integration, run `client:uninstall` without `--approve`,
+present the affected paths, ownership outcomes, warnings, and plan hash, and
+obtain explicit confirmation before rerunning it with that exact hash. Preserve
+all user-owned files and sections. Codex uninstall must preserve managed
+`AGENTS.md` while either a managed Claude bridge or a user-owned direct import
+still depends on it. When removing both managed integrations, uninstall Claude
+before Codex because `AGENTS.md` is shared; never rewrite a user-owned direct
+import automatically.
+
+For runtime state, first ensure the user understands that `project.sqlite` is
+authoritative and that purge is not restoreable without a filesystem backup.
+Check that the daemon is stopped, run `runtime:purge` to obtain the local plan,
+present removed and preserved paths, and obtain explicit confirmation before
+passing its exact hash to `runtime:purge --approve`. Never manually broaden the
+purge to source, dependencies, global configuration, or integration roots.
 
 ## Boundaries
 
