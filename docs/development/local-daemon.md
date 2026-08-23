@@ -20,9 +20,12 @@ The daemon:
 - stops accepting new requests on SIGINT or SIGTERM;
 - drains active requests before removing the socket and closing SQLite.
 
-The production command derives the runtime root from its current working
-directory; it has no public data-directory flag. Importing a different source
-repository does not move the database or socket into that repository. Coding
+The linkable `ai-office` entry point pins the runtime to its
+source/distribution checkout, so `ai-office install .` and `ai-office status`
+can be invoked from another repository while reaching the same office daemon.
+The legacy Bun development command derives the runtime root from its current
+working directory. Importing a different source repository does not move the
+database or socket into that repository. Coding
 client commands independently target their explicit `--root`; client
 integration files there do not belong to the daemon runtime root unless the two
 paths coincide.
@@ -49,6 +52,19 @@ the user to run `bun run daemon`. `runtime:purge` is the narrow lifecycle
 exception: it runs locally because it destroys the database that normally owns
 command authority, refuses to operate while a healthy daemon is reachable, and
 requires approval of the exact current purge-plan hash.
+
+`status` is the other local-aware exception, but it is not a stateful command.
+The CLI inspects the repository binding before protocol dispatch. If the daemon
+is unavailable, it returns schema-version `1` status with the binding marked
+`unverified`, authoritative state unavailable, and repository-local client
+inspection where possible. Binding existence and daemon reachability are
+reported as separate facts.
+
+For project-scoped commands without `--project`, the linkable CLI discovers the
+nearest valid binding from its current working directory and appends that
+project ID before protocol dispatch. Explicit `--project` always wins. Invalid
+bindings fail closed rather than falling back to path or project-name
+heuristics.
 
 ## Serialization and audit
 

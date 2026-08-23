@@ -9,6 +9,9 @@ import {
   type CliIo,
 } from "../../cli/src/cli.ts";
 import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
+import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
+import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
+import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 
 export interface DaemonCommandHandler {
   execute(request: DaemonCommandRequest): Promise<DaemonCommandResponse>;
@@ -21,6 +24,9 @@ export class LocalCommandHandler implements DaemonCommandHandler {
     private readonly onboardingGenerator?: OnboardingQuestionGenerator,
     private readonly globalDatabasePath?: string,
     private readonly globalMigrationDirectory?: string,
+    private readonly agentClients?: AgentClientCatalog,
+    private readonly projectBindings?: ProjectBindingAdapter,
+    private readonly defaultOfficeManifest?: OfficeManifest,
   ) {}
 
   async execute(request: DaemonCommandRequest): Promise<DaemonCommandResponse> {
@@ -54,6 +60,15 @@ export class LocalCommandHandler implements DaemonCommandHandler {
         ...(this.globalMigrationDirectory === undefined
           ? {}
           : { globalMigrationDirectory: this.globalMigrationDirectory }),
+        ...(this.agentClients === undefined
+          ? {}
+          : { agentClients: this.agentClients }),
+        ...(this.projectBindings === undefined
+          ? {}
+          : { projectBindings: this.projectBindings }),
+        ...(this.defaultOfficeManifest === undefined
+          ? {}
+          : { defaultOfficeManifest: this.defaultOfficeManifest }),
         io,
         propagatePromptRequired: true,
       });

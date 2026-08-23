@@ -10,6 +10,8 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Architecture overview](architecture/overview.md): current system boundaries, implemented surfaces, storage responsibilities, and trust model.
 - [Storage design](architecture/storage.md): current database ownership,
   authority, rebuildability, and runtime/import/integration-root path semantics.
+- [Repository-local project binding](adr/ADR-0008-repository-local-project-binding.md):
+  accepted identity, discovery, portability, and lifecycle decision.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.

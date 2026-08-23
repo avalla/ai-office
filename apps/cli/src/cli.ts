@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { InvalidAgentDefinitionError } from "@ai-office/agent-runtime/agent-definition.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { AgentDefinitionDirectoryError } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
@@ -118,6 +119,7 @@ import { handleCapabilityCommand } from "./commands/capability.ts";
 import { handleOfficeCommand } from "./commands/office.ts";
 import { handleClientCommand } from "./commands/client.ts";
 import { handleMemoryCommand } from "./commands/memory.ts";
+import { handleLifecycleCommand } from "./commands/lifecycle.ts";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
 import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import { InvalidProjectInstructionContractError } from "@ai-office/domain/agent/project-instruction-contract.ts";
@@ -127,6 +129,13 @@ import {
   GlobalMemorySourceMismatchError,
   GlobalMemoryVersionConflictError,
 } from "@ai-office/application/memory-errors.ts";
+import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
+import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
+import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
+import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
+import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
+import { ProjectLifecycleError } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
+import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -134,6 +143,10 @@ export type CliIo = CommandIo;
 export const cliHelp = `AI Office CLI
 
 Commands:
+  install [path] [--rebind] [--json]
+  status [path] [--json]
+  uninstall [path] [--approve <plan-hash>] [--json]
+  daemon  # available through the linkable ai-office entry point
   daemon:health
   project:create <name> [--description <description>] [--json]
   project:import [path] [--name <name>] [--json]
@@ -198,6 +211,9 @@ Commands:
 // runtime:purge is intentionally absent: the daemon client handles that
 // destructive offline lifecycle boundary before protocol dispatch.
 const commands = [
+  "install",
+  "status",
+  "uninstall",
   "project:create",
   "project:import",
   "project:onboard",
@@ -273,6 +289,32 @@ export interface CliOptions {
   io?: CliIo;
   propagatePromptRequired?: boolean;
   onboardingGenerator?: OnboardingQuestionGenerator;
+  agentClients?: AgentClientCatalog;
+  projectBindings?: ProjectBindingAdapter;
+  defaultOfficeManifest?: OfficeManifest;
+}
+
+function defaultOfficeManifest(): OfficeManifest {
+  const manifest = parseOfficeManifestJson(
+    readFileSync(
+      join(
+        sourceDirectory,
+        "..",
+        "..",
+        "..",
+        ".agents",
+        "skills",
+        "ai-office",
+        "assets",
+        "default-office-manifest.json",
+      ),
+      "utf8",
+    ),
+  );
+  return {
+    ...manifest,
+    provenance: { ...manifest.provenance, host: "cli" },
+  };
 }
 
 function configuredOnboardingGenerator(
@@ -295,6 +337,7 @@ function configuredOnboardingGenerator(
 }
 
 const handlers = [
+  handleLifecycleCommand,
   handleProjectCommand,
   handleOfficeCommand,
   handleClientCommand,
@@ -378,7 +421,9 @@ function formatKnownError(error: unknown): string | null {
     error instanceof GlobalMemoryDeprecatedError ||
     error instanceof GlobalMemoryNotFoundError ||
     error instanceof GlobalMemorySourceMismatchError ||
-    error instanceof GlobalMemoryVersionConflictError
+    error instanceof GlobalMemoryVersionConflictError ||
+    error instanceof ProjectLifecycleError ||
+    error instanceof ProjectBindingError
   )
     return error.message;
   return null;
@@ -454,7 +499,11 @@ export async function runCli(
       onboardingGenerator:
         options.onboardingGenerator ??
         configuredOnboardingGenerator(costs, ids, clock),
-      agentClients: new DefaultAgentClientCatalog(),
+      agentClients: options.agentClients ?? new DefaultAgentClientCatalog(),
+      projectBindings:
+        options.projectBindings ?? new LocalProjectBindingAdapter(),
+      defaultOfficeManifest:
+        options.defaultOfficeManifest ?? defaultOfficeManifest(),
       memoryReferences: new SqliteMemoryReferenceRepository(database),
       ...(globalDatabase === null
         ? {}

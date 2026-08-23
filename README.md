@@ -37,7 +37,8 @@ to end.
 
 ```text
 Codex / compatible host
-  -> repository-scoped ai-office skill
+  -> ai-office install/status/task commands
+  -> repository-scoped ai-office skill when conversation is needed
   -> machine-oriented CLI
   -> HTTP over .ai-office/daemon.sock
   -> local daemon command dispatch
@@ -53,36 +54,128 @@ available only while the daemon is stopped.
 
 ## Quick start
 
-Install and validate the repository:
+Install dependencies and expose the source checkout's linkable CLI:
 
 ```bash
 bun install --frozen-lockfile
-bun run check
+bun link
+bun link --global ai-office
 ```
 
-Interactive onboarding, offline project import, task management, governance,
-and simulated agent runs do not require an LLM credential in AI Office. The
-repository-scoped `ai-office` skill uses the model session already authenticated
-by the host. Provider configuration in `.env.example` is an optional headless
+The repository is not yet published as a packaged binary. `bun link` registers
+this checkout as a linkable package, and `bun link --global ai-office` exposes
+its declared `ai-office` bin from Bun's global bin directory. Ensure the path
+printed by `bun pm bin -g` is on `PATH`. The same entry point can also be run from this checkout as
+`bun run ai-office -- install /absolute/path/to/project`.
+
+Start the office daemon in one terminal:
+
+```bash
+ai-office daemon
+```
+
+Then install AI Office from the repository you want to manage:
+
+```bash
+cd /path/to/my-project
+ai-office install .
+ai-office status
+```
+
+`install` imports or reuses the project, applies the default office baseline
+only when no manifest exists, writes `.ai-office/project.json`, detects supported
+coding clients, and reconciles the repository-local files AI Office can safely
+manage. It does not install third-party software, overwrite user-owned
+`AGENTS.md`, grant capabilities, or copy the authoritative database into the
+project.
+
+`status` works from the project root or a descendant. It reports the project
+identity, binding validity, daemon and authoritative-state availability, office
+revision, client integration, and lightweight task counts. Use
+`ai-office status --json` for the stable schema-version `1` machine output.
+
+The JSON envelope is versioned independently from the binding:
+
+```json
+{
+  "schemaVersion": 1,
+  "installed": true,
+  "health": "healthy",
+  "project": {
+    "id": "...",
+    "name": "Example",
+    "root": "/canonical/project/root",
+    "binding": { "path": ".../.ai-office/project.json", "state": "valid" }
+  },
+  "runtime": { "daemon": "reachable", "authoritativeState": "available" },
+  "office": {
+    "state": "configured",
+    "revision": 1,
+    "name": "...",
+    "roles": []
+  },
+  "clients": [],
+  "tasks": { "open": 0, "wip": 0 },
+  "issues": []
+}
+```
+
+Binding states are `missing`, `invalid`, `unverified`, `stale`, `conflicting`,
+or `valid`. Runtime reachability is independent from binding validity. A future
+breaking field or semantic change requires a new `schemaVersion`; schema version
+`1` output keeps deterministic key and array ordering for identical state.
+
+`install <path>` always treats the canonical form of that exact path as the
+project root; it does not guess from Git or package manifests. `status`,
+`uninstall`, and project-scoped commands instead walk ancestors and choose the
+nearest valid binding. This makes nested projects deterministic while keeping
+new installation intent explicit.
+
+Interactive onboarding, offline import, task management, governance, and
+simulated agent runs do not require an LLM credential in AI Office. The
+repository-scoped skill uses the model session already authenticated by the
+host. Provider configuration in `.env.example` remains an optional headless
 fallback only; never commit `.env`.
 
-Start the daemon from the directory that should act as its runtime root (for
-this checkout, the repository root):
+The linkable entry point keeps this checkout as the current office runtime, so
+one daemon can manage multiple installed repositories. The legacy development
+commands `bun run daemon` and `bun run cli -- ...` remain supported and retain
+their current-working-directory runtime semantics. See
+[Local storage and state](#local-storage-and-state) for the advanced path model.
 
-```bash
-bun run daemon
+## Project lifecycle
+
+The repository-local binding is deliberately small and safe to commit:
+
+```json
+{
+  "schemaVersion": 1,
+  "managedBy": "ai-office",
+  "projectId": "..."
+}
 ```
 
-In another terminal, check its health:
+It contains no runtime path, credential, capability grant, client executable
+path, or copied project state. SQLite remains authoritative. A clone, moved
+checkout, purged runtime, or different runtime can therefore expose a stale or
+conflicting binding; AI Office stops and explains the recovery instead of
+silently creating a replacement. `ai-office install . --rebind` is the explicit
+choice to create or select a new association for the current canonical path.
+
+Project-local removal is also explicit and non-destructive to runtime state:
 
 ```bash
-bun run cli -- daemon:health
+ai-office uninstall .
+# Inspect the affected paths and plan hash, then:
+ai-office uninstall . --approve <plan-hash>
 ```
 
-The daemon creates and migrates `.ai-office/project.sqlite` relative to the
-directory where it starts and listens on `.ai-office/daemon.sock`. See
-[Local storage and state](#local-storage-and-state) before deleting or resetting
-that directory.
+The lifecycle removes managed client integration in dependency order and then
+the exact binding. It preserves user-owned instructions, unrelated
+`.ai-office/` entries, the project in `project.sqlite`, the whole runtime, and
+`global.sqlite`. `uninstall`, project-state deletion, `runtime:purge`, and
+global-memory deletion are different operations; install/uninstall never
+collapse them into one destructive action.
 
 ## Conversational onboarding
 
@@ -127,6 +220,13 @@ deterministic, idempotent, and usable offline. `office:validate`, `office:apply`
 `office:show`, and `office:pipeline` form the versioned machine contract used by
 the skill. `project:onboard` remains available as an optional provider-backed
 headless compatibility flow; it is no longer the primary interactive UX.
+
+When a project-scoped command is invoked without `--project`, the linkable CLI
+canonicalizes the current directory, walks same-filesystem ancestors, and uses
+the nearest valid `.ai-office/project.json`. Explicit `--project` remains
+available for automation and debugging. The machine-oriented commands are
+preserved as primitives under the user-facing lifecycle; they are not a second
+source of truth.
 
 For the optional headless compatibility flow, opt in at the daemon composition
 root, configure pricing for the provider's bare model name, and optionally set a
@@ -261,10 +361,11 @@ Simulation is not mutation. Every filesystem v2 mutation requires approval, exec
 
 ## Local storage and state
 
-AI Office is primarily local to the directory where its daemon runs today. In
-the current implementation, the production daemon and CLI derive this **runtime
-root** from their current working directory; there is no public data-directory
-flag or environment setting. Starting the daemon creates and migrates
+AI Office is primarily local to the directory where its daemon runs. The
+linkable `ai-office` entry point uses its source/distribution checkout as the
+office runtime so it can be called from installed repositories without changing
+authority. The legacy `bun run daemon` and `bun run cli` scripts derive the
+**runtime root** from their current working directory. Starting the daemon creates and migrates
 `<runtime-root>/.ai-office/project.sqlite` before opening the socket. The
 production CLI is only a daemon client (except for local help), so the daemon
 owns operational access to that database. `bun run db:migrate` can also migrate
@@ -306,7 +407,8 @@ The intended three-database layout is:
 
 <integration-root>/
 ├── .ai-office/
-│   └── agent-instructions.json   # optional coding-client contract input
+│   ├── project.json              # committable identity binding; not authority
+│   └── agent-instructions.json   # optional machine-workflow contract input
 ├── AGENTS.md                     # canonical project instructions
 └── CLAUDE.md                     # optional Claude import bridge
 ```
@@ -316,6 +418,13 @@ Normal daemon operation creates `project.sqlite`, its live SQLite sidecars, and
 `~/.ai-office/global.sqlite`. Runtime-root drafts, generated files, and
 integration artifacts appear only when their corresponding workflow is used.
 `index.sqlite` remains a planned boundary and is not opened or populated.
+
+The normal `install` lifecycle makes the source/import root and integration root
+the same canonical repository and writes only `project.json` below its
+`.ai-office/`. It derives the coding-client contract in memory from the current
+office configuration. The optional `agent-instructions.json` remains supported
+for the lower-level `client:*` workflow, but `install` does not create another
+persisted contract or source of truth.
 
 For example, suppose AI Office starts from `/Users/alice/dev/ai-office`, then
 imports and integrates `/Users/alice/dev/my-product`:
@@ -335,7 +444,7 @@ The resulting path ownership can be:
 
 /Users/alice/dev/my-product/
 ├── .ai-office/
-│   └── agent-instructions.json   # integration contract input
+│   └── project.json              # local project identity anchor
 ├── AGENTS.md
 └── CLAUDE.md
 ```
@@ -344,11 +453,12 @@ The resulting path ownership can be:
 integration root. The runtime database remains under `ai-office`; importing or
 integrating `my-product` does not relocate it.
 
-| Path                                       | Scope and purpose                                              | Current status                             | Authority and deletion impact                                                                                     |
-| ------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
-| `<runtime-root>/.ai-office/project.sqlite` | Projects known to this runtime and their operational state     | Active; opened and migrated by the daemon  | **Authoritative, not a cache.** Deleting it removes persisted AI Office knowledge and history from this runtime.  |
-| `~/.ai-office/global.sqlite`               | User-level roles, patterns, and lessons shared across runtimes | Active; migrated lazily by memory commands | **Durable global knowledge.** Deleting it removes reusable definitions; project adoption rows remain but dangle.  |
-| `<runtime-root>/.ai-office/index.sqlite`   | Future per-project derived code intelligence                   | Initial migration only; M8 is future       | Intended to be regenerable from source and authoritative metadata; there is no populated index to preserve today. |
+| Path                                       | Scope and purpose                                              | Current status                             | Authority and deletion impact                                                                                          |
+| ------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `<runtime-root>/.ai-office/project.sqlite` | Projects known to this runtime and their operational state     | Active; opened and migrated by the daemon  | **Authoritative, not a cache.** Deleting it removes persisted AI Office knowledge and history from this runtime.       |
+| `~/.ai-office/global.sqlite`               | User-level roles, patterns, and lessons shared across runtimes | Active; migrated lazily by memory commands | **Durable global knowledge.** Deleting it removes reusable definitions; project adoption rows remain but dangle.       |
+| `<runtime-root>/.ai-office/index.sqlite`   | Future per-project derived code intelligence                   | Initial migration only; M8 is future       | Intended to be regenerable from source and authoritative metadata; there is no populated index to preserve today.      |
+| `<project-root>/.ai-office/project.json`   | Repository-local project identity binding                      | Active; created by `install`               | **Not authoritative.** Safe to commit; removing it uninstalls the local association but does not delete runtime state. |
 
 Project migrations are versioned under `migrations/project/`, applied
 transactionally, and tracked in `schema_migration`. SQLite runs in WAL mode;
@@ -575,6 +685,12 @@ canonical project operating contract. Codex loads it natively; Claude Code can
 use a minimal `CLAUDE.md` import bridge. Client detection and inspection are
 passive, and configuration mutation requires an explicit hash from the exact
 proposed plan:
+
+The normal `ai-office install .` lifecycle composes detect, inspect, plan,
+apply, and validate for detected or already managed clients. It still computes
+and applies each exact plan hash internally, in sequence, and reports every
+created or updated path. Use the commands below directly for automation,
+debugging, or a custom instruction contract:
 
 ```bash
 bun run cli -- client:detect

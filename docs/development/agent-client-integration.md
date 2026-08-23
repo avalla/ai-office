@@ -55,6 +55,23 @@ Codex reads `AGENTS.md` natively. Claude uses a minimal managed bridge:
 
 ## CLI workflow
 
+The normal lifecycle composes this workflow:
+
+```bash
+ai-office install .
+ai-office status
+```
+
+Install detects supported executables without launching them, preflights every
+detected or already-managed adapter, creates the repository binding, then plans
+and applies each client sequentially with its exact current plan hash. This
+ordering lets Codex and Claude share one canonical file without stale plans.
+The project instruction contract is derived in memory from the authoritative
+office manifest; no additional contract file becomes a source of truth.
+
+The lower-level commands remain available for automation, debugging, or a
+custom contract file:
+
 ```bash
 bun run cli -- client:detect
 bun run cli -- client:inspect --client claude --root /path/to/project
@@ -88,6 +105,14 @@ bun run cli -- client:uninstall --client claude --root /path/to/project
 bun run cli -- client:uninstall --client claude --root /path/to/project \
   --approve <plan-hash>
 ```
+
+The user-facing `ai-office uninstall .` previews one lifecycle plan that binds
+the project binding and both current client inspections. Applying its exact hash
+re-plans and removes Claude before Codex, then removes the binding. This permits
+an AI Office-owned `AGENTS.md` to be removed only after a managed Claude bridge
+has safely gone away. A user-owned direct import continues to preserve the
+canonical file. Direct `client:uninstall` remains useful for removing one client
+without uninstalling the project binding.
 
 Claude removal deletes an AI Office-owned bridge file or removes only the
 marked block from a merged `CLAUDE.md`. A user-owned direct `@AGENTS.md` import

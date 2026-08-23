@@ -294,6 +294,32 @@ Semantic retrieval, autonomous LLM lesson extraction, pattern outcome feedback
 from a future pipeline runtime, global audit, memory-write policy, poisoning
 protection, and quotas remain deferred.
 
+## M7.5 — Repository lifecycle UX
+
+Status: implemented.
+
+- user-facing `install`, `status`, and exact-plan `uninstall` orchestration over
+  existing project, office-manifest, and coding-client services;
+- strict, schema-versioned, committable `.ai-office/project.json` identity
+  binding with no path, secret, capability, or copied authoritative state;
+- canonical same-filesystem ancestor discovery with nearest nested-project
+  precedence and symlink fail-closed behavior;
+- automatic project-ID resolution for project-scoped commands;
+- idempotent install reconciliation, default office only when absent, passive
+  client detection, and ownership-safe sequential client apply;
+- status schema version `1`, including offline binding/client inspection when
+  the daemon is unavailable;
+- lifecycle uninstall that preserves user content, project/runtime authority,
+  runtime purge scope, and global reusable memory;
+- linkable source-checkout `ai-office` bin while published packages, compiled
+  binaries, and background service management remain M9 work.
+
+The repository binding is identity metadata rather than project authority.
+Clones, moved repositories, purged runtimes, and cross-runtime reuse fail closed
+when project ID and canonical source association cannot both be verified;
+explicit rebind selects a new association without deleting the old runtime's
+state. See ADR-0008.
+
 ## M8 — Code intelligence
 
 Status: future.

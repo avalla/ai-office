@@ -2,16 +2,20 @@
 
 ## Product boundary
 
-AI Office presents one logical local office to the user. A repository-scoped
-skill is the primary conversational interface in supported agent hosts. The CLI
-is the stable machine interface used by that skill and automation. Web and MCP
-may use the same daemon protocol in future milestones.
+AI Office presents one logical local office to the user. `install`, `status`,
+and `uninstall` are the user-facing repository lifecycle; a repository-scoped
+skill is the primary conversational interface when project-specific reasoning
+or office revision is needed. The lower-level CLI remains the stable machine
+interface used by the lifecycle, skill, and automation. Web and MCP may use the
+same daemon protocol in future milestones.
 
 ```text
 Codex / compatible host
           |
           v
- repository-scoped skill       Web / MCP (targets)
+ lifecycle CLI                 Web / MCP (targets)
+          |                           |
+ repository-scoped skill             |
           |                           |
           +------ CLI / protocol -----+
                       |
@@ -47,6 +51,14 @@ infrastructure adapters. The integration root may differ from both the daemon
 runtime root and the repository scanned by `project:import`. Client integration
 does not grant runtime capabilities or move host reasoning into runtime
 authority.
+
+Repository identity uses another narrow application port backed by
+`.ai-office/project.json` in the managed repository. The strict binding stores
+only schema version, AI Office ownership, and canonical runtime project ID. It
+contains no path, secret, client detection, capability, or authoritative state.
+The lifecycle application service verifies that ID and the canonical source
+path against `project.sqlite` before composing existing import, office, and
+client services. See ADR-0008.
 
 The M6D-lite bridge routes a structured action intent from an agent run through
 an executor-facing gateway. The agent-runtime package depends on the gateway
@@ -150,8 +162,9 @@ The architecture distinguishes three databases by authority and rebuildability:
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
 
-The production daemon derives `runtime-root` from its current working directory;
-there is no public data-directory option. The source/import root is the
+The linkable source entry point uses its distribution checkout as `runtime-root`;
+the legacy Bun development scripts derive it from their current working
+directory. The source/import root is the
 repository path passed to `project:import`; importing stores scan state in the
 current daemon's database rather than creating a database under that repository.
 The independently supplied `client:* --root` is the integration root containing
@@ -159,6 +172,13 @@ the instruction contract and any managed `AGENTS.md` or `CLAUDE.md`. These three
 roots may coincide but do not have to. See the [storage design](storage.md) and
 the README's
 [local storage guide](../../README.md#local-storage-and-state).
+
+An installed repository also contains `.ai-office/project.json`. This binding
+is committable identity metadata, not a fourth database and not authoritative
+state. Discovery canonicalizes the current directory, selects the nearest
+same-filesystem ancestor binding, and rejects symlinked or malformed anchors.
+The current runtime must verify both its project ID and canonical source path;
+stale or conflicting bindings require explicit recovery.
 
 ## Current trust model
 

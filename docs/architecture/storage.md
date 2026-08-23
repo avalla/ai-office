@@ -4,9 +4,9 @@ AI Office separates authoritative project state, global reusable memory, and reg
 
 ## Runtime, import, and integration roots
 
-The production daemon and CLI use their current working directory as the
-runtime root. There is no public data-directory flag or environment setting.
-The active database path is therefore:
+The linkable `ai-office` entry point uses its source/distribution checkout as
+the runtime root. The legacy `bun run daemon` and `bun run cli` development
+scripts use their current working directory. The active database path is:
 
 ```text
 <runtime-root>/.ai-office/project.sqlite
@@ -27,6 +27,38 @@ The three roots often coincide, but current code does not require that.
 `/other/repository/.ai-office/project.sqlite`, and a single runtime database may
 contain several imported project IDs. Likewise, client integration never moves
 the runtime database into its integration root.
+
+## Repository-local project binding
+
+`ai-office install <path>` creates
+`<project-root>/.ai-office/project.json` after canonicalizing the repository.
+The strict schema-version `1` contract contains exactly `schemaVersion`,
+`managedBy: "ai-office"`, and the canonical `projectId` assigned by the current
+runtime. It has no absolute path, runtime locator, hostname, credential,
+capability, client executable path, or copied project data.
+
+The binding is intended to be committed. It is a visible identity anchor, not
+authority: the current runtime must find the project ID in `project.sqlite` and
+must find the current canonical root associated with the same ID. A clone,
+moved repository, purged runtime, or different runtime can therefore expose a
+stale or conflicting binding. Install fails closed; `--rebind` explicitly
+chooses a new current-path association without deleting old runtime state.
+Relocating an existing project while preserving its old authoritative history
+is not inferred automatically and remains a distinct recovery concern.
+
+Install resolves and targets its explicit directory exactly, allowing an
+intentional nested project to be created. Status, uninstall, and automatic
+project-scoped resolution walk real ancestors on the same filesystem device.
+The nearest valid binding wins, so a nested AI Office project shadows an outer
+one. Traversal stops at the filesystem root or before crossing a device
+boundary. A symlinked `.ai-office`, symlinked `project.json`, invalid filesystem
+type, malformed contract, foreign ownership, or unsupported schema fails
+closed.
+
+Binding plan/apply uses expected file hashes, atomic create/update, and fresh
+inspection. Uninstall removes only the exact binding after ownership-safe client
+removal; unrelated `.ai-office/` entries remain. See
+[ADR-0008](../adr/ADR-0008-repository-local-project-binding.md).
 
 ## `project.sqlite` — implemented and authoritative
 
@@ -122,6 +154,12 @@ manages `<integration-root>/AGENTS.md` and `<integration-root>/CLAUDE.md`. These
 are integration artifacts governed by their own ownership rules, not database
 state or runtime authorization.
 
+The normal install lifecycle derives that instruction contract in memory from
+the current office manifest and project identity. It writes the project binding
+plus ownership-safe `AGENTS.md`/`CLAUDE.md` changes, but does not persist a
+second instruction contract. The JSON contract file remains an optional input
+for direct machine-oriented `client:*` workflows.
+
 There is no built-in backup/restore or legacy-state import command. A filesystem
 backup should be taken after a clean daemon shutdown so SQLite and its WAL are
 consistent. Re-running `project:import` rebuilds detected repository facts; it
@@ -147,3 +185,10 @@ integration roots are outside this lifecycle boundary. Removal is not a
 cross-file atomic transaction, so derived files and SQLite sidecars are removed
 before the authoritative `project.sqlite`; any failure stops the purge and
 requires a fresh plan for the remaining state.
+
+Repository-local `uninstall` is not purge. It uses an exact lifecycle plan to
+remove managed client artifacts in dependency order and then
+`.ai-office/project.json`. It does not delete a project row, `project.sqlite`,
+runtime artifacts, or `global.sqlite`. When runtime and project roots coincide,
+`runtime:purge` continues to treat `project.json` as an unknown repository-local
+entry and preserves it.
