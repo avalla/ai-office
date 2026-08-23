@@ -1,6 +1,6 @@
 import { DomainValidationError } from "../errors.ts";
 import type { MemoryStatus } from "./global-role.ts";
-import { nonEmpty, validDate } from "./memory-validation.ts";
+import { memoryStatus, nonEmpty, validDate } from "./memory-validation.ts";
 
 export interface GlobalLessonProps {
   readonly id: string;
@@ -12,6 +12,46 @@ export interface GlobalLessonProps {
   readonly status: MemoryStatus;
   readonly createdAt: Date;
   readonly updatedAt: Date;
+}
+
+function validateProps(props: GlobalLessonProps): GlobalLessonProps {
+  if (
+    !Number.isFinite(props.confidence) ||
+    props.confidence < 0 ||
+    props.confidence > 1
+  )
+    throw new DomainValidationError(
+      "Global lesson confidence must be between 0 and 1",
+    );
+  if (props.sourceTaskId !== undefined && props.sourceProjectId === undefined)
+    throw new DomainValidationError(
+      "Global lesson sourceTaskId requires sourceProjectId",
+    );
+  return {
+    id: nonEmpty(props.id, "Global lesson id"),
+    ...(props.sourceProjectId === undefined
+      ? {}
+      : {
+          sourceProjectId: nonEmpty(
+            props.sourceProjectId,
+            "Global lesson sourceProjectId",
+          ),
+        }),
+    ...(props.sourceTaskId === undefined
+      ? {}
+      : {
+          sourceTaskId: nonEmpty(
+            props.sourceTaskId,
+            "Global lesson sourceTaskId",
+          ),
+        }),
+    title: nonEmpty(props.title, "Global lesson title"),
+    content: nonEmpty(props.content, "Global lesson content"),
+    confidence: props.confidence,
+    status: memoryStatus(props.status, "Global lesson status"),
+    createdAt: validDate(props.createdAt, "Global lesson createdAt"),
+    updatedAt: validDate(props.updatedAt, "Global lesson updatedAt"),
+  };
 }
 
 export class GlobalLesson {
@@ -26,52 +66,32 @@ export class GlobalLesson {
     confidence: number;
     now: Date;
   }): GlobalLesson {
-    if (
-      !Number.isFinite(input.confidence) ||
-      input.confidence < 0 ||
-      input.confidence > 1
-    )
-      throw new DomainValidationError(
-        "Global lesson confidence must be between 0 and 1",
-      );
-    if (input.sourceTaskId !== undefined && input.sourceProjectId === undefined)
-      throw new DomainValidationError(
-        "Global lesson sourceTaskId requires sourceProjectId",
-      );
     const now = validDate(input.now, "Global lesson timestamp");
-    return new GlobalLesson({
-      id: nonEmpty(input.id, "Global lesson id"),
-      ...(input.sourceProjectId === undefined
-        ? {}
-        : {
-            sourceProjectId: nonEmpty(
-              input.sourceProjectId,
-              "Global lesson sourceProjectId",
-            ),
-          }),
-      ...(input.sourceTaskId === undefined
-        ? {}
-        : {
-            sourceTaskId: nonEmpty(
-              input.sourceTaskId,
-              "Global lesson sourceTaskId",
-            ),
-          }),
-      title: nonEmpty(input.title, "Global lesson title"),
-      content: nonEmpty(input.content, "Global lesson content"),
-      confidence: input.confidence,
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    });
+    return new GlobalLesson(
+      validateProps({
+        id: input.id,
+        ...(input.sourceProjectId === undefined
+          ? {}
+          : {
+              sourceProjectId: input.sourceProjectId,
+            }),
+        ...(input.sourceTaskId === undefined
+          ? {}
+          : {
+              sourceTaskId: input.sourceTaskId,
+            }),
+        title: input.title,
+        content: input.content,
+        confidence: input.confidence,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
   }
 
   static restore(props: GlobalLessonProps): GlobalLesson {
-    return new GlobalLesson({
-      ...props,
-      createdAt: validDate(props.createdAt, "Global lesson createdAt"),
-      updatedAt: validDate(props.updatedAt, "Global lesson updatedAt"),
-    });
+    return new GlobalLesson(validateProps(props));
   }
 
   deprecate(now: Date): void {

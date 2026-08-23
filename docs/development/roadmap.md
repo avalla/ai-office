@@ -291,7 +291,8 @@ Status: implemented.
 - bounded cross-project text search that excludes deprecated memory.
 
 Semantic retrieval, autonomous LLM lesson extraction, pattern outcome feedback
-from a future pipeline runtime, quotas, and global audit remain deferred.
+from a future pipeline runtime, global audit, memory-write policy, poisoning
+protection, and quotas remain deferred.
 
 ## M8 — Code intelligence
 

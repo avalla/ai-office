@@ -218,8 +218,11 @@ export async function handleMemoryCommand(
     const type = requiredOption(parsed, "type");
     if (type !== "role" && type !== "pattern" && type !== "lesson")
       throw new CliUsageError("Option --type must be role, pattern, or lesson");
-    if (type === "pattern" && parsed.options.get("version") === undefined)
-      throw new CliUsageError("Pattern deprecation requires --version");
+    if (
+      (type === "role" || type === "pattern") &&
+      parsed.options.get("version") === undefined
+    )
+      throw new CliUsageError(`${type} deprecation requires --version`);
     await service.deprecate({
       type: type as MemoryTargetType,
       id: requiredOption(parsed, "id"),

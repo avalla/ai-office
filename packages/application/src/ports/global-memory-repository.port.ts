@@ -15,8 +15,10 @@ export interface MemorySearchResult {
 
 export interface GlobalMemoryRepository {
   saveRole(role: GlobalRole): Promise<void>;
-  findRole(id: string): Promise<GlobalRole | null>;
-  findRoleByKey(key: string): Promise<GlobalRole | null>;
+  updateRoleStatus(role: GlobalRole): Promise<void>;
+  findRole(id: string, version: number): Promise<GlobalRole | null>;
+  findLatestRole(id: string): Promise<GlobalRole | null>;
+  findLatestRoleByKey(key: string): Promise<GlobalRole | null>;
   savePattern(pattern: GlobalPattern): Promise<void>;
   findPattern(id: string, version: number): Promise<GlobalPattern | null>;
   saveLesson(lesson: GlobalLesson): Promise<void>;

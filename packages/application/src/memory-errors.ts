@@ -13,8 +13,17 @@ export class GlobalMemoryDeprecatedError extends Error {
 }
 
 export class GlobalMemoryVersionConflictError extends Error {
-  constructor(type: string, id: string, version: number) {
-    super(`Global memory ${type} ${id} version ${version} already exists`);
+  constructor(
+    type: string,
+    id: string,
+    version: number,
+    latestVersion?: number,
+  ) {
+    super(
+      latestVersion === undefined
+        ? `Global memory ${type} ${id} version ${version} already exists`
+        : `Global memory ${type} ${id} version ${version} conflicts with latest version ${latestVersion}`,
+    );
     this.name = "GlobalMemoryVersionConflictError";
   }
 }

@@ -1,5 +1,9 @@
 import { DomainValidationError } from "../errors.ts";
-import { nonEmpty, validDate } from "./memory-validation.ts";
+import {
+  nonEmpty,
+  positiveSafeInteger,
+  validDate,
+} from "./memory-validation.ts";
 
 export type MemoryTargetType = "role" | "pattern" | "lesson";
 export type MemoryReferenceType = "adopted";
@@ -17,6 +21,37 @@ export interface MemoryReferenceProps {
   readonly updatedAt: Date;
 }
 
+function validateProps(props: MemoryReferenceProps): MemoryReferenceProps {
+  if (props.targetType !== "pattern")
+    throw new DomainValidationError(
+      "Memory reference targetType must be pattern",
+    );
+  if (props.referenceType !== "adopted")
+    throw new DomainValidationError(
+      "Memory reference referenceType must be adopted",
+    );
+  return {
+    id: nonEmpty(props.id, "Memory reference id"),
+    projectId: nonEmpty(props.projectId, "Memory reference projectId"),
+    targetId: nonEmpty(props.targetId, "Memory reference targetId"),
+    targetVersion: positiveSafeInteger(
+      props.targetVersion,
+      "Memory reference targetVersion",
+    ),
+    targetType: props.targetType,
+    referenceType: props.referenceType,
+    ...(props.query === undefined
+      ? {}
+      : { query: nonEmpty(props.query, "Memory reference query") }),
+    usageCount: positiveSafeInteger(
+      props.usageCount,
+      "Memory reference usageCount",
+    ),
+    createdAt: validDate(props.createdAt, "Memory reference createdAt"),
+    updatedAt: validDate(props.updatedAt, "Memory reference updatedAt"),
+  };
+}
+
 export class MemoryReference {
   private constructor(private readonly props: MemoryReferenceProps) {}
 
@@ -30,31 +65,25 @@ export class MemoryReference {
     query?: string;
     now: Date;
   }): MemoryReference {
-    if (!Number.isSafeInteger(input.targetVersion) || input.targetVersion < 1)
-      throw new DomainValidationError(
-        "Memory reference targetVersion must be a positive safe integer",
-      );
     const now = validDate(input.now, "Memory reference timestamp");
-    return new MemoryReference({
-      id: nonEmpty(input.id, "Memory reference id"),
-      projectId: nonEmpty(input.projectId, "Memory reference projectId"),
-      targetId: nonEmpty(input.targetId, "Memory reference targetId"),
-      targetVersion: input.targetVersion,
-      targetType: input.targetType,
-      referenceType: input.referenceType,
-      ...(input.query === undefined ? {} : { query: input.query.trim() }),
-      usageCount: 1,
-      createdAt: now,
-      updatedAt: now,
-    });
+    return new MemoryReference(
+      validateProps({
+        id: input.id,
+        projectId: input.projectId,
+        targetId: input.targetId,
+        targetVersion: input.targetVersion,
+        targetType: input.targetType,
+        referenceType: input.referenceType,
+        ...(input.query === undefined ? {} : { query: input.query }),
+        usageCount: 1,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
   }
 
   static restore(props: MemoryReferenceProps): MemoryReference {
-    return new MemoryReference({
-      ...props,
-      createdAt: validDate(props.createdAt, "Memory reference createdAt"),
-      updatedAt: validDate(props.updatedAt, "Memory reference updatedAt"),
-    });
+    return new MemoryReference(validateProps(props));
   }
 
   snapshot(): MemoryReferenceProps {

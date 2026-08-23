@@ -47,18 +47,34 @@ the operational history for every project recorded in that runtime.
 
 ## `global.sqlite` — implemented durable reusable memory
 
-`~/.ai-office/global.sqlite` stores reusable roles, versioned patterns, and
-lessons. The daemon-backed CLI opens and migrates it lazily for `memory:*`
-commands through an application repository port. It is durable user-level
-knowledge, not project authority, and it is not inside the runtime purge
-boundary. Exact project adoption references remain in authoritative
-`project.sqlite`.
+`~/.ai-office/global.sqlite` stores immutable versions of reusable roles and
+patterns plus lessons. A role `key` identifies one logical role, `(id, version)`
+identifies an exact revision, and creating a newer revision preserves both the
+stable ID and every older revision. Deprecation is revision-specific and does
+not delete history. The daemon-backed CLI opens and migrates the database lazily
+for `memory:*` commands through an application repository port. It is durable
+global memory authority at user scope, not project authority, and it is not
+inside the runtime purge boundary. Exact project adoption references remain in
+authoritative `project.sqlite`.
 
 Project ownership and task provenance are validated against `project.sqlite`
 before global writes. Project adoption rows have a local project foreign key;
 their global pattern target cannot have a cross-database foreign key and is
 therefore validated by the application service. Global SQLite transactions
 remain short and never span provider or connector calls.
+
+`sourceProjectId` and `sourceTaskId` on global patterns and lessons are
+historical provenance identifiers validated at write time. They are not
+cross-database foreign references with permanently guaranteed existence:
+`global.sqlite` can outlive `runtime:purge` of the originating project database
+and can be read from another runtime.
+
+All runtimes owned by the same operating-system user share this global memory
+trust boundary. An explicit write by runtime A becomes available to runtimes B
+and C. Agents do not receive the database or raw SQL access, and lesson
+extraction remains explicit and application-validated. Global audit,
+memory-write authorization policy, poisoning protection, and quotas are future
+hardening work rather than guarantees of the current storage boundary.
 
 Provider pricing currently remains in `project.sqlite`. Moving any catalog data to global storage requires an explicit future design and compatibility plan.
 

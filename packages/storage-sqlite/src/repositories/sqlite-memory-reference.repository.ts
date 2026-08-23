@@ -16,24 +16,14 @@ interface ReferenceRow {
   updated_at: string;
 }
 
-function targetType(value: string): "pattern" {
-  if (value === "pattern") return value;
-  throw new Error(`Invalid memory reference target type in storage: ${value}`);
-}
-
-function referenceType(value: string): "adopted" {
-  if (value === "adopted") return value;
-  throw new Error(`Invalid memory reference type in storage: ${value}`);
-}
-
 function restoreReference(row: ReferenceRow): MemoryReference {
   const props: MemoryReferenceProps = {
     id: row.id,
     projectId: row.project_id,
     targetId: row.target_id,
     targetVersion: row.target_version,
-    targetType: targetType(row.target_type),
-    referenceType: referenceType(row.reference_type),
+    targetType: row.target_type as "pattern",
+    referenceType: row.reference_type as "adopted",
     ...(row.query === null ? {} : { query: row.query }),
     usageCount: row.usage_count,
     createdAt: new Date(row.created_at),
@@ -65,7 +55,8 @@ export class SqliteMemoryReferenceRepository implements MemoryReferenceRepositor
         this.database
           .prepare(
             `UPDATE project_memory_reference
-             SET usage_count = usage_count + 1, query = ?, updated_at = ?
+             SET usage_count = usage_count + 1,
+               query = COALESCE(?, query), updated_at = ?
              WHERE id = ?`,
           )
           .run(value.query ?? null, value.updatedAt.toISOString(), existing.id);

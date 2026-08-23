@@ -1,6 +1,12 @@
-import { DomainValidationError } from "../errors.ts";
 import type { MemoryStatus } from "./global-role.ts";
-import { nonEmpty, stringList, validDate } from "./memory-validation.ts";
+import {
+  memoryStatus,
+  nonEmpty,
+  nonNegativeSafeInteger,
+  positiveSafeInteger,
+  stringList,
+  validDate,
+} from "./memory-validation.ts";
 
 export interface GlobalPatternProps {
   readonly id: string;
@@ -20,6 +26,42 @@ export interface GlobalPatternProps {
   readonly updatedAt: Date;
 }
 
+function validateProps(props: GlobalPatternProps): GlobalPatternProps {
+  return {
+    id: nonEmpty(props.id, "Global pattern id"),
+    version: positiveSafeInteger(props.version, "Global pattern version"),
+    name: nonEmpty(props.name, "Global pattern name"),
+    problem: nonEmpty(props.problem, "Global pattern problem"),
+    context: nonEmpty(props.context, "Global pattern context"),
+    solution: nonEmpty(props.solution, "Global pattern solution"),
+    applicability: stringList(
+      props.applicability,
+      "Global pattern applicability",
+    ),
+    constraints: stringList(props.constraints, "Global pattern constraints"),
+    risks: stringList(props.risks, "Global pattern risks"),
+    status: memoryStatus(props.status, "Global pattern status"),
+    ...(props.sourceProjectId === undefined
+      ? {}
+      : {
+          sourceProjectId: nonEmpty(
+            props.sourceProjectId,
+            "Global pattern sourceProjectId",
+          ),
+        }),
+    successCount: nonNegativeSafeInteger(
+      props.successCount,
+      "Global pattern successCount",
+    ),
+    failureCount: nonNegativeSafeInteger(
+      props.failureCount,
+      "Global pattern failureCount",
+    ),
+    createdAt: validDate(props.createdAt, "Global pattern createdAt"),
+    updatedAt: validDate(props.updatedAt, "Global pattern updatedAt"),
+  };
+}
+
 export class GlobalPattern {
   private constructor(private props: GlobalPatternProps) {}
 
@@ -36,52 +78,32 @@ export class GlobalPattern {
     sourceProjectId?: string;
     now: Date;
   }): GlobalPattern {
-    if (!Number.isSafeInteger(input.version) || input.version < 1)
-      throw new DomainValidationError(
-        "Global pattern version must be a positive safe integer",
-      );
     const now = validDate(input.now, "Global pattern timestamp");
-    return new GlobalPattern({
-      id: nonEmpty(input.id, "Global pattern id"),
-      version: input.version,
-      name: nonEmpty(input.name, "Global pattern name"),
-      problem: nonEmpty(input.problem, "Global pattern problem"),
-      context: nonEmpty(input.context, "Global pattern context"),
-      solution: nonEmpty(input.solution, "Global pattern solution"),
-      applicability: stringList(
-        input.applicability ?? [],
-        "Global pattern applicability",
-      ),
-      constraints: stringList(
-        input.constraints ?? [],
-        "Global pattern constraints",
-      ),
-      risks: stringList(input.risks ?? [], "Global pattern risks"),
-      status: "active",
-      ...(input.sourceProjectId === undefined
-        ? {}
-        : {
-            sourceProjectId: nonEmpty(
-              input.sourceProjectId,
-              "Global pattern sourceProjectId",
-            ),
-          }),
-      successCount: 0,
-      failureCount: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
+    return new GlobalPattern(
+      validateProps({
+        id: input.id,
+        version: input.version,
+        name: input.name,
+        problem: input.problem,
+        context: input.context,
+        solution: input.solution,
+        applicability: input.applicability ?? [],
+        constraints: input.constraints ?? [],
+        risks: input.risks ?? [],
+        status: "active",
+        ...(input.sourceProjectId === undefined
+          ? {}
+          : { sourceProjectId: input.sourceProjectId }),
+        successCount: 0,
+        failureCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
   }
 
   static restore(props: GlobalPatternProps): GlobalPattern {
-    return new GlobalPattern({
-      ...props,
-      applicability: [...props.applicability],
-      constraints: [...props.constraints],
-      risks: [...props.risks],
-      createdAt: validDate(props.createdAt, "Global pattern createdAt"),
-      updatedAt: validDate(props.updatedAt, "Global pattern updatedAt"),
-    });
+    return new GlobalPattern(validateProps(props));
   }
 
   deprecate(now: Date): void {

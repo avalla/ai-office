@@ -3,6 +3,7 @@ import type {
   GlobalMemoryRepository,
   MemorySearchResult,
 } from "@ai-office/application/ports/global-memory-repository.port.ts";
+import { GlobalMemoryVersionConflictError } from "@ai-office/application/memory-errors.ts";
 import { GlobalLesson } from "@ai-office/domain/memory/global-lesson.ts";
 import type { GlobalLessonProps } from "@ai-office/domain/memory/global-lesson.ts";
 import { GlobalPattern } from "@ai-office/domain/memory/global-pattern.ts";
@@ -65,59 +66,12 @@ interface SearchRow {
   score: number;
 }
 
-function status(value: string): MemoryStatus {
-  if (value === "active" || value === "deprecated") return value;
-  throw new Error(`Invalid global memory status in storage: ${value}`);
-}
-
-function stringArray(value: string, field: string): readonly string[] {
-  const parsed = JSON.parse(value) as unknown;
-  if (!Array.isArray(parsed) || parsed.some((item) => typeof item !== "string"))
-    throw new Error(`Invalid ${field} in global memory storage`);
-  return parsed;
+function stringArray(value: string): readonly string[] {
+  return JSON.parse(value) as readonly string[];
 }
 
 function roleDefinition(value: string): GlobalRoleDefinition {
-  const parsed = JSON.parse(value) as unknown;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
-    throw new Error("Invalid global role definition in storage");
-  const record = parsed as Record<string, unknown>;
-  const limits = record.limits;
-  if (
-    typeof record.key !== "string" ||
-    typeof record.description !== "string" ||
-    !Array.isArray(record.responsibilities) ||
-    record.responsibilities.some((item) => typeof item !== "string") ||
-    !Array.isArray(record.capabilities) ||
-    record.capabilities.some((item) => typeof item !== "string") ||
-    !Array.isArray(record.tools) ||
-    record.tools.some((item) => typeof item !== "string") ||
-    typeof record.modelPolicy !== "string" ||
-    typeof limits !== "object" ||
-    limits === null ||
-    Array.isArray(limits)
-  )
-    throw new Error("Invalid global role definition in storage");
-  const limitRecord = limits as Record<string, unknown>;
-  if (
-    typeof limitRecord.maxIterations !== "number" ||
-    typeof limitRecord.maxCostMicros !== "string" ||
-    typeof limitRecord.timeoutSeconds !== "number"
-  )
-    throw new Error("Invalid global role limits in storage");
-  return {
-    key: record.key,
-    description: record.description,
-    responsibilities: record.responsibilities as string[],
-    capabilities: record.capabilities as string[],
-    tools: record.tools as string[],
-    modelPolicy: record.modelPolicy,
-    limits: {
-      maxIterations: limitRecord.maxIterations,
-      maxCostMicros: limitRecord.maxCostMicros,
-      timeoutSeconds: limitRecord.timeoutSeconds,
-    },
-  };
+  return JSON.parse(value) as GlobalRoleDefinition;
 }
 
 function restoreRole(row: RoleRow): GlobalRole {
@@ -126,7 +80,7 @@ function restoreRole(row: RoleRow): GlobalRole {
     name: row.name,
     version: row.version,
     definition: roleDefinition(row.definition_json),
-    status: status(row.status),
+    status: row.status as MemoryStatus,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
@@ -141,10 +95,10 @@ function restorePattern(row: PatternRow): GlobalPattern {
     problem: row.problem,
     context: row.context,
     solution: row.solution,
-    applicability: stringArray(row.applicability_json, "pattern applicability"),
-    constraints: stringArray(row.constraints_json, "pattern constraints"),
-    risks: stringArray(row.risks_json, "pattern risks"),
-    status: status(row.status),
+    applicability: stringArray(row.applicability_json),
+    constraints: stringArray(row.constraints_json),
+    risks: stringArray(row.risks_json),
+    status: row.status as MemoryStatus,
     ...(row.source_project_id === null
       ? {}
       : { sourceProjectId: row.source_project_id }),
@@ -168,7 +122,7 @@ function restoreLesson(row: LessonRow): GlobalLesson {
     title: row.title,
     content: row.content,
     confidence: row.confidence,
-    status: status(row.status),
+    status: row.status as MemoryStatus,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };
@@ -180,41 +134,102 @@ export class SqliteGlobalMemoryRepository implements GlobalMemoryRepository {
 
   async saveRole(role: GlobalRole): Promise<void> {
     const value = role.snapshot();
+    const save = this.database.transaction(() => {
+      const latest = this.database
+        .query<{ id: string; version: number }, [string]>(
+          `SELECT id, version FROM global_role
+           WHERE json_extract(definition_json, '$.key') = ?
+           ORDER BY version DESC LIMIT 1`,
+        )
+        .get(value.definition.key);
+      if (
+        latest !== null &&
+        (latest.id !== value.id || value.version <= latest.version)
+      )
+        throw new GlobalMemoryVersionConflictError(
+          "role",
+          latest.id,
+          value.version,
+          latest.version,
+        );
+      this.database
+        .prepare(
+          `INSERT INTO global_role(
+            id, name, version, definition_json, status, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          value.id,
+          value.name,
+          value.version,
+          JSON.stringify(value.definition),
+          value.status,
+          value.createdAt.toISOString(),
+          value.updatedAt.toISOString(),
+        );
+    });
+    try {
+      save();
+    } catch (error) {
+      if (error instanceof GlobalMemoryVersionConflictError) throw error;
+      const latest = this.database
+        .query<{ id: string; version: number }, [string]>(
+          `SELECT id, version FROM global_role
+           WHERE json_extract(definition_json, '$.key') = ?
+           ORDER BY version DESC LIMIT 1`,
+        )
+        .get(value.definition.key);
+      if (latest !== null)
+        throw new GlobalMemoryVersionConflictError(
+          "role",
+          latest.id,
+          value.version,
+          latest.version,
+        );
+      throw error;
+    }
+  }
+
+  async updateRoleStatus(role: GlobalRole): Promise<void> {
+    const value = role.snapshot();
     this.database
       .prepare(
-        `INSERT INTO global_role(
-          id, name, version, definition_json, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-          name = excluded.name,
-          version = excluded.version,
-          definition_json = excluded.definition_json,
-          status = excluded.status,
-          updated_at = excluded.updated_at`,
+        `UPDATE global_role SET status = ?, updated_at = ?
+         WHERE id = ? AND version = ?`,
       )
       .run(
-        value.id,
-        value.name,
-        value.version,
-        JSON.stringify(value.definition),
         value.status,
-        value.createdAt.toISOString(),
         value.updatedAt.toISOString(),
+        value.id,
+        value.version,
       );
   }
 
-  async findRole(id: string): Promise<GlobalRole | null> {
+  async findRole(id: string, version: number): Promise<GlobalRole | null> {
     const row = this.database
-      .query<RoleRow, [string]>("SELECT * FROM global_role WHERE id = ?")
+      .query<RoleRow, [string, number]>(
+        "SELECT * FROM global_role WHERE id = ? AND version = ?",
+      )
+      .get(id, version);
+    return row === null ? null : restoreRole(row);
+  }
+
+  async findLatestRole(id: string): Promise<GlobalRole | null> {
+    const row = this.database
+      .query<RoleRow, [string]>(
+        `SELECT * FROM global_role
+         WHERE id = ? ORDER BY version DESC LIMIT 1`,
+      )
       .get(id);
     return row === null ? null : restoreRole(row);
   }
 
-  async findRoleByKey(key: string): Promise<GlobalRole | null> {
+  async findLatestRoleByKey(key: string): Promise<GlobalRole | null> {
     const row = this.database
       .query<RoleRow, [string]>(
         `SELECT * FROM global_role
-         WHERE json_extract(definition_json, '$.key') = ?`,
+         WHERE json_extract(definition_json, '$.key') = ?
+         ORDER BY version DESC LIMIT 1`,
       )
       .get(key);
     return row === null ? null : restoreRole(row);

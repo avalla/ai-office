@@ -180,7 +180,7 @@ Commands:
   memory:search --query <text> [--limit <1..100>] [--json]
   memory:pattern:adopt --project <id> --pattern <id> --version <n> [--query <text>]
   memory:references --project <id> [--json]
-  memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]
+  memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]  # version required for roles and patterns
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>
   resource:disable --project <id> --resource <id>

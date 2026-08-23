@@ -4,8 +4,8 @@
 
 M7 promotes the existing global database schema into a daemon-backed reusable
 memory subsystem. `~/.ai-office/global.sqlite` remains separate from
-project authority and stores reusable global roles, versioned patterns, and
-lessons. Exact pattern-adoption references remain in authoritative
+project authority and stores versioned global roles and patterns plus lessons.
+Exact pattern-adoption references remain in authoritative
 `project.sqlite`.
 
 The implementation keeps the established dependency direction:
@@ -25,20 +25,27 @@ is never passed to an agent and does not replace project state in
 ## Domain and persistence
 
 - `GlobalRole` validates a structured definition, positive version, decimal
-  micro-cost string, execution limits, and deterministic deprecation.
+  micro-cost string, execution limits, and revision-specific deterministic
+  deprecation. Its trimmed, case-sensitive `key` names one logical role; all
+  strictly increasing versions retain the same ID and remain exactly
+  retrievable.
 - `GlobalPattern` stores the problem, context, solution, applicability,
   constraints, risks, provenance, outcome counts, and status for one version.
 - `GlobalLesson` stores optional project/task provenance, content, confidence,
   and status. Application validation rejects cross-project task references.
 - `MemoryReference` records explicit project adoption of one exact pattern
-  version and increments usage on repeated adoption.
+  version and increments usage on repeated adoption. An omitted repeated query
+  preserves the existing query; an explicit non-empty query replaces it.
 
 Global migration `0002_memory_integrity.sql` leaves the applied initial
-migration unchanged and adds deterministic lookup indexes plus a unique
-global-role key. Project migration `0018_reusable_memory_references.sql` adds
-project-owned adoption references with project foreign-key enforcement. The
-shared migration runner provides atomic, ordered, `schema_migration`-tracked
-fresh and upgrade behavior.
+migration unchanged. Forward migration `0003_versioned_global_roles.sql`
+rebuilds `global_role` with primary key `(id, version)`, unique `(key, version)`
+identity, stable key/ID guards, and immutable-history triggers while preserving
+existing rows. Status updates allow only revision-specific
+`active -> deprecated`; deletes are rejected. Project migration
+`0018_reusable_memory_references.sql` adds project-owned adoption references
+with project foreign-key enforcement. The shared migration runner provides
+atomic, ordered, `schema_migration`-tracked fresh and upgrade behavior.
 
 ## Commands
 
@@ -65,11 +72,18 @@ search and embeddings remain M8/M8.5 work.
 - global targets are validated by the application service because a
   cross-database foreign key is not possible; project ownership has a local
   foreign-key backstop;
-- there is no global audit stream, quota, backup command, or semantic index.
+- `sourceProjectId` and `sourceTaskId` are historical provenance identifiers
+  validated at write time, not permanent cross-database foreign references;
+- global memory is shared by runtimes of the same operating-system user, so an
+  explicit write in one runtime is visible to the others. Agents have no direct
+  database access and lesson extraction stays explicit and validated;
+- there is no global audit stream, memory-write policy, poisoning protection,
+  quota, backup command, or semantic index.
 
 ## Verification
 
-Coverage includes domain invariants, fresh migration, representative upgrade,
-role version conflicts, cross-project task ownership, deterministic search,
-pattern adoption and usage tracking, deprecation, project foreign-key
+Coverage includes create/restore domain invariants, corrupt-row rejection,
+fresh migration plus upgrades from `0001` and `0002`, immutable role history and
+version conflicts, cross-project task ownership, deterministic search, pattern
+adoption/query/usage semantics, revision deprecation, project foreign-key
 enforcement, and the complete daemon/CLI Unix-socket flow.

@@ -1,5 +1,11 @@
 import { DomainValidationError } from "../errors.ts";
-import { nonEmpty, stringList, validDate } from "./memory-validation.ts";
+import {
+  memoryStatus,
+  nonEmpty,
+  positiveSafeInteger,
+  stringList,
+  validDate,
+} from "./memory-validation.ts";
 
 export type MemoryStatus = "active" | "deprecated";
 
@@ -30,6 +36,8 @@ export interface GlobalRoleProps {
 }
 
 function validateLimits(limits: GlobalRoleLimits): GlobalRoleLimits {
+  if (typeof limits !== "object" || limits === null || Array.isArray(limits))
+    throw new DomainValidationError("Global role limits must be an object");
   if (!Number.isSafeInteger(limits.maxIterations) || limits.maxIterations < 1)
     throw new DomainValidationError(
       "Global role maxIterations must be a positive safe integer",
@@ -45,9 +53,17 @@ function validateLimits(limits: GlobalRoleLimits): GlobalRoleLimits {
   return { ...limits };
 }
 
-function validateDefinition(
+export function normalizeGlobalRoleDefinition(
   definition: GlobalRoleDefinition,
 ): GlobalRoleDefinition {
+  if (
+    typeof definition !== "object" ||
+    definition === null ||
+    Array.isArray(definition)
+  )
+    throw new DomainValidationError("Global role definition must be an object");
+  if (typeof definition.description !== "string")
+    throw new DomainValidationError("Global role description must be a string");
   return {
     key: nonEmpty(definition.key, "Global role key"),
     description: definition.description.trim(),
@@ -65,6 +81,18 @@ function validateDefinition(
   };
 }
 
+function validateProps(props: GlobalRoleProps): GlobalRoleProps {
+  return {
+    id: nonEmpty(props.id, "Global role id"),
+    name: nonEmpty(props.name, "Global role name"),
+    version: positiveSafeInteger(props.version, "Global role version"),
+    definition: normalizeGlobalRoleDefinition(props.definition),
+    status: memoryStatus(props.status, "Global role status"),
+    createdAt: validDate(props.createdAt, "Global role createdAt"),
+    updatedAt: validDate(props.updatedAt, "Global role updatedAt"),
+  };
+}
+
 export class GlobalRole {
   private constructor(private props: GlobalRoleProps) {}
 
@@ -75,29 +103,22 @@ export class GlobalRole {
     definition: GlobalRoleDefinition;
     now: Date;
   }): GlobalRole {
-    if (!Number.isSafeInteger(input.version) || input.version < 1)
-      throw new DomainValidationError(
-        "Global role version must be a positive safe integer",
-      );
     const now = validDate(input.now, "Global role timestamp");
-    return new GlobalRole({
-      id: nonEmpty(input.id, "Global role id"),
-      name: nonEmpty(input.name, "Global role name"),
-      version: input.version,
-      definition: validateDefinition(input.definition),
-      status: "active",
-      createdAt: now,
-      updatedAt: now,
-    });
+    return new GlobalRole(
+      validateProps({
+        id: input.id,
+        name: input.name,
+        version: input.version,
+        definition: input.definition,
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
   }
 
   static restore(props: GlobalRoleProps): GlobalRole {
-    return new GlobalRole({
-      ...props,
-      definition: validateDefinition(props.definition),
-      createdAt: validDate(props.createdAt, "Global role createdAt"),
-      updatedAt: validDate(props.updatedAt, "Global role updatedAt"),
-    });
+    return new GlobalRole(validateProps(props));
   }
 
   deprecate(now: Date): void {

@@ -21,6 +21,7 @@ import { GlobalPattern } from "@ai-office/domain/memory/global-pattern.ts";
 import {
   GlobalRole,
   type GlobalRoleDefinition,
+  normalizeGlobalRoleDefinition,
 } from "@ai-office/domain/memory/global-role.ts";
 import {
   MemoryReference,
@@ -42,27 +43,40 @@ export class ManageGlobalMemory {
     version: number;
     definition: GlobalRoleDefinition;
   }): Promise<string> {
-    const existing = await this.memory.findRoleByKey(input.definition.key);
-    if (existing !== null) {
-      const current = existing.snapshot();
+    const definition = normalizeGlobalRoleDefinition(input.definition);
+    const latest = await this.memory.findLatestRoleByKey(definition.key);
+    if (latest !== null) {
+      const current = latest.snapshot();
       if (input.version <= current.version)
         throw new GlobalMemoryVersionConflictError(
           "role",
           current.id,
           input.version,
+          current.version,
         );
-      if (current.status === "deprecated")
-        throw new GlobalMemoryDeprecatedError("role", current.id);
     }
     const role = GlobalRole.create({
-      id: existing?.snapshot().id ?? this.ids.generate(),
+      id: latest?.snapshot().id ?? this.ids.generate(),
       name: input.name,
       version: input.version,
-      definition: input.definition,
+      definition,
       now: this.clock.now(),
     });
     await this.memory.saveRole(role);
     return role.snapshot().id;
+  }
+
+  async getRole(id: string, version: number): Promise<GlobalRole> {
+    const role = await this.memory.findRole(id, version);
+    if (role === null)
+      throw new GlobalMemoryNotFoundError("role", `${id}@${version}`);
+    return role;
+  }
+
+  async getLatestRole(id: string): Promise<GlobalRole> {
+    const role = await this.memory.findLatestRole(id);
+    if (role === null) throw new GlobalMemoryNotFoundError("role", id);
+    return role;
   }
 
   async createPattern(input: {
@@ -178,10 +192,16 @@ export class ManageGlobalMemory {
   }): Promise<void> {
     const now = this.clock.now();
     if (input.type === "role") {
-      const role = await this.memory.findRole(input.id);
-      if (role === null) throw new GlobalMemoryNotFoundError("role", input.id);
+      if (input.version === undefined)
+        throw new GlobalMemoryNotFoundError("role", `${input.id}@<version>`);
+      const role = await this.memory.findRole(input.id, input.version);
+      if (role === null)
+        throw new GlobalMemoryNotFoundError(
+          "role",
+          `${input.id}@${input.version}`,
+        );
       role.deprecate(now);
-      await this.memory.saveRole(role);
+      await this.memory.updateRoleStatus(role);
       return;
     }
     if (input.type === "lesson") {

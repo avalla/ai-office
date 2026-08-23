@@ -10,13 +10,26 @@ The current domain and application model includes:
 - pricing versions, budgets, reservations, normalized usage, and costs;
 - milestones, requirements, architecture-decision records, reviews, and governance decisions;
 - resources, capability grants, action requests, simulation artifacts, action approvals, and action executions;
-- global roles, versioned reusable patterns, lessons, and project memory references;
+- versioned global roles and reusable patterns, lessons, and project memory references;
 - append-only audit and agent-run events.
 
 Code-index entities and fully assembled task context remain future M8–M8.5
 concerns. Global memory is durable reusable knowledge, not project authority:
 project adoption records in `project.sqlite` reference one exact global pattern
 version without copying its definition or granting capabilities.
+
+A global role `key` is its trimmed, case-sensitive stable logical identity.
+Every role revision keeps the same role ID and is addressed by `(id, version)`;
+only a strictly newer version can be created, and historical revisions are
+never overwritten or deleted. Deprecation changes the status of one exact
+revision, so reconstructing the role configuration used by earlier work remains
+possible.
+
+Global pattern and lesson `sourceProjectId` / `sourceTaskId` values are
+historical provenance identifiers. The application validates them against the
+current project authority when writing, but the domain does not model them as
+permanent cross-database references: durable global memory may outlive or be
+shared independently of the originating runtime database.
 
 ## Ownership and references
 
