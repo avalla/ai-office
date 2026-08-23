@@ -10,9 +10,13 @@ The current domain and application model includes:
 - pricing versions, budgets, reservations, normalized usage, and costs;
 - milestones, requirements, architecture-decision records, reviews, and governance decisions;
 - resources, capability grants, action requests, simulation artifacts, action approvals, and action executions;
+- global roles, versioned reusable patterns, lessons, and project memory references;
 - append-only audit and agent-run events.
 
-Patterns, lessons, global reusable memory, code-index entities, and fully assembled task context are future M7–M8.5 concerns. Initial global and index schemas do not make those product behaviors implemented.
+Code-index entities and fully assembled task context remain future M8–M8.5
+concerns. Global memory is durable reusable knowledge, not project authority:
+project adoption records in `project.sqlite` reference one exact global pattern
+version without copying its definition or granting capabilities.
 
 ## Ownership and references
 

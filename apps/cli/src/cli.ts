@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { InvalidAgentDefinitionError } from "@ai-office/agent-runtime/agent-definition.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
@@ -69,6 +70,7 @@ import { TransactionAlreadyActiveError } from "@ai-office/application/ports/tran
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
+import { migrateGlobal } from "@ai-office/storage-sqlite/database/migrate-global.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
@@ -81,6 +83,8 @@ import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositori
 import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
 import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
 import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
+import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
+import { SqliteMemoryReferenceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-memory-reference.repository.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import { UnavailableOnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
@@ -113,9 +117,16 @@ import { handleTaskCommand } from "./commands/task.ts";
 import { handleCapabilityCommand } from "./commands/capability.ts";
 import { handleOfficeCommand } from "./commands/office.ts";
 import { handleClientCommand } from "./commands/client.ts";
+import { handleMemoryCommand } from "./commands/memory.ts";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
 import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import { InvalidProjectInstructionContractError } from "@ai-office/domain/agent/project-instruction-contract.ts";
+import {
+  GlobalMemoryDeprecatedError,
+  GlobalMemoryNotFoundError,
+  GlobalMemorySourceMismatchError,
+  GlobalMemoryVersionConflictError,
+} from "@ai-office/application/memory-errors.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -163,6 +174,13 @@ Commands:
   review:decide --project <id> --review <id> --actor <name> --decision <approved|rejected> [--rationale <text>]
   governance:profile --project <id>
   governance:export --project <id>
+  memory:role:create --name <name> --key <key> --version <n> --model-policy <policy> --max-iterations <n> --max-cost <micros> --timeout <seconds> [--description <text>] [--responsibilities <csv>] [--capabilities <csv>] [--tools <csv>]
+  memory:pattern:create --name <name> --version <n> --problem <text> --context <text> --solution <text> [--id <id>] [--source-project <id>] [--applicability <csv>] [--constraints <csv>] [--risks <csv>]
+  memory:lesson:create --title <title> --content <text> --confidence <0..1> [--source-project <id> --source-task <id>]
+  memory:search --query <text> [--limit <1..100>] [--json]
+  memory:pattern:adopt --project <id> --pattern <id> --version <n> [--query <text>]
+  memory:references --project <id> [--json]
+  memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>
   resource:disable --project <id> --resource <id>
@@ -218,6 +236,13 @@ const commands = [
   "review:decide",
   "governance:profile",
   "governance:export",
+  "memory:role:create",
+  "memory:pattern:create",
+  "memory:lesson:create",
+  "memory:search",
+  "memory:pattern:adopt",
+  "memory:references",
+  "memory:deprecate",
   "resource:create",
   "resource:list",
   "resource:disable",
@@ -243,6 +268,8 @@ const defaultIo: CliIo = {
 export interface CliOptions {
   projectRoot: string;
   migrationDirectory?: string;
+  globalDatabasePath?: string;
+  globalMigrationDirectory?: string;
   io?: CliIo;
   propagatePromptRequired?: boolean;
   onboardingGenerator?: OnboardingQuestionGenerator;
@@ -276,6 +303,7 @@ const handlers = [
   handleRunCommand,
   handleCostCommand,
   handleGovernanceCommand,
+  handleMemoryCommand,
   handleCapabilityCommand,
 ] as const;
 
@@ -346,7 +374,11 @@ function formatKnownError(error: unknown): string | null {
     error instanceof FilesystemConnectorError ||
     error instanceof LlmProviderError ||
     error instanceof AgentClientIntegrationError ||
-    error instanceof InvalidProjectInstructionContractError
+    error instanceof InvalidProjectInstructionContractError ||
+    error instanceof GlobalMemoryDeprecatedError ||
+    error instanceof GlobalMemoryNotFoundError ||
+    error instanceof GlobalMemorySourceMismatchError ||
+    error instanceof GlobalMemoryVersionConflictError
   )
     return error.message;
   return null;
@@ -375,12 +407,24 @@ export async function runCli(
   const database = openDatabase(
     join(options.projectRoot, ".ai-office", "project.sqlite"),
   );
+  let globalDatabase: ReturnType<typeof openDatabase> | null = null;
   try {
     migrate(
       database,
       options.migrationDirectory ??
         join(sourceDirectory, "..", "..", "..", "migrations", "project"),
     );
+    if (command.startsWith("memory:")) {
+      globalDatabase = openDatabase(
+        options.globalDatabasePath ??
+          join(homedir(), ".ai-office", "global.sqlite"),
+      );
+      migrateGlobal(
+        globalDatabase,
+        options.globalMigrationDirectory ??
+          join(sourceDirectory, "..", "..", "..", "migrations", "global"),
+      );
+    }
     const ids = new CryptoIdGenerator();
     const clock = new SystemClock();
     const capabilities = new SqliteCapabilityPolicyRepository(database);
@@ -411,6 +455,10 @@ export async function runCli(
         options.onboardingGenerator ??
         configuredOnboardingGenerator(costs, ids, clock),
       agentClients: new DefaultAgentClientCatalog(),
+      memoryReferences: new SqliteMemoryReferenceRepository(database),
+      ...(globalDatabase === null
+        ? {}
+        : { memory: new SqliteGlobalMemoryRepository(globalDatabase) }),
     };
     for (const handler of handlers) {
       const result = await handler(command, commandArguments, context);
@@ -431,6 +479,7 @@ export async function runCli(
     io.stderr("AI Office failed because of an unexpected error.");
     return 1;
   } finally {
+    globalDatabase?.close();
     database.close();
   }
 }

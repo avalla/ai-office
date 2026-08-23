@@ -191,7 +191,7 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "fresh.sqlite"));
     expect(migrate(database, migrationSource).applied.at(-1)).toBe(
-      "0017_skill_first_office.sql",
+      "0018_reusable_memory_references.sql",
     );
     expect(
       database
@@ -239,6 +239,7 @@ describe("M6C-lite migration", () => {
       "0015_llm_assisted_onboarding.sql",
       "0016_agent_controlled_actions.sql",
       "0017_skill_first_office.sql",
+      "0018_reusable_memory_references.sql",
     ]);
     expect(
       database

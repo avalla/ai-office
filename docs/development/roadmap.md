@@ -282,13 +282,16 @@ Deferred until after M6:
 
 ## M7 — Reusable memory
 
-Status: future.
+Status: implemented.
 
-- global roles and patterns;
-- project pattern adoption;
-- lesson extraction;
-- validation and deprecation;
-- cross-project search.
+- validated, versioned global roles and patterns in `global.sqlite`;
+- explicit project adoption of exact pattern versions with usage tracking;
+- validated lesson capture with optional project/task provenance;
+- deterministic validation, version-conflict handling, and deprecation;
+- bounded cross-project text search that excludes deprecated memory.
+
+Semantic retrieval, autonomous LLM lesson extraction, pattern outcome feedback
+from a future pipeline runtime, quotas, and global audit remain deferred.
 
 ## M8 — Code intelligence
 

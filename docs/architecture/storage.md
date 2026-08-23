@@ -45,9 +45,20 @@ by `schema_migration`. The standalone project migration command targets the same
 current-working-directory path. The database is not a cache: deleting it loses
 the operational history for every project recorded in that runtime.
 
-## `global.sqlite` — initial schema, not connected
+## `global.sqlite` — implemented durable reusable memory
 
-`~/.ai-office/global.sqlite` is the future durable store for reusable knowledge across projects. Its initial migration defines global roles, patterns, and lessons. The current daemon does not open this database, and no application repositories manage it yet. Reusable-memory behavior belongs to M7.
+`~/.ai-office/global.sqlite` stores reusable roles, versioned patterns, and
+lessons. The daemon-backed CLI opens and migrates it lazily for `memory:*`
+commands through an application repository port. It is durable user-level
+knowledge, not project authority, and it is not inside the runtime purge
+boundary. Exact project adoption references remain in authoritative
+`project.sqlite`.
+
+Project ownership and task provenance are validated against `project.sqlite`
+before global writes. Project adoption rows have a local project foreign key;
+their global pattern target cannot have a cross-database foreign key and is
+therefore validated by the application service. Global SQLite transactions
+remain short and never span provider or connector calls.
 
 Provider pricing currently remains in `project.sqlite`. Moving any catalog data to global storage requires an explicit future design and compatibility plan.
 
