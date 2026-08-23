@@ -19,6 +19,7 @@ The current implementation on `main` includes:
 - an LLM gateway with mock and opt-in OpenAI providers;
 - versioned pricing, budgets, reservations, usage normalization, and cost accounting;
 - structured milestones, requirements, ADRs, reviews, approvals, and Markdown export;
+- versioned global roles and patterns, lessons, project adoption, and cross-project search;
 - deny-by-default capability policy and a project-scoped resource registry;
 - a filesystem connector with scoped reads, search, mutation simulation, and sandbox checks;
 - local approval plus trusted-local create, write, move, and delete execution;
@@ -291,7 +292,7 @@ The intended three-database layout is:
 
 ```text
 ~/.ai-office/
-└── global.sqlite                 # schema exists; not created or used by the daemon
+└── global.sqlite                 # durable reusable memory, opened by memory commands
 
 <runtime-root>/
 └── .ai-office/
@@ -310,12 +311,11 @@ The intended three-database layout is:
 └── CLAUDE.md                     # optional Claude import bridge
 ```
 
-Only `project.sqlite` and its live SQLite sidecars plus `daemon.sock` are
-created by normal daemon operation today. Runtime-root drafts and generated
-files appear only when their corresponding workflow is used. Integration
-artifacts appear only under the separately selected integration root.
-`global.sqlite` and `index.sqlite` are shown to explain the planned boundary;
-production code does not currently open or create either file.
+Normal daemon operation creates `project.sqlite`, its live SQLite sidecars, and
+`daemon.sock`. The first `memory:*` command creates or upgrades
+`~/.ai-office/global.sqlite`. Runtime-root drafts, generated files, and
+integration artifacts appear only when their corresponding workflow is used.
+`index.sqlite` remains a planned boundary and is not opened or populated.
 
 For example, suppose AI Office starts from `/Users/alice/dev/ai-office`, then
 imports and integrates `/Users/alice/dev/my-product`:
@@ -344,11 +344,11 @@ The resulting path ownership can be:
 integration root. The runtime database remains under `ai-office`; importing or
 integrating `my-product` does not relocate it.
 
-| Path                                       | Scope and purpose                                                     | Current status                            | Authority and deletion impact                                                                                     |
-| ------------------------------------------ | --------------------------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `<runtime-root>/.ai-office/project.sqlite` | Projects known to this runtime and their operational state            | Active; opened and migrated by the daemon | **Authoritative, not a cache.** Deleting it removes persisted AI Office knowledge and history from this runtime.  |
-| `~/.ai-office/global.sqlite`               | Future user-level roles, patterns, and lessons shared across projects | Initial migration only; M7 is future      | Intended to be durable global knowledge, but AI Office writes no production data there today.                     |
-| `<runtime-root>/.ai-office/index.sqlite`   | Future per-project derived code intelligence                          | Initial migration only; M8 is future      | Intended to be regenerable from source and authoritative metadata; there is no populated index to preserve today. |
+| Path                                       | Scope and purpose                                              | Current status                             | Authority and deletion impact                                                                                     |
+| ------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `<runtime-root>/.ai-office/project.sqlite` | Projects known to this runtime and their operational state     | Active; opened and migrated by the daemon  | **Authoritative, not a cache.** Deleting it removes persisted AI Office knowledge and history from this runtime.  |
+| `~/.ai-office/global.sqlite`               | User-level roles, patterns, and lessons shared across runtimes | Active; migrated lazily by memory commands | **Durable global knowledge.** Deleting it removes reusable definitions; project adoption rows remain but dangle.  |
+| `<runtime-root>/.ai-office/index.sqlite`   | Future per-project derived code intelligence                   | Initial migration only; M8 is future       | Intended to be regenerable from source and authoritative metadata; there is no populated index to preserve today. |
 
 Project migrations are versioned under `migrations/project/`, applied
 transactionally, and tracked in `schema_migration`. SQLite runs in WAL mode;
@@ -393,10 +393,24 @@ root, the databases are independent:
 ```
 
 By contrast, `~/.ai-office/global.sqlite` is user-scoped rather than
-repository-scoped. Its initial schema defines reusable roles, patterns, and
-lessons, but the daemon does not use it and reusable memory remains future M7
-work. No production AI Office state is currently written under the user's home
-directory by this storage subsystem.
+repository-scoped. Daemon-backed `memory:*` commands store reusable roles,
+versioned patterns, and lessons there. Role versions are immutable revisions of
+one logical role key and can be retrieved exactly; deprecation applies to one
+exact revision without deleting history. Project pattern-adoption references
+stay in each runtime's authoritative `project.sqlite`. Repeated adoption keeps
+the last recorded query when no new query is supplied and replaces it when an
+explicit non-empty query is supplied.
+
+Global memory is a user-level trust boundary shared by every runtime of the
+same operating-system user. An explicit validated write from one runtime is
+therefore available to the others. Agents never receive direct database or raw
+SQL access, and lesson extraction remains an explicit validated command.
+`sourceProjectId` and `sourceTaskId` in global memory are historical provenance
+identifiers validated when written, not foreign references whose existence is
+guaranteed permanently: the originating `project.sqlite` can later be purged or
+belong to another runtime. Global memory remains outside `runtime:purge` and
+should be backed up separately from each runtime database. Global audit,
+memory-write policy, poisoning protection, and quotas remain deferred.
 
 ### Regenerable, generated, and ephemeral files
 

@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0017_skill_first_office.sql",
+        "0018_reusable_memory_references.sql",
       );
       expect(
         database
@@ -104,6 +104,7 @@ describe("migration upgrades", () => {
       "0015_llm_assisted_onboarding.sql",
       "0016_agent_controlled_actions.sql",
       "0017_skill_first_office.sql",
+      "0018_reusable_memory_references.sql",
     ]);
     expect(
       database
@@ -149,6 +150,7 @@ describe("migration upgrades", () => {
 
     expect(migrate(database, migrations).applied).toEqual([
       "0017_skill_first_office.sql",
+      "0018_reusable_memory_references.sql",
     ]);
     expect(
       database

@@ -19,6 +19,8 @@ export class LocalCommandHandler implements DaemonCommandHandler {
     private readonly projectRoot: string,
     private readonly migrationDirectory?: string,
     private readonly onboardingGenerator?: OnboardingQuestionGenerator,
+    private readonly globalDatabasePath?: string,
+    private readonly globalMigrationDirectory?: string,
   ) {}
 
   async execute(request: DaemonCommandRequest): Promise<DaemonCommandResponse> {
@@ -46,6 +48,12 @@ export class LocalCommandHandler implements DaemonCommandHandler {
         ...(this.onboardingGenerator === undefined
           ? {}
           : { onboardingGenerator: this.onboardingGenerator }),
+        ...(this.globalDatabasePath === undefined
+          ? {}
+          : { globalDatabasePath: this.globalDatabasePath }),
+        ...(this.globalMigrationDirectory === undefined
+          ? {}
+          : { globalMigrationDirectory: this.globalMigrationDirectory }),
         io,
         propagatePromptRequired: true,
       });

@@ -17,6 +17,8 @@ export interface BootstrapOptions {
   socketPath?: string;
   migrationDirectory?: string;
   onboardingGenerator?: OnboardingQuestionGenerator;
+  globalDatabasePath?: string;
+  globalMigrationDirectory?: string;
 }
 
 export async function bootstrap(
@@ -43,6 +45,8 @@ export async function bootstrap(
       projectRoot,
       migrationDirectory,
       options.onboardingGenerator,
+      options.globalDatabasePath,
+      options.globalMigrationDirectory,
     ),
     events,
     onStopped: () => database.close(),

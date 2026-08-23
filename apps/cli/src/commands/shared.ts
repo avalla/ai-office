@@ -14,6 +14,8 @@ import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-regis
 import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import type { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
+import type { GlobalMemoryRepository } from "@ai-office/application/ports/global-memory-repository.port.ts";
+import type { MemoryReferenceRepository } from "@ai-office/application/ports/memory-reference-repository.port.ts";
 
 export interface CommandIo {
   stdout(message: string): void;
@@ -40,6 +42,8 @@ export interface CommandContext {
   connectors: ConnectorRegistry;
   onboardingGenerator: OnboardingQuestionGenerator;
   agentClients: AgentClientCatalog;
+  memory?: GlobalMemoryRepository;
+  memoryReferences: MemoryReferenceRepository;
 }
 
 export class CliUsageError extends Error {
