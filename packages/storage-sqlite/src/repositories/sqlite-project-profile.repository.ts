@@ -20,6 +20,20 @@ interface ProjectIdRow {
   project_id: string;
 }
 
+interface DetachmentRow {
+  detached: number;
+}
+
+interface ProjectSourceRow {
+  id: string;
+  project_id: string;
+  source_type: "local";
+  local_path: string;
+  remote_url: string | null;
+  default_branch: string | null;
+  created_at: string;
+}
+
 interface ProjectQuestionRow {
   id: string;
   project_id: string;
@@ -128,6 +142,16 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
   constructor(private readonly database: Database) {}
 
   async findProjectIdByLocalPath(localPath: string): Promise<string | null> {
+    const detachment = this.database
+      .query<DetachmentRow, [string]>(
+        `SELECT 1 AS detached
+         FROM project_checkout_detachment
+         WHERE local_path = ?`,
+      )
+      .get(localPath);
+
+    if (detachment !== null) return null;
+
     const source = this.database
       .query<ProjectIdRow, [string]>(
         `SELECT project_id
@@ -167,7 +191,34 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
     return legacyProject?.project_id ?? null;
   }
 
+  async listSources(projectId: string): Promise<ProjectSource[]> {
+    return this.database
+      .query<ProjectSourceRow, [string]>(
+        `SELECT id, project_id, source_type, local_path, remote_url,
+                default_branch, created_at
+         FROM project_source
+         WHERE project_id = ? AND source_type = 'local'
+         ORDER BY created_at, id`,
+      )
+      .all(projectId)
+      .map((row) => ({
+        id: row.id,
+        projectId: row.project_id,
+        sourceType: row.source_type,
+        localPath: row.local_path,
+        ...(row.remote_url === null ? {} : { remoteUrl: row.remote_url }),
+        ...(row.default_branch === null
+          ? {}
+          : { defaultBranch: row.default_branch }),
+        createdAt: new Date(row.created_at),
+      }));
+  }
+
   async saveSource(source: ProjectSource): Promise<void> {
+    this.database
+      .prepare(`DELETE FROM project_checkout_detachment WHERE local_path = ?`)
+      .run(source.localPath);
+
     this.database
       .prepare(
         `INSERT INTO project_source(
@@ -186,6 +237,44 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
         source.defaultBranch ?? null,
         source.createdAt.toISOString(),
       );
+  }
+
+  async removeSource(projectId: string, localPath: string): Promise<boolean> {
+    const detach = this.database.transaction(() => {
+      const removed = this.database
+        .prepare(
+          `DELETE FROM project_source
+           WHERE project_id = ? AND local_path = ?`,
+        )
+        .run(projectId, localPath).changes;
+
+      if (removed !== 1) return false;
+
+      this.database
+        .prepare(
+          `DELETE FROM project_profile_entry
+           WHERE project_id = ?
+             AND category = 'repository'
+             AND key = 'root_path'
+             AND origin = 'detected'
+             AND value_json = ?`,
+        )
+        .run(projectId, JSON.stringify(localPath));
+
+      this.database
+        .prepare(
+          `INSERT INTO project_checkout_detachment(local_path, project_id, detached_at)
+           VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+           ON CONFLICT(local_path) DO UPDATE SET
+             project_id = excluded.project_id,
+             detached_at = excluded.detached_at`,
+        )
+        .run(localPath, projectId);
+
+      return true;
+    });
+
+    return detach();
   }
 
   async saveScan(scan: ProjectScan): Promise<void> {

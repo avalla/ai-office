@@ -182,8 +182,7 @@ export async function handleGovernanceCommand(
       return 0;
     }
     const outputPath = join(
-      context.projectRoot,
-      ".ai-office",
+      context.runtimeHome,
       "generated",
       "governance.md",
     );

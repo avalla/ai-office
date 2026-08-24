@@ -54,6 +54,7 @@ describe("offline runtime purge CLI", () => {
     writeFileSync(join(state, "project.sqlite"), "authoritative state");
     writeFileSync(join(state, "generated", "profile.md"), "generated");
     writeFileSync(join(state, "agent-instructions.json"), "{}\n");
+    writeFileSync(join(state, "global.sqlite"), "global memory remains");
     writeFileSync(join(state, "notes.txt"), "keep me\n");
 
     const plannedOutput = captureIo();
@@ -69,13 +70,14 @@ describe("offline runtime purge CLI", () => {
       preservedPaths: string[];
     };
     expect(plan.artifacts.map((artifact) => artifact.relativePath)).toEqual([
-      ".ai-office/generated/profile.md",
-      ".ai-office/generated",
-      ".ai-office/project.sqlite",
+      "generated/profile.md",
+      "generated",
+      "project.sqlite",
     ]);
     expect(plan.preservedPaths).toEqual([
-      ".ai-office/agent-instructions.json",
-      ".ai-office/notes.txt",
+      "agent-instructions.json",
+      "global.sqlite",
+      "notes.txt",
     ]);
     expect(existsSync(join(state, "project.sqlite"))).toBe(true);
 
@@ -90,17 +92,21 @@ describe("offline runtime purge CLI", () => {
       purged: true,
       stateDirectoryRemoved: false,
       removedPaths: [
-        ".ai-office/generated/profile.md",
-        ".ai-office/generated",
-        ".ai-office/project.sqlite",
+        "generated/profile.md",
+        "generated",
+        "project.sqlite",
       ],
       preservedPaths: [
-        ".ai-office/agent-instructions.json",
-        ".ai-office/notes.txt",
+        "agent-instructions.json",
+        "global.sqlite",
+        "notes.txt",
       ],
     });
     expect(existsSync(join(state, "project.sqlite"))).toBe(false);
     expect(readFileSync(join(state, "notes.txt"), "utf8")).toBe("keep me\n");
+    expect(readFileSync(join(state, "global.sqlite"), "utf8")).toBe(
+      "global memory remains",
+    );
   });
 
   test("rejects stale approval when runtime state changes after planning", async () => {
@@ -156,8 +162,7 @@ describe("offline runtime purge CLI", () => {
 
   test("refuses to purge while the daemon is running", async () => {
     const root = temporaryRoot("ai-office-runtime-purge-live-");
-    mkdirSync(join(root, ".ai-office"));
-    writeFileSync(join(root, ".ai-office", "project.sqlite"), "state");
+    writeFileSync(join(root, "project.sqlite"), "state");
     const output = captureIo();
     expect(
       await runRuntimePurgeCli([], {
@@ -175,7 +180,7 @@ describe("offline runtime purge CLI", () => {
     expect(output.stderr).toEqual([
       "Runtime purge requires the AI Office daemon to be stopped",
     ]);
-    expect(existsSync(join(root, ".ai-office", "project.sqlite"))).toBe(true);
+    expect(existsSync(join(root, "project.sqlite"))).toBe(true);
   });
 
   test("fails closed when the runtime state directory is a symlink", async () => {
@@ -192,7 +197,7 @@ describe("offline runtime purge CLI", () => {
       }),
     ).toBe(1);
     expect(output.stderr[0]).toContain(
-      "Runtime state path must be a real directory",
+      "must be a real directory",
     );
     expect(readFileSync(join(external, "project.sqlite"), "utf8")).toBe(
       "outside",
@@ -210,10 +215,10 @@ describe("offline runtime purge CLI", () => {
         beforeRemove: () => writeFileSync(database, "last-moment change"),
       }),
     );
-    const plan = await service.plan(root);
+    const plan = await service.plan(state);
 
     await expect(
-      service.apply({ runtimeRoot: root, approvedPlanHash: plan.planHash }),
+      service.apply({ runtimeRoot: state, approvedPlanHash: plan.planHash }),
     ).rejects.toBeInstanceOf(LocalRuntimePurgeError);
     expect(readFileSync(database, "utf8")).toBe("last-moment change");
   });
@@ -230,21 +235,21 @@ describe("offline runtime purge CLI", () => {
     const service = new ManageRuntimePurge(
       new LocalRuntimePurgeAdapter({
         beforeRemove: (relativePath) => {
-          if (relativePath === ".ai-office/generated")
+          if (relativePath === "generated")
             writeFileSync(unexpected, "arrived during apply");
         },
       }),
     );
-    const plan = await service.plan(root);
+    const plan = await service.plan(state);
     expect(plan.artifacts.map((artifact) => artifact.relativePath)).toEqual([
-      ".ai-office/generated/a.md",
-      ".ai-office/generated/b.md",
-      ".ai-office/generated",
-      ".ai-office/project.sqlite",
+      "generated/a.md",
+      "generated/b.md",
+      "generated",
+      "project.sqlite",
     ]);
 
     await expect(
-      service.apply({ runtimeRoot: root, approvedPlanHash: plan.planHash }),
+      service.apply({ runtimeRoot: state, approvedPlanHash: plan.planHash }),
     ).rejects.toBeInstanceOf(LocalRuntimePurgeError);
     expect(readFileSync(unexpected, "utf8")).toBe("arrived during apply");
     expect(existsSync(generated)).toBe(true);
@@ -262,9 +267,9 @@ describe("offline runtime purge CLI", () => {
 
     const plan = await new ManageRuntimePurge(
       new LocalRuntimePurgeAdapter(),
-    ).plan(root);
+    ).plan(state);
     expect(plan.artifacts).toEqual([]);
-    expect(plan.preservedPaths).toEqual([".ai-office/project.sqlite"]);
+    expect(plan.preservedPaths).toEqual(["project.sqlite"]);
     expect(readFileSync(externalDatabase, "utf8")).toBe("outside");
   });
 });

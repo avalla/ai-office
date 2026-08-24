@@ -16,6 +16,9 @@ import type { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/r
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { GlobalMemoryRepository } from "@ai-office/application/ports/global-memory-repository.port.ts";
 import type { MemoryReferenceRepository } from "@ai-office/application/ports/memory-reference-repository.port.ts";
+import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
+import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
+import type { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
 
 export interface CommandIo {
   stdout(message: string): void;
@@ -25,6 +28,7 @@ export interface CommandIo {
 
 export interface CommandContext {
   projectRoot: string;
+  runtimeHome: string;
   io: CommandIo;
   projects: SqliteProjectRepository;
   profiles: SqliteProjectProfileRepository;
@@ -42,6 +46,9 @@ export interface CommandContext {
   connectors: ConnectorRegistry;
   onboardingGenerator: OnboardingQuestionGenerator;
   agentClients: AgentClientCatalog;
+  projectBindings: ProjectBindingAdapter;
+  repositoryIdentities: SqliteRepositoryIdentityRepository;
+  defaultOfficeManifest: OfficeManifest;
   memory?: GlobalMemoryRepository;
   memoryReferences: MemoryReferenceRepository;
 }

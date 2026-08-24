@@ -1,0 +1,346 @@
+import { ApplyOfficeManifest } from "@ai-office/application/commands/apply-office-manifest.ts";
+import {
+  ImportProject,
+  ProjectSourceAssociationError,
+} from "@ai-office/application/commands/import-project.ts";
+import { ManageAgentClientIntegration } from "@ai-office/application/agent-client/manage-agent-client-integration.ts";
+import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
+import {
+  ManageProjectLifecycle,
+  ProjectInstallPartialError,
+  ProjectLifecycleError,
+  ProjectUninstallPartialError,
+  type LifecycleClientStatus,
+  type ProjectInstallResult,
+  type ProjectLifecycleStatus,
+  type ProjectUninstallPlan,
+  type ProjectUninstallResult,
+} from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
+import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
+import { InvalidProjectInstructionContractError } from "@ai-office/domain/agent/project-instruction-contract.ts";
+import { LocalProjectScanner } from "../local-project-scanner.ts";
+import {
+  CliUsageError,
+  parseArguments,
+  type CommandContext,
+} from "./shared.ts";
+
+function service(context: CommandContext): ManageProjectLifecycle {
+  return new ManageProjectLifecycle({
+    projects: context.projects,
+    profiles: context.profiles,
+    identities: context.repositoryIdentities,
+    manifests: context.officeManifests,
+    tasks: context.tasks,
+    importer: new ImportProject(
+      context.projects,
+      context.profiles,
+      new LocalProjectScanner(),
+      context.ids,
+      context.clock,
+      context.transactions,
+    ),
+    manifestApplicator: new ApplyOfficeManifest(
+      context.projects,
+      context.officeManifests,
+      context.audit,
+      context.ids,
+      context.clock,
+      context.transactions,
+    ),
+    clients: new ManageAgentClientIntegration(context.agentClients),
+    bindings: context.projectBindings,
+    ids: context.ids,
+    clock: context.clock,
+    runtimeHome: context.runtimeHome,
+    defaultManifest: context.defaultOfficeManifest,
+  });
+}
+
+function clientLine(client: LifecycleClientStatus): string {
+  const state =
+    client.detection === "detected"
+      ? client.configuration
+      : client.configuration === "not_configured"
+        ? "not detected"
+        : `${client.configuration} (client not detected)`;
+  return `  ${client.displayName}: ${state}`;
+}
+
+function lifecycleFailureMessage(error: unknown): string | null {
+  return error instanceof ProjectLifecycleError ||
+    error instanceof ProjectBindingError ||
+    error instanceof ProjectSourceAssociationError ||
+    error instanceof AgentClientIntegrationError ||
+    error instanceof InvalidProjectInstructionContractError
+    ? error.message
+    : null;
+}
+
+function printJsonFailure(
+  operation: "install" | "uninstall",
+  message: string,
+  context: CommandContext,
+): void {
+  context.io.stdout(
+    JSON.stringify({
+      schemaVersion: 2,
+      outcome: "failed",
+      operation,
+      error: {
+        message,
+        recovery:
+          operation === "install"
+            ? "Resolve the reported issue, run ai-office status, then rerun ai-office install ."
+            : "No lifecycle mutation was started for this attempt. Inspect current state and request a new uninstall plan.",
+      },
+    }),
+  );
+}
+
+function printInstall(
+  result: ProjectInstallResult,
+  context: CommandContext,
+): void {
+  context.io.stdout(
+    result.outcome === "installed"
+      ? "AI Office installed."
+      : "AI Office installed with warnings.",
+  );
+  context.io.stdout("");
+  context.io.stdout("Project");
+  context.io.stdout(`  name: ${result.project.name}`);
+  context.io.stdout(`  id: ${result.project.id}`);
+  context.io.stdout(`  repository id: ${result.project.repositoryId}`);
+  context.io.stdout(`  root: ${result.project.root}`);
+  context.io.stdout("");
+  context.io.stdout("Created or updated");
+  if (result.repositoryIdentity.action !== "none")
+    context.io.stdout(`  ${result.repositoryIdentity.path}`);
+  for (const change of result.changes)
+    context.io.stdout(`  ${change.relativePath} (${change.kind})`);
+  if (
+    result.repositoryIdentity.action === "none" &&
+    result.changes.length === 0
+  )
+    context.io.stdout("  no filesystem changes");
+  context.io.stdout("");
+  context.io.stdout("Office");
+  context.io.stdout(`  state: ${result.office.state}`);
+  context.io.stdout(`  onboarding: ${result.office.onboarding}`);
+  context.io.stdout(`  revision: ${result.office.revision}`);
+  context.io.stdout(`  roles: ${result.office.roles.join(", ")}`);
+  context.io.stdout("");
+  context.io.stdout("Clients");
+  for (const client of result.clients) context.io.stdout(clientLine(client));
+  for (const issue of result.issues) {
+    context.io.stdout(`  ${issue.severity}: ${issue.message}`);
+    if (issue.recovery !== undefined)
+      context.io.stdout(`    ${issue.recovery}`);
+  }
+  context.io.stdout("");
+  context.io.stdout("Next");
+  context.io.stdout("  ai-office status");
+  context.io.stdout("  ai-office task:list");
+}
+
+export function printProjectLifecycleStatus(
+  result: ProjectLifecycleStatus,
+  context: Pick<CommandContext, "io">,
+): void {
+  context.io.stdout("AI Office");
+  context.io.stdout("");
+  context.io.stdout("Project");
+  context.io.stdout(`  name: ${result.project.name ?? "unavailable"}`);
+  context.io.stdout(`  id: ${result.project.id ?? "unavailable"}`);
+  context.io.stdout(`  root: ${result.project.root}`);
+  context.io.stdout(
+    `  repository identity: ${result.project.repositoryIdentity.state}`,
+  );
+  context.io.stdout(
+    `  repository id: ${result.project.repositoryIdentity.id ?? "unavailable"}`,
+  );
+  context.io.stdout(
+    `  runtime association: ${result.project.runtimeAssociation.state}`,
+  );
+  context.io.stdout("");
+  context.io.stdout("Runtime");
+  context.io.stdout(`  daemon: ${result.runtime.daemon}`);
+  context.io.stdout(`  home: ${result.runtime.home}`);
+  context.io.stdout(`  state: ${result.runtime.authoritativeState}`);
+  context.io.stdout("");
+  context.io.stdout("Office");
+  context.io.stdout(`  state: ${result.office.state}`);
+  context.io.stdout(`  onboarding: ${result.office.onboarding}`);
+  context.io.stdout(`  revision: ${result.office.revision ?? "unavailable"}`);
+  context.io.stdout(`  roles: ${result.office.roles.length}`);
+  context.io.stdout("");
+  context.io.stdout("Clients");
+  if (result.clients.length === 0) context.io.stdout("  unavailable");
+  for (const client of result.clients) context.io.stdout(clientLine(client));
+  if (result.tasks !== null) {
+    context.io.stdout("");
+    context.io.stdout("Tasks");
+    context.io.stdout(`  open: ${result.tasks.open}`);
+    context.io.stdout(`  wip: ${result.tasks.wip}`);
+  }
+  if (result.issues.length > 0) {
+    context.io.stdout("");
+    context.io.stdout("Issues");
+    for (const issue of result.issues) {
+      context.io.stdout(`  ${issue.code}: ${issue.message}`);
+      if (issue.recovery !== undefined)
+        context.io.stdout(`    ${issue.recovery}`);
+    }
+  }
+  context.io.stdout("");
+  context.io.stdout(`Status: ${result.health}`);
+}
+
+function printUninstallPlan(
+  result: ProjectUninstallPlan,
+  context: CommandContext,
+): void {
+  if (!result.installed) {
+    context.io.stdout("AI Office is not installed for this repository.");
+    return;
+  }
+  context.io.stdout("AI Office uninstall plan");
+  context.io.stdout("");
+  context.io.stdout(`Project: ${result.projectId ?? "unknown"}`);
+  context.io.stdout(`Repository: ${result.repositoryId ?? "unknown"}`);
+  context.io.stdout(`Root: ${result.rootPath}`);
+  context.io.stdout("Changes");
+  for (const change of result.changes)
+    context.io.stdout(`  ${change.kind}: ${change.relativePath}`);
+  if (result.changes.length === 0) context.io.stdout("  none");
+  for (const item of result.preserved)
+    context.io.stdout(`  preserved: ${item}`);
+  context.io.stdout("");
+  context.io.stdout(
+    "Portable repository identity, runtime project state, and global memory will be preserved.",
+  );
+  context.io.stdout("");
+  context.io.stdout("Approve this exact plan with:");
+  context.io.stdout(`  ai-office uninstall . --approve ${result.planHash}`);
+}
+
+function printUninstallResult(
+  result: ProjectUninstallResult,
+  context: CommandContext,
+): void {
+  context.io.stdout(
+    result.uninstalled
+      ? "AI Office uninstalled from this repository."
+      : "AI Office was not installed for this repository.",
+  );
+  context.io.stdout(`Root: ${result.rootPath}`);
+  for (const path of result.removedPaths) context.io.stdout(`Removed: ${path}`);
+  context.io.stdout("Authoritative runtime state: preserved");
+  context.io.stdout("Portable repository identity: preserved");
+  context.io.stdout("Global memory: preserved");
+}
+
+export async function handleLifecycleCommand(
+  command: string,
+  args: string[],
+  context: CommandContext,
+): Promise<number | null> {
+  if (command !== "install" && command !== "status" && command !== "uninstall")
+    return null;
+
+  if (command === "install") {
+    const parsed = parseArguments(args, new Set(), new Set(["json", "rebind"]));
+    if (parsed.positionals.length > 1)
+      throw new CliUsageError("install accepts at most one project path");
+    try {
+      const result = await service(context).install({
+        rootPath: parsed.positionals[0] ?? context.projectRoot,
+        rebind: parsed.flags.has("rebind"),
+      });
+      if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(result));
+      else printInstall(result, context);
+      return result.outcome === "installed" ? 0 : 2;
+    } catch (error) {
+      if (error instanceof ProjectInstallPartialError) {
+        if (parsed.flags.has("json"))
+          context.io.stdout(JSON.stringify(error.result));
+        else {
+          context.io.stderr("AI Office installation is partial.");
+          context.io.stderr(error.result.error.message);
+          context.io.stderr(error.result.error.recovery);
+        }
+        return 1;
+      }
+      const message = lifecycleFailureMessage(error);
+      if (parsed.flags.has("json") && message !== null) {
+        printJsonFailure("install", message, context);
+        return 1;
+      }
+      throw error;
+    }
+  }
+
+  if (command === "status") {
+    const parsed = parseArguments(args, new Set(), new Set(["json"]));
+    if (parsed.positionals.length > 1)
+      throw new CliUsageError("status accepts at most one project path");
+    const result = await service(context).status(
+      parsed.positionals[0] ?? context.projectRoot,
+    );
+    if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(result));
+    else printProjectLifecycleStatus(result, context);
+    return result.health === "healthy" ? 0 : 1;
+  }
+
+  const parsed = parseArguments(args, new Set(["approve"]), new Set(["json"]));
+  if (parsed.positionals.length > 1)
+    throw new CliUsageError("uninstall accepts at most one project path");
+  const rootPath = parsed.positionals[0] ?? context.projectRoot;
+  const approvedPlanHash = parsed.options.get("approve");
+  if (approvedPlanHash === undefined) {
+    try {
+      const plan = await service(context).planUninstall(rootPath);
+      if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(plan));
+      else printUninstallPlan(plan, context);
+      return 0;
+    } catch (error) {
+      const message = lifecycleFailureMessage(error);
+      if (parsed.flags.has("json") && message !== null) {
+        printJsonFailure("uninstall", message, context);
+        return 1;
+      }
+      throw error;
+    }
+  }
+  try {
+    const result = await service(context).uninstall({
+      rootPath,
+      approvedPlanHash,
+    });
+    if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(result));
+    else printUninstallResult(result, context);
+    return 0;
+  } catch (error) {
+    if (error instanceof ProjectUninstallPartialError) {
+      if (parsed.flags.has("json"))
+        context.io.stdout(JSON.stringify(error.result));
+      else {
+        context.io.stderr("AI Office uninstall is partial.");
+        context.io.stderr(error.result.error.message);
+        for (const path of error.result.removedPaths)
+          context.io.stderr(`Already removed: ${path}`);
+        for (const path of error.result.possiblyModifiedPaths)
+          context.io.stderr(`Inspect: ${path}`);
+        context.io.stderr(error.result.error.recovery);
+      }
+      return 1;
+    }
+    const message = lifecycleFailureMessage(error);
+    if (parsed.flags.has("json") && message !== null) {
+      printJsonFailure("uninstall", message, context);
+      return 1;
+    }
+    throw error;
+  }
+}

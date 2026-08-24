@@ -294,6 +294,39 @@ Semantic retrieval, autonomous LLM lesson extraction, pattern outcome feedback
 from a future pipeline runtime, global audit, memory-write policy, poisoning
 protection, and quotas remain deferred.
 
+## M7.5 — Repository lifecycle UX
+
+Status: implemented.
+
+- user-facing `install`, `status`, and exact-plan `uninstall` orchestration over
+  existing project, office-manifest, and coding-client services;
+- strict, schema-versioned, committable `.ai-office/project.json` identity
+  anchor with a portable repository ID and no path, runtime project ID, secret,
+  capability, or copied authoritative state;
+- stable user runtime home selected by `AI_OFFICE_HOME` or `~/.ai-office`,
+  independent from program distribution and current repository;
+- SQLite mapping from portable repository identity to runtime-local project ID,
+  with canonical multi-checkout associations and fail-closed remote evidence;
+- canonical same-filesystem ancestor discovery with nearest nested-project
+  precedence and symlink fail-closed behavior;
+- automatic project-ID resolution for project-scoped commands;
+- idempotent install reconciliation, default office only when absent, passive
+  client detection, and ownership-safe sequential client apply;
+- status schema version `2`, including distinct repository identity and runtime
+  association plus offline repository/client inspection when
+  the daemon is unavailable;
+- lifecycle uninstall that preserves the portable identity, user content,
+  project/runtime authority, other checkouts, runtime purge scope, and global
+  reusable memory while reporting partial mutations honestly;
+- linkable source-checkout `ai-office` bin while published packages, compiled
+  binaries, and background service management remain M9 work.
+
+The repository artifact is portable identity metadata rather than project
+authority. Clones and purged runtimes establish a local SQLite mapping through
+normal install. Additional or moved checkouts reuse authority when Git remote
+evidence matches; copied or conflicting identities fail closed. Explicit
+rebind remains exceptional recovery. See ADR-0008 and ADR-0009.
+
 ## M8 — Code intelligence
 
 Status: future.

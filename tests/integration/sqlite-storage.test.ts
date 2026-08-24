@@ -56,6 +56,7 @@ describe("project database migrations", () => {
       "0016_agent_controlled_actions.sql",
       "0017_skill_first_office.sql",
       "0018_reusable_memory_references.sql",
+      "0019_repository_identity.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -84,6 +85,7 @@ describe("project database migrations", () => {
       { version: "0016_agent_controlled_actions.sql" },
       { version: "0017_skill_first_office.sql" },
       { version: "0018_reusable_memory_references.sql" },
+      { version: "0019_repository_identity.sql" },
     ]);
     database.close();
   });

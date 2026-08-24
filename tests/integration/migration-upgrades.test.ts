@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0018_reusable_memory_references.sql",
+        "0019_repository_identity.sql",
       );
       expect(
         database
@@ -105,6 +105,7 @@ describe("migration upgrades", () => {
       "0016_agent_controlled_actions.sql",
       "0017_skill_first_office.sql",
       "0018_reusable_memory_references.sql",
+      "0019_repository_identity.sql",
     ]);
     expect(
       database
@@ -151,6 +152,7 @@ describe("migration upgrades", () => {
     expect(migrate(database, migrations).applied).toEqual([
       "0017_skill_first_office.sql",
       "0018_reusable_memory_references.sql",
+      "0019_repository_identity.sql",
     ]);
     expect(
       database
@@ -166,6 +168,62 @@ describe("migration upgrades", () => {
         )
         .get()?.name,
     ).toBe("Existing");
+    database.close();
+  });
+
+  test("adds portable repository identity and checkout detachment state without changing projects", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-identity-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0018_reusable_memory_references.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    }
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    const createdAt = "2026-08-23T00:00:00.000Z";
+    database
+      .prepare(
+        `INSERT INTO project(id,name,description,created_at,updated_at)
+         VALUES ('project','Existing',NULL,?,?)`,
+      )
+      .run(createdAt, createdAt);
+
+    expect(migrate(database, migrations).applied).toEqual([
+      "0019_repository_identity.sql",
+    ]);
+    database
+      .prepare(
+        `INSERT INTO project_repository_identity(repository_id,project_id,created_at)
+         VALUES ('repo_portable','project',?)`,
+      )
+      .run(createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_checkout_detachment(local_path,project_id,detached_at)
+         VALUES ('/canonical/checkout','project',?)`,
+      )
+      .run(createdAt);
+
+    expect(
+      database
+        .query<{ project_id: string }, []>(
+          "SELECT project_id FROM project_repository_identity WHERE repository_id='repo_portable'",
+        )
+        .get(),
+    ).toEqual({ project_id: "project" });
+    expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.prepare("DELETE FROM project WHERE id='project'").run();
+    expect(
+      database
+        .query<{ count: number }, []>(
+          `SELECT
+             (SELECT COUNT(*) FROM project_repository_identity) +
+             (SELECT COUNT(*) FROM project_checkout_detachment) AS count`,
+        )
+        .get()?.count,
+    ).toBe(0);
     database.close();
   });
 

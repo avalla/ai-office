@@ -11,7 +11,7 @@ import {
 export class DaemonUnavailableError extends Error {
   constructor(socketPath: string) {
     super(
-      `AI Office daemon is not available at ${socketPath}. Start it with "bun run daemon".`,
+      `AI Office daemon is not available at ${socketPath}. Start it with "bun run daemon" in development mode or "ai-office daemon" through the linkable CLI.`,
     );
     this.name = "DaemonUnavailableError";
   }

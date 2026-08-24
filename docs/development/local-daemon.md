@@ -4,8 +4,15 @@ Milestone M2 moves authoritative project access behind one local process.
 
 ## Lifecycle
 
-Start the daemon from the intended runtime root. In a simple setup this may be
-the repository being managed, but that is not required:
+The normal installed entry point selects a stable user runtime home and can be
+started from any directory:
+
+```bash
+ai-office daemon
+```
+
+It uses `AI_OFFICE_HOME` when explicitly set and otherwise `~/.ai-office`.
+Development commands retain an explicit checkout-local compatibility mode:
 
 ```bash
 bun run daemon
@@ -13,16 +20,18 @@ bun run daemon
 
 The daemon:
 
-- opens and migrates `.ai-office/project.sqlite`;
-- removes an unreachable stale `.ai-office/daemon.sock`;
+- opens and migrates `<runtime-home>/project.sqlite`;
+- removes an unreachable stale `<runtime-home>/daemon.sock`;
 - refuses to start when a healthy daemon already owns the socket;
 - creates the Unix socket with owner-only permissions;
 - stops accepting new requests on SIGINT or SIGTERM;
 - drains active requests before removing the socket and closing SQLite.
 
-The production command derives the runtime root from its current working
-directory; it has no public data-directory flag. Importing a different source
-repository does not move the database or socket into that repository. Coding
+The linkable `ai-office` entry point resolves the same data and socket paths
+regardless of distribution checkout or current repository. Moving or relinking
+the program therefore does not select a new office. The legacy Bun development
+command derives `<cwd>/.ai-office` deliberately. Importing a different source repository does not move the
+database or socket into that repository. Coding
 client commands independently target their explicit `--root`; client
 integration files there do not belong to the daemon runtime root unless the two
 paths coincide.
@@ -49,6 +58,20 @@ the user to run `bun run daemon`. `runtime:purge` is the narrow lifecycle
 exception: it runs locally because it destroys the database that normally owns
 command authority, refuses to operate while a healthy daemon is reachable, and
 requires approval of the exact current purge-plan hash.
+
+`status` is the other local-aware exception, but it is not a stateful command.
+The CLI inspects the repository binding before protocol dispatch. If the daemon
+is unavailable, it returns schema-version `2` status with the portable
+repository identity reported separately from an `unverified` runtime
+association, authoritative state unavailable, and repository-local client
+inspection where possible. Identity existence and daemon reachability are
+separate facts.
+
+For project-scoped commands without `--project`, the linkable CLI discovers the
+nearest valid binding from its current working directory and appends that
+project ID before protocol dispatch. Explicit `--project` always wins. Invalid
+bindings fail closed rather than falling back to path or project-name
+heuristics.
 
 ## Serialization and audit
 
