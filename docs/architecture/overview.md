@@ -260,13 +260,26 @@ Workflow gates remain separate from existing approval concepts:
 
 No one approval type substitutes for another.
 
-### GitHub connector boundary
+### Source-control and GitHub connector boundary
 
-GitHub is a protected external system, not an orchestration engine. A future
-GitHub App and connector expose project-scoped repository resources plus
-authorized operations for issues, branches, commits/push, pull requests,
-reviews, comments, checks, and merge. Installation credentials remain behind
-infrastructure credential references and are never passed to agents.
+Source control is a provider-neutral application boundary, not an orchestration
+engine. Future domain/application concepts may include a development pipeline,
+pull-request association, review, review finding, and merge gate, but they must
+not depend on GitHub SDK types or API semantics. A source-control port should
+normalize operations such as creating or updating a pull request, reading its
+state and CI/check results, publishing a review, reading review state, and
+merging. Infrastructure adapters may target GitHub first and later GitLab,
+Bitbucket, or an appropriately constrained local Git workflow.
+
+GitHub is the first probable protected external adapter. A future GitHub App
+and connector expose project-scoped repository resources plus authorized
+operations for issues, branches, commits/push, pull requests, reviews,
+comments, checks, and merge. Installation credentials remain behind
+infrastructure credential references and are never passed to agents. The
+source-control port does not bypass controlled actions: push, pull-request
+creation or update, review publication, and merge remain policy-controlled
+side effects with the applicable capability, approval, revalidation, outcome,
+and audit lifecycle.
 
 Signed webhook ingestion is an inbound infrastructure adapter. It authenticates,
 deduplicates, validates ownership, and translates deliveries into application
@@ -280,14 +293,25 @@ assessment must still decide the boundary between local Git/worktree operations,
 remote Git transport, and GitHub API operations without exposing raw repository,
 shell, network, or credential access to workers.
 
-### Structured outcomes and risk-based policy
+### Structured outcomes, persistence, and risk-based policy
 
 Stages may produce typed artifacts in addition to human-readable output. In
 particular, a review artifact can carry a decision and structured findings with
-severity, category, source location, message, and suggestion. Pipeline policy
-can use that data to request fixes, require another reviewer, trigger QA or
-security, publish connector comments, or block merge. Free-form review text is
-never authorization by itself.
+stable identity, severity, category, description, optional source location,
+required/advisory disposition, and lifecycle status. A later review must be
+able to verify prior findings through an explicit
+`open -> addressed -> verified -> closed` lifecycle rather than producing an
+unrelated replacement analysis. Pipeline policy can use that data to request
+fixes, require another reviewer, trigger QA or security, publish connector
+comments, or block merge. Free-form review text is never authorization by
+itself, and a developer marking a finding addressed does not independently
+verify or close it.
+
+Future pipeline runs, pull-request associations, reviews, findings, resolutions,
+gate evaluations, and iterations are project-authoritative operational state in
+`project.sqlite`. A verified finding may be proposed for explicit promotion to
+a reusable lesson or pattern in `global.sqlite`; review state itself does not
+become global memory, and promotion must not be automatic.
 
 Change-risk routing may eventually select stronger pipeline gates, including
 independent review, security review, human approval, or human merge. This must be

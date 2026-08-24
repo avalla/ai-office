@@ -13,7 +13,10 @@ AI Office
   |-- agent pipeline engine
   |-- policy and capabilities
   |-- connectors
-  |     `-- GitHub
+  |     `-- source control
+  |           |-- GitHub (first probable adapter)
+  |           |-- GitLab / Bitbucket
+  |           `-- constrained local Git workflow
   `-- worker runtimes
         |-- Codex
         |-- Claude Code
@@ -27,10 +30,10 @@ Two boundaries govern this direction:
 1. A generic, client-agnostic Agent Pipeline Engine owns pipeline and stage
    orchestration, assignment, policy gates, transitions, retries, controlled
    loops, approvals, artifacts, and audit.
-2. GitHub remains an external system behind connector and application ports. A
-   GitHub connector exposes repository resources and operations; it never
-   decides which role works next, whether a review is independent, or whether
-   policy permits merge.
+2. Source control remains provider-neutral behind application and connector
+   ports. GitHub is the first probable adapter, not the core abstraction; no
+   adapter decides which role works next, whether a review is independent, or
+   whether policy permits merge.
 
 The M6E office manifest is the configuration precursor for this direction. It
 currently stores roles and ordered pipeline descriptions, while the active host
@@ -405,6 +408,8 @@ A future pipeline definition must be able to describe:
   `review -> fix -> review`;
 - retries, timeouts, cancellation, failure handling, compensation or escalation
   where meaningful;
+- loop limits including maximum iterations, elapsed time, and cost, with
+  deterministic escalation to a human when a bounded cycle does not converge;
 - workflow approval gates and human checkpoints;
 - complete, sanitized provenance and audit.
 
@@ -483,13 +488,29 @@ review one change.
 Depends on: M11, M6F external client integration, and M8.5 effective context
 assembly.
 
-## M13 — GitHub connector and GitHub App
+## M13 — Source-control abstraction and GitHub adapter
 
 Status: future.
 
-Goal: expose GitHub as a protected external resource through the connector
-model, with GitHub App authentication and controlled inbound and outbound
-integration.
+Goal: establish a provider-neutral source-control boundary and expose GitHub as
+its first probable protected external adapter, without leaking provider types or
+workflow decisions into domain/application policy.
+
+The application boundary should define a port conceptually equivalent to
+`SourceControlPort`. Its normalized operations may include:
+
+- create or update a pull request and read its current state;
+- read CI/check status;
+- publish a structured review and read externally visible review state;
+- merge a pull request using an explicitly selected strategy.
+
+Conceptual project models such as `PullRequest` or pull-request association may
+retain provider references and synchronization state without importing GitHub
+SDK objects. The exact naming must remain usable by future GitLab, Bitbucket,
+and constrained local Git adapters; GitHub-specific metadata belongs to its
+infrastructure adapter.
+
+The first GitHub adapter scope may include:
 
 - GitHub App installation and repository authorization, with credentials kept
   behind infrastructure credential references and never exposed to agents;
@@ -506,6 +527,12 @@ integration.
 - GitHub Actions evaluated as an optional execution backend, check producer, or
   integration point, never as AI Office's primary orchestrator.
 
+Push, pull-request creation or update, review publication, and merge are
+protected side effects. They must use the applicable capability and
+controlled-action lifecycle, including policy evaluation, approval where
+required, execution-time revalidation, outcome recording, and audit. A
+source-control port is not an alternate path around those controls.
+
 Webhook adapters translate authenticated external deliveries into application
 commands or facts. They do not choose the next role or directly bypass pipeline
 and policy evaluation. The connector performs authorized GitHub operations but
@@ -518,15 +545,16 @@ That split must preserve the current rule that agents do not receive direct
 repository, shell, credential, or connector authority.
 
 Depends on: M6 connector and controlled-action foundations and M11 pipeline
-orchestration. M12 workers may consume the connector through those boundaries;
-they must not depend on GitHub SDK objects directly.
+orchestration. M12 workers may consume source-control operations through those
+boundaries; they must not depend on GitHub SDK objects directly.
 
 ## M14 — Software development pipelines
 
 Status: future.
 
 Goal: build reusable, policy-governed software delivery workflows on the generic
-engine, worker-runtime ports, and GitHub connector.
+engine, worker-runtime ports, and provider-neutral source-control boundary, with
+GitHub as the first probable adapter.
 
 Initial role responsibilities should remain configurable but preserve these
 default boundaries:
@@ -579,15 +607,74 @@ only to communicate direction; no path or file format is selected yet:
 A software-delivery pipeline may coordinate assessment, plan approval,
 branch/worktree preparation, implementation, test, push, pull request, structured
 review, bounded fix loops, QA, conditional security review, human approval, and
-merge. The engine owns this lifecycle; GitHub only reflects and performs the
+merge. A conceptual `DevelopmentPipeline` specializes the generic M11 workflow
+without moving software-delivery policy into its engine. The engine owns the
+lifecycle; the selected source-control adapter only reflects and performs the
 external repository operations it is authorized to expose.
 
+The baseline development lifecycle is:
+
+```text
+task -> planning/architecture -> implementation -> validation
+     -> commit/push -> open or update pull request
+     -> independent review
+          |-- changes requested -> fix -> validation -> re-review
+          `-- approved -> merge gate -> human or explicit policy approval -> merge
+```
+
+Review and implementation must be assignable to different agent identities and
+stage runs. A low-risk pipeline may use `Developer -> Reviewer -> Merge Gate`.
+A higher-risk pipeline may require `Architect -> Developer -> QA -> Architecture
+Reviewer -> Code Reviewer -> Security Reviewer -> Human Approval -> Merge`, with
+security and additional review stages selected conditionally by policy. A
+developer never implicitly approves the developer's own work.
+
 Agent reviews should be able to return machine-interpretable artifacts in
-addition to human-readable text. A provisional shape may contain `decision` and
-`findings`, with each finding carrying severity, category, file, line, message,
-and suggestion. The pipeline can then apply policy, publish GitHub comments,
-start a fix loop, or block/allow later stages. Exact schema, diff anchoring, and
-versioning remain design work.
+addition to human-readable text. Provisional concepts include `Review`,
+`ReviewDecision`, `ReviewFinding`, `FindingSeverity`, and `FindingStatus`. A
+finding must carry at least a stable ID, severity, category, description,
+optional file/location, required or advisory disposition, and status. A review
+may then express a decision such as `changes_requested` and reference the exact
+findings that require remediation.
+
+These software-delivery review records are distinct from M5 governance reviews,
+even if a later assessment reuses shared value objects or terminology. Neither
+kind of review substitutes for a pipeline transition approval or for the M6
+approval of one protected external action.
+
+Finding lifecycle must preserve continuity across review iterations:
+
+```text
+open -> addressed -> verified -> closed
+```
+
+The developer may mark a finding addressed and link the corrective change, but
+an independent reviewer verifies it before closure. Re-review must reference
+the preceding review and outstanding findings, while still allowing genuinely
+new findings, instead of replacing history with an unrelated free-form review.
+Required open or merely addressed findings remain eligible to block later
+stages according to policy.
+
+The review loop is bounded by pipeline policy such as
+`max_review_iterations`, `max_cost`, and `timeout`. Exceeding a limit, reaching
+an ambiguous external outcome, or otherwise failing to converge must stop
+automatic progression and `escalate_to_human`; it must not silently approve,
+replay a protected side effect, or merge.
+
+Review decisions and merge authorization are separate. Configurable merge gates
+may require:
+
+- CI/checks green;
+- no open blocker or other policy-defined required findings;
+- all required independent reviewers approved;
+- required validation, QA, architecture, and security stages passed;
+- budget/cost policy satisfied;
+- explicit human approval when required by task or repository policy.
+
+Merge strategy and approval mode are explicit policy inputs. Automatic approval
+may be available for repositories or tasks classified as low risk, but it is
+never the implicit default. Even explicit automatic approval cannot bypass the
+controlled action and capability required for the merge side effect.
 
 Risk-based routing should integrate with, but not silently redefine, the
 existing trusted operation risk model. An illustrative change-risk policy could
@@ -597,9 +684,24 @@ high-risk work through review plus security review and human approval, and
 critical work through mandatory human approval and merge. These levels and
 gates are examples, not a finalized classification.
 
-Depends on: M11 Agent Pipeline Engine, M12 worker runtime adapters, M13 GitHub
-integration, M6A policy/capability enforcement, and the relevant M8/M8.5 code
-intelligence and context foundations.
+Operational pipeline state belongs to project authority. `project.sqlite`
+should persist the development pipeline run, pull-request association, review
+and decision state, structured findings, finding resolution and verification,
+merge-gate evaluations, iterations, cost/budget linkage, provenance, and audit
+needed to resume deterministically. External provider state is synchronized
+evidence, not the sole authoritative record of AI Office policy decisions.
+
+Verified recurring findings may later be proposed as reusable lessons or
+patterns through M7's validated memory boundary. Promotion into
+`global.sqlite` must be explicit, preserve provenance, and store reusable
+knowledge rather than copying project review state. Automatic lesson extraction
+or automatic promotion of every finding is outside this milestone.
+
+Depends on: M11 Agent Pipeline Engine, M12 worker runtime adapters, the M13
+source-control boundary and its first adapter, M4 cost/budget accounting, M5
+governance concepts, M6A policy/capability enforcement, M7 reusable memory for
+optional promotion, and the relevant M8/M8.5 code-intelligence and context
+foundations.
 
 Exit direction:
 
@@ -607,8 +709,12 @@ Exit direction:
   review, bounded remediation, QA, policy approval, and merge;
 - structured review findings drive deterministic gates without trusting free
   text as authorization;
+- re-review verifies the lifecycle of prior findings and preserves iteration
+  history;
 - separation-of-duties violations fail closed;
 - merge is impossible until all effective policy gates are satisfied;
+- non-converging review loops stop at configured iteration, cost, or time limits
+  and escalate to a human;
 - changing the selected worker runtime does not change workflow semantics.
 
 ## M11-M14 dependency summary and open design questions
@@ -620,7 +726,8 @@ M6E office definitions + M6 policy/actions + M8.5 context
                 M11 Pipeline Engine
                   |             |
                   v             v
-       M12 Runtime adapters   M13 GitHub connector
+       M12 Runtime adapters   M13 Source-control port
+                                  + GitHub adapter
                   \             /
                    v           v
               M14 Software development pipelines
@@ -638,6 +745,8 @@ These milestones intentionally defer:
 - the precise independence rule across agent identities, runtime sessions,
   models, providers, and human actors;
 - structured review artifact versioning and durable anchoring to changing diffs;
+- exact review-decision, finding-severity, finding-status, and merge-gate
+  schemas;
 - local Git versus GitHub API ownership of branch, commit, push, worktree, and
   precondition semantics;
 - webhook ordering, installation lifecycle, delivery reconciliation, and
@@ -645,7 +754,10 @@ These milestones intentionally defer:
 - runner isolation, credential delegation, cancellation, crash recovery, and
   ambiguous external outcomes;
 - the policy thresholds for autonomous merge and the authentication required for
-  human workflow approvals.
+  human workflow approvals;
+- automatic extraction or promotion of review findings into reusable memory;
+- any automatic-merge policy beyond an explicit, opt-in, low-risk
+  configuration; auto-merge is not selected or assumed as a default here.
 
 These questions require milestone-specific assessments and, where a durable
 architectural choice is ready, an ADR. This roadmap direction does not itself
