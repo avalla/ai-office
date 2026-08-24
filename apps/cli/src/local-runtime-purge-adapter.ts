@@ -52,7 +52,7 @@ const removalOrder = [
 ] as const;
 
 function removalRank(relativePath: string): number {
-  const name = relativePath.slice(".ai-office/".length).split("/", 1)[0]!;
+  const name = relativePath.split("/", 1)[0]!;
   const rank = removalOrder.findIndex((candidate) => candidate === name);
   return rank === -1 ? removalOrder.length : rank;
 }
@@ -207,25 +207,41 @@ export class LocalRuntimePurgeAdapter implements RuntimePurgeAdapter {
   async plan(runtimeRootInput: string): Promise<RuntimePurgeDraft> {
     let runtimeRoot: string;
     try {
-      runtimeRoot = realpathSync(resolve(runtimeRootInput));
-    } catch {
+      const selectedPath = resolve(runtimeRootInput);
+      const selected = lstatSync(selectedPath);
+      if (selected.isSymbolicLink() || !selected.isDirectory())
+        throw new LocalRuntimePurgeError(
+          `Runtime state path must be a real directory: ${selectedPath}`,
+        );
+      runtimeRoot = realpathSync(selectedPath);
+    } catch (error) {
+      if (error instanceof LocalRuntimePurgeError) throw error;
+      if (error instanceof Error && "code" in error && error.code === "ENOENT")
+        return {
+          contractVersion: 1,
+          runtimeRoot: resolve(runtimeRootInput),
+          stateDirectory: resolve(runtimeRootInput),
+          stateDirectoryFingerprint: null,
+          artifacts: [],
+          preservedPaths: [],
+        };
       throw new LocalRuntimePurgeError(
-        `Runtime root does not exist: ${runtimeRootInput}`,
+        `Runtime home could not be resolved: ${runtimeRootInput}`,
       );
     }
     try {
       if (!statSync(runtimeRoot).isDirectory())
         throw new LocalRuntimePurgeError(
-          `Runtime root is not a directory: ${runtimeRootInput}`,
+          `Runtime home is not a directory: ${runtimeRootInput}`,
         );
     } catch (error) {
       if (error instanceof LocalRuntimePurgeError) throw error;
       throw new LocalRuntimePurgeError(
-        `Runtime purge could not inspect the runtime root safely: ${runtimeRoot}`,
+        `Runtime purge could not inspect the runtime home safely: ${runtimeRoot}`,
       );
     }
 
-    const stateDirectory = join(runtimeRoot, ".ai-office");
+    const stateDirectory = runtimeRoot;
     let names: string[];
     let stateDirectoryFingerprint: string | null = null;
     try {
@@ -251,7 +267,7 @@ export class LocalRuntimePurgeAdapter implements RuntimePurgeAdapter {
     const artifacts: RuntimePurgeArtifact[] = [];
     const preservedPaths: string[] = [];
     for (const name of names) {
-      const relativePath = `.ai-office/${name}`;
+      const relativePath = name;
       const expectedKind = runtimeArtifacts.get(name);
       if (expectedKind === undefined) {
         preservedPaths.push(relativePath);

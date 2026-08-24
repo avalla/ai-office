@@ -27,7 +27,8 @@
       "@ai-office/connector-sdk/*": ["packages/connector-sdk/src/*"],
       "@ai-office/filesystem-connector/*": [
         "packages/filesystem-connector/src/*"
-      ]
+      ],
+      "@ai-office/runtime-paths/*": ["packages/runtime-paths/src/*"]
     }
   },
   "include": [

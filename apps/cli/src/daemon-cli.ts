@@ -1,5 +1,5 @@
 import { createInterface } from "node:readline/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { cliHelp, type CliIo } from "./cli.ts";
 import {
   DaemonClient,
@@ -14,9 +14,15 @@ import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
 import { getOfflineProjectStatus } from "./offline-project-status.ts";
 import { printProjectLifecycleStatus } from "./commands/lifecycle.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
+import {
+  resolveRuntimePaths,
+  RuntimePathError,
+  type RuntimePaths,
+} from "@ai-office/runtime-paths/runtime-paths.ts";
 
 export interface DaemonCliOptions {
-  projectRoot: string;
+  projectRoot?: string;
+  runtimePaths?: RuntimePaths;
   socketPath?: string;
   io?: CliIo;
   runtimePurgeAdapter?: RuntimePurgeAdapter;
@@ -130,7 +136,7 @@ async function resolvedArguments(
   args: string[],
   workingDirectory: string,
   bindings: ProjectBindingAdapter,
-): Promise<{ args: string[]; discoveredProjectId?: string }> {
+): Promise<{ args: string[]; discoveredRoot?: string }> {
   const lifecycle = lifecycleArguments(args, workingDirectory);
   const command = lifecycle[0];
   if (
@@ -149,17 +155,16 @@ async function resolvedArguments(
   if (inspection.status !== "valid" || inspection.binding === undefined)
     return { args: lifecycle };
   return {
-    args: [...lifecycle, "--project", inspection.binding.projectId],
-    discoveredProjectId: inspection.binding.projectId,
+    args: lifecycle,
+    discoveredRoot: inspection.rootPath,
   };
 }
 
-async function verifyDiscoveredProject(
+async function resolveDiscoveredProject(
   client: DaemonClient,
-  workingDirectory: string,
-  projectId: string,
-): Promise<void> {
-  const response = await client.execute(["status", workingDirectory, "--json"]);
+  rootPath: string,
+): Promise<string> {
+  const response = await client.execute(["status", rootPath, "--json"]);
   const firstLine = response.stdout[0];
   let value: unknown;
   try {
@@ -175,18 +180,25 @@ async function verifyDiscoveredProject(
     );
   const status = value as {
     schemaVersion?: unknown;
-    project?: { id?: unknown; binding?: { state?: unknown } };
+    project?: {
+      id?: unknown;
+      repositoryIdentity?: { state?: unknown };
+      runtimeAssociation?: { state?: unknown };
+    };
     runtime?: { authoritativeState?: unknown };
   };
   if (
-    status.schemaVersion !== 1 ||
-    status.project?.id !== projectId ||
-    status.project.binding?.state !== "valid" ||
+    status.schemaVersion !== 2 ||
+    typeof status.project?.id !== "string" ||
+    (status.project.repositoryIdentity?.state !== "valid" &&
+      status.project.repositoryIdentity?.state !== "legacy") ||
+    status.project.runtimeAssociation?.state !== "valid" ||
     status.runtime?.authoritativeState !== "available"
   )
     throw new ProjectBindingError(
       "The discovered project binding is not valid in the current runtime. Run ai-office status for recovery details.",
     );
+  return status.project.id;
 }
 
 export async function runDaemonCli(
@@ -194,9 +206,23 @@ export async function runDaemonCli(
   options: DaemonCliOptions,
 ): Promise<number> {
   const io = options.io ?? defaultIo;
+  let runtimePaths: RuntimePaths;
+  try {
+    runtimePaths =
+      options.runtimePaths ??
+      resolveRuntimePaths({
+        mode: "development",
+        developmentRoot: options.projectRoot ?? process.cwd(),
+      });
+  } catch (error) {
+    if (error instanceof RuntimePathError) {
+      io.stderr(error.message);
+      return 1;
+    }
+    throw error;
+  }
   const socketPath =
-    options.socketPath ??
-    join(options.projectRoot, ".ai-office", "daemon.sock");
+    options.socketPath ?? runtimePaths.socketPath;
   const client = new DaemonClient(socketPath);
   const workingDirectory = options.workingDirectory ?? process.cwd();
   const bindings = options.projectBindings ?? new LocalProjectBindingAdapter();
@@ -221,7 +247,7 @@ export async function runDaemonCli(
 
     if (args[0] === "runtime:purge")
       return runRuntimePurgeCli(args.slice(1), {
-        runtimeRoot: options.projectRoot,
+        runtimeRoot: runtimePaths.runtimeHome,
         daemonClient: client,
         io,
         ...(options.runtimePurgeAdapter === undefined
@@ -230,12 +256,14 @@ export async function runDaemonCli(
       });
 
     const prepared = await resolvedArguments(args, workingDirectory, bindings);
-    if (prepared.discoveredProjectId !== undefined)
-      await verifyDiscoveredProject(
-        client,
-        workingDirectory,
-        prepared.discoveredProjectId,
-      );
+    const commandArguments =
+      prepared.discoveredRoot === undefined
+        ? prepared.args
+        : [
+            ...prepared.args,
+            "--project",
+            await resolveDiscoveredProject(client, prepared.discoveredRoot),
+          ];
     const reader =
       io.prompt === undefined
         ? createInterface({ input: process.stdin, output: process.stdout })
@@ -247,7 +275,7 @@ export async function runDaemonCli(
 
     try {
       while (true) {
-        const response = await client.execute(prepared.args, answer);
+        const response = await client.execute(commandArguments, answer);
         const stdout = withoutRepeatedPrefix(
           response.stdout,
           previousPromptContext,
@@ -266,6 +294,7 @@ export async function runDaemonCli(
     if (error instanceof DaemonUnavailableError && args[0] === "status") {
       const prepared = lifecycleArguments(args, workingDirectory);
       const status = await getOfflineProjectStatus(prepared[1]!, {
+        runtimeHome: runtimePaths.runtimeHome,
         bindings,
         ...(options.agentClients === undefined
           ? {}
@@ -278,7 +307,8 @@ export async function runDaemonCli(
     if (
       error instanceof DaemonUnavailableError ||
       error instanceof InvalidDaemonResponseError ||
-      error instanceof ProjectBindingError
+      error instanceof ProjectBindingError ||
+      error instanceof RuntimePathError
     ) {
       io.stderr(error.message);
       return 1;

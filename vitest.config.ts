@@ -22,6 +22,7 @@ export default defineConfig({
       ),
       "@ai-office/llm-gateway": sourceDirectory("llm-gateway"),
       "@ai-office/orchestration": sourceDirectory("orchestration"),
+      "@ai-office/runtime-paths": sourceDirectory("runtime-paths"),
       "@ai-office/storage-sqlite": sourceDirectory("storage-sqlite"),
     },
   },

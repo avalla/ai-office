@@ -12,6 +12,13 @@ the repository-local project binding, and supported client integration. The
 steps below remain the machine-oriented and conversational revision workflow
 used for custom onboarding, automation, and debugging.
 
+`install` does not perform personalized onboarding and does not call a provider.
+When it creates the baseline, human and JSON output say
+`state: default_baseline` and `onboarding: not_completed`. A non-default
+manifest is reported as `configured` with onboarding `not_tracked`, because the
+current schema has no durable fact proving which conversational workflow
+created it. The lifecycle never invents an `onboarded` claim.
+
 Interactive onboarding runs in the active agent host through the
 repository-scoped `ai-office` skill. Codex discovers it under
 `.agents/skills/ai-office`; compatible hosts can implement a thin adapter around
@@ -39,7 +46,7 @@ bun run cli -- office:context --project <project-id>
 ```
 
 Install composes the deterministic `project:import` primitive, default office
-configuration only when absent, the project binding, and safe coding-client
+baseline only when absent, portable repository identity reconciliation, and safe coding-client
 integration. The import scan detects Git metadata, package manager, languages,
 common frameworks, database indicators, test tooling, and relevant
 documentation. It is offline, idempotent, and does not execute repository

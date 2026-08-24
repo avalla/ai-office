@@ -107,12 +107,20 @@ bun run cli -- client:uninstall --client claude --root /path/to/project \
 ```
 
 The user-facing `ai-office uninstall .` previews one lifecycle plan that binds
-the project binding and both current client inspections. Applying its exact hash
-re-plans and removes Claude before Codex, then removes the binding. This permits
+the portable repository identity and both current client inspections. Applying
+its exact hash performs a complete preflight, re-plans and removes Claude before
+Codex, then detaches the current checkout association while preserving the
+portable identity. This permits
 an AI Office-owned `AGENTS.md` to be removed only after a managed Claude bridge
 has safely gone away. A user-owned direct import continues to preserve the
 canonical file. Direct `client:uninstall` remains useful for removing one client
-without uninstalling the project binding.
+without detaching the project checkout.
+
+The operations are deliberately sequential rather than falsely transactional
+across SQLite and filesystem boundaries. If a post-preflight mutation fails,
+the lifecycle reports `partial`, lists already removed and possibly modified
+paths, preserves user-owned content, and requires a fresh status and plan for
+recovery.
 
 Claude removal deletes an AI Office-owned bridge file or removes only the
 marked block from a merged `CLAUDE.md`. A user-owned direct `@AGENTS.md` import

@@ -61,7 +61,9 @@ export interface OnboardingGeneration {
 
 export interface ProjectProfileRepository {
   findProjectIdByLocalPath(localPath: string): Promise<string | null>;
+  listSources(projectId: string): Promise<ProjectSource[]>;
   saveSource(source: ProjectSource): Promise<void>;
+  removeSource(projectId: string, localPath: string): Promise<boolean>;
   saveScan(scan: ProjectScan): Promise<void>;
   replaceDetected(entries: ProjectProfileEntry[]): Promise<void>;
   ensureQuestions(questions: NewProjectQuestion[]): Promise<void>;

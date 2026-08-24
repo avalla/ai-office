@@ -3,11 +3,19 @@ import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.
 
 export const projectBindingFile = ".ai-office/project.json";
 
-export interface ProjectBinding {
+export interface LegacyProjectBinding {
   schemaVersion: 1;
   managedBy: "ai-office";
   projectId: string;
 }
+
+export interface ProjectBinding {
+  schemaVersion: 2;
+  managedBy: "ai-office";
+  repositoryId: string;
+}
+
+export type ParsedProjectBinding = LegacyProjectBinding | ProjectBinding;
 
 export type ProjectBindingStatus = "missing" | "valid" | "invalid";
 
@@ -16,7 +24,7 @@ export interface ProjectBindingInspection {
   searchedFrom: string;
   rootPath: string;
   bindingPath: string;
-  binding?: ProjectBinding;
+  binding?: ParsedProjectBinding;
   sha256?: string;
   issue?: string;
 }
@@ -53,33 +61,54 @@ function bindingRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export function parseProjectBinding(value: unknown): ProjectBinding {
-  const record = bindingRecord(value);
-  const keys = Object.keys(record).sort();
+function validIdentity(value: unknown, field: string): string {
   if (
-    keys.join("\0") !== ["managedBy", "projectId", "schemaVersion"].join("\0")
+    typeof value !== "string" ||
+    value.trim() === "" ||
+    value.length > 256
   )
     throw new ProjectBindingError(
-      "Project binding must contain exactly managedBy, projectId, and schemaVersion",
+      `Project binding ${field} must be non-empty text`,
     );
-  if (record.schemaVersion !== 1)
+  return value;
+}
+
+export function parseProjectBinding(value: unknown): ParsedProjectBinding {
+  const record = bindingRecord(value);
+  const keys = Object.keys(record).sort();
+  if (record.managedBy !== "ai-office")
+    throw new ProjectBindingError("Project binding is not owned by AI Office");
+
+  if (record.schemaVersion === 1) {
+    if (
+      keys.join("\0") !==
+      ["managedBy", "projectId", "schemaVersion"].join("\0")
+    )
+      throw new ProjectBindingError(
+        "Legacy project binding must contain exactly managedBy, projectId, and schemaVersion",
+      );
+    return Object.freeze({
+      schemaVersion: 1,
+      managedBy: "ai-office",
+      projectId: validIdentity(record.projectId, "projectId"),
+    });
+  }
+
+  if (record.schemaVersion !== 2)
     throw new ProjectBindingError(
       "Project binding schema version is not supported",
     );
-  if (record.managedBy !== "ai-office")
-    throw new ProjectBindingError("Project binding is not owned by AI Office");
   if (
-    typeof record.projectId !== "string" ||
-    record.projectId.trim() === "" ||
-    record.projectId.length > 256
+    keys.join("\0") !==
+    ["managedBy", "repositoryId", "schemaVersion"].join("\0")
   )
     throw new ProjectBindingError(
-      "Project binding projectId must be non-empty text",
+      "Project binding must contain exactly managedBy, repositoryId, and schemaVersion",
     );
   return Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     managedBy: "ai-office",
-    projectId: record.projectId,
+    repositoryId: validIdentity(record.repositoryId, "repositoryId"),
   });
 }
 
@@ -91,4 +120,10 @@ export function projectBindingPlanHash(value: Readonly<object>): string {
   return createHash("sha256")
     .update(canonicalStringify(value), "utf8")
     .digest("hex");
+}
+
+export function repositoryIdFromLegacyProjectId(projectId: string): string {
+  return `repo_${createHash("sha256")
+    .update(`ai-office-repository-binding-v2\0${projectId}`, "utf8")
+    .digest("hex")}`;
 }

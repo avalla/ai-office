@@ -178,6 +178,8 @@ export class LocalProjectBindingAdapter implements ProjectBindingAdapter {
     binding: ProjectBinding,
   ): Promise<ProjectBindingWritePlan> {
     const parsed = parseProjectBinding(binding);
+    if (parsed.schemaVersion !== 2)
+      throw new ProjectBindingError("Cannot write a legacy project binding");
     const inspection = await this.inspect(rootPath);
     if (inspection.status === "invalid")
       throw new ProjectBindingError(
@@ -186,7 +188,8 @@ export class LocalProjectBindingAdapter implements ProjectBindingAdapter {
 
     const currentMatches =
       inspection.status === "valid" &&
-      inspection.binding?.projectId === parsed.projectId;
+      inspection.binding?.schemaVersion === 2 &&
+      inspection.binding.repositoryId === parsed.repositoryId;
     const planWithoutHash: Omit<ProjectBindingWritePlan, "planHash"> = {
       contractVersion: 1,
       action:

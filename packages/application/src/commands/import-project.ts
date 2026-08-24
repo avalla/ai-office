@@ -17,6 +17,17 @@ export interface ImportProjectResult {
   questions: string[];
 }
 
+export class ProjectSourceAssociationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProjectSourceAssociationError";
+  }
+}
+
+function normalizedRemote(value: string): string {
+  return value.trim().replace(/\/?\.git$/u, "").replace(/\/$/u, "");
+}
+
 function profileEntries(
   projectId: string,
   scan: ProjectScanSummary,
@@ -64,16 +75,49 @@ export class ImportProject {
   async execute(input: {
     rootPath: string;
     name?: string;
+    projectId?: string;
   }): Promise<ImportProjectResult> {
     const scanStartedAt = this.clock.now();
     const scan = await this.scanner.scan(input.rootPath);
     const completedAt = this.clock.now();
 
+    if (input.projectId !== undefined) {
+      const project = await this.projects.findById(input.projectId);
+      if (project === null)
+        throw new ProjectSourceAssociationError(
+          `Project ${input.projectId} does not exist for repository association`,
+        );
+      const sources = await this.profiles.listSources(input.projectId);
+      if (sources.length > 0) {
+        const knownRemotes = sources
+          .flatMap((source) =>
+            source.remoteUrl === undefined ? [] : [source.remoteUrl],
+          )
+          .map(normalizedRemote);
+        if (
+          scan.remoteUrl === undefined ||
+          knownRemotes.length === 0 ||
+          !knownRemotes.includes(normalizedRemote(scan.remoteUrl))
+        )
+          throw new ProjectSourceAssociationError(
+            `Repository identity is already associated with project ${input.projectId}, but this checkout cannot be verified as the same Git remote. Use a distinct repository identity or resolve the copied binding explicitly.`,
+          );
+      }
+    }
+
     return this.transactions.run(async () => {
       const existingProjectId = await this.profiles.findProjectIdByLocalPath(
         scan.rootPath,
       );
-      let projectId = existingProjectId;
+      if (
+        input.projectId !== undefined &&
+        existingProjectId !== null &&
+        existingProjectId !== input.projectId
+      )
+        throw new ProjectSourceAssociationError(
+          `Canonical path ${scan.rootPath} is already associated with project ${existingProjectId}`,
+        );
+      let projectId = input.projectId ?? existingProjectId;
       let created = false;
 
       if (projectId === null) {

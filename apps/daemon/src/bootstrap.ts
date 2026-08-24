@@ -12,10 +12,17 @@ import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/o
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
+import {
+  ensureRuntimeHome,
+  resolveRuntimePaths,
+  withRuntimePathOverrides,
+  type RuntimePaths,
+} from "@ai-office/runtime-paths/runtime-paths.ts";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 
 export interface BootstrapOptions {
+  runtimePaths?: RuntimePaths;
   projectRoot?: string;
   socketPath?: string;
   migrationDirectory?: string;
@@ -30,13 +37,27 @@ export interface BootstrapOptions {
 export async function bootstrap(
   options: BootstrapOptions = {},
 ): Promise<OfficeDaemon> {
-  const projectRoot = options.projectRoot ?? process.cwd();
+  const commandRoot = options.projectRoot ?? process.cwd();
+  const runtimePaths = withRuntimePathOverrides(
+    options.runtimePaths ??
+      resolveRuntimePaths({
+        mode: "development",
+        developmentRoot: commandRoot,
+      }),
+    {
+      ...(options.socketPath === undefined
+        ? {}
+        : { socketPath: options.socketPath }),
+      ...(options.globalDatabasePath === undefined
+        ? {}
+        : { globalDatabasePath: options.globalDatabasePath }),
+    },
+  );
+  ensureRuntimeHome(runtimePaths);
   const migrationDirectory =
     options.migrationDirectory ??
     join(sourceDirectory, "..", "..", "..", "migrations", "project");
-  const database = openDatabase(
-    join(projectRoot, ".ai-office", "project.sqlite"),
-  );
+  const database = openDatabase(runtimePaths.projectDatabasePath);
   migrate(database, migrationDirectory);
   const events = new RecordAuditEvent(
     new SqliteAuditEventRepository(database),
@@ -45,13 +66,12 @@ export async function bootstrap(
   );
 
   return new OfficeDaemon({
-    socketPath:
-      options.socketPath ?? join(projectRoot, ".ai-office", "daemon.sock"),
+    socketPath: runtimePaths.socketPath,
     handler: new LocalCommandHandler(
-      projectRoot,
+      runtimePaths,
+      commandRoot,
       migrationDirectory,
       options.onboardingGenerator,
-      options.globalDatabasePath,
       options.globalMigrationDirectory,
       options.agentClients,
       options.projectBindings,

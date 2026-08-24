@@ -52,6 +52,9 @@
     "packages/orchestration": {
       "name": "@ai-office/orchestration",
     },
+    "packages/runtime-paths": {
+      "name": "@ai-office/runtime-paths",
+    },
     "packages/storage-sqlite": {
       "name": "@ai-office/storage-sqlite",
     },
@@ -76,6 +79,8 @@
     "@ai-office/llm-gateway": ["@ai-office/llm-gateway@workspace:packages/llm-gateway"],
 
     "@ai-office/orchestration": ["@ai-office/orchestration@workspace:packages/orchestration"],
+
+    "@ai-office/runtime-paths": ["@ai-office/runtime-paths@workspace:packages/runtime-paths"],
 
     "@ai-office/storage-sqlite": ["@ai-office/storage-sqlite@workspace:packages/storage-sqlite"],
 

@@ -221,8 +221,7 @@ export async function handleProjectCommand(
       return 0;
     }
     const outputPath = join(
-      context.projectRoot,
-      ".ai-office",
+      context.runtimeHome,
       "generated",
       "project-profile.md",
     );

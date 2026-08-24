@@ -8,6 +8,7 @@ import type {
   ProjectLifecycleStatus,
 } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
 import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
+import { repositoryIdFromLegacyProjectId } from "@ai-office/application/project-lifecycle/project-binding.ts";
 
 function offlineConfiguration(input: {
   detected: boolean;
@@ -29,9 +30,10 @@ function offlineConfiguration(input: {
 export async function getOfflineProjectStatus(
   rootPath: string,
   input: {
+    runtimeHome: string;
     bindings?: ProjectBindingAdapter;
     clients?: AgentClientCatalog;
-  } = {},
+  },
 ): Promise<ProjectLifecycleStatus> {
   const bindings = input.bindings ?? new LocalProjectBindingAdapter();
   const clients = new ManageAgentClientIntegration(
@@ -97,31 +99,50 @@ export async function getOfflineProjectStatus(
   }
 
   return {
-    schemaVersion: 1,
-    installed: bindingValid,
+    schemaVersion: 2,
+    installed: bindingValid ? null : false,
     health:
       bindingValid || inspection.status === "invalid"
         ? "needs_attention"
         : "not_installed",
     project: {
-      id: inspection.binding?.projectId ?? null,
+      id: null,
       name: null,
       root: inspection.rootPath,
-      binding: {
+      repositoryIdentity: {
+        id:
+          inspection.binding?.schemaVersion === 2
+            ? inspection.binding.repositoryId
+            : inspection.binding?.schemaVersion === 1
+              ? repositoryIdFromLegacyProjectId(inspection.binding.projectId)
+              : null,
         path: inspection.bindingPath,
         state:
           inspection.status === "valid"
-            ? "unverified"
+            ? inspection.binding?.schemaVersion === 1
+              ? "legacy"
+              : "valid"
             : inspection.status === "invalid"
               ? "invalid"
               : "missing",
       },
+      runtimeAssociation: {
+        projectId: null,
+        state: bindingValid ? "unverified" : "missing",
+      },
     },
     runtime: {
       daemon: "unreachable",
+      home: input.runtimeHome,
       authoritativeState: "unavailable",
     },
-    office: { state: "unavailable", revision: null, name: null, roles: [] },
+    office: {
+      state: "unavailable",
+      onboarding: "unavailable",
+      revision: null,
+      name: null,
+      roles: [],
+    },
     clients: clientStatuses,
     tasks: null,
     issues,

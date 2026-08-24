@@ -54,11 +54,11 @@ authority.
 
 Repository identity uses another narrow application port backed by
 `.ai-office/project.json` in the managed repository. The strict binding stores
-only schema version, AI Office ownership, and canonical runtime project ID. It
+only schema version, AI Office ownership, and portable repository ID. It
 contains no path, secret, client detection, capability, or authoritative state.
-The lifecycle application service verifies that ID and the canonical source
-path against `project.sqlite` before composing existing import, office, and
-client services. See ADR-0008.
+The selected runtime maps that ID to its own project ID and canonical checkout
+paths in `project.sqlite` before composing existing import, office, and client
+services. See ADR-0008.
 
 The M6D-lite bridge routes a structured action intent from an agent run through
 an executor-facing gateway. The agent-runtime package depends on the gateway
@@ -85,7 +85,7 @@ Application services orchestrate use cases through ports. Composition roots in t
 ## Local daemon and concurrency
 
 The TypeScript daemon exposes protocol version 1 as HTTP over
-`.ai-office/daemon.sock`; it does not open a TCP listener. The production CLI
+`<runtime-home>/daemon.sock`; it does not open a TCP listener. The production CLI
 sends stateful product commands to that socket. Help and the explicitly offline
 `runtime:purge` lifecycle command are local; purge refuses to run while a
 healthy daemon is reachable and requires approval of its exact plan hash.
@@ -156,15 +156,15 @@ The architecture distinguishes three databases by authority and rebuildability:
 
 | Database                                   | Responsibility                                                                                                                                                           | Current implementation                                                       |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `<runtime-root>/.ai-office/project.sqlite` | Authoritative state for the projects known to that daemon runtime: office manifests, onboarding, tasks, agents/runs, costs, governance, capabilities, actions, and audit | Implemented, opened and migrated by the daemon and project migration command |
-| `~/.ai-office/global.sqlite`               | Durable versioned global roles and patterns plus lessons shared across runtimes                                                                                          | Implemented and migrated lazily by daemon-backed `memory:*` commands         |
-| `<runtime-root>/.ai-office/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                         | Initial schema only; indexing and daemon integration are future work         |
+| `<runtime-home>/project.sqlite` | Authoritative state for the projects known to that daemon runtime: repository mappings, office manifests, onboarding, tasks, agents/runs, costs, governance, capabilities, actions, and audit | Implemented, opened and migrated by the daemon and project migration command |
+| `<runtime-home>/global.sqlite`  | Durable versioned global roles and patterns plus lessons; isolated with an explicit `AI_OFFICE_HOME`                                                                     | Implemented and migrated lazily by daemon-backed `memory:*` commands         |
+| `<runtime-home>/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                         | Initial schema only; indexing and daemon integration are future work         |
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
 
-The linkable source entry point uses its distribution checkout as `runtime-root`;
-the legacy Bun development scripts derive it from their current working
-directory. The source/import root is the
+The linkable entry point uses `AI_OFFICE_HOME` or the default stable user home
+`~/.ai-office`; program location and current repository do not select authority.
+The legacy Bun development scripts explicitly use `<cwd>/.ai-office`. The source/import root is the
 repository path passed to `project:import`; importing stores scan state in the
 current daemon's database rather than creating a database under that repository.
 The independently supplied `client:* --root` is the integration root containing
@@ -173,12 +173,13 @@ roots may coincide but do not have to. See the [storage design](storage.md) and
 the README's
 [local storage guide](../../README.md#local-storage-and-state).
 
-An installed repository also contains `.ai-office/project.json`. This binding
-is committable identity metadata, not a fourth database and not authoritative
+An installed repository also contains `.ai-office/project.json`. This
+committable portable identity is not a fourth database and is not authoritative
 state. Discovery canonicalizes the current directory, selects the nearest
 same-filesystem ancestor binding, and rejects symlinked or malformed anchors.
-The current runtime must verify both its project ID and canonical source path;
-stale or conflicting bindings require explicit recovery.
+Status reports repository identity and runtime association separately. A fresh
+runtime can establish its own association through install; conflicting paths or
+copied identities fail closed.
 
 ## Current trust model
 

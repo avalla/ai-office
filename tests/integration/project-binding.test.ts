@@ -23,9 +23,9 @@ function temporaryRoot(prefix: string): string {
 }
 
 const binding = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   managedBy: "ai-office",
-  projectId: "project-one",
+  repositoryId: "repository-one",
 } as const;
 
 afterEach(() => {
@@ -66,7 +66,7 @@ describe("repository-local project binding", () => {
     await adapter.applyWrite(
       await adapter.planWrite(nested, {
         ...binding,
-        projectId: "project-nested",
+        repositoryId: "repository-nested",
       }),
     );
 
@@ -74,13 +74,13 @@ describe("repository-local project binding", () => {
     expect(fromNested).toMatchObject({
       status: "valid",
       rootPath: realpathSync(nested),
-      binding: { projectId: "project-nested" },
+      binding: { repositoryId: "repository-nested" },
     });
     const fromRoot = await adapter.inspect(root, { ancestors: true });
     expect(fromRoot).toMatchObject({
       status: "valid",
       rootPath: realpathSync(root),
-      binding: { projectId: "project-one" },
+      binding: { repositoryId: "repository-one" },
     });
   });
 
@@ -144,7 +144,7 @@ describe("repository-local project binding", () => {
     mkdirSync(join(root, ".ai-office"));
     writeFileSync(
       join(root, ".ai-office", "project.json"),
-      JSON.stringify({ ...binding, projectId: "concurrent" }),
+      JSON.stringify({ ...binding, repositoryId: "concurrent" }),
     );
     await expect(adapter.applyWrite(create)).rejects.toThrow(
       "changed after planning",
@@ -154,7 +154,7 @@ describe("repository-local project binding", () => {
     writeFileSync(join(root, ".ai-office", "notes.txt"), "preserve\n");
     writeFileSync(
       join(root, ".ai-office", "project.json"),
-      `${JSON.stringify({ ...binding, projectId: "concurrent" })}\n`,
+      `${JSON.stringify({ ...binding, repositoryId: "concurrent" })}\n`,
     );
     await expect(adapter.applyRemove(remove)).rejects.toThrow(
       "changed after planning",

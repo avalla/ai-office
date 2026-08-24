@@ -12,6 +12,8 @@ AI Office keeps different kinds of documentation separate so current product tru
   authority, rebuildability, and runtime/import/integration-root path semantics.
 - [Repository-local project binding](adr/ADR-0008-repository-local-project-binding.md):
   accepted identity, discovery, portability, and lifecycle decision.
+- [Stable user runtime home](adr/ADR-0009-stable-user-runtime-home.md):
+  accepted separation of program location from authoritative user data.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.

@@ -12,6 +12,7 @@ import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/o
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
+import type { RuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 
 export interface DaemonCommandHandler {
   execute(request: DaemonCommandRequest): Promise<DaemonCommandResponse>;
@@ -19,10 +20,10 @@ export interface DaemonCommandHandler {
 
 export class LocalCommandHandler implements DaemonCommandHandler {
   constructor(
-    private readonly projectRoot: string,
+    private readonly runtimePaths: RuntimePaths,
+    private readonly commandRoot: string,
     private readonly migrationDirectory?: string,
     private readonly onboardingGenerator?: OnboardingQuestionGenerator,
-    private readonly globalDatabasePath?: string,
     private readonly globalMigrationDirectory?: string,
     private readonly agentClients?: AgentClientCatalog,
     private readonly projectBindings?: ProjectBindingAdapter,
@@ -47,16 +48,14 @@ export class LocalCommandHandler implements DaemonCommandHandler {
 
     try {
       const exitCode = await runCli(request.args, {
-        projectRoot: this.projectRoot,
+        projectRoot: this.commandRoot,
+        runtimePaths: this.runtimePaths,
         ...(this.migrationDirectory === undefined
           ? {}
           : { migrationDirectory: this.migrationDirectory }),
         ...(this.onboardingGenerator === undefined
           ? {}
           : { onboardingGenerator: this.onboardingGenerator }),
-        ...(this.globalDatabasePath === undefined
-          ? {}
-          : { globalDatabasePath: this.globalDatabasePath }),
         ...(this.globalMigrationDirectory === undefined
           ? {}
           : { globalMigrationDirectory: this.globalMigrationDirectory }),

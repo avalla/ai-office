@@ -1,7 +1,12 @@
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
+import {
+  resolveRuntimePaths,
+  withRuntimePathOverrides,
+  type RuntimePaths,
+} from "@ai-office/runtime-paths/runtime-paths.ts";
+import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
 import { InvalidAgentDefinitionError } from "@ai-office/agent-runtime/agent-definition.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { AgentDefinitionDirectoryError } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
@@ -136,6 +141,7 @@ import { parseOfficeManifestJson } from "@ai-office/application/office/office-ma
 import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
 import { ProjectLifecycleError } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
+import { ProjectSourceAssociationError } from "@ai-office/application/commands/import-project.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -144,6 +150,7 @@ export const cliHelp = `AI Office CLI
 
 Commands:
   install [path] [--rebind] [--json]
+    exit 0: installed; exit 2: installed with warnings; exit 1: failed/partial
   status [path] [--json]
   uninstall [path] [--approve <plan-hash>] [--json]
   daemon  # available through the linkable ai-office entry point
@@ -206,7 +213,10 @@ Commands:
   action:reject --project <id> --action <id> --actor <audit-identity>
   action:execute --project <id> --action <id>
   action:list --project <id>
-  action:show --project <id> --action <id>`;
+  action:show --project <id> --action <id>
+
+Environment (linkable ai-office entry point):
+  AI_OFFICE_HOME  runtime data home; defaults to ~/.ai-office`;
 
 // runtime:purge is intentionally absent: the daemon client handles that
 // destructive offline lifecycle boundary before protocol dispatch.
@@ -283,6 +293,7 @@ const defaultIo: CliIo = {
 
 export interface CliOptions {
   projectRoot: string;
+  runtimePaths?: RuntimePaths;
   migrationDirectory?: string;
   globalDatabasePath?: string;
   globalMigrationDirectory?: string;
@@ -423,6 +434,7 @@ function formatKnownError(error: unknown): string | null {
     error instanceof GlobalMemorySourceMismatchError ||
     error instanceof GlobalMemoryVersionConflictError ||
     error instanceof ProjectLifecycleError ||
+    error instanceof ProjectSourceAssociationError ||
     error instanceof ProjectBindingError
   )
     return error.message;
@@ -449,9 +461,17 @@ export async function runCli(
     return 1;
   }
 
-  const database = openDatabase(
-    join(options.projectRoot, ".ai-office", "project.sqlite"),
+  const runtimePaths = withRuntimePathOverrides(
+    options.runtimePaths ??
+      resolveRuntimePaths({
+        mode: "development",
+        developmentRoot: options.projectRoot,
+      }),
+    options.globalDatabasePath === undefined
+      ? {}
+      : { globalDatabasePath: options.globalDatabasePath },
   );
+  const database = openDatabase(runtimePaths.projectDatabasePath);
   let globalDatabase: ReturnType<typeof openDatabase> | null = null;
   try {
     migrate(
@@ -460,10 +480,7 @@ export async function runCli(
         join(sourceDirectory, "..", "..", "..", "migrations", "project"),
     );
     if (command.startsWith("memory:")) {
-      globalDatabase = openDatabase(
-        options.globalDatabasePath ??
-          join(homedir(), ".ai-office", "global.sqlite"),
-      );
+      globalDatabase = openDatabase(runtimePaths.globalDatabasePath);
       migrateGlobal(
         globalDatabase,
         options.globalMigrationDirectory ??
@@ -477,6 +494,7 @@ export async function runCli(
     const costs = new SqliteCostRepository(database);
     const context: CommandContext = {
       projectRoot: options.projectRoot,
+      runtimeHome: runtimePaths.runtimeHome,
       io,
       projects: new SqliteProjectRepository(database),
       profiles: new SqliteProjectProfileRepository(database),
@@ -502,6 +520,7 @@ export async function runCli(
       agentClients: options.agentClients ?? new DefaultAgentClientCatalog(),
       projectBindings:
         options.projectBindings ?? new LocalProjectBindingAdapter(),
+      repositoryIdentities: new SqliteRepositoryIdentityRepository(database),
       defaultOfficeManifest:
         options.defaultOfficeManifest ?? defaultOfficeManifest(),
       memoryReferences: new SqliteMemoryReferenceRepository(database),
