@@ -321,7 +321,21 @@ describe("CLI to daemon end-to-end", () => {
       await runDaemonCli(["--help"], { projectRoot, io: helpOutput.io }),
     ).toBe(0);
     expect(helpOutput.stdout[0]).toContain("daemon:health");
+    expect(helpOutput.stdout[0]).toContain(
+      "update [--approve <plan-hash>] [--json]",
+    );
     expect(helpOutput.stderr).toEqual([]);
+
+    const developmentUpdate = captureIo();
+    expect(
+      await runDaemonCli(["update"], {
+        projectRoot,
+        io: developmentUpdate.io,
+      }),
+    ).toBe(1);
+    expect(developmentUpdate.stderr).toEqual([
+      "AI Office program update is available only through the linkable ai-office entry point",
+    ]);
   });
 
   test("never falls back to a local writer when the Runtime is unavailable", async () => {

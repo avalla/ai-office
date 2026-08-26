@@ -1,4 +1,4 @@
 interface:
   display_name: "AI Office"
-  short_description: "Install, onboard, inspect, and operate AI Office"
-  default_prompt: "Use $ai-office to help me install, inspect, onboard, or operate this project."
+  short_description: "Install, update, onboard, and operate AI Office"
+  default_prompt: "Use $ai-office to help me install, update, inspect, onboard, or operate this project."

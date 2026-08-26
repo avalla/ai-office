@@ -32,6 +32,7 @@ const requiredSkillSnippets = [
   "## Help",
   "## Install or inspect",
   "## Hand the project over",
+  "## Update AI Office",
   "## Onboard",
   "## Revise the office",
   "## Operate a task",
@@ -41,6 +42,7 @@ const requiredSkillSnippets = [
   "ai-office install",
   "ai-office status",
   "ai-office next",
+  "ai-office update",
   "ai-office --help",
 ] as const;
 
