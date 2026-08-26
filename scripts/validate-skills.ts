@@ -28,6 +28,7 @@ const requiredPaths = [
 const requiredSkillSnippets = [
   "## Help",
   "## Install or inspect",
+  "## Update AI Office",
   "## Onboard",
   "## Revise the office",
   "## Operate a task",
@@ -36,6 +37,7 @@ const requiredSkillSnippets = [
   "## Uninstall safely",
   "ai-office install",
   "ai-office status",
+  "ai-office update",
   "ai-office --help",
 ] as const;
 
@@ -120,7 +122,9 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
   }
   for (const snippet of removedOnboardingSnippets) {
     if (source.includes(snippet))
-      errors.push(`SKILL.md references removed provider onboarding: ${snippet}`);
+      errors.push(
+        `SKILL.md references removed provider onboarding: ${snippet}`,
+      );
   }
 
   for (const requiredPath of requiredPaths) {

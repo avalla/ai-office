@@ -87,8 +87,10 @@ Application services orchestrate use cases through ports. Composition roots in t
 The TypeScript daemon exposes protocol version 1 as HTTP over
 `<runtime-home>/daemon.sock`; it does not open a TCP listener. The production CLI
 sends stateful product commands to that socket. Help and the explicitly offline
-`runtime:purge` lifecycle command are local; purge refuses to run while a
-healthy daemon is reachable and requires approval of its exact plan hash.
+`update` and `runtime:purge` lifecycle commands are local; both refuse to run
+while a healthy daemon is reachable and require approval of an exact plan hash.
+Program update resolves the distribution root from the linkable executable and
+never uses the current project or runtime home as its mutation target.
 
 Short commands enter a FIFO queue. Long-running run execution is dispatched outside that global queue. SQLite runs in WAL mode, and transactions remain short: repository scans, prompts, LLM calls, simulated agent work, and filesystem mutations happen outside open transactions.
 

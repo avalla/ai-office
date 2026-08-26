@@ -1,6 +1,6 @@
 ---
 name: ai-office
-description: Help users install, inspect, onboard, configure, operate, and safely remove AI Office projects through Codex CLI or Claude Code and the local audited runtime. Use for AI Office setup, status, virtual-office design, client integration, task operation, controlled actions, memory, troubleshooting, or lifecycle help. Do not use for ordinary repository work that does not involve AI Office.
+description: Help users install, update, inspect, onboard, configure, operate, and safely remove AI Office through Codex CLI or Claude Code and the local audited runtime. Use for AI Office setup, status, program updates, virtual-office design, client integration, task operation, controlled actions, memory, troubleshooting, or lifecycle help. Do not use for ordinary repository work that does not involve AI Office.
 ---
 
 # AI Office
@@ -13,7 +13,7 @@ AI Office remains authoritative for stored configuration, policy, controlled act
 
 Resolve the AI Office distribution root from this skill's location: it is three directories above `.agents/skills/ai-office`. Prefer the linkable `ai-office` executable. If it is not on `PATH`, run the same entry point from the distribution root as `bun run ai-office --`. Do not fall back to `bun run cli --`, because that command intentionally selects a development runtime from its current working directory.
 
-Before a stateful workflow other than offline `runtime:purge`:
+Before a stateful workflow other than offline `update` and `runtime:purge`:
 
 1. Check `ai-office daemon:health`.
 2. If dependencies are absent, ask before installing them with `bun install --frozen-lockfile`.
@@ -26,7 +26,7 @@ The linkable command uses the stable user runtime selected by `AI_OFFICE_HOME` o
 When the user asks what AI Office can do, how to use it, or for command help:
 
 1. Run `ai-office --help` so syntax reflects the installed version.
-2. Lead with the normal lifecycle: `install`, `status`, conversational onboarding through this skill, task operation, and `uninstall`.
+2. Lead with the normal lifecycle: `install`, `status`, conversational onboarding through this skill, task operation, program `update`, and project `uninstall`.
 3. Explain machine-oriented command families only when relevant: `office:*`, `client:*`, `task:*`, `run:*`, `memory:*`, governance, resources, capabilities, and controlled `action:*` commands.
 4. Distinguish project uninstall from `runtime:purge` and global-memory deletion.
 5. Do not make the user understand distribution, runtime, import, or integration roots unless they ask for architecture or troubleshooting.
@@ -36,6 +36,7 @@ When the user asks what AI Office can do, how to use it, or for command help:
 - For first-time setup or a request to onboard a repository, follow **Onboard**.
 - For installation without personalization, follow **Install or inspect**.
 - For help or command discovery, follow **Help**.
+- For updating the linked AI Office program, follow **Update AI Office**.
 - For changes to roles, goals, constraints, or pipelines, follow **Revise the office**.
 - For a new task or request to execute work, follow **Operate a task**.
 - For status questions, run `ai-office status <path> --json`, then read `office:context`, task, run, action, and cost state only as relevant; do not mutate anything.
@@ -51,6 +52,39 @@ Read [references/manifest-contract.md](references/manifest-contract.md) when cre
 For installation, run `ai-office install <path> --json`. Report the project identity, repository binding, office baseline, configured and preserved client artifacts, warnings, partial state, and next action. Exit code `2` means installed with warnings, not a clean success. Do not claim personalized onboarding when install only applied the default baseline.
 
 For inspection, run `ai-office status <path> --json`. Distinguish local repository identity, runtime association, authoritative project availability, office state, onboarding state, and each client integration. A valid local identity with an unreachable daemon is not the same as an uninstalled project.
+
+## Update AI Office
+
+Program update is separate from project reconciliation: `install` manages a
+repository, while `update` advances the source-linked AI Office distribution.
+It does not update Bun itself or select, purge, copy, or rewrite runtime state.
+
+1. Ensure the AI Office daemon is stopped. Do not update program files while an
+   older daemon is serving the runtime. If the user explicitly operates several
+   `AI_OFFICE_HOME` runtimes from one distribution, ensure all their daemons are
+   stopped; the command can verify only the currently selected runtime.
+2. Run `ai-office update --json`. This contacts the configured Git upstream but
+   does not change the checkout. Report the canonical distribution root,
+   branch, upstream ref, current and target revisions, preserved state, steps,
+   and plan hash.
+3. If `updateAvailable` is false, report that the program is current and stop.
+4. If tracked files are dirty, the branch is detached, ahead, divergent, or
+   lacks an upstream, preserve the checkout and explain the reported manual
+   recovery. Never stash, reset, switch branches, or rewrite Git history.
+5. Obtain explicit confirmation before rerunning `ai-office update --approve
+   <planHash> --json`. Never reuse an approval after the plan or upstream target
+   changes.
+6. On `updated`, start the daemon again and verify `daemon:health`; normal daemon
+   startup applies forward SQLite migrations to the preserved runtime.
+7. On `failed`, report that no program revision changed. On `partial`, report
+   the exact completed and failed steps and follow only the returned recovery;
+   do not claim rollback or restart the daemon with an incomplete installation.
+
+The current updater supports the repository's source-linked Bun distribution:
+an approved exact target is fetched and fast-forwarded, dependencies are
+installed with the frozen lockfile, and the bare `bun link` registration is
+refreshed. A future published-package installer requires its own update adapter;
+do not substitute `bun update -g` for the source-linked workflow.
 
 ## Onboard
 

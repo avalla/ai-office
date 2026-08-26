@@ -49,8 +49,8 @@ Codex / compatible host
 Stateful product commands go through the daemon. Short writes use
 application-level transactions; provider calls, scans, simulated agent work,
 and filesystem side effects do not run inside an open SQLite transaction. Help
-and the destructive `runtime:purge` lifecycle command run locally; purge is
-available only while the daemon is stopped.
+and the offline program `update` and destructive `runtime:purge` lifecycle
+commands run locally; both require the daemon to be stopped.
 
 ## Quick start
 
@@ -160,6 +160,42 @@ The legacy development
 commands `bun run daemon` and `bun run cli -- ...` remain supported and retain
 their current-working-directory runtime semantics. See
 [Local storage and state](#local-storage-and-state) for the advanced path model.
+
+### Update the source-linked installation
+
+Stop the foreground daemon, then inspect the exact program update plan:
+
+```bash
+ai-office update
+```
+
+If an upstream revision is available, the command reports the distribution
+checkout, current and target commits, preserved state, ordered steps, and a plan
+hash. Apply only that reviewed plan:
+
+```bash
+ai-office update --approve <plan-hash>
+```
+
+The updater fast-forwards the source checkout to the approved commit, installs
+the frozen dependency graph, and refreshes the bare `bun link` registration. It
+never derives its target from the current project, changes `AI_OFFICE_HOME`,
+purges runtime data, deletes global memory, rewrites repository bindings, or
+updates Bun itself. After a complete update, restart `ai-office daemon`; normal
+startup applies any forward SQLite migrations to the preserved runtime.
+
+The current package is marked private and source-linked, not installed with
+`bun add -g`, so `bun update -g` is not an equivalent update path. `update`
+requires a clean tracked checkout on a branch with an upstream and refuses
+detached, locally ahead, or divergent states. It preserves untracked files. A
+failure before fast-forward reports `failed`; a dependency or link failure after
+the checkout advances reports `partial` and prints the exact manual recovery.
+There is no destructive automatic rollback across Git, dependencies, and Bun's
+global link registry.
+
+The command verifies the daemon selected by the current `AI_OFFICE_HOME` (or its
+default). If advanced use has multiple explicitly isolated runtimes serving from
+the same distribution, stop each daemon before updating that distribution.
 
 ## Project lifecycle
 
