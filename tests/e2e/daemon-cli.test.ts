@@ -6,10 +6,6 @@ import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "../../apps/cli/src/cli.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
-import {
-  ScriptedOnboardingGenerator,
-  textQuestion,
-} from "../helpers/onboarding-generator.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -57,7 +53,7 @@ afterEach(() => {
 });
 
 describe("CLI to daemon end-to-end", () => {
-  test("runs persisted commands and interactive onboarding through the socket", async () => {
+  test("runs persisted project commands through the socket", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-daemon-cli-"));
     temporaryDirectories.push(projectRoot);
     writeFileSync(join(projectRoot, "README.md"), "# Existing project");
@@ -70,35 +66,9 @@ describe("CLI to daemon end-to-end", () => {
       }),
     );
     const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
-    const generator = new ScriptedOnboardingGenerator([
-      {
-        status: "needs_more_context",
-        questions: [
-          textQuestion({
-            category: "goal",
-            question: "What outcome is next?",
-            priority: 100,
-          }),
-          {
-            category: "permission",
-            question: "Which operations may agents perform?",
-            rationale: "Records preferences only.",
-            answerType: "multi_select",
-            options: ["read_files", "modify_files", "run_tests"],
-            priority: 90,
-          },
-          textQuestion({
-            category: "constraint",
-            question: "What must remain unchanged?",
-            priority: 80,
-          }),
-        ],
-      },
-    ]);
     const daemon = await bootstrap({
       projectRoot,
       socketPath,
-      onboardingGenerator: generator,
     });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);
@@ -126,34 +96,6 @@ describe("CLI to daemon end-to-end", () => {
       const projectId =
         importOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
 
-      const onboardingOutput = captureIo([
-        "Ship M2",
-        "read_files,modify_files,run_tests",
-        "Keep strict TypeScript",
-      ]);
-      expect(
-        await runDaemonCli(["project:onboard", "--project", projectId], {
-          projectRoot,
-          socketPath,
-          io: onboardingOutput.io,
-        }),
-      ).toBe(0);
-      expect(onboardingOutput.prompts).toEqual(["> ", "> ", "> "]);
-      expect(
-        onboardingOutput.stdout.filter((line) => line.startsWith("[goal/")),
-      ).toHaveLength(1);
-      expect(
-        onboardingOutput.stdout.filter((line) =>
-          line.startsWith("[permission/"),
-        ),
-      ).toHaveLength(1);
-      expect(
-        onboardingOutput.stdout.filter((line) =>
-          line.startsWith("[constraint/"),
-        ),
-      ).toHaveLength(1);
-      expect(generator.prompts).toHaveLength(1);
-
       const profileOutput = captureIo();
       expect(
         await runDaemonCli(["project:profile", "--project", projectId], {
@@ -162,7 +104,7 @@ describe("CLI to daemon end-to-end", () => {
           io: profileOutput.io,
         }),
       ).toBe(0);
-      expect(profileOutput.stdout[0]).toContain("Ship M2");
+      expect(profileOutput.stdout[0]).toContain("TypeScript");
       expect(profileOutput.stderr).toEqual([]);
     } finally {
       controller.abort();

@@ -6,7 +6,6 @@ import {
   ModelProviderRegistry,
   parseModelRef,
 } from "@ai-office/llm-gateway/model-provider-registry.ts";
-import { GatewayOnboardingQuestionGenerator } from "@ai-office/llm-gateway/onboarding-question-generator.ts";
 import { MockLlmProvider } from "@ai-office/llm-gateway/mock-provider.ts";
 import {
   InvalidProviderResponseError,
@@ -158,39 +157,6 @@ describe("model provider registry", () => {
     });
   });
 
-  test("provider switching does not change the onboarding adapter", () => {
-    const registry = new ModelProviderRegistry(
-      ["openai", "anthropic"].map((providerId) => ({
-        providerId,
-        requiredEnvironmentVariables: [],
-        create: () =>
-          new MockLlmProvider({
-            providerId,
-            text: "ok",
-            usage: {
-              inputTokens: 1,
-              cachedInputTokens: 0,
-              outputTokens: 1,
-              reasoningTokens: 0,
-            },
-          }),
-      })),
-    );
-    const gateway = {} as ConstructorParameters<
-      typeof GatewayOnboardingQuestionGenerator
-    >[0];
-
-    for (const modelRef of ["openai:gpt-test", "anthropic:claude-test"]) {
-      const resolved = registry.resolve({ AI_OFFICE_LLM_MODEL: modelRef });
-      const generator = new GatewayOnboardingQuestionGenerator(
-        gateway,
-        resolved.providerId,
-        resolved.model,
-      );
-      expect(generator.targetProvider).toBe(resolved.providerId);
-      expect(generator.targetModel).toBe(resolved.model);
-    }
-  });
 });
 
 describe("LangChain model provider", () => {

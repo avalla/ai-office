@@ -28,9 +28,6 @@ import {
 } from "@ai-office/application/cost-errors.ts";
 import {
   InvalidProjectAnswerError,
-  InvalidOnboardingGenerationError,
-  OnboardingProviderUnavailableError,
-  OnboardingRoundLimitError,
   InvalidOfficeManifestError,
   OfficeManifestNotFoundError,
   OfficePipelineNotFoundError,
@@ -92,14 +89,6 @@ import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/reposi
 import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
 import { SqliteMemoryReferenceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-memory-reference.repository.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
-import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
-import { UnavailableOnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
-import { MeteredLlmGateway } from "@ai-office/llm-gateway/metered-gateway.ts";
-import { GatewayOnboardingQuestionGenerator } from "@ai-office/llm-gateway/onboarding-question-generator.ts";
-import {
-  createDefaultModelProviderRegistry,
-  ModelProviderConfigurationError,
-} from "@ai-office/llm-gateway/model-provider-registry.ts";
 import { LlmProviderError } from "@ai-office/llm-gateway/provider.ts";
 import {
   ConnectorRegistryError,
@@ -157,8 +146,7 @@ Commands:
   daemon:health
   project:create <name> [--description <description>] [--json]
   project:import [path] [--name <name>] [--json]
-  project:onboard --project <id> [--generate]  # optional headless fallback
-  project:answer --project <id> --question <id> --answer <value>
+  project:answer --project <id> --question <id> --answer <value>  # legacy stored questions only
   project:profile --project <id>
   project:export --project <id>
   office:context --project <id>
@@ -226,7 +214,6 @@ const commands = [
   "uninstall",
   "project:create",
   "project:import",
-  "project:onboard",
   "project:answer",
   "project:profile",
   "project:export",
@@ -299,7 +286,6 @@ export interface CliOptions {
   globalMigrationDirectory?: string;
   io?: CliIo;
   propagatePromptRequired?: boolean;
-  onboardingGenerator?: OnboardingQuestionGenerator;
   agentClients?: AgentClientCatalog;
   projectBindings?: ProjectBindingAdapter;
   defaultOfficeManifest?: OfficeManifest;
@@ -328,25 +314,6 @@ function defaultOfficeManifest(): OfficeManifest {
   };
 }
 
-function configuredOnboardingGenerator(
-  costs: SqliteCostRepository,
-  ids: CryptoIdGenerator,
-  clock: SystemClock,
-): OnboardingQuestionGenerator {
-  try {
-    const resolved = createDefaultModelProviderRegistry().resolve(process.env);
-    return new GatewayOnboardingQuestionGenerator(
-      new MeteredLlmGateway(resolved.provider, costs, ids, clock),
-      resolved.providerId,
-      resolved.model,
-    );
-  } catch (error) {
-    if (error instanceof ModelProviderConfigurationError)
-      return new UnavailableOnboardingQuestionGenerator(error.message);
-    throw error;
-  }
-}
-
 const handlers = [
   handleLifecycleCommand,
   handleProjectCommand,
@@ -373,9 +340,6 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ProjectQuestionNotFoundError ||
     error instanceof ProjectQuestionAlreadyAnsweredError ||
     error instanceof InvalidProjectAnswerError ||
-    error instanceof InvalidOnboardingGenerationError ||
-    error instanceof OnboardingProviderUnavailableError ||
-    error instanceof OnboardingRoundLimitError ||
     error instanceof InvalidOfficeManifestError ||
     error instanceof OfficeManifestNotFoundError ||
     error instanceof OfficePipelineNotFoundError ||
@@ -514,9 +478,6 @@ export async function runCli(
       clock,
       transactions: new SqliteTransactionRunner(database),
       connectors: createDefaultConnectorRegistry(),
-      onboardingGenerator:
-        options.onboardingGenerator ??
-        configuredOnboardingGenerator(costs, ids, clock),
       agentClients: options.agentClients ?? new DefaultAgentClientCatalog(),
       projectBindings:
         options.projectBindings ?? new LocalProjectBindingAdapter(),

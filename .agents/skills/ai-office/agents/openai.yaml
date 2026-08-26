@@ -1,4 +1,4 @@
 interface:
   display_name: "AI Office"
-  short_description: "Onboard and operate a virtual software office"
-  default_prompt: "Use $ai-office to onboard this project and propose its virtual office."
+  short_description: "Install, onboard, inspect, and operate AI Office"
+  default_prompt: "Use $ai-office to help me install, inspect, onboard, or operate this project."

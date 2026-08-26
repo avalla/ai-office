@@ -1,6 +1,6 @@
 # ADR-0006: Use host skills for interactive office orchestration
 
-- Status: Accepted
+- Status: Accepted; provider-fallback clause superseded by ADR-0010
 - Date: 2026-08-20
 
 ## Context
@@ -40,9 +40,9 @@ fields back into profile entries: conflicting historical evidence remains
 available with its own provenance, while the manifest defines the office model
 currently in operation.
 
-Retain the metered provider-backed onboarding path as an optional headless
-compatibility flow. It is not required for base installation or interactive
-onboarding.
+The initial decision retained the metered provider-backed onboarding path as an
+optional compatibility flow. ADR-0010 supersedes that clause: onboarding is now
+host-only and the provider-backed command is removed.
 
 ## Consequences
 
@@ -51,7 +51,7 @@ onboarding.
 - The same runtime contract can support thin adapters for other compatible agent
   hosts without moving authority into prompts.
 - Office structure and default routing become validated, auditable project state.
-- Truly unattended model execution still requires a separately authenticated
-  executor or optional provider configuration.
+- Truly unattended model execution remains separate future executor scope; it
+  is not an onboarding fallback.
 - The first implementation stores and resolves pipelines but does not yet own a
   durable multi-stage pipeline executor.

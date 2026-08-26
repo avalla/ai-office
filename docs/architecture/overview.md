@@ -115,13 +115,12 @@ The latest office manifest is the approved current organizational model.
 does not synchronize overlapping goals, constraints, preferences, or permission
 knowledge back into the profile.
 
-The optional LLM gateway separates provider invocation from pricing and
-accounting. A registry resolves prefixed model references into the normalized
-provider port; the default infrastructure adapter uses LangChain for OpenAI and
-Anthropic compatibility, while the native OpenAI Responses adapter remains
-available. It supports headless workflows but is not required for interactive
-skill-first onboarding. LangChain does not cross into application/domain code
-or own orchestration.
+The LLM gateway remains a provider-neutral, metered infrastructure boundary for
+explicit future execution consumers. Its registry and OpenAI/Anthropic adapters
+are not composed into project onboarding or normal daemon commands. Codex or
+Claude generates onboarding questions in the host session; only the accepted
+manifest crosses into the daemon. LangChain does not cross into
+application/domain code or own orchestration.
 
 Governance stores milestones, requirements, ADRs, reviews, and approval decisions as structured project state. This M5 governance approval model is separate from M6C-lite `ActionApproval`, which binds a controlled filesystem mutation to its authorization and simulation artifact.
 

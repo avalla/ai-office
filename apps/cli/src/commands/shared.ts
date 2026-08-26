@@ -11,7 +11,6 @@ import type { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite
 import type { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
-import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import type { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { GlobalMemoryRepository } from "@ai-office/application/ports/global-memory-repository.port.ts";
@@ -44,7 +43,6 @@ export interface CommandContext {
   clock: Clock;
   transactions: TransactionRunner;
   connectors: ConnectorRegistry;
-  onboardingGenerator: OnboardingQuestionGenerator;
   agentClients: AgentClientCatalog;
   projectBindings: ProjectBindingAdapter;
   repositoryIdentities: SqliteRepositoryIdentityRepository;

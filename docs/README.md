@@ -14,6 +14,9 @@ AI Office keeps different kinds of documentation separate so current product tru
   accepted identity, discovery, portability, and lifecycle decision.
 - [Stable user runtime home](adr/ADR-0009-stable-user-runtime-home.md):
   accepted separation of program location from authoritative user data.
+- [Host-only onboarding](adr/ADR-0010-host-only-onboarding.md): accepted
+  removal of the daemon/provider onboarding path and compatibility policy for
+  historical onboarding data.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
@@ -23,7 +26,7 @@ AI Office keeps different kinds of documentation separate so current product tru
 The CLI itself is the syntax authority for current commands:
 
 ```bash
-bun run cli -- --help
+ai-office --help
 ```
 
 ## Directory guide

@@ -66,7 +66,7 @@ client artifacts, and detaches only the current checkout in SQLite; unrelated
 
 `<runtime-home>/project.sqlite` currently stores:
 
-- projects, imported-source metadata, onboarding questions, profile facts, and immutable office-manifest revisions;
+- projects, imported-source metadata, historical onboarding questions, profile facts, and immutable office-manifest revisions;
 - tasks, roles, agents, agent runs, task locks, and run events;
 - pricing, budgets, reservations, normalized usage, and costs;
 - milestones, requirements, ADR records, reviews, and governance decisions;

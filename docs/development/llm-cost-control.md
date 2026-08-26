@@ -2,6 +2,12 @@
 
 The LLM gateway provides a normalized provider port, provider registry, deterministic mock, infrastructure-only LangChain compatibility adapter, existing OpenAI Responses HTTP adapter, retry-aware fallback chain, and metered gateway. The default registry supports OpenAI and Anthropic. Callers must supply an estimated token envelope and accounting context.
 
+No current onboarding or normal daemon command composes this registry. Codex or
+Claude owns conversational onboarding through the `ai-office` skill, so normal
+installation does not need a `.env`, model reference, or provider credential.
+The configuration below documents the infrastructure contract for an explicit
+future consumer and adapter tests; it is not an onboarding setup guide.
+
 ## Provider configuration
 
 Use one canonical model reference in `<provider>:<model>` form:
@@ -25,7 +31,7 @@ Provider-native credentials remain infrastructure concerns. The current registry
 ## Dependency and execution boundary
 
 ```text
-Onboarding
+Explicit application consumer
     -> MeteredLlmGateway
     -> LlmProvider port
     -> ModelProviderRegistry
@@ -47,8 +53,8 @@ The existing native OpenAI adapter still requires an API key passed by its compo
 
 The LangChain adapter maps text, effective model, provider request ID, standard usage metadata, provider response metadata, and measured latency into the normalized response. The cost contract requires numeric cached-input and reasoning token counts, so unavailable optional detail maps to zero, matching the existing native OpenAI adapter. The adapter does not infer or fabricate non-zero provider-specific usage fields. If total input or output usage is absent, the response is rejected instead of being guessed.
 
-The CLI exposes pricing, budget, and cost-report commands. Adaptive
-`project:onboard` is the first real consumer: it records purpose
-`project_onboarding` with the project dimension and automatically honors a
-configured hard project budget. Standard tests use deterministic providers and
-injected transports rather than paid calls.
+The CLI exposes pricing, budget, and cost-report commands, but no current
+product command invokes a model provider. Standard gateway tests use
+deterministic providers and injected transports rather than paid calls. A
+future consumer must define its own purpose, accounting dimensions,
+authentication boundary, and approval model before composition.

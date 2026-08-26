@@ -1,11 +1,11 @@
 # ADR-0005: Keep model providers behind an infrastructure registry
 
-- Status: Accepted
+- Status: Accepted for generic provider infrastructure; onboarding composition superseded by ADR-0010
 - Date: 2026-08-11
 
 ## Context
 
-The onboarding composition root selected only `openai` and directly constructed the native OpenAI Responses adapter. That coupled CLI composition to one vendor even though metering already depended on a normalized provider port.
+The former onboarding composition root selected only `openai` and directly constructed the native OpenAI Responses adapter. That coupled CLI composition to one vendor even though metering already depended on a normalized provider port.
 
 AI Office needs replaceable model infrastructure without moving task execution, agents, policy, memory, retries, usage accounting, or budgets into a third-party orchestration framework.
 
@@ -18,7 +18,7 @@ Use `LangChainModelProvider` as the default compatibility adapter for registered
 Keep the execution path:
 
 ```text
-application/onboarding -> MeteredLlmGateway -> LlmProvider
+explicit application consumer -> MeteredLlmGateway -> LlmProvider
   -> registry-selected LangChainModelProvider -> vendor
 ```
 
@@ -28,9 +28,12 @@ Temporarily accept a bare `AI_OFFICE_LLM_MODEL` when paired with `AI_OFFICE_LLM_
 
 ## Consequences
 
-- OpenAI and Anthropic can be selected without onboarding or application changes.
+- OpenAI and Anthropic can be selected without changing a future application consumer.
 - Adding Gemini, OpenRouter, or Ollama requires an infrastructure registration and provider package, not domain changes.
 - Provider-specific environment variables remain at the composition boundary.
 - Provider metadata and latency can be returned without changing cost semantics.
 - Cached-input and reasoning detail are zero when LangChain does not expose them because the existing normalized usage contract requires numeric fields; missing total input/output usage is rejected.
 - LangChain package upgrades are isolated to the LLM gateway but remain an infrastructure maintenance responsibility.
+
+ADR-0010 removes the onboarding consumer and its CLI composition. The registry
+remains infrastructure and is not initialized by normal daemon commands.

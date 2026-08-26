@@ -8,7 +8,6 @@ import {
   runCli,
   type CliIo,
 } from "../../cli/src/cli.ts";
-import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
@@ -23,7 +22,6 @@ export class LocalCommandHandler implements DaemonCommandHandler {
     private readonly runtimePaths: RuntimePaths,
     private readonly commandRoot: string,
     private readonly migrationDirectory?: string,
-    private readonly onboardingGenerator?: OnboardingQuestionGenerator,
     private readonly globalMigrationDirectory?: string,
     private readonly agentClients?: AgentClientCatalog,
     private readonly projectBindings?: ProjectBindingAdapter,
@@ -53,9 +51,6 @@ export class LocalCommandHandler implements DaemonCommandHandler {
         ...(this.migrationDirectory === undefined
           ? {}
           : { migrationDirectory: this.migrationDirectory }),
-        ...(this.onboardingGenerator === undefined
-          ? {}
-          : { onboardingGenerator: this.onboardingGenerator }),
         ...(this.globalMigrationDirectory === undefined
           ? {}
           : { globalMigrationDirectory: this.globalMigrationDirectory }),

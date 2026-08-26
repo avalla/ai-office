@@ -232,6 +232,11 @@ intent retain the deterministic simulator. Autonomous LLM tool selection,
 multi-step tool loops, subprocess execution, and real Git worktrees remain
 future work.
 
+The M6C.5 provider-backed onboarding entry point was subsequently removed by
+the host-only decision in ADR-0010. Its applied migrations remain for upgrade
+compatibility and preserve historical questions and provenance; no current
+command creates new provider-generated onboarding batches.
+
 ### M6E — Skill-first office onboarding
 
 Status: implemented.
@@ -248,8 +253,8 @@ Status: implemented.
 - permission preferences kept separate from capability authorization.
 
 The runtime resolves pipeline definitions but does not yet persist or execute a
-multi-stage pipeline state machine. The provider-backed `project:onboard` path
-remains an optional headless compatibility flow.
+multi-stage pipeline state machine. Conversational questions and synthesis are
+host-only; the daemon exposes no provider-backed onboarding fallback.
 
 ### M6F — External coding-client integration
 

@@ -9,16 +9,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli, type CliIo } from "../../apps/cli/src/cli.ts";
-import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
-import { UnavailableOnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
-import {
-  InvalidProviderResponseError,
-  LlmProviderError,
-} from "@ai-office/llm-gateway/provider.ts";
-import {
-  ScriptedOnboardingGenerator,
-  textQuestion,
-} from "../helpers/onboarding-generator.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -148,7 +138,7 @@ describe("Project/Task CLI vertical slice", () => {
     expect(output.stdout).toEqual([]);
   });
 
-  test("answers a question, displays the categorized profile, and exports deterministically", async () => {
+  test("displays the imported profile and exports it deterministically", async () => {
     const projectRoot = prepareExistingProjectRoot();
     const importedOutput = captureIo();
     expect(
@@ -160,49 +150,6 @@ describe("Project/Task CLI vertical slice", () => {
     const projectId =
       importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
 
-    const generator = new ScriptedOnboardingGenerator([
-      {
-        status: "needs_more_context",
-        questions: [
-          textQuestion({ question: "What outcome should be published?" }),
-        ],
-      },
-    ]);
-    expect(
-      await runCli(["project:onboard", "--project", projectId, "--generate"], {
-        projectRoot,
-        io: captureIo().io,
-        onboardingGenerator: generator,
-      }),
-    ).toBe(0);
-
-    const database = openDatabase(
-      join(projectRoot, ".ai-office", "project.sqlite"),
-    );
-    const goalQuestion = database
-      .query<{ id: string }, []>(
-        "SELECT id FROM project_question WHERE source = 'llm' AND answer_json IS NULL",
-      )
-      .get();
-    database.close();
-
-    const answerOutput = captureIo();
-    expect(
-      await runCli(
-        [
-          "project:answer",
-          "--project",
-          projectId,
-          "--question",
-          goalQuestion?.id ?? "",
-          "--answer",
-          "Publish the onboarding milestone",
-        ],
-        { projectRoot, io: answerOutput.io },
-      ),
-    ).toBe(0);
-    expect(answerOutput.stdout[0]).toContain("(goal)");
-
     const profileOutput = captureIo();
     expect(
       await runCli(["project:profile", "--project", projectId], {
@@ -211,13 +158,7 @@ describe("Project/Task CLI vertical slice", () => {
       }),
     ).toBe(0);
     expect(profileOutput.stdout[0]).toContain("## Detected facts");
-    expect(profileOutput.stdout[0]).toContain("## Goals");
-    expect(profileOutput.stdout[0]).toContain(
-      "## LLM-generated onboarding questions",
-    );
-    expect(profileOutput.stdout[0]).toContain(
-      "Publish the onboarding milestone",
-    );
+    expect(profileOutput.stdout[0]).toContain("TypeScript");
 
     const exportOutput = captureIo();
     expect(
@@ -244,162 +185,19 @@ describe("Project/Task CLI vertical slice", () => {
     expect(firstExport).toBe(`${profileOutput.stdout[0]}\n`);
   });
 
-  test("runs interactive onboarding one open question at a time", async () => {
-    const projectRoot = prepareExistingProjectRoot();
-    const importedOutput = captureIo();
-    expect(
-      await runCli(["project:import", "."], {
-        projectRoot,
-        io: importedOutput.io,
-      }),
-    ).toBe(0);
-    const projectId =
-      importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
-    const onboardingOutput = captureIo([
-      "Ship M1.5",
-      "read_files,modify_files,run_tests",
-      "Keep strict TypeScript",
-    ]);
-    const generator = new ScriptedOnboardingGenerator([
-      {
-        status: "needs_more_context",
-        questions: [
-          textQuestion({
-            category: "goal",
-            question: "What concrete outcome is next?",
-            priority: 100,
-          }),
-          {
-            category: "permission",
-            question: "Which operations may agents perform?",
-            rationale:
-              "Records project preferences without granting capabilities.",
-            answerType: "multi_select",
-            options: ["read_files", "modify_files", "run_tests"],
-            priority: 90,
-          },
-          textQuestion({
-            category: "constraint",
-            question: "What must remain unchanged?",
-            priority: 80,
-          }),
-        ],
-      },
-    ]);
-
-    expect(
-      await runCli(["project:onboard", "--project", projectId], {
-        projectRoot,
-        io: onboardingOutput.io,
-        onboardingGenerator: generator,
-      }),
-    ).toBe(0);
-    expect(onboardingOutput.prompts).toEqual(["> ", "> ", "> "]);
-    expect(
-      onboardingOutput.stdout.filter((line) => line.startsWith("[")),
-    ).toEqual([
-      "[goal/text/llm] What concrete outcome is next?",
-      "[permission/multi_select/llm] Which operations may agents perform?",
-      "[constraint/text/llm] What must remain unchanged?",
-    ]);
-
-    const database = openDatabase(
-      join(projectRoot, ".ai-office", "project.sqlite"),
-    );
-    expect(
-      database
-        .query<{ count: number }, []>(
-          "SELECT COUNT(*) AS count FROM project_question WHERE answer_json IS NULL",
-        )
-        .get()?.count,
-    ).toBe(0);
-    expect(
-      database
-        .query<{ count: number }, []>(
-          "SELECT COUNT(*) AS count FROM project_profile_entry WHERE origin = 'user'",
-        )
-        .get()?.count,
-    ).toBe(3);
-    database.close();
-  });
-
-  test("fails clearly when onboarding has no configured provider", async () => {
-    const projectRoot = prepareExistingProjectRoot();
-    const importedOutput = captureIo();
-    await runCli(["project:import", "."], {
-      projectRoot,
-      io: importedOutput.io,
-    });
-    const projectId =
-      importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
-    const output = captureIo();
-
-    expect(
-      await runCli(["project:onboard", "--project", projectId, "--generate"], {
-        projectRoot,
-        io: output.io,
-        onboardingGenerator: new UnavailableOnboardingQuestionGenerator(),
-      }),
-    ).toBe(1);
-    expect(output.stderr).toEqual(["LLM provider unavailable for onboarding"]);
-  });
-
-  test.each([
-    new LlmProviderError(
-      "openai",
-      "openai returned HTTP 401",
-      false,
-      "HTTP",
-    ),
-    new InvalidProviderResponseError(
-      "openai",
-      "Provider response did not contain usage metadata",
-    ),
-  ])("reports %s as a known CLI error", async (providerError) => {
-    const projectRoot = prepareExistingProjectRoot();
-    const importedOutput = captureIo();
-    await runCli(["project:import", "."], {
-      projectRoot,
-      io: importedOutput.io,
-    });
-    const projectId =
-      importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
-    const output = captureIo();
-
-    const exitCode = await runCli(
-      ["project:onboard", "--project", projectId, "--generate"],
-      {
-        projectRoot,
-        io: output.io,
-        onboardingGenerator: new ScriptedOnboardingGenerator([providerError]),
-      },
-    );
-
-    expect(exitCode).toBe(1);
-    expect(output.stderr).toEqual([providerError.message]);
-  });
-
-  test("reports the configured model and missing credential without a network call", async () => {
+  test("rejects removed provider-backed onboarding without reading provider configuration", async () => {
     vi.stubEnv("AI_OFFICE_LLM_MODEL", "anthropic:claude-sonnet-4-6");
-    vi.stubEnv("ANTHROPIC_API_KEY", "");
-    const projectRoot = prepareExistingProjectRoot();
-    const importedOutput = captureIo();
-    await runCli(["project:import", "."], {
-      projectRoot,
-      io: importedOutput.io,
-    });
-    const projectId =
-      importedOutput.stdout[0]?.replace("Project imported: ", "") ?? "";
+    vi.stubEnv("ANTHROPIC_API_KEY", "must-not-be-read");
     const output = captureIo();
 
     expect(
-      await runCli(["project:onboard", "--project", projectId, "--generate"], {
-        projectRoot,
+      await runCli(["project:onboard", "--project", "legacy"], {
+        projectRoot: createProjectRoot(),
         io: output.io,
       }),
     ).toBe(1);
-    expect(output.stderr).toEqual([
-      "No usable LLM provider configuration found.\n\nConfigured model:\n  anthropic:claude-sonnet-4-6\n\nMissing:\n  ANTHROPIC_API_KEY",
-    ]);
+    expect(output.stderr[0]).toContain("Unknown command: project:onboard");
+    expect(output.stderr[0]).not.toContain("ANTHROPIC_API_KEY");
+    expect(output.stderr[0]).not.toContain("project:onboard --project");
   });
 });
