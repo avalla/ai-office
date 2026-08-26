@@ -59,13 +59,15 @@ Install dependencies and expose the source checkout's linkable CLI:
 ```bash
 bun install --frozen-lockfile
 bun link
-bun link --global ai-office
 ```
 
-The repository is not yet published as a packaged binary. `bun link` registers
-this checkout as a linkable package, and `bun link --global ai-office` exposes
-its declared `ai-office` bin from Bun's global bin directory. Ensure the path
-printed by `bun pm bin -g` is on `PATH`. The same entry point can also be run from this checkout as
+The repository is not yet published as a packaged binary. The bare `bun link`
+command registers this checkout in Bun's global link registry and exposes its
+declared `ai-office` bin; do not follow it with
+`bun link --global ai-office`. Ensure the path printed by `bun pm bin -g` is on
+`PATH`. If the obsolete two-command sequence was already attempted and left a
+dangling bin link, rerun the bare `bun link` command from this checkout to
+repair it. The same entry point can also be run from this checkout as
 `bun run ai-office -- install /absolute/path/to/project`.
 
 Start the office daemon in one terminal:
