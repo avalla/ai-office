@@ -70,6 +70,12 @@ dangling bin link, rerun the bare `bun link` command from this checkout to
 repair it. The same entry point can also be run from this checkout as
 `bun run ai-office -- install /absolute/path/to/project`.
 
+The supported Bun baseline is 1.3.6, used by the full CI validation job. The
+source-link contract is additionally smoke-tested against the latest stable Bun
+release so current Bun installations remain supported without silently assuming
+identical global-link behavior. Other or prerelease Bun versions are not a
+tested compatibility target.
+
 Start the office daemon in one terminal:
 
 ```bash

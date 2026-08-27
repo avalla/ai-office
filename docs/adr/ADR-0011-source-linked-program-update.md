@@ -31,16 +31,29 @@ daemon is reachable. It supports only the current source-linked package layout.
 
 Planning canonicalizes and validates the distribution, requires a clean
 tracked Git worktree and a checked-out branch with a conventional upstream,
-and uses `git ls-remote` to resolve the exact advertised target commit without
-modifying the checkout. The plan binds the distribution root, package identity,
-branch, remote name, upstream and remote-tracking refs, current and target
-revisions, and ordered steps into a deterministic hash. Untracked files are preserved and do
-not invalidate the plan; Git still fails closed if one conflicts with an
+and uses `git ls-remote` to resolve the exact advertised target commit. When
+that commit is absent locally, planning fetches the advertised upstream ref into
+a random `refs/ai-office/update-plan/*` temporary ref with fetch-head writes and
+submodule recursion disabled. It verifies the fetched commit, unchanged `HEAD`
+and tracked worktree, and fast-forward ancestry, then removes the temporary ref
+through an unconditional cleanup boundary. Failure to remove the ref blocks plan
+creation.
+
+This acquisition may add immutable Git objects to the local object database; it
+does not change the checked-out branch, index, tracked files, normal upstream
+tracking ref, or program revision. A plan is never returned until
+fast-forwardability has been proven. The plan binds the distribution root,
+package identity, branch, remote name, a credential-safe SHA-256 fingerprint of
+the ordered fetch URLs, upstream and remote-tracking refs, current and target
+revisions, and ordered steps into a deterministic hash. The raw remote URLs are
+not exposed. Untracked files are preserved and do not invalidate the plan; Git
+still fails closed if one conflicts with an
 incoming tracked path. Detached, locally ahead, and divergent branches require
 manual reconciliation.
 
 After explicit approval, the application service repeats the complete preflight
-and rejects stale approval. The adapter then:
+including remote-object acquisition and ancestry proof, and rejects stale
+approval. The adapter then:
 
 1. fetches the approved upstream ref and verifies `FETCH_HEAD` still equals the
    approved target;

@@ -21,6 +21,7 @@ export interface DistributionUpdatePlan {
   branch: string;
   upstream: {
     remote: string;
+    identity: string;
     sourceRef: string;
     trackingRef: string;
   };
@@ -46,6 +47,7 @@ function publicPlan(draft: DistributionUpdateDraft): DistributionUpdatePlan {
     branch: draft.branch,
     upstream: {
       remote: draft.remote,
+      identity: draft.remoteIdentity,
       sourceRef: draft.upstreamRef,
       trackingRef: draft.trackingRef,
     },

@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
@@ -166,6 +167,142 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
     return revision(trimmed(result), "the local checkout");
   }
 
+  private async requireCleanTrackedWorktree(
+    distributionRoot: string,
+  ): Promise<void> {
+    const trackedStatus = await this.command(
+      distributionRoot,
+      ["git", "status", "--porcelain=v1", "--untracked-files=no"],
+      "AI Office update could not inspect the Git working tree",
+    );
+    if (trimmed(trackedStatus) !== "")
+      throw new LocalDistributionUpdateError(
+        "AI Office update requires a clean tracked Git working tree. Commit or restore tracked changes, then run ai-office update again.",
+      );
+  }
+
+  private async acquireTargetObject(input: {
+    distributionRoot: string;
+    remote: string;
+    upstreamRef: string;
+    targetRevision: string;
+  }): Promise<void> {
+    const existing = await this.runner.run(
+      ["git", "cat-file", "-e", `${input.targetRevision}^{commit}`],
+      input.distributionRoot,
+    );
+    if (existing.exitCode === 0) return;
+
+    const temporaryRef = `refs/ai-office/update-plan/${randomUUID()}`;
+    let acquisitionFailed = false;
+    let acquisitionError: unknown;
+    try {
+      await this.command(
+        input.distributionRoot,
+        [
+          "git",
+          "fetch",
+          "--no-write-fetch-head",
+          "--no-tags",
+          "--quiet",
+          "--recurse-submodules=no",
+          input.remote,
+          `${input.upstreamRef}:${temporaryRef}`,
+        ],
+        "AI Office update could not acquire the advertised upstream commit for safe planning. Check network access and Git authentication.",
+      );
+      const fetchedResult = await this.command(
+        input.distributionRoot,
+        ["git", "rev-parse", temporaryRef],
+        "AI Office update could not verify its temporary planning ref",
+      );
+      const fetchedRevision = revision(
+        trimmed(fetchedResult),
+        "the temporary planning ref",
+      );
+      if (fetchedRevision !== input.targetRevision)
+        throw new LocalDistributionUpdateError(
+          "The upstream changed while AI Office was planning the update. Run ai-office update again to inspect the new target.",
+        );
+    } catch (error) {
+      acquisitionFailed = true;
+      acquisitionError = error;
+    }
+    const cleanup = await this.runner.run(
+      ["git", "update-ref", "-d", temporaryRef],
+      input.distributionRoot,
+    );
+    if (cleanup.exitCode !== 0)
+      throw new LocalDistributionUpdateError(
+        `AI Office update could not remove temporary planning ref ${temporaryRef}`,
+      );
+    if (acquisitionFailed) throw acquisitionError;
+  }
+
+  private async requireFastForward(input: {
+    distributionRoot: string;
+    currentRevision: string;
+    targetRevision: string;
+  }): Promise<void> {
+    if (input.currentRevision === input.targetRevision) return;
+    const currentIsAncestor = await this.runner.run(
+      [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        input.currentRevision,
+        input.targetRevision,
+      ],
+      input.distributionRoot,
+    );
+    if (currentIsAncestor.exitCode === 0) return;
+    if (currentIsAncestor.exitCode !== 1)
+      throw new LocalDistributionUpdateError(
+        "AI Office update could not prove that the upstream is a fast-forward",
+      );
+
+    const targetIsAncestor = await this.runner.run(
+      [
+        "git",
+        "merge-base",
+        "--is-ancestor",
+        input.targetRevision,
+        input.currentRevision,
+      ],
+      input.distributionRoot,
+    );
+    if (targetIsAncestor.exitCode === 0)
+      throw new LocalDistributionUpdateError(
+        "The AI Office distribution branch contains local commits that are not on its upstream. Reconcile or publish them before updating.",
+      );
+    if (targetIsAncestor.exitCode === 1)
+      throw new LocalDistributionUpdateError(
+        "The AI Office distribution branch has diverged from its upstream. Reconcile the checkout manually before updating.",
+      );
+    throw new LocalDistributionUpdateError(
+      "AI Office update could not compare the local and upstream revisions",
+    );
+  }
+
+  private async remoteIdentity(
+    distributionRoot: string,
+    remote: string,
+  ): Promise<string> {
+    const result = await this.command(
+      distributionRoot,
+      ["git", "config", "--get-all", `remote.${remote}.url`],
+      "AI Office update could not resolve the configured upstream remote identity",
+    );
+    const urls = result.stdout.split(/\r?\n/).filter((url) => url !== "");
+    if (urls.length === 0)
+      throw new LocalDistributionUpdateError(
+        "The current AI Office upstream remote has no fetch URL",
+      );
+    return `sha256:${createHash("sha256")
+      .update(JSON.stringify(urls), "utf8")
+      .digest("hex")}`;
+  }
+
   async plan(distributionRootInput: string): Promise<DistributionUpdateDraft> {
     const distributionRoot = canonicalDistributionRoot(distributionRootInput);
     validatePackage(distributionRoot);
@@ -192,15 +329,7 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       throw new LocalDistributionUpdateError(
         "AI Office update requires the distribution root to be the Git checkout root",
       );
-    const trackedStatus = await this.command(
-      distributionRoot,
-      ["git", "status", "--porcelain=v1", "--untracked-files=no"],
-      "AI Office update could not inspect the Git working tree",
-    );
-    if (trimmed(trackedStatus) !== "")
-      throw new LocalDistributionUpdateError(
-        "AI Office update requires a clean tracked Git working tree. Commit or restore tracked changes, then run ai-office update again.",
-      );
+    await this.requireCleanTrackedWorktree(distributionRoot);
 
     const branchResult = await this.command(
       distributionRoot,
@@ -223,6 +352,7 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       throw new LocalDistributionUpdateError(
         "AI Office update requires a conventional named Git remote",
       );
+    const remoteIdentity = await this.remoteIdentity(distributionRoot, remote);
 
     const upstreamResult = await this.command(
       distributionRoot,
@@ -260,42 +390,28 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       matching?.[0] ?? "",
       "the configured upstream",
     );
-    if (targetRevision !== currentRevision) {
-      const targetExists = await this.runner.run(
-        ["git", "cat-file", "-e", `${targetRevision}^{commit}`],
-        distributionRoot,
+    await this.acquireTargetObject({
+      distributionRoot,
+      remote,
+      upstreamRef,
+      targetRevision,
+    });
+    if ((await this.head(distributionRoot)) !== currentRevision)
+      throw new LocalDistributionUpdateError(
+        "The AI Office distribution revision changed during update planning. Run ai-office update again.",
       );
-      if (targetExists.exitCode === 0) {
-        const remoteIsAncestor = await this.runner.run(
-          [
-            "git",
-            "merge-base",
-            "--is-ancestor",
-            targetRevision,
-            currentRevision,
-          ],
-          distributionRoot,
-        );
-        if (remoteIsAncestor.exitCode === 0)
-          throw new LocalDistributionUpdateError(
-            "The AI Office distribution branch contains local commits that are not on its upstream. Reconcile or publish them before updating.",
-          );
-        const currentIsAncestor = await this.runner.run(
-          [
-            "git",
-            "merge-base",
-            "--is-ancestor",
-            currentRevision,
-            targetRevision,
-          ],
-          distributionRoot,
-        );
-        if (currentIsAncestor.exitCode !== 0)
-          throw new LocalDistributionUpdateError(
-            "The AI Office distribution branch has diverged from its upstream. Reconcile the checkout manually before updating.",
-          );
-      }
-    }
+    if (
+      (await this.remoteIdentity(distributionRoot, remote)) !== remoteIdentity
+    )
+      throw new LocalDistributionUpdateError(
+        "The AI Office upstream remote changed during update planning. Run ai-office update again.",
+      );
+    await this.requireCleanTrackedWorktree(distributionRoot);
+    await this.requireFastForward({
+      distributionRoot,
+      currentRevision,
+      targetRevision,
+    });
 
     return {
       contractVersion: 1,
@@ -303,6 +419,7 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       packageName: "ai-office",
       branch,
       remote,
+      remoteIdentity,
       upstreamRef,
       trackingRef,
       currentRevision,

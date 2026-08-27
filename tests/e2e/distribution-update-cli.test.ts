@@ -38,6 +38,7 @@ function updateDraft(root: string): DistributionUpdateDraft {
     packageName: "ai-office",
     branch: "main",
     remote: "origin",
+    remoteIdentity: `sha256:${"1".repeat(64)}`,
     upstreamRef: "refs/heads/main",
     trackingRef: "refs/remotes/origin/main",
     currentRevision: "a".repeat(40),
@@ -174,10 +175,10 @@ describe("source-linked distribution update CLI", () => {
       failedStep: "install_dependencies",
       completedSteps: ["fetch", "fast_forward"],
     });
-    expect(Bun.file(join(runtime, "project.sqlite")).text()).resolves.toBe(
-      "authority",
-    );
-    expect(Bun.file(join(runtime, "global.sqlite")).text()).resolves.toBe(
+    await expect(
+      Bun.file(join(runtime, "project.sqlite")).text(),
+    ).resolves.toBe("authority");
+    await expect(Bun.file(join(runtime, "global.sqlite")).text()).resolves.toBe(
       "memory",
     );
   });

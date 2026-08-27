@@ -8,13 +8,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   LocalDistributionUpdateAdapter,
   type DistributionCommandResult,
   type DistributionCommandRunner,
 } from "../../apps/cli/src/local-distribution-update-adapter.ts";
-import { ManageDistributionUpdate } from "@ai-office/application/runtime/manage-distribution-update.ts";
+import {
+  DistributionUpdateApprovalError,
+  ManageDistributionUpdate,
+} from "@ai-office/application/runtime/manage-distribution-update.ts";
 
 const roots: string[] = [];
 
@@ -34,6 +37,26 @@ function git(cwd: string, ...args: string[]): string {
   if (result.exitCode !== 0)
     throw new Error(result.stderr.toString() || `git ${args.join(" ")} failed`);
   return result.stdout.toString().trim();
+}
+
+function hasGitObject(cwd: string, revision: string): boolean {
+  return (
+    Bun.spawnSync(["git", "cat-file", "-e", `${revision}^{commit}`], {
+      cwd,
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exitCode === 0
+  );
+}
+
+function temporaryPlanningRefs(cwd: string): string[] {
+  const output = git(
+    cwd,
+    "for-each-ref",
+    "--format=%(refname)",
+    "refs/ai-office/update-plan",
+  );
+  return output === "" ? [] : output.split("\n");
 }
 
 class GitWithFakeBunRunner implements DistributionCommandRunner {
@@ -116,7 +139,9 @@ afterEach(() => {
 describe("source-linked distribution update adapter", () => {
   test("updates the distribution from its upstream without using project or runtime paths", async () => {
     const { source, distribution } = sourceLinkedInstallation();
+    const currentRevision = git(distribution, "rev-parse", "HEAD");
     const targetRevision = publishNextRevision(source);
+    expect(hasGitObject(distribution, targetRevision)).toBe(false);
     writeFileSync(join(distribution, "untracked-local-note.txt"), "preserve\n");
     const runner = new GitWithFakeBunRunner();
     const service = new ManageDistributionUpdate(
@@ -129,6 +154,7 @@ describe("source-linked distribution update adapter", () => {
       branch: "main",
       upstream: {
         remote: "origin",
+        identity: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
         sourceRef: "refs/heads/main",
         trackingRef: "refs/remotes/origin/main",
       },
@@ -136,6 +162,12 @@ describe("source-linked distribution update adapter", () => {
       updateAvailable: true,
       preserves: ["runtime_state", "global_memory", "project_bindings"],
     });
+    expect(git(distribution, "rev-parse", "HEAD")).toBe(currentRevision);
+    expect(readFileSync(join(distribution, "version.txt"), "utf8")).toBe(
+      "one\n",
+    );
+    expect(hasGitObject(distribution, targetRevision)).toBe(true);
+    expect(temporaryPlanningRefs(distribution)).toEqual([]);
     const result = await service.apply({
       distributionRoot: distribution,
       approvedPlanHash: plan.planHash,
@@ -177,6 +209,175 @@ describe("source-linked distribution update adapter", () => {
     await expect(adapter.plan(distribution)).rejects.toThrow(
       "clean tracked Git working tree",
     );
+  });
+
+  test("rejects divergent local and remote commits before approving an absent target", async () => {
+    const { source, distribution } = sourceLinkedInstallation();
+    git(distribution, "config", "user.name", "AI Office Test");
+    git(distribution, "config", "user.email", "ai-office@example.invalid");
+    writeFileSync(join(distribution, "local.txt"), "local\n");
+    git(distribution, "add", "local.txt");
+    git(distribution, "commit", "-m", "local-only change");
+    const localRevision = git(distribution, "rev-parse", "HEAD");
+    const targetRevision = publishNextRevision(source);
+    expect(hasGitObject(distribution, targetRevision)).toBe(false);
+    const adapter = new LocalDistributionUpdateAdapter(
+      new GitWithFakeBunRunner(),
+      "/test/fake-bun",
+    );
+
+    await expect(adapter.plan(distribution)).rejects.toThrow(
+      "has diverged from its upstream",
+    );
+    expect(git(distribution, "rev-parse", "HEAD")).toBe(localRevision);
+    expect(readFileSync(join(distribution, "local.txt"), "utf8")).toBe(
+      "local\n",
+    );
+    expect(temporaryPlanningRefs(distribution)).toEqual([]);
+  });
+
+  test("rejects a logically local-ahead shallow branch when the target object is absent", async () => {
+    const { source, distribution } = sourceLinkedInstallation();
+    const baseRevision = git(source, "rev-parse", "HEAD");
+    publishNextRevision(source);
+    const remote = git(source, "remote", "get-url", "origin");
+    rmSync(distribution, { recursive: true });
+    git(
+      dirname(distribution),
+      "clone",
+      "--depth",
+      "1",
+      "--branch",
+      "main",
+      `file://${remote}`,
+      distribution,
+    );
+    git(distribution, "config", "user.name", "AI Office Test");
+    git(distribution, "config", "user.email", "ai-office@example.invalid");
+    writeFileSync(join(distribution, "local.txt"), "local\n");
+    git(distribution, "add", "local.txt");
+    git(distribution, "commit", "-m", "local commit after shallow tip");
+    const localRevision = git(distribution, "rev-parse", "HEAD");
+    git(source, "push", "--force", "origin", `${baseRevision}:refs/heads/main`);
+    expect(hasGitObject(distribution, baseRevision)).toBe(false);
+    const adapter = new LocalDistributionUpdateAdapter(
+      new GitWithFakeBunRunner(),
+      "/test/fake-bun",
+    );
+
+    await expect(adapter.plan(distribution)).rejects.toThrow(
+      "has diverged from its upstream",
+    );
+    expect(git(distribution, "rev-parse", "HEAD")).toBe(localRevision);
+    expect(readFileSync(join(distribution, "local.txt"), "utf8")).toBe(
+      "local\n",
+    );
+    expect(temporaryPlanningRefs(distribution)).toEqual([]);
+  });
+
+  test("rejects a locally-ahead branch during planning", async () => {
+    const { distribution } = sourceLinkedInstallation();
+    git(distribution, "config", "user.name", "AI Office Test");
+    git(distribution, "config", "user.email", "ai-office@example.invalid");
+    writeFileSync(join(distribution, "local.txt"), "local\n");
+    git(distribution, "add", "local.txt");
+    git(distribution, "commit", "-m", "local-only change");
+    const localRevision = git(distribution, "rev-parse", "HEAD");
+    const adapter = new LocalDistributionUpdateAdapter(
+      new GitWithFakeBunRunner(),
+      "/test/fake-bun",
+    );
+
+    await expect(adapter.plan(distribution)).rejects.toThrow(
+      "contains local commits that are not on its upstream",
+    );
+    expect(git(distribution, "rev-parse", "HEAD")).toBe(localRevision);
+    expect(temporaryPlanningRefs(distribution)).toEqual([]);
+  });
+
+  test("rejects an unrelated absent upstream target before approval", async () => {
+    const { source, distribution } = sourceLinkedInstallation();
+    const localRevision = git(distribution, "rev-parse", "HEAD");
+    git(source, "switch", "--orphan", "replacement");
+    writeFileSync(join(source, "version.txt"), "unrelated\n");
+    git(source, "add", "version.txt");
+    git(source, "commit", "-m", "unrelated replacement");
+    git(source, "push", "--force", "origin", "HEAD:main");
+    const targetRevision = git(source, "rev-parse", "HEAD");
+    expect(hasGitObject(distribution, targetRevision)).toBe(false);
+    const adapter = new LocalDistributionUpdateAdapter(
+      new GitWithFakeBunRunner(),
+      "/test/fake-bun",
+    );
+
+    await expect(adapter.plan(distribution)).rejects.toThrow(
+      "has diverged from its upstream",
+    );
+    expect(git(distribution, "rev-parse", "HEAD")).toBe(localRevision);
+    expect(temporaryPlanningRefs(distribution)).toEqual([]);
+  });
+
+  test("rejects stale approval when the upstream advances after planning", async () => {
+    const { source, distribution } = sourceLinkedInstallation();
+    publishNextRevision(source);
+    const runner = new GitWithFakeBunRunner();
+    const service = new ManageDistributionUpdate(
+      new LocalDistributionUpdateAdapter(runner, "/test/fake-bun"),
+    );
+    const plan = await service.plan(distribution);
+    const initialRevision = git(distribution, "rev-parse", "HEAD");
+    publishNextRevision(source, "three\n");
+
+    await expect(
+      service.apply({
+        distributionRoot: distribution,
+        approvedPlanHash: plan.planHash,
+      }),
+    ).rejects.toBeInstanceOf(DistributionUpdateApprovalError);
+    expect(git(distribution, "rev-parse", "HEAD")).toBe(initialRevision);
+    expect(readFileSync(join(distribution, "version.txt"), "utf8")).toBe(
+      "one\n",
+    );
+    expect(runner.bunCommands).toEqual([]);
+    expect(temporaryPlanningRefs(distribution)).toEqual([]);
+  });
+
+  test("rejects stale approval when the configured remote identity changes", async () => {
+    const { distribution } = sourceLinkedInstallation();
+    const runner = new GitWithFakeBunRunner();
+    const service = new ManageDistributionUpdate(
+      new LocalDistributionUpdateAdapter(runner, "/test/fake-bun"),
+    );
+    const plan = await service.plan(distribution);
+    const originalUrl = git(distribution, "remote", "get-url", "origin");
+    git(distribution, "remote", "set-url", "origin", `file://${originalUrl}`);
+
+    await expect(
+      service.apply({
+        distributionRoot: distribution,
+        approvedPlanHash: plan.planHash,
+      }),
+    ).rejects.toBeInstanceOf(DistributionUpdateApprovalError);
+    expect(runner.bunCommands).toEqual([]);
+  });
+
+  test("treats a clean already-current checkout as an idempotent no-op", async () => {
+    const { distribution } = sourceLinkedInstallation();
+    const runner = new GitWithFakeBunRunner();
+    const service = new ManageDistributionUpdate(
+      new LocalDistributionUpdateAdapter(runner, "/test/fake-bun"),
+    );
+    const plan = await service.plan(distribution);
+
+    expect(plan.updateAvailable).toBe(false);
+    expect(
+      await service.apply({
+        distributionRoot: distribution,
+        approvedPlanHash: plan.planHash,
+      }),
+    ).toMatchObject({ status: "already_current", completedSteps: [] });
+    expect(runner.bunCommands).toEqual([]);
+    expect(temporaryPlanningRefs(distribution)).toEqual([]);
   });
 
   test("reports partial state when source advances but dependency installation fails", async () => {
