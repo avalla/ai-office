@@ -17,6 +17,7 @@ function draft(
     packageName: "ai-office",
     branch: "main",
     remote: "origin",
+    remoteIdentity: `sha256:${"1".repeat(64)}`,
     upstreamRef: "refs/heads/main",
     trackingRef: "refs/remotes/origin/main",
     currentRevision: "a".repeat(40),
@@ -55,6 +56,7 @@ describe("distribution update orchestration", () => {
       updateAvailable: true,
       upstream: {
         remote: "origin",
+        identity: `sha256:${"1".repeat(64)}`,
         sourceRef: "refs/heads/main",
         trackingRef: "refs/remotes/origin/main",
       },
@@ -74,6 +76,26 @@ describe("distribution update orchestration", () => {
     const service = new ManageDistributionUpdate(adapter);
     const plan = await service.plan("/distribution");
     current = draft({ currentRevision: "c".repeat(40) });
+
+    await expect(
+      service.apply({
+        distributionRoot: "/distribution",
+        approvedPlanHash: plan.planHash,
+      }),
+    ).rejects.toBeInstanceOf(DistributionUpdateApprovalError);
+  });
+
+  test("binds the credential-safe upstream identity into approval", async () => {
+    let current = draft();
+    const adapter: DistributionUpdateAdapter = {
+      plan: async () => current,
+      apply: async () => {
+        throw new Error("must not apply");
+      },
+    };
+    const service = new ManageDistributionUpdate(adapter);
+    const plan = await service.plan("/distribution");
+    current = draft({ remoteIdentity: `sha256:${"2".repeat(64)}` });
 
     await expect(
       service.apply({

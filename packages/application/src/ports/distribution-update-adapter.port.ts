@@ -7,6 +7,7 @@ export interface DistributionUpdateDraft {
   packageName: "ai-office";
   branch: string;
   remote: string;
+  remoteIdentity: string;
   upstreamRef: string;
   trackingRef: string;
   currentRevision: string;
