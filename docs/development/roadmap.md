@@ -278,6 +278,10 @@ The original managed `AGENTS.md` projection remains upgrade-compatible through
 ordinary idempotent install; current installs migrate it to the shared guide and
 repository skills while preserving user-owned files.
 
+Lifecycle root resolution is worktree-aware for descendant invocations, and
+offline status attests deterministic skill/pointer drift while conservatively
+reporting manifest-dependent guidance as unverified.
+
 Client version probing, machine preference persistence, additional coding
 clients, and internal-agent context composition remain future work.
 
@@ -324,7 +328,7 @@ Status: implemented.
 - automatic project-ID resolution for project-scoped commands;
 - idempotent install reconciliation, default office only when absent, passive
   client detection, and ownership-safe sequential client apply;
-- status schema version `2`, including distinct repository identity and runtime
+- status schema version `3`, including distinct repository identity and runtime
   association plus offline repository/client inspection when
   the daemon is unavailable;
 - lifecycle uninstall that preserves the portable identity, user content,

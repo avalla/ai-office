@@ -37,7 +37,8 @@ The Codex pointer explicitly instructs the host to read `AI-OFFICE.md`; it is
 not a Markdown include mechanism. The Claude bridge uses Claude's native
 `@AI-OFFICE.md` import. The primary skill is deterministic and self-contained;
 the Claude wrapper points to that shared skill and guide instead of duplicating
-the workflow.
+the workflow. It uses Claude Code's documented `${CLAUDE_PROJECT_DIR}` project
+root variable rather than directory-depth-relative paths.
 
 All five files are derived repository integration artifacts. SQLite office
 manifests and project state remain authoritative. The files contain no runtime
@@ -56,6 +57,18 @@ AI Office never overwrites an unmarked `AI-OFFICE.md`, `AGENTS.md`, repository
 skill, or user-owned `CLAUDE.md` content. It may append or update only its
 marked Claude bridge. An unmanaged artifact is preserved and reported as
 unmanaged, not configured.
+
+Managed ownership parsing treats LF and CRLF as equivalent without normalizing
+or rewriting user-owned bytes. Deterministic host pointers and skill bodies are
+compared with the compiler output, so preserved ownership markers do not hide
+content drift. Offline status can attest those artifacts without a daemon. It
+cannot reconstruct `AI-OFFICE.md` without the authoritative manifest, so a
+fully intact offline integration is reported as `unverified`; certain drift in
+a deterministic pointer or skill remains `drifted`.
+
+The lifecycle status envelope advances to schema version 3 for the new
+`unverified` client configuration state. Binding schema version 2 and the
+authoritative database schema are unchanged.
 
 ## Migration and lifecycle
 

@@ -13,7 +13,10 @@ import {
   legacyManagedProjectInstructionsHeader,
   managedProjectInstructionsHeader,
 } from "@ai-office/application/agent-client/instruction-compiler.ts";
-import { managedProjectSkillMarker } from "@ai-office/application/agent-client/project-skill-compiler.ts";
+import {
+  compileProjectSkill,
+  managedProjectSkillMarker,
+} from "@ai-office/application/agent-client/project-skill-compiler.ts";
 import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import {
   LocalAgentClientFiles,
@@ -49,8 +52,18 @@ description: Install, inspect, onboard, configure, operate, troubleshoot, and sa
 
 ${claudeSkillMarker}
 
-Read and follow \`../../../.agents/skills/ai-office/SKILL.md\`. That file is the shared repository-local AI Office skill. Read \`../../../${canonicalProjectInstructionsPath}\` for this project's managed operating guidance.
+Read and follow \`\${CLAUDE_PROJECT_DIR}/.agents/skills/ai-office/SKILL.md\`. That file is the shared repository-local AI Office skill. Read \`\${CLAUDE_PROJECT_DIR}/${canonicalProjectInstructionsPath}\` for this project's managed operating guidance.
 `;
+
+function normalizeEol(content: string): string {
+  return content.replace(/\r\n?/gu, "\n");
+}
+
+function equivalentText(actual: string | undefined, expected: string): boolean {
+  return (
+    actual !== undefined && normalizeEol(actual) === normalizeEol(expected)
+  );
+}
 
 function fileState(
   file: LocalInstructionFile,
@@ -84,7 +97,8 @@ function hasManagedSkillMarker(
   file: LocalInstructionFile,
   marker: string,
 ): boolean {
-  const content = file.content;
+  const content =
+    file.content === undefined ? undefined : normalizeEol(file.content);
   if (content === undefined || !content.startsWith("---\nname: ai-office\n"))
     return false;
   const frontmatterEnd = content.indexOf("\n---\n", 4);
@@ -105,13 +119,19 @@ function isClaudeSkillManaged(file: LocalInstructionFile): boolean {
 function managedState(
   file: LocalInstructionFile,
   managed: (file: LocalInstructionFile) => boolean,
+  expectedContent?: string,
 ): AgentClientFileState {
   if (!file.exists) return fileState(file, "absent", "missing");
   const owned = managed(file);
   return fileState(
     file,
     owned ? "ai_office_owned" : "user_owned",
-    owned ? "integrated" : "unmanaged",
+    owned
+      ? expectedContent === undefined ||
+        equivalentText(file.content, expectedContent)
+        ? "integrated"
+        : "drifted"
+      : "unmanaged",
   );
 }
 
@@ -122,7 +142,7 @@ function canonicalState(file: LocalInstructionFile): AgentClientFileState {
 function codexPointerState(file: LocalInstructionFile): AgentClientFileState {
   if (isLegacyCanonicalManaged(file))
     return fileState(file, "ai_office_owned", "unmanaged");
-  return managedState(file, isCodexPointerManaged);
+  return managedState(file, isCodexPointerManaged, codexManagedFileContent);
 }
 
 function legacyState(file: LocalInstructionFile): AgentClientFileState {
@@ -168,13 +188,18 @@ function analyzeClaudeBridge(file: LocalInstructionFile): ClaudeBridgeAnalysis {
       kind: "conflict",
     };
   const managed = content.slice(start, end);
+  const normalizedContent = normalizeEol(content);
+  const normalizedManaged = normalizeEol(managed);
   const aiOfficeOwned =
-    content === claudeManagedFileContent || content.trim() === managed.trim();
+    normalizedContent === normalizeEol(claudeManagedFileContent) ||
+    normalizedContent.trim() === normalizedManaged.trim();
   return {
     state: fileState(
       file,
       aiOfficeOwned ? "ai_office_owned" : "merged",
-      managed === claudeManagedBlock ? "integrated" : "unmanaged",
+      normalizedManaged === normalizeEol(claudeManagedBlock)
+        ? "integrated"
+        : "drifted",
     ),
     kind: "managed",
     start,
@@ -224,7 +249,10 @@ function reconcileManagedFile(input: {
         summary: input.createSummary,
       },
     ];
-  if (input.managed(input.file) && input.file.content !== input.nextContent)
+  if (
+    input.managed(input.file) &&
+    !equivalentText(input.file.content, input.nextContent)
+  )
     return [
       {
         kind: "update",
@@ -415,7 +443,11 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
       rootPath: root,
       canonicalInstructions: canonicalState(canonical),
       clientInstructions: codexPointerState(pointer),
-      skillInstructions: managedState(projectSkill, isProjectSkillManaged),
+      skillInstructions: managedState(
+        projectSkill,
+        isProjectSkillManaged,
+        compileProjectSkill(),
+      ),
       legacyInstructions: legacyState(legacy),
       issues,
     };
@@ -595,7 +627,8 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
   readonly executableName = "claude";
 
   async inspect(rootPath: string): Promise<AgentClientInspection> {
-    const { root, canonical, legacy, issues } = this.inspectBase(rootPath);
+    const { root, canonical, projectSkill, legacy, issues } =
+      this.inspectBase(rootPath);
     const bridge = analyzeClaudeBridge(this.files.read(root, "CLAUDE.md"));
     const claudeSkill = this.files.read(root, claudeProjectSkillPath);
     if (bridge.kind === "conflict")
@@ -623,7 +656,16 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
       rootPath: root,
       canonicalInstructions: canonicalState(canonical),
       clientInstructions: bridge.state,
-      skillInstructions: managedState(claudeSkill, isClaudeSkillManaged),
+      sharedSkillInstructions: managedState(
+        projectSkill,
+        isProjectSkillManaged,
+        compileProjectSkill(),
+      ),
+      skillInstructions: managedState(
+        claudeSkill,
+        isClaudeSkillManaged,
+        claudeSkillContent,
+      ),
       legacyInstructions: legacyState(legacy),
       issues,
     };

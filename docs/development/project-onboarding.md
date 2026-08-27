@@ -7,6 +7,11 @@ ai-office install .
 ai-office status
 ```
 
+These lifecycle commands may be invoked from any directory within the
+repository. An existing binding wins; otherwise first install selects the
+nearest Git worktree root. A standalone non-Git directory uses the explicit
+canonical path.
+
 It composes import, a default office baseline when no current manifest exists,
 the repository-local project binding, and supported client integration. The
 steps below remain the machine-oriented and conversational revision workflow

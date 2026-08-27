@@ -52,6 +52,7 @@ export interface LifecycleClientStatus {
     | "configured"
     | "unmanaged"
     | "drifted"
+    | "unverified"
     | "missing"
     | "conflict"
     | "not_configured";
@@ -59,7 +60,7 @@ export interface LifecycleClientStatus {
 }
 
 export interface ProjectLifecycleStatus {
-  schemaVersion: 2;
+  schemaVersion: 3;
   installed: boolean | null;
   health: LifecycleHealth;
   project: {
@@ -307,7 +308,10 @@ async function clientStatus(
   if (hasConflict) configuration = "conflict";
   else if (
     inspection.canonicalInstructions.integrationStatus === "unmanaged" ||
+    (inspection.clientInstructions?.ownership === "user_owned" &&
+      inspection.clientInstructions.integrationStatus === "integrated") ||
     inspection.clientInstructions?.integrationStatus === "unmanaged" ||
+    inspection.sharedSkillInstructions?.integrationStatus === "unmanaged" ||
     inspection.skillInstructions?.integrationStatus === "unmanaged"
   )
     configuration = "unmanaged";
@@ -404,7 +408,8 @@ export class ManageProjectLifecycle {
     rebind?: boolean;
   }): Promise<ProjectInstallResult> {
     const { bindings, profiles, projects, identities } = this.dependencies;
-    const inspection = await bindings.inspect(input.rootPath);
+    const resolvedRoot = await bindings.resolveProjectRoot(input.rootPath);
+    const inspection = await bindings.inspect(resolvedRoot);
     if (inspection.status === "invalid")
       throw new ProjectBindingError(
         `${inspection.issue ?? "Project binding is invalid"}. Resolve or remove ${projectBindingFile} explicitly.`,
@@ -649,9 +654,9 @@ export class ManageProjectLifecycle {
   }
 
   async status(rootPath: string): Promise<ProjectLifecycleStatus> {
-    const inspection = await this.dependencies.bindings.inspect(rootPath, {
-      ancestors: true,
-    });
+    const resolvedRoot =
+      await this.dependencies.bindings.resolveProjectRoot(rootPath);
+    const inspection = await this.dependencies.bindings.inspect(resolvedRoot);
     const baseProject = {
       id: null,
       name: null,
@@ -671,7 +676,7 @@ export class ManageProjectLifecycle {
     if (inspection.status !== "valid" || inspection.binding === undefined) {
       const invalid = inspection.status === "invalid";
       return {
-        schemaVersion: 2,
+        schemaVersion: 3,
         installed: false,
         health: invalid ? "needs_attention" : "not_installed",
         project: baseProject,
@@ -814,7 +819,7 @@ export class ManageProjectLifecycle {
         : isDefaultManifest(office.manifest, this.dependencies.defaultManifest);
     const installed = associationState === "valid";
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       installed,
       health: installed && issues.length === 0 ? "healthy" : "needs_attention",
       project: {
@@ -868,9 +873,9 @@ export class ManageProjectLifecycle {
   }
 
   async planUninstall(rootPath: string): Promise<ProjectUninstallPlan> {
-    const inspection = await this.dependencies.bindings.inspect(rootPath, {
-      ancestors: true,
-    });
+    const resolvedRoot =
+      await this.dependencies.bindings.resolveProjectRoot(rootPath);
+    const inspection = await this.dependencies.bindings.inspect(resolvedRoot);
     if (inspection.status === "invalid")
       throw new ProjectBindingError(
         inspection.issue ?? "Repository identity is invalid",

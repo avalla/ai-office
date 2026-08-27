@@ -187,7 +187,7 @@ async function resolveDiscoveredProject(
     runtime?: { authoritativeState?: unknown };
   };
   if (
-    status.schemaVersion !== 2 ||
+    (status.schemaVersion !== 2 && status.schemaVersion !== 3) ||
     typeof status.project?.id !== "string" ||
     (status.project.repositoryIdentity?.state !== "valid" &&
       status.project.repositoryIdentity?.state !== "legacy") ||
@@ -220,8 +220,7 @@ export async function runDaemonCli(
     }
     throw error;
   }
-  const socketPath =
-    options.socketPath ?? runtimePaths.socketPath;
+  const socketPath = options.socketPath ?? runtimePaths.socketPath;
   const client = new DaemonClient(socketPath);
   const workingDirectory = options.workingDirectory ?? process.cwd();
   const bindings = options.projectBindings ?? new LocalProjectBindingAdapter();

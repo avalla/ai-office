@@ -61,11 +61,14 @@ requires approval of the exact current purge-plan hash.
 
 `status` is the other local-aware exception, but it is not a stateful command.
 The CLI inspects the repository binding before protocol dispatch. If the daemon
-is unavailable, it returns schema-version `2` status with the portable
+is unavailable, it returns schema-version `3` status with the portable
 repository identity reported separately from an `unverified` runtime
 association, authoritative state unavailable, and repository-local client
-inspection where possible. Identity existence and daemon reachability are
-separate facts.
+inspection where possible. Deterministic host pointers and skills can still be
+classified as missing, unmanaged, conflicting, or drifted. The manifest-derived
+`AI-OFFICE.md` body cannot be attested without authority, so an otherwise intact
+client integration is `unverified`. Identity existence and daemon reachability
+are separate facts.
 
 For project-scoped commands without `--project`, the linkable CLI discovers the
 nearest valid binding from its current working directory and appends that

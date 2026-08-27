@@ -55,9 +55,13 @@ class MutatingBindingAdapter implements ProjectBindingAdapter {
     this.mutation = mutation;
   }
 
+  resolveProjectRoot(inputPath: string): Promise<string> {
+    return this.delegate.resolveProjectRoot(inputPath);
+  }
+
   async inspect(
     inputPath: string,
-    options?: { ancestors?: boolean },
+    options?: { ancestors?: boolean; stopAt?: string },
   ): Promise<ProjectBindingInspection> {
     if (this.remainingInspections !== null) {
       this.remainingInspections -= 1;
@@ -305,7 +309,7 @@ describe("project lifecycle UX", () => {
     expect(firstStatus.exitCode).toBe(0);
     expect(firstStatus.stdout).toEqual(secondStatus.stdout);
     expect(JSON.parse(firstStatus.stdout[0]!)).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       installed: true,
       health: "healthy",
       project: {
@@ -418,7 +422,64 @@ describe("project lifecycle UX", () => {
     expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(false);
   });
 
-  test("installs an explicit nested project and discovers its nearest binding", async () => {
+  test("resolves lifecycle commands from descendants to the managed repository root", async () => {
+    const harness = await startHarness();
+    configureGitIdentity(
+      harness.projectRoot,
+      "https://example.test/team/descendant.git",
+    );
+    const descendant = join(harness.projectRoot, "packages", "foo", "src");
+    mkdirSync(descendant, { recursive: true });
+
+    const firstInstall = await run(
+      harness,
+      ["install", ".", "--json"],
+      descendant,
+    );
+    const installed = JSON.parse(firstInstall.stdout[0]!) as {
+      project: { id: string; root: string };
+    };
+    expect(installed.project.root).toBe(realpathSync(harness.projectRoot));
+    expect(existsSync(join(descendant, ".ai-office", "project.json"))).toBe(
+      false,
+    );
+
+    const repeated = JSON.parse(
+      (await run(harness, ["install", ".", "--json"], descendant)).stdout[0]!,
+    ) as { project: { id: string; root: string }; changes: unknown[] };
+    expect(repeated).toMatchObject({
+      project: {
+        id: installed.project.id,
+        root: realpathSync(harness.projectRoot),
+      },
+      changes: [],
+    });
+
+    const status = JSON.parse(
+      (await run(harness, ["status", ".", "--json"], descendant)).stdout[0]!,
+    ) as { project: { id: string; root: string } };
+    expect(status.project).toMatchObject({
+      id: installed.project.id,
+      root: realpathSync(harness.projectRoot),
+    });
+
+    const uninstallPlan = JSON.parse(
+      (await run(harness, ["uninstall", ".", "--json"], descendant)).stdout[0]!,
+    ) as { planHash: string; rootPath: string };
+    expect(uninstallPlan.rootPath).toBe(realpathSync(harness.projectRoot));
+    const uninstalled = await run(
+      harness,
+      ["uninstall", ".", "--approve", uninstallPlan.planHash, "--json"],
+      descendant,
+    );
+    expect(uninstalled.exitCode).toBe(0);
+    expect(JSON.parse(uninstalled.stdout[0]!)).toMatchObject({
+      rootPath: realpathSync(harness.projectRoot),
+      uninstalled: true,
+    });
+  });
+
+  test("keeps an explicit nested Git worktree as a distinct project", async () => {
     const harness = await startHarness();
     const outer = await run(harness, ["install", ".", "--json"]);
     const outerId = (
@@ -427,19 +488,19 @@ describe("project lifecycle UX", () => {
     const nested = join(harness.projectRoot, "packages", "nested");
     const descendant = join(nested, "src");
     mkdirSync(descendant, { recursive: true });
-    writeFileSync(
-      join(nested, "package.json"),
-      JSON.stringify({ name: "nested" }),
-    );
+    writeFileSync(join(nested, "package.json"), '{"name":"nested"}\n');
+    configureGitIdentity(nested, "https://example.test/team/nested.git");
 
     const nestedInstall = await run(
       harness,
       ["install", ".", "--json"],
-      nested,
+      descendant,
     );
-    const nestedId = (
-      JSON.parse(nestedInstall.stdout[0]!) as { project: { id: string } }
-    ).project.id;
+    const nestedResult = JSON.parse(nestedInstall.stdout[0]!) as {
+      project: { id: string; root: string };
+    };
+    const nestedId = nestedResult.project.id;
+    expect(nestedResult.project.root).toBe(realpathSync(nested));
     expect(nestedId).not.toBe(outerId);
     expect(existsSync(join(nested, ".ai-office", "project.json"))).toBe(true);
 
@@ -451,6 +512,20 @@ describe("project lifecycle UX", () => {
     expect(JSON.parse(outerStatus.stdout[0]!)).toMatchObject({
       project: { id: outerId, root: realpathSync(harness.projectRoot) },
     });
+  });
+
+  test("uses the explicit directory for a standalone non-Git project", async () => {
+    const harness = await startHarness();
+    const standalone = join(harness.workspace, "standalone", "project");
+    createProjectFixture(standalone, "standalone");
+
+    const installed = JSON.parse(
+      (await run(harness, ["install", ".", "--json"], standalone)).stdout[0]!,
+    ) as { project: { root: string } };
+    expect(installed.project.root).toBe(realpathSync(standalone));
+    expect(existsSync(join(standalone, ".ai-office", "project.json"))).toBe(
+      true,
+    );
   });
 
   test("associates two verified checkouts of one portable repository identity with one runtime project", async () => {
@@ -832,6 +907,7 @@ describe("project lifecycle UX", () => {
     const offline = await run(harness, ["status", "--json"]);
     expect(offline.exitCode).toBe(1);
     expect(JSON.parse(offline.stdout[0]!)).toMatchObject({
+      schemaVersion: 3,
       installed: null,
       project: {
         id: null,
@@ -845,12 +921,71 @@ describe("project lifecycle UX", () => {
       clients: [
         expect.objectContaining({
           clientId: "codex",
-          configuration: "configured",
+          configuration: "unverified",
         }),
         expect.objectContaining({
           clientId: "claude",
           configuration: "not_configured",
         }),
+      ],
+    });
+  });
+
+  test("reports deterministic skill drift while authoritative status is offline", async () => {
+    const harness = await startHarness(["codex", "claude"]);
+    await run(harness, ["install", ".", "--json"]);
+    const skillPath = join(
+      harness.projectRoot,
+      ".agents/skills/ai-office/SKILL.md",
+    );
+    const skill = readFileSync(skillPath, "utf8");
+    const codexPointerPath = join(harness.projectRoot, "AGENTS.md");
+    const codexPointer = readFileSync(codexPointerPath, "utf8");
+    const claudeWrapperPath = join(
+      harness.projectRoot,
+      ".claude/skills/ai-office/SKILL.md",
+    );
+    const claudeWrapper = readFileSync(claudeWrapperPath, "utf8");
+    writeFileSync(skillPath, `${skill}\nUser-modified managed body.\n`);
+
+    harness.controller.abort();
+    await harness.running;
+    const offline = await run(harness, ["status", ".", "--json"]);
+    expect(offline.exitCode).toBe(1);
+    expect(JSON.parse(offline.stdout[0]!)).toMatchObject({
+      installed: null,
+      runtime: { daemon: "unreachable" },
+      clients: [
+        { clientId: "codex", configuration: "drifted" },
+        { clientId: "claude", configuration: "drifted" },
+      ],
+    });
+
+    writeFileSync(skillPath, skill);
+    writeFileSync(
+      codexPointerPath,
+      `${codexPointer}\nUser-modified managed pointer.\n`,
+    );
+    expect(
+      JSON.parse((await run(harness, ["status", ".", "--json"])).stdout[0]!),
+    ).toMatchObject({
+      clients: [
+        { clientId: "codex", configuration: "drifted" },
+        { clientId: "claude", configuration: "unverified" },
+      ],
+    });
+
+    writeFileSync(codexPointerPath, codexPointer);
+    writeFileSync(
+      claudeWrapperPath,
+      `${claudeWrapper}\nUser-modified managed wrapper.\n`,
+    );
+    expect(
+      JSON.parse((await run(harness, ["status", ".", "--json"])).stdout[0]!),
+    ).toMatchObject({
+      clients: [
+        { clientId: "codex", configuration: "unverified" },
+        { clientId: "claude", configuration: "drifted" },
       ],
     });
   });

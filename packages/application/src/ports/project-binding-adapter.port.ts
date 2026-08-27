@@ -6,9 +6,11 @@ import type {
 } from "../project-lifecycle/project-binding.ts";
 
 export interface ProjectBindingAdapter {
+  /** Resolve the managed ancestor, Git worktree root, or standalone directory. */
+  resolveProjectRoot(inputPath: string): Promise<string>;
   inspect(
     inputPath: string,
-    options?: { ancestors?: boolean },
+    options?: { ancestors?: boolean; stopAt?: string },
   ): Promise<ProjectBindingInspection>;
   planWrite(
     rootPath: string,

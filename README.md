@@ -98,13 +98,18 @@ actionable warnings, and `1` means failed or partial. JSON output uses the same
 `status` works from the project root or a descendant. It reports the project
 identity, runtime-association validity, daemon and authoritative-state availability, office
 revision, client integration, and lightweight task counts. Use
-`ai-office status --json` for the stable schema-version `2` machine output.
+`ai-office status --json` for the stable schema-version `3` machine output.
+Lifecycle commands first select the nearest valid AI Office binding within the
+current Git worktree. On first install they select that worktree root; a
+standalone non-Git directory remains its own project root. Running `install .`,
+`status .`, or `uninstall .` from a package directory therefore cannot create
+or mutate a second project binding there.
 
 The JSON envelope is versioned independently from the binding:
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "installed": true,
   "health": "healthy",
   "project": {
@@ -142,11 +147,11 @@ runtime association states are reported independently as `missing`, `unverified`
 breaking field or semantic change requires a new `schemaVersion`; schema version
 `2` output keeps deterministic key and array ordering for identical state.
 
-`install <path>` always treats the canonical form of that exact path as the
-project root; it does not guess from Git or package manifests. `status`,
-`uninstall`, and project-scoped commands instead walk ancestors and choose the
-nearest valid binding. This makes nested projects deterministic while keeping
-new installation intent explicit.
+Lifecycle paths are canonicalized through one repository-root resolver. A
+valid binding inside the nearest Git worktree wins; otherwise first install
+uses that worktree root. A non-Git directory falls back to the exact canonical
+path. Nested Git worktrees remain distinct, while ordinary package directories
+cannot become accidental projects merely because the command was run there.
 
 Interactive onboarding, offline import, task management, governance, and
 simulated agent runs do not require an LLM credential in AI Office. The
@@ -710,6 +715,12 @@ maintained. A user-owned artifact remains `unmanaged`: the client can consume
 it, but AI Office does not claim that the supplied contract was installed. These commands
 do not modify global Codex/Claude configuration and remain separate from project
 onboarding. See the [client integration guide](docs/development/agent-client-integration.md).
+
+When the daemon is unavailable, status still verifies deterministic pointers
+and repository skills from their managed contracts and reports certain changes
+as `drifted`. The current `AI-OFFICE.md` body depends on the authoritative
+manifest, so an otherwise intact offline integration is `unverified`, never
+misreported as fully `configured`.
 
 Uninstallation uses the same inspect-plan-approve discipline. Running the
 command without `--approve` returns the exact removal plan and hash; passing

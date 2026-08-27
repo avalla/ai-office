@@ -17,7 +17,8 @@ export interface AgentClientFileState {
   ownership: AgentClientFileOwnership;
   sha256?: string;
   /** Integration state at this file's boundary; see the client integration contract. */
-  integrationStatus: "missing" | "integrated" | "unmanaged" | "conflict";
+  integrationStatus:
+    "missing" | "integrated" | "drifted" | "unmanaged" | "conflict";
 }
 
 export interface AgentClientIntegrationIssue {
@@ -31,6 +32,8 @@ export interface AgentClientInspection {
   rootPath: string;
   canonicalInstructions: AgentClientFileState;
   clientInstructions?: AgentClientFileState;
+  /** Shared primary repository skill when the client uses an additional wrapper. */
+  sharedSkillInstructions?: AgentClientFileState;
   skillInstructions?: AgentClientFileState;
   legacyInstructions: AgentClientFileState;
   issues: readonly AgentClientIntegrationIssue[];

@@ -39,7 +39,9 @@ this marked block to `CLAUDE.md`:
 Codex discovers the primary skill under `.agents/skills`. Claude discovers the
 small wrapper under `.claude/skills`; that wrapper directs the host to the
 primary skill and shared guide without duplicating the workflow. AI Office does
-not create symlinks.
+not create symlinks. The wrapper uses Claude Code's documented
+[`${CLAUDE_PROJECT_DIR}` project-root variable](https://code.claude.com/docs/en/plugins-reference#environment-variables)
+for project-rooted paths, so it is independent of the wrapper directory depth.
 
 These files contain no credentials, absolute machine paths, runtime project ID,
 capability grant, approval, or copied authoritative state. They may be
@@ -88,6 +90,7 @@ File ownership and integration status are independent:
 | ------------ | ---------------------------------------------------------------------------------------- |
 | `missing`    | The expected artifact is absent.                                                         |
 | `integrated` | The artifact has the expected managed marker or host reference.                          |
+| `drifted`    | The artifact is AI Office-owned but differs from deterministic expected content.         |
 | `unmanaged`  | A user-owned artifact occupies the path or lacks the managed reference; it is preserved. |
 | `conflict`   | Markers or filesystem state are ambiguous and mutation fails closed.                     |
 
@@ -96,6 +99,14 @@ skill are all integrated and its contract-aware plan has no changes. A
 user-owned artifact is never reported as configured merely because the host can
 read it. Having no supported executable detected is a distinct state from a
 detected but incomplete integration.
+
+Online lifecycle status compares every derived artifact with the current
+authoritative contract. Offline status remains local: it verifies deterministic
+host pointers and both repository skills, but cannot reconstruct the current
+`AI-OFFICE.md` body without the SQLite office manifest. Consequently an intact
+offline integration is `unverified`; deterministic local drift is still
+reported as `drifted`, and missing, unmanaged, or conflicting files retain
+their more specific states.
 
 AI Office follows these rules:
 
@@ -106,6 +117,8 @@ AI Office follows these rules:
 - an existing user `CLAUDE.md` keeps all user content and receives only the
   marked block;
 - malformed or duplicated managed markers fail closed;
+- LF and CRLF are equivalent only during parsing and deterministic comparison;
+  original user-owned bytes are never rewritten;
 - every relevant concurrent edit invalidates the plan hash or file
   precondition;
 - nested skill directories are created only under the canonical integration
