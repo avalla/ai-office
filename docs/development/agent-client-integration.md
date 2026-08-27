@@ -158,7 +158,10 @@ the primary `.agents` skill are removed by the adapter removing the final host
 reference. They are preserved while a Codex instruction file, Claude bridge, or
 direct user import still depends on them. A user-owned direct
 `@AI-OFFICE.md` import is preserved and keeps the shared files in place until
-its owner changes that dependency.
+its owner changes that dependency. Any user-owned `AGENTS.md` is likewise a
+conservative host dependency: AI Office preserves it, `AI-OFFICE.md`, and the
+primary skill. A host dependency that appears after approval invalidates or
+stops the remaining shared-artifact deletion.
 
 The user-facing `ai-office uninstall .` preflights one aggregate plan, removes
 Claude before Codex, and detaches the current checkout association. It removes

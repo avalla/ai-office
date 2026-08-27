@@ -1152,6 +1152,49 @@ describe("agent client integrations", () => {
     expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(userClaude);
   });
 
+  test("stops Codex uninstall when user-owned AGENTS.md appears immediately before shared delete", async () => {
+    const root = temporaryRoot("ai-office-client-codex-host-race-");
+    const installing = service();
+    const installPlan = await installing.plan({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    await installing.apply({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: installPlan.planHash,
+    });
+    const concurrentAgents =
+      "# Concurrent team instructions\n\nRead AI-OFFICE.md before working.\n";
+    const uninstalling = service({
+      beforeCommit: (path) => {
+        if (path === codexProjectSkillPath)
+          writeFileSync(join(root, "AGENTS.md"), concurrentAgents);
+      },
+    });
+    const uninstallPlan = await uninstalling.planUninstall({
+      clientId: "codex",
+      rootPath: root,
+    });
+
+    await expect(
+      uninstalling.uninstall({
+        clientId: "codex",
+        rootPath: root,
+        approvedPlanHash: uninstallPlan.planHash,
+      }),
+    ).rejects.toThrow(
+      "AGENTS.md changed during apply and still requires shared AI Office artifacts",
+    );
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(
+      concurrentAgents,
+    );
+    expect(existsSync(join(root, canonicalProjectInstructionsPath))).toBe(true);
+    expect(existsSync(join(root, codexProjectSkillPath))).toBe(true);
+  });
+
   test("leaves a multi-file failure valid and repairable", async () => {
     const root = temporaryRoot("ai-office-client-partial-");
     const failing = service({

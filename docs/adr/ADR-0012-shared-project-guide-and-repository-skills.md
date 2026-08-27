@@ -85,6 +85,11 @@ removes its skill wrapper and only its managed bridge. Codex uninstall removes
 its pointer. The adapter removing the final host reference also removes shared
 guidance and the primary skill; either adapter preserves them while a Codex
 instruction file, Claude bridge, or direct user import still depends on them.
+An unmarked, user-owned `AGENTS.md` is conservatively treated as a surviving
+host dependency: uninstall cannot prove which shared guidance it consumes and
+must not delete `AI-OFFICE.md` or the primary skill beneath it. Dependency
+preconditions are revalidated immediately before shared deletion so a host file
+created or replaced after approval stops the remaining removal.
 The user-facing lifecycle removes Claude before Codex, preflights the exact
 aggregate plan, and reports partial filesystem changes if a later boundary
 fails.

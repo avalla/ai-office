@@ -93,6 +93,14 @@ function isCodexPointerManaged(file: LocalInstructionFile): boolean {
   return file.content?.startsWith(codexManagedInstructionsHeader) === true;
 }
 
+function isUserOwnedCodexHost(file: LocalInstructionFile): boolean {
+  return (
+    file.exists &&
+    !isCodexPointerManaged(file) &&
+    !isLegacyCanonicalManaged(file)
+  );
+}
+
 function hasManagedSkillMarker(
   file: LocalInstructionFile,
   marker: string,
@@ -523,6 +531,7 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
       bridge.kind === "managed" ||
       bridge.kind === "direct_import" ||
       bridge.kind === "conflict";
+    const sharedRequiredByCodex = isUserOwnedCodexHost(pointer);
     if (bridge.kind === "managed" || bridge.kind === "direct_import")
       issues.push(
         preservedIssue(
@@ -544,7 +553,15 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
         ),
       );
 
-    if (!sharedRequiredByClaude)
+    if (sharedRequiredByCodex)
+      issues.push(
+        preservedIssue(
+          "codex_shared_dependency_preserved",
+          "AGENTS.md is user-owned, so shared AI Office artifacts will be preserved until the host dependency is removed",
+        ),
+      );
+
+    if (!sharedRequiredByClaude && !sharedRequiredByCodex)
       operations.push(
         ...deleteIfManaged(
           projectSkill,
@@ -578,6 +595,14 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
       )
         return;
       const bridge = analyzeClaudeBridge(this.files.read(root, "CLAUDE.md"));
+      if (
+        isUserOwnedCodexHost(
+          this.files.read(root, codexProjectInstructionsPath),
+        )
+      )
+        throw new AgentClientIntegrationError(
+          "AGENTS.md changed during apply and still requires shared AI Office artifacts; removal was stopped",
+        );
       if (
         bridge.kind === "managed" ||
         bridge.kind === "direct_import" ||

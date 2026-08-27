@@ -734,10 +734,11 @@ bun run cli -- client:uninstall --client claude --root /path/to/integration-root
 
 Claude uninstall removes only its managed bridge and skill wrapper. Codex
 uninstall removes its managed pointer. Shared `AI-OFFICE.md` guidance and the
-primary `.agents` skill are removed only when Claude no longer depends on them.
-To remove both managed integrations, uninstall Claude first and Codex second.
-A user-owned direct import remains untouched and keeps shared artifacts in
-place until its owner changes that dependency.
+primary `.agents` skill are removed only when no surviving repository host file
+can depend on them. In particular, a user-owned `AGENTS.md` or direct Claude
+import remains untouched and keeps shared artifacts in place until its owner
+changes that dependency. To remove both managed integrations, uninstall Claude
+first and Codex second.
 
 Read [AGENTS.md](AGENTS.md) before changing code. It defines the canonical
 operating contract, invariants, scope rules, and definition of done.

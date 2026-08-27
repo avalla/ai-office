@@ -943,6 +943,8 @@ export class ManageProjectLifecycle {
     );
     const claudeStep = clientSteps.find((step) => step.clientId === "claude");
     const codexStep = clientSteps.find((step) => step.clientId === "codex");
+    const userOwnedCodexHost =
+      codexStep?.inspection.clientInstructions?.ownership === "user_owned";
     const removesClaudeDependency =
       claudeStep?.plan.changes.some(
         (change) => change.relativePath === "CLAUDE.md",
@@ -952,6 +954,7 @@ export class ManageProjectLifecycle {
       "ai_office_owned";
     if (
       removesClaudeDependency &&
+      !userOwnedCodexHost &&
       managedCanonical &&
       !changes.some((change) => change.relativePath === "AI-OFFICE.md")
     )
@@ -964,6 +967,7 @@ export class ManageProjectLifecycle {
       codexStep?.inspection.skillInstructions?.ownership === "ai_office_owned";
     if (
       removesClaudeDependency &&
+      !userOwnedCodexHost &&
       managedProjectSkill &&
       !changes.some(
         (change) => change.relativePath === ".agents/skills/ai-office/SKILL.md",
@@ -985,6 +989,7 @@ export class ManageProjectLifecycle {
     );
     const ignoredDependencyIssue = (code: string) =>
       removesClaudeDependency &&
+      !userOwnedCodexHost &&
       managedCanonical &&
       (code === "claude_canonical_dependency_preserved" ||
         code === "canonical_instructions_shared_preserved");

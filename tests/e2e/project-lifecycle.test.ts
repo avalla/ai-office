@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
+import type { LocalAgentClientFilesHooks } from "@ai-office/agent-client-integrations/local-agent-client-files.ts";
 import { LocalProjectBindingAdapter } from "../../apps/cli/src/local-project-binding-adapter.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "../../apps/cli/src/cli.ts";
@@ -148,6 +149,7 @@ async function waitForDaemon(socketPath: string): Promise<void> {
 async function startHarness(
   detected: readonly ("codex" | "claude")[] = [],
   projectBindings: ProjectBindingAdapter = new LocalProjectBindingAdapter(),
+  fileHooks?: LocalAgentClientFilesHooks,
 ): Promise<RunningHarness> {
   const workspace = mkdtempSync(join(tmpdir(), "ai-office-lifecycle-"));
   const runtimeRoot = join(workspace, "runtime");
@@ -163,7 +165,10 @@ async function startHarness(
   writeFileSync(join(projectRoot, "index.ts"), "export const value = 1;\n");
   for (const client of detected) addExecutable(binRoot, client);
 
-  const clients = new DefaultAgentClientCatalog({ pathValue: binRoot });
+  const clients = new DefaultAgentClientCatalog({
+    pathValue: binRoot,
+    ...(fileHooks === undefined ? {} : { fileHooks }),
+  });
   const runtimePaths = resolveRuntimePaths({
     mode: "user",
     runtimeHome: runtimeRoot,
@@ -1171,6 +1176,101 @@ describe("project lifecycle UX", () => {
     expect(readFileSync(join(harness.projectRoot, "CLAUDE.md"), "utf8")).toBe(
       "# User Claude\n",
     );
+  });
+
+  test("full uninstall preserves shared artifacts required by user-owned AGENTS.md", async () => {
+    const harness = await startHarness(["codex", "claude"]);
+    const userAgents =
+      "# Team instructions\n\nRead AI-OFFICE.md and use the repository ai-office skill.\n";
+    writeFileSync(join(harness.projectRoot, "AGENTS.md"), userAgents);
+    await run(harness, ["install", ".", "--json"]);
+    expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(true);
+    expect(
+      existsSync(
+        join(harness.projectRoot, ".agents/skills/ai-office/SKILL.md"),
+      ),
+    ).toBe(true);
+    expect(readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8")).toBe(
+      userAgents,
+    );
+
+    const plan = JSON.parse(
+      (await run(harness, ["uninstall", ".", "--json"])).stdout[0]!,
+    ) as { planHash: string };
+    const removed = await run(harness, [
+      "uninstall",
+      ".",
+      "--approve",
+      plan.planHash,
+      "--json",
+    ]);
+    expect(removed.exitCode).toBe(0);
+    expect(readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8")).toBe(
+      userAgents,
+    );
+    expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(true);
+    expect(
+      existsSync(
+        join(harness.projectRoot, ".agents/skills/ai-office/SKILL.md"),
+      ),
+    ).toBe(true);
+    expect(existsSync(join(harness.projectRoot, "CLAUDE.md"))).toBe(false);
+    expect(
+      existsSync(
+        join(harness.projectRoot, ".claude/skills/ai-office/SKILL.md"),
+      ),
+    ).toBe(false);
+  });
+
+  test("full uninstall stops if AGENTS.md becomes user-owned after preflight", async () => {
+    let raceRoot = "";
+    let armed = false;
+    const concurrentAgents =
+      "# Concurrent team instructions\n\nRead AI-OFFICE.md before working.\n";
+    const harness = await startHarness(
+      ["codex", "claude"],
+      new LocalProjectBindingAdapter(),
+      {
+        beforeCommit: (relativePath) => {
+          if (armed && relativePath === ".claude/skills/ai-office/SKILL.md") {
+            armed = false;
+            writeFileSync(join(raceRoot, "AGENTS.md"), concurrentAgents);
+          }
+        },
+      },
+    );
+    raceRoot = harness.projectRoot;
+    await run(harness, ["install", ".", "--json"]);
+    const plan = JSON.parse(
+      (await run(harness, ["uninstall", ".", "--json"])).stdout[0]!,
+    ) as { planHash: string };
+
+    armed = true;
+    const partial = await run(harness, [
+      "uninstall",
+      ".",
+      "--approve",
+      plan.planHash,
+      "--json",
+    ]);
+    expect(partial.exitCode).toBe(1);
+    expect(JSON.parse(partial.stdout[0]!)).toMatchObject({
+      outcome: "partial",
+      removedPaths: [".claude/skills/ai-office/SKILL.md", "CLAUDE.md"],
+      associationRemoved: false,
+      error: {
+        message: expect.stringContaining(
+          "Client integration changed after lifecycle approval",
+        ),
+      },
+    });
+    expect(readFileSync(join(raceRoot, "AGENTS.md"), "utf8")).toBe(
+      concurrentAgents,
+    );
+    expect(existsSync(join(raceRoot, "AI-OFFICE.md"))).toBe(true);
+    expect(
+      existsSync(join(raceRoot, ".agents/skills/ai-office/SKILL.md")),
+    ).toBe(true);
   });
 
   test("rejects a lifecycle uninstall plan when client integration changed", async () => {
