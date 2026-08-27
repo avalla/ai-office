@@ -200,4 +200,21 @@ describe("Project/Task CLI vertical slice", () => {
     expect(output.stderr[0]).not.toContain("ANTHROPIC_API_KEY");
     expect(output.stderr[0]).not.toContain("project:onboard --project");
   });
+
+  test("applies the manifest byte limit to inline UTF-8 input", async () => {
+    const oversizedManifest = JSON.stringify({
+      padding: "é".repeat(128 * 1024),
+    });
+    const output = captureIo();
+
+    expect(
+      await runCli(["office:validate", "--manifest", oversizedManifest], {
+        projectRoot: createProjectRoot(),
+        io: output.io,
+      }),
+    ).toBe(1);
+    expect(output.stderr).toEqual([
+      "Office manifest exceeds the 262144-byte limit",
+    ]);
+  });
 });
