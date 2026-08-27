@@ -50,12 +50,14 @@ describe("AI Office skill validation", () => {
     const skillPath = join(skillRoot, "SKILL.md");
     const source = readFileSync(skillPath, "utf8")
       .replace("## Help", "## Usage")
+      .replace("## Update AI Office", "## Program maintenance")
       .concat("\nLegacy command: project:onboard\n");
     writeFileSync(skillPath, source);
 
     expect(validateAiOfficeSkill(skillRoot)).toEqual(
       expect.arrayContaining([
         "SKILL.md is missing required workflow content: ## Help",
+        "SKILL.md is missing required workflow content: ## Update AI Office",
         "SKILL.md references removed provider onboarding: project:onboard",
       ]),
     );

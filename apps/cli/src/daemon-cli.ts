@@ -8,6 +8,8 @@ import {
 } from "./daemon-client.ts";
 import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
 import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
+import type { DistributionUpdateAdapter } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
+import { runDistributionUpdateCli } from "./distribution-update-cli.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
@@ -22,10 +24,12 @@ import {
 
 export interface DaemonCliOptions {
   projectRoot?: string;
+  distributionRoot?: string;
   runtimePaths?: RuntimePaths;
   socketPath?: string;
   io?: CliIo;
   runtimePurgeAdapter?: RuntimePurgeAdapter;
+  distributionUpdateAdapter?: DistributionUpdateAdapter;
   workingDirectory?: string;
   projectBindings?: ProjectBindingAdapter;
   agentClients?: AgentClientCatalog;
@@ -220,8 +224,7 @@ export async function runDaemonCli(
     }
     throw error;
   }
-  const socketPath =
-    options.socketPath ?? runtimePaths.socketPath;
+  const socketPath = options.socketPath ?? runtimePaths.socketPath;
   const client = new DaemonClient(socketPath);
   const workingDirectory = options.workingDirectory ?? process.cwd();
   const bindings = options.projectBindings ?? new LocalProjectBindingAdapter();
@@ -253,6 +256,23 @@ export async function runDaemonCli(
           ? {}
           : { adapter: options.runtimePurgeAdapter }),
       });
+
+    if (args[0] === "update") {
+      if (options.distributionRoot === undefined) {
+        io.stderr(
+          "AI Office program update is available only through the linkable ai-office entry point",
+        );
+        return 1;
+      }
+      return runDistributionUpdateCli(args.slice(1), {
+        distributionRoot: options.distributionRoot,
+        daemonClient: client,
+        io,
+        ...(options.distributionUpdateAdapter === undefined
+          ? {}
+          : { adapter: options.distributionUpdateAdapter }),
+      });
+    }
 
     const prepared = await resolvedArguments(args, workingDirectory, bindings);
     const commandArguments =

@@ -323,6 +323,10 @@ Status: implemented.
 - lifecycle uninstall that preserves the portable identity, user content,
   project/runtime authority, other checkouts, runtime purge scope, and global
   reusable memory while reporting partial mutations honestly;
+- offline exact-plan `update` for the current source-linked Bun distribution,
+  with clean/upstream Git preconditions, daemon-stop enforcement, an approved
+  target revision, frozen dependency install, bare-link refresh, and explicit
+  partial recovery while preserving runtime and global state;
 - linkable source-checkout `ai-office` bin while published packages, compiled
   binaries, and background service management remain M9 work.
 

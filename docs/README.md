@@ -17,6 +17,9 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Host-only onboarding](adr/ADR-0010-host-only-onboarding.md): accepted
   removal of the daemon/provider onboarding path and compatibility policy for
   historical onboarding data.
+- [Source-linked program update](adr/ADR-0011-source-linked-program-update.md):
+  accepted offline exact-plan update boundary for the current Bun-linked
+  distribution.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.

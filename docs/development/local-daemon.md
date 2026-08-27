@@ -54,10 +54,21 @@ a server-side timeout in addition to the client timeout.
 
 The production CLI is a daemon client. Help remains available while the daemon
 is stopped; stateful product commands return an actionable error instructing
-the user to run `bun run daemon`. `runtime:purge` is the narrow lifecycle
-exception: it runs locally because it destroys the database that normally owns
-command authority, refuses to operate while a healthy daemon is reachable, and
-requires approval of the exact current purge-plan hash.
+the user to run `bun run daemon`. `update` and `runtime:purge` are narrow
+lifecycle exceptions: both run locally, refuse to operate while a healthy
+daemon is reachable, and require approval of an exact current plan hash.
+Purge is local because it destroys the database that normally owns command
+authority. Update is local because changing the program serving that database
+through its own running daemon would mix incompatible program revisions.
+
+The linkable entry point supplies `update` with its canonical distribution
+root; the command never derives it from the current repository or
+`AI_OFFICE_HOME`. For the current source-linked packaging it binds a clean Git
+checkout and exact upstream commit, then fast-forwards, installs the frozen
+dependency graph, and refreshes bare `bun link`. Later dependency or link
+failures are reported as partial. The command never rolls back program files,
+migrates SQLite while updating, or changes runtime/global-memory authority. See
+ADR-0011.
 
 `status` is the other local-aware exception, but it is not a stateful command.
 The CLI inspects the repository binding before protocol dispatch. If the daemon

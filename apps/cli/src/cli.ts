@@ -142,6 +142,7 @@ Commands:
     exit 0: installed; exit 2: installed with warnings; exit 1: failed/partial
   status [path] [--json]
   uninstall [path] [--approve <plan-hash>] [--json]
+  update [--approve <plan-hash>] [--json]  # local source-linked program update; daemon must be stopped
   daemon  # available through the linkable ai-office entry point
   daemon:health
   project:create <name> [--description <description>] [--json]
@@ -206,8 +207,8 @@ Commands:
 Environment (linkable ai-office entry point):
   AI_OFFICE_HOME  runtime data home; defaults to ~/.ai-office`;
 
-// runtime:purge is intentionally absent: the daemon client handles that
-// destructive offline lifecycle boundary before protocol dispatch.
+// update and runtime:purge are intentionally absent: the daemon client handles
+// those offline program/runtime lifecycle boundaries before protocol dispatch.
 const commands = [
   "install",
   "status",

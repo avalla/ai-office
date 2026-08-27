@@ -11,6 +11,10 @@ AI Office tests behavior at the narrowest useful boundary and adds integration c
 - **Fault injection:** audit, transaction, connector, and outcome-persistence failures, including rollback and `execution_unknown` behavior around filesystem side effects.
 - **Daemon/CLI E2E:** the real Unix-socket path from CLI through daemon dispatch, application services, SQLite or connectors, and rendered CLI output.
 - **Agent client integration:** isolated PATH and project roots, passive inspection, deterministic plan hashes, ownership-preserving updates, unmanaged canonical status, operational validation semantics, malformed markers, stale approvals, atomic cleanup, idempotence, and daemon CLI flows. Tests never use the developer's real client configuration.
+- **Bun source-link smoke:** a copied real distribution uses temporary HOME,
+  install, global-package, global-bin, and runtime roots to prove frozen install,
+  bare link registration, launcher resolution, `ai-office --help`, and dangling
+  link repair without touching developer or runner-global Bun state.
 
 ## Isolation and determinism
 
@@ -42,3 +46,8 @@ claim equivalence with that host-internal validator.
 CI also checks the committed diff for whitespace errors. Local changes should
 pass the same commands plus the relevant `git diff --check` comparison before
 review.
+
+The full validation job pins Bun 1.3.6 as the supported baseline. A separate,
+small `smoke:bun-link` matrix runs on both 1.3.6 and the latest stable Bun
+release. This keeps ordinary tests deterministic while detecting changes in the
+source-link packaging contract on current Bun.

@@ -43,7 +43,10 @@ if (command === "daemon") {
     const controller = new AbortController();
     for (const signal of ["SIGINT", "SIGTERM"] as const)
       process.on(signal, () => controller.abort());
-    const daemon = await bootstrap({ runtimePaths, projectRoot: distributionRoot });
+    const daemon = await bootstrap({
+      runtimePaths,
+      projectRoot: distributionRoot,
+    });
     console.log(`AI Office daemon using ${runtimePaths.runtimeHome}`);
     await daemon.start(controller.signal);
   }
@@ -51,6 +54,7 @@ if (command === "daemon") {
   process.exitCode = await runDaemonCli(
     command === undefined ? [] : [command, ...arguments_],
     {
+      distributionRoot,
       runtimePaths,
       workingDirectory: process.cwd(),
     },
