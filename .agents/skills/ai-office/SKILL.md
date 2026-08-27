@@ -52,6 +52,12 @@ For installation, run `ai-office install <path> --json`. Report the project iden
 
 For inspection, run `ai-office status <path> --json`. Distinguish local repository identity, runtime association, authoritative project availability, office state, onboarding state, and each client integration. A valid local identity with an unreachable daemon is not the same as an uninstalled project.
 
+Normal installation projects one shared, derived guide to `AI-OFFICE.md`, a
+minimal managed pointer in `AGENTS.md`, and repository-local `ai-office` skills
+under `.agents/skills/` and `.claude/skills/` for detected hosts. Claude's
+managed `CLAUDE.md` block imports `AI-OFFICE.md` directly. Report user-owned or
+unmanaged artifacts as preserved, never as configured.
+
 ## Onboard
 
 1. Resolve the repository path the user wants to onboard. Default to the user's current project only when unambiguous.
@@ -119,18 +125,19 @@ side effect of install, uninstall, or runtime purge.
 For normal repository removal, run `ai-office uninstall <root> --json`,
 present its affected paths, preserved state, warnings, and lifecycle plan hash,
 then obtain explicit confirmation before rerunning it with `--approve <hash>`.
-This removes managed client integration in dependency order and the project
-binding only. It preserves authoritative project/runtime state and global
-memory.
+This removes only AI Office-owned repository integration artifacts in dependency
+order and detaches the current checkout association. It preserves the portable
+repository identity binding, authoritative project/runtime state, global memory,
+user-owned instruction content, and unrelated skills.
 
 For a coding-client integration, run `ai-office client:uninstall` without `--approve`,
 present the affected paths, ownership outcomes, warnings, and plan hash, and
 obtain explicit confirmation before rerunning it with that exact hash. Preserve
 all user-owned files and sections. Codex uninstall must preserve managed
-`AGENTS.md` while either a managed Claude bridge or a user-owned direct import
-still depends on it. When removing both managed integrations, uninstall Claude
-before Codex because `AGENTS.md` is shared; never rewrite a user-owned direct
-import automatically.
+`AI-OFFICE.md` and the primary `.agents` skill while either a managed Claude
+bridge or a user-owned direct import still depends on them. When removing both
+managed integrations, uninstall Claude before Codex because those artifacts are
+shared; never rewrite a user-owned direct import automatically.
 
 For runtime state, first ensure the user understands that `project.sqlite` is
 authoritative and that purge is not restoreable without a filesystem backup.

@@ -1,61 +1,56 @@
 # External agent client integration
 
-AI Office supports project-level integration with Codex CLI and Claude Code
-through a common application port. Detection is derived from `PATH`; inspection,
-planning, and validation are read-only. Mutation is a separate explicitly
-approved command.
+AI Office supports repository-local Codex CLI and Claude Code integration
+through one application port. Detection is derived from `PATH`; inspection,
+planning, and validation are read-only. Every mutation uses an exact approved
+plan, file-hash preconditions, ownership checks, and atomic per-file writes.
 
-## Canonical instruction contract
+## Repository artifacts
 
-`AGENTS.md` is the canonical project instruction artifact. AI Office can compile
-a strict JSON schema-version `1` contract containing a small operating policy
-plus mission, repository map, invariants, workflow, testing, documentation, and
-definition-of-done sections.
+Normal `ai-office install .` derives the current instruction contract in memory
+from the authoritative office manifest and projects it into:
 
-The policy is tool independent. The Markdown compiler is an application concern;
-client file names and import conventions remain infrastructure concerns.
-
-A minimal contract has this shape:
-
-```json
-{
-  "schemaVersion": 1,
-  "policy": {
-    "reasoning": "architecture_first",
-    "autonomy": "high",
-    "codeChanges": "autonomous",
-    "architectureChanges": "approval_required",
-    "adrCreation": "allowed",
-    "inspectBeforeNonTrivialWork": true,
-    "planBeforeNonTrivialWork": true,
-    "implementationReview": true,
-    "preserveInvariants": true
-  },
-  "project": {
-    "name": "Example",
-    "mission": "Deliver reliable software changes",
-    "repositoryMap": ["apps contain composition roots"],
-    "invariants": ["domain remains infrastructure independent"],
-    "workflow": ["inspect and plan before non-trivial work"],
-    "testing": ["run focused and full tests"],
-    "documentation": ["README describes current product behavior"],
-    "definitionOfDone": ["tests, typecheck, and review pass"]
-  }
-}
+```text
+<integration-root>/
+├── AI-OFFICE.md                         shared project guidance
+├── AGENTS.md                            minimal Codex pointer
+├── CLAUDE.md                            Claude @AI-OFFICE.md bridge
+├── .agents/skills/ai-office/SKILL.md    primary AI Office skill
+└── .claude/skills/ai-office/SKILL.md    Claude discovery wrapper
 ```
 
-Codex reads `AGENTS.md` natively. Claude uses a minimal managed bridge:
+`AI-OFFICE.md` is the only full project-guidance projection. It contains the
+mission, operating policy, repository map, invariants, workflow, testing,
+documentation, and definition of done. It is derived Markdown, not authority;
+the approved office manifest and project state remain in SQLite.
+
+Codex discovers `AGENTS.md` but does not implement Markdown imports. The
+AI Office-owned file therefore contains an explicit short instruction to read
+`AI-OFFICE.md` and use `$ai-office`. Claude supports imports, so AI Office adds
+this marked block to `CLAUDE.md`:
 
 ```markdown
 <!-- >>> ai-office managed: canonical-project-instructions -->
 
-@AGENTS.md
+@AI-OFFICE.md
 <!-- <<< ai-office managed: canonical-project-instructions -->
 ```
 
+Codex discovers the primary skill under `.agents/skills`. Claude discovers the
+small wrapper under `.claude/skills`; that wrapper directs the host to the
+primary skill and shared guide without duplicating the workflow. AI Office does
+not create symlinks. The wrapper uses Claude Code's documented
+[`${CLAUDE_PROJECT_DIR}` project-root variable](https://code.claude.com/docs/en/plugins-reference#environment-variables)
+for project-rooted paths, so it is independent of the wrapper directory depth.
+
+These files contain no credentials, absolute machine paths, runtime project ID,
+capability grant, approval, or copied authoritative state. They may be
+committed. A clone still runs `ai-office install .` to establish its runtime
+association and reconcile the projections with that runtime.
+
 ## CLI workflow
 
-The normal lifecycle composes this workflow:
+The normal lifecycle composes client integration:
 
 ```bash
 ai-office install .
@@ -63,128 +58,130 @@ ai-office status
 ```
 
 Install detects supported executables without launching them, preflights every
-detected or already-managed adapter, creates the repository binding, then plans
-and applies each client sequentially with its exact current plan hash. This
-ordering lets Codex and Claude share one canonical file without stale plans.
-The project instruction contract is derived in memory from the authoritative
-office manifest; no additional contract file becomes a source of truth.
+detected or already-managed adapter, then plans and applies clients
+sequentially. The output lists each created, updated, or preserved path.
 
-The lower-level commands remain available for automation, debugging, or a
-custom contract file:
+The lower-level commands remain available for automation, debugging, custom
+contracts, and one-client repair:
 
 ```bash
-bun run cli -- client:detect
-bun run cli -- client:inspect --client claude --root /path/to/project
-bun run cli -- client:plan \
+ai-office client:detect
+ai-office client:inspect --client claude --root /path/to/project
+ai-office client:plan \
   --client claude \
   --root /path/to/project \
   --contract .ai-office/agent-instructions.json
-```
-
-`client:plan` returns JSON containing the exact affected relative paths,
-ownership after apply, expected hashes, issues, and `planHash`. It does not
-return or persist unrelated user configuration.
-
-After reviewing the plan, provide that exact hash:
-
-```bash
-bun run cli -- client:apply \
+ai-office client:apply \
   --client claude \
   --root /path/to/project \
   --contract .ai-office/agent-instructions.json \
   --approve <plan-hash>
-
-bun run cli -- client:validate --client claude --root /path/to/project
+ai-office client:validate --client claude --root /path/to/project
 ```
 
-Removal follows the same plan-hash approval contract without requiring the
-original installation contract:
+The optional contract must be a regular JSON file inside the integration root
+and is limited to 256 KiB. Normal lifecycle install does not persist it.
+
+## Ownership and status
+
+File ownership and integration status are independent:
+
+| State        | Meaning                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| `missing`    | The expected artifact is absent.                                                         |
+| `integrated` | The artifact has the expected managed marker or host reference.                          |
+| `drifted`    | The artifact is AI Office-owned but differs from deterministic expected content.         |
+| `unmanaged`  | A user-owned artifact occupies the path or lacks the managed reference; it is preserved. |
+| `conflict`   | Markers or filesystem state are ambiguous and mutation fails closed.                     |
+
+A client is `configured` only when its shared guide, host discovery file, and
+skill are all integrated and its contract-aware plan has no changes. A
+user-owned artifact is never reported as configured merely because the host can
+read it. Having no supported executable detected is a distinct state from a
+detected but incomplete integration.
+
+Online lifecycle status compares every derived artifact with the current
+authoritative contract. Offline status remains local: it verifies deterministic
+host pointers and both repository skills, but cannot reconstruct the current
+`AI-OFFICE.md` body without the SQLite office manifest. Consequently an intact
+offline integration is `unverified`; deterministic local drift is still
+reported as `drifted`, and missing, unmanaged, or conflicting files retain
+their more specific states.
+
+AI Office follows these rules:
+
+- unmarked `AI-OFFICE.md`, `AGENTS.md`, and skill files are user-owned and are
+  never overwritten or deleted;
+- an old AI Office-managed schema-v1 `AGENTS.md` is migratable, not user-owned;
+- a missing `CLAUDE.md` may be created as AI Office-owned;
+- an existing user `CLAUDE.md` keeps all user content and receives only the
+  marked block;
+- malformed or duplicated managed markers fail closed;
+- LF and CRLF are equivalent only during parsing and deterministic comparison;
+  original user-owned bytes are never rewritten;
+- every relevant concurrent edit invalidates the plan hash or file
+  precondition;
+- nested skill directories are created only under the canonical integration
+  root, and symlinked or non-directory parents are rejected;
+- unrelated entries under `.agents`, `.claude`, and `.ai-office` are outside
+  the integration ownership boundary.
+
+## Upgrade from the original layout
+
+The first lifecycle version stored the complete compiled guide in an
+AI Office-managed `AGENTS.md` and made Claude import `@AGENTS.md`. Ordinary
+idempotent install migrates that layout after preflight:
+
+1. create schema-v2 `AI-OFFICE.md` from the current authoritative manifest;
+2. replace only the recognized managed schema-v1 `AGENTS.md` with the minimal
+   Codex pointer;
+3. update only the managed Claude block to `@AI-OFFICE.md`;
+4. install the primary and Claude wrapper skills.
+
+User-owned files are not treated as legacy managed output. A partial migration
+is repaired by rerunning install; there is no cross-filesystem/SQLite rollback
+claim.
+
+## Uninstall
+
+Direct client removal retains the same exact-plan contract:
 
 ```bash
-bun run cli -- client:uninstall --client claude --root /path/to/project
-bun run cli -- client:uninstall --client claude --root /path/to/project \
+ai-office client:uninstall --client claude --root /path/to/project
+ai-office client:uninstall --client claude --root /path/to/project \
   --approve <plan-hash>
 ```
 
-The user-facing `ai-office uninstall .` previews one lifecycle plan that binds
-the portable repository identity and both current client inspections. Applying
-its exact hash performs a complete preflight, re-plans and removes Claude before
-Codex, then detaches the current checkout association while preserving the
-portable identity. This permits
-an AI Office-owned `AGENTS.md` to be removed only after a managed Claude bridge
-has safely gone away. A user-owned direct import continues to preserve the
-canonical file. Direct `client:uninstall` remains useful for removing one client
-without detaching the project checkout.
+Claude uninstall deletes its managed skill wrapper and removes only its managed
+bridge. Codex uninstall deletes its managed pointer. Shared `AI-OFFICE.md` and
+the primary `.agents` skill are removed by the adapter removing the final host
+reference. They are preserved while a Codex instruction file, Claude bridge, or
+direct user import still depends on them. A user-owned direct
+`@AI-OFFICE.md` import is preserved and keeps the shared files in place until
+its owner changes that dependency. Any user-owned `AGENTS.md` is likewise a
+conservative host dependency: AI Office preserves it, `AI-OFFICE.md`, and the
+primary skill. A host dependency that appears after approval invalidates or
+stops the remaining shared-artifact deletion.
 
-The operations are deliberately sequential rather than falsely transactional
-across SQLite and filesystem boundaries. If a post-preflight mutation fails,
-the lifecycle reports `partial`, lists already removed and possibly modified
-paths, preserves user-owned content, and requires a fresh status and plan for
-recovery.
+The user-facing `ai-office uninstall .` preflights one aggregate plan, removes
+Claude before Codex, and detaches the current checkout association. It removes
+only AI Office-owned files and reports any partial result with already removed
+or possibly modified paths. It preserves user content, unrelated skills, the
+portable `.ai-office/project.json` identity, runtime project state, and global
+memory. Empty host directories may remain because AI Office does not infer
+directory ownership.
 
-Claude removal deletes an AI Office-owned bridge file or removes only the
-marked block from a merged `CLAUDE.md`. A user-owned direct `@AGENTS.md` import
-is preserved. Codex removal deletes `AGENTS.md` only when it carries the AI
-Office ownership header and `CLAUDE.md` does not import it. A managed bridge or
-user-owned direct import causes the Codex uninstall preview to preserve the
-canonical file and explain the remaining dependency. Uninstall Claude before
-Codex when removing both managed integrations; remove or rewrite a user-owned
-direct import manually before removing the canonical file.
+## Boundaries
 
-The contract file must be a regular JSON file inside the integration root and is
-limited to 256 KiB.
+Client integration never:
 
-## Status and validation semantics
+- modifies global Codex or Claude settings;
+- installs or launches either coding client;
+- grants capabilities or action approvals;
+- persists client detection as authority;
+- moves the runtime database into the repository;
+- owns conversational onboarding.
 
-File ownership and integration status answer different questions. For canonical
-instructions:
-
-| `integrationStatus` | Meaning                                                                                                                                        |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `missing`           | `AGENTS.md` does not exist.                                                                                                                    |
-| `integrated`        | `AGENTS.md` carries the AI Office ownership header and is managed. A contract-aware plan proposes an update when its compiled content differs. |
-| `unmanaged`         | `AGENTS.md` exists and is user-owned. The client can consume it, but AI Office does not attest that the supplied contract is represented.      |
-| `conflict`          | Safe integration is blocked and requires intervention.                                                                                         |
-
-For a client-specific instruction file such as `CLAUDE.md`, `integrated` means
-the client bridge is operational; `unmanaged` means the file exists but the
-bridge is absent or stale. The accompanying `ownership` field independently
-identifies AI Office-owned, user-owned, or merged content.
-
-`validation.valid` answers only whether the selected client can consume project
-instructions without a blocking conflict. For Codex, an existing `AGENTS.md` is
-operational regardless of ownership. For Claude, both `AGENTS.md` and an
-operational `CLAUDE.md` import are required. `valid: true` does not mean that the
-supplied AI Office contract was installed; callers must inspect the canonical
-status and warnings for that fact.
-
-## Ownership and conflicts
-
-- A missing `AGENTS.md` may be created as AI Office-owned compiled output.
-- An AI Office-owned `AGENTS.md` may be updated by a newly approved plan.
-- An existing user-owned `AGENTS.md` remains authoritative and is never
-  overwritten. It is reported as `unmanaged`, and plans include an actionable
-  warning because manual reconciliation may be needed.
-- A missing `CLAUDE.md` may be created with the bridge.
-- Existing user Claude instructions are preserved; AI Office appends or updates
-  only its marked bridge.
-- An existing direct `@AGENTS.md` import needs no change.
-- Malformed or duplicated markers fail closed.
-- Existing `CODEX.md` is reported as legacy user-owned state and is never
-  rewritten automatically.
-- Any relevant concurrent edit changes the plan hash or file precondition and
-  prevents apply.
-
-When the canonical file is user-owned, planning never mutates it. Claude may
-still plan or maintain a bridge to that file, but doing so does not change its
-canonical ownership or status.
-
-These commands are separate from host-driven conversational onboarding. Project
-import may detect instruction files, but passive scanning never mutates them.
-
-## Deliberate limitations
-
-The implementation does not modify `~/.codex/config.toml`, user Claude
-settings, or the developer's real home in tests. It does not launch clients to
-probe versions, persist setup choices, support other clients, or assemble
-internal-agent prompts. Those concerns require separate evidence and authority.
+Conversational questions and office synthesis remain host-only. AI Office owns
+manifest validation, persistence, policy, controlled execution, and audit. See
+[ADR-0012](../adr/ADR-0012-shared-project-guide-and-repository-skills.md).

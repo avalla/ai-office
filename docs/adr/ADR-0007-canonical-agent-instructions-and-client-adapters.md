@@ -1,6 +1,6 @@
 # ADR-0007: Use canonical project instructions and external client adapters
 
-- Status: Accepted
+- Status: Superseded by ADR-0012
 - Date: 2026-08-20
 
 ## Context

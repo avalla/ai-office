@@ -75,10 +75,15 @@ schema version 2. If the legacy project no longer exists, status reports
 portable identity and reports the migration. No database or live runtime is
 silently copied.
 
-Install targets its explicit canonical directory. Status, uninstall, and
-automatic project-scoped command resolution walk real ancestors on the same
-filesystem device; the nearest binding wins. Traversal stops at the filesystem
-root or before crossing a device boundary. Symlinked `.ai-office` or
+Repository-scoped lifecycle commands use one root-resolution contract. Within
+the nearest Git worktree, the nearest valid binding wins. If no binding exists,
+first install selects the worktree root; if no Git worktree exists, the
+explicit canonical directory is the fallback. A nested Git worktree is a
+separate boundary, so lookup does not capture a binding from an enclosing
+repository. Traversal stops at that boundary, the filesystem root, or before
+crossing a device. This prevents lifecycle calls from a package directory from
+creating a second implicit project while preserving explicit nested worktrees
+and standalone non-Git projects. Symlinked `.git`, `.ai-office`, or
 `project.json`, malformed JSON, unsupported schemas, and non-regular filesystem
 entries fail closed.
 
@@ -126,6 +131,8 @@ state.
 - Two runtimes may map one `repositoryId` to different `projectId` values
   without conflicting authority.
 - Two verified checkouts in one runtime can share one project history.
+- Lifecycle commands invoked from repository descendants reconcile the same
+  canonical worktree root.
 - Repository moves reconcile when repository evidence matches; ambiguous copies
   fail closed with an actionable error.
 - `--rebind` is exceptional recovery for a genuinely copied or intentionally

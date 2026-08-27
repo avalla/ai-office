@@ -50,6 +50,40 @@ function canonicalDirectory(inputPath: string): string {
   return rootPath;
 }
 
+function gitWorktreeRoot(inputPath: string): string | null {
+  let current = inputPath;
+  const startingDevice = statSync(inputPath).dev;
+  while (true) {
+    const gitPath = join(current, ".git");
+    if (existsSync(gitPath)) {
+      const state = lstatSync(gitPath);
+      if (state.isSymbolicLink())
+        throw new ProjectBindingError(
+          `.git must be a real directory or worktree file: ${gitPath}`,
+        );
+      if (state.isDirectory()) return current;
+      if (state.isFile()) {
+        if (state.size > maximumBindingBytes)
+          throw new ProjectBindingError(
+            `.git worktree file exceeds ${maximumBindingBytes} bytes: ${gitPath}`,
+          );
+        const pointer = readFileSync(gitPath, "utf8").trim();
+        if (/^gitdir:\s*\S/iu.test(pointer)) return current;
+        throw new ProjectBindingError(
+          `.git worktree file is malformed: ${gitPath}`,
+        );
+      }
+      throw new ProjectBindingError(
+        `.git must be a directory or worktree file: ${gitPath}`,
+      );
+    }
+    const parent = dirname(current);
+    if (parent === current || statSync(parent).dev !== startingDevice)
+      return null;
+    current = parent;
+  }
+}
+
 function invalidInspection(
   searchedFrom: string,
   rootPath: string,
@@ -148,11 +182,34 @@ function ensureStateDirectory(rootPath: string): string {
 }
 
 export class LocalProjectBindingAdapter implements ProjectBindingAdapter {
+  async resolveProjectRoot(inputPath: string): Promise<string> {
+    const searchedFrom = canonicalDirectory(inputPath);
+    const worktreeRoot = gitWorktreeRoot(searchedFrom);
+    const inspection = await this.inspect(searchedFrom, {
+      ancestors: true,
+      ...(worktreeRoot === null ? {} : { stopAt: worktreeRoot }),
+    });
+    if (inspection.status !== "missing") return inspection.rootPath;
+    return worktreeRoot ?? searchedFrom;
+  }
+
   async inspect(
     inputPath: string,
-    options: { ancestors?: boolean } = {},
+    options: { ancestors?: boolean; stopAt?: string } = {},
   ): Promise<ProjectBindingInspection> {
     const searchedFrom = canonicalDirectory(inputPath);
+    const stopAt =
+      options.stopAt === undefined
+        ? undefined
+        : canonicalDirectory(options.stopAt);
+    if (
+      stopAt !== undefined &&
+      searchedFrom !== stopAt &&
+      !searchedFrom.startsWith(`${stopAt}/`)
+    )
+      throw new ProjectBindingError(
+        `Project binding traversal boundary is not an ancestor: ${stopAt}`,
+      );
     let current = searchedFrom;
     const startingDevice = statSync(searchedFrom).dev;
 
@@ -160,6 +217,7 @@ export class LocalProjectBindingAdapter implements ProjectBindingAdapter {
       const inspection = inspectAt(searchedFrom, current);
       if (inspection !== null) return inspection;
       if (options.ancestors !== true) break;
+      if (current === stopAt) break;
       const parent = dirname(current);
       if (parent === current || statSync(parent).dev !== startingDevice) break;
       current = parent;

@@ -5,6 +5,7 @@ import {
   existsSync,
   linkSync,
   lstatSync,
+  mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -48,6 +49,29 @@ function inside(rootPath: string, targetPath: string): boolean {
   return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 }
 
+function ensureSafeParents(
+  rootPath: string,
+  relativePath: string,
+  create: boolean,
+): boolean {
+  const parent = dirname(relativePath);
+  if (parent === ".") return true;
+  let current = rootPath;
+  for (const segment of parent.split(sep)) {
+    current = join(current, segment);
+    if (!existsSync(current)) {
+      if (!create) return false;
+      mkdirSync(current, { mode: 0o755 });
+    }
+    const status = lstatSync(current);
+    if (status.isSymbolicLink() || !status.isDirectory())
+      throw new AgentClientIntegrationError(
+        `Agent client instruction parent must be a regular directory: ${relativePath}`,
+      );
+  }
+  return true;
+}
+
 export class LocalAgentClientFiles {
   constructor(private readonly hooks: LocalAgentClientFilesHooks = {}) {}
 
@@ -73,6 +97,8 @@ export class LocalAgentClientFiles {
       throw new AgentClientIntegrationError(
         `Agent client instruction path escapes its root: ${relativePath}`,
       );
+    if (!ensureSafeParents(rootPath, relativePath, false))
+      return { relativePath, exists: false };
     if (!existsSync(targetPath)) return { relativePath, exists: false };
     const status = lstatSync(targetPath);
     if (!status.isFile() || status.isSymbolicLink())
@@ -128,6 +154,8 @@ export class LocalAgentClientFiles {
         }
         continue;
       }
+
+      ensureSafeParents(rootPath, operation.relativePath, true);
 
       const temporaryPath = join(
         dirname(targetPath),

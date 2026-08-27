@@ -44,9 +44,10 @@ resource adapters
 
 External coding clients use a separate application port. AI Office compiles a
 tool-independent operating policy and project instruction contract into the
-canonical `AGENTS.md` artifact inside the explicitly supplied integration root;
-Codex consumes it natively and Claude uses a minimal managed import bridge in
-that same root. Detection and filesystem/configuration knowledge remain in
+shared derived `AI-OFFICE.md` guide inside the explicitly supplied integration
+root. Codex uses a minimal `AGENTS.md` pointer plus a repository skill; Claude
+uses a managed import bridge plus its repository skill wrapper. Detection and
+filesystem/configuration knowledge remain in
 infrastructure adapters. The integration root may differ from both the daemon
 runtime root and the repository scanned by `project:import`. Client integration
 does not grant runtime capabilities or move host reasoning into runtime
@@ -153,11 +154,11 @@ writes. No database transaction spans those filesystem operations.
 
 The architecture distinguishes three databases by authority and rebuildability:
 
-| Database                                   | Responsibility                                                                                                                                                           | Current implementation                                                       |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| Database                        | Responsibility                                                                                                                                                                                | Current implementation                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `<runtime-home>/project.sqlite` | Authoritative state for the projects known to that daemon runtime: repository mappings, office manifests, onboarding, tasks, agents/runs, costs, governance, capabilities, actions, and audit | Implemented, opened and migrated by the daemon and project migration command |
-| `<runtime-home>/global.sqlite`  | Durable versioned global roles and patterns plus lessons; isolated with an explicit `AI_OFFICE_HOME`                                                                     | Implemented and migrated lazily by daemon-backed `memory:*` commands         |
-| `<runtime-home>/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                         | Initial schema only; indexing and daemon integration are future work         |
+| `<runtime-home>/global.sqlite`  | Durable versioned global roles and patterns plus lessons; isolated with an explicit `AI_OFFICE_HOME`                                                                                          | Implemented and migrated lazily by daemon-backed `memory:*` commands         |
+| `<runtime-home>/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                                              | Initial schema only; indexing and daemon integration are future work         |
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
 
@@ -167,8 +168,8 @@ The legacy Bun development scripts explicitly use `<cwd>/.ai-office`. The source
 repository path passed to `project:import`; importing stores scan state in the
 current daemon's database rather than creating a database under that repository.
 The independently supplied `client:* --root` is the integration root containing
-the instruction contract and any managed `AGENTS.md` or `CLAUDE.md`. These three
-roots may coincide but do not have to. See the [storage design](storage.md) and
+the optional instruction contract, shared guide, host pointers, and repository
+skills. These three roots may coincide but do not have to. See the [storage design](storage.md) and
 the README's
 [local storage guide](../../README.md#local-storage-and-state).
 

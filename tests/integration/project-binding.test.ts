@@ -116,6 +116,50 @@ describe("repository-local project binding", () => {
     });
   });
 
+  test("resolves Git descendants, linked worktrees, and standalone directories", async () => {
+    const workspace = temporaryRoot("ai-office-binding-root-resolution-");
+    const repository = join(workspace, "repository");
+    const descendant = join(repository, "packages", "foo");
+    mkdirSync(join(repository, ".git"), { recursive: true });
+    mkdirSync(descendant, { recursive: true });
+    const adapter = new LocalProjectBindingAdapter();
+    expect(await adapter.resolveProjectRoot(descendant)).toBe(
+      realpathSync(repository),
+    );
+
+    const worktree = join(workspace, "worktree");
+    const worktreeChild = join(worktree, "src");
+    mkdirSync(worktreeChild, { recursive: true });
+    writeFileSync(join(worktree, ".git"), "gitdir: ../git/worktrees/one\n");
+    expect(await adapter.resolveProjectRoot(worktreeChild)).toBe(
+      realpathSync(worktree),
+    );
+
+    const standalone = join(workspace, "standalone", "src");
+    mkdirSync(standalone, { recursive: true });
+    expect(await adapter.resolveProjectRoot(standalone)).toBe(
+      realpathSync(standalone),
+    );
+  });
+
+  test("fails closed on ambiguous Git root markers", async () => {
+    const root = temporaryRoot("ai-office-binding-git-marker-");
+    const child = join(root, "src");
+    const external = temporaryRoot("ai-office-binding-git-external-");
+    mkdirSync(child);
+    symlinkSync(external, join(root, ".git"));
+    const adapter = new LocalProjectBindingAdapter();
+    await expect(adapter.resolveProjectRoot(child)).rejects.toThrow(
+      ".git must be a real directory",
+    );
+
+    rmSync(join(root, ".git"));
+    writeFileSync(join(root, ".git"), "not a worktree pointer\n");
+    await expect(adapter.resolveProjectRoot(child)).rejects.toThrow(
+      ".git worktree file is malformed",
+    );
+  });
+
   test("fails closed when .ai-office or project.json is symlinked", async () => {
     const root = temporaryRoot("ai-office-binding-symlink-");
     const external = temporaryRoot("ai-office-binding-external-");

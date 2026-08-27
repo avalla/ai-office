@@ -11,6 +11,7 @@ import type {
   AgentClientValidation,
 } from "../ports/agent-client-adapter.port.ts";
 import { compileProjectInstructions } from "./instruction-compiler.ts";
+import { compileProjectSkill } from "./project-skill-compiler.ts";
 import {
   AgentClientPlanApprovalError,
   AgentClientPlanConflictError,
@@ -78,6 +79,7 @@ export class ManageAgentClientIntegration {
     const draft = await this.clients.get(input.clientId).plan({
       rootPath: input.rootPath,
       canonicalInstructions: compileProjectInstructions(input.contract),
+      projectSkill: compileProjectSkill(),
     });
     return publicPlan(draft);
   }
@@ -92,6 +94,7 @@ export class ManageAgentClientIntegration {
     const draft = await client.plan({
       rootPath: input.rootPath,
       canonicalInstructions: compileProjectInstructions(input.contract),
+      projectSkill: compileProjectSkill(),
     });
     if (draft.issues.some((issue) => issue.severity === "conflict"))
       throw new AgentClientPlanConflictError();

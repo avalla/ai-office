@@ -12,18 +12,43 @@ import { repositoryIdFromLegacyProjectId } from "@ai-office/application/project-
 
 function offlineConfiguration(input: {
   detected: boolean;
-  clientId: "codex" | "claude";
-  canonicalStatus: "missing" | "integrated" | "unmanaged" | "conflict";
-  clientStatus?: "missing" | "integrated" | "unmanaged" | "conflict";
+  canonicalStatus:
+    "missing" | "integrated" | "drifted" | "unmanaged" | "conflict";
+  clientStatus?:
+    "missing" | "integrated" | "drifted" | "unmanaged" | "conflict";
+  skillStatus?: "missing" | "integrated" | "drifted" | "unmanaged" | "conflict";
+  sharedSkillStatus?:
+    "missing" | "integrated" | "drifted" | "unmanaged" | "conflict";
+  userOwnedClientInstructions: boolean;
   conflict: boolean;
 }): LifecycleClientStatus["configuration"] {
   if (input.conflict) return "conflict";
-  if (input.canonicalStatus === "unmanaged") return "unmanaged";
+  if (
+    input.canonicalStatus === "unmanaged" ||
+    input.userOwnedClientInstructions ||
+    input.clientStatus === "unmanaged" ||
+    input.sharedSkillStatus === "unmanaged" ||
+    input.skillStatus === "unmanaged"
+  )
+    return "unmanaged";
+  if (
+    input.canonicalStatus === "drifted" ||
+    input.clientStatus === "drifted" ||
+    input.sharedSkillStatus === "drifted" ||
+    input.skillStatus === "drifted"
+  )
+    return "drifted";
   if (
     input.canonicalStatus === "integrated" &&
-    (input.clientId === "codex" || input.clientStatus === "integrated")
+    input.clientStatus === "integrated" &&
+    (input.sharedSkillStatus === undefined ||
+      input.sharedSkillStatus === "integrated") &&
+    input.skillStatus === "integrated"
   )
-    return "configured";
+    // AI-OFFICE.md depends on the authoritative office manifest, which is not
+    // available offline. Deterministic host pointers and skills were attested,
+    // but the complete integration cannot honestly be called configured.
+    return "unverified";
   return input.detected ? "missing" : "not_configured";
 }
 
@@ -39,7 +64,8 @@ export async function getOfflineProjectStatus(
   const clients = new ManageAgentClientIntegration(
     input.clients ?? new DefaultAgentClientCatalog(),
   );
-  const inspection = await bindings.inspect(rootPath, { ancestors: true });
+  const resolvedRoot = await bindings.resolveProjectRoot(rootPath);
+  const inspection = await bindings.inspect(resolvedRoot);
   const bindingValid =
     inspection.status === "valid" && inspection.binding !== undefined;
   const issues: LifecycleIssue[] = [];
@@ -80,7 +106,6 @@ export async function getOfflineProjectStatus(
         detection: detection.status,
         configuration: offlineConfiguration({
           detected: detection.status === "detected",
-          clientId: detection.clientId,
           canonicalStatus:
             clientInspection.canonicalInstructions.integrationStatus,
           ...(clientInspection.clientInstructions === undefined
@@ -89,9 +114,23 @@ export async function getOfflineProjectStatus(
                 clientStatus:
                   clientInspection.clientInstructions.integrationStatus,
               }),
+          ...(clientInspection.skillInstructions === undefined
+            ? {}
+            : {
+                skillStatus:
+                  clientInspection.skillInstructions.integrationStatus,
+              }),
+          ...(clientInspection.sharedSkillInstructions === undefined
+            ? {}
+            : {
+                sharedSkillStatus:
+                  clientInspection.sharedSkillInstructions.integrationStatus,
+              }),
           conflict: clientInspection.issues.some(
             (issue) => issue.severity === "conflict",
           ),
+          userOwnedClientInstructions:
+            clientInspection.clientInstructions?.ownership === "user_owned",
         }),
         issues: clientInspection.issues.map((issue) => issue.message).sort(),
       });
@@ -99,7 +138,7 @@ export async function getOfflineProjectStatus(
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     installed: bindingValid ? null : false,
     health:
       bindingValid || inspection.status === "invalid"

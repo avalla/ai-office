@@ -139,6 +139,7 @@ export const cliHelp = `AI Office CLI
 
 Commands:
   install [path] [--rebind] [--json]
+    reconciles repository identity, shared AI-OFFICE.md guidance, and detected host skills
     exit 0: installed; exit 2: installed with warnings; exit 1: failed/partial
   status [path] [--json]
   uninstall [path] [--approve <plan-hash>] [--json]

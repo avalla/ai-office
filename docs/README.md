@@ -17,6 +17,9 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Host-only onboarding](adr/ADR-0010-host-only-onboarding.md): accepted
   removal of the daemon/provider onboarding path and compatibility policy for
   historical onboarding data.
+- [Shared project guide and repository skills](adr/ADR-0012-shared-project-guide-and-repository-skills.md):
+  accepted ownership, discovery, migration, and uninstall contract for
+  `AI-OFFICE.md` and Codex/Claude project skills.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
@@ -65,7 +68,8 @@ implementation historical and milestone detail
 CLI --help     current command syntax
 ```
 
-`CODEX.md` and `CLAUDE.md` are compatibility bridges, not independent sources of
-project truth. When documents disagree, first use this ownership model and each
-ADR's status. Update the authoritative document for the concept instead of
-copying the same truth into every file.
+`AI-OFFICE.md` is a derived project-guidance projection; `AGENTS.md`,
+`CODEX.md`, and `CLAUDE.md` are host discovery or compatibility files, not
+independent sources of authoritative AI Office state. When documents disagree,
+first use this ownership model and each ADR's status. Update the authoritative
+document for the concept instead of copying the same truth into every file.
