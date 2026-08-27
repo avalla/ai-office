@@ -45,20 +45,6 @@ export interface NewProjectQuestion {
   source: OnboardingQuestionSource;
 }
 
-export interface OnboardingGeneration {
-  id: string;
-  projectId: string;
-  provider: string;
-  model: string;
-  promptVersion: string;
-  inputHash: string;
-  round: number;
-  status: "completed" | "failed";
-  batchStatus?: "needs_more_context" | "ready";
-  failureCode?: string;
-  createdAt: Date;
-}
-
 export interface ProjectProfileRepository {
   findProjectIdByLocalPath(localPath: string): Promise<string | null>;
   listSources(projectId: string): Promise<ProjectSource[]>;
@@ -67,12 +53,6 @@ export interface ProjectProfileRepository {
   saveScan(scan: ProjectScan): Promise<void>;
   replaceDetected(entries: ProjectProfileEntry[]): Promise<void>;
   ensureQuestions(questions: NewProjectQuestion[]): Promise<void>;
-  saveOnboardingGeneration(generation: OnboardingGeneration): Promise<void>;
-  findCompletedOnboardingGeneration(
-    projectId: string,
-    inputHash: string,
-  ): Promise<OnboardingGeneration | null>;
-  listOnboardingGenerations(projectId: string): Promise<OnboardingGeneration[]>;
   findQuestion(
     projectId: string,
     questionId: string,

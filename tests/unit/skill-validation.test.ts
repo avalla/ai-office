@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { validateAiOfficeSkill } from "../../scripts/validate-skills.ts";
@@ -30,6 +36,27 @@ describe("AI Office skill validation", () => {
       expect.arrayContaining([
         "SKILL.md must start with YAML frontmatter",
         "Required skill file is missing: references/manifest-contract.md",
+      ]),
+    );
+  });
+
+  test("requires lifecycle help and rejects removed provider onboarding", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ai-office-skill-flow-"));
+    temporaryDirectories.push(directory);
+    const skillRoot = join(directory, "ai-office");
+    cpSync(join(process.cwd(), ".agents", "skills", "ai-office"), skillRoot, {
+      recursive: true,
+    });
+    const skillPath = join(skillRoot, "SKILL.md");
+    const source = readFileSync(skillPath, "utf8")
+      .replace("## Help", "## Usage")
+      .concat("\nLegacy command: project:onboard\n");
+    writeFileSync(skillPath, source);
+
+    expect(validateAiOfficeSkill(skillRoot)).toEqual(
+      expect.arrayContaining([
+        "SKILL.md is missing required workflow content: ## Help",
+        "SKILL.md references removed provider onboarding: project:onboard",
       ]),
     );
   });

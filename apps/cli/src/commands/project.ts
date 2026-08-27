@@ -1,12 +1,9 @@
-import { createInterface } from "node:readline/promises";
 import { join } from "node:path";
 import { AnswerProjectQuestion } from "@ai-office/application/commands/answer-project-question.ts";
 import { CreateProject } from "@ai-office/application/commands/create-project.ts";
 import { ImportProject } from "@ai-office/application/commands/import-project.ts";
-import { GenerateProjectOnboarding } from "@ai-office/application/commands/generate-project-onboarding.ts";
 import { GetProjectProfile } from "@ai-office/application/queries/get-project-profile.ts";
 import { renderProjectProfileMarkdown } from "@ai-office/application/queries/render-project-profile-markdown.ts";
-import { agentOperations } from "@ai-office/domain/project/project-profile.ts";
 import { writeTextFileAtomic } from "../atomic-file.ts";
 import { LocalProjectScanner } from "../local-project-scanner.ts";
 import {
@@ -27,7 +24,6 @@ export async function handleProjectCommand(
     ids,
     clock,
     transactions,
-    onboardingGenerator,
     io,
   } = context;
   if (command === "project:create") {
@@ -100,90 +96,6 @@ export async function handleProjectCommand(
     io.stdout(
       "Repository scan completed offline; use the ai-office skill for conversational onboarding.",
     );
-    return 0;
-  }
-  if (command === "project:onboard") {
-    const parsed = parseArguments(
-      args,
-      new Set(["project"]),
-      new Set(["generate"]),
-    );
-    if (parsed.positionals.length > 0)
-      throw new CliUsageError("project:onboard only accepts named options");
-    const projectId = requiredOption(parsed, "project");
-    const before = await new GetProjectProfile(projects, profiles).execute(
-      projectId,
-    );
-    if (before.openQuestions.length === 0) {
-      io.stdout("Generating onboarding questions...");
-    }
-    const onboarding = await new GenerateProjectOnboarding(
-      projects,
-      profiles,
-      onboardingGenerator,
-      ids,
-      clock,
-      transactions,
-    ).execute(projectId);
-    if (onboarding.status === "ready") {
-      io.stdout(`Onboarding context is ready for project ${projectId}.`);
-      return 0;
-    }
-    if (onboarding.generated) {
-      io.stdout(
-        `Generated ${onboarding.questions.length} question(s) for onboarding round ${onboarding.round}.`,
-      );
-    }
-    if (parsed.flags.has("generate")) {
-      for (const question of onboarding.questions) {
-        io.stdout(
-          `${question.id}\t${question.answerCategory}\t${question.answerType}\t${question.question}`,
-        );
-      }
-      return 0;
-    }
-    const reader =
-      io.prompt === undefined
-        ? createInterface({ input: process.stdin, output: process.stdout })
-        : undefined;
-    const prompt =
-      io.prompt ?? ((message: string) => reader!.question(message));
-    const answer = new AnswerProjectQuestion(
-      profiles,
-      ids,
-      clock,
-      transactions,
-    );
-    try {
-      for (const question of onboarding.questions) {
-        io.stdout(
-          `[${question.answerCategory}/${question.answerType}/${question.source}] ${question.question}`,
-        );
-        if (question.options !== undefined) {
-          io.stdout(`Options: ${question.options.join(", ")}`);
-        }
-        if (question.answerCategory === "permission") {
-          io.stdout(
-            `Supported operations: ${(question.options ?? agentOperations).join(", ")}`,
-          );
-          io.stdout('Use a comma-separated list, "all", or "none".');
-        } else if (question.answerType === "boolean") {
-          io.stdout("Use true/false or yes/no.");
-        }
-        await answer.execute({
-          projectId,
-          questionId: question.id,
-          value: await prompt("> "),
-        });
-        io.stdout(`Answer saved: ${question.id}`);
-      }
-      io.stdout("Answers saved.");
-      io.stdout(
-        "Run project:onboard again to generate the next adaptive round.",
-      );
-    } finally {
-      reader?.close();
-    }
     return 0;
   }
   if (command === "project:answer") {

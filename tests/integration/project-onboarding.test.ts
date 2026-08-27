@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AnswerProjectQuestion } from "@ai-office/application/commands/answer-project-question.ts";
 import { ImportProject } from "@ai-office/application/commands/import-project.ts";
-import { GenerateProjectOnboarding } from "@ai-office/application/commands/generate-project-onboarding.ts";
 import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { GetProjectProfile } from "@ai-office/application/queries/get-project-profile.ts";
@@ -15,7 +14,6 @@ import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqli
 import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
-import { ScriptedOnboardingGenerator } from "../helpers/onboarding-generator.ts";
 
 const temporaryDirectories: string[] = [];
 const migrationDirectory = join(process.cwd(), "migrations", "project");
@@ -26,8 +24,8 @@ afterEach(() => {
   }
 });
 
-describe("existing project onboarding", () => {
-  test("persists structured answers and renders the categorized profile deterministically", async () => {
+describe("legacy project-question compatibility", () => {
+  test("answers stored questions and renders the categorized profile deterministically", async () => {
     const repositoryRoot = mkdtempSync(
       join(tmpdir(), "ai-office-onboarding-repository-"),
     );
@@ -53,57 +51,69 @@ describe("existing project onboarding", () => {
       new SqliteTransactionRunner(database),
     ).execute({ rootPath: repositoryRoot });
     expect(imported.questions).toEqual([]);
-    const generator = new ScriptedOnboardingGenerator([
-      {
-        status: "needs_more_context",
-        questions: [
-          {
-            category: "goal",
-            question: "What outcome is next?",
-            rationale: "Sets the goal.",
-            answerType: "text",
-            priority: 100,
-          },
-          {
-            category: "permission",
-            question: "Which operations may agents perform?",
-            rationale: "Records preferences only.",
-            answerType: "multi_select",
-            options: ["read_files", "modify_files", "run_tests"],
-            priority: 90,
-          },
-          {
-            category: "constraint",
-            question: "Which architecture must remain?",
-            rationale: "Protects constraints.",
-            answerType: "text",
-            priority: 80,
-          },
-          {
-            category: "preference",
-            question: "Which testing strategy is expected?",
-            rationale: "Clarifies testing.",
-            answerType: "text",
-            priority: 70,
-          },
-          {
-            category: "preference",
-            question: "Where should decisions be documented?",
-            rationale: "Clarifies documentation.",
-            answerType: "text",
-            priority: 60,
-          },
-        ],
-      },
-    ]);
-    await new GenerateProjectOnboarding(
-      projects,
-      profiles,
-      generator,
-      ids,
-      clock,
-      new SqliteTransactionRunner(database),
-    ).execute(imported.projectId);
+    const legacyGenerationId = ids.generate();
+    database
+      .prepare(
+        `INSERT INTO onboarding_generation(
+           id, project_id, provider, model, prompt_version, input_hash,
+           round, status, batch_status, created_at
+         ) VALUES (?, ?, 'legacy', 'legacy', 'project-onboarding-v1', ?, 1,
+                   'completed', 'needs_more_context', ?)`,
+      )
+      .run(
+        legacyGenerationId,
+        imported.projectId,
+        "0".repeat(64),
+        clock.now().toISOString(),
+      );
+    await profiles.ensureQuestions(
+      [
+        {
+          answerCategory: "goal" as const,
+          question: "What outcome is next?",
+          reason: "Legacy stored project knowledge.",
+          answerType: "text" as const,
+          priority: 100,
+        },
+        {
+          answerCategory: "permission" as const,
+          question: "Which operations may agents perform?",
+          reason: "Legacy stored project knowledge.",
+          answerType: "multi_select" as const,
+          options: ["read_files", "modify_files", "run_tests"],
+          priority: 90,
+        },
+        {
+          answerCategory: "constraint" as const,
+          question: "Which architecture must remain?",
+          reason: "Legacy stored project knowledge.",
+          answerType: "text" as const,
+          priority: 80,
+        },
+        {
+          answerCategory: "preference" as const,
+          question: "Which testing strategy is expected?",
+          reason: "Legacy stored project knowledge.",
+          answerType: "text" as const,
+          priority: 70,
+        },
+        {
+          answerCategory: "preference" as const,
+          question: "Where should decisions be documented?",
+          reason: "Legacy stored project knowledge.",
+          answerType: "text" as const,
+          priority: 60,
+        },
+      ].map((question) => ({
+        id: ids.generate(),
+        projectId: imported.projectId,
+        generationId: legacyGenerationId,
+        key: `legacy_${question.answerCategory}_${question.priority}`,
+        normalizedQuestion: `${question.answerCategory}:${question.question.toLowerCase()}`,
+        source: "llm" as const,
+        ...question,
+      })),
+    );
     const questions = await profiles.listOpenQuestions(imported.projectId);
     const questionByText = new Map(
       questions.map((question) => [question.question, question]),
@@ -194,7 +204,7 @@ describe("existing project onboarding", () => {
     expect(firstMarkdown).toContain("## Constraints");
     expect(firstMarkdown).toContain("## Goals");
     expect(firstMarkdown).toContain("## Agent permissions");
-    expect(firstMarkdown).toContain("## LLM-generated onboarding questions");
+    expect(firstMarkdown).toContain("## Historical onboarding questions");
     expect(firstMarkdown).toContain("## Open questions");
     expect(profile.generatedOnboardingQuestions).toHaveLength(5);
     expect(

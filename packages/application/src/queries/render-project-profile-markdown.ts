@@ -64,7 +64,7 @@ export function renderProjectProfileMarkdown(
     "",
     ...entryLines(profile.permissions),
     "",
-    "## LLM-generated onboarding questions",
+    "## Historical onboarding questions",
     "",
     ...generatedQuestionLines(profile.generatedOnboardingQuestions),
     "",

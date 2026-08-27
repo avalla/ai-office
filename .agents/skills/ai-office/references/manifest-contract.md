@@ -60,3 +60,9 @@ Allowed permission preferences are `read_files`, `modify_files`, `run_tests`, `r
 Set `provenance.host` to the current host adapter, such as `codex` or `claude`. Keep `skill` equal to `ai-office` and use `skillVersion` `1` for this contract.
 
 Keep goals, responsibilities, stages, and checks concrete. Do not invent business requirements from repository metadata; ask the user when a decision would materially change the office.
+
+For normal skill operation, serialize the complete proposal and pass that exact
+JSON to `ai-office office:validate --manifest <json>`. After user confirmation,
+pass the same validated serialization to `ai-office office:apply --project
+<projectId> --manifest <json>`. A draft file is optional derived working state,
+not project or runtime authority.

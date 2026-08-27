@@ -1,7 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type {
   NewProjectQuestion,
-  OnboardingGeneration,
   ProjectProfileRepository,
   ProjectScan,
   ProjectSource,
@@ -51,20 +50,6 @@ interface ProjectQuestionRow {
   answered_at: string | null;
 }
 
-interface OnboardingGenerationRow {
-  id: string;
-  project_id: string;
-  provider: string;
-  model: string;
-  prompt_version: string;
-  input_hash: string;
-  round: number;
-  status: "completed" | "failed";
-  batch_status: "needs_more_context" | "ready" | null;
-  failure_code: string | null;
-  created_at: string;
-}
-
 interface ProjectProfileEntryRow {
   id: string;
   project_id: string;
@@ -100,22 +85,6 @@ function restoreQuestion(row: ProjectQuestionRow): ProjectQuestion {
     ...(row.answered_at === null
       ? {}
       : { answeredAt: new Date(row.answered_at) }),
-  };
-}
-
-function restoreGeneration(row: OnboardingGenerationRow): OnboardingGeneration {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    provider: row.provider,
-    model: row.model,
-    promptVersion: row.prompt_version,
-    inputHash: row.input_hash,
-    round: row.round,
-    status: row.status,
-    ...(row.batch_status === null ? {} : { batchStatus: row.batch_status }),
-    ...(row.failure_code === null ? {} : { failureCode: row.failure_code }),
-    createdAt: new Date(row.created_at),
   };
 }
 
@@ -341,62 +310,6 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
         question.source,
       );
     }
-  }
-
-  async saveOnboardingGeneration(
-    generation: OnboardingGeneration,
-  ): Promise<void> {
-    this.database
-      .prepare(
-        `INSERT INTO onboarding_generation(
-           id, project_id, provider, model, prompt_version, input_hash,
-           round, status, batch_status, failure_code, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        generation.id,
-        generation.projectId,
-        generation.provider,
-        generation.model,
-        generation.promptVersion,
-        generation.inputHash,
-        generation.round,
-        generation.status,
-        generation.batchStatus ?? null,
-        generation.failureCode ?? null,
-        generation.createdAt.toISOString(),
-      );
-  }
-
-  async findCompletedOnboardingGeneration(
-    projectId: string,
-    inputHash: string,
-  ): Promise<OnboardingGeneration | null> {
-    const row = this.database
-      .query<OnboardingGenerationRow, [string, string]>(
-        `SELECT id, project_id, provider, model, prompt_version, input_hash,
-                round, status, batch_status, failure_code, created_at
-         FROM onboarding_generation
-         WHERE project_id = ? AND input_hash = ? AND status = 'completed'
-         LIMIT 1`,
-      )
-      .get(projectId, inputHash);
-    return row === null ? null : restoreGeneration(row);
-  }
-
-  async listOnboardingGenerations(
-    projectId: string,
-  ): Promise<OnboardingGeneration[]> {
-    return this.database
-      .query<OnboardingGenerationRow, [string]>(
-        `SELECT id, project_id, provider, model, prompt_version, input_hash,
-                round, status, batch_status, failure_code, created_at
-         FROM onboarding_generation
-         WHERE project_id = ?
-         ORDER BY round, created_at, id`,
-      )
-      .all(projectId)
-      .map(restoreGeneration);
   }
 
   async findQuestion(

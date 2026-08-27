@@ -26,29 +26,6 @@ export class InvalidProjectAnswerError extends Error {
   }
 }
 
-export class OnboardingProviderUnavailableError extends Error {
-  constructor(message = "LLM provider unavailable for onboarding") {
-    super(message);
-    this.name = "OnboardingProviderUnavailableError";
-  }
-}
-
-export class InvalidOnboardingGenerationError extends Error {
-  constructor(message: string) {
-    super(`Invalid LLM onboarding output: ${message}`);
-    this.name = "InvalidOnboardingGenerationError";
-  }
-}
-
-export class OnboardingRoundLimitError extends Error {
-  constructor(limit: number) {
-    super(
-      `Project onboarding reached the maximum of ${limit} generated rounds`,
-    );
-    this.name = "OnboardingRoundLimitError";
-  }
-}
-
 export class InvalidOfficeManifestError extends Error {
   constructor(message: string) {
     super(`Invalid office manifest: ${message}`);

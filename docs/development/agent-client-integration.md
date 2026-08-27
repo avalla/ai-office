@@ -179,8 +179,8 @@ When the canonical file is user-owned, planning never mutates it. Claude may
 still plan or maintain a bridge to that file, but doing so does not change its
 canonical ownership or status.
 
-These commands are separate from `project:onboard`. Project import may detect
-instruction files, but passive scanning never mutates them.
+These commands are separate from host-driven conversational onboarding. Project
+import may detect instruction files, but passive scanning never mutates them.
 
 ## Deliberate limitations
 

@@ -8,7 +8,6 @@ import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.t
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { LocalCommandHandler } from "./local-command-handler.ts";
 import { OfficeDaemon } from "./office-daemon.ts";
-import type { OnboardingQuestionGenerator } from "@ai-office/application/ports/onboarding-question-generator.port.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
@@ -26,7 +25,6 @@ export interface BootstrapOptions {
   projectRoot?: string;
   socketPath?: string;
   migrationDirectory?: string;
-  onboardingGenerator?: OnboardingQuestionGenerator;
   globalDatabasePath?: string;
   globalMigrationDirectory?: string;
   agentClients?: AgentClientCatalog;
@@ -71,7 +69,6 @@ export async function bootstrap(
       runtimePaths,
       commandRoot,
       migrationDirectory,
-      options.onboardingGenerator,
       options.globalMigrationDirectory,
       options.agentClients,
       options.projectBindings,

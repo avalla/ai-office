@@ -18,6 +18,15 @@ import {
 
 const maximumManifestBytes = 256 * 1024;
 
+function parseBoundedManifest(source: string): OfficeManifest {
+  if (Buffer.byteLength(source, "utf8") > maximumManifestBytes) {
+    throw new CliUsageError(
+      `Office manifest exceeds the ${maximumManifestBytes}-byte limit`,
+    );
+  }
+  return parseOfficeManifestJson(source);
+}
+
 function isTaskKind(value: string): value is OfficeTaskKind {
   return officeTaskKinds.some((candidate) => candidate === value);
 }
@@ -33,7 +42,7 @@ function manifestFromOptions(
       "Provide exactly one of --manifest <json> or --file <path>",
     );
   }
-  if (inline !== undefined) return parseOfficeManifestJson(inline);
+  if (inline !== undefined) return parseBoundedManifest(inline);
 
   const canonicalRoot = realpathSync(projectRoot);
   let canonicalFile: string;
@@ -64,7 +73,7 @@ function manifestFromOptions(
       `Office manifest exceeds the ${maximumManifestBytes}-byte limit`,
     );
   }
-  return parseOfficeManifestJson(readFileSync(canonicalFile, "utf8"));
+  return parseBoundedManifest(readFileSync(canonicalFile, "utf8"));
 }
 
 function revisionJson(value: {

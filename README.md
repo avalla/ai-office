@@ -59,13 +59,15 @@ Install dependencies and expose the source checkout's linkable CLI:
 ```bash
 bun install --frozen-lockfile
 bun link
-bun link --global ai-office
 ```
 
-The repository is not yet published as a packaged binary. `bun link` registers
-this checkout as a linkable package, and `bun link --global ai-office` exposes
-its declared `ai-office` bin from Bun's global bin directory. Ensure the path
-printed by `bun pm bin -g` is on `PATH`. The same entry point can also be run from this checkout as
+The repository is not yet published as a packaged binary. The bare `bun link`
+command registers this checkout in Bun's global link registry and exposes its
+declared `ai-office` bin; do not follow it with
+`bun link --global ai-office`. Ensure the path printed by `bun pm bin -g` is on
+`PATH`. If the obsolete two-command sequence was already attempted and left a
+dangling bin link, rerun the bare `bun link` command from this checkout to
+repair it. The same entry point can also be run from this checkout as
 `bun run ai-office -- install /absolute/path/to/project`.
 
 Start the office daemon in one terminal:
@@ -147,8 +149,9 @@ new installation intent explicit.
 Interactive onboarding, offline import, task management, governance, and
 simulated agent runs do not require an LLM credential in AI Office. The
 repository-scoped skill uses the model session already authenticated by the
-host. Provider configuration in `.env.example` remains an optional headless
-fallback only; never commit `.env`.
+host to generate adaptive questions and synthesize the office. The daemon does
+not expose a separate provider-backed onboarding command. A `.env` file is not
+required for normal operation; never commit one containing credentials.
 
 The linkable entry point uses `AI_OFFICE_HOME` when set and otherwise the stable
 user runtime `~/.ai-office`, so moving or relinking the program does not select
@@ -204,8 +207,9 @@ Use $ai-office to onboard /path/to/repository
 ```
 
 The skill scans the repository offline, reads the resulting structured context,
-asks only material project questions, proposes a virtual office and default task
-pipelines, validates the manifest, and asks for confirmation before applying it.
+uses the active Codex or Claude model to generate only material project
+questions, proposes a virtual office and default task pipelines, validates the
+manifest, and asks for confirmation before applying it.
 The runtime stores each accepted manifest as an immutable revision and records a
 sanitized audit event. Permission preferences remain project knowledge; they do
 not create capability grants.
@@ -218,26 +222,27 @@ starting point, not an automatic grant or fixed organization.
 Import an existing repository, then inspect its structured profile:
 
 ```bash
-bun run cli -- project:import /path/to/repository --json
+ai-office project:import /path/to/repository --json
 # Read projectId from the JSON result.
 
-bun run cli -- project:profile --project <project-id>
-bun run cli -- office:context --project <project-id>
+ai-office project:profile --project <project-id>
+ai-office office:context --project <project-id>
 ```
 
 For a new project without an import scan:
 
 ```bash
-bun run cli -- project:create "Demo"
-bun run cli -- task:create --project <project-id> --title "First task" --priority 10
-bun run cli -- task:list --project <project-id>
+ai-office project:create "Demo"
+ai-office task:create --project <project-id> --title "First task" --priority 10
+ai-office task:list --project <project-id>
 ```
 
 `project:import` never calls a provider: its repository scan remains
 deterministic, idempotent, and usable offline. `office:validate`, `office:apply`,
 `office:show`, and `office:pipeline` form the versioned machine contract used by
-the skill. `project:onboard` remains available as an optional provider-backed
-headless compatibility flow; it is no longer the primary interactive UX.
+the skill. There is no provider-backed onboarding command in the daemon; Codex
+or Claude owns questions and synthesis, while SQLite remains authoritative for
+accepted manifests and project state.
 
 When a project-scoped command is invoked without `--project`, the linkable CLI
 canonicalizes the current directory, walks same-filesystem ancestors, and uses
@@ -246,40 +251,10 @@ available for automation and debugging. The machine-oriented commands are
 preserved as primitives under the user-facing lifecycle; they are not a second
 source of truth.
 
-For the optional headless compatibility flow, opt in at the daemon composition
-root, configure pricing for the provider's bare model name, and optionally set a
-project budget. OpenAI and Anthropic remain supported through the
-infrastructure-only LangChain compatibility adapter:
-
-```bash
-export AI_OFFICE_LLM_MODEL=openai:gpt-5.4
-export OPENAI_API_KEY=<your-key>
-
-bun run daemon
-bun run cli -- pricing:set --provider openai --model gpt-5.4 --currency USD --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
-```
-
-Or use Anthropic with the same onboarding and metering path:
-
-```bash
-export AI_OFFICE_LLM_MODEL=anthropic:claude-sonnet-4-6
-export ANTHROPIC_API_KEY=<your-key>
-
-bun run daemon
-bun run cli -- pricing:set --provider anthropic --model claude-sonnet-4-6 --currency USD --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
-```
-
-The model prefix selects the provider; it is not part of the pricing model key. The legacy combination `AI_OFFICE_LLM_PROVIDER=openai` plus `AI_OFFICE_LLM_MODEL=<bare-model>` remains temporarily supported, but new configuration should use the single prefixed model reference.
-
-If the optional provider, model, or required credential is not configured, only
-the legacy `project:onboard` command fails. Skill-first onboarding and the rest
-of the base runtime remain usable. Provider errors do not display secret values
-or change existing questions or answers.
-
 For current command syntax and the complete command list, use:
 
 ```bash
-bun run cli -- --help
+ai-office --help
 ```
 
 ## Architecture

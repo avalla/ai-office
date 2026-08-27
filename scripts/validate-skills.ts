@@ -25,6 +25,27 @@ const requiredPaths = [
   "references/task-operation.md",
 ] as const;
 
+const requiredSkillSnippets = [
+  "## Help",
+  "## Install or inspect",
+  "## Onboard",
+  "## Revise the office",
+  "## Operate a task",
+  "## Integrate a coding client",
+  "## Reusable memory",
+  "## Uninstall safely",
+  "ai-office install",
+  "ai-office status",
+  "ai-office --help",
+] as const;
+
+const removedOnboardingSnippets = [
+  "project:onboard",
+  "AI_OFFICE_LLM_MODEL",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+] as const;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -91,6 +112,15 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
       errors.push("SKILL.md frontmatter requires a non-empty description");
     else if (description.length > 1024)
       errors.push("SKILL.md description must not exceed 1024 characters");
+  }
+
+  for (const snippet of requiredSkillSnippets) {
+    if (!source.includes(snippet))
+      errors.push(`SKILL.md is missing required workflow content: ${snippet}`);
+  }
+  for (const snippet of removedOnboardingSnippets) {
+    if (source.includes(snippet))
+      errors.push(`SKILL.md references removed provider onboarding: ${snippet}`);
   }
 
   for (const requiredPath of requiredPaths) {
