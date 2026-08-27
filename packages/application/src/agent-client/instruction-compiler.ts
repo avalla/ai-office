@@ -1,6 +1,8 @@
 import type { ProjectInstructionContract } from "@ai-office/domain/agent/project-instruction-contract.ts";
 
 export const managedProjectInstructionsHeader =
+  "<!-- ai-office:managed project-instructions v2 -->";
+export const legacyManagedProjectInstructionsHeader =
   "<!-- ai-office:managed project-instructions v1 -->";
 
 function list(items: readonly string[]): string {

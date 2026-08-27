@@ -78,7 +78,7 @@ describe("daemon-backed agent client integration", () => {
         clientId: "claude",
         canonicalInstructions: { integrationStatus: "missing" },
       });
-      expect(() => readFileSync(join(root, "AGENTS.md"), "utf8")).toThrow();
+      expect(() => readFileSync(join(root, "AI-OFFICE.md"), "utf8")).toThrow();
       const invalid = await run([
         "client:validate",
         "--client",
@@ -103,8 +103,10 @@ describe("daemon-backed agent client integration", () => {
         changes: Array<{ relativePath: string }>;
       };
       expect(plan.changes.map((change) => change.relativePath)).toEqual([
-        "AGENTS.md",
+        "AI-OFFICE.md",
+        ".agents/skills/ai-office/SKILL.md",
         "CLAUDE.md",
+        ".claude/skills/ai-office/SKILL.md",
       ]);
 
       const rejected = await run([
@@ -140,7 +142,7 @@ describe("daemon-backed agent client integration", () => {
         validation: { valid: true },
       });
       expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toContain(
-        "@AGENTS.md",
+        "@AI-OFFICE.md",
       );
       expect(
         (await run(["client:validate", "--client", "claude", "--root", root]))
@@ -161,7 +163,18 @@ describe("daemon-backed agent client integration", () => {
       };
       expect(uninstallPlan).toMatchObject({
         action: "uninstall",
-        changes: [{ kind: "delete", relativePath: "CLAUDE.md" }],
+        changes: [
+          {
+            kind: "delete",
+            relativePath: ".claude/skills/ai-office/SKILL.md",
+          },
+          { kind: "delete", relativePath: "CLAUDE.md" },
+          {
+            kind: "delete",
+            relativePath: ".agents/skills/ai-office/SKILL.md",
+          },
+          { kind: "delete", relativePath: "AI-OFFICE.md" },
+        ],
       });
       const uninstalled = await run([
         "client:uninstall",
@@ -177,13 +190,12 @@ describe("daemon-backed agent client integration", () => {
         uninstalled: true,
         inspection: {
           clientInstructions: { integrationStatus: "missing" },
-          canonicalInstructions: { integrationStatus: "integrated" },
+          canonicalInstructions: { integrationStatus: "missing" },
+          skillInstructions: { integrationStatus: "missing" },
         },
       });
       expect(() => readFileSync(join(root, "CLAUDE.md"), "utf8")).toThrow();
-      expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
-        "ai-office:managed",
-      );
+      expect(() => readFileSync(join(root, "AI-OFFICE.md"), "utf8")).toThrow();
     } finally {
       controller.abort();
       await running;

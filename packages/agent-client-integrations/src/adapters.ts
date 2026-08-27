@@ -9,7 +9,11 @@ import type {
   AgentClientIntegrationIssue,
   AgentClientValidation,
 } from "@ai-office/application/ports/agent-client-adapter.port.ts";
-import { managedProjectInstructionsHeader } from "@ai-office/application/agent-client/instruction-compiler.ts";
+import {
+  legacyManagedProjectInstructionsHeader,
+  managedProjectInstructionsHeader,
+} from "@ai-office/application/agent-client/instruction-compiler.ts";
+import { managedProjectSkillMarker } from "@ai-office/application/agent-client/project-skill-compiler.ts";
 import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import {
   LocalAgentClientFiles,
@@ -17,13 +21,36 @@ import {
   type LocalInstructionFile,
 } from "./local-agent-client-files.ts";
 
+export const canonicalProjectInstructionsPath = "AI-OFFICE.md";
+export const codexProjectInstructionsPath = "AGENTS.md";
+export const codexProjectSkillPath = ".agents/skills/ai-office/SKILL.md";
+export const claudeProjectSkillPath = ".claude/skills/ai-office/SKILL.md";
+export const codexManagedInstructionsHeader =
+  "<!-- ai-office:managed codex-project-instructions v1 -->";
 export const claudeManagedStart =
   "<!-- >>> ai-office managed: canonical-project-instructions -->";
 export const claudeManagedEnd =
   "<!-- <<< ai-office managed: canonical-project-instructions -->";
-const claudeImport = "@AGENTS.md";
+
+const claudeImport = `@${canonicalProjectInstructionsPath}`;
 const claudeManagedBlock = `${claudeManagedStart}\n${claudeImport}\n${claudeManagedEnd}`;
 const claudeManagedFileContent = `# Claude Code compatibility\n\n${claudeManagedBlock}\n`;
+const codexManagedFileContent = `${codexManagedInstructionsHeader}
+# AI Office project guidance
+
+Read and follow [${canonicalProjectInstructionsPath}](${canonicalProjectInstructionsPath}) before doing any work in this repository. Use the repository-local \`$ai-office\` skill for lifecycle, onboarding, status, task, and controlled-action workflows.
+`;
+const claudeSkillMarker =
+  "<!-- ai-office:managed claude-repository-skill v1 -->";
+const claudeSkillContent = `---
+name: ai-office
+description: Install, inspect, onboard, configure, operate, troubleshoot, and safely remove AI Office for this repository.
+---
+
+${claudeSkillMarker}
+
+Read and follow \`../../../.agents/skills/ai-office/SKILL.md\`. That file is the shared repository-local AI Office skill. Read \`../../../${canonicalProjectInstructionsPath}\` for this project's managed operating guidance.
+`;
 
 function fileState(
   file: LocalInstructionFile,
@@ -43,14 +70,59 @@ function isCanonicalManaged(file: LocalInstructionFile): boolean {
   return file.content?.startsWith(managedProjectInstructionsHeader) === true;
 }
 
-function canonicalState(file: LocalInstructionFile): AgentClientFileState {
+function isLegacyCanonicalManaged(file: LocalInstructionFile): boolean {
+  return (
+    file.content?.startsWith(legacyManagedProjectInstructionsHeader) === true
+  );
+}
+
+function isCodexPointerManaged(file: LocalInstructionFile): boolean {
+  return file.content?.startsWith(codexManagedInstructionsHeader) === true;
+}
+
+function hasManagedSkillMarker(
+  file: LocalInstructionFile,
+  marker: string,
+): boolean {
+  const content = file.content;
+  if (content === undefined || !content.startsWith("---\nname: ai-office\n"))
+    return false;
+  const frontmatterEnd = content.indexOf("\n---\n", 4);
+  return (
+    frontmatterEnd >= 0 &&
+    content.slice(frontmatterEnd + 5).startsWith(`\n${marker}\n`)
+  );
+}
+
+function isProjectSkillManaged(file: LocalInstructionFile): boolean {
+  return hasManagedSkillMarker(file, managedProjectSkillMarker);
+}
+
+function isClaudeSkillManaged(file: LocalInstructionFile): boolean {
+  return hasManagedSkillMarker(file, claudeSkillMarker);
+}
+
+function managedState(
+  file: LocalInstructionFile,
+  managed: (file: LocalInstructionFile) => boolean,
+): AgentClientFileState {
   if (!file.exists) return fileState(file, "absent", "missing");
-  const owned = isCanonicalManaged(file);
+  const owned = managed(file);
   return fileState(
     file,
     owned ? "ai_office_owned" : "user_owned",
     owned ? "integrated" : "unmanaged",
   );
+}
+
+function canonicalState(file: LocalInstructionFile): AgentClientFileState {
+  return managedState(file, isCanonicalManaged);
+}
+
+function codexPointerState(file: LocalInstructionFile): AgentClientFileState {
+  if (isLegacyCanonicalManaged(file))
+    return fileState(file, "ai_office_owned", "unmanaged");
+  return managedState(file, isCodexPointerManaged);
 }
 
 function legacyState(file: LocalInstructionFile): AgentClientFileState {
@@ -73,7 +145,7 @@ function analyzeClaudeBridge(file: LocalInstructionFile): ClaudeBridgeAnalysis {
   const starts = [...content.matchAll(new RegExp(claudeManagedStart, "gu"))];
   const ends = [...content.matchAll(new RegExp(claudeManagedEnd, "gu"))];
   if (starts.length === 0 && ends.length === 0) {
-    if (/^@AGENTS\.md\s*$/mu.test(content))
+    if (/^@AI-OFFICE\.md\s*$/mu.test(content))
       return {
         state: fileState(file, "user_owned", "integrated"),
         kind: "direct_import",
@@ -117,19 +189,92 @@ function preservedIssue(
   return { severity: "warning", code, message };
 }
 
-function canonicalUninstallOperations(
-  canonical: LocalInstructionFile,
+function deleteIfManaged(
+  file: LocalInstructionFile,
+  managed: (file: LocalInstructionFile) => boolean,
+  summary: string,
 ): AgentClientFileOperation[] {
-  if (!isCanonicalManaged(canonical)) return [];
+  if (!managed(file)) return [];
   return [
     {
       kind: "delete",
-      relativePath: "AGENTS.md",
-      expectedSha256: canonical.sha256!,
+      relativePath: file.relativePath,
+      expectedSha256: file.sha256!,
       ownershipAfter: "absent",
-      summary: "Delete AI Office-managed canonical project instructions",
+      summary,
     },
   ];
+}
+
+function reconcileManagedFile(input: {
+  file: LocalInstructionFile;
+  nextContent: string;
+  managed: (file: LocalInstructionFile) => boolean;
+  createSummary: string;
+  updateSummary: string;
+}): AgentClientFileOperation[] {
+  if (!input.file.exists)
+    return [
+      {
+        kind: "create",
+        relativePath: input.file.relativePath,
+        expectedSha256: null,
+        nextContent: input.nextContent,
+        ownershipAfter: "ai_office_owned",
+        summary: input.createSummary,
+      },
+    ];
+  if (input.managed(input.file) && input.file.content !== input.nextContent)
+    return [
+      {
+        kind: "update",
+        relativePath: input.file.relativePath,
+        expectedSha256: input.file.sha256!,
+        nextContent: input.nextContent,
+        ownershipAfter: "ai_office_owned",
+        summary: input.updateSummary,
+      },
+    ];
+  return [];
+}
+
+function canonicalOperations(
+  canonical: LocalInstructionFile,
+  nextContent: string,
+): AgentClientFileOperation[] {
+  return reconcileManagedFile({
+    file: canonical,
+    nextContent,
+    managed: isCanonicalManaged,
+    createSummary: "Create canonical AI Office project guidance",
+    updateSummary: "Update canonical AI Office project guidance",
+  });
+}
+
+function projectSkillOperations(
+  skill: LocalInstructionFile,
+  nextContent: string,
+): AgentClientFileOperation[] {
+  return reconcileManagedFile({
+    file: skill,
+    nextContent,
+    managed: isProjectSkillManaged,
+    createSummary: "Install the repository-local AI Office skill",
+    updateSummary: "Update the repository-local AI Office skill",
+  });
+}
+
+function codexPointerOperations(
+  pointer: LocalInstructionFile,
+): AgentClientFileOperation[] {
+  return reconcileManagedFile({
+    file: pointer,
+    nextContent: codexManagedFileContent,
+    managed: (file) =>
+      isCodexPointerManaged(file) || isLegacyCanonicalManaged(file),
+    createSummary: "Create the minimal Codex pointer to AI-OFFICE.md",
+    updateSummary: "Migrate the managed Codex instructions to AI-OFFICE.md",
+  });
 }
 
 function withoutClaudeManagedBlock(
@@ -148,6 +293,7 @@ function withoutClaudeManagedBlock(
 
 function baseIssues(
   canonical: LocalInstructionFile,
+  projectSkill: LocalInstructionFile,
   legacy: LocalInstructionFile,
 ): AgentClientIntegrationIssue[] {
   const issues: AgentClientIntegrationIssue[] = [];
@@ -156,14 +302,27 @@ function baseIssues(
       severity: "warning",
       code: "canonical_instructions_missing",
       message:
-        "AGENTS.md is missing and can be created from the approved contract",
+        "AI-OFFICE.md is missing and can be created from the approved contract",
     });
   else if (!isCanonicalManaged(canonical))
     issues.push({
       severity: "warning",
       code: "canonical_instructions_unmanaged",
       message:
-        "AGENTS.md is user-owned: the client can consume it, but AI Office will not overwrite it or attest that its instruction contract is installed; reconcile it manually if needed",
+        "AI-OFFICE.md is user-owned and will not be overwritten; reconcile the project guidance manually",
+    });
+  if (!projectSkill.exists)
+    issues.push({
+      severity: "warning",
+      code: "project_skill_missing",
+      message: "The repository-local AI Office skill is missing",
+    });
+  else if (!isProjectSkillManaged(projectSkill))
+    issues.push({
+      severity: "warning",
+      code: "project_skill_unmanaged",
+      message:
+        "The repository-local ai-office skill is user-owned and will be preserved",
     });
   if (legacy.exists)
     issues.push({
@@ -173,35 +332,6 @@ function baseIssues(
         "CODEX.md is user-owned and requires manual migration or a compatibility pointer",
     });
   return issues;
-}
-
-function canonicalOperations(
-  canonical: LocalInstructionFile,
-  nextContent: string,
-): AgentClientFileOperation[] {
-  if (!canonical.exists)
-    return [
-      {
-        kind: "create",
-        relativePath: "AGENTS.md",
-        expectedSha256: null,
-        nextContent,
-        ownershipAfter: "ai_office_owned",
-        summary: "Create canonical AI Office-managed project instructions",
-      },
-    ];
-  if (isCanonicalManaged(canonical) && canonical.content !== nextContent)
-    return [
-      {
-        kind: "update",
-        relativePath: "AGENTS.md",
-        expectedSha256: canonical.sha256!,
-        nextContent,
-        ownershipAfter: "ai_office_owned",
-        summary: "Update canonical AI Office-managed project instructions",
-      },
-    ];
-  return [];
 }
 
 abstract class BaseAgentClientAdapter implements AgentClientAdapter {
@@ -226,15 +356,23 @@ abstract class BaseAgentClientAdapter implements AgentClientAdapter {
 
   protected inspectBase(rootPath: string) {
     const root = this.files.resolveRoot(rootPath);
-    const canonical = this.files.read(root, "AGENTS.md");
+    const canonical = this.files.read(root, canonicalProjectInstructionsPath);
+    const projectSkill = this.files.read(root, codexProjectSkillPath);
     const legacy = this.files.read(root, "CODEX.md");
-    return { root, canonical, legacy, issues: baseIssues(canonical, legacy) };
+    return {
+      root,
+      canonical,
+      projectSkill,
+      legacy,
+      issues: baseIssues(canonical, projectSkill, legacy),
+    };
   }
 
   abstract inspect(rootPath: string): Promise<AgentClientInspection>;
   abstract plan(input: {
     rootPath: string;
     canonicalInstructions: string;
+    projectSkill: string;
   }): Promise<AgentClientIntegrationDraft>;
   abstract planUninstall(
     rootPath: string,
@@ -253,11 +391,31 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
   readonly executableName = "codex";
 
   async inspect(rootPath: string): Promise<AgentClientInspection> {
-    const { root, canonical, legacy, issues } = this.inspectBase(rootPath);
+    const { root, canonical, projectSkill, legacy, issues } =
+      this.inspectBase(rootPath);
+    const pointer = this.files.read(root, codexProjectInstructionsPath);
+    if (!pointer.exists)
+      issues.push({
+        severity: "warning",
+        code: "codex_pointer_missing",
+        message: "AGENTS.md does not point Codex to AI-OFFICE.md",
+      });
+    else if (
+      !isCodexPointerManaged(pointer) &&
+      !isLegacyCanonicalManaged(pointer)
+    )
+      issues.push({
+        severity: "warning",
+        code: "codex_pointer_unmanaged",
+        message:
+          "AGENTS.md is user-owned and will be preserved; add a reference to AI-OFFICE.md manually",
+      });
     return {
       clientId: this.id,
       rootPath: root,
       canonicalInstructions: canonicalState(canonical),
+      clientInstructions: codexPointerState(pointer),
+      skillInstructions: managedState(projectSkill, isProjectSkillManaged),
       legacyInstructions: legacyState(legacy),
       issues,
     };
@@ -266,60 +424,113 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
   async plan(input: {
     rootPath: string;
     canonicalInstructions: string;
+    projectSkill: string;
   }): Promise<AgentClientIntegrationDraft> {
-    const { root, canonical, issues } = this.inspectBase(input.rootPath);
+    const { root, canonical, projectSkill, issues } = this.inspectBase(
+      input.rootPath,
+    );
+    const pointer = this.files.read(root, codexProjectInstructionsPath);
+    const operations = [
+      ...canonicalOperations(canonical, input.canonicalInstructions),
+      ...projectSkillOperations(projectSkill, input.projectSkill),
+      ...codexPointerOperations(pointer),
+    ];
+    if (
+      pointer.exists &&
+      !isCodexPointerManaged(pointer) &&
+      !isLegacyCanonicalManaged(pointer)
+    )
+      issues.push(
+        preservedIssue(
+          "codex_pointer_user_owned_preserved",
+          "AGENTS.md is user-owned and will be preserved; add a reference to AI-OFFICE.md manually",
+        ),
+      );
     return {
       contractVersion: 1,
       action: "install",
       clientId: this.id,
       rootPath: root,
-      operations: canonicalOperations(canonical, input.canonicalInstructions),
+      operations,
       issues,
     };
   }
 
   async planUninstall(rootPath: string): Promise<AgentClientIntegrationDraft> {
-    const { root, canonical } = this.inspectBase(rootPath);
+    const { root, canonical, projectSkill } = this.inspectBase(rootPath);
+    const pointer = this.files.read(root, codexProjectInstructionsPath);
     const issues: AgentClientIntegrationIssue[] = [];
-    let canonicalRequiredByClaude = false;
-    if (canonical.exists && !isCanonicalManaged(canonical))
+    const operations = [
+      ...deleteIfManaged(
+        pointer,
+        (file) => isCodexPointerManaged(file) || isLegacyCanonicalManaged(file),
+        "Delete the AI Office-managed Codex pointer",
+      ),
+    ];
+    if (projectSkill.exists && !isProjectSkillManaged(projectSkill))
       issues.push(
         preservedIssue(
-          "canonical_instructions_user_owned_preserved",
+          "project_skill_user_owned_preserved",
+          "The repository-local ai-office skill is user-owned and will be preserved",
+        ),
+      );
+    if (
+      pointer.exists &&
+      !isCodexPointerManaged(pointer) &&
+      !isLegacyCanonicalManaged(pointer)
+    )
+      issues.push(
+        preservedIssue(
+          "codex_pointer_user_owned_preserved",
           "AGENTS.md is user-owned and will be preserved",
         ),
       );
 
-    if (isCanonicalManaged(canonical)) {
-      const claude = this.files.read(root, "CLAUDE.md");
-      const bridge = analyzeClaudeBridge(claude);
-      if (bridge.kind === "managed" || bridge.kind === "direct_import") {
-        canonicalRequiredByClaude = true;
-        issues.push(
-          preservedIssue(
-            "claude_canonical_dependency_preserved",
-            "CLAUDE.md imports AGENTS.md, so the managed canonical file remains required and will be preserved; remove the Claude dependency before retrying Codex uninstall",
-          ),
-        );
-      } else if (bridge.kind === "conflict") {
-        canonicalRequiredByClaude = true;
-        issues.push({
-          severity: "conflict",
-          code: "claude_managed_section_malformed",
-          message:
-            "CLAUDE.md contains malformed or duplicated AI Office markers",
-        });
-      }
-    }
+    const bridge = analyzeClaudeBridge(this.files.read(root, "CLAUDE.md"));
+    const sharedRequiredByClaude =
+      bridge.kind === "managed" ||
+      bridge.kind === "direct_import" ||
+      bridge.kind === "conflict";
+    if (bridge.kind === "managed" || bridge.kind === "direct_import")
+      issues.push(
+        preservedIssue(
+          "claude_canonical_dependency_preserved",
+          "CLAUDE.md imports AI-OFFICE.md, so shared AI Office artifacts will be preserved until the Claude integration is removed",
+        ),
+      );
+    else if (bridge.kind === "conflict")
+      issues.push({
+        severity: "conflict",
+        code: "claude_managed_section_malformed",
+        message: "CLAUDE.md contains malformed or duplicated AI Office markers",
+      });
+    if (canonical.exists && !isCanonicalManaged(canonical))
+      issues.push(
+        preservedIssue(
+          "canonical_instructions_user_owned_preserved",
+          "AI-OFFICE.md is user-owned and will be preserved",
+        ),
+      );
 
+    if (!sharedRequiredByClaude)
+      operations.push(
+        ...deleteIfManaged(
+          projectSkill,
+          isProjectSkillManaged,
+          "Delete the repository-local AI Office skill",
+        ),
+        ...deleteIfManaged(
+          canonical,
+          isCanonicalManaged,
+          "Delete AI Office-managed project guidance",
+        ),
+      );
     return {
       contractVersion: 1,
       action: "uninstall",
       clientId: this.id,
       rootPath: root,
-      operations: canonicalRequiredByClaude
-        ? []
-        : canonicalUninstallOperations(canonical),
+      operations,
       issues,
     };
   }
@@ -330,7 +541,8 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
       if (
         plan.action !== "uninstall" ||
         operation.kind !== "delete" ||
-        operation.relativePath !== "AGENTS.md"
+        (operation.relativePath !== canonicalProjectInstructionsPath &&
+          operation.relativePath !== codexProjectSkillPath)
       )
         return;
       const bridge = analyzeClaudeBridge(this.files.read(root, "CLAUDE.md"));
@@ -340,26 +552,34 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
         bridge.kind === "conflict"
       )
         throw new AgentClientIntegrationError(
-          "CLAUDE.md changed during apply and still requires AGENTS.md; canonical removal was stopped",
+          "CLAUDE.md changed during apply and still requires shared AI Office artifacts; removal was stopped",
         );
     });
   }
 
   async validate(rootPath: string): Promise<AgentClientValidation> {
     const inspection = await this.inspect(rootPath);
-    const issues = inspection.canonicalInstructions.exists
-      ? inspection.issues
-      : [
-          ...inspection.issues.filter(
-            (issue) => issue.code !== "canonical_instructions_missing",
-          ),
-          {
-            severity: "conflict" as const,
-            code: "codex_canonical_instructions_unavailable",
-            message:
-              "Codex cannot load project instructions because AGENTS.md is missing",
-          },
-        ];
+    const issues = [...inspection.issues];
+    if (!inspection.canonicalInstructions.exists)
+      issues.push({
+        severity: "conflict",
+        code: "codex_canonical_instructions_unavailable",
+        message:
+          "Codex cannot load project guidance because AI-OFFICE.md is missing",
+      });
+    if (!inspection.clientInstructions?.exists)
+      issues.push({
+        severity: "conflict",
+        code: "codex_pointer_unavailable",
+        message:
+          "Codex cannot discover project guidance because AGENTS.md is missing",
+      });
+    if (!inspection.skillInstructions?.exists)
+      issues.push({
+        severity: "conflict",
+        code: "codex_skill_unavailable",
+        message: "Codex cannot discover the repository-local AI Office skill",
+      });
     return {
       clientId: this.id,
       rootPath: inspection.rootPath,
@@ -377,17 +597,33 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
   async inspect(rootPath: string): Promise<AgentClientInspection> {
     const { root, canonical, legacy, issues } = this.inspectBase(rootPath);
     const bridge = analyzeClaudeBridge(this.files.read(root, "CLAUDE.md"));
+    const claudeSkill = this.files.read(root, claudeProjectSkillPath);
     if (bridge.kind === "conflict")
       issues.push({
         severity: "conflict",
         code: "claude_managed_section_malformed",
         message: "CLAUDE.md contains malformed or duplicated AI Office markers",
       });
+    if (!claudeSkill.exists)
+      issues.push({
+        severity: "warning",
+        code: "claude_skill_missing",
+        message:
+          "The Claude repository-local AI Office skill bridge is missing",
+      });
+    else if (!isClaudeSkillManaged(claudeSkill))
+      issues.push({
+        severity: "warning",
+        code: "claude_skill_unmanaged",
+        message:
+          "The Claude ai-office skill is user-owned and will be preserved",
+      });
     return {
       clientId: this.id,
       rootPath: root,
       canonicalInstructions: canonicalState(canonical),
       clientInstructions: bridge.state,
+      skillInstructions: managedState(claudeSkill, isClaudeSkillManaged),
       legacyInstructions: legacyState(legacy),
       issues,
     };
@@ -396,12 +632,15 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
   async plan(input: {
     rootPath: string;
     canonicalInstructions: string;
+    projectSkill: string;
   }): Promise<AgentClientIntegrationDraft> {
-    const { root, canonical, issues } = this.inspectBase(input.rootPath);
-    const operations = canonicalOperations(
-      canonical,
-      input.canonicalInstructions,
+    const { root, canonical, projectSkill, issues } = this.inspectBase(
+      input.rootPath,
     );
+    const operations = [
+      ...canonicalOperations(canonical, input.canonicalInstructions),
+      ...projectSkillOperations(projectSkill, input.projectSkill),
+    ];
     const file = this.files.read(root, "CLAUDE.md");
     const bridge = analyzeClaudeBridge(file);
     if (bridge.kind === "absent")
@@ -409,9 +648,9 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
         kind: "create",
         relativePath: "CLAUDE.md",
         expectedSha256: null,
-        nextContent: `# Claude Code compatibility\n\n${claudeManagedBlock}\n`,
+        nextContent: claudeManagedFileContent,
         ownershipAfter: "ai_office_owned",
-        summary: "Create a Claude bridge to canonical AGENTS.md instructions",
+        summary: "Create a Claude bridge to AI-OFFICE.md",
       });
     else if (bridge.kind === "unmanaged")
       operations.push({
@@ -420,7 +659,7 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
         expectedSha256: file.sha256!,
         nextContent: `${file.content!.trimEnd()}\n\n${claudeManagedBlock}\n`,
         ownershipAfter: "merged",
-        summary: "Append an AI Office-managed canonical instruction bridge",
+        summary: "Append an AI Office-managed project guidance bridge",
       });
     else if (
       bridge.kind === "managed" &&
@@ -433,7 +672,7 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
         nextContent: `${file.content!.slice(0, bridge.start!)}${claudeManagedBlock}${file.content!.slice(bridge.end!)}`,
         ownershipAfter:
           bridge.state.ownership === "merged" ? "merged" : "ai_office_owned",
-        summary: "Refresh the AI Office-managed canonical instruction bridge",
+        summary: "Migrate the Claude bridge to AI-OFFICE.md",
       });
     else if (bridge.kind === "conflict")
       issues.push({
@@ -441,6 +680,24 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
         code: "claude_managed_section_malformed",
         message: "CLAUDE.md contains malformed or duplicated AI Office markers",
       });
+
+    const claudeSkill = this.files.read(root, claudeProjectSkillPath);
+    operations.push(
+      ...reconcileManagedFile({
+        file: claudeSkill,
+        nextContent: claudeSkillContent,
+        managed: isClaudeSkillManaged,
+        createSummary: "Install the Claude repository-local AI Office skill",
+        updateSummary: "Update the Claude repository-local AI Office skill",
+      }),
+    );
+    if (claudeSkill.exists && !isClaudeSkillManaged(claudeSkill))
+      issues.push(
+        preservedIssue(
+          "claude_skill_user_owned_preserved",
+          "The Claude ai-office skill is user-owned and will be preserved",
+        ),
+      );
     return {
       contractVersion: 1,
       action: "install",
@@ -452,10 +709,17 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
   }
 
   async planUninstall(rootPath: string): Promise<AgentClientIntegrationDraft> {
-    const { root, canonical } = this.inspectBase(rootPath);
+    const { root, canonical, projectSkill } = this.inspectBase(rootPath);
     const file = this.files.read(root, "CLAUDE.md");
     const bridge = analyzeClaudeBridge(file);
-    const operations: AgentClientFileOperation[] = [];
+    const claudeSkill = this.files.read(root, claudeProjectSkillPath);
+    const operations: AgentClientFileOperation[] = [
+      ...deleteIfManaged(
+        claudeSkill,
+        isClaudeSkillManaged,
+        "Delete the Claude repository-local AI Office skill",
+      ),
+    ];
     const issues: AgentClientIntegrationIssue[] = [];
 
     if (bridge.kind === "managed") {
@@ -494,11 +758,42 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
         message: "CLAUDE.md contains malformed or duplicated AI Office markers",
       });
 
-    if (isCanonicalManaged(canonical))
+    if (claudeSkill.exists && !isClaudeSkillManaged(claudeSkill))
+      issues.push(
+        preservedIssue(
+          "claude_skill_user_owned_preserved",
+          "The Claude ai-office skill is user-owned and will be preserved",
+        ),
+      );
+    const codexInstructions = this.files.read(
+      root,
+      codexProjectInstructionsPath,
+    );
+    const sharedRequired =
+      codexInstructions.exists ||
+      bridge.kind === "direct_import" ||
+      bridge.kind === "conflict";
+    if (
+      sharedRequired &&
+      (isCanonicalManaged(canonical) || isProjectSkillManaged(projectSkill))
+    )
       issues.push(
         preservedIssue(
           "canonical_instructions_shared_preserved",
-          "AI Office-managed AGENTS.md is shared with Codex and will be preserved; uninstall the Codex integration separately to remove it",
+          "Shared AI-OFFICE.md guidance and the primary repository skill are still referenced by repository host instructions and will be preserved",
+        ),
+      );
+    else if (!sharedRequired)
+      operations.push(
+        ...deleteIfManaged(
+          projectSkill,
+          isProjectSkillManaged,
+          "Delete the repository-local AI Office skill",
+        ),
+        ...deleteIfManaged(
+          canonical,
+          isCanonicalManaged,
+          "Delete AI Office-managed project guidance",
         ),
       );
 
@@ -512,19 +807,42 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
     };
   }
 
+  override async apply(plan: AgentClientIntegrationDraft): Promise<void> {
+    const root = this.files.resolveRoot(plan.rootPath);
+    this.files.apply(root, plan.operations, (operation) => {
+      if (
+        plan.action !== "uninstall" ||
+        operation.kind !== "delete" ||
+        (operation.relativePath !== canonicalProjectInstructionsPath &&
+          operation.relativePath !== codexProjectSkillPath)
+      )
+        return;
+      const codexInstructions = this.files.read(
+        root,
+        codexProjectInstructionsPath,
+      );
+      const bridge = analyzeClaudeBridge(this.files.read(root, "CLAUDE.md"));
+      if (
+        codexInstructions.exists ||
+        bridge.kind === "managed" ||
+        bridge.kind === "direct_import" ||
+        bridge.kind === "conflict"
+      )
+        throw new AgentClientIntegrationError(
+          "Repository host instructions changed during apply and still require shared AI Office artifacts; removal was stopped",
+        );
+    });
+  }
+
   async validate(rootPath: string): Promise<AgentClientValidation> {
     const inspection = await this.inspect(rootPath);
-    const issues = inspection.canonicalInstructions.exists
-      ? [...inspection.issues]
-      : inspection.issues.filter(
-          (issue) => issue.code !== "canonical_instructions_missing",
-        );
+    const issues = [...inspection.issues];
     if (!inspection.canonicalInstructions.exists)
       issues.push({
         severity: "conflict",
         code: "claude_canonical_instructions_unavailable",
         message:
-          "Claude cannot import canonical instructions because AGENTS.md is missing",
+          "Claude cannot import canonical guidance because AI-OFFICE.md is missing",
       });
     if (
       inspection.clientInstructions?.integrationStatus !== "integrated" &&
@@ -533,7 +851,13 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
       issues.push({
         severity: "conflict",
         code: "claude_bridge_unavailable",
-        message: "CLAUDE.md does not import canonical AGENTS.md instructions",
+        message: "CLAUDE.md does not import AI-OFFICE.md",
+      });
+    if (!inspection.skillInstructions?.exists)
+      issues.push({
+        severity: "conflict",
+        code: "claude_skill_unavailable",
+        message: "Claude cannot discover its repository-local AI Office skill",
       });
     return {
       clientId: this.id,

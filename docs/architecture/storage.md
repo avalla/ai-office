@@ -21,8 +21,8 @@ The current path model has three independent roles:
 - the **source/import root** is the canonical repository path scanned by
   `project:import <path>` and recorded in the current runtime database;
 - the **integration root** is supplied separately through `client:* --root` and
-  contains the project instruction contract plus any `AGENTS.md` and
-  `CLAUDE.md` inspected or managed by that workflow.
+  contains the optional project instruction contract plus the shared guide,
+  host pointers, and repository skills inspected or managed by that workflow.
 
 The three roots often coincide, but current code does not require that.
 `project:import /other/repository` does not create
@@ -152,15 +152,16 @@ behind those projections remain authoritative in SQLite.
 
 Coding-client integration instead consumes an optional
 `<integration-root>/.ai-office/agent-instructions.json` contract and inspects or
-manages `<integration-root>/AGENTS.md` and `<integration-root>/CLAUDE.md`. These
-are integration artifacts governed by their own ownership rules, not database
-state or runtime authorization.
+manages `<integration-root>/AI-OFFICE.md`, minimal host instruction files, and
+repository-local skills under `.agents/skills` and `.claude/skills`. These are
+integration artifacts governed by their own ownership rules, not database state
+or runtime authorization.
 
 The normal install lifecycle derives that instruction contract in memory from
 the current office manifest and project identity. It writes the project binding
-plus ownership-safe `AGENTS.md`/`CLAUDE.md` changes, but does not persist a
-second instruction contract. The JSON contract file remains an optional input
-for direct machine-oriented `client:*` workflows.
+plus ownership-safe guide, pointer, and skill changes, but does not persist a
+second authoritative instruction contract. The JSON contract file remains an
+optional input for direct machine-oriented `client:*` workflows.
 
 There is no built-in backup/restore or legacy-state import command. A filesystem
 backup should be taken after a clean daemon shutdown so SQLite and its WAL are

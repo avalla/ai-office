@@ -9,6 +9,7 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
+import { compileProjectSkill } from "@ai-office/application/agent-client/project-skill-compiler.ts";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSkillRoot = resolve(
@@ -44,6 +45,17 @@ const removedOnboardingSnippets = [
   "AI_OFFICE_LLM_MODEL",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
+] as const;
+
+const requiredProjectedSkillSnippets = [
+  "## Help",
+  "## Install or inspect",
+  "## Onboard",
+  "## Operate",
+  "## Uninstall safely",
+  "ai-office --help",
+  "ai-office install",
+  "ai-office status",
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -120,7 +132,9 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
   }
   for (const snippet of removedOnboardingSnippets) {
     if (source.includes(snippet))
-      errors.push(`SKILL.md references removed provider onboarding: ${snippet}`);
+      errors.push(
+        `SKILL.md references removed provider onboarding: ${snippet}`,
+      );
   }
 
   for (const requiredPath of requiredPaths) {
@@ -178,12 +192,43 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
   return errors;
 }
 
+export function validateProjectedAiOfficeSkill(source: string): string[] {
+  const errors: string[] = [];
+  const frontmatter = parseFrontmatter(source, errors);
+  if (frontmatter !== null) {
+    if (frontmatter.name !== "ai-office")
+      errors.push("Projected SKILL.md name must be ai-office");
+    if (
+      typeof frontmatter.description !== "string" ||
+      frontmatter.description.trim() === "" ||
+      frontmatter.description.length > 1024
+    )
+      errors.push(
+        "Projected SKILL.md requires a non-empty description of at most 1024 characters",
+      );
+  }
+  for (const snippet of requiredProjectedSkillSnippets) {
+    if (!source.includes(snippet))
+      errors.push(`Projected SKILL.md is missing workflow content: ${snippet}`);
+  }
+  for (const snippet of removedOnboardingSnippets) {
+    if (source.includes(snippet))
+      errors.push(
+        `Projected SKILL.md references removed provider onboarding: ${snippet}`,
+      );
+  }
+  return errors;
+}
+
 if (import.meta.main) {
-  const errors = validateAiOfficeSkill();
+  const errors = [
+    ...validateAiOfficeSkill(),
+    ...validateProjectedAiOfficeSkill(compileProjectSkill()),
+  ];
   if (errors.length > 0) {
     for (const error of errors) console.error(`- ${error}`);
     process.exitCode = 1;
   } else {
-    console.log("AI Office skill contract is valid");
+    console.log("AI Office source and projected skill contracts are valid");
   }
 }

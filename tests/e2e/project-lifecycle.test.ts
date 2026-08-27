@@ -250,9 +250,24 @@ describe("project lifecycle UX", () => {
       }),
     ]);
     expect(installed.changes.map((change) => change.relativePath)).toEqual([
+      "AI-OFFICE.md",
+      ".agents/skills/ai-office/SKILL.md",
       "AGENTS.md",
       "CLAUDE.md",
+      ".claude/skills/ai-office/SKILL.md",
     ]);
+    expect(
+      readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8"),
+    ).toContain("AI-OFFICE.md");
+    expect(
+      readFileSync(join(harness.projectRoot, "CLAUDE.md"), "utf8"),
+    ).toContain("@AI-OFFICE.md");
+    expect(
+      readFileSync(
+        join(harness.projectRoot, ".agents/skills/ai-office/SKILL.md"),
+        "utf8",
+      ),
+    ).toContain("name: ai-office");
     expect(
       existsSync(join(harness.projectRoot, ".ai-office", "project.json")),
     ).toBe(true);
@@ -312,8 +327,8 @@ describe("project lifecycle UX", () => {
     expect(taskList.stdout[0]).toContain(installed.project.id);
 
     writeFileSync(
-      join(harness.projectRoot, "AGENTS.md"),
-      `${readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8")}\n# local drift\n`,
+      join(harness.projectRoot, "AI-OFFICE.md"),
+      `${readFileSync(join(harness.projectRoot, "AI-OFFICE.md"), "utf8")}\n# local drift\n`,
     );
     const drifted = await run(harness, ["status", "--json"]);
     expect(drifted.exitCode).toBe(1);
@@ -324,6 +339,54 @@ describe("project lifecycle UX", () => {
         { clientId: "claude", configuration: "drifted" },
       ],
     });
+  });
+
+  test("migrates the original managed client layout during normal install", async () => {
+    const harness = await startHarness(["codex", "claude"]);
+    writeFileSync(
+      join(harness.projectRoot, "AGENTS.md"),
+      "<!-- ai-office:managed project-instructions v1 -->\n# Legacy generated guide\n",
+    );
+    writeFileSync(
+      join(harness.projectRoot, "CLAUDE.md"),
+      "# Claude Code compatibility\n\n<!-- >>> ai-office managed: canonical-project-instructions -->\n@AGENTS.md\n<!-- <<< ai-office managed: canonical-project-instructions -->\n",
+    );
+
+    const installed = await run(harness, ["install", ".", "--json"]);
+    expect(installed.exitCode).toBe(0);
+    expect(
+      (
+        JSON.parse(installed.stdout[0]!) as {
+          changes: Array<{ kind: string; relativePath: string }>;
+        }
+      ).changes,
+    ).toEqual(
+      expect.arrayContaining([
+        { kind: "create", relativePath: "AI-OFFICE.md" },
+        { kind: "update", relativePath: "AGENTS.md" },
+        { kind: "update", relativePath: "CLAUDE.md" },
+        {
+          kind: "create",
+          relativePath: ".agents/skills/ai-office/SKILL.md",
+        },
+        {
+          kind: "create",
+          relativePath: ".claude/skills/ai-office/SKILL.md",
+        },
+      ]),
+    );
+    expect(
+      readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8"),
+    ).toContain("AI-OFFICE.md");
+    expect(
+      readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8"),
+    ).not.toContain("Legacy generated guide");
+    expect(
+      readFileSync(join(harness.projectRoot, "CLAUDE.md"), "utf8"),
+    ).toContain("@AI-OFFICE.md");
+
+    const reconciled = await run(harness, ["install", ".", "--json"]);
+    expect(JSON.parse(reconciled.stdout[0]!)).toMatchObject({ changes: [] });
   });
 
   test("reuses an already imported project and canonicalizes the repository path", async () => {
@@ -352,6 +415,7 @@ describe("project lifecycle UX", () => {
     });
     expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(false);
     expect(existsSync(join(harness.projectRoot, "CLAUDE.md"))).toBe(false);
+    expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(false);
   });
 
   test("installs an explicit nested project and discovers its nearest binding", async () => {
@@ -574,10 +638,15 @@ describe("project lifecycle UX", () => {
           changes: Array<{ relativePath: string }>;
         }
       ).changes,
-    ).toEqual([expect.objectContaining({ relativePath: "CLAUDE.md" })]);
+    ).toEqual([
+      expect.objectContaining({ relativePath: "CLAUDE.md" }),
+      expect.objectContaining({
+        relativePath: ".claude/skills/ai-office/SKILL.md",
+      }),
+    ]);
     expect(
       readFileSync(join(harness.projectRoot, "CLAUDE.md"), "utf8"),
-    ).toContain("@AGENTS.md");
+    ).toContain("@AI-OFFICE.md");
   });
 
   test("reports no detected client as an installed warning, not configured", async () => {
@@ -643,7 +712,7 @@ describe("project lifecycle UX", () => {
     expect(JSON.parse(context.stdout[0]!)).toMatchObject({ current: null });
   });
 
-  test("preserves user-owned Codex and Claude instructions and reports unmanaged status", async () => {
+  test("preserves user-owned client instructions and manages only safe references", async () => {
     const harness = await startHarness(["codex", "claude"]);
     writeFileSync(join(harness.projectRoot, "AGENTS.md"), "# User agents\n");
     writeFileSync(
@@ -654,24 +723,21 @@ describe("project lifecycle UX", () => {
     expect(installed.exitCode).toBe(2);
     expect(JSON.parse(installed.stdout[0]!)).toMatchObject({
       outcome: "installed_with_warnings",
-      issues: [
-        expect.objectContaining({ code: "client_codex_unmanaged" }),
-        expect.objectContaining({ code: "client_claude_unmanaged" }),
-      ],
+      issues: [expect.objectContaining({ code: "client_codex_unmanaged" })],
     });
     expect(readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8")).toBe(
       "# User agents\n",
     );
-    expect(readFileSync(join(harness.projectRoot, "CLAUDE.md"), "utf8")).toBe(
-      "# User Claude notes\n\n@AGENTS.md\n",
-    );
+    const claude = readFileSync(join(harness.projectRoot, "CLAUDE.md"), "utf8");
+    expect(claude).toContain("# User Claude notes\n\n@AGENTS.md");
+    expect(claude).toContain("@AI-OFFICE.md");
     const status = await run(harness, ["status", "--json"]);
     expect(status.exitCode).toBe(1);
     expect(JSON.parse(status.stdout[0]!)).toMatchObject({
       health: "needs_attention",
       clients: [
         { clientId: "codex", configuration: "unmanaged" },
-        { clientId: "claude", configuration: "unmanaged" },
+        { clientId: "claude", configuration: "configured" },
       ],
     });
   });
@@ -776,6 +842,16 @@ describe("project lifecycle UX", () => {
         runtimeAssociation: { state: "unverified" },
       },
       runtime: { daemon: "unreachable", authoritativeState: "unavailable" },
+      clients: [
+        expect.objectContaining({
+          clientId: "codex",
+          configuration: "configured",
+        }),
+        expect.objectContaining({
+          clientId: "claude",
+          configuration: "not_configured",
+        }),
+      ],
     });
   });
 
@@ -804,13 +880,30 @@ describe("project lifecycle UX", () => {
       join(harness.projectRoot, ".ai-office", "notes.txt"),
       "preserve\n",
     );
+    mkdirSync(join(harness.projectRoot, ".agents", "skills", "other"), {
+      recursive: true,
+    });
+    mkdirSync(join(harness.projectRoot, ".claude", "skills", "other"), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(harness.projectRoot, ".agents", "skills", "other", "SKILL.md"),
+      "# User Codex skill\n",
+    );
+    writeFileSync(
+      join(harness.projectRoot, ".claude", "skills", "other", "SKILL.md"),
+      "# User Claude skill\n",
+    );
     const planned = await run(harness, ["uninstall", ".", "--json"]);
     const plan = JSON.parse(planned.stdout[0]!) as {
       planHash: string;
       changes: Array<{ relativePath: string }>;
     };
     expect(plan.changes.map((change) => change.relativePath)).toEqual([
+      ".agents/skills/ai-office/SKILL.md",
+      ".claude/skills/ai-office/SKILL.md",
       "AGENTS.md",
+      "AI-OFFICE.md",
       "CLAUDE.md",
       "runtime checkout association",
     ]);
@@ -857,7 +950,30 @@ describe("project lifecycle UX", () => {
       globalMemoryPreserved: true,
     });
     expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(false);
     expect(existsSync(join(harness.projectRoot, "CLAUDE.md"))).toBe(false);
+    expect(
+      existsSync(
+        join(harness.projectRoot, ".agents/skills/ai-office/SKILL.md"),
+      ),
+    ).toBe(false);
+    expect(
+      existsSync(
+        join(harness.projectRoot, ".claude/skills/ai-office/SKILL.md"),
+      ),
+    ).toBe(false);
+    expect(
+      readFileSync(
+        join(harness.projectRoot, ".agents", "skills", "other", "SKILL.md"),
+        "utf8",
+      ),
+    ).toBe("# User Codex skill\n");
+    expect(
+      readFileSync(
+        join(harness.projectRoot, ".claude", "skills", "other", "SKILL.md"),
+        "utf8",
+      ),
+    ).toBe("# User Claude skill\n");
     expect(existsSync(bindingPath)).toBe(true);
     expect(
       readFileSync(
@@ -979,7 +1095,13 @@ describe("project lifecycle UX", () => {
     expect(partial.exitCode).toBe(1);
     expect(JSON.parse(partial.stdout[0]!)).toMatchObject({
       outcome: "partial",
-      removedPaths: ["CLAUDE.md", "AGENTS.md"],
+      removedPaths: [
+        ".claude/skills/ai-office/SKILL.md",
+        "CLAUDE.md",
+        "AGENTS.md",
+        ".agents/skills/ai-office/SKILL.md",
+        "AI-OFFICE.md",
+      ],
       possiblyModifiedPaths: [],
       associationRemoved: false,
       repositoryIdentityPreserved: true,

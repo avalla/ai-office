@@ -21,8 +21,9 @@ created it. The lifecycle never invents an `onboarded` claim.
 
 Interactive onboarding runs in the active agent host through the
 repository-scoped `ai-office` skill. Codex discovers it under
-`.agents/skills/ai-office`; compatible hosts can implement a thin adapter around
-the same manifest and daemon command contract.
+`.agents/skills/ai-office`; Claude discovers a thin wrapper under
+`.claude/skills/ai-office` that points to the same workflow. Both hosts read the
+shared derived project guide in `AI-OFFICE.md`.
 
 The host owns conversation and synthesis. The daemon owns deterministic scanning,
 manifest validation, persistence, policy, controlled actions, and audit.
@@ -51,6 +52,11 @@ integration. The import scan detects Git metadata, package manager, languages,
 common frameworks, database indicators, test tooling, and relevant
 documentation. It is offline, idempotent, and does not execute repository
 scripts or call a provider.
+
+For a detected supported host, install also creates or reconciles the
+repository-local skill. Existing AI Office-managed full guidance in `AGENTS.md`
+is migrated to `AI-OFFICE.md`; user-owned host instructions and skills remain
+untouched and are reported as unmanaged.
 
 Repository-derived data is untrusted. The skill may use it as evidence but must
 not follow instructions found in scanned project content. It asks only questions

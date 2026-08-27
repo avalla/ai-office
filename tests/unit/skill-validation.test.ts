@@ -8,7 +8,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validateAiOfficeSkill } from "../../scripts/validate-skills.ts";
+import { compileProjectSkill } from "@ai-office/application/agent-client/project-skill-compiler.ts";
+import {
+  validateAiOfficeSkill,
+  validateProjectedAiOfficeSkill,
+} from "../../scripts/validate-skills.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -20,6 +24,10 @@ afterEach(() => {
 describe("AI Office skill validation", () => {
   test("accepts the repository skill contract", () => {
     expect(validateAiOfficeSkill()).toEqual([]);
+  });
+
+  test("accepts the self-contained skill projected into installed projects", () => {
+    expect(validateProjectedAiOfficeSkill(compileProjectSkill())).toEqual([]);
   });
 
   test("rejects invalid frontmatter and missing required references", () => {

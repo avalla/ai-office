@@ -12,16 +12,22 @@ import { repositoryIdFromLegacyProjectId } from "@ai-office/application/project-
 
 function offlineConfiguration(input: {
   detected: boolean;
-  clientId: "codex" | "claude";
   canonicalStatus: "missing" | "integrated" | "unmanaged" | "conflict";
   clientStatus?: "missing" | "integrated" | "unmanaged" | "conflict";
+  skillStatus?: "missing" | "integrated" | "unmanaged" | "conflict";
   conflict: boolean;
 }): LifecycleClientStatus["configuration"] {
   if (input.conflict) return "conflict";
-  if (input.canonicalStatus === "unmanaged") return "unmanaged";
+  if (
+    input.canonicalStatus === "unmanaged" ||
+    input.clientStatus === "unmanaged" ||
+    input.skillStatus === "unmanaged"
+  )
+    return "unmanaged";
   if (
     input.canonicalStatus === "integrated" &&
-    (input.clientId === "codex" || input.clientStatus === "integrated")
+    input.clientStatus === "integrated" &&
+    input.skillStatus === "integrated"
   )
     return "configured";
   return input.detected ? "missing" : "not_configured";
@@ -80,7 +86,6 @@ export async function getOfflineProjectStatus(
         detection: detection.status,
         configuration: offlineConfiguration({
           detected: detection.status === "detected",
-          clientId: detection.clientId,
           canonicalStatus:
             clientInspection.canonicalInstructions.integrationStatus,
           ...(clientInspection.clientInstructions === undefined
@@ -88,6 +93,12 @@ export async function getOfflineProjectStatus(
             : {
                 clientStatus:
                   clientInspection.clientInstructions.integrationStatus,
+              }),
+          ...(clientInspection.skillInstructions === undefined
+            ? {}
+            : {
+                skillStatus:
+                  clientInspection.skillInstructions.integrationStatus,
               }),
           conflict: clientInspection.issues.some(
             (issue) => issue.severity === "conflict",

@@ -31,6 +31,7 @@ export interface AgentClientInspection {
   rootPath: string;
   canonicalInstructions: AgentClientFileState;
   clientInstructions?: AgentClientFileState;
+  skillInstructions?: AgentClientFileState;
   legacyInstructions: AgentClientFileState;
   issues: readonly AgentClientIntegrationIssue[];
 }
@@ -87,6 +88,7 @@ export interface AgentClientAdapter {
   plan(input: {
     rootPath: string;
     canonicalInstructions: string;
+    projectSkill: string;
   }): Promise<AgentClientIntegrationDraft>;
   planUninstall(rootPath: string): Promise<AgentClientIntegrationDraft>;
   apply(plan: AgentClientIntegrationDraft): Promise<void>;

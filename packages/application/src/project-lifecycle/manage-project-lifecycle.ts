@@ -281,8 +281,9 @@ function hasManagedClientState(
   inspection: AgentClientInspection,
 ): boolean {
   if (clientId === "codex")
-    return inspection.canonicalInstructions.ownership === "ai_office_owned";
+    return inspection.clientInstructions?.ownership === "ai_office_owned";
   return (
+    inspection.skillInstructions?.ownership === "ai_office_owned" ||
     inspection.clientInstructions?.ownership === "ai_office_owned" ||
     inspection.clientInstructions?.ownership === "merged"
   );
@@ -304,7 +305,11 @@ async function clientStatus(
   let configuration: LifecycleClientStatus["configuration"];
 
   if (hasConflict) configuration = "conflict";
-  else if (inspection.canonicalInstructions.integrationStatus === "unmanaged")
+  else if (
+    inspection.canonicalInstructions.integrationStatus === "unmanaged" ||
+    inspection.clientInstructions?.integrationStatus === "unmanaged" ||
+    inspection.skillInstructions?.integrationStatus === "unmanaged"
+  )
     configuration = "unmanaged";
   else if (
     detection.status === "not_detected" &&
@@ -943,11 +948,25 @@ export class ManageProjectLifecycle {
     if (
       removesClaudeDependency &&
       managedCanonical &&
-      !changes.some((change) => change.relativePath === "AGENTS.md")
+      !changes.some((change) => change.relativePath === "AI-OFFICE.md")
     )
       changes.push({
         kind: "delete",
-        relativePath: "AGENTS.md",
+        relativePath: "AI-OFFICE.md",
+        owner: "ai-office",
+      });
+    const managedProjectSkill =
+      codexStep?.inspection.skillInstructions?.ownership === "ai_office_owned";
+    if (
+      removesClaudeDependency &&
+      managedProjectSkill &&
+      !changes.some(
+        (change) => change.relativePath === ".agents/skills/ai-office/SKILL.md",
+      )
+    )
+      changes.push({
+        kind: "delete",
+        relativePath: ".agents/skills/ai-office/SKILL.md",
         owner: "ai-office",
       });
     if (installed)
@@ -962,7 +981,8 @@ export class ManageProjectLifecycle {
     const ignoredDependencyIssue = (code: string) =>
       removesClaudeDependency &&
       managedCanonical &&
-      code === "claude_canonical_dependency_preserved";
+      (code === "claude_canonical_dependency_preserved" ||
+        code === "canonical_instructions_shared_preserved");
     const preserved = [
       ...(inspection.status === "valid"
         ? [`${projectBindingFile}: portable repository identity preserved`]
@@ -1051,25 +1071,44 @@ export class ManageProjectLifecycle {
         const expectedChanges = [...approvedStep.plan.changes];
         if (
           clientId === "codex" &&
-          current.changes.some(
-            (change) =>
-              change.kind === "delete" && change.relativePath === "AGENTS.md",
-          ) &&
-          !expectedChanges.some((change) => change.relativePath === "AGENTS.md")
+          current.changes.some((change) => change.kind === "delete")
         ) {
-          const expectedSha256 =
-            approvedStep.inspection.canonicalInstructions.sha256;
-          if (expectedSha256 === undefined)
-            throw new ProjectLifecycleError(
-              "The approved uninstall plan has no AGENTS.md precondition",
-            );
-          expectedChanges.push({
-            kind: "delete",
-            relativePath: "AGENTS.md",
-            expectedSha256,
-            ownershipAfter: "absent",
-            summary: "Delete AI Office-managed canonical project instructions",
-          });
+          const deferredSharedArtifacts = [
+            {
+              relativePath: ".agents/skills/ai-office/SKILL.md",
+              sha256: approvedStep.inspection.skillInstructions?.sha256,
+              summary: "Delete the repository-local AI Office skill",
+            },
+            {
+              relativePath: "AI-OFFICE.md",
+              sha256: approvedStep.inspection.canonicalInstructions.sha256,
+              summary: "Delete AI Office-managed project guidance",
+            },
+          ];
+          for (const artifact of deferredSharedArtifacts) {
+            if (
+              !current.changes.some(
+                (change) =>
+                  change.kind === "delete" &&
+                  change.relativePath === artifact.relativePath,
+              ) ||
+              expectedChanges.some(
+                (change) => change.relativePath === artifact.relativePath,
+              )
+            )
+              continue;
+            if (artifact.sha256 === undefined)
+              throw new ProjectLifecycleError(
+                `The approved uninstall plan has no ${artifact.relativePath} precondition`,
+              );
+            expectedChanges.push({
+              kind: "delete",
+              relativePath: artifact.relativePath,
+              expectedSha256: artifact.sha256,
+              ownershipAfter: "absent",
+              summary: artifact.summary,
+            });
+          }
         }
         if (!clientChangesMatch(plan.changes, expectedChanges))
           throw new ProjectLifecycleError(

@@ -2,23 +2,30 @@ import { afterEach, describe, expect, test } from "vitest";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ManageAgentClientIntegration } from "@ai-office/application/agent-client/manage-agent-client-integration.ts";
+import { legacyManagedProjectInstructionsHeader } from "@ai-office/application/agent-client/instruction-compiler.ts";
 import {
   AgentClientPlanApprovalError,
   AgentClientPlanConflictError,
 } from "@ai-office/application/agent-client/errors.ts";
 import {
+  canonicalProjectInstructionsPath,
   claudeManagedEnd,
   claudeManagedStart,
+  claudeProjectSkillPath,
+  codexManagedInstructionsHeader,
+  codexProjectSkillPath,
 } from "@ai-office/agent-client-integrations/adapters.ts";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
 import { projectInstructionContract } from "../helpers/project-instruction-contract.ts";
@@ -93,6 +100,16 @@ describe("agent client integrations", () => {
     expect(first.changes).toEqual([
       expect.objectContaining({
         kind: "create",
+        relativePath: canonicalProjectInstructionsPath,
+        expectedSha256: null,
+      }),
+      expect.objectContaining({
+        kind: "create",
+        relativePath: codexProjectSkillPath,
+        expectedSha256: null,
+      }),
+      expect.objectContaining({
+        kind: "create",
         relativePath: "AGENTS.md",
         expectedSha256: null,
       }),
@@ -116,8 +133,17 @@ describe("agent client integrations", () => {
       approvedPlanHash: plan.planHash,
     });
     expect(validation.valid).toBe(true);
+    expect(
+      readFileSync(join(root, canonicalProjectInstructionsPath), "utf8"),
+    ).toContain("<!-- ai-office:managed project-instructions v2 -->");
     expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
-      "<!-- ai-office:managed project-instructions v1 -->",
+      codexManagedInstructionsHeader,
+    );
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
+      "AI-OFFICE.md",
+    );
+    expect(readFileSync(join(root, codexProjectSkillPath), "utf8")).toContain(
+      "name: ai-office",
     );
     expect(
       await integration.plan({
@@ -128,20 +154,126 @@ describe("agent client integrations", () => {
     ).toMatchObject({ changes: [] });
   });
 
+  test("migrates the original managed AGENTS and Claude bridge to the shared guide", async () => {
+    const root = temporaryRoot("ai-office-client-v1-migration-");
+    writeFileSync(
+      join(root, "AGENTS.md"),
+      `${legacyManagedProjectInstructionsHeader}\n# Legacy generated project instructions\n`,
+    );
+    writeFileSync(
+      join(root, "CLAUDE.md"),
+      `# Claude Code compatibility\n\n${claudeManagedStart}\n@AGENTS.md\n${claudeManagedEnd}\n`,
+    );
+    const integration = service();
+
+    for (const clientId of ["codex", "claude"] as const) {
+      const plan = await integration.plan({
+        clientId,
+        rootPath: root,
+        contract: projectInstructionContract,
+      });
+      await integration.apply({
+        clientId,
+        rootPath: root,
+        contract: projectInstructionContract,
+        approvedPlanHash: plan.planHash,
+      });
+    }
+
+    expect(
+      readFileSync(join(root, canonicalProjectInstructionsPath), "utf8"),
+    ).toContain("# Fixture project instructions");
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
+      "Read and follow [AI-OFFICE.md]",
+    );
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).not.toContain(
+      "Legacy generated project instructions",
+    );
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toContain(
+      "@AI-OFFICE.md",
+    );
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).not.toContain(
+      "@AGENTS.md",
+    );
+    expect(existsSync(join(root, codexProjectSkillPath))).toBe(true);
+    expect(existsSync(join(root, claudeProjectSkillPath))).toBe(true);
+
+    for (const clientId of ["codex", "claude"] as const)
+      expect(
+        await integration.plan({
+          clientId,
+          rootPath: root,
+          contract: projectInstructionContract,
+        }),
+      ).toMatchObject({ changes: [] });
+  });
+
+  test("preserves user-owned shared guidance and repository skill", async () => {
+    const root = temporaryRoot("ai-office-client-user-shared-");
+    const userGuide = "# User AI Office guidance\n";
+    const userSkill =
+      "---\nname: ai-office\ndescription: User skill.\n---\n\n# User notes\n<!-- ai-office:managed repository-skill v1 -->\n";
+    writeFileSync(join(root, canonicalProjectInstructionsPath), userGuide);
+    mkdirSync(join(root, ".agents", "skills", "ai-office"), {
+      recursive: true,
+    });
+    writeFileSync(join(root, codexProjectSkillPath), userSkill);
+    const integration = service();
+
+    const plan = await integration.plan({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    expect(plan.changes.map((change) => change.relativePath)).toEqual([
+      "AGENTS.md",
+    ]);
+    expect(plan.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
+        expect.objectContaining({ code: "project_skill_unmanaged" }),
+      ]),
+    );
+    await integration.apply({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: plan.planHash,
+    });
+    expect(
+      readFileSync(join(root, canonicalProjectInstructionsPath), "utf8"),
+    ).toBe(userGuide);
+    expect(readFileSync(join(root, codexProjectSkillPath), "utf8")).toBe(
+      userSkill,
+    );
+  });
+
+  test("rejects symlinked skill parents without writing outside the root", async () => {
+    const root = temporaryRoot("ai-office-client-symlink-root-");
+    const external = temporaryRoot("ai-office-client-symlink-external-");
+    symlinkSync(external, join(root, ".agents"));
+    const integration = service();
+
+    await expect(integration.inspect("codex", root)).rejects.toThrow(
+      "parent must be a regular directory",
+    );
+    expect(readdirSync(external)).toEqual([]);
+  });
+
   test("keeps user-owned Codex instructions operational but unmanaged", async () => {
     const root = temporaryRoot("ai-office-client-codex-user-");
     writeFileSync(join(root, "AGENTS.md"), "# User instructions\n");
     const integration = service();
 
     const inspection = await integration.inspect("codex", root);
-    expect(inspection.canonicalInstructions).toMatchObject({
+    expect(inspection.clientInstructions).toMatchObject({
       ownership: "user_owned",
       integrationStatus: "unmanaged",
     });
     expect(inspection.issues).toContainEqual(
       expect.objectContaining({
         severity: "warning",
-        code: "canonical_instructions_unmanaged",
+        code: "codex_pointer_unmanaged",
       }),
     );
 
@@ -150,9 +282,12 @@ describe("agent client integrations", () => {
       rootPath: root,
       contract: projectInstructionContract,
     });
-    expect(plan.changes).toEqual([]);
+    expect(plan.changes.map((change) => change.relativePath)).toEqual([
+      canonicalProjectInstructionsPath,
+      codexProjectSkillPath,
+    ]);
     expect(plan.issues).toContainEqual(
-      expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
+      expect.objectContaining({ code: "codex_pointer_user_owned_preserved" }),
     );
 
     const validation = await integration.apply({
@@ -163,7 +298,7 @@ describe("agent client integrations", () => {
     });
     expect(validation).toMatchObject({ valid: true });
     expect(validation.issues).toContainEqual(
-      expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
+      expect.objectContaining({ code: "codex_pointer_unmanaged" }),
     );
     expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(
       "# User instructions\n",
@@ -180,10 +315,7 @@ describe("agent client integrations", () => {
     );
     const integration = service();
     const before = await integration.inspect("claude", root);
-    expect(before.canonicalInstructions).toMatchObject({
-      ownership: "user_owned",
-      integrationStatus: "unmanaged",
-    });
+    expect(before.canonicalInstructions.integrationStatus).toBe("missing");
     expect(before.clientInstructions).toMatchObject({
       ownership: "user_owned",
       integrationStatus: "unmanaged",
@@ -193,15 +325,12 @@ describe("agent client integrations", () => {
       rootPath: root,
       contract: projectInstructionContract,
     });
-    expect(plan.changes).toEqual([
-      expect.objectContaining({
-        relativePath: "CLAUDE.md",
-        ownershipAfter: "merged",
-      }),
+    expect(plan.changes.map((change) => change.relativePath)).toEqual([
+      canonicalProjectInstructionsPath,
+      codexProjectSkillPath,
+      "CLAUDE.md",
+      claudeProjectSkillPath,
     ]);
-    expect(plan.issues).toContainEqual(
-      expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
-    );
 
     const validation = await integration.apply({
       clientId: "claude",
@@ -218,20 +347,17 @@ describe("agent client integrations", () => {
     const claude = readFileSync(join(root, "CLAUDE.md"), "utf8");
     expect(claude).toContain("Keep this.");
     expect(claude).toContain(claudeManagedStart);
-    expect(claude).toContain("@AGENTS.md");
+    expect(claude).toContain("@AI-OFFICE.md");
     expect(validation.valid).toBe(true);
-    expect(validation.issues).toContainEqual(
-      expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
-    );
     const after = await integration.inspect("claude", root);
     expect(after.canonicalInstructions).toMatchObject({
-      ownership: "user_owned",
-      integrationStatus: "unmanaged",
+      ownership: "ai_office_owned",
+      integrationStatus: "integrated",
     });
     expect(after.clientInstructions?.integrationStatus).toBe("integrated");
     writeFileSync(
       join(root, "CLAUDE.md"),
-      claude.replace("@AGENTS.md", "@OBSOLETE.md"),
+      claude.replace("@AI-OFFICE.md", "@OBSOLETE.md"),
     );
     const refresh = await integration.plan({
       clientId: "claude",
@@ -249,7 +375,7 @@ describe("agent client integrations", () => {
     });
     const refreshedClaude = readFileSync(join(root, "CLAUDE.md"), "utf8");
     expect(refreshedClaude).toContain("Keep this.");
-    expect(refreshedClaude).toContain("@AGENTS.md");
+    expect(refreshedClaude).toContain("@AI-OFFICE.md");
     expect(refreshedClaude).not.toContain("@OBSOLETE.md");
     expect(
       await integration.plan({
@@ -260,10 +386,57 @@ describe("agent client integrations", () => {
     ).toMatchObject({ changes: [] });
   });
 
+  test("preserves a user-owned Claude skill during install and uninstall", async () => {
+    const root = temporaryRoot("ai-office-client-claude-user-skill-");
+    const userSkill =
+      "---\nname: ai-office\ndescription: User Claude workflow.\n---\n\n# Keep this\n";
+    mkdirSync(join(root, ".claude", "skills", "ai-office"), {
+      recursive: true,
+    });
+    writeFileSync(join(root, claudeProjectSkillPath), userSkill);
+    const integration = service();
+    const installPlan = await integration.plan({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    expect(installPlan.changes).not.toContainEqual(
+      expect.objectContaining({ relativePath: claudeProjectSkillPath }),
+    );
+    expect(installPlan.issues).toContainEqual(
+      expect.objectContaining({ code: "claude_skill_user_owned_preserved" }),
+    );
+    await integration.apply({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: installPlan.planHash,
+    });
+
+    const uninstallPlan = await integration.planUninstall({
+      clientId: "claude",
+      rootPath: root,
+    });
+    expect(uninstallPlan.changes).not.toContainEqual(
+      expect.objectContaining({ relativePath: claudeProjectSkillPath }),
+    );
+    await integration.uninstall({
+      clientId: "claude",
+      rootPath: root,
+      approvedPlanHash: uninstallPlan.planHash,
+    });
+    expect(readFileSync(join(root, claudeProjectSkillPath), "utf8")).toBe(
+      userSkill,
+    );
+  });
+
   test("accepts an existing direct Claude import without duplicating it", async () => {
     const root = temporaryRoot("ai-office-client-claude-import-");
-    writeFileSync(join(root, "AGENTS.md"), "# User canonical contract\n");
-    writeFileSync(join(root, "CLAUDE.md"), "# Claude notes\n\n@AGENTS.md\n");
+    writeFileSync(
+      join(root, canonicalProjectInstructionsPath),
+      "# User canonical contract\n",
+    );
+    writeFileSync(join(root, "CLAUDE.md"), "# Claude notes\n\n@AI-OFFICE.md\n");
     const integration = service();
 
     const inspection = await integration.inspect("claude", root);
@@ -276,20 +449,28 @@ describe("agent client integrations", () => {
       integrationStatus: "integrated",
     });
 
-    expect(
-      await integration.plan({
-        clientId: "claude",
-        rootPath: root,
-        contract: projectInstructionContract,
-      }),
-    ).toMatchObject({ changes: [] });
+    const plan = await integration.plan({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    expect(plan.changes.map((change) => change.relativePath)).toEqual([
+      codexProjectSkillPath,
+      claudeProjectSkillPath,
+    ]);
+    await integration.apply({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: plan.planHash,
+    });
     const validation = await integration.validate("claude", root);
     expect(validation.valid).toBe(true);
     expect(validation.issues).toContainEqual(
       expect.objectContaining({ code: "canonical_instructions_unmanaged" }),
     );
     expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(
-      "# Claude notes\n\n@AGENTS.md\n",
+      "# Claude notes\n\n@AI-OFFICE.md\n",
     );
   });
 
@@ -301,7 +482,10 @@ describe("agent client integrations", () => {
       rootPath: root,
       contract: projectInstructionContract,
     });
-    writeFileSync(join(root, "AGENTS.md"), "# Concurrent user contract\n");
+    writeFileSync(
+      join(root, canonicalProjectInstructionsPath),
+      "# Concurrent user contract\n",
+    );
 
     await expect(
       integration.apply({
@@ -311,9 +495,9 @@ describe("agent client integrations", () => {
         approvedPlanHash: plan.planHash,
       }),
     ).rejects.toBeInstanceOf(AgentClientPlanApprovalError);
-    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(
-      "# Concurrent user contract\n",
-    );
+    expect(
+      readFileSync(join(root, canonicalProjectInstructionsPath), "utf8"),
+    ).toBe("# Concurrent user contract\n");
     expect(() => readFileSync(join(root, "CLAUDE.md"), "utf8")).toThrow();
   });
 
@@ -388,7 +572,11 @@ describe("agent client integrations", () => {
     });
     expect(uninstallPlan).toMatchObject({
       action: "uninstall",
-      changes: [{ kind: "delete", relativePath: "AGENTS.md" }],
+      changes: [
+        { kind: "delete", relativePath: "AGENTS.md" },
+        { kind: "delete", relativePath: codexProjectSkillPath },
+        { kind: "delete", relativePath: canonicalProjectInstructionsPath },
+      ],
     });
     await integration.uninstall({
       clientId: "codex",
@@ -396,6 +584,10 @@ describe("agent client integrations", () => {
       approvedPlanHash: uninstallPlan.planHash,
     });
     expect(existsSync(join(root, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(root, canonicalProjectInstructionsPath))).toBe(
+      false,
+    );
+    expect(existsSync(join(root, codexProjectSkillPath))).toBe(false);
   });
 
   test("preserves user-owned Codex instructions during uninstall", async () => {
@@ -410,7 +602,7 @@ describe("agent client integrations", () => {
     expect(plan.changes).toEqual([]);
     expect(plan.issues).toContainEqual(
       expect.objectContaining({
-        code: "canonical_instructions_user_owned_preserved",
+        code: "codex_pointer_user_owned_preserved",
       }),
     );
     await integration.uninstall({
@@ -445,6 +637,10 @@ describe("agent client integrations", () => {
       rootPath: root,
     });
     expect(uninstallPlan.changes).toEqual([
+      expect.objectContaining({
+        kind: "delete",
+        relativePath: claudeProjectSkillPath,
+      }),
       expect.objectContaining({
         kind: "update",
         relativePath: "CLAUDE.md",
@@ -481,7 +677,11 @@ describe("agent client integrations", () => {
       contract: projectInstructionContract,
       approvedPlanHash: installPlan.planHash,
     });
-    const canonicalBefore = readFileSync(join(root, "AGENTS.md"), "utf8");
+    const canonicalBefore = readFileSync(
+      join(root, canonicalProjectInstructionsPath),
+      "utf8",
+    );
+    const skillBefore = readFileSync(join(root, codexProjectSkillPath), "utf8");
     const claudeBefore = readFileSync(join(root, "CLAUDE.md"), "utf8");
 
     const uninstallPlan = await integration.planUninstall({
@@ -494,7 +694,7 @@ describe("agent client integrations", () => {
         severity: "warning",
         code: "claude_canonical_dependency_preserved",
         message: expect.stringContaining(
-          "remains required and will be preserved",
+          "will be preserved until the Claude integration is removed",
         ),
       }),
     );
@@ -504,7 +704,12 @@ describe("agent client integrations", () => {
       approvedPlanHash: uninstallPlan.planHash,
     });
 
-    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(canonicalBefore);
+    expect(
+      readFileSync(join(root, canonicalProjectInstructionsPath), "utf8"),
+    ).toBe(canonicalBefore);
+    expect(readFileSync(join(root, codexProjectSkillPath), "utf8")).toBe(
+      skillBefore,
+    );
     expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(claudeBefore);
     expect(await integration.validate("claude", root)).toMatchObject({
       valid: true,
@@ -525,14 +730,16 @@ describe("agent client integrations", () => {
       contract: projectInstructionContract,
       approvedPlanHash: installPlan.planHash,
     });
-    const userClaude = "# User Claude instructions\n\n@AGENTS.md\n";
+    const userClaude = "# User Claude instructions\n\n@AI-OFFICE.md\n";
     writeFileSync(join(root, "CLAUDE.md"), userClaude);
 
     const uninstallPlan = await integration.planUninstall({
       clientId: "codex",
       rootPath: root,
     });
-    expect(uninstallPlan.changes).toEqual([]);
+    expect(uninstallPlan.changes).toEqual([
+      expect.objectContaining({ kind: "delete", relativePath: "AGENTS.md" }),
+    ]);
     expect(uninstallPlan.issues).toContainEqual(
       expect.objectContaining({
         severity: "warning",
@@ -545,13 +752,52 @@ describe("agent client integrations", () => {
       approvedPlanHash: uninstallPlan.planHash,
     });
 
-    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
-      "<!-- ai-office:managed project-instructions v1 -->",
-    );
+    expect(
+      readFileSync(join(root, canonicalProjectInstructionsPath), "utf8"),
+    ).toContain("<!-- ai-office:managed project-instructions v2 -->");
     expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(userClaude);
   });
 
-  test("deletes an AI Office-owned Claude bridge but leaves canonical instructions", async () => {
+  test("Codex uninstall preserves the shared skill when Claude imports user-owned guidance", async () => {
+    const root = temporaryRoot("ai-office-client-user-guide-dependency-");
+    const userGuide = "# User-owned shared guidance\n";
+    writeFileSync(join(root, canonicalProjectInstructionsPath), userGuide);
+    const integration = service();
+    const claudePlan = await integration.plan({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    await integration.apply({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: claudePlan.planHash,
+    });
+
+    const uninstallPlan = await integration.planUninstall({
+      clientId: "codex",
+      rootPath: root,
+    });
+    expect(uninstallPlan.changes).toEqual([]);
+    expect(uninstallPlan.issues).toContainEqual(
+      expect.objectContaining({
+        code: "claude_canonical_dependency_preserved",
+      }),
+    );
+    await integration.uninstall({
+      clientId: "codex",
+      rootPath: root,
+      approvedPlanHash: uninstallPlan.planHash,
+    });
+
+    expect(
+      readFileSync(join(root, canonicalProjectInstructionsPath), "utf8"),
+    ).toBe(userGuide);
+    expect(existsSync(join(root, codexProjectSkillPath))).toBe(true);
+  });
+
+  test("removes unreferenced shared artifacts with an AI Office-owned Claude integration", async () => {
     const root = temporaryRoot("ai-office-client-claude-owned-uninstall-");
     const integration = service();
     const installPlan = await integration.plan({
@@ -574,7 +820,19 @@ describe("agent client integrations", () => {
       rootPath: root,
     });
     expect(uninstallPlan.changes).toEqual([
+      expect.objectContaining({
+        kind: "delete",
+        relativePath: claudeProjectSkillPath,
+      }),
       expect.objectContaining({ kind: "delete", relativePath: "CLAUDE.md" }),
+      expect.objectContaining({
+        kind: "delete",
+        relativePath: codexProjectSkillPath,
+      }),
+      expect.objectContaining({
+        kind: "delete",
+        relativePath: canonicalProjectInstructionsPath,
+      }),
     ]);
     await integration.uninstall({
       clientId: "claude",
@@ -582,7 +840,46 @@ describe("agent client integrations", () => {
       approvedPlanHash: uninstallPlan.planHash,
     });
     expect(existsSync(join(root, "CLAUDE.md"))).toBe(false);
-    expect(existsSync(join(root, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(root, canonicalProjectInstructionsPath))).toBe(
+      false,
+    );
+    expect(existsSync(join(root, codexProjectSkillPath))).toBe(false);
+  });
+
+  test("stops Claude uninstall when a Codex dependency appears during apply", async () => {
+    const root = temporaryRoot("ai-office-client-claude-dependency-race-");
+    const installing = service();
+    const installPlan = await installing.plan({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    await installing.apply({
+      clientId: "claude",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: installPlan.planHash,
+    });
+    const uninstalling = service({
+      beforeCommit: (path) => {
+        if (path === codexProjectSkillPath)
+          writeFileSync(join(root, "AGENTS.md"), "# New Codex dependency\n");
+      },
+    });
+    const uninstallPlan = await uninstalling.planUninstall({
+      clientId: "claude",
+      rootPath: root,
+    });
+
+    await expect(
+      uninstalling.uninstall({
+        clientId: "claude",
+        rootPath: root,
+        approvedPlanHash: uninstallPlan.planHash,
+      }),
+    ).rejects.toThrow("still require shared AI Office artifacts");
+    expect(existsSync(join(root, canonicalProjectInstructionsPath))).toBe(true);
+    expect(existsSync(join(root, codexProjectSkillPath))).toBe(true);
   });
 
   test("rejects a stale uninstall approval without deleting concurrent edits", async () => {
@@ -633,8 +930,10 @@ describe("agent client integrations", () => {
     });
 
     const uninstalling = service({
-      beforeCommit: () =>
-        writeFileSync(join(root, "AGENTS.md"), "# Last-moment user edit\n"),
+      beforeCommit: (path) => {
+        if (path === "AGENTS.md")
+          writeFileSync(join(root, "AGENTS.md"), "# Last-moment user edit\n");
+      },
     });
     const uninstallPlan = await uninstalling.planUninstall({
       clientId: "codex",
@@ -666,10 +965,10 @@ describe("agent client integrations", () => {
       contract: projectInstructionContract,
       approvedPlanHash: installPlan.planHash,
     });
-    const userClaude = "# Concurrent Claude instructions\n\n@AGENTS.md\n";
+    const userClaude = "# Concurrent Claude instructions\n\n@AI-OFFICE.md\n";
     const uninstalling = service({
       beforeCommit: (path) => {
-        if (path === "AGENTS.md")
+        if (path === codexProjectSkillPath)
           writeFileSync(join(root, "CLAUDE.md"), userClaude);
       },
     });
@@ -684,10 +983,10 @@ describe("agent client integrations", () => {
         rootPath: root,
         approvedPlanHash: uninstallPlan.planHash,
       }),
-    ).rejects.toThrow("still requires AGENTS.md");
-    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
-      "<!-- ai-office:managed project-instructions v1 -->",
-    );
+    ).rejects.toThrow("still requires shared AI Office artifacts");
+    expect(
+      readFileSync(join(root, canonicalProjectInstructionsPath), "utf8"),
+    ).toContain("<!-- ai-office:managed project-instructions v2 -->");
     expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(userClaude);
   });
 
@@ -712,9 +1011,9 @@ describe("agent client integrations", () => {
         approvedPlanHash: plan.planHash,
       }),
     ).rejects.toThrow("injected bridge failure");
-    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toContain(
-      "<!-- ai-office:managed project-instructions v1 -->",
-    );
+    expect(
+      readFileSync(join(root, canonicalProjectInstructionsPath), "utf8"),
+    ).toContain("<!-- ai-office:managed project-instructions v2 -->");
     expect(() => readFileSync(join(root, "CLAUDE.md"), "utf8")).toThrow();
     expect(readdirSync(root).some((path) => path.endsWith(".tmp"))).toBe(false);
     expect((await failing.validate("claude", root)).valid).toBe(false);
@@ -727,6 +1026,7 @@ describe("agent client integrations", () => {
     });
     expect(repairPlan.changes.map((change) => change.relativePath)).toEqual([
       "CLAUDE.md",
+      claudeProjectSkillPath,
     ]);
     expect(
       await repairing.apply({

@@ -87,9 +87,11 @@ ai-office status
 `install` imports or reuses the project, applies the default office baseline
 only when no manifest exists, writes `.ai-office/project.json`, detects supported
 coding clients, and reconciles the repository-local files AI Office can safely
-manage. It does not install third-party software, overwrite user-owned
-`AGENTS.md`, grant capabilities, or copy the authoritative database into the
-project. Exit code `0` means installed without issues, `2` means installed with
+manage. For detected Codex or Claude hosts this includes the shared
+`AI-OFFICE.md` guide, minimal host pointers, and a discoverable repository-local
+`ai-office` skill. It does not install third-party software, overwrite
+user-owned instructions or skills, grant capabilities, or copy the authoritative
+database into the project. Exit code `0` means installed without issues, `2` means installed with
 actionable warnings, and `1` means failed or partial. JSON output uses the same
 `installed`, `installed_with_warnings`, or `partial` outcome semantics.
 
@@ -214,8 +216,11 @@ The runtime stores each accepted manifest as an immutable revision and records a
 sanitized audit event. Permission preferences remain project knowledge; they do
 not create capability grants.
 
-The skill is checked in at `.agents/skills/ai-office`. Its default manifest is a
-starting point, not an automatic grant or fixed organization.
+The distribution skill is checked in at `.agents/skills/ai-office`; normal
+install also projects a self-contained repository skill at that path in the
+target project and a Claude discovery wrapper under `.claude/skills`. Its
+default manifest is a starting point, not an automatic grant or fixed
+organization.
 
 ## Machine interface
 
@@ -374,8 +379,9 @@ Three path roles are independent in the current implementation:
   move or create that database under the imported repository.
 - **Integration root:** the target repository supplied explicitly to
   `client:inspect`, `client:plan`, `client:apply`, and `client:validate` with
-  `--root <path>`. The instruction contract must be inside this root, and
-  `AGENTS.md` plus `CLAUDE.md` are inspected or managed there.
+  `--root <path>`. The optional instruction contract must be inside this root;
+  the shared guide, host pointers, and repository skills are inspected or
+  managed there.
 
 These roots often coincide in a simple setup, but they are not required to do
 so. One runtime database can contain more than one imported project ID, and an
@@ -399,8 +405,11 @@ The intended three-database layout is:
 ├── .ai-office/
 │   ├── project.json              # committable repository identity; not authority
 │   └── agent-instructions.json   # optional machine-workflow contract input
-├── AGENTS.md                     # canonical project instructions
-└── CLAUDE.md                     # optional Claude import bridge
+├── AI-OFFICE.md                  # shared derived project guidance
+├── AGENTS.md                     # minimal Codex pointer
+├── CLAUDE.md                     # optional Claude import bridge
+├── .agents/skills/ai-office/SKILL.md
+└── .claude/skills/ai-office/SKILL.md
 ```
 
 Normal daemon operation creates `project.sqlite`, its live SQLite sidecars, and
@@ -435,20 +444,23 @@ The resulting path ownership can be:
 /Users/alice/dev/my-product/
 ├── .ai-office/
 │   └── project.json              # portable repository identity anchor
-├── AGENTS.md
-└── CLAUDE.md
+├── AI-OFFICE.md                  # shared, derived, safe to commit
+├── AGENTS.md                     # minimal Codex pointer
+├── CLAUDE.md                     # managed @AI-OFFICE.md bridge
+├── .agents/skills/ai-office/SKILL.md
+└── .claude/skills/ai-office/SKILL.md
 ```
 
 `my-product` is the source/import root and, for the client commands, the
 integration root. The runtime database remains under the stable user home;
 moving or reinstalling the AI Office program does not relocate or replace it.
 
-| Path                                       | Scope and purpose                                              | Current status                             | Authority and deletion impact                                                                                          |
-| ------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `<runtime-home>/project.sqlite`          | Projects known to this runtime and their operational state     | Active; opened and migrated by the daemon  | **Authoritative, not a cache.** Deleting it removes persisted AI Office knowledge and history from this runtime.       |
-| `<runtime-home>/global.sqlite`           | User-level roles, patterns, and lessons                        | Active; migrated lazily by memory commands | **Durable global knowledge.** Preserved by `runtime:purge`; deleting it explicitly removes reusable definitions.       |
-| `<runtime-home>/index.sqlite`            | Future derived code intelligence                               | Initial migration only; M8 is future       | Intended to be regenerable; there is no populated index to preserve today.                                             |
-| `<project-root>/.ai-office/project.json` | Portable repository identity                                   | Active; created by `install`               | **Not authoritative.** Safe to commit and preserved by local uninstall.                                                |
+| Path                                     | Scope and purpose                                          | Current status                             | Authority and deletion impact                                                                                    |
+| ---------------------------------------- | ---------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `<runtime-home>/project.sqlite`          | Projects known to this runtime and their operational state | Active; opened and migrated by the daemon  | **Authoritative, not a cache.** Deleting it removes persisted AI Office knowledge and history from this runtime. |
+| `<runtime-home>/global.sqlite`           | User-level roles, patterns, and lessons                    | Active; migrated lazily by memory commands | **Durable global knowledge.** Preserved by `runtime:purge`; deleting it explicitly removes reusable definitions. |
+| `<runtime-home>/index.sqlite`            | Future derived code intelligence                           | Initial migration only; M8 is future       | Intended to be regenerable; there is no populated index to preserve today.                                       |
+| `<project-root>/.ai-office/project.json` | Portable repository identity                               | Active; created by `install`               | **Not authoritative.** Safe to commit and preserved by local uninstall.                                          |
 
 Project migrations are versioned under `migrations/project/`, applied
 transactionally, and tracked in `schema_migration`. SQLite runs in WAL mode;
@@ -536,14 +548,15 @@ The runtime home is daemon operational material and is
 conceptually separate from source such as `src/` and `docs/`. Coding-client
 integration is another concern and may target a different repository. Relative
 to the explicit `client:* --root`, the workflow may use
-`.ai-office/agent-instructions.json` as its contract input, create an
-AI Office-owned `AGENTS.md` when none exists, or maintain a marked import bridge
-inside `CLAUDE.md`.
+`.ai-office/agent-instructions.json` as its contract input, project shared
+guidance to `AI-OFFICE.md`, create a minimal AI Office-owned `AGENTS.md` pointer,
+maintain a marked import bridge inside `CLAUDE.md`, and install repository-local
+skills for supported hosts.
 
-AI Office never blindly overwrites a user-owned `AGENTS.md`; it reports that
-file as unmanaged. Existing Claude instructions are preserved and only the
-identifiable managed bridge is created or updated after approval of the exact
-plan hash. These files configure how a client consumes project instructions;
+AI Office never blindly overwrites a user-owned guide, pointer, or skill; it
+reports that artifact as unmanaged. Existing Claude instructions are preserved
+and only the identifiable managed bridge is created or updated after approval
+of the exact plan hash. These files configure how a client consumes project instructions;
 they are not SQLite runtime state, an office manifest, a capability grant, or
 agent authorization. Inspect their ownership and Git status before removing
 them. See the [client integration guide](docs/development/agent-client-integration.md)
@@ -552,8 +565,9 @@ for the complete ownership and validation contract.
 This repository's `.gitignore` deliberately ignores local SQLite files and
 sidecars, sockets, `generated/`, and `drafts/` under `.ai-office/`; it does not
 ignore the entire directory. The optional `agent-instructions.json` contract is
-not ignored by that rule. Repository-owned `AGENTS.md`, `CLAUDE.md`, and
-`.agents/skills/` may intentionally be versioned. Treat runtime database files
+not ignored by that rule. Repository-owned `AI-OFFICE.md`, `AGENTS.md`,
+`CLAUDE.md`, `.agents/skills/`, and `.claude/skills/` may intentionally be
+versioned. Treat runtime database files
 as local state and decide separately which client-integration artifacts belong
 in source control.
 
@@ -574,8 +588,8 @@ At minimum preserve `project.sqlite`. Copying the whole runtime directory after
 a clean shutdown also preserves unapplied office drafts and generated
 projections. It preserves the optional client contract only when the integration
 root and runtime root coincide; otherwise inspect and back up
-`<integration-root>/.ai-office/agent-instructions.json`, `AGENTS.md`, and
-`CLAUDE.md` separately according to their ownership. Do not copy only
+`<integration-root>/.ai-office/agent-instructions.json`, `AI-OFFICE.md`, host
+pointers, and repository skills separately according to their ownership. Do not copy only
 `project.sqlite` while the daemon is running because its WAL may contain
 committed state. Keep the backup outside the runtime home you intend
 to purge and verify that the copy exists. Then generate and inspect the local
@@ -667,11 +681,12 @@ calls.
 
 ## Coding client integration
 
-Within the selected integration root, AI Office uses `AGENTS.md` as the
-canonical project operating contract. Codex loads it natively; Claude Code can
-use a minimal `CLAUDE.md` import bridge. Client detection and inspection are
-passive, and configuration mutation requires an explicit hash from the exact
-proposed plan:
+Within the selected integration root, AI Office uses `AI-OFFICE.md` as the
+shared derived project guide. Codex gets a minimal `AGENTS.md` pointer and a
+skill under `.agents/skills`; Claude gets a managed `CLAUDE.md` import and a
+small discovery wrapper under `.claude/skills`. Client detection and inspection
+are passive, and configuration mutation requires an explicit hash from the
+exact proposed plan:
 
 The normal `ai-office install .` lifecycle composes detect, inspect, plan,
 apply, and validate for detected or already managed clients. It still computes
@@ -689,10 +704,10 @@ bun run cli -- client:apply --client claude --root /path/to/integration-root \
 bun run cli -- client:validate --client claude --root /path/to/integration-root
 ```
 
-AI Office never overwrites user-owned `AGENTS.md`. Existing Claude instructions
-are preserved and only an identifiable managed bridge is maintained. A
-user-owned canonical file remains `unmanaged`: the client can consume it, but AI
-Office does not claim that the supplied contract was installed. These commands
+AI Office never overwrites user-owned guidance, pointers, or skills. Existing
+Claude instructions are preserved and only an identifiable managed bridge is
+maintained. A user-owned artifact remains `unmanaged`: the client can consume
+it, but AI Office does not claim that the supplied contract was installed. These commands
 do not modify global Codex/Claude configuration and remain separate from project
 onboarding. See the [client integration guide](docs/development/agent-client-integration.md).
 
@@ -706,13 +721,12 @@ bun run cli -- client:uninstall --client claude --root /path/to/integration-root
   --approve <plan-hash>
 ```
 
-Claude uninstall removes only its managed bridge. Codex uninstall removes an
-AI Office-owned canonical `AGENTS.md` only when `CLAUDE.md` does not still
-import it. A managed Claude bridge or user-owned direct `@AGENTS.md` import
-keeps the canonical file in place and is explained in the preview. To remove
-both managed integrations, uninstall Claude first and Codex second. A
-user-owned direct import remains untouched and must be removed or rewritten by
-its owner before Codex uninstall can remove the shared canonical file.
+Claude uninstall removes only its managed bridge and skill wrapper. Codex
+uninstall removes its managed pointer. Shared `AI-OFFICE.md` guidance and the
+primary `.agents` skill are removed only when Claude no longer depends on them.
+To remove both managed integrations, uninstall Claude first and Codex second.
+A user-owned direct import remains untouched and keeps shared artifacts in
+place until its owner changes that dependency.
 
 Read [AGENTS.md](AGENTS.md) before changing code. It defines the canonical
 operating contract, invariants, scope rules, and definition of done.

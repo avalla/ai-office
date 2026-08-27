@@ -28,7 +28,8 @@ bun run check
 ```
 
 `bun run check` validates the repository-scoped AI Office skill, then runs
-typecheck, lint, and the full test suite. The skill check is deterministic,
+typecheck, lint, and the full test suite. It validates both the distribution
+skill and the self-contained skill projected by project install. The check is deterministic,
 requires no secret or network access, validates `SKILL.md` and
 `agents/openai.yaml` structure, verifies required linked resources, and parses
 the default manifest through the production manifest schema.
