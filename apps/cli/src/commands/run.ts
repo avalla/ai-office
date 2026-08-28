@@ -32,6 +32,7 @@ function controlledActionExecutor(
     context.ids,
     context.clock,
     context.transactions,
+    context.runtime,
   );
   const invoke = new InvokeControlledConnectorAction(
     request,
@@ -43,10 +44,15 @@ function controlledActionExecutor(
     context.connectors,
     evaluator,
     context.controlled,
+    {},
+    context.runtime,
   );
   return new ControlledActionAgentExecutor({
     invoke: async (input) => {
-      const result = await invoke.execute(input);
+      const result = await invoke.execute({
+        agentRunId: input.agentRunId,
+        ...(input.signal === undefined ? {} : { signal: input.signal }),
+      });
       return {
         requestId: result.requestId,
         outcome: result.outcome,

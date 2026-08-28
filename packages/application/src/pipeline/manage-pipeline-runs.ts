@@ -17,6 +17,10 @@ import type { OfficeManifestRepository } from "../ports/office-manifest-reposito
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import type {
+  AgentExecutionPrincipal,
+  OperatorPrincipal,
+} from "../ports/execution-principal.port.ts";
 import { RecordAuditEvent } from "../commands/record-audit-event.ts";
 import {
   ActivePipelineRunExistsError,
@@ -26,10 +30,7 @@ import {
   PipelineRunNotFoundError,
 } from "../pipeline-errors.ts";
 
-export interface PipelineActor {
-  type: "user" | "agent";
-  id: string;
-}
+type PipelinePrincipal = OperatorPrincipal | AgentExecutionPrincipal;
 
 export class ManagePipelineRuns {
   constructor(
@@ -47,9 +48,10 @@ export class ManagePipelineRuns {
     projectId: string;
     taskId: string;
     pipelineId: string;
-    actor: PipelineActor;
+    principal: OperatorPrincipal;
+    actorLabel?: string;
   }): Promise<PipelineRun> {
-    this.requireOperator(input.actor);
+    this.requireOperator(input.principal);
     const task = await this.tasks.findById(input.taskId);
     if (task === null || task.snapshot().projectId !== input.projectId)
       throw new TaskNotFoundError(input.taskId);
@@ -76,7 +78,7 @@ export class ManagePipelineRuns {
       manifestRevisionId: revision.id,
       manifestRevision: revision.revision,
       definition,
-      startedBy: input.actor.id,
+      startedBy: input.principal.id,
       stageRunIds: definition.stages.map(() => this.ids.generate()),
       now,
     });
@@ -84,12 +86,15 @@ export class ManagePipelineRuns {
     await this.transactions.run(async () => {
       await this.tasks.save(task);
       await this.pipelines.insert(run);
-      await this.event(run, "pipeline.started", input.actor, {
+      await this.event(run, "pipeline.started", input.principal, {
         taskId: input.taskId,
         pipelineId: definition.id,
         manifestRevision: revision.revision,
+        ...(input.actorLabel === undefined
+          ? {}
+          : { actorLabel: input.actorLabel }),
       });
-      await this.event(run, "pipeline.stage_activated", input.actor, {
+      await this.event(run, "pipeline.stage_activated", input.principal, {
         stageId: run.currentStage()!.stageId,
       });
     });
@@ -100,149 +105,177 @@ export class ManagePipelineRuns {
     projectId: string;
     pipelineRunId: string;
     agentId: string;
-    actor: PipelineActor;
+    principal: OperatorPrincipal;
+    actorLabel?: string;
   }): Promise<PipelineRun> {
-    this.requireOperator(input.actor);
+    this.requireOperator(input.principal);
     const agent = await this.agents.findAgent(input.agentId);
     if (agent === null || agent.projectId !== input.projectId || !agent.enabled)
       throw new AgentNotFoundError(input.agentId);
     const role = await this.agents.findRole(agent.roleId, input.projectId);
     if (role === null) throw new AgentNotFoundError(input.agentId);
-    return this.change(
-      input.projectId,
-      input.pipelineRunId,
-      input.actor,
-      async (run) => {
-        const before = run.snapshot().version;
-        run.assign(input.agentId, role.snapshot().key, this.clock.now());
-        await this.persist(run, before);
-        await this.event(run, "pipeline.agent_assigned", input.actor, {
-          stageId: run.currentStage()!.stageId,
-          agentId: input.agentId,
-        });
-      },
-    );
+    return this.change(input.projectId, input.pipelineRunId, async (run) => {
+      const before = run.snapshot().version;
+      run.assign(input.agentId, role.snapshot().key, this.clock.now());
+      await this.persist(run, before);
+      await this.event(run, "pipeline.agent_assigned", input.principal, {
+        stageId: run.currentStage()!.stageId,
+        agentId: input.agentId,
+        ...(input.actorLabel === undefined
+          ? {}
+          : { actorLabel: input.actorLabel }),
+      });
+    });
   }
 
-  async completeStage(input: {
+  async completeStageFromAgentRun(input: {
     projectId: string;
-    pipelineRunId: string;
-    actor: PipelineActor;
+    agentRunId: string;
+    expectedPipelineRunId?: string;
   }): Promise<PipelineRun> {
-    if (input.actor.type !== "agent")
+    const agentRun = await this.agents.findRun(input.agentRunId);
+    if (agentRun === null)
       throw new PipelineActorUnauthorizedError("stage completion");
-    return this.change(
-      input.projectId,
-      input.pipelineRunId,
-      input.actor,
-      async (run) => {
-        const before = run.snapshot();
-        run.completeStage(input.actor.id, this.clock.now());
-        await this.persist(run, before.version);
-        await this.syncTaskTerminal(run);
-        const after = run.snapshot();
-        await this.event(
-          run,
-          run.currentStage()?.status === "awaiting_approval"
-            ? "pipeline.approval_requested"
-            : "pipeline.stage_completed",
-          input.actor,
-          { stageId: before.stages[before.currentStageIndex]!.stageId },
-        );
-        if (after.status === "completed")
-          await this.event(run, "pipeline.completed", input.actor, {});
-        else if (after.currentStageIndex !== before.currentStageIndex)
-          await this.event(run, "pipeline.stage_activated", input.actor, {
-            stageId: after.stages[after.currentStageIndex]!.stageId,
-          });
-      },
-    );
+    const agent = agentRun.snapshot();
+    if (
+      agent.projectId !== input.projectId ||
+      agent.pipelineRunId === undefined
+    )
+      throw new PipelineActorUnauthorizedError("stage completion");
+    if (
+      input.expectedPipelineRunId !== undefined &&
+      input.expectedPipelineRunId !== agent.pipelineRunId
+    )
+      throw new PipelineActorUnauthorizedError("stage completion");
+    if (!(agent.status === "running" || agent.status === "reviewing"))
+      throw new PipelineActorUnauthorizedError("stage completion");
+    const principal: AgentExecutionPrincipal = {
+      kind: "agent",
+      agentRunId: agent.id,
+      agentId: agent.agentId,
+      projectId: agent.projectId,
+      taskId: agent.taskId,
+      pipelineRunId: agent.pipelineRunId,
+    };
+    return this.change(input.projectId, agent.pipelineRunId, async (run) => {
+      const snapshot = run.snapshot();
+      const stage = run.currentStage();
+      if (snapshot.taskId !== principal.taskId || stage === null)
+        throw new PipelineActorUnauthorizedError("stage completion");
+      if (
+        stage.status !== "active" ||
+        stage.assignedAgentId !== principal.agentId ||
+        (stage.assignedAt !== undefined &&
+          agent.createdAt.getTime() < stage.assignedAt.getTime())
+      )
+        throw new PipelineActorUnauthorizedError("stage completion");
+      const before = run.snapshot();
+      run.completeStage(principal.agentId, this.clock.now());
+      await this.persist(run, before.version);
+      await this.syncTaskTerminal(run);
+      const after = run.snapshot();
+      await this.event(
+        run,
+        run.currentStage()?.status === "awaiting_approval"
+          ? "pipeline.approval_requested"
+          : "pipeline.stage_completed",
+        principal,
+        { stageId: before.stages[before.currentStageIndex]!.stageId },
+      );
+      if (after.status === "completed")
+        await this.event(run, "pipeline.completed", principal, {});
+      else if (after.currentStageIndex !== before.currentStageIndex)
+        await this.event(run, "pipeline.stage_activated", principal, {
+          stageId: after.stages[after.currentStageIndex]!.stageId,
+        });
+    });
   }
 
   async approveStage(input: {
     projectId: string;
     pipelineRunId: string;
-    actor: PipelineActor;
+    principal: OperatorPrincipal;
+    actorLabel?: string;
     rationale?: string;
   }): Promise<PipelineRun> {
-    this.requireOperator(input.actor);
-    return this.change(
-      input.projectId,
-      input.pipelineRunId,
-      input.actor,
-      async (run) => {
-        const before = run.snapshot();
-        run.approveStage(input.actor.id, input.rationale, this.clock.now());
-        await this.persist(run, before.version);
-        await this.syncTaskTerminal(run);
-        await this.event(run, "pipeline.approval_granted", input.actor, {
-          stageId: before.stages[before.currentStageIndex]!.stageId,
-          ...(input.rationale === undefined
-            ? {}
-            : { rationale: input.rationale }),
-        });
-        await this.afterAdvance(run, before, input.actor);
-      },
-    );
+    this.requireOperator(input.principal);
+    return this.change(input.projectId, input.pipelineRunId, async (run) => {
+      const before = run.snapshot();
+      run.approveStage(input.principal.id, input.rationale, this.clock.now());
+      await this.persist(run, before.version);
+      await this.syncTaskTerminal(run);
+      await this.event(run, "pipeline.approval_granted", input.principal, {
+        stageId: before.stages[before.currentStageIndex]!.stageId,
+        ...(input.actorLabel === undefined
+          ? {}
+          : { actorLabel: input.actorLabel }),
+        ...(input.rationale === undefined
+          ? {}
+          : { rationale: input.rationale }),
+      });
+      await this.afterAdvance(run, before, input.principal);
+    });
   }
 
   async rejectStage(input: {
     projectId: string;
     pipelineRunId: string;
-    actor: PipelineActor;
+    principal: OperatorPrincipal;
+    actorLabel?: string;
     rationale: string;
   }): Promise<PipelineRun> {
-    this.requireOperator(input.actor);
-    return this.change(
-      input.projectId,
-      input.pipelineRunId,
-      input.actor,
-      async (run) => {
-        const before = run.snapshot();
-        run.rejectStage(input.actor.id, input.rationale, this.clock.now());
-        await this.persist(run, before.version);
-        await this.syncTaskTerminal(run);
-        await this.event(run, "pipeline.approval_rejected", input.actor, {
-          stageId: before.stages[before.currentStageIndex]!.stageId,
-          rationale: input.rationale,
-        });
-        await this.event(run, "pipeline.cancelled", input.actor, {
-          reason: "approval_rejected",
-        });
-      },
-    );
+    this.requireOperator(input.principal);
+    return this.change(input.projectId, input.pipelineRunId, async (run) => {
+      const before = run.snapshot();
+      run.rejectStage(input.principal.id, input.rationale, this.clock.now());
+      await this.persist(run, before.version);
+      await this.syncTaskTerminal(run);
+      await this.event(run, "pipeline.approval_rejected", input.principal, {
+        stageId: before.stages[before.currentStageIndex]!.stageId,
+        rationale: input.rationale,
+        ...(input.actorLabel === undefined
+          ? {}
+          : { actorLabel: input.actorLabel }),
+      });
+      await this.event(run, "pipeline.cancelled", input.principal, {
+        reason: "approval_rejected",
+      });
+    });
   }
 
   async override(input: {
     projectId: string;
     pipelineRunId: string;
-    actor: PipelineActor;
+    principal: OperatorPrincipal;
+    actorLabel?: string;
     reason: string;
   }): Promise<{ run: PipelineRun; override: PipelineOverrideRecord }> {
-    this.requireOperator(input.actor);
+    this.requireOperator(input.principal);
     let result: PipelineOverrideRecord | undefined;
     const run = await this.change(
       input.projectId,
       input.pipelineRunId,
-      input.actor,
       async (value) => {
         const before = value.snapshot();
         result = value.overrideCurrent({
           id: this.ids.generate(),
-          actorId: input.actor.id,
+          actorId: input.principal.id,
           reason: input.reason,
           now: this.clock.now(),
         });
         await this.persist(value, before.version);
         await this.syncTaskTerminal(value);
         await this.pipelines.appendOverride(result);
-        await this.event(value, "pipeline.override_issued", input.actor, {
+        await this.event(value, "pipeline.override_issued", input.principal, {
           stageId: before.stages[before.currentStageIndex]!.stageId,
           reason: result.reason,
           previousRule: result.previousRule,
           resultingAuthorization: result.resultingAuthorization,
+          ...(input.actorLabel === undefined
+            ? {}
+            : { actorLabel: input.actorLabel }),
         });
-        await this.afterAdvance(value, before, input.actor);
+        await this.afterAdvance(value, before, input.principal);
       },
     );
     return { run, override: result! };
@@ -251,21 +284,21 @@ export class ManagePipelineRuns {
   async cancel(input: {
     projectId: string;
     pipelineRunId: string;
-    actor: PipelineActor;
+    principal: OperatorPrincipal;
+    actorLabel?: string;
   }): Promise<PipelineRun> {
-    this.requireOperator(input.actor);
-    return this.change(
-      input.projectId,
-      input.pipelineRunId,
-      input.actor,
-      async (run) => {
-        const version = run.snapshot().version;
-        run.cancel(input.actor.id, this.clock.now());
-        await this.persist(run, version);
-        await this.syncTaskTerminal(run);
-        await this.event(run, "pipeline.cancelled", input.actor, {});
-      },
-    );
+    this.requireOperator(input.principal);
+    return this.change(input.projectId, input.pipelineRunId, async (run) => {
+      const version = run.snapshot().version;
+      run.cancel(input.principal.id, this.clock.now());
+      await this.persist(run, version);
+      await this.syncTaskTerminal(run);
+      await this.event(run, "pipeline.cancelled", input.principal, {
+        ...(input.actorLabel === undefined
+          ? {}
+          : { actorLabel: input.actorLabel }),
+      });
+    });
   }
 
   async show(projectId: string, pipelineRunId: string): Promise<PipelineRun> {
@@ -279,7 +312,6 @@ export class ManagePipelineRuns {
   private async change(
     projectId: string,
     pipelineRunId: string,
-    _actor: PipelineActor,
     operation: (run: PipelineRun) => Promise<void>,
   ): Promise<PipelineRun> {
     return this.transactions.run(async () => {
@@ -306,17 +338,19 @@ export class ManagePipelineRuns {
       throw new ConcurrentPipelineTransitionError(run.snapshot().id);
   }
 
-  private requireOperator(actor: PipelineActor): void {
-    if (actor.type !== "user")
-      throw new PipelineActorUnauthorizedError("administration");
-    if (actor.id.trim() === "")
+  private requireOperator(actor: OperatorPrincipal): void {
+    if (
+      actor.kind !== "operator" ||
+      actor.source !== "local_cli" ||
+      actor.id !== "local-operator"
+    )
       throw new PipelineActorUnauthorizedError("administration");
   }
 
   private async afterAdvance(
     run: PipelineRun,
     before: ReturnType<PipelineRun["snapshot"]>,
-    actor: PipelineActor,
+    actor: PipelinePrincipal,
   ): Promise<void> {
     const after = run.snapshot();
     await this.event(run, "pipeline.stage_completed", actor, {
@@ -344,14 +378,14 @@ export class ManagePipelineRuns {
   private async event(
     run: PipelineRun,
     eventType: string,
-    actor: PipelineActor,
+    actor: PipelinePrincipal,
     payload: Readonly<Record<string, unknown>>,
   ): Promise<void> {
     const snapshot = run.snapshot();
     await this.audit.execute({
       eventType,
-      actorType: actor.type === "user" ? "cli" : "system",
-      actorId: actor.id,
+      actorType: actor.kind === "operator" ? "cli" : "system",
+      actorId: actor.kind === "operator" ? actor.id : actor.agentId,
       projectId: snapshot.projectId,
       aggregateType: "pipeline_run",
       aggregateId: snapshot.id,

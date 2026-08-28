@@ -26,10 +26,11 @@ export class EvaluatePipelineAuthorization {
     pipelineRunId?: string;
   }): Promise<PipelineAuthorizationDecision> {
     if (input.pipelineRunId === undefined) {
-      const active = await this.pipelines.listActiveByProject(input.projectId);
-      return active.length === 0
-        ? { decision: "allow", reasons: [] }
-        : { decision: "deny", reasons: ["pipeline_run_required"] };
+      // Pipeline runs are task-bound. A direct operator action has no task
+      // provenance and is intentionally outside an agent-run pipeline; an
+      // agent action must enter through RequestControlledAction's run-bound
+      // gateway, which supplies pipelineRunId from the persisted AgentRun.
+      return { decision: "allow", reasons: [] };
     }
     const run = await this.pipelines.findById(
       input.pipelineRunId,

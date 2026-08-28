@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0020_pipeline_enforcement.sql",
+        "0021_agent_action_provenance.sql",
       );
       expect(
         database
@@ -107,6 +107,7 @@ describe("migration upgrades", () => {
       "0018_reusable_memory_references.sql",
       "0019_repository_identity.sql",
       "0020_pipeline_enforcement.sql",
+      "0021_agent_action_provenance.sql",
     ]);
     expect(
       database
@@ -155,6 +156,7 @@ describe("migration upgrades", () => {
       "0018_reusable_memory_references.sql",
       "0019_repository_identity.sql",
       "0020_pipeline_enforcement.sql",
+      "0021_agent_action_provenance.sql",
     ]);
     expect(
       database
@@ -195,6 +197,7 @@ describe("migration upgrades", () => {
     expect(migrate(database, migrations).applied).toEqual([
       "0019_repository_identity.sql",
       "0020_pipeline_enforcement.sql",
+      "0021_agent_action_provenance.sql",
     ]);
     database
       .prepare(

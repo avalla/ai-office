@@ -47,6 +47,21 @@ function json(run: PipelineRun): string {
   });
 }
 
+function label(parsed: ReturnType<typeof parseArguments>): string | undefined {
+  const actor = parsed.options.get("actor");
+  const actorLabel = parsed.options.get("actor-label");
+  if (actor !== undefined && actorLabel !== undefined)
+    throw new CliUsageError("Use only one of --actor or --actor-label");
+  return actorLabel ?? actor;
+}
+
+function labelOption(
+  parsed: ReturnType<typeof parseArguments>,
+): { actorLabel: string } | Record<string, never> {
+  const value = label(parsed);
+  return value === undefined ? {} : { actorLabel: value };
+}
+
 export async function handlePipelineCommand(
   command: string,
   args: string[],
@@ -56,13 +71,14 @@ export async function handlePipelineCommand(
   if (command === "pipeline:start") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "task", "pipeline", "actor"]),
+      new Set(["project", "task", "pipeline", "actor", "actor-label"]),
     );
     const run = await manager.start({
       projectId: requiredOption(parsed, "project"),
       taskId: requiredOption(parsed, "task"),
       pipelineId: requiredOption(parsed, "pipeline"),
-      actor: { type: "user", id: requiredOption(parsed, "actor") },
+      principal: context.principal,
+      ...labelOption(parsed),
     });
     context.io.stdout(json(run));
     return 0;
@@ -95,13 +111,14 @@ export async function handlePipelineCommand(
   if (command === "pipeline:assign") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "run", "agent", "actor"]),
+      new Set(["project", "run", "agent", "actor", "actor-label"]),
     );
     const run = await manager.assign({
       projectId: requiredOption(parsed, "project"),
       pipelineRunId: requiredOption(parsed, "run"),
       agentId: requiredOption(parsed, "agent"),
-      actor: { type: "user", id: requiredOption(parsed, "actor") },
+      principal: context.principal,
+      ...labelOption(parsed),
     });
     context.io.stdout(json(run));
     return 0;
@@ -109,38 +126,54 @@ export async function handlePipelineCommand(
   if (command === "pipeline:transition") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "run", "event", "actor", "rationale"]),
+      new Set([
+        "project",
+        "run",
+        "event",
+        "actor",
+        "actor-label",
+        "agent-run",
+        "rationale",
+      ]),
     );
     const event = requiredOption(parsed, "event");
-    const common = {
-      projectId: requiredOption(parsed, "project"),
-      pipelineRunId: requiredOption(parsed, "run"),
-    };
-    const actor = requiredOption(parsed, "actor");
+    const projectId = requiredOption(parsed, "project");
+    const runId = parsed.options.get("run");
     let run: PipelineRun;
-    if (event === "complete")
-      run = await manager.completeStage({
-        ...common,
-        actor: { type: "agent", id: actor },
+    if (event === "complete") {
+      if (parsed.options.has("actor") || parsed.options.has("actor-label"))
+        throw new CliUsageError(
+          "Agent stage completion requires --agent-run and does not accept an actor label",
+        );
+      run = await manager.completeStageFromAgentRun({
+        projectId,
+        agentRunId: requiredOption(parsed, "agent-run"),
+        ...(runId === undefined ? {} : { expectedPipelineRunId: runId }),
       });
-    else if (event === "approve")
+    } else if (event === "approve")
       run = await manager.approveStage({
-        ...common,
-        actor: { type: "user", id: actor },
+        projectId,
+        pipelineRunId: requiredOption(parsed, "run"),
+        principal: context.principal,
+        ...labelOption(parsed),
         ...(parsed.options.get("rationale") === undefined
           ? {}
           : { rationale: parsed.options.get("rationale")! }),
       });
     else if (event === "reject")
       run = await manager.rejectStage({
-        ...common,
-        actor: { type: "user", id: actor },
+        projectId,
+        pipelineRunId: requiredOption(parsed, "run"),
+        principal: context.principal,
+        ...labelOption(parsed),
         rationale: requiredOption(parsed, "rationale"),
       });
     else if (event === "cancel")
       run = await manager.cancel({
-        ...common,
-        actor: { type: "user", id: actor },
+        projectId,
+        pipelineRunId: requiredOption(parsed, "run"),
+        principal: context.principal,
+        ...labelOption(parsed),
       });
     else
       throw new CliUsageError(
@@ -152,12 +185,13 @@ export async function handlePipelineCommand(
   if (command === "pipeline:override") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "run", "actor", "reason"]),
+      new Set(["project", "run", "actor", "actor-label", "reason"]),
     );
     const result = await manager.override({
       projectId: requiredOption(parsed, "project"),
       pipelineRunId: requiredOption(parsed, "run"),
-      actor: { type: "user", id: requiredOption(parsed, "actor") },
+      principal: context.principal,
+      ...labelOption(parsed),
       reason: requiredOption(parsed, "reason"),
     });
     context.io.stdout(

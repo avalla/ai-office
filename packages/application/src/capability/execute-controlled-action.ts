@@ -28,6 +28,7 @@ import type { Clock } from "../ports/clock.port.ts";
 import type { ControlledExecutionRepository } from "../ports/controlled-execution-repository.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
 import { assertApprovalBinding } from "./action-approval-binding.ts";
 import { hashCanonicalActionPayload } from "./canonical-action.ts";
 import { EvaluateActionPolicy } from "./evaluate-action-policy.ts";
@@ -68,6 +69,7 @@ export class ExecuteControlledAction {
     private readonly connectors: ConnectorRegistry,
     private readonly evaluatePolicy: EvaluateActionPolicy,
     private readonly hooks: ControlledExecutionHooks = {},
+    private readonly runtime?: AgentRuntimeRepository,
   ) {}
 
   async execute(input: {
@@ -256,6 +258,18 @@ export class ExecuteControlledAction {
     operation: ConnectorOperationDescriptor,
   ): Promise<void> {
     const action = request.snapshot();
+    if (action.agentRunId !== undefined) {
+      if (this.runtime === undefined) throw new StaleActionAuthorizationError();
+      const run = await this.runtime.findRun(action.agentRunId);
+      const value = run?.snapshot();
+      if (
+        value === undefined ||
+        value.projectId !== action.projectId ||
+        value.agentId !== action.agentId ||
+        value.pipelineRunId !== action.pipelineRunId
+      )
+        throw new StaleActionAuthorizationError();
+    }
     const current = await this.evaluatePolicy.execute({
       projectId: action.projectId,
       agentId: action.agentId,
@@ -279,6 +293,9 @@ export class ExecuteControlledAction {
       operation: action.operation,
       normalizedArguments: current.normalizedArguments,
       effectiveConstraints: current.decision.effectiveConstraints,
+      ...(action.agentRunId === undefined
+        ? {}
+        : { agentRunId: action.agentRunId }),
       ...(current.pipeline.pipelineRunId === undefined
         ? {}
         : { pipelineRunId: current.pipeline.pipelineRunId }),

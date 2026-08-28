@@ -141,6 +141,7 @@ import {
   PipelineRunNotFoundError,
 } from "@ai-office/application/pipeline-errors.ts";
 import { PipelineTransitionError } from "@ai-office/domain/pipeline/pipeline-run.ts";
+import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -165,11 +166,11 @@ Commands:
   office:apply --project <id> (--file <path> | --manifest <json>)
   office:show --project <id>
   office:pipeline --project <id> --task-kind <feature|bugfix|maintenance|research|release>
-  pipeline:start --project <id> --task <id> --pipeline <id> --actor <operator>
+  pipeline:start --project <id> --task <id> --pipeline <id> [--actor-label <label>]
   pipeline:status --project <id> [--run <id>]
-  pipeline:assign --project <id> --run <id> --agent <id> --actor <operator>
-  pipeline:transition --project <id> --run <id> --event <complete|approve|reject|cancel> --actor <id> [--rationale <text>]
-  pipeline:override --project <id> --run <id> --actor <operator> --reason <text>
+  pipeline:assign --project <id> --run <id> --agent <id> [--actor-label <label>]
+  pipeline:transition --project <id> [--run <id>] --event <complete|approve|reject|cancel> [--agent-run <id>] [--actor-label <label>] [--rationale <text>]
+  pipeline:override --project <id> --run <id> --reason <text> [--actor-label <label>]
   client:detect [--client <codex|claude>]
   client:inspect --client <codex|claude> --root <path>
   client:plan --client <codex|claude> --root <path> --contract <file>
@@ -488,6 +489,7 @@ export async function runCli(
       projectRoot: options.projectRoot,
       runtimeHome: runtimePaths.runtimeHome,
       io,
+      principal: localOperatorPrincipal,
       projects: new SqliteProjectRepository(database),
       profiles: new SqliteProjectProfileRepository(database),
       officeManifests: new SqliteOfficeManifestRepository(database),

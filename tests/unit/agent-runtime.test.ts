@@ -104,11 +104,7 @@ describe("agent runtime domain", () => {
     });
     expect(calls).toEqual([
       {
-        projectId: "project",
-        agentId: "agent",
-        resourceId: "workspace",
-        operation: "filesystem.create",
-        arguments: { content: "hello", path: "notes/hello.txt" },
+        agentRunId: "run",
       },
     ]);
   });

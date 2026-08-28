@@ -33,6 +33,7 @@ export interface CanonicalActionPayload {
   operation: string;
   normalizedArguments: unknown;
   effectiveConstraints: unknown;
+  agentRunId?: string;
   pipelineRunId?: string;
   pipelineStageRunId?: string;
 }
@@ -47,6 +48,7 @@ export interface ActionRequestProps {
   operation: string;
   normalizedArguments: unknown;
   effectiveConstraints: unknown;
+  agentRunId?: string;
   payloadHash: string;
   decision: PolicyDecisionKind;
   riskLevel: RiskLevel;
@@ -206,6 +208,9 @@ export class ActionRequest {
       operation: this.props.operation,
       normalizedArguments: this.props.normalizedArguments,
       effectiveConstraints: this.props.effectiveConstraints,
+      ...(this.props.agentRunId === undefined
+        ? {}
+        : { agentRunId: this.props.agentRunId }),
       ...(this.props.pipelineRunId === undefined
         ? {}
         : { pipelineRunId: this.props.pipelineRunId }),

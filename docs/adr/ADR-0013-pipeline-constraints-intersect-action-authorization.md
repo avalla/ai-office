@@ -22,6 +22,14 @@ grant or bypass connector policy. With no active enforced run, existing action
 behavior is unchanged. Markdown remains a deterministic explanatory projection,
 not an authorization input.
 
+Pipeline administration receives an operator principal established by the
+owner-facing local CLI/daemon boundary. Caller-provided actor text is retained
+only as optional audit metadata. Agent stage completion and controlled actions
+receive provenance from a persisted AgentRun, which binds the project, task,
+agent, and pipeline; a caller-selected pipeline run cannot replace that
+binding. This is an application authority boundary within the trusted-local
+single-user model, not cryptographic human authentication.
+
 Workflow approval remains a stage-transition decision. Controlled-action
 approval remains bound to one exact simulation and side effect; neither is
 reused as the other. Separation of duty is configured on assignments and

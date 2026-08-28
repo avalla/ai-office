@@ -32,3 +32,10 @@ export class PipelineActorUnauthorizedError extends Error {
     this.name = "PipelineActorUnauthorizedError";
   }
 }
+
+export class AgentRunProvenanceError extends Error {
+  constructor(message = "Agent-run provenance is invalid") {
+    super(message);
+    this.name = "AgentRunProvenanceError";
+  }
+}

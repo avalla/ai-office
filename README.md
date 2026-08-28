@@ -266,14 +266,16 @@ Operate an enforced pipeline with the daemon-backed machine surface:
 ai-office pipeline:start --project <id> --task <task-id> --pipeline <pipeline-id> --actor <operator>
 ai-office pipeline:status --project <id> --run <run-id>
 ai-office pipeline:assign --project <id> --run <run-id> --agent <agent-id> --actor <operator>
-ai-office pipeline:transition --project <id> --run <run-id> --event complete --actor <agent-id>
+ai-office pipeline:transition --project <id> --run <run-id> --event complete --agent-run <agent-run-id>
 ```
 
 Approval and cancellation are explicit transition events. A reasoned
 `pipeline:override` is restricted to the operator surface, persisted, and
-audited. Direct controlled-action requests use `--pipeline-run <run-id>` while
-enforcement is active; agent runs inherit the binding from their task and
-current assignment.
+audited. The legacy `--actor` option is accepted only as an audit label and
+does not establish authority. Agent controlled actions use `--agent-run`; the
+runtime derives project, task, agent, and pipeline provenance from that
+persisted run. Direct operator actions do not select an unrelated task's
+pipeline by supplying a run identifier.
 
 When a project-scoped command is invoked without `--project`, the linkable CLI
 canonicalizes the current directory, walks same-filesystem ancestors, and uses

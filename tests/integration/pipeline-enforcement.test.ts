@@ -35,6 +35,9 @@ import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
+import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
+import type { OperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
+import { AgentRunProvenanceError } from "@ai-office/application/pipeline-errors.ts";
 
 const roots: string[] = [];
 const now = new Date("2026-08-28T10:00:00.000Z");
@@ -273,6 +276,85 @@ async function fixture() {
 }
 
 describe("pipeline enforcement persistence and authorization", () => {
+  test("caller labels cannot impersonate operators or switch agent pipeline provenance", async () => {
+    const context = await fixture();
+    const forged = {
+      kind: "operator",
+      source: "local_cli",
+      id: "operator",
+    } as unknown as OperatorPrincipal;
+    await expect(
+      context.manager.start({
+        projectId: "project",
+        taskId: "task",
+        pipelineId: "delivery",
+        principal: forged,
+        actorLabel: "operator",
+      }),
+    ).rejects.toThrow("not authorized");
+
+    const started = await context.manager.start({
+      projectId: "project",
+      taskId: "task",
+      pipelineId: "delivery",
+      principal: localOperatorPrincipal,
+    });
+    await context.manager.assign({
+      projectId: "project",
+      pipelineRunId: started.snapshot().id,
+      agentId: "architect-agent",
+      principal: localOperatorPrincipal,
+    });
+    const agentRunId = await new ScheduleAgentRun(
+      context.projects,
+      context.tasks,
+      context.runtime,
+      context.ids,
+      context.clock,
+      context.transactions,
+      context.pipelines,
+    ).execute({
+      projectId: "project",
+      taskId: "task",
+      agentId: "architect-agent",
+      actionIntent: {
+        resourceId: "resource",
+        operation: "fake.read",
+        arguments: {},
+      },
+    });
+    const agentRun = await context.runtime.findRun(agentRunId);
+    agentRun!.transition("preparing", now);
+    agentRun!.transition("running", now);
+    await context.runtime.saveRun(agentRun!);
+    const evaluator = new EvaluateActionPolicy(
+      context.runtime,
+      context.capabilities,
+      context.clock,
+      createDefaultConnectorRegistry(),
+      new EvaluatePipelineAuthorization(context.pipelines),
+    );
+    await expect(
+      new RequestControlledAction(
+        evaluator,
+        context.capabilities,
+        context.audit,
+        context.ids,
+        context.clock,
+        context.transactions,
+        context.runtime,
+      ).execute({
+        projectId: "project",
+        agentId: "architect-agent",
+        resourceId: "resource",
+        operation: "fake.read",
+        arguments: {},
+        agentRunId,
+        pipelineRunId: "another-pipeline",
+      }),
+    ).rejects.toBeInstanceOf(AgentRunProvenanceError);
+  });
+
   test("upgrades an existing project database without deleting historical state", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-pipeline-upgrade-"));
     roots.push(root);
@@ -293,6 +375,7 @@ describe("pipeline enforcement persistence and authorization", () => {
 
     expect(migrate(database, migrations).applied).toEqual([
       "0020_pipeline_enforcement.sql",
+      "0021_agent_action_provenance.sql",
     ]);
     expect(
       database
@@ -337,7 +420,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       projectId: "project",
       taskId: "task",
       pipelineId: "delivery",
-      actor: { type: "user", id: "operator" },
+      principal: localOperatorPrincipal,
     });
     const runId = run.snapshot().id;
 
@@ -358,7 +441,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       projectId: "project",
       pipelineRunId: runId,
       agentId: "architect-agent",
-      actor: { type: "user", id: "operator" },
+      principal: localOperatorPrincipal,
     });
     const allowed = await evaluator.execute({
       projectId: "project",
@@ -385,10 +468,19 @@ describe("pipeline enforcement persistence and authorization", () => {
       projectId: "project",
       taskId: "task",
       agentId: "architect-agent",
+      actionIntent: {
+        resourceId: "resource",
+        operation: "fake.read",
+        arguments: {},
+      },
     });
     expect(
       (await context.runtime.findRun(agentRunId))?.snapshot().pipelineRunId,
     ).toBe(runId);
+    const executingRun = await context.runtime.findRun(agentRunId);
+    executingRun!.transition("preparing", now);
+    executingRun!.transition("running", now);
+    await context.runtime.saveRun(executingRun!);
 
     const future = await evaluator.execute({
       projectId: "project",
@@ -409,7 +501,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       operation: "fake.read",
       arguments: {},
     });
-    expect(omitted.decision.reasons).toContain("pipeline_run_required");
+    expect(omitted.decision.decision).toBe("allow");
 
     const baseDenied = await evaluator.execute({
       projectId: "project",
@@ -429,23 +521,23 @@ describe("pipeline enforcement persistence and authorization", () => {
       context.ids,
       context.clock,
       context.transactions,
+      context.runtime,
     ).execute({
       projectId: "project",
       agentId: "architect-agent",
       resourceId: "resource",
       operation: "fake.read",
       arguments: {},
-      pipelineRunId: runId,
+      agentRunId,
     });
     expect(requested.request.snapshot()).toMatchObject({
       pipelineRunId: runId,
       pipelineStageRunId: run.currentStage()!.id,
       status: "authorized",
     });
-    await context.manager.completeStage({
+    await context.manager.completeStageFromAgentRun({
       projectId: "project",
-      pipelineRunId: runId,
-      actor: { type: "agent", id: "architect-agent" },
+      agentRunId,
     });
     const invoke = new InvokeControlledConnectorAction(
       new RequestControlledAction(
@@ -455,6 +547,7 @@ describe("pipeline enforcement persistence and authorization", () => {
         context.ids,
         context.clock,
         context.transactions,
+        context.runtime,
       ),
       context.capabilities,
       context.audit,
@@ -464,6 +557,8 @@ describe("pipeline enforcement persistence and authorization", () => {
       createDefaultConnectorRegistry(),
       evaluator,
       new SqliteControlledExecutionRepository(context.database),
+      {},
+      context.runtime,
     );
     await expect(
       invoke.invokeAuthorized({
@@ -487,7 +582,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       projectId: "project",
       taskId: "task",
       pipelineId: "delivery",
-      actor: { type: "user", id: "operator" },
+      principal: localOperatorPrincipal,
     });
     const runId = started.snapshot().id;
     const stale = await context.pipelines.findById(runId, "project");
@@ -495,7 +590,8 @@ describe("pipeline enforcement persistence and authorization", () => {
     const result = await context.manager.override({
       projectId: "project",
       pipelineRunId: runId,
-      actor: { type: "user", id: "incident-commander" },
+      principal: localOperatorPrincipal,
+      actorLabel: "incident-commander",
       reason: "Documented emergency exception",
     });
     expect(result.override.previousRule).toBe("pipeline_agent_not_assigned");
@@ -515,7 +611,7 @@ describe("pipeline enforcement persistence and authorization", () => {
     expect(snapshot?.stages[1]?.status).toBe("active");
     expect(await repository.listOverrides(runId, "project")).toMatchObject([
       {
-        actorId: "incident-commander",
+        actorId: "local-operator",
         reason: "Documented emergency exception",
         resultingAuthorization: "stage_completed",
       },

@@ -9,6 +9,7 @@ import type { CliIo } from "../../apps/cli/src/cli.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
+import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { Agent } from "@ai-office/domain/agent/agent.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 
@@ -234,7 +235,6 @@ describe("daemon enforced pipeline lifecycle", () => {
             timestamp.toISOString(),
           );
       database.close();
-
       const started = await command([
         "pipeline:start",
         "--project",
@@ -248,6 +248,32 @@ describe("daemon enforced pipeline lifecycle", () => {
       ]);
       expect(started.exitCode).toBe(0);
       const runId = (JSON.parse(started.stdout[0]!) as { id: string }).id;
+      const createAgentRun = async (
+        agentId: string,
+        actionIntent?: {
+          resourceId: string;
+          operation: string;
+          arguments: Readonly<Record<string, unknown>>;
+        },
+      ) => {
+        const run = AgentRun.create({
+          id: crypto.randomUUID(),
+          projectId,
+          taskId,
+          agentId,
+          pipelineRunId: runId,
+          ...(actionIntent === undefined ? {} : { actionIntent }),
+          now: new Date(),
+        });
+        run.transition("preparing", timestamp);
+        run.transition("running", timestamp);
+        const agentDatabase = openDatabase(
+          join(root, ".ai-office", "project.sqlite"),
+        );
+        await new SqliteAgentRuntimeRepository(agentDatabase).saveRun(run);
+        agentDatabase.close();
+        return run.snapshot().id;
+      };
 
       const assign = (agent: string) =>
         command([
@@ -261,8 +287,9 @@ describe("daemon enforced pipeline lifecycle", () => {
           "--actor",
           "operator",
         ]);
-      const complete = (agent: string) =>
-        command([
+      const complete = async (agent: string) => {
+        const agentRunId = await createAgentRun(agent);
+        return command([
           "pipeline:transition",
           "--project",
           projectId,
@@ -270,9 +297,10 @@ describe("daemon enforced pipeline lifecycle", () => {
           runId,
           "--event",
           "complete",
-          "--actor",
-          agent,
+          "--agent-run",
+          agentRunId,
         ]);
+      };
       await assign("architect-agent");
       await complete("architect-agent");
       await assign("developer-agent");
@@ -281,16 +309,12 @@ describe("daemon enforced pipeline lifecycle", () => {
         "action:request",
         "--project",
         projectId,
-        "--agent",
-        "developer-agent",
-        "--resource",
-        "resource",
-        "--operation",
-        "fake.delete",
-        "--arguments",
-        JSON.stringify({ target: "main" }),
-        "--pipeline-run",
-        runId,
+        "--agent-run",
+        await createAgentRun("developer-agent", {
+          resourceId: "resource",
+          operation: "fake.delete",
+          arguments: { target: "main" },
+        }),
       ]);
       expect(earlyMerge.exitCode).toBe(2);
       expect(earlyMerge.stdout.join("\n")).toContain(
@@ -306,34 +330,29 @@ describe("daemon enforced pipeline lifecycle", () => {
         "action:request",
         "--project",
         projectId,
-        "--agent",
-        "reviewer-agent",
-        "--resource",
-        "resource",
-        "--operation",
-        "fake.write",
-        "--arguments",
-        JSON.stringify({ target: "change" }),
-        "--pipeline-run",
-        runId,
+        "--agent-run",
+        await createAgentRun("reviewer-agent", {
+          resourceId: "resource",
+          operation: "fake.write",
+          arguments: { target: "change" },
+        }),
       ]);
       expect(reviewerWrite.exitCode).toBe(2);
       expect(reviewerWrite.stdout.join("\n")).toContain(
         "pipeline_capability_denied",
       );
+      const pendingAgentRun = await createAgentRun("reviewer-agent", {
+        resourceId: "resource",
+        operation: "fake.read",
+        arguments: {},
+      });
       await complete("reviewer-agent");
       const pending = await command([
         "action:request",
         "--project",
         projectId,
-        "--agent",
-        "reviewer-agent",
-        "--resource",
-        "resource",
-        "--operation",
-        "fake.read",
-        "--pipeline-run",
-        runId,
+        "--agent-run",
+        pendingAgentRun,
       ]);
       expect(pending.exitCode).toBe(2);
       expect(pending.stdout.join("\n")).toContain("pipeline_approval_required");
@@ -361,16 +380,12 @@ describe("daemon enforced pipeline lifecycle", () => {
         "action:request",
         "--project",
         projectId,
-        "--agent",
-        "developer-agent",
-        "--resource",
-        "resource",
-        "--operation",
-        "fake.delete",
-        "--arguments",
-        JSON.stringify({ target: "main" }),
-        "--pipeline-run",
-        runId,
+        "--agent-run",
+        await createAgentRun("developer-agent", {
+          resourceId: "resource",
+          operation: "fake.delete",
+          arguments: { target: "main" },
+        }),
       ]);
       expect(merge.exitCode, JSON.stringify(merge)).toBe(0);
       expect(merge.stdout.join("\n")).toContain("approval_required");

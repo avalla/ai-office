@@ -236,7 +236,7 @@ export async function handleCapabilityCommand(
         "resource",
         "operation",
         "arguments",
-        "pipeline-run",
+        "agent-run",
       ]),
     );
     const evaluator = new EvaluateActionPolicy(
@@ -246,23 +246,26 @@ export async function handleCapabilityCommand(
       connectors,
       new EvaluatePipelineAuthorization(pipelines),
     );
-    const result = await new RequestControlledAction(
+    const requestAction = new RequestControlledAction(
       evaluator,
       capabilities,
       audit,
       ids,
       clock,
       transactions,
-    ).execute({
-      projectId: requiredOption(parsed, "project"),
-      agentId: requiredOption(parsed, "agent"),
-      resourceId: requiredOption(parsed, "resource"),
-      operation: requiredOption(parsed, "operation"),
-      arguments: jsonObject(parsed.options.get("arguments"), "arguments"),
-      ...(parsed.options.get("pipeline-run") === undefined
-        ? {}
-        : { pipelineRunId: parsed.options.get("pipeline-run")! }),
-    });
+      runtime,
+    );
+    const agentRunId = parsed.options.get("agent-run");
+    const result =
+      agentRunId === undefined
+        ? await requestAction.execute({
+            projectId: requiredOption(parsed, "project"),
+            agentId: requiredOption(parsed, "agent"),
+            resourceId: requiredOption(parsed, "resource"),
+            operation: requiredOption(parsed, "operation"),
+            arguments: jsonObject(parsed.options.get("arguments"), "arguments"),
+          })
+        : await requestAction.executeFromAgentRun(agentRunId);
     io.stdout(`Action request: ${result.request.snapshot().id}`);
     if (result.request.snapshot().reasons.length > 0)
       io.stdout(`Reasons: ${result.request.snapshot().reasons.join(",")}`);
@@ -279,10 +282,10 @@ export async function handleCapabilityCommand(
         "resource",
         "operation",
         "arguments",
-        "pipeline-run",
+        "agent-run",
       ]),
     );
-    const projectId = requiredOption(parsed, "project");
+    const projectId = parsed.options.get("project");
     const evaluator = new EvaluateActionPolicy(
       runtime,
       capabilities,
@@ -297,6 +300,7 @@ export async function handleCapabilityCommand(
       ids,
       clock,
       transactions,
+      runtime,
     );
     const service = new InvokeControlledConnectorAction(
       requestAction,
@@ -308,11 +312,13 @@ export async function handleCapabilityCommand(
       connectors,
       evaluator,
       controlled,
+      {},
+      runtime,
     );
     const actionRequestId = parsed.options.get("action");
     if (
       actionRequestId !== undefined &&
-      ["agent", "resource", "operation", "arguments", "pipeline-run"].some(
+      ["agent", "resource", "operation", "arguments", "agent-run"].some(
         (name) => parsed.options.has(name),
       )
     )
@@ -321,17 +327,24 @@ export async function handleCapabilityCommand(
       );
     const result =
       actionRequestId === undefined
-        ? await service.execute({
-            projectId,
-            agentId: requiredOption(parsed, "agent"),
-            resourceId: requiredOption(parsed, "resource"),
-            operation: requiredOption(parsed, "operation"),
-            arguments: jsonObject(parsed.options.get("arguments"), "arguments"),
-            ...(parsed.options.get("pipeline-run") === undefined
-              ? {}
-              : { pipelineRunId: parsed.options.get("pipeline-run")! }),
-          })
-        : await service.invokeAuthorized({ projectId, actionRequestId });
+        ? await service.execute(
+            parsed.options.get("agent-run") === undefined
+              ? {
+                  projectId: projectId ?? requiredOption(parsed, "project"),
+                  agentId: requiredOption(parsed, "agent"),
+                  resourceId: requiredOption(parsed, "resource"),
+                  operation: requiredOption(parsed, "operation"),
+                  arguments: jsonObject(
+                    parsed.options.get("arguments"),
+                    "arguments",
+                  ),
+                }
+              : { agentRunId: parsed.options.get("agent-run")! },
+          )
+        : await service.invokeAuthorized({
+            projectId: projectId ?? requiredOption(parsed, "project"),
+            actionRequestId,
+          });
     io.stdout(`Action request: ${result.requestId}`);
     io.stdout(`Status: ${result.status}`);
     if (result.result !== undefined)
@@ -410,6 +423,8 @@ export async function handleCapabilityCommand(
       transactions,
       connectors,
       evaluator,
+      {},
+      runtime,
     ).execute({ projectId, actionRequestId });
     io.stdout(`Action request: ${result.actionRequestId}`);
     io.stdout(`Execution: ${result.executionId}`);

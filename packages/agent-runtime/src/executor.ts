@@ -12,12 +12,7 @@ export interface AgentControlledActionResult {
 
 export interface AgentControlledActionGateway {
   invoke(input: {
-    projectId: string;
-    agentId: string;
-    resourceId: string;
-    operation: string;
-    arguments: Readonly<Record<string, unknown>>;
-    pipelineRunId?: string;
+    agentRunId: string;
     signal?: AbortSignal;
   }): Promise<AgentControlledActionResult>;
 }
@@ -61,14 +56,7 @@ export class ControlledActionAgentExecutor implements AgentExecutor {
     if (signal?.aborted === true)
       throw new DOMException("Execution cancelled", "AbortError");
     const action = await this.gateway.invoke({
-      projectId: snapshot.projectId,
-      agentId: snapshot.agentId,
-      resourceId: intent.resourceId,
-      operation: intent.operation,
-      arguments: intent.arguments,
-      ...(snapshot.pipelineRunId === undefined
-        ? {}
-        : { pipelineRunId: snapshot.pipelineRunId }),
+      agentRunId: snapshot.id,
       ...(signal === undefined ? {} : { signal }),
     });
     return {
