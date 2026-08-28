@@ -2,8 +2,7 @@
   "name": "ai-office",
   "private": true,
   "bin": {
-    "ai-office": "./bin/ai-office.ts",
-    "ai-office-operator": "./bin/ai-office-operator.ts"
+    "ai-office": "./bin/ai-office.ts"
   },
   "type": "module",
   "workspaces": [

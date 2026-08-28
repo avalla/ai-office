@@ -22,13 +22,15 @@ grant or bypass connector policy. With no active enforced run, existing action
 behavior is unchanged. Markdown remains a deterministic explanatory projection,
 not an authorization input.
 
-Pipeline administration receives an operator principal established by the
-owner-facing local CLI/daemon boundary. Caller-provided actor text is retained
-only as optional audit metadata. Agent stage completion and controlled actions
-receive provenance from a persisted AgentRun, which binds the project, task,
-agent, and pipeline; a caller-selected pipeline run cannot replace that
-binding. This is an application authority boundary within the trusted-local
-single-user model, not cryptographic human authentication.
+Pipeline administration receives the application operator principal in the
+trusted-local single-user model. Caller-provided actor text is retained only as
+optional audit metadata. The local daemon does not authenticate human presence,
+so a same-user shell-capable worker can reach the same administrative surface;
+strong operator isolation is explicitly deferred to a future worker sandbox or
+authenticated operator-presence boundary. Agent stage completion and
+controlled actions receive provenance from a persisted AgentRun, which binds
+the project, task, agent, and pipeline; a caller-selected pipeline run cannot
+replace that binding.
 
 Workflow approval remains a stage-transition decision. Controlled-action
 approval remains bound to one exact simulation and side effect; neither is
@@ -39,7 +41,8 @@ advance a workflow gate but cannot override a base capability denial.
 
 ## Consequences
 
-- Ignoring `AI-OFFICE.md` cannot bypass an active enforced run.
+- Ignoring `AI-OFFICE.md` cannot bypass mediated actions or AgentRun stage
+  transitions in an active enforced run.
 - Action requests carry pipeline run/stage provenance and become stale when the
   stage changes, the run ends, or assignment/approval state no longer permits
   the operation.

@@ -19,6 +19,7 @@ describe("daemon protocol validation", () => {
 
   test.each([
     [{ ...valid, protocolVersion: 2 }],
+    [{ ...valid, operatorSurface: true }],
     [{ ...valid, requestId: "" }],
     [
       {

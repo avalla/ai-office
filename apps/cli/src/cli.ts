@@ -141,7 +141,7 @@ import {
   PipelineRunNotFoundError,
 } from "@ai-office/application/pipeline-errors.ts";
 import { PipelineTransitionError } from "@ai-office/domain/pipeline/pipeline-run.ts";
-import type { OperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
+import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -149,7 +149,6 @@ export type CliIo = CommandIo;
 export const cliHelp = `AI Office CLI
 
 Commands:
-  # pipeline administration requires the interactive ai-office-operator entry point
   install [path] [--rebind] [--json]
     reconciles repository identity, shared AI-OFFICE.md guidance, and detected host skills
     exit 0: installed; exit 2: installed with warnings; exit 1: failed/partial
@@ -309,7 +308,6 @@ export interface CliOptions {
   globalMigrationDirectory?: string;
   io?: CliIo;
   propagatePromptRequired?: boolean;
-  principal?: OperatorPrincipal;
   agentClients?: AgentClientCatalog;
   projectBindings?: ProjectBindingAdapter;
   defaultOfficeManifest?: OfficeManifest;
@@ -491,9 +489,7 @@ export async function runCli(
       projectRoot: options.projectRoot,
       runtimeHome: runtimePaths.runtimeHome,
       io,
-      ...(options.principal === undefined
-        ? {}
-        : { principal: options.principal }),
+      principal: localOperatorPrincipal,
       projects: new SqliteProjectRepository(database),
       profiles: new SqliteProjectProfileRepository(database),
       officeManifests: new SqliteOfficeManifestRepository(database),

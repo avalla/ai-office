@@ -24,22 +24,19 @@ completion event. Approval stages wait for an operator decision;
 `requiresIndependentApproval` prevents the assigned stage agent from deciding
 that gate when configured.
 
-Use `ai-office-operator pipeline:start`, `ai-office pipeline:status`,
-`ai-office-operator pipeline:assign`, `ai-office pipeline:transition`, and
-`ai-office-operator pipeline:override`; `ai-office --help` is the worker-safe
-syntax authority and the operator entry point exposes the same administration
-commands. Project `status` distinguishes guidance-only configuration,
+Use `ai-office pipeline:start`, `ai-office pipeline:status`,
+`ai-office pipeline:assign`, `ai-office pipeline:transition`, and
+`ai-office pipeline:override`; `ai-office --help` is the syntax authority.
+Project `status` distinguishes guidance-only configuration,
 enforcement without a run, active runs, pending approval, missing assignment,
 and a run pinned to an older manifest revision.
 
-Overrides are not an untracked force flag. Only the operator application
-surface can issue one, and it requires an authoritative local operator
-principal and a non-empty reason. The legacy `--actor` option is retained only
-as an audit label; changing it cannot grant authority. The immutable override
-record captures the affected run/stage, previous rule, resulting transition,
-verified principal, reason, and timestamp; the audit log records the same
-event. An override never creates a capability grant and cannot turn a base
-policy denial into authority.
+Overrides are not an untracked force flag. They require the application
+operator principal and a non-empty reason, are persisted immutably, and are
+audited. The legacy `--actor` option is retained only as an audit label;
+changing it cannot grant authority within the application layer. An override
+never creates a capability grant and cannot turn a base policy denial into
+authority.
 
 Pipeline stage approval and controlled-action approval have different binding
 semantics. A stage approval authorizes one workflow transition. An action
@@ -57,7 +54,8 @@ worker dispatch, typed artifacts, GitHub-specific gates, cryptographic operator
 identity, and arbitrary conditions remain deferred.
 
 AI Office is still trusted-local and single-user rather than cryptographically
-authenticated. The local daemon establishes the operator principal for its
-owner-facing application surface; worker adapters receive agent provenance from
-an AgentRun and cannot construct an operator principal. Authenticated human
-presence and remote multi-user identity remain future hardening work.
+authenticated. The local daemon cannot distinguish a same-user worker from the
+operator, so operator administration is not strongly isolated in this release.
+Worker-mediated actions and AgentRun transitions remain runtime-enforced.
+Authenticated human presence, worker sandboxing, and remote multi-user identity
+remain future hardening work.

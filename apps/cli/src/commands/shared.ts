@@ -31,7 +31,7 @@ export interface CommandContext {
   projectRoot: string;
   runtimeHome: string;
   io: CommandIo;
-  principal?: OperatorPrincipal;
+  principal: OperatorPrincipal;
   projects: SqliteProjectRepository;
   profiles: SqliteProjectProfileRepository;
   officeManifests: SqliteOfficeManifestRepository;

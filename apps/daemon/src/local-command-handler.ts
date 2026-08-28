@@ -12,7 +12,6 @@ import type { AgentClientCatalog } from "@ai-office/application/ports/agent-clie
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import type { RuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
-import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 
 export interface DaemonCommandHandler {
   execute(request: DaemonCommandRequest): Promise<DaemonCommandResponse>;
@@ -65,9 +64,6 @@ export class LocalCommandHandler implements DaemonCommandHandler {
           ? {}
           : { defaultOfficeManifest: this.defaultOfficeManifest }),
         io,
-        ...(request.operatorSurface === true
-          ? { principal: localOperatorPrincipal }
-          : {}),
         propagatePromptRequired: true,
       });
 

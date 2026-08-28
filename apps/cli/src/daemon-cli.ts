@@ -29,7 +29,6 @@ export interface DaemonCliOptions {
   workingDirectory?: string;
   projectBindings?: ProjectBindingAdapter;
   agentClients?: AgentClientCatalog;
-  operatorSurface?: boolean;
 }
 
 const defaultIo: CliIo = {
@@ -279,11 +278,7 @@ export async function runDaemonCli(
 
     try {
       while (true) {
-        const response = await client.execute(
-          commandArguments,
-          answer,
-          options.operatorSurface === true,
-        );
+        const response = await client.execute(commandArguments, answer);
         const stdout = withoutRepeatedPrefix(
           response.stdout,
           previousPromptContext,

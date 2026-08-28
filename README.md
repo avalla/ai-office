@@ -263,19 +263,24 @@ accepted manifests and project state.
 Operate an enforced pipeline with the daemon-backed machine surface:
 
 ```bash
-ai-office-operator pipeline:start --project <id> --task <task-id> --pipeline <pipeline-id>
+ai-office pipeline:start --project <id> --task <task-id> --pipeline <pipeline-id>
 ai-office pipeline:status --project <id> --run <run-id>
-ai-office-operator pipeline:assign --project <id> --run <run-id> --agent <agent-id>
+ai-office pipeline:assign --project <id> --run <run-id> --agent <agent-id>
 ai-office pipeline:transition --project <id> --run <run-id> --event complete --agent-run <agent-run-id>
 ```
 
 Approval and cancellation are explicit transition events. A reasoned
-`pipeline:override` is restricted to the operator surface, persisted, and
-audited. The legacy `--actor` option is accepted only as an audit label and
-does not establish authority. Agent controlled actions use `--agent-run`; the
-runtime derives project, task, agent, and pipeline provenance from that
-persisted run. Direct operator actions do not select an unrelated task's
-pipeline by supplying a run identifier.
+Pipeline administration remains a trusted-local operator operation, persisted
+and audited. The legacy `--actor` option is accepted only as an audit label and
+does not establish authority within the application layer. Agent controlled
+actions use `--agent-run`; the runtime derives project, task, agent, and
+pipeline provenance from that persisted run. Direct actions do not select an
+unrelated task's pipeline by supplying a run identifier.
+
+The local daemon does not authenticate human presence. A same-user shell-capable
+worker can technically invoke the same CLI and daemon socket, so this release
+does not claim strong operator isolation. Strong isolation requires a future
+worker sandbox or authenticated operator-presence boundary.
 
 When a project-scoped command is invoked without `--project`, the linkable CLI
 canonicalizes the current directory, walks same-filesystem ancestors, and uses

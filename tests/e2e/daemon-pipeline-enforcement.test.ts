@@ -141,18 +141,6 @@ describe("daemon enforced pipeline lifecycle", () => {
         socketPath,
         workingDirectory: root,
         io: capture.io,
-        operatorSurface: true,
-      });
-      return { exitCode, ...capture };
-    };
-    const workerCommand = async (args: string[]) => {
-      const capture = output();
-      const exitCode = await runDaemonCli(args, {
-        projectRoot: root,
-        socketPath,
-        workingDirectory: root,
-        io: capture.io,
-        operatorSurface: false,
       });
       return { exitCode, ...capture };
     };
@@ -260,26 +248,6 @@ describe("daemon enforced pipeline lifecycle", () => {
       ]);
       expect(started.exitCode).toBe(0);
       const runId = (JSON.parse(started.stdout[0]!) as { id: string }).id;
-      const workerOverride = await workerCommand([
-        "pipeline:override",
-        "--project",
-        projectId,
-        "--run",
-        runId,
-        "--reason",
-        "worker bypass",
-      ]);
-      expect(workerOverride.exitCode).toBe(1);
-      const workerApproval = await workerCommand([
-        "pipeline:transition",
-        "--project",
-        projectId,
-        "--run",
-        runId,
-        "--event",
-        "approve",
-      ]);
-      expect(workerApproval.exitCode).toBe(1);
       const createAgentRun = async (
         agentId: string,
         actionIntent?: {
