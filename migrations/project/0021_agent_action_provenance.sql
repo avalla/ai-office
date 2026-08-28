@@ -8,7 +8,10 @@ DROP TRIGGER action_request_pipeline_binding_valid;
 
 CREATE TRIGGER action_request_pipeline_binding_valid
 BEFORE INSERT ON action_requests
-WHEN NEW.pipeline_run_id IS NOT NULL AND NOT EXISTS (
+WHEN (
+  (NEW.pipeline_run_id IS NULL) <> (NEW.pipeline_stage_run_id IS NULL)
+  OR (
+    NEW.pipeline_run_id IS NOT NULL AND NOT EXISTS (
   SELECT 1
   FROM pipeline_run pr
   JOIN pipeline_stage_run psr
@@ -18,6 +21,8 @@ WHEN NEW.pipeline_run_id IS NOT NULL AND NOT EXISTS (
     AND pr.status = 'active'
     AND psr.id = NEW.pipeline_stage_run_id
     AND psr.status IN ('active', 'awaiting_approval')
+    )
+  )
 )
 BEGIN SELECT RAISE(ABORT, 'action request pipeline binding is inconsistent'); END;
 

@@ -263,9 +263,9 @@ accepted manifests and project state.
 Operate an enforced pipeline with the daemon-backed machine surface:
 
 ```bash
-ai-office pipeline:start --project <id> --task <task-id> --pipeline <pipeline-id> --actor <operator>
+ai-office-operator pipeline:start --project <id> --task <task-id> --pipeline <pipeline-id>
 ai-office pipeline:status --project <id> --run <run-id>
-ai-office pipeline:assign --project <id> --run <run-id> --agent <agent-id> --actor <operator>
+ai-office-operator pipeline:assign --project <id> --run <run-id> --agent <agent-id>
 ai-office pipeline:transition --project <id> --run <run-id> --event complete --agent-run <agent-run-id>
 ```
 

@@ -12,6 +12,8 @@ export interface DaemonCommandRequest {
   requestId: string;
   args: string[];
   promptAnswer?: string;
+  /** Internal surface marker set by the dedicated operator adapter. */
+  operatorSurface?: true;
 }
 
 export interface DaemonPrompt {
@@ -67,7 +69,9 @@ export function isDaemonCommandRequest(
     (candidate.promptAnswer === undefined ||
       (typeof candidate.promptAnswer === "string" &&
         candidate.promptAnswer.length <=
-          daemonProtocolLimits.maxPromptAnswerLength))
+          daemonProtocolLimits.maxPromptAnswerLength)) &&
+    (candidate.operatorSurface === undefined ||
+      candidate.operatorSurface === true)
   );
 }
 

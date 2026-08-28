@@ -78,6 +78,7 @@ unmanaged artifacts as preserved, never as configured.
     ```text
     ai-office office:apply --project <projectId> --manifest <json>
     ```
+
 11. Return the applied revision and any capability or executor setup still needed.
 
 ## Revise the office
@@ -92,7 +93,9 @@ Classify the request as `feature`, `bugfix`, `maintenance`, `research`, or `rele
     ai-office office:pipeline --project <projectId> --task-kind <kind>
 ```
 
-Follow the returned stages in order and use the named virtual-office role as the responsibility boundary. Persist tasks and runs through AI Office commands. A guidance-only definition is not runtime authority. For an enforced definition, start and inspect its runtime run, use registered agent assignments and explicit stage transitions, and include the pipeline-run binding on direct controlled-action requests. Protected operations must continue through controlled actions; a stage approval is a workflow gate and never substitutes for controlled-action authorization.
+Follow the returned stages in order and use the named virtual-office role as the responsibility boundary. Persist tasks and runs through AI Office commands. A guidance-only definition is not runtime authority. For an enforced definition, inspect its runtime run and use registered agent assignments and explicit stage transitions. Worker actions use an `AgentRun` binding so the runtime derives the task, agent, and pipeline provenance; do not select a pipeline run by CLI argument. Pipeline approvals, assignment, cancellation, and overrides belong to the dedicated operator surface, not worker execution. Protected operations must continue through controlled actions; a stage approval is a workflow gate and never substitutes for controlled-action authorization.
+
+AI Office remains trusted-local and single-user. The normal `ai-office` worker-accessible CLI surface does not establish an operator principal. Human administration uses the interactive `ai-office-operator` entry point; its authority is established by that dedicated application surface rather than by `--actor`, labels, or other command arguments. This is not cryptographic human authentication and does not defend against a hostile same-user process.
 
 Stop and explain the missing setup when no manifest, default pipeline, matching runtime agent, resource, or capability exists. Do not silently bypass the runtime to make a protected change.
 

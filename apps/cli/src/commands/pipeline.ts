@@ -6,6 +6,13 @@ import {
   parseArguments,
   requiredOption,
 } from "./shared.ts";
+import { PipelineActorUnauthorizedError } from "@ai-office/application/pipeline-errors.ts";
+
+function operatorPrincipal(context: CommandContext) {
+  if (context.principal === undefined)
+    throw new PipelineActorUnauthorizedError("administration");
+  return context.principal;
+}
 
 function service(context: CommandContext): ManagePipelineRuns {
   return new ManagePipelineRuns(
@@ -77,7 +84,7 @@ export async function handlePipelineCommand(
       projectId: requiredOption(parsed, "project"),
       taskId: requiredOption(parsed, "task"),
       pipelineId: requiredOption(parsed, "pipeline"),
-      principal: context.principal,
+      principal: operatorPrincipal(context),
       ...labelOption(parsed),
     });
     context.io.stdout(json(run));
@@ -117,7 +124,7 @@ export async function handlePipelineCommand(
       projectId: requiredOption(parsed, "project"),
       pipelineRunId: requiredOption(parsed, "run"),
       agentId: requiredOption(parsed, "agent"),
-      principal: context.principal,
+      principal: operatorPrincipal(context),
       ...labelOption(parsed),
     });
     context.io.stdout(json(run));
@@ -154,7 +161,7 @@ export async function handlePipelineCommand(
       run = await manager.approveStage({
         projectId,
         pipelineRunId: requiredOption(parsed, "run"),
-        principal: context.principal,
+        principal: operatorPrincipal(context),
         ...labelOption(parsed),
         ...(parsed.options.get("rationale") === undefined
           ? {}
@@ -164,7 +171,7 @@ export async function handlePipelineCommand(
       run = await manager.rejectStage({
         projectId,
         pipelineRunId: requiredOption(parsed, "run"),
-        principal: context.principal,
+        principal: operatorPrincipal(context),
         ...labelOption(parsed),
         rationale: requiredOption(parsed, "rationale"),
       });
@@ -172,7 +179,7 @@ export async function handlePipelineCommand(
       run = await manager.cancel({
         projectId,
         pipelineRunId: requiredOption(parsed, "run"),
-        principal: context.principal,
+        principal: operatorPrincipal(context),
         ...labelOption(parsed),
       });
     else
@@ -190,7 +197,7 @@ export async function handlePipelineCommand(
     const result = await manager.override({
       projectId: requiredOption(parsed, "project"),
       pipelineRunId: requiredOption(parsed, "run"),
-      principal: context.principal,
+      principal: operatorPrincipal(context),
       ...labelOption(parsed),
       reason: requiredOption(parsed, "reason"),
     });

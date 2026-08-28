@@ -24,9 +24,11 @@ completion event. Approval stages wait for an operator decision;
 `requiresIndependentApproval` prevents the assigned stage agent from deciding
 that gate when configured.
 
-Use `pipeline:start`, `pipeline:status`, `pipeline:assign`,
-`pipeline:transition`, and `pipeline:override`; `ai-office --help` is the syntax
-authority. Project `status` distinguishes guidance-only configuration,
+Use `ai-office-operator pipeline:start`, `ai-office pipeline:status`,
+`ai-office-operator pipeline:assign`, `ai-office pipeline:transition`, and
+`ai-office-operator pipeline:override`; `ai-office --help` is the worker-safe
+syntax authority and the operator entry point exposes the same administration
+commands. Project `status` distinguishes guidance-only configuration,
 enforcement without a run, active runs, pending approval, missing assignment,
 and a run pinned to an older manifest revision.
 

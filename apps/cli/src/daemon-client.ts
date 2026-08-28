@@ -50,6 +50,7 @@ export class DaemonClient {
   async execute(
     args: string[],
     promptAnswer?: string,
+    operatorSurface = false,
   ): Promise<DaemonCommandResponse> {
     const requestId = crypto.randomUUID();
     const value = await this.request("/commands", {
@@ -60,6 +61,7 @@ export class DaemonClient {
         requestId,
         args,
         ...(promptAnswer === undefined ? {} : { promptAnswer }),
+        ...(operatorSurface ? { operatorSurface: true as const } : {}),
       }),
     });
 

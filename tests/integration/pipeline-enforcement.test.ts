@@ -355,6 +355,27 @@ describe("pipeline enforcement persistence and authorization", () => {
     ).rejects.toBeInstanceOf(AgentRunProvenanceError);
   });
 
+  test("rejects half-null pipeline action bindings at the SQLite boundary", async () => {
+    const context = await fixture();
+    const insert = context.database.prepare(
+      `INSERT INTO action_requests(
+        id, project_id, agent_id, resource_id, connector, connector_version,
+        operation, normalized_arguments_json, effective_constraints_json,
+        payload_hash, decision, risk_level, matched_grant_ids_json,
+        reasons_json, status, created_at, updated_at,
+        pipeline_run_id, pipeline_stage_run_id
+      ) VALUES (?, 'project', 'architect-agent', 'resource', 'fake', '1',
+        'fake.read', '{}', '{}', ?, 'deny', 'low', '[]', '[]', 'requested', ?, ?, ?, ?)`,
+    );
+    const values = ["0".repeat(64), now.toISOString(), now.toISOString()];
+    expect(() =>
+      insert.run("half-null-run", ...values, null, "missing-stage"),
+    ).toThrow("action request pipeline binding is inconsistent");
+    expect(() =>
+      insert.run("half-null-stage", ...values, "missing-run", null),
+    ).toThrow("action request pipeline binding is inconsistent");
+  });
+
   test("upgrades an existing project database without deleting historical state", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-pipeline-upgrade-"));
     roots.push(root);
