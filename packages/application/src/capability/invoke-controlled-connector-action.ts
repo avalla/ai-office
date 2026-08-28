@@ -122,6 +122,7 @@ export class InvokeControlledConnectorAction {
     resourceId: string;
     operation: string;
     arguments: Readonly<Record<string, unknown>>;
+    pipelineRunId?: string;
     signal?: AbortSignal;
   }): Promise<InvokedControlledAction> {
     const requested = await this.requestAction.execute(input);
@@ -479,6 +480,9 @@ export class InvokeControlledConnectorAction {
       arguments: snapshot.normalizedArguments as Readonly<
         Record<string, unknown>
       >,
+      ...(snapshot.pipelineRunId === undefined
+        ? {}
+        : { pipelineRunId: snapshot.pipelineRunId }),
     });
     const currentPayloadHash = hashCanonicalActionPayload({
       schemaVersion: 1,
@@ -490,6 +494,12 @@ export class InvokeControlledConnectorAction {
       operation: snapshot.operation,
       normalizedArguments: current.normalizedArguments,
       effectiveConstraints: current.decision.effectiveConstraints,
+      ...(current.pipeline.pipelineRunId === undefined
+        ? {}
+        : { pipelineRunId: current.pipeline.pipelineRunId }),
+      ...(current.pipeline.pipelineStageRunId === undefined
+        ? {}
+        : { pipelineStageRunId: current.pipeline.pipelineStageRunId }),
     }).hash;
     const sameGrantIds =
       current.decision.matchedGrantIds.length ===
@@ -509,6 +519,8 @@ export class InvokeControlledConnectorAction {
       current.decision.decision !== snapshot.decision ||
       current.decision.decision === "deny" ||
       current.decision.riskLevel !== snapshot.riskLevel ||
+      current.pipeline.pipelineRunId !== snapshot.pipelineRunId ||
+      current.pipeline.pipelineStageRunId !== snapshot.pipelineStageRunId ||
       !sameGrantIds ||
       currentPayloadHash !== snapshot.payloadHash ||
       hashCanonicalActionPayload(request.canonicalPayload()).hash !==

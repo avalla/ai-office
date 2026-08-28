@@ -92,7 +92,7 @@ Classify the request as `feature`, `bugfix`, `maintenance`, `research`, or `rele
     ai-office office:pipeline --project <projectId> --task-kind <kind>
 ```
 
-Follow the returned stages in order and use the named virtual-office role as the responsibility boundary. Persist tasks and runs through AI Office commands. Protected operations must continue through controlled actions; an approval stage in the pipeline is a workflow gate and never substitutes for controlled-action authorization.
+Follow the returned stages in order and use the named virtual-office role as the responsibility boundary. Persist tasks and runs through AI Office commands. A guidance-only definition is not runtime authority. For an enforced definition, start and inspect its runtime run, use registered agent assignments and explicit stage transitions, and include the pipeline-run binding on direct controlled-action requests. Protected operations must continue through controlled actions; a stage approval is a workflow gate and never substitutes for controlled-action authorization.
 
 Stop and explain the missing setup when no manifest, default pipeline, matching runtime agent, resource, or capability exists. Do not silently bypass the runtime to make a protected change.
 

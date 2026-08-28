@@ -14,9 +14,14 @@ import type {
 } from "@ai-office/domain/capability/capability.ts";
 import { PolicyEngine } from "@ai-office/domain/capability/policy-engine.ts";
 import { canonicalRecord, requiredText } from "./validation.ts";
+import {
+  EvaluatePipelineAuthorization,
+  type PipelineAuthorizationDecision,
+} from "../pipeline/evaluate-pipeline-authorization.ts";
 
 export interface EvaluatedActionPolicy {
   decision: PolicyDecision;
+  pipeline: PipelineAuthorizationDecision;
   resource: Resource;
   normalizedArguments: Readonly<Record<string, unknown>>;
   connector: ConnectorDescriptor;
@@ -28,6 +33,7 @@ export class EvaluateActionPolicy {
     private readonly repository: CapabilityPolicyRepository,
     private readonly clock: Clock,
     private readonly connectors: ConnectorRegistry,
+    private readonly pipeline?: EvaluatePipelineAuthorization,
     private readonly engine: PolicyEngine = new PolicyEngine(connectors),
   ) {}
 
@@ -38,6 +44,7 @@ export class EvaluateActionPolicy {
     operation: string;
     arguments: Readonly<Record<string, unknown>>;
     evaluatedAt?: Date;
+    pipelineRunId?: string;
   }): Promise<EvaluatedActionPolicy> {
     const resource = await this.repository.findResource(input.resourceId);
     if (resource === null) throw new ResourceNotFoundError(input.resourceId);
@@ -54,7 +61,7 @@ export class EvaluateActionPolicy {
       requiredText(input.operation, "operation"),
       canonicalRecord(input.arguments, "action arguments"),
     );
-    const decision = this.engine.evaluate(
+    const baseDecision = this.engine.evaluate(
       {
         projectId: input.projectId,
         agentId: agent.id,
@@ -66,8 +73,28 @@ export class EvaluateActionPolicy {
       },
       input.evaluatedAt ?? this.clock.now(),
     );
+    const pipeline =
+      this.pipeline === undefined
+        ? ({ decision: "allow", reasons: [] } as const)
+        : await this.pipeline.execute({
+            projectId: input.projectId,
+            agentId: input.agentId,
+            operation: requiredText(input.operation, "operation"),
+            ...(input.pipelineRunId === undefined
+              ? {}
+              : { pipelineRunId: input.pipelineRunId }),
+          });
+    const decision: PolicyDecision =
+      pipeline.decision === "allow"
+        ? baseDecision
+        : {
+            ...baseDecision,
+            decision: "deny",
+            reasons: [...baseDecision.reasons, ...pipeline.reasons],
+          };
     return {
       decision,
+      pipeline,
       resource,
       normalizedArguments,
       connector: definition.descriptor,

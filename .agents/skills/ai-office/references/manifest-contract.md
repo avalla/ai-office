@@ -36,6 +36,7 @@ Create a strict JSON document matching schema version `1`. The runtime rejects u
       "name": "Delivery",
       "description": "Default delivery workflow",
       "defaultFor": ["feature", "bugfix", "maintenance"],
+      "enforcement": "guidance",
       "stages": [
         {
           "id": "implement",
@@ -43,7 +44,9 @@ Create a strict JSON document matching schema version `1`. The runtime rejects u
           "roleId": "developer",
           "objective": "Produce the smallest verified change",
           "checks": ["Relevant tests pass"],
-          "requiresApproval": false
+          "requiresApproval": false,
+          "capabilities": ["filesystem.read", "filesystem.write"],
+          "requiresDifferentAgentFrom": []
         }
       ]
     }
@@ -52,6 +55,15 @@ Create a strict JSON document matching schema version `1`. The runtime rejects u
 ```
 
 Identifiers use lowercase kebab-case and are stable across revisions. A pipeline stage's `roleId` must reference a role in the same manifest.
+
+Pipelines default to `"enforcement": "guidance"` when the field is absent.
+Set `"enforcement": "enforced"` only when every stage explicitly declares its
+capability operation names. These names restrict the agent's ordinary grants;
+they never create a grant. `requiresDifferentAgentFrom` may reference only
+earlier stages and is enforced from stable runtime agent identities.
+`requiresIndependentApproval` is optional and, when true, requires
+`requiresApproval` and prevents the assigned stage agent from deciding the
+gate.
 
 Allowed task kinds are `feature`, `bugfix`, `maintenance`, `research`, and `release`. Each kind can occur in `defaultFor` at most once across all pipelines.
 

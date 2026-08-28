@@ -1,5 +1,8 @@
 import type { ProjectId } from "../project/project.ts";
-import { DomainValidationError, InvalidTaskTransitionError } from "../errors.ts";
+import {
+  DomainValidationError,
+  InvalidTaskTransitionError,
+} from "../errors.ts";
 
 export type TaskId = string;
 export type TaskStatus =
@@ -50,11 +53,13 @@ export class Task {
       id: input.id,
       projectId: input.projectId,
       title,
-      ...(input.description === undefined ? {} : { description: input.description }),
+      ...(input.description === undefined
+        ? {}
+        : { description: input.description }),
       status: "pending",
       priority,
       createdAt: input.now,
-      updatedAt: input.now
+      updatedAt: input.now,
     });
   }
 
@@ -71,18 +76,27 @@ export class Task {
   }
 
   complete(now: Date): void {
-    if (this.props.status !== "running" && this.props.status !== "waiting_review") {
+    if (
+      this.props.status !== "running" &&
+      this.props.status !== "waiting_review"
+    ) {
       throw new InvalidTaskTransitionError(this.props.status, "completed");
     }
 
     this.props = { ...this.props, status: "completed", updatedAt: now };
   }
 
+  cancel(now: Date): void {
+    if (["completed", "failed", "cancelled"].includes(this.props.status))
+      throw new InvalidTaskTransitionError(this.props.status, "cancelled");
+    this.props = { ...this.props, status: "cancelled", updatedAt: now };
+  }
+
   snapshot(): TaskProps {
     return {
       ...this.props,
       createdAt: new Date(this.props.createdAt),
-      updatedAt: new Date(this.props.updatedAt)
+      updatedAt: new Date(this.props.updatedAt),
     };
   }
 }

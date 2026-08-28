@@ -2,10 +2,15 @@ import type { ProjectInstructionContract } from "@ai-office/domain/agent/project
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 
 function configuredWorkflow(manifest: OfficeManifest): string[] {
-  return manifest.pipelines.map((pipeline) => {
-    const stages = pipeline.stages.map((stage) => stage.name).join(" -> ");
-    return `${pipeline.name}: ${stages}`;
-  });
+  return [
+    "Pipeline guidance describes expected work; it is not the security boundary",
+    "When an enforced runtime pipeline is active, AI Office authorization, assignments, approvals, and stage transitions are authoritative",
+    "Protected operations must use action requests and must not bypass runtime gates",
+    ...manifest.pipelines.map((pipeline) => {
+      const stages = pipeline.stages.map((stage) => stage.name).join(" -> ");
+      return `${pipeline.name} [${pipeline.enforcement ?? "guidance"}]: ${stages}`;
+    }),
+  ];
 }
 
 export function buildProjectInstructionContract(input: {

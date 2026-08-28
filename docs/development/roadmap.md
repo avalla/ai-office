@@ -252,9 +252,10 @@ Status: implemented.
 - immutable SQLite revisions and sanitized apply audit events;
 - permission preferences kept separate from capability authorization.
 
-The runtime resolves pipeline definitions but does not yet persist or execute a
-multi-stage pipeline state machine. Conversational questions and synthesis are
-host-only; the daemon exposes no provider-backed onboarding fallback.
+M6E itself introduced definitions, not execution authority. The later M11
+foundation now persists explicitly enforced runs; guidance-only definitions
+retain the original M6E behavior. Conversational questions and synthesis remain
+host-only, and the daemon exposes no provider-backed onboarding fallback.
 
 ### M6F — External coding-client integration
 
@@ -398,7 +399,7 @@ requirements for M6D-lite. M10 includes:
 
 ## M11 — Agent Pipeline Engine
 
-Status: future.
+Status: in progress; enforcement foundation implemented.
 
 Goal: add a durable, generic orchestration layer that executes validated office
 pipelines without embedding software-development or GitHub-specific business
@@ -410,6 +411,20 @@ Conceptual primitives, subject to design assessment before implementation:
 - `PipelineStage`: one stage definition and its responsibility boundary;
 - `PipelineRun`: one durable execution of a pinned pipeline definition;
 - `StageRun`: one durable stage execution or attempt within a pipeline run.
+
+Implemented foundation:
+
+- guidance-only versus explicitly enforced manifest definitions;
+- pinned, restart-safe sequential pipeline and stage runs bound to existing tasks;
+- registered-agent assignment with role matching and configurable separation of duties;
+- stage-scoped capability intersection in action request and execution-time revalidation;
+- explicit completion, approval, rejection, cancellation, and attributed override events;
+- daemon-backed start, status, assignment, transition, and override commands;
+- pipeline diagnostics in project status and append-only audit integration.
+
+Still future within M11: branching, bounded cycles, retries/timeouts,
+machine-interpretable artifacts, generalized conditions, failure compensation,
+and worker-runtime dispatch.
 
 A future pipeline definition must be able to describe:
 

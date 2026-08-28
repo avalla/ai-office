@@ -37,7 +37,7 @@ Run install, keep the returned project ID, then inspect \`ai-office office:conte
 
 ## Operate
 
-Classify tasks as feature, bugfix, maintenance, research, or release and resolve \`ai-office office:pipeline --project <projectId> --task-kind <kind>\` before operating them. Use \`task:*\` and \`run:*\` for work, \`client:*\` only for manual integration recovery, \`memory:*\` for reusable memory, and governance, resource, capability, and \`action:*\` commands for controlled execution. Never bypass approval or capability boundaries and never launch Codex or Claude implicitly.
+Classify tasks as feature, bugfix, maintenance, research, or release and resolve \`ai-office office:pipeline --project <projectId> --task-kind <kind>\` before operating them. Guidance-only definitions describe expected work. For an enforced definition, use \`pipeline:start\`, inspect \`pipeline:status\`, bind only the assigned registered agent, and use explicit runtime transitions. Runtime authorization is authoritative: never bypass assignments, stage capabilities, approvals, separation rules, \`action:*\` requests, or controlled execution. Use \`task:*\` and \`run:*\` for work, \`client:*\` only for manual integration recovery, and \`memory:*\` for reusable memory. Never launch Codex or Claude implicitly.
 
 ## Uninstall safely
 

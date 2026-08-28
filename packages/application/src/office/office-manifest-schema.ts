@@ -18,6 +18,15 @@ const identifierSchema = z
 
 const shortTextSchema = z.string().trim().min(1).max(240);
 const longTextSchema = z.string().trim().min(1).max(2_000);
+const capabilitySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(
+    /^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/,
+    "must be a capability operation name",
+  );
 
 function uniqueValues(values: readonly string[]): boolean {
   return new Set(values).size === values.length;
@@ -59,6 +68,7 @@ export const officeManifestSchema = z
           name: shortTextSchema,
           description: longTextSchema,
           defaultFor: z.array(z.enum(officeTaskKinds)).min(1).max(5),
+          enforcement: z.enum(["guidance", "enforced"]).optional(),
           stages: z
             .array(
               z.strictObject({
@@ -68,6 +78,12 @@ export const officeManifestSchema = z
                 objective: longTextSchema,
                 checks: z.array(shortTextSchema).max(16),
                 requiresApproval: z.boolean(),
+                requiresIndependentApproval: z.boolean().optional(),
+                capabilities: z.array(capabilitySchema).max(64).optional(),
+                requiresDifferentAgentFrom: z
+                  .array(identifierSchema)
+                  .max(16)
+                  .optional(),
               }),
             )
             .min(1)
@@ -131,6 +147,72 @@ export const officeManifestSchema = z
             path: ["pipelines", pipelineIndex, "stages", stageIndex, "roleId"],
             message: `Unknown office role ${stage.roleId}`,
           });
+        }
+        if (
+          pipeline.enforcement === "enforced" &&
+          stage.capabilities === undefined
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: [
+              "pipelines",
+              pipelineIndex,
+              "stages",
+              stageIndex,
+              "capabilities",
+            ],
+            message:
+              "Enforced pipeline stages must declare capabilities explicitly",
+          });
+        }
+        if (
+          stage.capabilities !== undefined &&
+          !uniqueValues(stage.capabilities)
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: [
+              "pipelines",
+              pipelineIndex,
+              "stages",
+              stageIndex,
+              "capabilities",
+            ],
+            message: "Stage capabilities must be unique",
+          });
+        }
+        if (
+          stage.requiresIndependentApproval === true &&
+          !stage.requiresApproval
+        ) {
+          context.addIssue({
+            code: "custom",
+            path: [
+              "pipelines",
+              pipelineIndex,
+              "stages",
+              stageIndex,
+              "requiresIndependentApproval",
+            ],
+            message:
+              "Independent approval requires the stage approval gate to be enabled",
+          });
+        }
+        for (const predecessorId of stage.requiresDifferentAgentFrom ?? []) {
+          const predecessorIndex = stageIds.indexOf(predecessorId);
+          if (predecessorIndex < 0 || predecessorIndex >= stageIndex) {
+            context.addIssue({
+              code: "custom",
+              path: [
+                "pipelines",
+                pipelineIndex,
+                "stages",
+                stageIndex,
+                "requiresDifferentAgentFrom",
+              ],
+              message: `Separation constraint must reference an earlier stage: ${predecessorId}`,
+            });
+          }
         }
       }
     }

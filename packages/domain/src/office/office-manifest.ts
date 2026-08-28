@@ -43,6 +43,9 @@ export interface OfficePipelineStage {
   objective: string;
   checks: readonly string[];
   requiresApproval: boolean;
+  requiresIndependentApproval?: boolean | undefined;
+  capabilities?: readonly string[] | undefined;
+  requiresDifferentAgentFrom?: readonly string[] | undefined;
 }
 
 export interface OfficePipeline {
@@ -50,6 +53,7 @@ export interface OfficePipeline {
   name: string;
   description: string;
   defaultFor: readonly OfficeTaskKind[];
+  enforcement?: "guidance" | "enforced" | undefined;
   stages: readonly OfficePipelineStage[];
 }
 

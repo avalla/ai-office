@@ -9,6 +9,7 @@ import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
 
 export class AgentNotFoundError extends Error {
   constructor(id: string) {
@@ -43,6 +44,7 @@ export class ScheduleAgentRun {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
+    private readonly pipelines?: PipelineRunRepository,
   ) {}
   async execute(input: {
     projectId: string;
@@ -58,8 +60,26 @@ export class ScheduleAgentRun {
     const agent = await this.runtime.findAgent(input.agentId);
     if (agent === null || agent.projectId !== input.projectId || !agent.enabled)
       throw new AgentNotFoundError(input.agentId);
+    const pipeline = await this.pipelines?.findActiveByTask(
+      input.taskId,
+      input.projectId,
+    );
+    if (pipeline !== undefined && pipeline !== null) {
+      const stage = pipeline.currentStage();
+      if (stage?.status !== "active" || stage.assignedAgentId !== input.agentId)
+        throw new AgentNotFoundError(
+          `${input.agentId} is not assigned to the active pipeline stage`,
+        );
+    }
     const now = this.clock.now();
-    const run = AgentRun.create({ id: this.ids.generate(), ...input, now });
+    const run = AgentRun.create({
+      id: this.ids.generate(),
+      ...input,
+      ...(pipeline === undefined || pipeline === null
+        ? {}
+        : { pipelineRunId: pipeline.snapshot().id }),
+      now,
+    });
     await this.transactions.run(async () => {
       await this.runtime.saveRun(run);
       const locked = await this.runtime.acquireTaskLock(

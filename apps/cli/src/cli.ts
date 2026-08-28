@@ -86,6 +86,7 @@ import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositori
 import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
 import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
 import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
+import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
 import { SqliteMemoryReferenceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-memory-reference.repository.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
@@ -114,6 +115,7 @@ import { handleOfficeCommand } from "./commands/office.ts";
 import { handleClientCommand } from "./commands/client.ts";
 import { handleMemoryCommand } from "./commands/memory.ts";
 import { handleLifecycleCommand } from "./commands/lifecycle.ts";
+import { handlePipelineCommand } from "./commands/pipeline.ts";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
 import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import { InvalidProjectInstructionContractError } from "@ai-office/domain/agent/project-instruction-contract.ts";
@@ -131,6 +133,14 @@ import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
 import { ProjectLifecycleError } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 import { ProjectSourceAssociationError } from "@ai-office/application/commands/import-project.ts";
+import {
+  ActivePipelineRunExistsError,
+  ConcurrentPipelineTransitionError,
+  PipelineActorUnauthorizedError,
+  PipelineDefinitionNotEnforcedError,
+  PipelineRunNotFoundError,
+} from "@ai-office/application/pipeline-errors.ts";
+import { PipelineTransitionError } from "@ai-office/domain/pipeline/pipeline-run.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -155,6 +165,11 @@ Commands:
   office:apply --project <id> (--file <path> | --manifest <json>)
   office:show --project <id>
   office:pipeline --project <id> --task-kind <feature|bugfix|maintenance|research|release>
+  pipeline:start --project <id> --task <id> --pipeline <id> --actor <operator>
+  pipeline:status --project <id> [--run <id>]
+  pipeline:assign --project <id> --run <id> --agent <id> --actor <operator>
+  pipeline:transition --project <id> --run <id> --event <complete|approve|reject|cancel> --actor <id> [--rationale <text>]
+  pipeline:override --project <id> --run <id> --actor <operator> --reason <text>
   client:detect [--client <codex|claude>]
   client:inspect --client <codex|claude> --root <path>
   client:plan --client <codex|claude> --root <path> --contract <file>
@@ -223,6 +238,11 @@ const commands = [
   "office:apply",
   "office:show",
   "office:pipeline",
+  "pipeline:start",
+  "pipeline:status",
+  "pipeline:assign",
+  "pipeline:transition",
+  "pipeline:override",
   "client:detect",
   "client:inspect",
   "client:plan",
@@ -319,6 +339,7 @@ const handlers = [
   handleLifecycleCommand,
   handleProjectCommand,
   handleOfficeCommand,
+  handlePipelineCommand,
   handleClientCommand,
   handleTaskCommand,
   handleAgentCommand,
@@ -400,7 +421,13 @@ function formatKnownError(error: unknown): string | null {
     error instanceof GlobalMemoryVersionConflictError ||
     error instanceof ProjectLifecycleError ||
     error instanceof ProjectSourceAssociationError ||
-    error instanceof ProjectBindingError
+    error instanceof ProjectBindingError ||
+    error instanceof ActivePipelineRunExistsError ||
+    error instanceof ConcurrentPipelineTransitionError ||
+    error instanceof PipelineActorUnauthorizedError ||
+    error instanceof PipelineDefinitionNotEnforcedError ||
+    error instanceof PipelineRunNotFoundError ||
+    error instanceof PipelineTransitionError
   )
     return error.message;
   return null;
@@ -464,6 +491,7 @@ export async function runCli(
       projects: new SqliteProjectRepository(database),
       profiles: new SqliteProjectProfileRepository(database),
       officeManifests: new SqliteOfficeManifestRepository(database),
+      pipelines: new SqlitePipelineRunRepository(database),
       tasks: new SqliteTaskRepository(database),
       runtime: new SqliteAgentRuntimeRepository(database),
       costs,

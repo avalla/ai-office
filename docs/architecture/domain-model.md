@@ -6,6 +6,7 @@ The current domain and application model includes:
 
 - projects, project profiles, and tasks;
 - immutable virtual-office manifest revisions, roles, and default task pipelines;
+- pinned pipeline runs, stage runs, assignments, workflow gates, and overrides;
 - roles, agents, agent runs, and task locks;
 - pricing versions, budgets, reservations, normalized usage, and costs;
 - milestones, requirements, architecture-decision records, reviews, and governance decisions;
@@ -51,10 +52,13 @@ maintenance, research, and release work. Pipeline stage role references and
 default routing are validated before persistence. Every apply creates a new
 immutable revision.
 
-The manifest is organizational configuration, not execution authority.
+The manifest is organizational configuration, not execution authority by
+itself. Existing definitions default to guidance-only. An explicitly enforced
+definition becomes authoritative only when an operator starts a durable run.
 Permission preferences do not create capability grants, and pipeline approval
-gates do not replace controlled-action approval. The current runtime resolves a
-default pipeline but does not yet persist stage-by-stage pipeline progress.
+gates do not replace controlled-action approval. Stage capabilities narrow
+ordinary policy grants. The runtime persists ordered stage progress, assignment,
+approval, cancellation, and reasoned overrides for active enforced runs.
 
 Project profiles and office manifests have different authority. The project
 profile is the knowledge/evidence layer: detected or imported facts, onboarding
@@ -70,19 +74,18 @@ goal may therefore conflict legitimately. `office:context` returns both with
 distinct semantics instead of resolving the conflict. A future context builder
 may consume both only while preserving their separate provenance.
 
-## Planned pipeline execution model
+## Pipeline execution model
 
-M11 is intended to evolve the current descriptive pipeline configuration into a
-durable execution model. The following names communicate aggregate
-responsibilities; they do not yet define stable TypeScript APIs or SQLite tables:
+The initial M11 enforcement foundation uses these responsibilities:
 
-- `Pipeline` is a versioned declarative workflow definition;
-- `PipelineStage` defines one responsibility boundary, its inputs, outputs,
-  dependencies, conditions, policy gates, and failure behavior;
+- `OfficePipeline` is a declarative workflow definition pinned from an immutable
+  manifest revision;
+- an office pipeline stage defines one role boundary, allowed capability
+  operations, sequential position, approval gate, and separation constraints;
 - `PipelineRun` binds a task to one effective pipeline definition and records
   end-to-end state and provenance;
-- `StageRun` records an assigned agent identity, attempt, effective inputs,
-  produced artifacts, outcome, and transition evidence.
+- stage-run state records an assigned stable agent identity, status, approval
+  evidence, and transition timestamps.
 
 A pipeline run must not reinterpret a role or a stage declaration as an
 authorization grant. The assigned agent still needs effective capabilities for

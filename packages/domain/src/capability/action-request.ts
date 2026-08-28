@@ -33,6 +33,8 @@ export interface CanonicalActionPayload {
   operation: string;
   normalizedArguments: unknown;
   effectiveConstraints: unknown;
+  pipelineRunId?: string;
+  pipelineStageRunId?: string;
 }
 
 export interface ActionRequestProps {
@@ -50,6 +52,8 @@ export interface ActionRequestProps {
   riskLevel: RiskLevel;
   matchedGrantIds: readonly string[];
   reasons: readonly string[];
+  pipelineRunId?: string;
+  pipelineStageRunId?: string;
   status: ActionStatus;
   createdAt: Date;
   updatedAt: Date;
@@ -202,6 +206,12 @@ export class ActionRequest {
       operation: this.props.operation,
       normalizedArguments: this.props.normalizedArguments,
       effectiveConstraints: this.props.effectiveConstraints,
+      ...(this.props.pipelineRunId === undefined
+        ? {}
+        : { pipelineRunId: this.props.pipelineRunId }),
+      ...(this.props.pipelineStageRunId === undefined
+        ? {}
+        : { pipelineStageRunId: this.props.pipelineStageRunId }),
     };
   }
 

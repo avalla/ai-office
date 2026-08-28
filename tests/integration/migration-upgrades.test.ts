@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0019_repository_identity.sql",
+        "0020_pipeline_enforcement.sql",
       );
       expect(
         database
@@ -106,6 +106,7 @@ describe("migration upgrades", () => {
       "0017_skill_first_office.sql",
       "0018_reusable_memory_references.sql",
       "0019_repository_identity.sql",
+      "0020_pipeline_enforcement.sql",
     ]);
     expect(
       database
@@ -153,6 +154,7 @@ describe("migration upgrades", () => {
       "0017_skill_first_office.sql",
       "0018_reusable_memory_references.sql",
       "0019_repository_identity.sql",
+      "0020_pipeline_enforcement.sql",
     ]);
     expect(
       database
@@ -192,6 +194,7 @@ describe("migration upgrades", () => {
 
     expect(migrate(database, migrations).applied).toEqual([
       "0019_repository_identity.sql",
+      "0020_pipeline_enforcement.sql",
     ]);
     database
       .prepare(

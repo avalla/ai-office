@@ -13,6 +13,7 @@ import type {
   ResourceType,
 } from "@ai-office/domain/capability/capability.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
+import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
 import {
   CliUsageError,
   type CommandContext,
@@ -82,6 +83,7 @@ export async function handleCapabilityCommand(
     clock,
     transactions,
     connectors,
+    pipelines,
     io,
   } = context;
   const records = new ListCapabilityRecords(capabilities);
@@ -228,13 +230,21 @@ export async function handleCapabilityCommand(
   if (command === "action:request") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "agent", "resource", "operation", "arguments"]),
+      new Set([
+        "project",
+        "agent",
+        "resource",
+        "operation",
+        "arguments",
+        "pipeline-run",
+      ]),
     );
     const evaluator = new EvaluateActionPolicy(
       runtime,
       capabilities,
       clock,
       connectors,
+      new EvaluatePipelineAuthorization(pipelines),
     );
     const result = await new RequestControlledAction(
       evaluator,
@@ -249,8 +259,13 @@ export async function handleCapabilityCommand(
       resourceId: requiredOption(parsed, "resource"),
       operation: requiredOption(parsed, "operation"),
       arguments: jsonObject(parsed.options.get("arguments"), "arguments"),
+      ...(parsed.options.get("pipeline-run") === undefined
+        ? {}
+        : { pipelineRunId: parsed.options.get("pipeline-run")! }),
     });
     io.stdout(`Action request: ${result.request.snapshot().id}`);
+    if (result.request.snapshot().reasons.length > 0)
+      io.stdout(`Reasons: ${result.request.snapshot().reasons.join(",")}`);
     io.stdout(`Decision: ${result.outcome}`);
     return result.outcome === "denied" ? 2 : 0;
   }
@@ -264,6 +279,7 @@ export async function handleCapabilityCommand(
         "resource",
         "operation",
         "arguments",
+        "pipeline-run",
       ]),
     );
     const projectId = requiredOption(parsed, "project");
@@ -272,6 +288,7 @@ export async function handleCapabilityCommand(
       capabilities,
       clock,
       connectors,
+      new EvaluatePipelineAuthorization(pipelines),
     );
     const requestAction = new RequestControlledAction(
       evaluator,
@@ -295,8 +312,8 @@ export async function handleCapabilityCommand(
     const actionRequestId = parsed.options.get("action");
     if (
       actionRequestId !== undefined &&
-      ["agent", "resource", "operation", "arguments"].some((name) =>
-        parsed.options.has(name),
+      ["agent", "resource", "operation", "arguments", "pipeline-run"].some(
+        (name) => parsed.options.has(name),
       )
     )
       throw new CliUsageError(
@@ -310,6 +327,9 @@ export async function handleCapabilityCommand(
             resourceId: requiredOption(parsed, "resource"),
             operation: requiredOption(parsed, "operation"),
             arguments: jsonObject(parsed.options.get("arguments"), "arguments"),
+            ...(parsed.options.get("pipeline-run") === undefined
+              ? {}
+              : { pipelineRunId: parsed.options.get("pipeline-run")! }),
           })
         : await service.invokeAuthorized({ projectId, actionRequestId });
     io.stdout(`Action request: ${result.requestId}`);
@@ -379,6 +399,7 @@ export async function handleCapabilityCommand(
       capabilities,
       clock,
       connectors,
+      new EvaluatePipelineAuthorization(pipelines),
     );
     const result = await new ExecuteControlledAction(
       capabilities,
@@ -451,8 +472,7 @@ export async function handleCapabilityCommand(
                 ...(executionSnapshot.completedAt === undefined
                   ? {}
                   : {
-                      completedAt:
-                        executionSnapshot.completedAt.toISOString(),
+                      completedAt: executionSnapshot.completedAt.toISOString(),
                     }),
                 ...(executionSnapshot.failureCode === undefined
                   ? {}

@@ -221,6 +221,12 @@ The runtime stores each accepted manifest as an immutable revision and records a
 sanitized audit event. Permission preferences remain project knowledge; they do
 not create capability grants.
 
+Pipeline definitions are guidance-only unless they are explicitly configured
+as enforced and an operator starts a runtime run. An enforced run pins its
+manifest revision, task, stages, role requirements, capability restrictions,
+assignments, approvals, separation rules, transitions, and overrides in SQLite.
+Stage capabilities intersect ordinary grants; they never broaden authority.
+
 The distribution skill is checked in at `.agents/skills/ai-office`; normal
 install also projects a self-contained repository skill at that path in the
 target project and a Claude discovery wrapper under `.claude/skills`. Its
@@ -253,6 +259,21 @@ deterministic, idempotent, and usable offline. `office:validate`, `office:apply`
 the skill. There is no provider-backed onboarding command in the daemon; Codex
 or Claude owns questions and synthesis, while SQLite remains authoritative for
 accepted manifests and project state.
+
+Operate an enforced pipeline with the daemon-backed machine surface:
+
+```bash
+ai-office pipeline:start --project <id> --task <task-id> --pipeline <pipeline-id> --actor <operator>
+ai-office pipeline:status --project <id> --run <run-id>
+ai-office pipeline:assign --project <id> --run <run-id> --agent <agent-id> --actor <operator>
+ai-office pipeline:transition --project <id> --run <run-id> --event complete --actor <agent-id>
+```
+
+Approval and cancellation are explicit transition events. A reasoned
+`pipeline:override` is restricted to the operator surface, persisted, and
+audited. Direct controlled-action requests use `--pipeline-run <run-id>` while
+enforcement is active; agent runs inherit the binding from their task and
+current assignment.
 
 When a project-scoped command is invoked without `--project`, the linkable CLI
 canonicalizes the current directory, walks same-filesystem ancestors, and uses

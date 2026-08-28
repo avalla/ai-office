@@ -18,6 +18,7 @@ import type { MemoryReferenceRepository } from "@ai-office/application/ports/mem
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import type { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
+import type { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 
 export interface CommandIo {
   stdout(message: string): void;
@@ -32,6 +33,7 @@ export interface CommandContext {
   projects: SqliteProjectRepository;
   profiles: SqliteProjectProfileRepository;
   officeManifests: SqliteOfficeManifestRepository;
+  pipelines: SqlitePipelineRunRepository;
   tasks: SqliteTaskRepository;
   runtime: SqliteAgentRuntimeRepository;
   costs: SqliteCostRepository;

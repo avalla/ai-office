@@ -2,10 +2,7 @@ import type { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { ActionStatus } from "@ai-office/domain/capability/action-request.ts";
 
 export type AgentControlledActionOutcome =
-  | "allowed"
-  | "denied"
-  | "simulation_required"
-  | "approval_required";
+  "allowed" | "denied" | "simulation_required" | "approval_required";
 
 export interface AgentControlledActionResult {
   requestId: string;
@@ -20,6 +17,7 @@ export interface AgentControlledActionGateway {
     resourceId: string;
     operation: string;
     arguments: Readonly<Record<string, unknown>>;
+    pipelineRunId?: string;
     signal?: AbortSignal;
   }): Promise<AgentControlledActionResult>;
 }
@@ -68,6 +66,9 @@ export class ControlledActionAgentExecutor implements AgentExecutor {
       resourceId: intent.resourceId,
       operation: intent.operation,
       arguments: intent.arguments,
+      ...(snapshot.pipelineRunId === undefined
+        ? {}
+        : { pipelineRunId: snapshot.pipelineRunId }),
       ...(signal === undefined ? {} : { signal }),
     });
     return {

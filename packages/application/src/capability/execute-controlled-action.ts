@@ -52,7 +52,9 @@ export interface ExecutedControlledAction {
 }
 
 export interface ControlledExecutionHooks {
-  afterFreshAuthorizationBeforeLease?(actionRequestId: string): void | Promise<void>;
+  afterFreshAuthorizationBeforeLease?(
+    actionRequestId: string,
+  ): void | Promise<void>;
 }
 
 export class ExecuteControlledAction {
@@ -106,7 +108,11 @@ export class ExecuteControlledAction {
         error instanceof ConnectorMutationExecutionError
           ? error.code
           : "UnexpectedConnectorError";
-      const persisted = await this.finishWithFallback(lease, status, failureCode);
+      const persisted = await this.finishWithFallback(
+        lease,
+        status,
+        failureCode,
+      );
       return {
         actionRequestId: input.actionRequestId,
         executionId: lease.execution.snapshot().id,
@@ -174,7 +180,9 @@ export class ExecuteControlledAction {
         action.projectId,
       );
       if (simulation === null)
-        throw new InvalidActionExecutionStateError("Action simulation is unavailable");
+        throw new InvalidActionExecutionStateError(
+          "Action simulation is unavailable",
+        );
       if (approval === null) throw new ActionApprovalNotFoundError(action.id);
       assertApprovalBinding(request, simulation, approval);
       if (approval.snapshot().status !== "approved")
@@ -184,8 +192,10 @@ export class ExecuteControlledAction {
       if (this.hooks.afterFreshAuthorizationBeforeLease !== undefined)
         await this.requireFreshAuthorization(request, definition, operation);
       if (
-        (await this.controlled.findExecutionByAction(action.id, action.projectId)) !==
-        null
+        (await this.controlled.findExecutionByAction(
+          action.id,
+          action.projectId,
+        )) !== null
       )
         throw new ActionExecutionConflictError(action.id);
       const startedAt = this.clock.now();
@@ -229,7 +239,14 @@ export class ExecuteControlledAction {
           approvalId: approval.snapshot().id,
         },
       });
-      return { request, simulation, execution, definition, operation, resource: await this.requireCurrentResource(action.resourceId) };
+      return {
+        request,
+        simulation,
+        execution,
+        definition,
+        operation,
+        resource: await this.requireCurrentResource(action.resourceId),
+      };
     });
   }
 
@@ -244,8 +261,13 @@ export class ExecuteControlledAction {
       agentId: action.agentId,
       resourceId: action.resourceId,
       operation: action.operation,
-      arguments: action.normalizedArguments as Readonly<Record<string, unknown>>,
+      arguments: action.normalizedArguments as Readonly<
+        Record<string, unknown>
+      >,
       evaluatedAt: this.clock.now(),
+      ...(action.pipelineRunId === undefined
+        ? {}
+        : { pipelineRunId: action.pipelineRunId }),
     });
     const payloadHash = hashCanonicalActionPayload({
       schemaVersion: 1,
@@ -257,9 +279,16 @@ export class ExecuteControlledAction {
       operation: action.operation,
       normalizedArguments: current.normalizedArguments,
       effectiveConstraints: current.decision.effectiveConstraints,
+      ...(current.pipeline.pipelineRunId === undefined
+        ? {}
+        : { pipelineRunId: current.pipeline.pipelineRunId }),
+      ...(current.pipeline.pipelineStageRunId === undefined
+        ? {}
+        : { pipelineStageRunId: current.pipeline.pipelineStageRunId }),
     }).hash;
     const sameGrantIds =
-      current.decision.matchedGrantIds.length === action.matchedGrantIds.length &&
+      current.decision.matchedGrantIds.length ===
+        action.matchedGrantIds.length &&
       current.decision.matchedGrantIds.every(
         (id, index) => id === action.matchedGrantIds[index],
       );
@@ -267,16 +296,21 @@ export class ExecuteControlledAction {
       current.resource.status !== "active" ||
       current.resource.projectId !== action.projectId ||
       current.resource.provider !== definition.descriptor.id ||
-      !definition.descriptor.supportedResourceTypes.includes(current.resource.type) ||
+      !definition.descriptor.supportedResourceTypes.includes(
+        current.resource.type,
+      ) ||
       current.connector.id !== action.connector ||
       current.connector.version !== action.connectorVersion ||
       operation.operation !== action.operation ||
       current.decision.decision !== action.decision ||
       current.decision.decision !== "allow_with_approval" ||
       current.decision.riskLevel !== action.riskLevel ||
+      current.pipeline.pipelineRunId !== action.pipelineRunId ||
+      current.pipeline.pipelineStageRunId !== action.pipelineStageRunId ||
       !sameGrantIds ||
       payloadHash !== action.payloadHash ||
-      hashCanonicalActionPayload(request.canonicalPayload()).hash !== action.payloadHash
+      hashCanonicalActionPayload(request.canonicalPayload()).hash !==
+        action.payloadHash
     )
       throw new StaleActionAuthorizationError();
   }

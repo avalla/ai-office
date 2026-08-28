@@ -14,6 +14,7 @@ import type { OfficeManifestRepository } from "../ports/office-manifest-reposito
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
+import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
 import {
   ProjectSourceAssociationError,
   type ImportProject,
@@ -95,6 +96,19 @@ export interface ProjectLifecycleStatus {
   };
   clients: readonly LifecycleClientStatus[];
   tasks: { open: number; wip: number } | null;
+  pipeline?: {
+    state:
+      | "guidance_only"
+      | "enforcement_enabled_no_run"
+      | "active"
+      | "awaiting_approval"
+      | "assignment_missing"
+      | "drifted"
+      | "unavailable";
+    configured: readonly { id: string; mode: "guidance" | "enforced" }[];
+    activeRuns: number;
+    currentStages: readonly string[];
+  };
   issues: readonly LifecycleIssue[];
 }
 
@@ -225,6 +239,7 @@ interface ProjectLifecycleDependencies {
   identities: RepositoryIdentityRepository;
   manifests: OfficeManifestRepository;
   tasks: TaskRepository;
+  pipelines?: PipelineRunRepository;
   importer: ImportProject;
   manifestApplicator: ApplyOfficeManifest;
   clients: ManageAgentClientIntegration;
@@ -818,6 +833,57 @@ export class ManageProjectLifecycle {
         ? false
         : isDefaultManifest(office.manifest, this.dependencies.defaultManifest);
     const installed = associationState === "valid";
+    const configuredPipelines =
+      office?.manifest.pipelines.map((pipeline) => ({
+        id: pipeline.id,
+        mode: pipeline.enforcement ?? ("guidance" as const),
+      })) ?? [];
+    const activePipelineRuns =
+      projectId === null || this.dependencies.pipelines === undefined
+        ? []
+        : await this.dependencies.pipelines.listActiveByProject(projectId);
+    const currentPipelineStages = activePipelineRuns
+      .map((run) => run.currentStage())
+      .filter((stage) => stage !== null);
+    const pipelineState: NonNullable<
+      ProjectLifecycleStatus["pipeline"]
+    >["state"] =
+      this.dependencies.pipelines === undefined
+        ? "unavailable"
+        : configuredPipelines.every((pipeline) => pipeline.mode === "guidance")
+          ? "guidance_only"
+          : activePipelineRuns.length === 0
+            ? "enforcement_enabled_no_run"
+            : activePipelineRuns.some(
+                  (run) =>
+                    office !== null &&
+                    run.snapshot().manifestRevision !== office.revision,
+                )
+              ? "drifted"
+              : currentPipelineStages.some(
+                    (stage) => stage.status === "awaiting_approval",
+                  )
+                ? "awaiting_approval"
+                : currentPipelineStages.some(
+                      (stage) => stage.assignedAgentId === undefined,
+                    )
+                  ? "assignment_missing"
+                  : "active";
+    if (pipelineState === "drifted")
+      issues.push({
+        severity: "warning",
+        code: "pipeline_definition_drifted",
+        message: "An active pipeline is pinned to an older office revision",
+        recovery:
+          "Complete or cancel the pinned run before starting a new revision",
+      });
+    if (pipelineState === "assignment_missing")
+      issues.push({
+        severity: "warning",
+        code: "pipeline_agent_assignment_missing",
+        message: "An active pipeline stage has no assigned runtime agent",
+        recovery: "Assign a matching registered agent with pipeline:assign",
+      });
     return {
       schemaVersion: 3,
       installed,
@@ -868,6 +934,12 @@ export class ManageProjectLifecycle {
                 .length,
               wip: snapshots.filter((task) => wip.has(task.status)).length,
             },
+      pipeline: {
+        state: pipelineState,
+        configured: configuredPipelines,
+        activeRuns: activePipelineRuns.length,
+        currentStages: currentPipelineStages.map((stage) => stage.stageId),
+      },
       issues,
     };
   }

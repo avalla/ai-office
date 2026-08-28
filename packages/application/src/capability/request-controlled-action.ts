@@ -37,6 +37,7 @@ export class RequestControlledAction {
     resourceId: string;
     operation: string;
     arguments: Readonly<Record<string, unknown>>;
+    pipelineRunId?: string;
   }): Promise<{ request: ActionRequest; outcome: ControlledActionOutcome }> {
     return this.transactions.run(async () => {
       const evaluated = await this.evaluatePolicy.execute(input);
@@ -51,6 +52,12 @@ export class RequestControlledAction {
         operation: input.operation.trim(),
         normalizedArguments: evaluated.normalizedArguments,
         effectiveConstraints: evaluated.decision.effectiveConstraints,
+        ...(evaluated.pipeline.pipelineRunId === undefined
+          ? {}
+          : { pipelineRunId: evaluated.pipeline.pipelineRunId }),
+        ...(evaluated.pipeline.pipelineStageRunId === undefined
+          ? {}
+          : { pipelineStageRunId: evaluated.pipeline.pipelineStageRunId }),
       };
       const payloadHash = hashCanonicalActionPayload(payload).hash;
       const requestedAt = this.clock.now();
@@ -69,6 +76,12 @@ export class RequestControlledAction {
         riskLevel: evaluated.decision.riskLevel,
         matchedGrantIds: evaluated.decision.matchedGrantIds,
         reasons: evaluated.decision.reasons,
+        ...(evaluated.pipeline.pipelineRunId === undefined
+          ? {}
+          : { pipelineRunId: evaluated.pipeline.pipelineRunId }),
+        ...(evaluated.pipeline.pipelineStageRunId === undefined
+          ? {}
+          : { pipelineStageRunId: evaluated.pipeline.pipelineStageRunId }),
         now: requestedAt,
       });
       await this.repository.insertActionRequest(request);
@@ -84,6 +97,13 @@ export class RequestControlledAction {
           operation: payload.operation,
           riskLevel: evaluated.decision.riskLevel,
           payloadHash,
+          reasons: evaluated.decision.reasons,
+          ...(evaluated.pipeline.pipelineRunId === undefined
+            ? {}
+            : { pipelineRunId: evaluated.pipeline.pipelineRunId }),
+          ...(evaluated.pipeline.pipelineStageId === undefined
+            ? {}
+            : { pipelineStageId: evaluated.pipeline.pipelineStageId }),
         },
       });
       const nextStatus =
@@ -116,8 +136,36 @@ export class RequestControlledAction {
           riskLevel: evaluated.decision.riskLevel,
           matchedGrantIds: evaluated.decision.matchedGrantIds,
           payloadHash,
+          reasons: evaluated.decision.reasons,
+          ...(evaluated.pipeline.pipelineRunId === undefined
+            ? {}
+            : { pipelineRunId: evaluated.pipeline.pipelineRunId }),
+          ...(evaluated.pipeline.pipelineStageId === undefined
+            ? {}
+            : { pipelineStageId: evaluated.pipeline.pipelineStageId }),
         },
       });
+      if (
+        nextStatus === "denied" &&
+        evaluated.pipeline.decision === "deny" &&
+        evaluated.pipeline.pipelineRunId !== undefined
+      )
+        await this.audit.execute({
+          eventType: "pipeline.action_denied",
+          actorType: "system",
+          actorId: input.agentId,
+          projectId: input.projectId,
+          aggregateType: "pipeline_run",
+          aggregateId: evaluated.pipeline.pipelineRunId,
+          payload: {
+            actionRequestId: request.snapshot().id,
+            operation: payload.operation,
+            reasons: evaluated.pipeline.reasons,
+            ...(evaluated.pipeline.pipelineStageId === undefined
+              ? {}
+              : { stageId: evaluated.pipeline.pipelineStageId }),
+          },
+        });
       return { request, outcome: outcomes[evaluated.decision.decision] };
     });
   }

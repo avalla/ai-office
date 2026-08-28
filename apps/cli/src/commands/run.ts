@@ -6,6 +6,7 @@ import { RequestControlledAction } from "@ai-office/application/capability/reque
 import { ExecuteAgentRun } from "@ai-office/application/commands/execute-agent-run.ts";
 import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent-run.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
+import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
 import {
   CliUsageError,
   type CommandContext,
@@ -22,6 +23,7 @@ function controlledActionExecutor(
     context.capabilities,
     context.clock,
     context.connectors,
+    new EvaluatePipelineAuthorization(context.pipelines),
   );
   const request = new RequestControlledAction(
     evaluator,
@@ -89,6 +91,7 @@ export async function handleRunCommand(
       ids,
       clock,
       transactions,
+      context.pipelines,
     ).execute({
       projectId: requiredOption(parsed, "project"),
       taskId: requiredOption(parsed, "task"),
