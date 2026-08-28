@@ -78,6 +78,7 @@ unmanaged artifacts as preserved, never as configured.
     ```text
     ai-office office:apply --project <projectId> --manifest <json>
     ```
+
 11. Return the applied revision and any capability or executor setup still needed.
 
 ## Revise the office
@@ -92,7 +93,9 @@ Classify the request as `feature`, `bugfix`, `maintenance`, `research`, or `rele
     ai-office office:pipeline --project <projectId> --task-kind <kind>
 ```
 
-Follow the returned stages in order and use the named virtual-office role as the responsibility boundary. Persist tasks and runs through AI Office commands. Protected operations must continue through controlled actions; an approval stage in the pipeline is a workflow gate and never substitutes for controlled-action authorization.
+Follow the returned stages in order and use the named virtual-office role as the responsibility boundary. Persist tasks and runs through AI Office commands. A guidance-only definition is not runtime authority. For an enforced definition, inspect its runtime run and use registered agent assignments and explicit stage transitions. Worker actions use an `AgentRun` binding so the runtime derives the task, agent, and pipeline provenance; do not select a pipeline run by CLI argument. Pipeline approvals, assignment, cancellation, and overrides are administrative operations subject to the trusted-local operator boundary. Protected operations must continue through controlled actions; a stage approval is a workflow gate and never substitutes for controlled-action authorization.
+
+AI Office remains trusted-local and single-user. The daemon does not authenticate human presence: a same-user shell-capable worker can invoke the same local CLI and socket interfaces as the operator. Runtime-mediated action and AgentRun constraints remain authoritative, but strong isolation of operator administration requires a future worker sandbox or authenticated operator-presence boundary.
 
 Stop and explain the missing setup when no manifest, default pipeline, matching runtime agent, resource, or capability exists. Do not silently bypass the runtime to make a protected change.
 

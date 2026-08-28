@@ -191,7 +191,7 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "fresh.sqlite"));
     expect(migrate(database, migrationSource).applied.at(-1)).toBe(
-      "0019_repository_identity.sql",
+      "0021_agent_action_provenance.sql",
     );
     expect(
       database
@@ -241,6 +241,8 @@ describe("M6C-lite migration", () => {
       "0017_skill_first_office.sql",
       "0018_reusable_memory_references.sql",
       "0019_repository_identity.sql",
+      "0020_pipeline_enforcement.sql",
+      "0021_agent_action_provenance.sql",
     ]);
     expect(
       database
@@ -251,7 +253,7 @@ describe("M6C-lite migration", () => {
     ).toEqual([]);
     expect(
       database.query("SELECT * FROM action_requests ORDER BY id").all(),
-    ).toEqual(before);
+    ).toMatchObject(before);
     const repository = new SqliteCapabilityPolicyRepository(database);
     expect(
       (await repository.findActionRequest("action-simulated"))?.snapshot(),

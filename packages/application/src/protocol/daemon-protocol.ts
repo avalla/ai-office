@@ -67,7 +67,8 @@ export function isDaemonCommandRequest(
     (candidate.promptAnswer === undefined ||
       (typeof candidate.promptAnswer === "string" &&
         candidate.promptAnswer.length <=
-          daemonProtocolLimits.maxPromptAnswerLength))
+          daemonProtocolLimits.maxPromptAnswerLength)) &&
+    !("operatorSurface" in candidate)
   );
 }
 

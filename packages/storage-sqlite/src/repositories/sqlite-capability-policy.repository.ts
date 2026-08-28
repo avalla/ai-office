@@ -67,6 +67,9 @@ interface ActionRow {
   status: ActionStatus;
   created_at: string;
   updated_at: string;
+  agent_run_id?: string | null;
+  pipeline_run_id?: string | null;
+  pipeline_stage_run_id?: string | null;
 }
 
 interface SimulationRow {
@@ -88,7 +91,7 @@ const resourceColumns =
   "id, project_id, type, provider, external_ref, display_name, configuration_json, status, created_at, updated_at";
 const grantColumns =
   "id, project_id, principal_type, principal_id, resource_id, actions_json, constraints_json, valid_from, expires_at, revoked_at, granted_by, reason, created_at";
-const actionColumns =
+const baseActionColumns =
   "id, project_id, agent_id, resource_id, connector, connector_version, operation, normalized_arguments_json, effective_constraints_json, payload_hash, decision, risk_level, matched_grant_ids_json, reasons_json, status, created_at, updated_at";
 
 function parseRecord(json: string): Readonly<Record<string, unknown>> {
@@ -171,6 +174,13 @@ function action(row: ActionRow): ActionRequest {
     status: row.status,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
+    ...(row.agent_run_id == null ? {} : { agentRunId: row.agent_run_id }),
+    ...(row.pipeline_run_id == null
+      ? {}
+      : { pipelineRunId: row.pipeline_run_id }),
+    ...(row.pipeline_stage_run_id == null
+      ? {}
+      : { pipelineStageRunId: row.pipeline_stage_run_id }),
   };
   return ActionRequest.restore(props);
 }
@@ -196,7 +206,19 @@ function simulation(row: SimulationRow): ActionSimulation {
 }
 
 export class SqliteCapabilityPolicyRepository implements CapabilityPolicyRepository {
-  constructor(private readonly database: Database) {}
+  private readonly hasPipelineBindingColumns: boolean;
+  private readonly hasAgentRunBindingColumn: boolean;
+
+  constructor(private readonly database: Database) {
+    this.hasPipelineBindingColumns = database
+      .query<{ name: string }, []>("PRAGMA table_info(action_requests)")
+      .all()
+      .some((column) => column.name === "pipeline_run_id");
+    this.hasAgentRunBindingColumn = database
+      .query<{ name: string }, []>("PRAGMA table_info(action_requests)")
+      .all()
+      .some((column) => column.name === "agent_run_id");
+  }
 
   async saveResource(value: Resource): Promise<void> {
     this.database
@@ -321,34 +343,61 @@ export class SqliteCapabilityPolicyRepository implements CapabilityPolicyReposit
 
   async insertActionRequest(value: ActionRequest): Promise<void> {
     const request = value.snapshot();
+    const columns = this.actionInsertColumns();
+    const values = [
+      request.id,
+      request.projectId,
+      request.agentId,
+      request.resourceId,
+      request.connector,
+      request.connectorVersion,
+      request.operation,
+      JSON.stringify(request.normalizedArguments),
+      JSON.stringify(request.effectiveConstraints),
+      request.payloadHash,
+      request.decision,
+      request.riskLevel,
+      JSON.stringify(request.matchedGrantIds),
+      JSON.stringify(request.reasons),
+      request.status,
+      request.createdAt.toISOString(),
+      request.updatedAt.toISOString(),
+      ...(this.hasAgentRunBindingColumn ? [request.agentRunId ?? null] : []),
+      ...(this.hasPipelineBindingColumns
+        ? [request.pipelineRunId ?? null, request.pipelineStageRunId ?? null]
+        : []),
+    ];
     this.database
       .prepare(
-        `INSERT INTO action_requests(
-        id, project_id, agent_id, resource_id, connector, connector_version,
-        operation, normalized_arguments_json, effective_constraints_json,
-        payload_hash, decision, risk_level, matched_grant_ids_json, reasons_json,
-        status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO action_requests(${columns}) VALUES (${values.map(() => "?").join(", ")})`,
       )
-      .run(
-        request.id,
-        request.projectId,
-        request.agentId,
-        request.resourceId,
-        request.connector,
-        request.connectorVersion,
-        request.operation,
-        JSON.stringify(request.normalizedArguments),
-        JSON.stringify(request.effectiveConstraints),
-        request.payloadHash,
-        request.decision,
-        request.riskLevel,
-        JSON.stringify(request.matchedGrantIds),
-        JSON.stringify(request.reasons),
-        request.status,
-        request.createdAt.toISOString(),
-        request.updatedAt.toISOString(),
-      );
+      .run(...values);
+  }
+
+  private actionInsertColumns(): string {
+    return [
+      "id",
+      "project_id",
+      "agent_id",
+      "resource_id",
+      "connector",
+      "connector_version",
+      "operation",
+      "normalized_arguments_json",
+      "effective_constraints_json",
+      "payload_hash",
+      "decision",
+      "risk_level",
+      "matched_grant_ids_json",
+      "reasons_json",
+      "status",
+      "created_at",
+      "updated_at",
+      ...(this.hasAgentRunBindingColumn ? ["agent_run_id"] : []),
+      ...(this.hasPipelineBindingColumns
+        ? ["pipeline_run_id", "pipeline_stage_run_id"]
+        : []),
+    ].join(", ");
   }
 
   async transitionActionRequest(input: {
@@ -422,7 +471,7 @@ export class SqliteCapabilityPolicyRepository implements CapabilityPolicyReposit
   async findActionRequest(id: string): Promise<ActionRequest | null> {
     const row = this.database
       .query<ActionRow, [string]>(
-        `SELECT ${actionColumns} FROM action_requests WHERE id=?`,
+        `SELECT ${this.actionColumns()} FROM action_requests WHERE id=?`,
       )
       .get(id);
     return row === null ? null : action(row);
@@ -431,9 +480,19 @@ export class SqliteCapabilityPolicyRepository implements CapabilityPolicyReposit
   async listActionRequests(projectId: string): Promise<ActionRequest[]> {
     return this.database
       .query<ActionRow, [string]>(
-        `SELECT ${actionColumns} FROM action_requests WHERE project_id=? ORDER BY created_at, id`,
+        `SELECT ${this.actionColumns()} FROM action_requests WHERE project_id=? ORDER BY created_at, id`,
       )
       .all(projectId)
       .map(action);
+  }
+
+  private actionColumns(): string {
+    return [
+      baseActionColumns,
+      ...(this.hasAgentRunBindingColumn ? ["agent_run_id"] : []),
+      ...(this.hasPipelineBindingColumns
+        ? ["pipeline_run_id", "pipeline_stage_run_id"]
+        : []),
+    ].join(", ");
   }
 }

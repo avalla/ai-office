@@ -191,13 +191,13 @@ It does not defend against a hostile process with the same Unix credentials conc
 
 The daemon protocol and application ports keep future interface, provider, storage, and native-security changes replaceable. TypeScript remains the production implementation. A future Rust boundary is justified only for scoped hardening work accepted by the roadmap and ADR process; the existing native filesystem spike is research, not a production adapter.
 
-## Planned virtual engineering organization
+## Virtual engineering organization
 
-The post-M10 roadmap extends the current virtual-office configuration into an
-auditable engineering organization. This is a planned boundary, not a claim
-about the current runtime: M6E stores and resolves ordered pipeline definitions,
-but the active host still follows those stages and no durable multi-stage
-pipeline executor exists.
+The runtime now provides the first enforceable pipeline foundation: manifest
+definitions may remain guidance-only or opt into enforcement; a started run
+pins its definition and persists stage runs, task binding, assignment,
+transition, approval, override, and audit state. Advanced branching, retries,
+artifacts, and worker-runtime dispatch remain later M11/M12 work.
 
 ```text
                          AI Office authority
@@ -219,7 +219,7 @@ replaceable workers behind an application port. A worker does not define what an
 architect, developer, reviewer, QA, or security agent is allowed or required to
 do.
 
-This future worker-runtime port is distinct from both existing provider and
+The future worker-runtime port is distinct from both existing provider and
 client-integration boundaries:
 
 - the LLM gateway normalizes provider calls, usage, pricing, and budgets;
@@ -231,12 +231,12 @@ and does not grant it capabilities.
 
 ### Generic pipeline authority
 
-The future Agent Pipeline Engine belongs to the domain/application side of AI
-Office. Conceptual `Pipeline`, `PipelineStage`, `PipelineRun`, and `StageRun`
-models describe versioned definitions, responsible roles, agent assignments,
-inputs, artifacts, dependencies, conditions, branching, retry and failure
-semantics, workflow approvals, and bounded cycles such as review/fix/review.
-Their exact API and persistence shape remain open until M11 assessment.
+The pipeline engine belongs to the domain/application side of AI Office.
+Implemented `PipelineRun` and stage-run state pin ordered manifest definitions,
+responsible roles, assignments, capability restrictions, approvals, sequential
+transitions, cancellation, and attributed overrides. Branching, retry and
+failure policies, typed artifacts, and bounded cycles such as review/fix/review
+remain deliberately deferred.
 
 Pipeline configuration never creates authority by itself. Before a stage or
 transition proceeds, application policy evaluates the assigned principal,

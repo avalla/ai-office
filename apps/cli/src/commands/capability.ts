@@ -13,6 +13,7 @@ import type {
   ResourceType,
 } from "@ai-office/domain/capability/capability.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
+import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
 import {
   CliUsageError,
   type CommandContext,
@@ -82,6 +83,7 @@ export async function handleCapabilityCommand(
     clock,
     transactions,
     connectors,
+    pipelines,
     io,
   } = context;
   const records = new ListCapabilityRecords(capabilities);
@@ -228,29 +230,45 @@ export async function handleCapabilityCommand(
   if (command === "action:request") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "agent", "resource", "operation", "arguments"]),
+      new Set([
+        "project",
+        "agent",
+        "resource",
+        "operation",
+        "arguments",
+        "agent-run",
+      ]),
     );
     const evaluator = new EvaluateActionPolicy(
       runtime,
       capabilities,
       clock,
       connectors,
+      new EvaluatePipelineAuthorization(pipelines),
     );
-    const result = await new RequestControlledAction(
+    const requestAction = new RequestControlledAction(
       evaluator,
       capabilities,
       audit,
       ids,
       clock,
       transactions,
-    ).execute({
-      projectId: requiredOption(parsed, "project"),
-      agentId: requiredOption(parsed, "agent"),
-      resourceId: requiredOption(parsed, "resource"),
-      operation: requiredOption(parsed, "operation"),
-      arguments: jsonObject(parsed.options.get("arguments"), "arguments"),
-    });
+      runtime,
+    );
+    const agentRunId = parsed.options.get("agent-run");
+    const result =
+      agentRunId === undefined
+        ? await requestAction.execute({
+            projectId: requiredOption(parsed, "project"),
+            agentId: requiredOption(parsed, "agent"),
+            resourceId: requiredOption(parsed, "resource"),
+            operation: requiredOption(parsed, "operation"),
+            arguments: jsonObject(parsed.options.get("arguments"), "arguments"),
+          })
+        : await requestAction.executeFromAgentRun(agentRunId);
     io.stdout(`Action request: ${result.request.snapshot().id}`);
+    if (result.request.snapshot().reasons.length > 0)
+      io.stdout(`Reasons: ${result.request.snapshot().reasons.join(",")}`);
     io.stdout(`Decision: ${result.outcome}`);
     return result.outcome === "denied" ? 2 : 0;
   }
@@ -264,14 +282,16 @@ export async function handleCapabilityCommand(
         "resource",
         "operation",
         "arguments",
+        "agent-run",
       ]),
     );
-    const projectId = requiredOption(parsed, "project");
+    const projectId = parsed.options.get("project");
     const evaluator = new EvaluateActionPolicy(
       runtime,
       capabilities,
       clock,
       connectors,
+      new EvaluatePipelineAuthorization(pipelines),
     );
     const requestAction = new RequestControlledAction(
       evaluator,
@@ -280,6 +300,7 @@ export async function handleCapabilityCommand(
       ids,
       clock,
       transactions,
+      runtime,
     );
     const service = new InvokeControlledConnectorAction(
       requestAction,
@@ -291,12 +312,14 @@ export async function handleCapabilityCommand(
       connectors,
       evaluator,
       controlled,
+      {},
+      runtime,
     );
     const actionRequestId = parsed.options.get("action");
     if (
       actionRequestId !== undefined &&
-      ["agent", "resource", "operation", "arguments"].some((name) =>
-        parsed.options.has(name),
+      ["agent", "resource", "operation", "arguments", "agent-run"].some(
+        (name) => parsed.options.has(name),
       )
     )
       throw new CliUsageError(
@@ -304,14 +327,24 @@ export async function handleCapabilityCommand(
       );
     const result =
       actionRequestId === undefined
-        ? await service.execute({
-            projectId,
-            agentId: requiredOption(parsed, "agent"),
-            resourceId: requiredOption(parsed, "resource"),
-            operation: requiredOption(parsed, "operation"),
-            arguments: jsonObject(parsed.options.get("arguments"), "arguments"),
-          })
-        : await service.invokeAuthorized({ projectId, actionRequestId });
+        ? await service.execute(
+            parsed.options.get("agent-run") === undefined
+              ? {
+                  projectId: projectId ?? requiredOption(parsed, "project"),
+                  agentId: requiredOption(parsed, "agent"),
+                  resourceId: requiredOption(parsed, "resource"),
+                  operation: requiredOption(parsed, "operation"),
+                  arguments: jsonObject(
+                    parsed.options.get("arguments"),
+                    "arguments",
+                  ),
+                }
+              : { agentRunId: parsed.options.get("agent-run")! },
+          )
+        : await service.invokeAuthorized({
+            projectId: projectId ?? requiredOption(parsed, "project"),
+            actionRequestId,
+          });
     io.stdout(`Action request: ${result.requestId}`);
     io.stdout(`Status: ${result.status}`);
     if (result.result !== undefined)
@@ -379,6 +412,7 @@ export async function handleCapabilityCommand(
       capabilities,
       clock,
       connectors,
+      new EvaluatePipelineAuthorization(pipelines),
     );
     const result = await new ExecuteControlledAction(
       capabilities,
@@ -389,6 +423,8 @@ export async function handleCapabilityCommand(
       transactions,
       connectors,
       evaluator,
+      {},
+      runtime,
     ).execute({ projectId, actionRequestId });
     io.stdout(`Action request: ${result.actionRequestId}`);
     io.stdout(`Execution: ${result.executionId}`);
@@ -451,8 +487,7 @@ export async function handleCapabilityCommand(
                 ...(executionSnapshot.completedAt === undefined
                   ? {}
                   : {
-                      completedAt:
-                        executionSnapshot.completedAt.toISOString(),
+                      completedAt: executionSnapshot.completedAt.toISOString(),
                     }),
                 ...(executionSnapshot.failureCode === undefined
                   ? {}

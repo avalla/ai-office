@@ -32,6 +32,7 @@ function service(context: CommandContext): ManageProjectLifecycle {
     identities: context.repositoryIdentities,
     manifests: context.officeManifests,
     tasks: context.tasks,
+    pipelines: context.pipelines,
     importer: new ImportProject(
       context.projects,
       context.profiles,
@@ -183,6 +184,21 @@ export function printProjectLifecycleStatus(
     context.io.stdout("Tasks");
     context.io.stdout(`  open: ${result.tasks.open}`);
     context.io.stdout(`  wip: ${result.tasks.wip}`);
+  }
+  if (result.pipeline !== undefined) {
+    context.io.stdout("");
+    context.io.stdout("Pipeline");
+    context.io.stdout(`  state: ${result.pipeline.state}`);
+    context.io.stdout(`  active runs: ${result.pipeline.activeRuns}`);
+    context.io.stdout(
+      `  configured: ${result.pipeline.configured
+        .map((pipeline) => `${pipeline.id} (${pipeline.mode})`)
+        .join(", ")}`,
+    );
+    if (result.pipeline.currentStages.length > 0)
+      context.io.stdout(
+        `  current stages: ${result.pipeline.currentStages.join(", ")}`,
+      );
   }
   if (result.issues.length > 0) {
     context.io.stdout("");

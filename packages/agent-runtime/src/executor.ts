@@ -2,10 +2,7 @@ import type { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { ActionStatus } from "@ai-office/domain/capability/action-request.ts";
 
 export type AgentControlledActionOutcome =
-  | "allowed"
-  | "denied"
-  | "simulation_required"
-  | "approval_required";
+  "allowed" | "denied" | "simulation_required" | "approval_required";
 
 export interface AgentControlledActionResult {
   requestId: string;
@@ -15,11 +12,7 @@ export interface AgentControlledActionResult {
 
 export interface AgentControlledActionGateway {
   invoke(input: {
-    projectId: string;
-    agentId: string;
-    resourceId: string;
-    operation: string;
-    arguments: Readonly<Record<string, unknown>>;
+    agentRunId: string;
     signal?: AbortSignal;
   }): Promise<AgentControlledActionResult>;
 }
@@ -63,11 +56,7 @@ export class ControlledActionAgentExecutor implements AgentExecutor {
     if (signal?.aborted === true)
       throw new DOMException("Execution cancelled", "AbortError");
     const action = await this.gateway.invoke({
-      projectId: snapshot.projectId,
-      agentId: snapshot.agentId,
-      resourceId: intent.resourceId,
-      operation: intent.operation,
-      arguments: intent.arguments,
+      agentRunId: snapshot.id,
       ...(signal === undefined ? {} : { signal }),
     });
     return {

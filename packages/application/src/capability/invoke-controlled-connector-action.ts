@@ -21,6 +21,7 @@ import type { Clock } from "../ports/clock.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import type { ControlledExecutionRepository } from "../ports/controlled-execution-repository.port.ts";
+import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
 import type {
   ActionOperationMode,
   ActionRequestProps,
@@ -114,17 +115,29 @@ export class InvokeControlledConnectorAction {
     private readonly evaluatePolicy: EvaluateActionPolicy,
     private readonly controlledExecution: ControlledExecutionRepository,
     private readonly leaseHooks: AuthorizationLeaseHooks = {},
+    private readonly runtime?: AgentRuntimeRepository,
   ) {}
 
-  async execute(input: {
-    projectId: string;
-    agentId: string;
-    resourceId: string;
-    operation: string;
-    arguments: Readonly<Record<string, unknown>>;
-    signal?: AbortSignal;
-  }): Promise<InvokedControlledAction> {
-    const requested = await this.requestAction.execute(input);
+  async execute(
+    input:
+      | {
+          agentRunId: string;
+          signal?: AbortSignal;
+        }
+      | {
+          projectId: string;
+          agentId: string;
+          resourceId: string;
+          operation: string;
+          arguments: Readonly<Record<string, unknown>>;
+          pipelineRunId?: string;
+          signal?: AbortSignal;
+        },
+  ): Promise<InvokedControlledAction> {
+    const requested =
+      "agentRunId" in input
+        ? await this.requestAction.executeFromAgentRun(input.agentRunId)
+        : await this.requestAction.execute(input);
     const request = requested.request;
     const snapshot = request.snapshot();
     if (requested.outcome === "denied")
@@ -458,6 +471,7 @@ export class InvokeControlledConnectorAction {
     evaluatedAt: Date,
   ): Promise<FreshAuthorization> {
     const snapshot = request.snapshot();
+    await this.validateAgentRunBinding(snapshot);
     if (snapshot.status !== "authorized")
       throw new InvalidConnectorInvocationStateError(
         `Action request must be authorized before invocation: ${snapshot.status}`,
@@ -479,6 +493,9 @@ export class InvokeControlledConnectorAction {
       arguments: snapshot.normalizedArguments as Readonly<
         Record<string, unknown>
       >,
+      ...(snapshot.pipelineRunId === undefined
+        ? {}
+        : { pipelineRunId: snapshot.pipelineRunId }),
     });
     const currentPayloadHash = hashCanonicalActionPayload({
       schemaVersion: 1,
@@ -490,6 +507,15 @@ export class InvokeControlledConnectorAction {
       operation: snapshot.operation,
       normalizedArguments: current.normalizedArguments,
       effectiveConstraints: current.decision.effectiveConstraints,
+      ...(snapshot.agentRunId === undefined
+        ? {}
+        : { agentRunId: snapshot.agentRunId }),
+      ...(current.pipeline.pipelineRunId === undefined
+        ? {}
+        : { pipelineRunId: current.pipeline.pipelineRunId }),
+      ...(current.pipeline.pipelineStageRunId === undefined
+        ? {}
+        : { pipelineStageRunId: current.pipeline.pipelineStageRunId }),
     }).hash;
     const sameGrantIds =
       current.decision.matchedGrantIds.length ===
@@ -509,6 +535,8 @@ export class InvokeControlledConnectorAction {
       current.decision.decision !== snapshot.decision ||
       current.decision.decision === "deny" ||
       current.decision.riskLevel !== snapshot.riskLevel ||
+      current.pipeline.pipelineRunId !== snapshot.pipelineRunId ||
+      current.pipeline.pipelineStageRunId !== snapshot.pipelineStageRunId ||
       !sameGrantIds ||
       currentPayloadHash !== snapshot.payloadHash ||
       hashCanonicalActionPayload(request.canonicalPayload()).hash !==
@@ -521,6 +549,22 @@ export class InvokeControlledConnectorAction {
       resource: current.resource,
       outcome: outcomeByDecision[current.decision.decision],
     };
+  }
+
+  private async validateAgentRunBinding(
+    action: ActionRequestProps,
+  ): Promise<void> {
+    if (action.agentRunId === undefined) return;
+    if (this.runtime === undefined) throw new StaleActionAuthorizationError();
+    const run = await this.runtime.findRun(action.agentRunId);
+    const value = run?.snapshot();
+    if (
+      value === undefined ||
+      value.projectId !== action.projectId ||
+      value.agentId !== action.agentId ||
+      value.pipelineRunId !== action.pipelineRunId
+    )
+      throw new StaleActionAuthorizationError();
   }
 
   private readAudit(

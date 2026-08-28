@@ -137,9 +137,11 @@ and generation rows; migrations preserve those records, and `project:answer`
 can close an already-stored question. No current command creates new rows of
 that kind.
 
-## Current limitation
+## Pipeline modes
 
 The runtime stores office definitions and resolves the default pipeline for a
-task kind. It does not yet persist stage-by-stage pipeline progress or execute a
-multi-step autonomous tool loop. The active host follows the configured stages
-and reports that limitation during handoff.
+task kind. Definitions without explicit enforcement remain guidance-only. An
+enforced definition can create a durable, task-bound run with assignments,
+capability restrictions, approvals, and explicit transitions. The runtime does
+not yet execute a multi-step autonomous tool loop; worker dispatch remains a
+separate future boundary.

@@ -221,6 +221,12 @@ The runtime stores each accepted manifest as an immutable revision and records a
 sanitized audit event. Permission preferences remain project knowledge; they do
 not create capability grants.
 
+Pipeline definitions are guidance-only unless they are explicitly configured
+as enforced and an operator starts a runtime run. An enforced run pins its
+manifest revision, task, stages, role requirements, capability restrictions,
+assignments, approvals, separation rules, transitions, and overrides in SQLite.
+Stage capabilities intersect ordinary grants; they never broaden authority.
+
 The distribution skill is checked in at `.agents/skills/ai-office`; normal
 install also projects a self-contained repository skill at that path in the
 target project and a Claude discovery wrapper under `.claude/skills`. Its
@@ -253,6 +259,28 @@ deterministic, idempotent, and usable offline. `office:validate`, `office:apply`
 the skill. There is no provider-backed onboarding command in the daemon; Codex
 or Claude owns questions and synthesis, while SQLite remains authoritative for
 accepted manifests and project state.
+
+Operate an enforced pipeline with the daemon-backed machine surface:
+
+```bash
+ai-office pipeline:start --project <id> --task <task-id> --pipeline <pipeline-id>
+ai-office pipeline:status --project <id> --run <run-id>
+ai-office pipeline:assign --project <id> --run <run-id> --agent <agent-id>
+ai-office pipeline:transition --project <id> --run <run-id> --event complete --agent-run <agent-run-id>
+```
+
+Approval and cancellation are explicit transition events. A reasoned
+Pipeline administration remains a trusted-local operator operation, persisted
+and audited. The legacy `--actor` option is accepted only as an audit label and
+does not establish authority within the application layer. Agent controlled
+actions use `--agent-run`; the runtime derives project, task, agent, and
+pipeline provenance from that persisted run. Direct actions do not select an
+unrelated task's pipeline by supplying a run identifier.
+
+The local daemon does not authenticate human presence. A same-user shell-capable
+worker can technically invoke the same CLI and daemon socket, so this release
+does not claim strong operator isolation. Strong isolation requires a future
+worker sandbox or authenticated operator-presence boundary.
 
 When a project-scoped command is invoked without `--project`, the linkable CLI
 canonicalizes the current directory, walks same-filesystem ancestors, and uses

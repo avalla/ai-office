@@ -19,6 +19,7 @@ export interface AgentRunProps {
   projectId: string;
   taskId: string;
   agentId: string;
+  pipelineRunId?: string;
   actionIntent?: AgentActionIntent;
   status: AgentRunStatus;
   worktreePath?: string;
@@ -84,6 +85,7 @@ export class AgentRun {
     projectId: string;
     taskId: string;
     agentId: string;
+    pipelineRunId?: string;
     actionIntent?: AgentActionIntentInput;
     now: Date;
   }): AgentRun {

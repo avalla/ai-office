@@ -68,6 +68,8 @@ client artifacts, and detaches only the current checkout in SQLite; unrelated
 
 - projects, imported-source metadata, historical onboarding questions, profile facts, and immutable office-manifest revisions;
 - tasks, roles, agents, agent runs, task locks, and run events;
+- pinned pipeline runs, ordered stage state, assignments, workflow decisions,
+  reasoned overrides, and agent/action pipeline bindings;
 - pricing, budgets, reservations, normalized usage, and costs;
 - milestones, requirements, ADR records, reviews, and governance decisions;
 - resources, capability grants, action requests, simulations, approvals, and execution records;

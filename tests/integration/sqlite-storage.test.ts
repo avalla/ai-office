@@ -57,6 +57,8 @@ describe("project database migrations", () => {
       "0017_skill_first_office.sql",
       "0018_reusable_memory_references.sql",
       "0019_repository_identity.sql",
+      "0020_pipeline_enforcement.sql",
+      "0021_agent_action_provenance.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -86,6 +88,8 @@ describe("project database migrations", () => {
       { version: "0017_skill_first_office.sql" },
       { version: "0018_reusable_memory_references.sql" },
       { version: "0019_repository_identity.sql" },
+      { version: "0020_pipeline_enforcement.sql" },
+      { version: "0021_agent_action_provenance.sql" },
     ]);
     database.close();
   });
