@@ -5,7 +5,10 @@ import type { ProjectBindingAdapter } from "../ports/project-binding-adapter.por
 import type { ProjectProfileRepository } from "../ports/project-profile-repository.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { ProjectScanner } from "../ports/project-scanner.port.ts";
-import type { ProjectStateRepository } from "../ports/project-state-repository.port.ts";
+import type {
+  ProjectPortabilityBlocker,
+  ProjectStateRepository,
+} from "../ports/project-state-repository.port.ts";
 import type { RepositoryIdentityRepository } from "../ports/repository-identity-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import {
@@ -20,6 +23,10 @@ import {
   type PortableProjectArchive,
   type PortableProjectManifest,
 } from "./project-snapshot.ts";
+import {
+  comparablePortableGitRemote,
+  portableGitRemote,
+} from "./project-git-provenance.ts";
 
 export class ProjectPortabilityError extends Error {
   constructor(message: string) {
@@ -52,21 +59,31 @@ function normalizedRemote(value: string): string {
     .replace(/\/$/u, "");
 }
 
-function sanitizedRemote(value: string | undefined): string | undefined {
-  if (value === undefined) return undefined;
-  try {
-    const parsed = new URL(value);
-    parsed.username = "";
-    parsed.password = "";
-    return parsed.toString();
-  } catch {
-    return /:\/\/[^/]*@/u.test(value) ? undefined : value;
+function describeBlocker(blocker: ProjectPortabilityBlocker): string {
+  switch (blocker.kind) {
+    case "task":
+      return `Task ${blocker.taskId}: ${blocker.status}`;
+    case "agent_run":
+      return `Active agent run ${blocker.runId}: ${blocker.status} (task ${blocker.taskId})`;
+    case "pipeline_run":
+      return `Active pipeline ${blocker.pipelineRunId} (task ${blocker.taskId})`;
+    case "task_lock":
+      return `Active task lock for task ${blocker.taskId} (run ${blocker.runId}, expires ${blocker.expiresAt.toISOString()})`;
   }
 }
 
-function comparableRemote(value: string | undefined): string | undefined {
-  const sanitized = sanitizedRemote(value);
-  return sanitized === undefined ? undefined : normalizedRemote(sanitized);
+function portabilityBlocked(
+  blockers: ProjectPortabilityBlocker[],
+): ProjectPortabilityError {
+  return new ProjectPortabilityError(
+    [
+      "Cannot create portable backup while project has active execution state.",
+      "",
+      ...blockers.map(describeBlocker),
+      "",
+      "Finish or cancel active work before retrying project:backup.",
+    ].join("\n"),
+  );
 }
 
 function message(error: unknown): string {
@@ -123,6 +140,11 @@ export class ManageProjectPortability {
     const now = this.dependencies.clock.now();
     const { state, revision } = await this.dependencies.transactions.run(
       async () => {
+        const blockers = await this.dependencies.states.findPortabilityBlockers(
+          projectId,
+          now,
+        );
+        if (blockers.length > 0) throw portabilityBlocked(blockers);
         const state =
           await this.dependencies.states.loadPortableState(projectId);
         const stateChecksum = portableStateChecksum(state);
@@ -146,7 +168,7 @@ export class ManageProjectPortability {
     );
 
     const source = (await this.dependencies.profiles.listSources(projectId))[0];
-    const remote = sanitizedRemote(source?.remoteUrl);
+    const remote = portableGitRemote(source?.remoteUrl);
     const manifest: PortableProjectManifest = {
       format: portableProjectFormat,
       formatVersion: portableProjectFormatVersion,
@@ -230,8 +252,8 @@ export class ManageProjectPortability {
       bindingIdentity === undefined &&
       archive.manifest.source?.type === "git" &&
       archive.manifest.source.remote !== undefined &&
-      comparableRemote(scan.remoteUrl) !==
-        comparableRemote(archive.manifest.source.remote)
+      comparablePortableGitRemote(scan.remoteUrl) !==
+        comparablePortableGitRemote(archive.manifest.source.remote)
     )
       throw new ProjectPortabilityError(
         "Target checkout Git remote does not match the archive source provenance",

@@ -361,6 +361,8 @@ Delivered:
 - explicit portable-state allowlisting that excludes secrets, capabilities,
   controlled-action approvals, audit authority, active execution state, and
   absolute paths;
+- execution-quiescent capture, referential closure, trigger-valid governance
+  replay, and network-safe Git provenance;
 - idempotent migration for projects that predate portable identity;
 - immutable state revision metadata and a provider-neutral remote port.
 

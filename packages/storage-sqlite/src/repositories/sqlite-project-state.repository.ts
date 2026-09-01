@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type {
+  ProjectPortabilityBlocker,
   ProjectStateHead,
   ProjectStateRepository,
   ProjectStateRevision,
@@ -8,6 +9,7 @@ import {
   portableProjectStateSchema,
   type PortableProjectState,
 } from "@ai-office/application/project-portability/project-snapshot.ts";
+import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 
 interface ProjectRow {
   name: string;
@@ -149,12 +151,96 @@ interface RevisionRow {
   state_checksum: string;
 }
 
+interface BlockingTaskRow {
+  id: string;
+  status: "assigned" | "running" | "blocked" | "waiting_review";
+}
+
+interface BlockingAgentRunRow {
+  id: string;
+  task_id: string;
+  status: "queued" | "preparing" | "running" | "reviewing";
+}
+
+interface BlockingPipelineRunRow {
+  id: string;
+  task_id: string;
+}
+
+interface BlockingTaskLockRow {
+  task_id: string;
+  run_id: string;
+  expires_at: string;
+}
+
 function optional<T>(key: string, value: T | null): Record<string, T> {
   return value === null ? {} : { [key]: value };
 }
 
 export class SqliteProjectStateRepository implements ProjectStateRepository {
   constructor(private readonly database: Database) {}
+
+  async findPortabilityBlockers(
+    projectId: string,
+    at: Date,
+  ): Promise<ProjectPortabilityBlocker[]> {
+    const tasks = this.database
+      .query<BlockingTaskRow, [string]>(
+        `SELECT id, status FROM task
+         WHERE project_id = ?
+           AND status IN ('assigned', 'running', 'blocked', 'waiting_review')
+         ORDER BY created_at, id`,
+      )
+      .all(projectId)
+      .map((row): ProjectPortabilityBlocker => ({
+        kind: "task",
+        taskId: row.id,
+        status: row.status,
+      }));
+    const pipelines = this.database
+      .query<BlockingPipelineRunRow, [string]>(
+        `SELECT id, task_id FROM pipeline_run
+         WHERE project_id = ? AND status = 'active'
+         ORDER BY created_at, id`,
+      )
+      .all(projectId)
+      .map((row): ProjectPortabilityBlocker => ({
+        kind: "pipeline_run",
+        pipelineRunId: row.id,
+        taskId: row.task_id,
+        status: "active",
+      }));
+    const runs = this.database
+      .query<BlockingAgentRunRow, [string]>(
+        `SELECT id, task_id, status FROM agent_run
+         WHERE project_id = ?
+           AND status IN ('queued', 'preparing', 'running', 'reviewing')
+         ORDER BY created_at, id`,
+      )
+      .all(projectId)
+      .map((row): ProjectPortabilityBlocker => ({
+        kind: "agent_run",
+        runId: row.id,
+        taskId: row.task_id,
+        status: row.status,
+      }));
+    const locks = this.database
+      .query<BlockingTaskLockRow, [string, string]>(
+        `SELECT lock.task_id, lock.run_id, lock.expires_at
+         FROM task_lock lock
+         JOIN task ON task.id = lock.task_id
+         WHERE task.project_id = ? AND lock.expires_at > ?
+         ORDER BY lock.acquired_at, lock.task_id`,
+      )
+      .all(projectId, at.toISOString())
+      .map((row): ProjectPortabilityBlocker => ({
+        kind: "task_lock",
+        runId: row.run_id,
+        taskId: row.task_id,
+        expiresAt: new Date(row.expires_at),
+      }));
+    return [...tasks, ...pipelines, ...runs, ...locks];
+  }
 
   async loadPortableState(projectId: string): Promise<PortableProjectState> {
     const project = this.database
@@ -276,7 +362,18 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
         `SELECT id, subject_type, subject_id, reviewer_actor_type,
                 reviewer_actor_id, reviewer_display_name, status, summary,
                 created_at, completed_at
-         FROM review WHERE project_id = ? ORDER BY created_at, id`,
+         FROM review
+         WHERE project_id = ?
+           AND (
+             subject_type <> 'agent_run'
+             OR EXISTS (
+               SELECT 1 FROM agent_run portable_run
+               WHERE portable_run.id = review.subject_id
+                 AND portable_run.project_id = review.project_id
+                 AND portable_run.status IN ('completed', 'failed', 'cancelled')
+             )
+           )
+         ORDER BY created_at, id`,
       )
       .all(projectId)
       .map((row) => ({
@@ -297,7 +394,25 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
       .query<ApprovalRow, [string]>(
         `SELECT id, review_id, decision, actor_type, actor_id, display_name,
                 rationale, created_at
-         FROM approval WHERE project_id = ? ORDER BY created_at, id`,
+         FROM approval
+         WHERE project_id = ?
+           AND EXISTS (
+             SELECT 1 FROM review portable_review
+             WHERE portable_review.id = approval.review_id
+               AND portable_review.project_id = approval.project_id
+               AND (
+                 portable_review.subject_type <> 'agent_run'
+                 OR EXISTS (
+                   SELECT 1 FROM agent_run portable_run
+                   WHERE portable_run.id = portable_review.subject_id
+                     AND portable_run.project_id = portable_review.project_id
+                     AND portable_run.status IN (
+                       'completed', 'failed', 'cancelled'
+                     )
+                 )
+               )
+           )
+         ORDER BY created_at, id`,
       )
       .all(projectId)
       .map((row) => ({
@@ -579,10 +694,10 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
           item.reviewer.type,
           item.reviewer.id,
           item.reviewer.displayName ?? null,
-          item.status,
+          "pending",
           item.summary ?? null,
           item.createdAt,
-          item.completedAt ?? null,
+          null,
         );
     for (const item of value.governance.approvals)
       this.database
@@ -603,6 +718,20 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
           item.rationale ?? null,
           item.createdAt,
         );
+    for (const item of value.governance.reviews) {
+      if (item.status === "pending") continue;
+      const result = this.database
+        .prepare(
+          `UPDATE review SET completed_at = ?
+           WHERE id = ? AND project_id = ? AND status = ?`,
+        )
+        .run(item.completedAt!, item.id, projectId, item.status);
+      if (result.changes !== 1)
+        throw new Error(`Review ${item.id} was not reconstructed correctly`);
+    }
+    const restored = await this.loadPortableState(projectId);
+    if (canonicalStringify(restored) !== canonicalStringify(value))
+      throw new Error("Restored portable project state does not match archive");
   }
 
   async findHead(projectId: string): Promise<ProjectStateHead | null> {

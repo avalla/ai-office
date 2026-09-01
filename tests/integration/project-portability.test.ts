@@ -10,6 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ImportProject } from "@ai-office/application/commands/import-project.ts";
 import { CreateTask } from "@ai-office/application/commands/create-task.ts";
+import { ManageGovernance } from "@ai-office/application/commands/manage-governance.ts";
+import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
+import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
+import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate-action-policy.ts";
+import type { CapabilityPolicyRepository } from "@ai-office/application/ports/capability-policy-repository.port.ts";
 import { ManageProjectPortability } from "@ai-office/application/project-portability/manage-project-portability.ts";
 import {
   createPortableProjectArchive,
@@ -18,6 +23,9 @@ import {
 } from "@ai-office/application/project-portability/project-snapshot.ts";
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
+import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
+import { Role } from "@ai-office/domain/agent/role.ts";
+import { PipelineRun } from "@ai-office/domain/pipeline/pipeline-run.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
@@ -26,6 +34,9 @@ import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/reposi
 import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
 import { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
+import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
+import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { LocalProjectBindingAdapter } from "../../apps/cli/src/local-project-binding-adapter.ts";
 import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
 
@@ -45,6 +56,8 @@ function openRuntime(root: string) {
   const profiles = new SqliteProjectProfileRepository(database);
   const identities = new SqliteRepositoryIdentityRepository(database);
   const states = new SqliteProjectStateRepository(database);
+  const governance = new SqliteGovernanceRepository(database);
+  const agentRuntime = new SqliteAgentRuntimeRepository(database);
   const transactions = new SqliteTransactionRunner(database);
   const ids = new CryptoIdGenerator();
   const clock = new SystemClock();
@@ -65,11 +78,80 @@ function openRuntime(root: string) {
     profiles,
     identities,
     states,
+    governance,
+    agentRuntime,
     transactions,
     ids,
     clock,
     service,
   };
+}
+
+async function importProject(
+  runtime: ReturnType<typeof openRuntime>,
+  source: string,
+) {
+  return new ImportProject(
+    runtime.projects,
+    runtime.profiles,
+    new LocalProjectScanner(),
+    runtime.identities,
+    runtime.ids,
+    runtime.clock,
+    runtime.transactions,
+  ).execute({ rootPath: source });
+}
+
+async function createTask(
+  runtime: ReturnType<typeof openRuntime>,
+  projectId: string,
+  title: string,
+): Promise<string> {
+  return new CreateTask(
+    runtime.projects,
+    new SqliteTaskRepository(runtime.database),
+    runtime.ids,
+    runtime.clock,
+  ).execute({ projectId, title });
+}
+
+async function createAgent(
+  runtime: ReturnType<typeof openRuntime>,
+  projectId: string,
+  suffix: string,
+) {
+  const now = runtime.clock.now();
+  const roleId = `role-${suffix}`;
+  const agentId = `agent-${suffix}`;
+  await runtime.agentRuntime.saveRole(
+    Role.create({
+      id: roleId,
+      projectId,
+      key: `role-${suffix}`,
+      name: `Role ${suffix}`,
+      version: 1,
+      capabilities: [],
+      tools: [],
+      modelPolicy: "default",
+      limits: {
+        maxIterations: 1,
+        maxCostMicros: 0n,
+        timeoutSeconds: 60,
+      },
+      sourcePath: `/machine-local/${suffix}.json`,
+      now,
+    }),
+  );
+  await runtime.agentRuntime.saveAgent({
+    id: agentId,
+    projectId,
+    roleId,
+    name: `Agent ${suffix}`,
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return { roleId, agentId };
 }
 
 afterEach(() => {
@@ -189,6 +271,361 @@ describe("project portability", () => {
     runtime.database.close();
   });
 
+  test("round-trips pending, approved, and rejected governance reviews exactly", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-portable-governance-a-");
+    const targetRuntime = temporaryRoot("ai-office-portable-governance-b-");
+    const source = temporaryRoot("ai-office-portable-governance-source-");
+    const target = temporaryRoot("ai-office-portable-governance-target-");
+    writeFileSync(join(source, "package.json"), '{"name":"governance"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"governance"}\n');
+
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const taskId = await createTask(origin, imported.projectId, "Pending task");
+    const governance = new ManageGovernance(
+      origin.projects,
+      origin.governance,
+      origin.ids,
+      origin.clock,
+    );
+    const milestoneId = await governance.createMilestone({
+      projectId: imported.projectId,
+      title: "Portable milestone",
+    });
+    const requirementId = await governance.createRequirement({
+      projectId: imported.projectId,
+      milestoneId,
+      key: "PORT-1",
+      title: "Portable governance",
+      description: "Preserve review and approval semantics.",
+    });
+    await governance.createReview({
+      projectId: imported.projectId,
+      subjectType: "task",
+      subjectId: taskId,
+      reviewer: { type: "user", id: "pending-reviewer" },
+    });
+    const approvedReview = await governance.createReview({
+      projectId: imported.projectId,
+      subjectType: "requirement",
+      subjectId: requirementId,
+      reviewer: { type: "agent", id: "approval-reviewer" },
+    });
+    await governance.approve({
+      projectId: imported.projectId,
+      reviewId: approvedReview,
+      actor: { type: "user", id: "owner" },
+      decision: "approved",
+      rationale: "Accepted",
+    });
+    const rejectedReview = await governance.createReview({
+      projectId: imported.projectId,
+      subjectType: "milestone",
+      subjectId: milestoneId,
+      reviewer: { type: "agent", id: "rejection-reviewer" },
+    });
+    await governance.approve({
+      projectId: imported.projectId,
+      reviewId: rejectedReview,
+      actor: { type: "user", id: "owner" },
+      decision: "rejected",
+      rationale: "Needs revision",
+    });
+    const legacyCompletion = "2026-09-01T12:34:56.000Z";
+    origin.database
+      .prepare(
+        "UPDATE review SET completed_at = ? WHERE id = ? AND project_id = ?",
+      )
+      .run(legacyCompletion, approvedReview, imported.projectId);
+
+    const backup = await origin.service.backup(imported.projectId);
+    expect(backup.archive.state.governance.reviews).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "pending" }),
+        expect.objectContaining({
+          id: approvedReview,
+          status: "approved",
+          completedAt: legacyCompletion,
+        }),
+        expect.objectContaining({ id: rejectedReview, status: "rejected" }),
+      ]),
+    );
+    expect(backup.archive.state.governance.approvals).toHaveLength(2);
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: backup.archive,
+      rootPath: target,
+    });
+    expect(
+      await destination.states.loadPortableState(restored.projectId),
+    ).toEqual(backup.archive.state);
+    destination.database.close();
+  });
+
+  test("excludes active-run governance until its subject becomes portable", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-portable-active-review-a-");
+    const targetRuntime = temporaryRoot("ai-office-portable-active-review-b-");
+    const source = temporaryRoot("ai-office-portable-active-review-source-");
+    const target = temporaryRoot("ai-office-portable-active-review-target-");
+    writeFileSync(join(source, "package.json"), '{"name":"active-review"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"active-review"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const taskId = await createTask(origin, imported.projectId, "Reviewed run");
+    const { agentId } = await createAgent(origin, imported.projectId, "review");
+    const run = AgentRun.create({
+      id: "run-reviewed",
+      projectId: imported.projectId,
+      taskId,
+      agentId,
+      actionIntent: {
+        resourceId: "resource-local",
+        operation: "filesystem.read",
+        arguments: { path: "README.md" },
+      },
+      now: origin.clock.now(),
+    });
+    await origin.agentRuntime.saveRun(run);
+    const governance = new ManageGovernance(
+      origin.projects,
+      origin.governance,
+      origin.ids,
+      origin.clock,
+    );
+    const reviewId = await governance.createReview({
+      projectId: imported.projectId,
+      subjectType: "agent_run",
+      subjectId: run.snapshot().id,
+      reviewer: { type: "user", id: "reviewer" },
+    });
+    await governance.approve({
+      projectId: imported.projectId,
+      reviewId,
+      actor: { type: "user", id: "owner" },
+      decision: "approved",
+    });
+
+    const activeSubset = await origin.states.loadPortableState(
+      imported.projectId,
+    );
+    expect(activeSubset.agents.terminalRuns).toEqual([]);
+    expect(activeSubset.governance.reviews).toEqual([]);
+    expect(activeSubset.governance.approvals).toEqual([]);
+    await expect(origin.service.backup(imported.projectId)).rejects.toThrow(
+      "Active agent run run-reviewed: queued",
+    );
+    expect(await origin.states.findHead(imported.projectId)).toBeNull();
+
+    run.transition("cancelled", origin.clock.now(), {
+      worktreePath: "/machine-a/private/worktree",
+      error: { code: "cancelled-locally" },
+    });
+    await origin.agentRuntime.saveRun(run);
+    const backup = await origin.service.backup(imported.projectId);
+    expect(backup.archive.state.governance.reviews).toEqual([
+      expect.objectContaining({ id: reviewId, subjectId: "run-reviewed" }),
+    ]);
+    expect(backup.archive.state.governance.approvals).toHaveLength(1);
+    expect(backup.archive.state.agents.terminalRuns).toEqual([
+      expect.objectContaining({ id: "run-reviewed", status: "cancelled" }),
+    ]);
+    const serialized = serializePortableProjectArchive(backup.archive);
+    expect(serialized).not.toContain("machine-a/private/worktree");
+    expect(serialized).not.toContain("resource-local");
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: backup.archive,
+      rootPath: target,
+    });
+    expect(
+      await destination.states.loadPortableState(restored.projectId),
+    ).toEqual(backup.archive.state);
+    const restoredRun = await destination.agentRuntime.findRun("run-reviewed");
+    const restoredSummary = restoredRun!.snapshot();
+    expect(restoredSummary.status).toBe("cancelled");
+    for (const field of [
+      "pipelineRunId",
+      "actionIntent",
+      "worktreePath",
+      "result",
+      "error",
+    ] as const)
+      expect(field in restoredSummary).toBe(false);
+    expect(() =>
+      restoredRun?.transition("running", destination.clock.now()),
+    ).toThrow("Cannot transition agent run from cancelled to running");
+    const actionGateway = new RequestControlledAction(
+      {} as unknown as EvaluateActionPolicy,
+      {} as unknown as CapabilityPolicyRepository,
+      {} as unknown as RecordAuditEvent,
+      destination.ids,
+      destination.clock,
+      destination.transactions,
+      destination.agentRuntime,
+    );
+    await expect(
+      actionGateway.executeFromAgentRun("run-reviewed"),
+    ).rejects.toThrow("Agent run is not executing an action intent");
+    destination.database.close();
+  });
+
+  test("requires execution quiescence without advancing the snapshot head", async () => {
+    const runtimeRoot = temporaryRoot("ai-office-portable-quiescence-");
+    const source = temporaryRoot("ai-office-portable-quiescence-source-");
+    writeFileSync(join(source, "package.json"), '{"name":"quiescence"}\n');
+    const runtime = openRuntime(runtimeRoot);
+    const imported = await importProject(runtime, source);
+    await createTask(runtime, imported.projectId, "Pending portable work");
+    const completedTaskId = await createTask(
+      runtime,
+      imported.projectId,
+      "Completed portable work",
+    );
+    const tasks = new SqliteTaskRepository(runtime.database);
+    const completedTask = await tasks.findById(completedTaskId);
+    completedTask!.start(runtime.clock.now());
+    completedTask!.complete(runtime.clock.now());
+    await tasks.save(completedTask!);
+    const quiescent = await runtime.service.backup(imported.projectId);
+    expect(
+      quiescent.archive.state.tasks.map((item) => item.status).sort(),
+    ).toEqual(["completed", "pending"]);
+
+    const runningTaskId = await createTask(
+      runtime,
+      imported.projectId,
+      "Operational work",
+    );
+    const runningTask = await tasks.findById(runningTaskId);
+    const now = runtime.clock.now();
+    runningTask!.start(now);
+    await tasks.save(runningTask!);
+    const manifest = {
+      schemaVersion: 1 as const,
+      provenance: {
+        host: "codex",
+        skill: "ai-office" as const,
+        skillVersion: "1",
+      },
+      project: {
+        mission: "Test portable execution quiescence.",
+        goals: ["Preserve coherent snapshots."],
+        constraints: [],
+        preferences: [],
+        permissionPreferences: [],
+      },
+      office: {
+        name: "Test office",
+        roles: [
+          {
+            id: "worker",
+            title: "Worker",
+            purpose: "Execute work.",
+            responsibilities: ["Deliver the task."],
+          },
+        ],
+      },
+      pipelines: [
+        {
+          id: "delivery",
+          name: "Delivery",
+          description: "One enforced stage.",
+          defaultFor: ["feature" as const],
+          enforcement: "enforced" as const,
+          stages: [
+            {
+              id: "work",
+              name: "Work",
+              roleId: "worker",
+              objective: "Complete the task.",
+              checks: [],
+              requiresApproval: false,
+              capabilities: [],
+            },
+          ],
+        },
+      ],
+    };
+    runtime.database
+      .prepare(
+        `INSERT INTO office_manifest_revision(
+           id, project_id, revision, schema_version, manifest_json,
+           source_host, source_skill, source_skill_version, applied_at
+         ) VALUES (?, ?, 1, 1, ?, 'codex', 'ai-office', '1', ?)`,
+      )
+      .run(
+        "manifest-quiescence",
+        imported.projectId,
+        JSON.stringify(manifest),
+        now.toISOString(),
+      );
+    const pipeline = PipelineRun.create({
+      id: "pipeline-active",
+      projectId: imported.projectId,
+      taskId: runningTaskId,
+      manifestRevisionId: "manifest-quiescence",
+      manifestRevision: 1,
+      definition: manifest.pipelines[0]!,
+      startedBy: "operator",
+      stageRunIds: ["pipeline-stage-active"],
+      now,
+    });
+    await new SqlitePipelineRunRepository(runtime.database).insert(pipeline);
+    const { agentId } = await createAgent(
+      runtime,
+      imported.projectId,
+      "quiescence",
+    );
+    const run = AgentRun.create({
+      id: "run-active",
+      projectId: imported.projectId,
+      taskId: runningTaskId,
+      agentId,
+      now,
+    });
+    await runtime.agentRuntime.saveRun(run);
+    await runtime.agentRuntime.acquireTaskLock(
+      runningTaskId,
+      run.snapshot().id,
+      now,
+      new Date(now.getTime() + 60_000),
+    );
+
+    let failure: unknown;
+    try {
+      await runtime.service.backup(imported.projectId);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    const failureMessage = failure instanceof Error ? failure.message : "";
+    expect(failureMessage).toContain(`Task ${runningTaskId}: running`);
+    expect(failureMessage).toContain(
+      `Active pipeline pipeline-active (task ${runningTaskId})`,
+    );
+    expect(failureMessage).toContain(
+      `Active agent run run-active: queued (task ${runningTaskId})`,
+    );
+    expect(failureMessage).toContain(
+      `Active task lock for task ${runningTaskId} (run run-active`,
+    );
+    expect(
+      (await runtime.states.findHead(imported.projectId))?.revision.id,
+    ).toBe(quiescent.revisionId);
+    expect(
+      runtime.database
+        .query<{ count: number }, [string]>(
+          "SELECT COUNT(*) AS count FROM project_state_revision WHERE project_id = ?",
+        )
+        .get(imported.projectId)?.count,
+    ).toBe(1);
+    runtime.database.close();
+  });
+
   test("rejects a repository/archive identity mismatch before state mutation", async () => {
     const sourceRuntime = temporaryRoot("ai-office-portable-source-runtime-");
     const source = temporaryRoot("ai-office-portable-origin-");
@@ -262,6 +699,11 @@ describe("project portability", () => {
     expect(serializePortableProjectArchive(backup.archive)).not.toContain(
       "must-not-export",
     );
+    expect(backup.archive.manifest.source).toMatchObject({
+      type: "git",
+      remote: "https://example.test/team/source.git",
+      branch: "main",
+    });
     origin.database.close();
 
     const destination = openRuntime(targetRuntime);
@@ -294,6 +736,28 @@ describe("project portability", () => {
       projectIdentity: backup.projectIdentity,
     });
     destination.database.close();
+  });
+
+  test("omits a local filesystem Git remote from the archive", async () => {
+    const runtimeRoot = temporaryRoot("ai-office-portable-local-remote-");
+    const source = temporaryRoot("ai-office-portable-local-repository-");
+    mkdirSync(join(source, ".git"));
+    const localRemote = "/Users/alice/dev/private/upstream.git";
+    writeFileSync(
+      join(source, ".git", "config"),
+      `[remote "origin"]\n  url = ${localRemote}\n`,
+    );
+    writeFileSync(join(source, ".git", "HEAD"), "ref: refs/heads/main\n");
+    const runtime = openRuntime(runtimeRoot);
+    const imported = await importProject(runtime, source);
+    const backup = await runtime.service.backup(imported.projectId);
+    const serialized = serializePortableProjectArchive(backup.archive);
+    expect(serialized).not.toContain(localRemote);
+    expect(backup.archive.manifest.source).toEqual({
+      type: "directory",
+      branch: "main",
+    });
+    runtime.database.close();
   });
 
   test("rolls back authoritative state when a restored entity conflicts", async () => {

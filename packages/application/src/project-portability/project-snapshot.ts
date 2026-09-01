@@ -3,6 +3,7 @@ import * as z from "zod";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import { assertNoSensitiveFields } from "@ai-office/domain/capability/sensitive-fields.ts";
 import { officeManifestSchema } from "../office/office-manifest-schema.ts";
+import { portableGitRemote } from "./project-git-provenance.ts";
 
 export const portableProjectFormat = "ai-office-project" as const;
 export const portableProjectFormatVersion = 1 as const;
@@ -35,7 +36,7 @@ const actor = z.strictObject({
   displayName: shortText.optional(),
 });
 
-export const portableProjectStateSchema = z.strictObject({
+const portableProjectStateShape = z.strictObject({
   project: z.strictObject({
     name: z.string().trim().min(1).max(500),
     description: longText.optional(),
@@ -209,6 +210,124 @@ export const portableProjectStateSchema = z.strictObject({
   }),
 });
 
+export const portableProjectStateSchema = portableProjectStateShape.superRefine(
+  (state, context) => {
+    const milestones = new Set(
+      state.governance.milestones.map((item) => item.id),
+    );
+    const requirements = new Set(
+      state.governance.requirements.map((item) => item.id),
+    );
+    const adrs = new Set(state.governance.adrs.map((item) => item.id));
+    const tasks = new Set(state.tasks.map((item) => item.id));
+    const roles = new Set(state.agents.roles.map((item) => item.id));
+    const agents = new Set(state.agents.definitions.map((item) => item.id));
+    const runs = new Set(state.agents.terminalRuns.map((item) => item.id));
+    const reviews = new Map(
+      state.governance.reviews.map((item) => [item.id, item] as const),
+    );
+    const approvals = new Map<
+      string,
+      (typeof state.governance.approvals)[number]
+    >();
+
+    const missing = (path: (string | number)[], message: string): void => {
+      context.addIssue({ code: "custom", path, message });
+    };
+    for (const [index, item] of state.governance.requirements.entries())
+      if (item.milestoneId !== undefined && !milestones.has(item.milestoneId))
+        missing(
+          ["governance", "requirements", index, "milestoneId"],
+          `Referenced milestone ${item.milestoneId} is not portable`,
+        );
+    for (const [index, item] of state.governance.adrs.entries())
+      if (item.supersededById !== undefined && !adrs.has(item.supersededById))
+        missing(
+          ["governance", "adrs", index, "supersededById"],
+          `Referenced ADR ${item.supersededById} is not portable`,
+        );
+    const subjects = {
+      task: tasks,
+      agent_run: runs,
+      requirement: requirements,
+      adr: adrs,
+      milestone: milestones,
+    };
+    for (const [index, item] of state.governance.reviews.entries()) {
+      if (!subjects[item.subjectType].has(item.subjectId))
+        missing(
+          ["governance", "reviews", index, "subjectId"],
+          `Referenced ${item.subjectType} ${item.subjectId} is not portable`,
+        );
+    }
+    for (const [index, item] of state.governance.approvals.entries()) {
+      const review = reviews.get(item.reviewId);
+      if (review === undefined) {
+        missing(
+          ["governance", "approvals", index, "reviewId"],
+          `Referenced review ${item.reviewId} is not portable`,
+        );
+        continue;
+      }
+      if (approvals.has(item.reviewId))
+        missing(
+          ["governance", "approvals", index, "reviewId"],
+          `Review ${item.reviewId} has more than one approval`,
+        );
+      approvals.set(item.reviewId, item);
+      if (review.status !== item.decision)
+        missing(
+          ["governance", "approvals", index, "decision"],
+          `Approval decision does not match review ${item.reviewId}`,
+        );
+    }
+    for (const [index, item] of state.governance.reviews.entries()) {
+      const approval = approvals.get(item.id);
+      if (item.status === "pending") {
+        if (approval !== undefined)
+          missing(
+            ["governance", "reviews", index, "status"],
+            `Pending review ${item.id} cannot have an approval`,
+          );
+        if (item.completedAt !== undefined)
+          missing(
+            ["governance", "reviews", index, "completedAt"],
+            `Pending review ${item.id} cannot be completed`,
+          );
+      } else {
+        if (approval === undefined)
+          missing(
+            ["governance", "reviews", index, "status"],
+            `Decided review ${item.id} requires a portable approval`,
+          );
+        if (item.completedAt === undefined)
+          missing(
+            ["governance", "reviews", index, "completedAt"],
+            `Decided review ${item.id} requires a completion timestamp`,
+          );
+      }
+    }
+    for (const [index, item] of state.agents.definitions.entries())
+      if (!roles.has(item.roleId))
+        missing(
+          ["agents", "definitions", index, "roleId"],
+          `Referenced role ${item.roleId} is not portable`,
+        );
+    for (const [index, item] of state.agents.terminalRuns.entries()) {
+      if (!tasks.has(item.taskId))
+        missing(
+          ["agents", "terminalRuns", index, "taskId"],
+          `Referenced task ${item.taskId} is not portable`,
+        );
+      if (!agents.has(item.agentId))
+        missing(
+          ["agents", "terminalRuns", index, "agentId"],
+          `Referenced agent ${item.agentId} is not portable`,
+        );
+    }
+  },
+);
+
 export type PortableProjectState = z.infer<typeof portableProjectStateSchema>;
 
 export const portableProjectManifestSchema = z.strictObject({
@@ -224,7 +343,13 @@ export const portableProjectManifestSchema = z.strictObject({
   source: z
     .strictObject({
       type: z.enum(["git", "directory"]),
-      remote: z.string().max(8_000).optional(),
+      remote: z
+        .string()
+        .max(8_000)
+        .refine((value) => portableGitRemote(value) === value, {
+          message: "must be normalized network-safe Git provenance",
+        })
+        .optional(),
       branch: shortText.optional(),
     })
     .optional(),

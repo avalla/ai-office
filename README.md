@@ -236,6 +236,21 @@ validates the complete envelope through the daemon and refuses a mismatched
 identity, corrupt archive, unsupported version, or different existing local
 state or revision head. There is no destructive force-restore option.
 
+A backup is a coherent semantic snapshot, not an allowlist of unrelated rows.
+`project:backup` therefore fails before creating a revision or archive while a
+task is `assigned`, `running`, `blocked`, or `waiting_review`, while an agent or
+pipeline run is active, or while an unexpired task lock exists. Pending work and
+terminal tasks remain portable. Finish or cancel active work and retry; task
+states are never rewritten to make a backup appear resumable.
+
+Reviews and approvals are included only when their task, requirement, ADR,
+milestone, or terminal agent-run subject is included too. Terminal run summaries
+cannot resume execution or carry action intent, pipeline authority, results,
+errors, events, or worktree paths. Source provenance records only sanitized
+network Git remotes: URL credentials, query strings, and fragments are removed,
+while `file://`, absolute, relative, Windows, UNC, and ambiguous local remotes
+are omitted entirely.
+
 `project:import` remains the offline source scanner, and `project:export`
 remains the Markdown profile projection; `project:backup` and
 `project:restore` are the portable state workflow. Remote push/pull and

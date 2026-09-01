@@ -167,9 +167,10 @@ second authoritative instruction contract. The JSON contract file remains an
 optional input for direct machine-oriented `client:*` workflows.
 
 `project:backup` creates a strict, checksummed `.aioffice` snapshot of the
-documented portable subset; `project:restore` validates and restores it through
-the daemon. The format contains semantic records rather than SQLite pages and
-never carries absolute source/worktree paths, secrets, machine authority,
+documented, referentially closed portable subset and rejects non-quiescent
+execution state; `project:restore` validates and restores it through the daemon.
+The format contains semantic records rather than SQLite pages and never carries
+absolute source/worktree paths or local Git remotes, secrets, machine authority,
 capabilities, controlled-action approvals/executions, audit payloads, global
 memory, or active execution state. See
 [Project portability and synchronization](../development/project-portability-and-sync.md).

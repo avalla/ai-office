@@ -33,7 +33,7 @@ Report project identity, repository binding, office baseline, clients, created o
 
 ## Back up or restore
 
-Treat the repository identity reported by status as the stable logical project identity; never use an absolute path or runtime-local project ID as a cross-machine identifier. On explicit request, create a portable snapshot with \`ai-office project:backup --project <projectId> --output <file.aioffice>\`. Restore only after confirming the target checkout with \`ai-office project:restore <file.aioffice> --root <path>\`. Never use restore to overwrite different local state. Portable snapshots omit secrets, grants, controlled-action approvals, audit authority, active executions, and machine-local paths; diagnose and re-establish required credentials and security authority locally.
+Treat the repository identity reported by status as the stable logical project identity; never use an absolute path or runtime-local project ID as a cross-machine identifier. On explicit request, create a portable snapshot with \`ai-office project:backup --project <projectId> --output <file.aioffice>\`. Restore only after confirming the target checkout with \`ai-office project:restore <file.aioffice> --root <path>\`. Never use restore to overwrite different local state. Portable snapshots omit secrets, grants, controlled-action approvals, audit authority, active executions, and machine-local paths; diagnose and re-establish required credentials and security authority locally. Backup requires execution quiescence: if it reports active tasks, runs, pipelines, or locks, finish or cancel that work and retry; never rewrite lifecycle state merely to make a snapshot succeed.
 
 ## Onboard
 

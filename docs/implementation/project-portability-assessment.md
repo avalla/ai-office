@@ -16,9 +16,10 @@ Date: 2026-09-01
    integration/projection artifacts rather than authority.
 
 3. **Portable state.** Snapshot v1 can safely carry logical identity, project
-   metadata, tasks, sanitized active profile knowledge, office manifest
-   revisions, governance records, project role/agent definitions, and terminal
-   run summaries without result/error payloads.
+   metadata, quiescent pending/terminal tasks, sanitized active profile
+   knowledge, office manifest revisions, referentially closed governance
+   records, project role/agent definitions, and terminal run summaries without
+   execution-authority or result/error payloads.
 
 4. **Local or security authority.** Absolute source/worktree paths, checkout
    detachments, local scans, active runs/locks/pipelines, resources, credential
@@ -68,6 +69,12 @@ Date: 2026-09-01
     regular-file checks, identity matching, foreign keys, a short transaction,
     atomic writes, and fail-closed conflicts. The CLI remains a daemon client.
 
+    The implementation review added two further invariants. Backup rejects
+    operational task states, non-terminal runs, active pipelines, and unexpired
+    locks before recording a revision. Portable Git provenance accepts only
+    sanitized network remotes; filesystem and ambiguous remotes are omitted.
+    Governance and agent records must form a closed reference graph.
+
 11. **Documentation.** README needs the workflow and ownership map. Storage and
     overview docs need snapshot/revision boundaries. A focused development
     document should own format, lifecycle, security, migration, remotes, and
@@ -87,3 +94,8 @@ sync, semantic merge, binary artifacts, secrets transfer, active execution
 migration, or global-memory migration. These boundaries preserve current
 daemon, transaction, capability, and ownership invariants while leaving a
 direct path to filesystem remotes and later entity/event sync.
+
+Snapshot v1 deliberately requires execution quiescence rather than attempting
+to normalize or recreate active work. Governance restore replays the valid
+pending-review then append-only-approval sequence and verifies the reloaded
+portable state through its canonical checksum before commit.

@@ -76,23 +76,26 @@ revalidate the archive checksums after download.
 ### Included
 
 - project name, user-owned description, and timestamps;
-- tasks and their current lifecycle state;
+- pending and terminal tasks in an execution-quiescent project;
 - active profile knowledge except detected checkout root paths, raw remote URL
   entries, and source references; sanitized remote provenance lives only in the
   manifest;
 - all office manifest revisions;
-- milestones, requirements, architecture decisions, reviews, and governance
-  approvals;
+- milestones, requirements, architecture decisions, and only those reviews and
+  approvals whose complete referenced portable subject is present;
 - project role and agent definitions, with a portable source marker on restore;
 - terminal agent-run identity, status, and timestamps without action, result,
   error, pipeline, or worktree payloads;
-- sanitized Git remote/branch provenance when available.
+- sanitized network Git remote/branch provenance when available.
 
 Imported-source descriptions generated as `Imported from <absolute path>` are
-not portable descriptions and are omitted. URL user information is stripped
-from source provenance. A sensitive-key check rejects snapshot state containing
-fields such as token, password, credential, authorization, secret, or API key;
-backup fails rather than exporting the suspect value.
+not portable descriptions and are omitted. Network Git provenance accepts
+HTTP(S), SSH, Git-protocol, and normalized scp-style remotes. URL user
+information, query strings, and fragments are removed. `file://`, POSIX,
+relative, Windows-drive, UNC, and ambiguous remote strings are machine-local
+and omitted. A sensitive-key check rejects snapshot state containing fields
+such as token, password, credential, authorization, secret, or API key; backup
+fails rather than exporting the suspect value.
 
 ### Excluded
 
@@ -112,12 +115,44 @@ Security authority is intentionally re-established on the destination. A past
 approval or capability record never becomes current machine authority merely
 because another machine exported it.
 
+### Snapshot consistency and referential closure
+
+Snapshot v1 is referentially closed. Requirements may reference only exported
+milestones; superseding ADR references resolve within the exported ADR set;
+agents reference exported roles; and terminal run summaries reference exported
+tasks and agents. Review subjects must resolve to an exported task,
+requirement, ADR, milestone, or terminal run. An approval is exported only with
+its review. Pending reviews have no approval or completion timestamp; decided
+reviews have one matching append-only approval.
+
+Active-run reviews and their approvals are omitted while the run is not
+portable. In practice the active run also makes the project non-quiescent, so
+normal `project:backup` rejects rather than emitting a partial archive. Once the
+run is terminal, its summary and attached governance records enter the portable
+closure deterministically.
+
+### Execution quiescence
+
+Snapshot v1 has no resumable execution model. Backup therefore rejects before
+advancing the project-state head when any of these are present:
+
+- a task in `assigned`, `running`, `blocked`, or `waiting_review`;
+- an agent run in `queued`, `preparing`, `running`, or `reviewing`;
+- an active pipeline run;
+- an unexpired task lock.
+
+Pending tasks and terminal tasks (`completed`, `failed`, or `cancelled`) remain
+portable. Backup reports every blocker by task/run/pipeline identity. It never
+rewrites lifecycle state, fabricates a run on restore, or claims that active
+work can resume on another machine.
+
 ## Backup and restore lifecycle
 
-Backup is a daemon-backed project command. The application service loads one
-consistent semantic snapshot in a short database transaction, records/reuses
-its revision, and returns the envelope. The infrastructure adapter atomically
-writes a new mode-`0600` file and refuses overwrite.
+Backup is a daemon-backed project command. The application service checks
+execution quiescence and loads one consistent semantic snapshot in a short
+database transaction, records/reuses its revision only after those checks, and
+returns the envelope. The infrastructure adapter atomically writes a new
+mode-`0600` file and refuses overwrite.
 
 Restore reads and validates a regular, non-symlink `.aioffice` file before any
 database mutation. It verifies format/version, strict schema, sensitive fields,
@@ -142,6 +177,19 @@ Restore outcomes are conservative:
 
 There is no destructive overwrite or `--force`. Restoring an older backup over
 newer/different local authority is therefore impossible by accident.
+
+Decided governance reviews are reconstructed through the existing database
+sequence: insert the review as pending, insert its append-only approval so the
+governance trigger finalizes it, preserve the archived review completion time,
+and compare the fully reloaded portable state with the archive before commit.
+This preserves both legacy review completion timestamps and approval creation
+timestamps when they differ, without weakening triggers or constraints.
+
+Restored terminal agent-run rows are summaries only. Their terminal status is
+irreversible, and action intent, pipeline binding, worktree, result, error, and
+event data are null or absent. Existing action and pipeline gateways therefore
+cannot treat them as live execution principals or recover transferred
+authority.
 
 ## Revision and remote architecture
 
