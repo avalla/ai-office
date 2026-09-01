@@ -7,6 +7,7 @@ import {
   type RuntimePaths,
 } from "@ai-office/runtime-paths/runtime-paths.ts";
 import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
+import { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 import { InvalidAgentDefinitionError } from "@ai-office/agent-runtime/agent-definition.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { AgentDefinitionDirectoryError } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
@@ -142,6 +143,13 @@ import {
 } from "@ai-office/application/pipeline-errors.ts";
 import { PipelineTransitionError } from "@ai-office/domain/pipeline/pipeline-run.ts";
 import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
+import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project-archive-adapter.port.ts";
+import { LocalProjectArchiveAdapter } from "./local-project-archive-adapter.ts";
+import { PortableProjectArchiveError } from "@ai-office/application/project-portability/project-snapshot.ts";
+import {
+  ProjectPortabilityError,
+  ProjectRestorePartialError,
+} from "@ai-office/application/project-portability/manage-project-portability.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 export type CliIo = CommandIo;
@@ -161,6 +169,8 @@ Commands:
   project:answer --project <id> --question <id> --answer <value>  # legacy stored questions only
   project:profile --project <id>
   project:export --project <id>
+  project:backup --project <id> --output <path.aioffice> [--json]
+  project:restore <archive.aioffice> [--root <path>] [--json]
   office:context --project <id>
   office:validate (--file <path> | --manifest <json>)
   office:apply --project <id> (--file <path> | --manifest <json>)
@@ -234,6 +244,8 @@ const commands = [
   "project:answer",
   "project:profile",
   "project:export",
+  "project:backup",
+  "project:restore",
   "office:context",
   "office:validate",
   "office:apply",
@@ -311,6 +323,7 @@ export interface CliOptions {
   agentClients?: AgentClientCatalog;
   projectBindings?: ProjectBindingAdapter;
   defaultOfficeManifest?: OfficeManifest;
+  projectArchives?: ProjectArchiveAdapter;
 }
 
 function defaultOfficeManifest(): OfficeManifest {
@@ -428,7 +441,10 @@ function formatKnownError(error: unknown): string | null {
     error instanceof PipelineActorUnauthorizedError ||
     error instanceof PipelineDefinitionNotEnforcedError ||
     error instanceof PipelineRunNotFoundError ||
-    error instanceof PipelineTransitionError
+    error instanceof PipelineTransitionError ||
+    error instanceof PortableProjectArchiveError ||
+    error instanceof ProjectPortabilityError ||
+    error instanceof ProjectRestorePartialError
   )
     return error.message;
   return null;
@@ -513,6 +529,9 @@ export async function runCli(
       projectBindings:
         options.projectBindings ?? new LocalProjectBindingAdapter(),
       repositoryIdentities: new SqliteRepositoryIdentityRepository(database),
+      projectStates: new SqliteProjectStateRepository(database),
+      projectArchives:
+        options.projectArchives ?? new LocalProjectArchiveAdapter(),
       defaultOfficeManifest:
         options.defaultOfficeManifest ?? defaultOfficeManifest(),
       memoryReferences: new SqliteMemoryReferenceRepository(database),

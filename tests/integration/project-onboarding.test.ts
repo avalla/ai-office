@@ -13,6 +13,7 @@ import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.t
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
 import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
+import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
 import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
 
 const temporaryDirectories: string[] = [];
@@ -46,6 +47,7 @@ describe("legacy project-question compatibility", () => {
       projects,
       profiles,
       new LocalProjectScanner(),
+      new SqliteRepositoryIdentityRepository(database),
       ids,
       clock,
       new SqliteTransactionRunner(database),

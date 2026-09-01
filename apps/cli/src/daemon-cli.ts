@@ -62,6 +62,7 @@ const projectScopedCommands = new Set([
   "project:answer",
   "project:profile",
   "project:export",
+  "project:backup",
   "office:context",
   "office:apply",
   "office:show",
@@ -136,12 +137,44 @@ function lifecycleArguments(
   return result;
 }
 
+function portableProjectArguments(
+  args: string[],
+  workingDirectory: string,
+): string[] {
+  const command = args[0];
+  if (command !== "project:backup" && command !== "project:restore")
+    return args;
+  const result = [...args];
+  for (let index = 1; index < result.length; index += 1) {
+    const argument = result[index];
+    if (argument === "--output" || argument === "--root") {
+      const value = result[index + 1];
+      if (value !== undefined && !value.startsWith("--"))
+        result[index + 1] = resolve(workingDirectory, value);
+      index += 1;
+      continue;
+    }
+    if (
+      command === "project:restore" &&
+      argument !== undefined &&
+      !argument.startsWith("--")
+    )
+      result[index] = resolve(workingDirectory, argument);
+  }
+  if (command === "project:restore" && !result.includes("--root"))
+    result.push("--root", resolve(workingDirectory));
+  return result;
+}
+
 async function resolvedArguments(
   args: string[],
   workingDirectory: string,
   bindings: ProjectBindingAdapter,
 ): Promise<{ args: string[]; discoveredRoot?: string }> {
-  const lifecycle = lifecycleArguments(args, workingDirectory);
+  const lifecycle = lifecycleArguments(
+    portableProjectArguments(args, workingDirectory),
+    workingDirectory,
+  );
   const command = lifecycle[0];
   if (
     command === undefined ||

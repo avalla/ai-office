@@ -84,6 +84,11 @@ cannot structurally block unrelated commands. `run:schedule` remains a short
 queued command that creates the run and lock before returning its ID. A failed
 command does not block later commands. SQLite writes remain inside the existing short
 application transactions; filesystem scans and user input remain outside them.
+Portable `project:backup` and `project:restore` commands use the same daemon
+boundary. Archive validation, source scanning, manifest assembly, and archive
+file I/O happen outside SQLite transactions. A consistent semantic-state read
+plus revision update, and restored semantic-state changes, use short
+application-owned transactions.
 
 The append-only `audit_event` table records daemon lifecycle and command
 outcomes. Command arguments and answers are deliberately excluded from event

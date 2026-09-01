@@ -15,6 +15,7 @@ import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
+import type { ProjectStateRepository } from "../ports/project-state-repository.port.ts";
 import {
   ProjectSourceAssociationError,
   type ImportProject,
@@ -76,6 +77,11 @@ export interface ProjectLifecycleStatus {
     runtimeAssociation: {
       projectId: string | null;
       state: RuntimeAssociationState;
+    };
+    stateRevision?: {
+      head: string | null;
+      base: string | null;
+      checksum: string | null;
     };
   };
   runtime: {
@@ -240,6 +246,7 @@ interface ProjectLifecycleDependencies {
   manifests: OfficeManifestRepository;
   tasks: TaskRepository;
   pipelines?: PipelineRunRepository;
+  states?: ProjectStateRepository;
   importer: ImportProject;
   manifestApplicator: ApplyOfficeManifest;
   clients: ManageAgentClientIntegration;
@@ -436,6 +443,16 @@ export class ManageProjectLifecycle {
       this.dependencies.ids,
       input.rebind === true,
     );
+    if (input.rebind !== true && legacyProjectId !== null)
+      repositoryId =
+        (await identities.findRepositoryId(legacyProjectId)) ?? repositoryId;
+    if (
+      input.rebind !== true &&
+      inspection.binding === undefined &&
+      projectAtPath !== null
+    )
+      repositoryId =
+        (await identities.findRepositoryId(projectAtPath)) ?? repositoryId;
     if (input.rebind === true && projectAtPath !== null) {
       repositoryId =
         (await identities.findRepositoryId(projectAtPath)) ?? repositoryId;
@@ -471,7 +488,10 @@ export class ManageProjectLifecycle {
         await this.dependencies.importer.execute({ rootPath, projectId });
         sourceAssociated = true;
       } else {
-        const imported = await this.dependencies.importer.execute({ rootPath });
+        const imported = await this.dependencies.importer.execute({
+          rootPath,
+          repositoryId,
+        });
         projectId = imported.projectId;
         projectCreated = imported.created;
       }
@@ -826,6 +846,10 @@ export class ManageProjectLifecycle {
         ? null
         : await this.dependencies.tasks.listByProject(projectId!);
     const snapshots = tasks?.map((task) => task.snapshot()) ?? [];
+    const stateHead =
+      projectId === null || this.dependencies.states === undefined
+        ? null
+        : await this.dependencies.states.findHead(projectId);
     const terminal = new Set(["completed", "failed", "cancelled"]);
     const wip = new Set(["assigned", "running", "blocked", "waiting_review"]);
     const baseline =
@@ -898,6 +922,11 @@ export class ManageProjectLifecycle {
           state: legacy ? "legacy" : "valid",
         },
         runtimeAssociation: { projectId, state: associationState },
+        stateRevision: {
+          head: stateHead?.revision.id ?? null,
+          base: stateHead?.baseRevisionId ?? null,
+          checksum: stateHead?.revision.stateChecksum ?? null,
+        },
       },
       runtime: {
         daemon: "reachable",

@@ -33,10 +33,12 @@ function service(context: CommandContext): ManageProjectLifecycle {
     manifests: context.officeManifests,
     tasks: context.tasks,
     pipelines: context.pipelines,
+    states: context.projectStates,
     importer: new ImportProject(
       context.projects,
       context.profiles,
       new LocalProjectScanner(),
+      context.repositoryIdentities,
       context.ids,
       context.clock,
       context.transactions,
@@ -164,6 +166,10 @@ export function printProjectLifecycleStatus(
   context.io.stdout(
     `  runtime association: ${result.project.runtimeAssociation.state}`,
   );
+  if (result.project.stateRevision !== undefined)
+    context.io.stdout(
+      `  state revision: ${result.project.stateRevision.head ?? "not exported"}`,
+    );
   context.io.stdout("");
   context.io.stdout("Runtime");
   context.io.stdout(`  daemon: ${result.runtime.daemon}`);

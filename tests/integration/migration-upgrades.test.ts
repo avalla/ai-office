@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0021_agent_action_provenance.sql",
+        "0022_project_portability.sql",
       );
       expect(
         database
@@ -108,6 +108,7 @@ describe("migration upgrades", () => {
       "0019_repository_identity.sql",
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
+      "0022_project_portability.sql",
     ]);
     expect(
       database
@@ -157,6 +158,7 @@ describe("migration upgrades", () => {
       "0019_repository_identity.sql",
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
+      "0022_project_portability.sql",
     ]);
     expect(
       database
@@ -175,7 +177,7 @@ describe("migration upgrades", () => {
     database.close();
   });
 
-  test("adds portable repository identity and checkout detachment state without changing projects", () => {
+  test("assigns pre-feature projects one stable identity and adds revision state idempotently", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-identity-upgrade-"));
     roots.push(root);
     const partial = join(root, "partial-migrations");
@@ -198,13 +200,8 @@ describe("migration upgrades", () => {
       "0019_repository_identity.sql",
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
+      "0022_project_portability.sql",
     ]);
-    database
-      .prepare(
-        `INSERT INTO project_repository_identity(repository_id,project_id,created_at)
-         VALUES ('repo_portable','project',?)`,
-      )
-      .run(createdAt);
     database
       .prepare(
         `INSERT INTO project_checkout_detachment(local_path,project_id,detached_at)
@@ -212,13 +209,34 @@ describe("migration upgrades", () => {
       )
       .run(createdAt);
 
+    const portableIdentity = database
+      .query<{ repository_id: string }, []>(
+        "SELECT repository_id FROM project_repository_identity WHERE project_id='project'",
+      )
+      .get()?.repository_id;
+    expect(portableIdentity).toMatch(/^repo_[0-9a-f]{32}$/u);
+    expect(migrate(database, migrations).applied).toEqual([]);
     expect(
       database
-        .query<{ project_id: string }, []>(
-          "SELECT project_id FROM project_repository_identity WHERE repository_id='repo_portable'",
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM project_repository_identity WHERE project_id='project'",
         )
-        .get(),
-    ).toEqual({ project_id: "project" });
+        .get()?.count,
+    ).toBe(1);
+    expect(
+      database
+        .query<{ repository_id: string }, []>(
+          "SELECT repository_id FROM project_repository_identity WHERE project_id='project'",
+        )
+        .get()?.repository_id,
+    ).toBe(portableIdentity);
+    expect(
+      database
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='project_state_revision'",
+        )
+        .get()?.name,
+    ).toBe("project_state_revision");
     expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
     database.prepare("DELETE FROM project WHERE id='project'").run();
     expect(

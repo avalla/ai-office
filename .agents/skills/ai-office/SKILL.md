@@ -39,6 +39,7 @@ When the user asks what AI Office can do, how to use it, or for command help:
 - For changes to roles, goals, constraints, or pipelines, follow **Revise the office**.
 - For a new task or request to execute work, follow **Operate a task**.
 - For status questions, run `ai-office status <path> --json`, then read `office:context`, task, run, action, and cost state only as relevant; do not mutate anything.
+- For an explicit portability or restore request, follow **Back up or restore**.
 - Normal project installation already reconciles detected Codex and Claude
   repository integration. Follow **Integrate a coding client** only for a
   custom contract, one-client recovery, or manual machine workflow.
@@ -57,6 +58,19 @@ minimal managed pointer in `AGENTS.md`, and repository-local `ai-office` skills
 under `.agents/skills/` and `.claude/skills/` for detected hosts. Claude's
 managed `CLAUDE.md` block imports `AI-OFFICE.md` directly. Report user-owned or
 unmanaged artifacts as preserved, never as configured.
+
+## Back up or restore
+
+Treat the repository identity reported by `status` as the stable logical
+project identity; never use an absolute path or runtime-local project ID as a
+cross-machine identifier. On explicit request, create a portable snapshot with
+`ai-office project:backup --project <projectId> --output <file.aioffice>`. Restore
+only after confirming the target checkout with
+`ai-office project:restore <file.aioffice> --root <path>`. Never use restore to
+overwrite different local state. Portable snapshots omit secrets, grants,
+controlled-action approvals, audit authority, active executions, and
+machine-local paths; diagnose and re-establish required credentials and
+security authority locally.
 
 ## Onboard
 
