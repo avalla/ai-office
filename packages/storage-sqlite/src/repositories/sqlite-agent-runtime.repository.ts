@@ -325,10 +325,32 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
     expiresAt: Date,
   ): Promise<boolean> {
     const row = this.database
-      .query<{ run_id: string }, [string, string, string, string]>(
-        `INSERT INTO task_lock(task_id,run_id,acquired_at,expires_at) VALUES (?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET run_id=excluded.run_id,acquired_at=excluded.acquired_at,expires_at=excluded.expires_at WHERE task_lock.expires_at <= excluded.acquired_at RETURNING run_id`,
+      .query<
+        { run_id: string },
+        [string, string, string, string, string, string]
+      >(
+        `INSERT INTO task_lock(task_id,run_id,acquired_at,expires_at)
+         SELECT ?, ?, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM agent_run
+           WHERE id = ? AND task_id = ?
+             AND status IN ('queued','preparing','running','reviewing')
+         )
+         ON CONFLICT(task_id) DO UPDATE SET
+           run_id=excluded.run_id,
+           acquired_at=excluded.acquired_at,
+           expires_at=excluded.expires_at
+         WHERE task_lock.expires_at <= excluded.acquired_at
+         RETURNING run_id`,
       )
-      .get(taskId, runId, acquiredAt.toISOString(), expiresAt.toISOString());
+      .get(
+        taskId,
+        runId,
+        acquiredAt.toISOString(),
+        expiresAt.toISOString(),
+        runId,
+        taskId,
+      );
     return row?.run_id === runId;
   }
   async renewTaskLock(

@@ -87,8 +87,10 @@ application transactions; filesystem scans and user input remain outside them.
 Portable `project:backup` and `project:restore` commands use the same daemon
 boundary. Archive validation, source scanning, manifest assembly, and archive
 file I/O happen outside SQLite transactions. A consistent semantic-state read
-plus revision update, and restored semantic-state changes, use short
-application-owned transactions.
+plus revision-observation update, and restored semantic-state changes, use
+short application-owned transactions. Archive publication is a separate
+no-clobber filesystem outcome: a failed write does not invalidate the observed
+revision, and an identical retry reuses it.
 
 The append-only `audit_event` table records daemon lifecycle and command
 outcomes. Command arguments and answers are deliberately excluded from event

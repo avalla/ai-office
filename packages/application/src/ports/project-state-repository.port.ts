@@ -5,7 +5,7 @@ export interface ProjectStateRevision {
   projectId: string;
   parentRevisionId?: string;
   stateChecksum: string;
-  origin: "local_export" | "portable_import";
+  origin: "local_snapshot" | "portable_import";
   createdAt: Date;
 }
 
@@ -15,11 +15,6 @@ export interface ProjectStateHead {
 }
 
 export type ProjectPortabilityBlocker =
-  | {
-      kind: "task";
-      taskId: string;
-      status: "assigned" | "running" | "blocked" | "waiting_review";
-    }
   | {
       kind: "agent_run";
       runId: string;

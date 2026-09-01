@@ -7,7 +7,10 @@ import {
   type PortableProjectManifest,
   type PortableProjectState,
 } from "@ai-office/application/project-portability/project-snapshot.ts";
-import { portableGitRemote } from "@ai-office/application/project-portability/project-git-provenance.ts";
+import {
+  portableGitRemote,
+  selectPortableGitProvenance,
+} from "@ai-office/application/project-portability/project-git-provenance.ts";
 
 const timestamp = "2026-09-01T08:00:00.000Z";
 
@@ -135,6 +138,12 @@ describe("portable project snapshot", () => {
         manifest: manifest(sensitive),
       }),
     ).toThrow("sensitive field token");
+    expect(() =>
+      createPortableProjectArchive({
+        state: value,
+        manifest: { ...manifest(value), createdAt: "2026-09-01" },
+      }),
+    ).toThrow("canonical UTC ISO-8601 timestamp");
   });
 
   test("requires the portable subset to be referentially closed", () => {
@@ -256,6 +265,88 @@ describe("portable project snapshot", () => {
       }),
     ).toThrow("Referenced task missing-task is not portable");
   });
+
+  test("requires governance decisions to have exactly one matching approval", () => {
+    const pendingWithApproval = state();
+    pendingWithApproval.governance.reviews.push({
+      id: "review-pending",
+      subjectType: "task",
+      subjectId: "task-1",
+      reviewer: { type: "user", id: "reviewer" },
+      status: "pending",
+      createdAt: timestamp,
+    });
+    pendingWithApproval.governance.approvals.push({
+      id: "approval-pending",
+      reviewId: "review-pending",
+      decision: "approved",
+      actor: { type: "user", id: "owner" },
+      createdAt: timestamp,
+    });
+    expect(() =>
+      createPortableProjectArchive({
+        state: pendingWithApproval,
+        manifest: manifest(pendingWithApproval),
+      }),
+    ).toThrow("Pending review review-pending cannot have an approval");
+
+    const multipleApprovals = state();
+    multipleApprovals.governance.reviews.push({
+      id: "review-decided",
+      subjectType: "task",
+      subjectId: "task-1",
+      reviewer: { type: "user", id: "reviewer" },
+      status: "approved",
+      createdAt: timestamp,
+      completedAt: timestamp,
+    });
+    multipleApprovals.governance.approvals.push(
+      {
+        id: "approval-one",
+        reviewId: "review-decided",
+        decision: "approved",
+        actor: { type: "user", id: "owner" },
+        createdAt: timestamp,
+      },
+      {
+        id: "approval-two",
+        reviewId: "review-decided",
+        decision: "approved",
+        actor: { type: "user", id: "owner" },
+        createdAt: timestamp,
+      },
+    );
+    expect(() =>
+      createPortableProjectArchive({
+        state: multipleApprovals,
+        manifest: manifest(multipleApprovals),
+      }),
+    ).toThrow("Review review-decided has more than one approval");
+
+    const matchingDecision = state();
+    matchingDecision.governance.reviews.push({
+      id: "review-valid",
+      subjectType: "task",
+      subjectId: "task-1",
+      reviewer: { type: "user", id: "reviewer" },
+      status: "rejected",
+      createdAt: timestamp,
+      completedAt: timestamp,
+    });
+    matchingDecision.governance.approvals.push({
+      id: "approval-valid",
+      reviewId: "review-valid",
+      decision: "rejected",
+      actor: { type: "user", id: "owner" },
+      createdAt: timestamp,
+    });
+    expect(() =>
+      createPortableProjectArchive({
+        state: matchingDecision,
+        manifest: manifest(matchingDecision),
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("portable Git provenance", () => {
@@ -300,5 +391,57 @@ describe("portable Git provenance", () => {
         },
       }),
     ).toThrow("must be normalized network-safe Git provenance");
+  });
+
+  test("selects agreed provenance independently of source insertion order", () => {
+    const sources = [
+      {
+        remoteUrl: "https://alice:secret@example.test/team/repo.git",
+        defaultBranch: "main",
+      },
+      {
+        remoteUrl: "https://example.test/team/repo.git",
+        defaultBranch: "main",
+      },
+      { remoteUrl: "file:///Users/alice/upstream.git" },
+    ];
+    const expected = {
+      type: "git" as const,
+      remote: "https://example.test/team/repo.git",
+      branch: "main",
+    };
+    expect(selectPortableGitProvenance(sources)).toEqual(expected);
+    expect(selectPortableGitProvenance([...sources].reverse())).toEqual(
+      expected,
+    );
+  });
+
+  test("omits ambiguous remotes and conflicting branch provenance", () => {
+    expect(
+      selectPortableGitProvenance([
+        { remoteUrl: "https://example.test/team/one.git" },
+        { remoteUrl: "https://example.test/team/two.git" },
+      ]),
+    ).toBeUndefined();
+    expect(
+      selectPortableGitProvenance([
+        {
+          remoteUrl: "https://example.test/team/repo.git",
+          defaultBranch: "main",
+        },
+        {
+          remoteUrl: "https://example.test/team/repo.git",
+          defaultBranch: "release",
+        },
+      ]),
+    ).toEqual({
+      type: "git",
+      remote: "https://example.test/team/repo.git",
+    });
+    expect(
+      selectPortableGitProvenance([
+        { remoteUrl: "/Users/alice/upstream.git", defaultBranch: "main" },
+      ]),
+    ).toBeUndefined();
   });
 });

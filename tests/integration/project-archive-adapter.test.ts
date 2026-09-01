@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  existsSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -10,7 +11,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LocalProjectArchiveAdapter } from "../../apps/cli/src/local-project-archive-adapter.ts";
+import {
+  LocalProjectArchiveAdapter,
+  nodeProjectArchiveFileSystem,
+} from "../../apps/cli/src/local-project-archive-adapter.ts";
 
 const roots: string[] = [];
 
@@ -49,5 +53,39 @@ describe("local portable project archive", () => {
     await expect(adapter.read(join(root, "missing.aioffice"))).rejects.toThrow(
       "does not exist",
     );
+  });
+
+  test("cleans the private temporary file when its write fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-archive-write-fail-"));
+    roots.push(root);
+    const path = join(root, "backup.aioffice");
+    const adapter = new LocalProjectArchiveAdapter({
+      ...nodeProjectArchiveFileSystem,
+      write: () => {
+        throw new Error("injected temporary write failure");
+      },
+    });
+    await expect(adapter.write(path, "snapshot\n")).rejects.toThrow(
+      "Could not write portable project archive",
+    );
+    expect(existsSync(path)).toBe(false);
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  test("leaves no artifact or temporary file when publication fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-archive-link-fail-"));
+    roots.push(root);
+    const path = join(root, "backup.aioffice");
+    const adapter = new LocalProjectArchiveAdapter({
+      ...nodeProjectArchiveFileSystem,
+      link: () => {
+        throw new Error("injected publication failure");
+      },
+    });
+    await expect(adapter.write(path, "snapshot\n")).rejects.toThrow(
+      "Could not write portable project archive",
+    );
+    expect(existsSync(path)).toBe(false);
+    expect(readdirSync(root)).toEqual([]);
   });
 });

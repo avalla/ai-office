@@ -59,3 +59,51 @@ export function comparablePortableGitRemote(
     ?.replace(/\/?\.git$/u, "")
     .replace(/\/$/u, "");
 }
+
+export interface GitProvenanceCandidate {
+  remoteUrl?: string;
+  defaultBranch?: string;
+}
+
+export interface PortableGitProvenance {
+  type: "git";
+  remote: string;
+  branch?: string;
+}
+
+/**
+ * Selects provenance only when every portable network remote identifies the
+ * same repository. Source-row ordering is deliberately irrelevant.
+ */
+export function selectPortableGitProvenance(
+  candidates: readonly GitProvenanceCandidate[],
+): PortableGitProvenance | undefined {
+  const portable = candidates.flatMap((candidate) => {
+    const remote = portableGitRemote(candidate.remoteUrl);
+    const comparable = comparablePortableGitRemote(remote);
+    return remote === undefined || comparable === undefined
+      ? []
+      : [{ remote, comparable, branch: candidate.defaultBranch?.trim() }];
+  });
+  const repositories = new Set(
+    portable.map((candidate) => candidate.comparable),
+  );
+  if (repositories.size !== 1) return undefined;
+
+  const remote = portable
+    .map((candidate) => candidate.remote)
+    .sort((left, right) => left.localeCompare(right))[0]!;
+  const branches = new Set(
+    portable.flatMap((candidate) =>
+      candidate.branch === undefined || candidate.branch === ""
+        ? []
+        : [candidate.branch],
+    ),
+  );
+  const branch = branches.size === 1 ? [...branches][0] : undefined;
+  return {
+    type: "git",
+    remote,
+    ...(branch === undefined ? {} : { branch }),
+  };
+}

@@ -25,7 +25,7 @@ import {
 } from "./project-snapshot.ts";
 import {
   comparablePortableGitRemote,
-  portableGitRemote,
+  selectPortableGitProvenance,
 } from "./project-git-provenance.ts";
 
 export class ProjectPortabilityError extends Error {
@@ -61,8 +61,6 @@ function normalizedRemote(value: string): string {
 
 function describeBlocker(blocker: ProjectPortabilityBlocker): string {
   switch (blocker.kind) {
-    case "task":
-      return `Task ${blocker.taskId}: ${blocker.status}`;
     case "agent_run":
       return `Active agent run ${blocker.runId}: ${blocker.status} (task ${blocker.taskId})`;
     case "pipeline_run":
@@ -156,7 +154,7 @@ export class ManageProjectPortability {
           projectId,
           ...(head === null ? {} : { parentRevisionId: head.revision.id }),
           stateChecksum,
-          origin: "local_export" as const,
+          origin: "local_snapshot" as const,
           createdAt: now,
         };
         await this.dependencies.states.saveRevision(
@@ -167,8 +165,9 @@ export class ManageProjectPortability {
       },
     );
 
-    const source = (await this.dependencies.profiles.listSources(projectId))[0];
-    const remote = portableGitRemote(source?.remoteUrl);
+    const source = selectPortableGitProvenance(
+      await this.dependencies.profiles.listSources(projectId),
+    );
     const manifest: PortableProjectManifest = {
       format: portableProjectFormat,
       formatVersion: portableProjectFormatVersion,
@@ -181,20 +180,7 @@ export class ManageProjectPortability {
           : { parentRevisionId: revision.parentRevisionId }),
         stateChecksum: revision.stateChecksum,
       },
-      ...(source === undefined
-        ? {}
-        : {
-            source: {
-              type:
-                remote === undefined
-                  ? ("directory" as const)
-                  : ("git" as const),
-              ...(remote === undefined ? {} : { remote }),
-              ...(source.defaultBranch === undefined
-                ? {}
-                : { branch: source.defaultBranch }),
-            },
-          }),
+      ...(source === undefined ? {} : { source }),
       contents: [
         "project",
         "tasks",
@@ -301,6 +287,7 @@ export class ManageProjectPortability {
     let projectId = identityProject;
     let outcome: ProjectRestoreResult["outcome"] = "restored";
     let authoritativeStateCommitted = false;
+    let shouldRecordImportedRevision = false;
     const now = this.dependencies.clock.now();
     try {
       await this.dependencies.transactions.run(async () => {
@@ -330,6 +317,7 @@ export class ManageProjectPortability {
             projectId,
             archive.state,
           );
+          shouldRecordImportedRevision = true;
         } else {
           const local =
             await this.dependencies.states.loadPortableState(projectId);
@@ -348,6 +336,17 @@ export class ManageProjectPortability {
             throw new ProjectPortabilityError(
               `Restore conflict: local head ${localHead.revision.id} and archive head ${archive.manifest.revision.id} have different revision history; restore will not move the local head`,
             );
+          if (
+            localHead !== null &&
+            (localHead.revision.parentRevisionId !==
+              archive.manifest.revision.parentRevisionId ||
+              localHead.revision.createdAt.toISOString() !==
+                archive.manifest.createdAt)
+          )
+            throw new ProjectPortabilityError(
+              `Restore conflict: revision ${archive.manifest.revision.id} metadata does not match the local immutable revision`,
+            );
+          shouldRecordImportedRevision = localHead === null;
           outcome = pathProject === null ? "attached" : "unchanged";
         }
 
@@ -364,21 +363,23 @@ export class ManageProjectPortability {
             : { defaultBranch: scan.currentBranch }),
           createdAt: now,
         });
-        await this.dependencies.states.saveRevision(
-          {
-            id: archive.manifest.revision.id,
-            projectId,
-            ...(archive.manifest.revision.parentRevisionId === undefined
-              ? {}
-              : {
-                  parentRevisionId: archive.manifest.revision.parentRevisionId,
-                }),
-            stateChecksum: archive.manifest.revision.stateChecksum,
-            origin: "portable_import",
-            createdAt: new Date(archive.manifest.createdAt),
-          },
-          archive.manifest.revision.id,
-        );
+        if (shouldRecordImportedRevision)
+          await this.dependencies.states.saveRevision(
+            {
+              id: archive.manifest.revision.id,
+              projectId,
+              ...(archive.manifest.revision.parentRevisionId === undefined
+                ? {}
+                : {
+                    parentRevisionId:
+                      archive.manifest.revision.parentRevisionId,
+                  }),
+              stateChecksum: archive.manifest.revision.stateChecksum,
+              origin: "portable_import",
+              createdAt: new Date(archive.manifest.createdAt),
+            },
+            archive.manifest.revision.id,
+          );
       });
       authoritativeStateCommitted = true;
       await this.dependencies.bindings.applyWrite(bindingPlan);

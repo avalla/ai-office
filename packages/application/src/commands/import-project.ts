@@ -130,7 +130,6 @@ export class ImportProject {
         const project = Project.create({
           id: this.ids.generate(),
           name: input.name ?? scan.projectName,
-          description: `Imported from ${scan.rootPath}`,
           now: completedAt,
         });
 

@@ -13,11 +13,15 @@ export const maximumPortableProjectBytes = 32 * 1024 * 1024;
 const id = z.string().trim().min(1).max(256);
 const shortText = z.string().max(2_000);
 const longText = z.string().max(256_000);
-const timestamp = z
-  .string()
-  .refine((value) => !Number.isNaN(Date.parse(value)), {
-    message: "must be an ISO-8601 timestamp",
-  });
+const timestamp = z.string().refine(
+  (value) => {
+    const parsed = Date.parse(value);
+    return !Number.isNaN(parsed) && new Date(parsed).toISOString() === value;
+  },
+  {
+    message: "must be a canonical UTC ISO-8601 timestamp",
+  },
+);
 const checksum = z.string().regex(/^[0-9a-f]{64}$/u);
 const jsonValue: z.ZodType<unknown> = z.lazy(() =>
   z.union([

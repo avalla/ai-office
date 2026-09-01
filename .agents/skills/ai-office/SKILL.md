@@ -70,9 +70,10 @@ only after confirming the target checkout with
 overwrite different local state. Portable snapshots omit secrets, grants,
 controlled-action approvals, audit authority, active executions, and
 machine-local paths; diagnose and re-establish required credentials and
-security authority locally. Backup requires execution quiescence: if it reports
-active tasks, runs, pipelines, or locks, finish or cancel that work and retry;
-never rewrite lifecycle state merely to make a snapshot succeed.
+security authority locally. Backup requires execution-authority quiescence: if
+it reports active runs, pipelines, or locks, finish or cancel that work and
+retry; task lifecycle status is portable semantic state and must not be
+rewritten merely to make a snapshot succeed.
 
 ## Onboard
 

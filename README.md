@@ -236,12 +236,18 @@ validates the complete envelope through the daemon and refuses a mismatched
 identity, corrupt archive, unsupported version, or different existing local
 state or revision head. There is no destructive force-restore option.
 
+Project descriptions are semantic user/domain text and are transferred
+verbatim, including text that happens to start with `Imported from`. New source
+imports no longer encode checkout provenance in that field; checkout paths and
+scan provenance remain structured, machine-local source metadata.
+
 A backup is a coherent semantic snapshot, not an allowlist of unrelated rows.
-`project:backup` therefore fails before creating a revision or archive while a
-task is `assigned`, `running`, `blocked`, or `waiting_review`, while an agent or
-pipeline run is active, or while an unexpired task lock exists. Pending work and
-terminal tasks remain portable. Finish or cancel active work and retry; task
-states are never rewritten to make a backup appear resumable.
+Task lifecycle status is portable semantic state, not execution authority.
+`project:backup` therefore preserves `assigned`, `running`, `blocked`, and
+`waiting_review` tasks when no live authority exists, but fails while an agent
+or pipeline run is active or an unexpired task lock exists. Finish or cancel
+that active execution and retry; task states are never rewritten merely to
+make a backup succeed.
 
 Reviews and approvals are included only when their task, requirement, ADR,
 milestone, or terminal agent-run subject is included too. Terminal run summaries
@@ -249,7 +255,16 @@ cannot resume execution or carry action intent, pipeline authority, results,
 errors, events, or worktree paths. Source provenance records only sanitized
 network Git remotes: URL credentials, query strings, and fragments are removed,
 while `file://`, absolute, relative, Windows, UNC, and ambiguous local remotes
-are omitted entirely.
+are omitted entirely. Multiple checkout sources contribute provenance only
+when their sanitized network remotes agree; conflicting remotes are omitted
+rather than selected by row order.
+
+The state revision records that the daemon observed one semantic state; it is
+not a receipt proving that the output file was published. If the no-clobber
+archive write fails, an identical retry safely reuses that revision. The local
+writer uses a private synchronized temporary file and an atomic hard-link
+publication during normal process execution, but does not claim power-loss
+durability after return.
 
 `project:import` remains the offline source scanner, and `project:export`
 remains the Markdown profile projection; `project:backup` and

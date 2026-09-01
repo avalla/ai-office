@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0022_project_portability.sql",
+        "0023_project_snapshot_observations.sql",
       );
       expect(
         database
@@ -109,6 +109,7 @@ describe("migration upgrades", () => {
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
       "0022_project_portability.sql",
+      "0023_project_snapshot_observations.sql",
     ]);
     expect(
       database
@@ -130,6 +131,69 @@ describe("migration upgrades", () => {
       generation_id: null,
       answer_type: "multi_select",
     });
+    database.close();
+  });
+
+  test("migrates local export claims to local snapshot observations without changing lineage", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-observation-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0022_project_portability.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    }
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    const createdAt = "2026-09-01T00:00:00.000Z";
+    database
+      .prepare(
+        `INSERT INTO project(id,name,created_at,updated_at)
+         VALUES ('project','Existing',?,?)`,
+      )
+      .run(createdAt, createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_state_revision(
+           id,project_id,parent_revision_id,state_checksum,origin,created_at
+         ) VALUES ('revision','project','unknown-parent',?,'local_export',?)`,
+      )
+      .run("a".repeat(64), createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_state_head(
+           project_id,revision_id,base_revision_id,updated_at
+         ) VALUES ('project','revision','known-base',?)`,
+      )
+      .run(createdAt);
+
+    expect(migrate(database, migrations).applied).toEqual([
+      "0023_project_snapshot_observations.sql",
+    ]);
+    expect(
+      database
+        .query<
+          {
+            origin: string;
+            parent_revision_id: string | null;
+            base_revision_id: string | null;
+          },
+          []
+        >(
+          `SELECT revision.origin, revision.parent_revision_id,
+                  head.base_revision_id
+           FROM project_state_revision revision
+           JOIN project_state_head head
+             ON head.project_id=revision.project_id
+            AND head.revision_id=revision.id`,
+        )
+        .get(),
+    ).toEqual({
+      origin: "local_snapshot",
+      parent_revision_id: "unknown-parent",
+      base_revision_id: "known-base",
+    });
+    expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
     database.close();
   });
 
@@ -159,6 +223,7 @@ describe("migration upgrades", () => {
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
       "0022_project_portability.sql",
+      "0023_project_snapshot_observations.sql",
     ]);
     expect(
       database
@@ -201,6 +266,7 @@ describe("migration upgrades", () => {
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
       "0022_project_portability.sql",
+      "0023_project_snapshot_observations.sql",
     ]);
     database
       .prepare(

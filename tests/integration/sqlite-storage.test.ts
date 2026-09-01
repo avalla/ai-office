@@ -60,6 +60,7 @@ describe("project database migrations", () => {
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
       "0022_project_portability.sql",
+      "0023_project_snapshot_observations.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -92,6 +93,7 @@ describe("project database migrations", () => {
       { version: "0020_pipeline_enforcement.sql" },
       { version: "0021_agent_action_provenance.sql" },
       { version: "0022_project_portability.sql" },
+      { version: "0023_project_snapshot_observations.sql" },
     ]);
     database.close();
   });

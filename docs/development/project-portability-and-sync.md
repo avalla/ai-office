@@ -76,7 +76,8 @@ revalidate the archive checksums after download.
 ### Included
 
 - project name, user-owned description, and timestamps;
-- pending and terminal tasks in an execution-quiescent project;
+- task lifecycle state, including assigned, running, blocked, or review-waiting
+  semantics when no live execution authority remains;
 - active profile knowledge except detected checkout root paths, raw remote URL
   entries, and source references; sanitized remote provenance lives only in the
   manifest;
@@ -86,16 +87,26 @@ revalidate the archive checksums after download.
 - project role and agent definitions, with a portable source marker on restore;
 - terminal agent-run identity, status, and timestamps without action, result,
   error, pipeline, or worktree payloads;
-- sanitized network Git remote/branch provenance when available.
+- sanitized network Git remote/branch provenance when all portable checkout
+  sources agree.
 
-Imported-source descriptions generated as `Imported from <absolute path>` are
-not portable descriptions and are omitted. Network Git provenance accepts
-HTTP(S), SSH, Git-protocol, and normalized scp-style remotes. URL user
-information, query strings, and fragments are removed. `file://`, POSIX,
-relative, Windows-drive, UNC, and ambiguous remote strings are machine-local
-and omitted. A sensitive-key check rejects snapshot state containing fields
-such as token, password, credential, authorization, secret, or API key; backup
-fails rather than exporting the suspect value.
+Project descriptions are semantic user/domain data and are preserved verbatim;
+the snapshot layer never infers meaning from prefixes such as `Imported from`.
+New repository imports no longer inject checkout paths into descriptions.
+Existing descriptions remain intact because historical generated text cannot
+be distinguished reliably from user text. Structured `project_source` rows and
+detected profile entries own checkout/import provenance and are excluded.
+
+Network Git provenance accepts HTTP(S), SSH, Git-protocol, and normalized
+scp-style remotes. URL user information, query strings, and fragments are
+removed. `file://`, POSIX, relative, Windows-drive, UNC, and ambiguous remote
+strings are machine-local and omitted. Source-row ordering has no meaning: if
+all sanitized network remotes resolve to one comparable remote, that remote is
+recorded; if distinct network remotes remain, source provenance is omitted.
+Branch is included only when the contributing sources agree. The remote never
+becomes project identity. A sensitive-key check rejects snapshot state
+containing fields such as token, password, credential, authorization, secret,
+or API key; backup fails rather than exporting the suspect value.
 
 ### Excluded
 
@@ -131,28 +142,58 @@ normal `project:backup` rejects rather than emitting a partial archive. Once the
 run is terminal, its summary and attached governance records enter the portable
 closure deterministically.
 
-### Execution quiescence
+### Execution-authority quiescence
 
 Snapshot v1 has no resumable execution model. Backup therefore rejects before
 advancing the project-state head when any of these are present:
 
-- a task in `assigned`, `running`, `blocked`, or `waiting_review`;
 - an agent run in `queued`, `preparing`, `running`, or `reviewing`;
 - an active pipeline run;
 - an unexpired task lock.
 
-Pending tasks and terminal tasks (`completed`, `failed`, or `cancelled`) remain
-portable. Backup reports every blocker by task/run/pipeline identity. It never
-rewrites lifecycle state, fabricates a run on restore, or claims that active
-work can resume on another machine.
+Task status alone is not execution authority. `pending`, `assigned`, `running`,
+`blocked`, `waiting_review`, and terminal task values are all preserved exactly
+when no live run, pipeline, or lock remains. A blocked task may represent a
+long-lived external dependency; an assigned or review-waiting task may likewise
+remain meaningful without an executor. The authoritative blockers are the
+execution principals themselves, not correlated status names. Backup reports
+every live run/pipeline/lock by identity. It never rewrites lifecycle state,
+fabricates a run on restore, or claims that excluded execution can resume on
+another machine.
 
 ## Backup and restore lifecycle
 
 Backup is a daemon-backed project command. The application service checks
-execution quiescence and loads one consistent semantic snapshot in a short
-database transaction, records/reuses its revision only after those checks, and
-returns the envelope. The infrastructure adapter atomically writes a new
-mode-`0600` file and refuses overwrite.
+execution-authority quiescence and loads one consistent semantic snapshot in a
+short database transaction. It records or reuses a `local_snapshot` revision:
+that revision means the daemon observed this semantic state, not that an output
+artifact was published. The infrastructure adapter then writes the envelope as
+a separate filesystem result.
+
+This deliberately avoids pretending SQLite and the filesystem share one
+transaction. The normal-process publication protocol is:
+
+1. open a fresh private temporary file in the destination directory;
+2. write and `fsync` that file;
+3. hard-link it to the final name, which refuses an existing target;
+4. remove the temporary name.
+
+The boundary behavior is explicit:
+
+- before the observation transaction, no new revision exists;
+- after the transaction but before publication, the semantic observation may
+  be the head even though no archive exists;
+- temporary-write or link failure removes the temporary file when the process
+  is still running and leaves the observation valid;
+- an identical retry reuses the same revision and can publish to a fresh path;
+- an existing target is never overwritten;
+- after final link creation, the target is the complete synchronized temporary
+  file; a process or machine crash may still leave the private temporary link.
+
+This is atomic/no-clobber publication during normal execution. AI Office does
+not claim parent-directory `fsync` or power-loss durability after successful
+return. Revision `createdAt` and manifest `createdAt` are the semantic
+observation time, not a persisted archive-publication timestamp.
 
 Restore reads and validates a regular, non-symlink `.aioffice` file before any
 database mutation. It verifies format/version, strict schema, sensitive fields,
@@ -187,17 +228,33 @@ timestamps when they differ, without weakening triggers or constraints.
 
 Restored terminal agent-run rows are summaries only. Their terminal status is
 irreversible, and action intent, pipeline binding, worktree, result, error, and
-event data are null or absent. Existing action and pipeline gateways therefore
-cannot treat them as live execution principals or recover transferred
-authority.
+event data are null or absent. The run state machine rejects every transition
+from completed, failed, or cancelled back to running; pipeline completion
+requires a running/reviewing run with a persisted pipeline binding; controlled
+actions require a persisted intent; and task-lock acquisition accepts only a
+non-terminal run bound to that task. Restored summaries therefore cannot resume
+a pipeline, authorize an action, or reacquire execution authority.
 
 ## Revision and remote architecture
 
 `project_state_revision` stores immutable revision identity, optional parent,
-semantic checksum, provenance, and creation time. `project_state_head` stores
-the local head and its known synchronization base. Revisions are AI Office
-state snapshots, not Git commits. A source commit may later be provenance on a
-snapshot, but many AI Office revisions may occur without any source commit.
+semantic checksum, local acquisition origin, and observation time.
+`project_state_head` stores the local head and its known synchronization base.
+Revisions are AI Office state observations, not Git commits or archive
+publication receipts. A source commit may later be provenance on a snapshot,
+but many AI Office revisions may occur without any source commit.
+
+Revision IDs use globally unique generated identifiers and are globally unique
+inside one runtime database. A collision with another project fails closed;
+`ON CONFLICT` never aliases the rows because stored project, parent, checksum,
+and observation time are revalidated. A known parent must belong to the same
+project, self/cyclic lineage is rejected, and an absent parent is allowed as an
+intentional shallow lineage anchor when restoring an archive from another
+installation. The restored archive revision becomes both local head and known
+base. Attaching another checkout to an already identical headed project changes
+only the machine-local source association; it does not rewrite head, base, or
+revision metadata. Repeated restore is idempotent. Binding failure after a new
+restore commit retains the documented partial recovery path.
 
 The application-layer `ProjectStateRemote` port is backend-neutral:
 

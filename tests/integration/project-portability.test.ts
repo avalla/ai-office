@@ -15,7 +15,12 @@ import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-e
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate-action-policy.ts";
 import type { CapabilityPolicyRepository } from "@ai-office/application/ports/capability-policy-repository.port.ts";
-import { ManageProjectPortability } from "@ai-office/application/project-portability/manage-project-portability.ts";
+import {
+  ManageProjectPortability,
+  ProjectRestorePartialError,
+} from "@ai-office/application/project-portability/manage-project-portability.ts";
+import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
+import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
 import {
   createPortableProjectArchive,
   parsePortableProjectArchive,
@@ -37,6 +42,8 @@ import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sql
 import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
 import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
+import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
+import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { LocalProjectBindingAdapter } from "../../apps/cli/src/local-project-binding-adapter.ts";
 import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
 
@@ -229,6 +236,46 @@ describe("project portability", () => {
     b.database.close();
   });
 
+  test.each([
+    "Imported from another system as part of a customer migration",
+    "Imported from",
+    "imported from",
+    "Imported from /some/path",
+  ])(
+    "preserves semantic project description %j exactly",
+    async (description) => {
+      const sourceRuntime = temporaryRoot("ai-office-description-source-");
+      const targetRuntime = temporaryRoot("ai-office-description-target-");
+      const source = temporaryRoot("ai-office-description-checkout-a-");
+      const target = temporaryRoot("ai-office-description-checkout-b-");
+      writeFileSync(join(source, "package.json"), '{"name":"description"}\n');
+      writeFileSync(join(target, "package.json"), '{"name":"description"}\n');
+
+      const origin = openRuntime(sourceRuntime);
+      const imported = await importProject(origin, source);
+      origin.database
+        .prepare("UPDATE project SET description = ? WHERE id = ?")
+        .run(description, imported.projectId);
+      const backup = await origin.service.backup(imported.projectId);
+      expect(backup.archive.state.project.description).toBe(description);
+      origin.database.close();
+
+      const destination = openRuntime(targetRuntime);
+      const restored = await destination.service.restore({
+        archive: backup.archive,
+        rootPath: target,
+      });
+      expect(
+        (await destination.projects.findById(restored.projectId))?.snapshot()
+          .description,
+      ).toBe(description);
+      expect(
+        await destination.states.loadPortableState(restored.projectId),
+      ).toEqual(backup.archive.state);
+      destination.database.close();
+    },
+  );
+
   test("creates parented revisions and rejects rollback over changed local state", async () => {
     const runtimeRoot = temporaryRoot("ai-office-portable-revision-");
     const source = temporaryRoot("ai-office-portable-source-");
@@ -269,6 +316,149 @@ describe("project portability", () => {
       runtime.service.restore({ archive: first.archive, rootPath: source }),
     ).rejects.toThrow("Restore conflict");
     runtime.database.close();
+  });
+
+  test("enforces globally unique revision IDs and project-local acyclic lineage", async () => {
+    const runtimeRoot = temporaryRoot("ai-office-lineage-runtime-");
+    const sourceA = temporaryRoot("ai-office-lineage-a-");
+    const sourceB = temporaryRoot("ai-office-lineage-b-");
+    writeFileSync(join(sourceA, "package.json"), '{"name":"lineage-a"}\n');
+    writeFileSync(join(sourceB, "package.json"), '{"name":"lineage-b"}\n');
+    const runtime = openRuntime(runtimeRoot);
+    const projectA = await importProject(runtime, sourceA);
+    const projectB = await importProject(runtime, sourceB);
+    const revisionA = await runtime.service.backup(projectA.projectId);
+    const revisionB = await runtime.service.backup(projectB.projectId);
+
+    await expect(
+      runtime.states.saveRevision({
+        id: revisionA.revisionId,
+        projectId: projectB.projectId,
+        stateChecksum: revisionB.stateChecksum,
+        origin: "local_snapshot",
+        createdAt: new Date(revisionA.archive.manifest.createdAt),
+      }),
+    ).rejects.toThrow(
+      `Project state revision ${revisionA.revisionId} conflicts`,
+    );
+    await expect(
+      runtime.states.saveRevision({
+        id: "rev_cross_project_parent",
+        projectId: projectB.projectId,
+        parentRevisionId: revisionA.revisionId,
+        stateChecksum: revisionB.stateChecksum,
+        origin: "local_snapshot",
+        createdAt: runtime.clock.now(),
+      }),
+    ).rejects.toThrow("parent from another project");
+    await expect(
+      runtime.states.saveRevision(
+        {
+          id: "rev_cross_project_base",
+          projectId: projectB.projectId,
+          stateChecksum: revisionB.stateChecksum,
+          origin: "local_snapshot",
+          createdAt: runtime.clock.now(),
+        },
+        revisionA.revisionId,
+      ),
+    ).rejects.toThrow("base from another project");
+
+    await runtime.states.saveRevision({
+      id: "rev_cycle_a",
+      projectId: projectA.projectId,
+      parentRevisionId: "rev_cycle_b",
+      stateChecksum: revisionA.stateChecksum,
+      origin: "local_snapshot",
+      createdAt: runtime.clock.now(),
+    });
+    await expect(
+      runtime.states.saveRevision({
+        id: "rev_cycle_b",
+        projectId: projectA.projectId,
+        parentRevisionId: "rev_cycle_a",
+        stateChecksum: revisionA.stateChecksum,
+        origin: "local_snapshot",
+        createdAt: runtime.clock.now(),
+      }),
+    ).rejects.toThrow("cyclic lineage");
+    runtime.database.close();
+  });
+
+  test("restores a shallow lineage anchor and keeps checkout attachment lineage-neutral", async () => {
+    const originRuntime = temporaryRoot("ai-office-lineage-origin-");
+    const destinationRuntime = temporaryRoot("ai-office-lineage-destination-");
+    const source = temporaryRoot("ai-office-lineage-source-");
+    const target = temporaryRoot("ai-office-lineage-target-");
+    for (const root of [source, target]) {
+      mkdirSync(join(root, ".git"));
+      writeFileSync(
+        join(root, ".git", "config"),
+        '[remote "origin"]\n  url = https://example.test/team/lineage.git\n',
+      );
+      writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+    }
+    const origin = openRuntime(originRuntime);
+    const imported = await importProject(origin, source);
+    const observed = await origin.service.backup(imported.projectId);
+    const beforeAttachment = await origin.states.findHead(imported.projectId);
+    const attached = await origin.service.restore({
+      archive: observed.archive,
+      rootPath: target,
+    });
+    expect(attached.outcome).toBe("attached");
+    expect(await origin.states.findHead(imported.projectId)).toEqual(
+      beforeAttachment,
+    );
+    const forgedTimestamp = createPortableProjectArchive({
+      state: observed.archive.state,
+      manifest: {
+        ...observed.archive.manifest,
+        createdAt: "2026-09-01T23:59:59.000Z",
+      },
+    });
+    await expect(
+      origin.service.restore({ archive: forgedTimestamp, rootPath: source }),
+    ).rejects.toThrow("metadata does not match the local immutable revision");
+    origin.database.close();
+
+    const shallow = createPortableProjectArchive({
+      state: observed.archive.state,
+      manifest: {
+        ...observed.archive.manifest,
+        revision: {
+          ...observed.archive.manifest.revision,
+          id: "rev_shallow_head",
+          parentRevisionId: "rev_parent_not_stored_here",
+        },
+      },
+    });
+    const freshTarget = temporaryRoot("ai-office-lineage-fresh-target-");
+    mkdirSync(join(freshTarget, ".git"));
+    writeFileSync(
+      join(freshTarget, ".git", "config"),
+      '[remote "origin"]\n  url = https://example.test/team/lineage.git\n',
+    );
+    writeFileSync(join(freshTarget, ".git", "HEAD"), "ref: refs/heads/main\n");
+    const destination = openRuntime(destinationRuntime);
+    const restored = await destination.service.restore({
+      archive: shallow,
+      rootPath: freshTarget,
+    });
+    expect(await destination.states.findHead(restored.projectId)).toMatchObject(
+      {
+        revision: {
+          id: "rev_shallow_head",
+          parentRevisionId: "rev_parent_not_stored_here",
+          origin: "portable_import",
+        },
+        baseRevisionId: "rev_shallow_head",
+      },
+    );
+    await expect(
+      destination.service.restore({ archive: shallow, rootPath: freshTarget }),
+    ).resolves.toMatchObject({ outcome: "unchanged" });
+    destination.database.close();
   });
 
   test("round-trips pending, approved, and rejected governance reviews exactly", async () => {
@@ -470,6 +660,116 @@ describe("project portability", () => {
     await expect(
       actionGateway.executeFromAgentRun("run-reviewed"),
     ).rejects.toThrow("Agent run is not executing an action intent");
+    expect(
+      await destination.agentRuntime.acquireTaskLock(
+        restoredSummary.taskId,
+        restoredSummary.id,
+        destination.clock.now(),
+        new Date(destination.clock.now().getTime() + 60_000),
+      ),
+    ).toBe(false);
+    destination.database.close();
+  });
+
+  test("restores every terminal run status as non-executable summary state", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-terminal-source-");
+    const targetRuntime = temporaryRoot("ai-office-terminal-target-");
+    const source = temporaryRoot("ai-office-terminal-checkout-a-");
+    const target = temporaryRoot("ai-office-terminal-checkout-b-");
+    writeFileSync(join(source, "package.json"), '{"name":"terminal"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"terminal"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const taskId = await createTask(
+      origin,
+      imported.projectId,
+      "Terminal runs",
+    );
+    const { agentId } = await createAgent(
+      origin,
+      imported.projectId,
+      "terminal",
+    );
+    const statuses = ["completed", "failed", "cancelled"] as const;
+    for (const status of statuses) {
+      const run = AgentRun.create({
+        id: `run-${status}`,
+        projectId: imported.projectId,
+        taskId,
+        agentId,
+        actionIntent: {
+          resourceId: "machine-local-resource",
+          operation: "filesystem.read",
+          arguments: { path: "README.md" },
+        },
+        now: origin.clock.now(),
+      });
+      if (status === "completed") {
+        run.transition("preparing", origin.clock.now());
+        run.transition("running", origin.clock.now());
+        run.transition("completed", origin.clock.now());
+      } else if (status === "failed") {
+        run.transition("preparing", origin.clock.now());
+        run.transition("failed", origin.clock.now());
+      } else run.transition("cancelled", origin.clock.now());
+      await origin.agentRuntime.saveRun(run);
+    }
+    const backup = await origin.service.backup(imported.projectId);
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: backup.archive,
+      rootPath: target,
+    });
+    const actionGateway = new RequestControlledAction(
+      {} as unknown as EvaluateActionPolicy,
+      {} as unknown as CapabilityPolicyRepository,
+      {} as unknown as RecordAuditEvent,
+      destination.ids,
+      destination.clock,
+      destination.transactions,
+      destination.agentRuntime,
+    );
+    const pipelines = new ManagePipelineRuns(
+      new SqliteOfficeManifestRepository(destination.database),
+      new SqlitePipelineRunRepository(destination.database),
+      new SqliteTaskRepository(destination.database),
+      destination.agentRuntime,
+      new RecordAuditEvent(
+        new SqliteAuditEventRepository(destination.database),
+        destination.ids,
+        destination.clock,
+      ),
+      destination.ids,
+      destination.clock,
+      destination.transactions,
+    );
+    for (const status of statuses) {
+      const runId = `run-${status}`;
+      const summary = (await destination.agentRuntime.findRun(runId))!;
+      expect(summary.snapshot()).toMatchObject({ status });
+      expect(() =>
+        summary.transition("running", destination.clock.now()),
+      ).toThrow(`Cannot transition agent run from ${status} to running`);
+      await expect(actionGateway.executeFromAgentRun(runId)).rejects.toThrow(
+        "Agent run is not executing an action intent",
+      );
+      await expect(
+        pipelines.completeStageFromAgentRun({
+          projectId: restored.projectId,
+          agentRunId: runId,
+        }),
+      ).rejects.toThrow("not authorized");
+      expect(
+        await destination.agentRuntime.acquireTaskLock(
+          taskId,
+          runId,
+          destination.clock.now(),
+          new Date(destination.clock.now().getTime() + 60_000),
+        ),
+      ).toBe(false);
+    }
     destination.database.close();
   });
 
@@ -603,7 +903,7 @@ describe("project portability", () => {
     }
     expect(failure).toBeInstanceOf(Error);
     const failureMessage = failure instanceof Error ? failure.message : "";
-    expect(failureMessage).toContain(`Task ${runningTaskId}: running`);
+    expect(failureMessage).not.toContain(`Task ${runningTaskId}: running`);
     expect(failureMessage).toContain(
       `Active pipeline pipeline-active (task ${runningTaskId})`,
     );
@@ -624,6 +924,55 @@ describe("project portability", () => {
         .get(imported.projectId)?.count,
     ).toBe(1);
     runtime.database.close();
+  });
+
+  test("preserves task lifecycle state when no live execution authority exists", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-task-state-source-");
+    const targetRuntime = temporaryRoot("ai-office-task-state-target-");
+    const source = temporaryRoot("ai-office-task-state-checkout-a-");
+    const target = temporaryRoot("ai-office-task-state-checkout-b-");
+    writeFileSync(join(source, "package.json"), '{"name":"task-state"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"task-state"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const expected = [
+      "assigned",
+      "running",
+      "blocked",
+      "waiting_review",
+    ] as const;
+    for (const status of expected) {
+      const taskId = await createTask(
+        origin,
+        imported.projectId,
+        `Semantic ${status}`,
+      );
+      origin.database
+        .prepare("UPDATE task SET status = ? WHERE id = ?")
+        .run(status, taskId);
+    }
+
+    expect(
+      await origin.states.findPortabilityBlockers(
+        imported.projectId,
+        origin.clock.now(),
+      ),
+    ).toEqual([]);
+    const backup = await origin.service.backup(imported.projectId);
+    expect(
+      backup.archive.state.tasks.map((task) => task.status).sort(),
+    ).toEqual([...expected].sort());
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: backup.archive,
+      rootPath: target,
+    });
+    expect(
+      await destination.states.loadPortableState(restored.projectId),
+    ).toEqual(backup.archive.state);
+    destination.database.close();
   });
 
   test("rejects a repository/archive identity mismatch before state mutation", async () => {
@@ -753,10 +1102,58 @@ describe("project portability", () => {
     const backup = await runtime.service.backup(imported.projectId);
     const serialized = serializePortableProjectArchive(backup.archive);
     expect(serialized).not.toContain(localRemote);
-    expect(backup.archive.manifest.source).toEqual({
-      type: "directory",
+    expect(backup.archive.manifest.source).toBeUndefined();
+    runtime.database.close();
+  });
+
+  test("selects source provenance deterministically across multiple checkouts", async () => {
+    const runtimeRoot = temporaryRoot("ai-office-portable-sources-");
+    const source = temporaryRoot("ai-office-portable-source-primary-");
+    writeFileSync(join(source, "package.json"), '{"name":"sources"}\n');
+    const runtime = openRuntime(runtimeRoot);
+    const imported = await importProject(runtime, source);
+    const now = runtime.clock.now();
+    await runtime.profiles.saveSource({
+      id: "source-network-two",
+      projectId: imported.projectId,
+      sourceType: "local",
+      localPath: "/stale/checkout/two",
+      remoteUrl: "https://alice:secret@example.test/team/project.git",
+      defaultBranch: "main",
+      createdAt: new Date(now.getTime() - 2_000),
+    });
+    await runtime.profiles.saveSource({
+      id: "source-network-one",
+      projectId: imported.projectId,
+      sourceType: "local",
+      localPath: "/stale/checkout/one",
+      remoteUrl: "https://example.test/team/project.git",
+      defaultBranch: "main",
+      createdAt: new Date(now.getTime() - 3_000),
+    });
+
+    const agreed = await runtime.service.backup(imported.projectId);
+    expect(agreed.archive.manifest.source).toEqual({
+      type: "git",
+      remote: "https://example.test/team/project.git",
       branch: "main",
     });
+    expect(serializePortableProjectArchive(agreed.archive)).not.toContain(
+      "secret",
+    );
+
+    await runtime.profiles.saveSource({
+      id: "source-conflict",
+      projectId: imported.projectId,
+      sourceType: "local",
+      localPath: "/stale/checkout/conflict",
+      remoteUrl: "https://example.test/another/project.git",
+      defaultBranch: "main",
+      createdAt: new Date(now.getTime() - 4_000),
+    });
+    const ambiguous = await runtime.service.backup(imported.projectId);
+    expect(ambiguous.revisionId).toBe(agreed.revisionId);
+    expect(ambiguous.archive.manifest.source).toBeUndefined();
     runtime.database.close();
   });
 
@@ -819,6 +1216,74 @@ describe("project portability", () => {
     expect(
       await new LocalProjectBindingAdapter().inspect(target),
     ).toMatchObject({ status: "missing" });
+    destination.database.close();
+  });
+
+  test("recovers idempotently when binding publication fails after restore commit", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-partial-source-");
+    const targetRuntime = temporaryRoot("ai-office-partial-target-");
+    const source = temporaryRoot("ai-office-partial-checkout-a-");
+    const target = temporaryRoot("ai-office-partial-checkout-b-");
+    writeFileSync(join(source, "package.json"), '{"name":"partial"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"partial"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const backup = await origin.service.backup(imported.projectId);
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const local = new LocalProjectBindingAdapter();
+    let fail = true;
+    const bindings: ProjectBindingAdapter = {
+      resolveProjectRoot: (path) => local.resolveProjectRoot(path),
+      inspect: (path, options) => local.inspect(path, options),
+      planWrite: (path, binding) => local.planWrite(path, binding),
+      applyWrite: async (plan) => {
+        if (fail) {
+          fail = false;
+          throw new Error("injected binding publication failure");
+        }
+        await local.applyWrite(plan);
+      },
+      planRemove: (path) => local.planRemove(path),
+      applyRemove: (plan) => local.applyRemove(plan),
+    };
+    const service = new ManageProjectPortability({
+      projects: destination.projects,
+      profiles: destination.profiles,
+      identities: destination.identities,
+      states: destination.states,
+      bindings,
+      scanner: new LocalProjectScanner(),
+      transactions: destination.transactions,
+      ids: destination.ids,
+      clock: destination.clock,
+    });
+
+    let partial: unknown;
+    try {
+      await service.restore({ archive: backup.archive, rootPath: target });
+    } catch (error) {
+      partial = error;
+    }
+    expect(partial).toBeInstanceOf(ProjectRestorePartialError);
+    const mappedProject = await destination.identities.findProjectId(
+      backup.projectIdentity,
+    );
+    expect(mappedProject).not.toBeNull();
+    expect(
+      (await destination.states.findHead(mappedProject!))?.revision.id,
+    ).toBe(backup.revisionId);
+    expect(await local.inspect(target)).toMatchObject({ status: "missing" });
+
+    await expect(
+      service.restore({ archive: backup.archive, rootPath: target }),
+    ).resolves.toMatchObject({
+      outcome: "unchanged",
+      projectId: mappedProject,
+      revisionId: backup.revisionId,
+    });
+    expect(await local.inspect(target)).toMatchObject({ status: "valid" });
     destination.database.close();
   });
 });

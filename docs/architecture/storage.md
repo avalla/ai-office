@@ -167,13 +167,19 @@ second authoritative instruction contract. The JSON contract file remains an
 optional input for direct machine-oriented `client:*` workflows.
 
 `project:backup` creates a strict, checksummed `.aioffice` snapshot of the
-documented, referentially closed portable subset and rejects non-quiescent
-execution state; `project:restore` validates and restores it through the daemon.
+documented, referentially closed portable subset and rejects live agent runs,
+active pipelines, and unexpired locks while preserving task lifecycle state;
+`project:restore` validates and restores it through the daemon.
 The format contains semantic records rather than SQLite pages and never carries
 absolute source/worktree paths or local Git remotes, secrets, machine authority,
 capabilities, controlled-action approvals/executions, audit payloads, global
 memory, or active execution state. See
 [Project portability and synchronization](../development/project-portability-and-sync.md).
+
+Portable revisions in `project.sqlite` are semantic-state observations, not
+proof that an archive path was published. The no-clobber archive write happens
+after the short SQLite transaction; failure leaves the observation reusable by
+an identical retry and does not create a false cross-resource transaction.
 
 A full runtime filesystem backup remains a separate disaster-recovery concern
 and should be taken after a clean daemon shutdown so SQLite and its WAL are

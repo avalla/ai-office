@@ -363,6 +363,10 @@ Delivered:
   absolute paths;
 - execution-quiescent capture, referential closure, trigger-valid governance
   replay, and network-safe Git provenance;
+- authority-based quiescence that preserves task lifecycle semantics while
+  excluding live runs, pipelines, and locks;
+- state-observation revisions separated from no-clobber archive publication;
+- deterministic multi-checkout provenance selection with ambiguity omission;
 - idempotent migration for projects that predate portable identity;
 - immutable state revision metadata and a provider-neutral remote port.
 

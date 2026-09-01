@@ -63,14 +63,15 @@ services. See ADR-0008.
 
 Portable backup uses that identity without making the repository artifact
 authoritative. The daemon-backed portability service captures a referentially
-closed semantic snapshot through a storage port only when tasks and excluded
-execution state are quiescent, records an immutable AI Office state revision,
-and writes a strict checksummed `.aioffice` envelope through a local archive
-adapter. Restore creates a new runtime-local project ID or attaches an
-identical verified checkout; it replays governance decisions through existing
-constraints and never trusts another machine's absolute path or overwrites
-different local state. SQLite remains an adapter detail rather than the
-transfer format.
+closed semantic snapshot through a storage port only when excluded execution
+authority is quiescent, records an immutable AI Office state observation, and
+writes a strict checksummed `.aioffice` envelope through a local archive
+adapter. Task lifecycle values remain semantic and portable; non-terminal
+agent runs, active pipelines, and unexpired locks are the blockers. Restore
+creates a new runtime-local project ID or attaches an identical verified
+checkout; it replays governance decisions through existing constraints and
+never trusts another machine's absolute path or overwrites different local
+state. SQLite remains an adapter detail rather than the transfer format.
 
 The M6D-lite bridge routes a structured action intent from an agent run through
 an executor-facing gateway. The agent-runtime package depends on the gateway

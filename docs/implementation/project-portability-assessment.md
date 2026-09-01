@@ -16,7 +16,8 @@ Date: 2026-09-01
    integration/projection artifacts rather than authority.
 
 3. **Portable state.** Snapshot v1 can safely carry logical identity, project
-   metadata, quiescent pending/terminal tasks, sanitized active profile
+   metadata, all task lifecycle states when live execution authority is absent,
+   sanitized active profile
    knowledge, office manifest revisions, referentially closed governance
    records, project role/agent definitions, and terminal run summaries without
    execution-authority or result/error payloads.
@@ -36,6 +37,12 @@ Date: 2026-09-01
    known must continue through install instead of being guessed. Install must
    reuse an existing mapping when creating a missing repository file. Revision
    metadata must not rewrite project history.
+
+   Historical imports encoded `Imported from <root>` in `project.description`.
+   The exact-match lookup remains only as a compatibility fallback for locating
+   a legacy project that has no `project_source` row. Snapshot loading no longer
+   interprets that text: descriptions are preserved, while new imports store
+   path provenance only in structured source/profile records.
 
 6. **Archive format.** A strict, size-bounded JSON envelope with the
    `.aioffice` extension is the safest v1. It is one self-describing,
@@ -67,13 +74,17 @@ Date: 2026-09-01
     database/filesystem coordination. Mitigations are strict bounds, canonical
     checksums, no extraction or embedded write paths, sensitive-key rejection,
     regular-file checks, identity matching, foreign keys, a short transaction,
-    atomic writes, and fail-closed conflicts. The CLI remains a daemon client.
+    normal-process atomic/no-clobber publication, and fail-closed conflicts.
+    Parent-directory crash durability is not claimed. The CLI remains a daemon
+    client.
 
-    The implementation review added two further invariants. Backup rejects
-    operational task states, non-terminal runs, active pipelines, and unexpired
-    locks before recording a revision. Portable Git provenance accepts only
-    sanitized network remotes; filesystem and ambiguous remotes are omitted.
-    Governance and agent records must form a closed reference graph.
+    The implementation review added further invariants. Task status is semantic
+    data, so backup rejects non-terminal runs, active pipelines, and unexpired
+    locks rather than status-name proxies. Revisions are local semantic-state
+    observations; archive publication is a separate no-clobber filesystem
+    result. Portable Git provenance accepts only sanitized network remotes and
+    is included only when all portable checkout remotes agree. Governance and
+    agent records must form a closed reference graph.
 
 11. **Documentation.** README needs the workflow and ownership map. Storage and
     overview docs need snapshot/revision boundaries. A focused development
@@ -95,7 +106,8 @@ migration, or global-memory migration. These boundaries preserve current
 daemon, transaction, capability, and ownership invariants while leaving a
 direct path to filesystem remotes and later entity/event sync.
 
-Snapshot v1 deliberately requires execution quiescence rather than attempting
-to normalize or recreate active work. Governance restore replays the valid
-pending-review then append-only-approval sequence and verifies the reloaded
-portable state through its canonical checksum before commit.
+Snapshot v1 deliberately requires execution-authority quiescence rather than
+attempting to normalize or recreate active work. It preserves task lifecycle
+status exactly when no live run, pipeline, or lock remains. Governance restore
+replays the valid pending-review then append-only-approval sequence and verifies
+the reloaded portable state through its canonical checksum before commit.

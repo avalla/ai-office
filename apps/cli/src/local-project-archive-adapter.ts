@@ -21,7 +21,48 @@ import {
   PortableProjectArchiveError,
 } from "@ai-office/application/project-portability/project-snapshot.ts";
 
+interface FileStatus {
+  isFile(): boolean;
+  isDirectory(): boolean;
+  size: number;
+}
+
+export interface ProjectArchiveFileSystem {
+  exists(path: string): boolean;
+  openReadNoFollow(path: string): number;
+  openExclusivePrivate(path: string): number;
+  status(descriptor: number): FileStatus;
+  read(descriptor: number): string;
+  write(descriptor: number, contents: string): void;
+  sync(descriptor: number): void;
+  close(descriptor: number): void;
+  realpath(path: string): string;
+  pathStatus(path: string): FileStatus;
+  link(source: string, destination: string): void;
+  unlink(path: string): void;
+}
+
+export const nodeProjectArchiveFileSystem: ProjectArchiveFileSystem = {
+  exists: existsSync,
+  openReadNoFollow: (path) =>
+    openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW),
+  openExclusivePrivate: (path) => openSync(path, "wx", 0o600),
+  status: fstatSync,
+  read: (descriptor) => readFileSync(descriptor, "utf8"),
+  write: (descriptor, contents) => writeFileSync(descriptor, contents, "utf8"),
+  sync: fsyncSync,
+  close: closeSync,
+  realpath: realpathSync,
+  pathStatus: lstatSync,
+  link: linkSync,
+  unlink: unlinkSync,
+};
+
 export class LocalProjectArchiveAdapter implements ProjectArchiveAdapter {
+  constructor(
+    private readonly fileSystem: ProjectArchiveFileSystem = nodeProjectArchiveFileSystem,
+  ) {}
+
   async read(path: string): Promise<string> {
     const absolutePath = resolve(path);
     if (extname(absolutePath) !== portableProjectExtension)
@@ -30,11 +71,8 @@ export class LocalProjectArchiveAdapter implements ProjectArchiveAdapter {
       );
     let descriptor: number | null = null;
     try {
-      descriptor = openSync(
-        absolutePath,
-        constants.O_RDONLY | constants.O_NOFOLLOW,
-      );
-      const status = fstatSync(descriptor);
+      descriptor = this.fileSystem.openReadNoFollow(absolutePath);
+      const status = this.fileSystem.status(descriptor);
       if (!status.isFile())
         throw new PortableProjectArchiveError(
           "Portable project archive must be a regular, non-symlink file",
@@ -43,16 +81,16 @@ export class LocalProjectArchiveAdapter implements ProjectArchiveAdapter {
         throw new PortableProjectArchiveError(
           `Portable project archive exceeds ${maximumPortableProjectBytes} bytes`,
         );
-      return readFileSync(descriptor, "utf8");
+      return this.fileSystem.read(descriptor);
     } catch (error) {
       if (error instanceof PortableProjectArchiveError) throw error;
       throw new PortableProjectArchiveError(
-        existsSync(absolutePath)
+        this.fileSystem.exists(absolutePath)
           ? "Portable project archive must be a readable, regular, non-symlink file"
           : `Portable project archive does not exist: ${absolutePath}`,
       );
     } finally {
-      if (descriptor !== null) closeSync(descriptor);
+      if (descriptor !== null) this.fileSystem.close(descriptor);
     }
   }
 
@@ -66,19 +104,19 @@ export class LocalProjectArchiveAdapter implements ProjectArchiveAdapter {
       throw new PortableProjectArchiveError(
         `Portable project archive exceeds ${maximumPortableProjectBytes} bytes`,
       );
-    if (existsSync(absolutePath))
+    if (this.fileSystem.exists(absolutePath))
       throw new PortableProjectArchiveError(
         `Refusing to overwrite existing portable project archive: ${absolutePath}`,
       );
     let parent: string;
     try {
-      parent = realpathSync(dirname(absolutePath));
+      parent = this.fileSystem.realpath(dirname(absolutePath));
     } catch {
       throw new PortableProjectArchiveError(
         `Portable project archive parent does not exist: ${dirname(absolutePath)}`,
       );
     }
-    if (!lstatSync(parent).isDirectory())
+    if (!this.fileSystem.pathStatus(parent).isDirectory())
       throw new PortableProjectArchiveError(
         `Portable project archive parent is not a directory: ${parent}`,
       );
@@ -88,19 +126,20 @@ export class LocalProjectArchiveAdapter implements ProjectArchiveAdapter {
     );
     let descriptor: number | null = null;
     try {
-      descriptor = openSync(temporaryPath, "wx", 0o600);
-      writeFileSync(descriptor, contents, "utf8");
-      fsyncSync(descriptor);
-      closeSync(descriptor);
+      descriptor = this.fileSystem.openExclusivePrivate(temporaryPath);
+      this.fileSystem.write(descriptor, contents);
+      this.fileSystem.sync(descriptor);
+      this.fileSystem.close(descriptor);
       descriptor = null;
-      linkSync(temporaryPath, absolutePath);
-      unlinkSync(temporaryPath);
+      this.fileSystem.link(temporaryPath, absolutePath);
+      this.fileSystem.unlink(temporaryPath);
     } catch (error) {
-      if (descriptor !== null) closeSync(descriptor);
-      if (existsSync(temporaryPath)) unlinkSync(temporaryPath);
+      if (descriptor !== null) this.fileSystem.close(descriptor);
+      if (this.fileSystem.exists(temporaryPath))
+        this.fileSystem.unlink(temporaryPath);
       if (error instanceof PortableProjectArchiveError) throw error;
       throw new PortableProjectArchiveError(
-        existsSync(absolutePath)
+        this.fileSystem.exists(absolutePath)
           ? `Refusing to overwrite existing portable project archive: ${absolutePath}`
           : `Could not write portable project archive: ${absolutePath}`,
       );

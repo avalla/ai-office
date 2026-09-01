@@ -75,6 +75,13 @@ describe("ImportProject", () => {
       .get();
 
     expect(projects?.count).toBe(1);
+    expect(
+      database
+        .query<{ description: string | null }, [string]>(
+          "SELECT description FROM project WHERE id = ?",
+        )
+        .get(first.projectId)?.description,
+    ).toBeNull();
     expect(sources?.count).toBe(1);
     expect(scans?.count).toBe(2);
     expect(questions?.count).toBe(0);
