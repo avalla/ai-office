@@ -344,6 +344,37 @@ normal install. Additional or moved checkouts reuse authority when Git remote
 evidence matches; copied or conflicting identities fail closed. Explicit
 rebind remains exceptional recovery. See ADR-0008 and ADR-0009.
 
+## M7.6 — Portable project state
+
+Status: implemented.
+
+Focus: move one logical AI Office project between installations without making
+its checkout path or SQLite file the project identity or transport format.
+
+Delivered:
+
+- stable repository-portable identity reused across moves, clones, backup, and
+  restore;
+- machine-local bindings from that identity to the current checkout;
+- versioned, checksummed `.aioffice` semantic snapshots;
+- daemon-authoritative `project:backup` and transactional `project:restore`;
+- explicit portable-state allowlisting that excludes managed credentials,
+  structured credential-labelled profile state, capabilities, controlled-action
+  approvals, audit authority, active execution state, and absolute paths;
+- execution-quiescent capture, referential closure, trigger-valid governance
+  replay, and network-safe Git provenance;
+- authority-based quiescence that preserves task lifecycle semantics while
+  excluding live runs, pipelines, and locks;
+- state-observation revisions separated from no-clobber archive publication;
+- intrinsic portability and structured credential-label validation before
+  snapshot-head advancement;
+- project-owned identity reservations for materialized and shallow lineage IDs;
+- deterministic multi-checkout provenance selection with ambiguity omission;
+- idempotent migration for projects that predate portable identity;
+- immutable state revision metadata and a provider-neutral remote port.
+
+See [Project portability and sync](project-portability-and-sync.md).
+
 ## M8 — Code intelligence
 
 Status: future.
@@ -375,7 +406,24 @@ Focus: user-facing product surfaces, packaging, and operability.
 - plugin SDK;
 - MCP server;
 - packaged binaries;
-- backup/export/import.
+- remote snapshot transport with a deterministic filesystem adapter;
+- optimistic-concurrency push/pull and explicit divergence diagnostics;
+- GitHub, S3-compatible, and R2 remote adapters after the transport contract is
+  proven independently of any provider.
+
+Portable backup/restore shipped in M7.6. Remote snapshot transport remains
+future work and must not copy mutable SQLite files or silently overwrite a
+newer remote head.
+
+## M9.5 — Multi-machine semantic sync
+
+Status: future.
+
+Focus: evolve from whole-project snapshots to immutable changes or
+entity-level revisions with globally unique identifiers. Independent changes
+may then merge when they touch different entities; incompatible concurrent
+writes require explicit conflict resolution. This milestone does not imply an
+event-sourced rewrite of the current runtime.
 
 ## M10 — Security hardening
 

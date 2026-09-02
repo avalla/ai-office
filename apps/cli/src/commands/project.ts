@@ -7,6 +7,14 @@ import { renderProjectProfileMarkdown } from "@ai-office/application/queries/ren
 import { writeTextFileAtomic } from "../atomic-file.ts";
 import { LocalProjectScanner } from "../local-project-scanner.ts";
 import {
+  ManageProjectPortability,
+  ProjectRestorePartialError,
+} from "@ai-office/application/project-portability/manage-project-portability.ts";
+import {
+  parsePortableProjectArchive,
+  serializePortableProjectArchive,
+} from "@ai-office/application/project-portability/project-snapshot.ts";
+import {
   CliUsageError,
   type CommandContext,
   parseArguments,
@@ -18,14 +26,89 @@ export async function handleProjectCommand(
   args: string[],
   context: CommandContext,
 ): Promise<number | null> {
-  const {
-    projects,
-    profiles,
-    ids,
-    clock,
-    transactions,
-    io,
-  } = context;
+  const { projects, profiles, ids, clock, transactions, io } = context;
+  if (command === "project:backup") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "output"]),
+      new Set(["json"]),
+    );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError("project:backup only accepts named options");
+    const result = await new ManageProjectPortability({
+      projects,
+      profiles,
+      identities: context.repositoryIdentities,
+      states: context.projectStates,
+      bindings: context.projectBindings,
+      scanner: new LocalProjectScanner(),
+      transactions,
+      ids,
+      clock,
+    }).backup(requiredOption(parsed, "project"));
+    const outputPath = requiredOption(parsed, "output");
+    await context.projectArchives.write(
+      outputPath,
+      serializePortableProjectArchive(result.archive),
+    );
+    const output = {
+      schemaVersion: result.schemaVersion,
+      projectId: result.projectId,
+      projectIdentity: result.projectIdentity,
+      revisionId: result.revisionId,
+      parentRevisionId: result.parentRevisionId,
+      stateChecksum: result.stateChecksum,
+      outputPath,
+    };
+    io.stdout(
+      parsed.flags.has("json")
+        ? JSON.stringify(output)
+        : `Portable project backup created: ${outputPath}\nProject identity: ${result.projectIdentity}\nState revision: ${result.revisionId}`,
+    );
+    return 0;
+  }
+  if (command === "project:restore") {
+    const parsed = parseArguments(args, new Set(["root"]), new Set(["json"]));
+    if (parsed.positionals.length !== 1)
+      throw new CliUsageError(
+        "project:restore requires exactly one .aioffice archive",
+      );
+    const archivePath = parsed.positionals[0]!;
+    const archive = parsePortableProjectArchive(
+      await context.projectArchives.read(archivePath),
+    );
+    try {
+      const result = await new ManageProjectPortability({
+        projects,
+        profiles,
+        identities: context.repositoryIdentities,
+        states: context.projectStates,
+        bindings: context.projectBindings,
+        scanner: new LocalProjectScanner(),
+        transactions,
+        ids,
+        clock,
+      }).restore({
+        archive,
+        rootPath: parsed.options.get("root") ?? context.projectRoot,
+      });
+      io.stdout(
+        parsed.flags.has("json")
+          ? JSON.stringify({ ...result, archivePath })
+          : `Portable project ${result.outcome}: ${result.projectIdentity}\nLocal project: ${result.projectId}\nRoot: ${result.rootPath}\nState revision: ${result.revisionId}`,
+      );
+      return 0;
+    } catch (error) {
+      if (
+        error instanceof ProjectRestorePartialError &&
+        parsed.flags.has("json")
+      ) {
+        io.stdout(JSON.stringify(error.result));
+        return 1;
+      }
+      throw error;
+    }
+  }
   if (command === "project:create") {
     const parsed = parseArguments(
       args,
@@ -42,7 +125,13 @@ export async function handleProjectCommand(
         "project:create requires exactly one project name",
       );
     const description = parsed.options.get("description");
-    const id = await new CreateProject(projects, ids, clock).execute({
+    const id = await new CreateProject(
+      projects,
+      context.repositoryIdentities,
+      ids,
+      clock,
+      transactions,
+    ).execute({
       name,
       ...(description === undefined ? {} : { description }),
     });
@@ -61,6 +150,7 @@ export async function handleProjectCommand(
       projects,
       profiles,
       new LocalProjectScanner(),
+      context.repositoryIdentities,
       ids,
       clock,
       transactions,

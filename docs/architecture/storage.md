@@ -74,6 +74,7 @@ client artifacts, and detaches only the current checkout in SQLite; unrelated
 - milestones, requirements, ADR records, reviews, and governance decisions;
 - resources, capability grants, action requests, simulations, approvals, and execution records;
 - append-only audit events.
+- immutable portable project revisions plus local head/base metadata.
 
 The daemon creates, opens, and migrates this database before it opens its Unix
 socket. Project migrations are versioned under `migrations/project/` and tracked
@@ -165,13 +166,26 @@ plus ownership-safe guide, pointer, and skill changes, but does not persist a
 second authoritative instruction contract. The JSON contract file remains an
 optional input for direct machine-oriented `client:*` workflows.
 
-There is no built-in backup/restore or legacy-state import command. A filesystem
-backup should be taken after a clean daemon shutdown so SQLite and its WAL are
-consistent. Re-running `project:import` rebuilds detected repository facts; it
-does not restore tasks, runs, manifests, governance, costs, capabilities,
-controlled actions, approvals, executions, or audit history. When the
-integration root differs, its contract and instruction files require a separate
-ownership-aware backup decision.
+`project:backup` creates a strict, checksummed `.aioffice` snapshot of the
+documented, referentially closed portable subset and rejects live agent runs,
+active pipelines, and unexpired locks while preserving task lifecycle state;
+`project:restore` validates and restores it through the daemon.
+The format contains semantic records rather than SQLite pages and never carries
+absolute source/worktree paths or local Git remotes, secrets, machine authority,
+capabilities, controlled-action approvals/executions, audit payloads, global
+memory, or active execution state. See
+[Project portability and synchronization](../development/project-portability-and-sync.md).
+
+Portable revisions in `project.sqlite` are semantic-state observations, not
+proof that an archive path was published. The no-clobber archive write happens
+after the short SQLite transaction; failure leaves the observation reusable by
+an identical retry and does not create a false cross-resource transaction.
+
+A full runtime filesystem backup remains a separate disaster-recovery concern
+and should be taken after a clean daemon shutdown so SQLite and its WAL are
+consistent. Re-running `project:import` only rebuilds detected repository facts;
+it is not portable restore. Integration-root files and `global.sqlite` retain
+their separate ownership-aware backup decisions.
 
 ## Offline purge
 
@@ -197,3 +211,7 @@ not delete a project row, other checkout associations, repository identity
 mapping, `project.sqlite`, runtime artifacts, or `global.sqlite`. It makes no
 false cross-filesystem/SQLite atomicity claim: a partial failure reports paths
 already or possibly modified and gives deterministic recovery.
+
+Exported `.aioffice` files are user-owned paths outside runtime purge and
+repository uninstall. Neither lifecycle follows stored provenance or archive
+paths to remove them.

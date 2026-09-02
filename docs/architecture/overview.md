@@ -61,6 +61,18 @@ The selected runtime maps that ID to its own project ID and canonical checkout
 paths in `project.sqlite` before composing existing import, office, and client
 services. See ADR-0008.
 
+Portable backup uses that identity without making the repository artifact
+authoritative. The daemon-backed portability service captures a referentially
+closed semantic snapshot through a storage port only when excluded execution
+authority is quiescent, records an immutable AI Office state observation, and
+writes a strict checksummed `.aioffice` envelope through a local archive
+adapter. Task lifecycle values remain semantic and portable; non-terminal
+agent runs, active pipelines, and unexpired locks are the blockers. Restore
+creates a new runtime-local project ID or attaches an identical verified
+checkout; it replays governance decisions through existing constraints and
+never trusts another machine's absolute path or overwrites different local
+state. SQLite remains an adapter detail rather than the transfer format.
+
 The M6D-lite bridge routes a structured action intent from an agent run through
 an executor-facing gateway. The agent-runtime package depends on the gateway
 contract, not filesystem, connector, SQLite, or daemon implementations. Runs
@@ -94,6 +106,12 @@ healthy daemon is reachable and requires approval of its exact plan hash.
 Short commands enter a FIFO queue. Long-running run execution is dispatched outside that global queue. SQLite runs in WAL mode, and transactions remain short: repository scans, prompts, LLM calls, simulated agent work, and filesystem mutations happen outside open transactions.
 
 Daemon lifecycle and sanitized command outcomes are appended to `audit_event`. Agent-run transitions have their own append-only event stream. Generated project and governance Markdown views are deterministic projections and are not read back as authoritative state.
+
+Project backup/restore also remains inside the daemon command boundary. Snapshot
+reads and revision writes use short transactions. Repository scanning and
+archive file I/O occur outside those transactions; binding reconciliation uses
+the established atomic file adapter and reports the narrow database/filesystem
+partial case explicitly.
 
 ## Runtime, gateway, and governance
 
@@ -161,6 +179,12 @@ The architecture distinguishes three databases by authority and rebuildability:
 | `<runtime-home>/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                                              | Initial schema only; indexing and daemon integration are future work         |
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
+
+`project.sqlite` also stores immutable portable snapshot revisions and one
+local head/base record per backed-up or restored project. A revision identifies
+AI Office state, not a Git commit. The application-layer remote port defines
+head, pull, and compare-and-swap push without selecting a provider; no remote
+adapter or push/pull command is implemented yet.
 
 The linkable entry point uses `AI_OFFICE_HOME` or the default stable user home
 `~/.ai-office`; program location and current repository do not select authority.

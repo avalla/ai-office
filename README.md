@@ -14,6 +14,7 @@ The current implementation on `main` includes:
 
 - a local daemon and daemon-backed CLI;
 - project creation, deterministic offline repository import, and host-skill conversational onboarding without runtime provider credentials;
+- stable project identity plus portable, integrity-checked project backup and restore across machine paths;
 - versioned virtual-office manifests with roles and default task pipelines;
 - tasks, agent definitions, scheduled runs, locking, and persisted run events;
 - an LLM gateway with mock and opt-in OpenAI providers;
@@ -121,7 +122,8 @@ The JSON envelope is versioned independently from the binding:
       "path": ".../.ai-office/project.json",
       "state": "valid"
     },
-    "runtimeAssociation": { "projectId": "...", "state": "valid" }
+    "runtimeAssociation": { "projectId": "...", "state": "valid" },
+    "stateRevision": { "head": "rev_...", "base": "rev_...", "checksum": "..." }
   },
   "runtime": {
     "daemon": "reachable",
@@ -204,6 +206,89 @@ whole runtime, and `global.sqlite`. A failure after mutation reports removed and
 possibly modified paths; it does not claim filesystem atomicity or attempt a
 cross-SQLite/filesystem rollback. `uninstall`, project-state deletion,
 `runtime:purge`, and global-memory deletion are different operations.
+
+## Portable project backup and restore
+
+The canonical filesystem path is never the project identity. The committed
+`repositoryId` identifies the logical project; each machine keeps its own
+runtime project row and checkout binding. A portable backup moves the safe,
+project-owned subset of authoritative state without copying SQLite:
+
+```bash
+# Machine A
+cd ~/dev/my-project
+ai-office project:backup --output ../my-project.aioffice
+
+# Transfer the archive and obtain the source repository on Machine B.
+git clone <repository-url> ~/work/my-project
+cd ~/work/my-project
+ai-office project:restore ../my-project.aioffice --root .
+ai-office status
+```
+
+The versioned `.aioffice` file contains project metadata, tasks, sanitized
+profile knowledge, office manifest revisions, governance records, agent/role
+definitions, terminal run summaries, an immutable state revision, and SHA-256
+integrity metadata. It excludes absolute paths, active processes/runs/pipelines,
+locks, caches, global memory, pricing/cost state, resources, capability grants,
+controlled-action authority, audit payloads, managed credentials, and profile
+values explicitly labelled as credential/secret data. Nested structured fields
+with sensitive names are also rejected. Free-form human descriptions are not
+content-scanned for possible secrets; users must not place credentials in prose.
+Restore validates the complete envelope through the daemon and refuses a
+mismatched identity, corrupt archive, unsupported version, or different
+existing local state or revision head. There is no destructive force-restore
+option.
+
+Project descriptions are semantic user/domain text and are transferred
+verbatim, including text that happens to start with `Imported from`. The sole
+legacy exception is an exact `Imported from <path>` match against a structured
+local source binding or detachment record for that same project: the portable
+projection omits that historically generated machine metadata without mutating
+the stored description. An unmatched or differently cased description is
+preserved. New source imports no longer encode checkout provenance in that
+field; checkout paths and scan provenance remain structured, machine-local
+source metadata.
+
+A backup is a coherent semantic snapshot, not an allowlist of unrelated rows.
+Task lifecycle status is portable semantic state, not execution authority.
+`project:backup` therefore preserves `assigned`, `running`, `blocked`, and
+`waiting_review` tasks when no live authority exists, but fails while an agent
+or pipeline run is active or an unexpired task lock exists. Finish or cancel
+that active execution and retry; task states are never rewritten merely to
+make a backup succeed.
+
+Reviews and approvals are included only when their task, requirement, ADR,
+milestone, or terminal agent-run subject is included too. Terminal run summaries
+cannot resume execution or carry action intent, pipeline authority, results,
+errors, events, or worktree paths. Source provenance records only sanitized
+network Git remotes: URL credentials, query strings, and fragments are removed,
+while `file://`, absolute, relative, Windows, UNC, and ambiguous local remotes,
+including Windows drive-relative forms such as `C:repo.git`, are omitted
+entirely. Multiple checkout sources contribute provenance only
+when their sanitized network remotes agree; conflicting remotes are omitted
+rather than selected by row order.
+
+The state revision records that the daemon observed one semantic state; it is
+not a receipt proving that the output file was published. If the no-clobber
+archive write fails, an identical retry safely reuses that revision. The local
+writer uses a private synchronized temporary file and an atomic hard-link
+publication during normal process execution, but does not claim power-loss
+durability after return.
+
+Schema, referential-closure, sensitive-profile, checksum, manifest, and other
+intrinsic portability validation completes before a changed state advances the
+snapshot head. A valid observed snapshot may remain after later filesystem
+publication failure; state that cannot form a valid archive creates no revision.
+Shallow parent and base revision IDs receive lightweight project ownership
+reservations, so another project cannot claim them before their full revision
+payload arrives.
+
+`project:import` remains the offline source scanner, and `project:export`
+remains the Markdown profile projection; `project:backup` and
+`project:restore` are the portable state workflow. Remote push/pull and
+automatic semantic merge are roadmap work, not current commands. See
+[Project portability and synchronization](docs/development/project-portability-and-sync.md).
 
 ## Conversational onboarding
 
@@ -494,6 +579,7 @@ moving or reinstalling the AI Office program does not relocate or replace it.
 | `<runtime-home>/global.sqlite`           | User-level roles, patterns, and lessons                    | Active; migrated lazily by memory commands | **Durable global knowledge.** Preserved by `runtime:purge`; deleting it explicitly removes reusable definitions. |
 | `<runtime-home>/index.sqlite`            | Future derived code intelligence                           | Initial migration only; M8 is future       | Intended to be regenerable; there is no populated index to preserve today.                                       |
 | `<project-root>/.ai-office/project.json` | Portable repository identity                               | Active; created by `install`               | **Not authoritative.** Safe to commit and preserved by local uninstall.                                          |
+| `<chosen-path>/*.aioffice`               | User-owned portable project snapshot                       | Created only by `project:backup`           | **Backup artifact.** Never removed by uninstall or runtime purge; keep it outside the runtime being purged.      |
 
 Project migrations are versioned under `migrations/project/`, applied
 transactionally, and tracked in `schema_migration`. SQLite runs in WAL mode;
@@ -606,27 +692,20 @@ in source control.
 
 ### Backup, purge, and re-onboarding
 
-There is no built-in backup/restore or legacy-state import command yet; those
-remain future productization work. Before a purge, inspect the current runtime
-with the relevant `project:*`, `office:*`, `task:*`, `run:*`, `cost:*`,
-governance, capability, and action commands. Then stop the foreground daemon
-with `Ctrl-C` so it closes SQLite and removes the socket. Back up the selected
-runtime home (the default is shown):
+Use the daemon-backed portable workflow for project-owned state before a purge:
 
 ```bash
-cp -R ~/.ai-office /path/to/ai-office-backup
+ai-office project:backup --output /path/outside-the-runtime/project.aioffice
 ```
 
-At minimum preserve `project.sqlite`. Copying the whole runtime directory after
-a clean shutdown also preserves unapplied office drafts and generated
-projections. It preserves the optional client contract only when the integration
-root and runtime root coincide; otherwise inspect and back up
-`<integration-root>/.ai-office/agent-instructions.json`, `AI-OFFICE.md`, host
-pointers, and repository skills separately according to their ownership. Do not copy only
-`project.sqlite` while the daemon is running because its WAL may contain
-committed state. Keep the backup outside the runtime home you intend
-to purge and verify that the copy exists. Then generate and inspect the local
-purge plan while the daemon remains stopped:
+That snapshot intentionally excludes machine security authority, global memory,
+cost accounting, caches, drafts, and generated projections. For a full
+installation disaster-recovery copy, stop the daemon first and copy the entire
+runtime home so `project.sqlite` and its WAL are consistent; back up
+`global.sqlite` separately according to its user-level ownership. Never copy a
+live SQLite main file in isolation. Keep every backup outside the runtime home
+you intend to purge and verify it exists. Then inspect and apply the purge plan
+while the daemon remains stopped:
 
 ```bash
 bun run cli -- runtime:purge
@@ -649,27 +728,19 @@ A clean re-onboarding sequence is conceptually:
 ```text
 inspect existing AI Office state
   -> stop the daemon
-  -> back up the selected runtime home
+  -> create portable project backups (and any separate full-runtime backup)
   -> purge only that local runtime state
   -> start the current AI Office version
-  -> project:import
-  -> office onboarding
+  -> clone or obtain the source repository
+  -> project:restore
   -> coding-client integration, if desired
 ```
 
-`project:import` rescans the source repository and recreates detected project
-facts in the current database. It does **not** recover previous tasks, runs,
-manifest revisions, budgets or costs, governance history, capability grants,
-controlled-action approvals or executions, or audit events. Re-importing source
-and restoring operational state are different operations.
-
-Likewise, re-onboarding and authorization are separate. AI Office has no legacy
-state migrator today, and a future migration must not treat an archived
-capability grant, action approval/execution authorization, credential reference,
-or ephemeral authorization state as trusted merely because it appeared in an
-old database. Restore old operational state only through a future documented
-compatibility path; otherwise retain the backup as the historical record and
-re-establish current authorization explicitly.
+`project:import` only rescans source facts; `project:restore` recreates the
+documented portable state subset. Restore never transfers capability grants,
+action approvals/executions, credential references, or ephemeral authorization.
+Re-establish those explicitly on the destination machine. Export archives are
+user-owned and survive repository uninstall and runtime purge.
 
 ## Repository structure
 

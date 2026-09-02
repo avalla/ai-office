@@ -10,6 +10,9 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Architecture overview](architecture/overview.md): current system boundaries, implemented surfaces, storage responsibilities, and trust model.
 - [Storage design](architecture/storage.md): current database ownership,
   authority, rebuildability, and runtime/import/integration-root path semantics.
+- [Project portability and synchronization](development/project-portability-and-sync.md):
+  portable identity, snapshot format, restore/security lifecycle, revisions,
+  remote port, and future semantic-sync direction.
 - [Repository-local project binding](adr/ADR-0008-repository-local-project-binding.md):
   accepted identity, discovery, portability, and lifecycle decision.
 - [Stable user runtime home](adr/ADR-0009-stable-user-runtime-home.md):

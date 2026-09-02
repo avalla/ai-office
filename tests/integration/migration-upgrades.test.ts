@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0021_agent_action_provenance.sql",
+        "0024_project_revision_identity.sql",
       );
       expect(
         database
@@ -108,6 +108,9 @@ describe("migration upgrades", () => {
       "0019_repository_identity.sql",
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
+      "0022_project_portability.sql",
+      "0023_project_snapshot_observations.sql",
+      "0024_project_revision_identity.sql",
     ]);
     expect(
       database
@@ -129,6 +132,152 @@ describe("migration upgrades", () => {
       generation_id: null,
       answer_type: "multi_select",
     });
+    database.close();
+  });
+
+  test("migrates local export claims to local snapshot observations without changing lineage", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-observation-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0022_project_portability.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    }
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    const createdAt = "2026-09-01T00:00:00.000Z";
+    database
+      .prepare(
+        `INSERT INTO project(id,name,created_at,updated_at)
+         VALUES ('project','Existing',?,?)`,
+      )
+      .run(createdAt, createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_state_revision(
+           id,project_id,parent_revision_id,state_checksum,origin,created_at
+         ) VALUES ('revision','project','unknown-parent',?,'local_export',?)`,
+      )
+      .run("a".repeat(64), createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_state_head(
+           project_id,revision_id,base_revision_id,updated_at
+         ) VALUES ('project','revision','known-base',?)`,
+      )
+      .run(createdAt);
+
+    expect(migrate(database, migrations).applied).toEqual([
+      "0023_project_snapshot_observations.sql",
+      "0024_project_revision_identity.sql",
+    ]);
+    expect(
+      database
+        .query<
+          {
+            origin: string;
+            parent_revision_id: string | null;
+            base_revision_id: string | null;
+          },
+          []
+        >(
+          `SELECT revision.origin, revision.parent_revision_id,
+                  head.base_revision_id
+           FROM project_state_revision revision
+           JOIN project_state_head head
+             ON head.project_id=revision.project_id
+            AND head.revision_id=revision.id`,
+        )
+        .get(),
+    ).toEqual({
+      origin: "local_snapshot",
+      parent_revision_id: "unknown-parent",
+      base_revision_id: "known-base",
+    });
+    expect(
+      database
+        .query<{ revision_id: string; project_id: string }, []>(
+          `SELECT revision_id, project_id
+           FROM project_state_revision_identity
+           ORDER BY revision_id`,
+        )
+        .all(),
+    ).toEqual([
+      { revision_id: "known-base", project_id: "project" },
+      { revision_id: "revision", project_id: "project" },
+      { revision_id: "unknown-parent", project_id: "project" },
+    ]);
+    expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.prepare("DELETE FROM project WHERE id = 'project'").run();
+    expect(
+      database
+        .query<{ count: number }, []>(
+          `SELECT
+             (SELECT COUNT(*) FROM project_state_revision_identity) +
+             (SELECT COUNT(*) FROM project_state_revision) +
+             (SELECT COUNT(*) FROM project_state_head) AS count`,
+        )
+        .get()?.count,
+    ).toBe(0);
+    database.close();
+  });
+
+  test("fails migration rather than guessing contradictory shallow revision ownership", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-lineage-conflict-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0023_project_snapshot_observations.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    }
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    const createdAt = "2026-09-01T00:00:00.000Z";
+    for (const projectId of ["project-a", "project-b"])
+      database
+        .prepare(
+          `INSERT INTO project(id,name,description,created_at,updated_at)
+           VALUES (?,?,NULL,?,?)`,
+        )
+        .run(projectId, projectId, createdAt, createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_state_revision(
+           id,project_id,parent_revision_id,state_checksum,origin,created_at
+         ) VALUES ('revision-a','project-a','shared-parent',?,'portable_import',?)`,
+      )
+      .run("a".repeat(64), createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_state_revision(
+           id,project_id,parent_revision_id,state_checksum,origin,created_at
+         ) VALUES ('shared-parent','project-b',NULL,?,'local_snapshot',?)`,
+      )
+      .run("b".repeat(64), createdAt);
+
+    expect(() => migrate(database, migrations)).toThrow(
+      "contradictory project state revision identity ownership",
+    );
+    expect(
+      database
+        .query<{ count: number }, []>(
+          `SELECT COUNT(*) AS count FROM schema_migration
+           WHERE version = '0024_project_revision_identity.sql'`,
+        )
+        .get()?.count,
+    ).toBe(0);
+    expect(
+      database
+        .query<{ id: string; project_id: string }, []>(
+          "SELECT id, project_id FROM project_state_revision ORDER BY id",
+        )
+        .all(),
+    ).toEqual([
+      { id: "revision-a", project_id: "project-a" },
+      { id: "shared-parent", project_id: "project-b" },
+    ]);
     database.close();
   });
 
@@ -157,6 +306,9 @@ describe("migration upgrades", () => {
       "0019_repository_identity.sql",
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
+      "0022_project_portability.sql",
+      "0023_project_snapshot_observations.sql",
+      "0024_project_revision_identity.sql",
     ]);
     expect(
       database
@@ -175,7 +327,7 @@ describe("migration upgrades", () => {
     database.close();
   });
 
-  test("adds portable repository identity and checkout detachment state without changing projects", () => {
+  test("assigns pre-feature projects one stable identity and adds revision state idempotently", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-identity-upgrade-"));
     roots.push(root);
     const partial = join(root, "partial-migrations");
@@ -198,13 +350,10 @@ describe("migration upgrades", () => {
       "0019_repository_identity.sql",
       "0020_pipeline_enforcement.sql",
       "0021_agent_action_provenance.sql",
+      "0022_project_portability.sql",
+      "0023_project_snapshot_observations.sql",
+      "0024_project_revision_identity.sql",
     ]);
-    database
-      .prepare(
-        `INSERT INTO project_repository_identity(repository_id,project_id,created_at)
-         VALUES ('repo_portable','project',?)`,
-      )
-      .run(createdAt);
     database
       .prepare(
         `INSERT INTO project_checkout_detachment(local_path,project_id,detached_at)
@@ -212,13 +361,34 @@ describe("migration upgrades", () => {
       )
       .run(createdAt);
 
+    const portableIdentity = database
+      .query<{ repository_id: string }, []>(
+        "SELECT repository_id FROM project_repository_identity WHERE project_id='project'",
+      )
+      .get()?.repository_id;
+    expect(portableIdentity).toMatch(/^repo_[0-9a-f]{32}$/u);
+    expect(migrate(database, migrations).applied).toEqual([]);
     expect(
       database
-        .query<{ project_id: string }, []>(
-          "SELECT project_id FROM project_repository_identity WHERE repository_id='repo_portable'",
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM project_repository_identity WHERE project_id='project'",
         )
-        .get(),
-    ).toEqual({ project_id: "project" });
+        .get()?.count,
+    ).toBe(1);
+    expect(
+      database
+        .query<{ repository_id: string }, []>(
+          "SELECT repository_id FROM project_repository_identity WHERE project_id='project'",
+        )
+        .get()?.repository_id,
+    ).toBe(portableIdentity);
+    expect(
+      database
+        .query<{ name: string }, []>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name='project_state_revision'",
+        )
+        .get()?.name,
+    ).toBe("project_state_revision");
     expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
     database.prepare("DELETE FROM project WHERE id='project'").run();
     expect(

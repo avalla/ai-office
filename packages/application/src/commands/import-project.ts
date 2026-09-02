@@ -9,6 +9,7 @@ import type { ProjectProfileRepository } from "../ports/project-profile-reposito
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { ProjectScanner } from "../ports/project-scanner.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import type { RepositoryIdentityRepository } from "../ports/repository-identity-repository.port.ts";
 
 export interface ImportProjectResult {
   projectId: string;
@@ -25,7 +26,10 @@ export class ProjectSourceAssociationError extends Error {
 }
 
 function normalizedRemote(value: string): string {
-  return value.trim().replace(/\/?\.git$/u, "").replace(/\/$/u, "");
+  return value
+    .trim()
+    .replace(/\/?\.git$/u, "")
+    .replace(/\/$/u, "");
 }
 
 function profileEntries(
@@ -67,6 +71,7 @@ export class ImportProject {
     private readonly projects: ProjectRepository,
     private readonly profiles: ProjectProfileRepository,
     private readonly scanner: ProjectScanner,
+    private readonly identities: RepositoryIdentityRepository,
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
@@ -76,6 +81,7 @@ export class ImportProject {
     rootPath: string;
     name?: string;
     projectId?: string;
+    repositoryId?: string;
   }): Promise<ImportProjectResult> {
     const scanStartedAt = this.clock.now();
     const scan = await this.scanner.scan(input.rootPath);
@@ -124,12 +130,20 @@ export class ImportProject {
         const project = Project.create({
           id: this.ids.generate(),
           name: input.name ?? scan.projectName,
-          description: `Imported from ${scan.rootPath}`,
           now: completedAt,
         });
 
         await this.projects.save(project);
         projectId = project.snapshot().id;
+        const association = await this.identities.associate({
+          repositoryId: input.repositoryId ?? `repo_${projectId}`,
+          projectId,
+          createdAt: completedAt,
+        });
+        if (association !== "created")
+          throw new ProjectSourceAssociationError(
+            `Portable identity for imported project ${projectId} conflicts`,
+          );
         created = true;
       }
 

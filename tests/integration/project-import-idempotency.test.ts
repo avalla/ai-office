@@ -10,6 +10,7 @@ import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
 import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
+import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
 import type { ProjectScan } from "@ai-office/application/ports/project-profile-repository.port.ts";
 import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
 
@@ -40,6 +41,7 @@ describe("ImportProject", () => {
       new SqliteProjectRepository(database),
       new SqliteProjectProfileRepository(database),
       new LocalProjectScanner(),
+      new SqliteRepositoryIdentityRepository(database),
       new CryptoIdGenerator(),
       new SystemClock(),
       new SqliteTransactionRunner(database),
@@ -73,6 +75,13 @@ describe("ImportProject", () => {
       .get();
 
     expect(projects?.count).toBe(1);
+    expect(
+      database
+        .query<{ description: string | null }, [string]>(
+          "SELECT description FROM project WHERE id = ?",
+        )
+        .get(first.projectId)?.description,
+    ).toBeNull();
     expect(sources?.count).toBe(1);
     expect(scans?.count).toBe(2);
     expect(questions?.count).toBe(0);
@@ -118,6 +127,7 @@ describe("ImportProject", () => {
       new SqliteProjectRepository(database),
       new SqliteProjectProfileRepository(database),
       new LocalProjectScanner(),
+      new SqliteRepositoryIdentityRepository(database),
       new CryptoIdGenerator(),
       new SystemClock(),
       new SqliteTransactionRunner(database),
@@ -164,6 +174,7 @@ describe("ImportProject", () => {
       new SqliteProjectRepository(database),
       new FailingProfiles(database),
       new LocalProjectScanner(),
+      new SqliteRepositoryIdentityRepository(database),
       new CryptoIdGenerator(),
       new SystemClock(),
       new SqliteTransactionRunner(database),
@@ -225,6 +236,7 @@ describe("ImportProject", () => {
       new SqliteProjectRepository(database),
       new SqliteProjectProfileRepository(database),
       new LocalProjectScanner(),
+      new SqliteRepositoryIdentityRepository(database),
       new CryptoIdGenerator(),
       new SystemClock(),
       new SqliteTransactionRunner(database),
