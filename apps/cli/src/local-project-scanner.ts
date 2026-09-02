@@ -29,6 +29,44 @@ function detectGit(rootPath: string): { remoteUrl?: string; currentBranch?: stri
   };
 }
 
+/**
+ * Resolves the Git directory for a checkout. A worktree or submodule stores a
+ * `gitdir:` pointer file instead of a directory.
+ */
+function gitDirectory(rootPath: string): string | undefined {
+  const candidate = join(rootPath, ".git");
+  if (!existsSync(candidate)) return undefined;
+  if (statSync(candidate).isDirectory()) return candidate;
+  const pointer = readText(candidate)?.match(/^gitdir:\s*(.+)$/mu)?.[1]?.trim();
+  if (pointer === undefined) return undefined;
+  const resolved = resolve(rootPath, pointer);
+  return existsSync(resolved) ? resolved : undefined;
+}
+
+/**
+ * Cheap, offline evidence that the checkout has at least one commit. A branch
+ * pointer in HEAD is not history: `git init` writes it before any commit
+ * exists, so branch heads and packed refs are the signal.
+ */
+function detectCommitHistory(rootPath: string): boolean {
+  const git = gitDirectory(rootPath);
+  if (git === undefined) return false;
+  const packed = readText(join(git, "packed-refs")) ?? "";
+  if (/^[0-9a-f]{40}\s+refs\/heads\//mu.test(packed)) return true;
+  const heads = join(git, "refs", "heads");
+  if (!existsSync(heads)) return false;
+  const pending = [heads];
+  while (pending.length > 0) {
+    const directory = pending.pop()!;
+    for (const entry of readdirSync(directory)) {
+      const absolutePath = join(directory, entry);
+      if (statSync(absolutePath).isDirectory()) pending.push(absolutePath);
+      else return true;
+    }
+  }
+  return false;
+}
+
 function collectFiles(rootPath: string, limit = 20_000): string[] {
   const files: string[] = [];
   const pending = [rootPath];
@@ -125,6 +163,7 @@ export class LocalProjectScanner implements ProjectScanner {
       rootPath,
       projectName: basename(rootPath),
       ...detectGit(rootPath),
+      hasCommitHistory: detectCommitHistory(rootPath),
       ...(packageManager === undefined ? {} : { packageManager }),
       languages: detectLanguages(files),
       frameworks,
