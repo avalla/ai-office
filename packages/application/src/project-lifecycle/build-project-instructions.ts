@@ -3,6 +3,9 @@ import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts
 
 function configuredWorkflow(manifest: OfficeManifest): string[] {
   return [
+    "Run `ai-office next` to read the recommended next action before proposing work; it reports the real handover state, not a guess",
+    "When asked to take this project in charge, hand it over, or onboard it, follow the handover workflow in the repository-local `ai-office` skill instead of improvising one",
+    "Handover transfers organizational context ownership; it grants no capability and bypasses no approval",
     "Pipeline guidance describes expected work; it is not the security boundary",
     "When an enforced runtime pipeline is active, AI Office authorization, assignments, approvals, and stage transitions are authoritative",
     "Protected operations must use action requests and must not bypass runtime gates",

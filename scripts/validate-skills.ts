@@ -10,6 +10,7 @@ import {
 import { fileURLToPath } from "node:url";
 import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
 import { compileProjectSkill } from "@ai-office/application/agent-client/project-skill-compiler.ts";
+import { compileProjectHandoverSection } from "@ai-office/application/agent-client/project-handover-workflow.ts";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSkillRoot = resolve(
@@ -23,12 +24,14 @@ const requiredPaths = [
   "agents/openai.yaml",
   "assets/default-office-manifest.json",
   "references/manifest-contract.md",
+  "references/project-handover.md",
   "references/task-operation.md",
 ] as const;
 
 const requiredSkillSnippets = [
   "## Help",
   "## Install or inspect",
+  "## Hand the project over",
   "## Onboard",
   "## Revise the office",
   "## Operate a task",
@@ -37,6 +40,7 @@ const requiredSkillSnippets = [
   "## Uninstall safely",
   "ai-office install",
   "ai-office status",
+  "ai-office next",
   "ai-office --help",
 ] as const;
 
@@ -50,12 +54,14 @@ const removedOnboardingSnippets = [
 const requiredProjectedSkillSnippets = [
   "## Help",
   "## Install or inspect",
+  "## Hand the project over",
   "## Onboard",
   "## Operate",
   "## Uninstall safely",
   "ai-office --help",
   "ai-office install",
   "ai-office status",
+  "ai-office next",
 ] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -136,6 +142,12 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
         `SKILL.md references removed provider onboarding: ${snippet}`,
       );
   }
+  // The handover workflow has one canonical definition in the application
+  // layer. Both skill surfaces must carry it verbatim so no client drifts.
+  if (!source.includes(compileProjectHandoverSection()))
+    errors.push(
+      "SKILL.md does not embed the canonical project handover workflow verbatim",
+    );
 
   for (const requiredPath of requiredPaths) {
     const absolutePath = resolve(skillRoot, requiredPath);
@@ -217,6 +229,10 @@ export function validateProjectedAiOfficeSkill(source: string): string[] {
         `Projected SKILL.md references removed provider onboarding: ${snippet}`,
       );
   }
+  if (!source.includes(compileProjectHandoverSection()))
+    errors.push(
+      "Projected SKILL.md does not embed the canonical project handover workflow verbatim",
+    );
   return errors;
 }
 
