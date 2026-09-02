@@ -161,6 +161,9 @@ Commands:
     reconciles repository identity, shared AI-OFFICE.md guidance, and detected host skills
     exit 0: installed; exit 2: installed with warnings; exit 1: failed/partial
   status [path] [--json]
+  next [path] [--json]
+    reports project handover readiness and the recommended next action
+    exit 0: assessed; exit 1: authoritative state unavailable
   uninstall [path] [--approve <plan-hash>] [--json]
   daemon  # available through the linkable ai-office entry point
   daemon:health
@@ -238,6 +241,7 @@ Environment (linkable ai-office entry point):
 const commands = [
   "install",
   "status",
+  "next",
   "uninstall",
   "project:create",
   "project:import",

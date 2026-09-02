@@ -13,6 +13,8 @@ import type { AgentClientCatalog } from "@ai-office/application/ports/agent-clie
 import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
 import { getOfflineProjectStatus } from "./offline-project-status.ts";
 import { printProjectLifecycleStatus } from "./commands/lifecycle.ts";
+import { renderHandoverReport } from "./handover-view.ts";
+import { degradedProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 import {
   resolveRuntimePaths,
@@ -114,7 +116,12 @@ function lifecycleArguments(
   workingDirectory: string,
 ): string[] {
   const command = args[0];
-  if (command !== "install" && command !== "status" && command !== "uninstall")
+  if (
+    command !== "install" &&
+    command !== "status" &&
+    command !== "uninstall" &&
+    command !== "next"
+  )
     return args;
   const result = [...args];
   let positionalIndex = -1;
@@ -327,7 +334,10 @@ export async function runDaemonCli(
       reader?.close();
     }
   } catch (error) {
-    if (error instanceof DaemonUnavailableError && args[0] === "status") {
+    if (
+      error instanceof DaemonUnavailableError &&
+      (args[0] === "status" || args[0] === "next")
+    ) {
       const prepared = lifecycleArguments(args, workingDirectory);
       const status = await getOfflineProjectStatus(prepared[1]!, {
         runtimeHome: runtimePaths.runtimeHome,
@@ -336,8 +346,17 @@ export async function runDaemonCli(
           ? {}
           : { clients: options.agentClients }),
       });
+      // The authoritative runtime is unreachable, so the handover assessment
+      // is degraded on purpose: it reports what the repository proves and
+      // never guesses management state it cannot read.
+      const handover = degradedProjectHandoverReport(status);
+      if (args[0] === "next") {
+        if (args.includes("--json")) io.stdout(JSON.stringify(handover));
+        else renderHandoverReport(handover, { stdout: io.stdout });
+        return 1;
+      }
       if (args.includes("--json")) io.stdout(JSON.stringify(status));
-      else printProjectLifecycleStatus(status, { io });
+      else printProjectLifecycleStatus(status, { io }, handover);
       return 1;
     }
     if (
