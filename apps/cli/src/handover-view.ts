@@ -139,6 +139,9 @@ export function renderHandoverReport(
     io.stdout(
       `  ${stateMarker[entry.state]} ${padded(entry.title, width)}  ${entry.detail}`,
     );
+  const { blocking, advisory } = handover.openQuestions;
+  if (blocking > 0 || advisory > 0)
+    io.stdout(`  open questions: ${blocking} blocking, ${advisory} advisory`);
   io.stdout("");
   renderNextSteps(handover, io);
 }

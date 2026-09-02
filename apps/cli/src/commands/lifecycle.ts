@@ -29,9 +29,11 @@ import {
   renderStatusGuidance,
   renderWelcome,
 } from "../handover-view.ts";
+import { ConfirmRepositoryUnderstanding } from "@ai-office/application/project-lifecycle/confirm-repository-understanding.ts";
 import {
   CliUsageError,
   parseArguments,
+  requiredOption,
   type CommandContext,
 } from "./shared.ts";
 
@@ -308,9 +310,41 @@ export async function handleLifecycleCommand(
     command !== "install" &&
     command !== "status" &&
     command !== "uninstall" &&
-    command !== "next"
+    command !== "next" &&
+    command !== "handover:confirm"
   )
     return null;
+
+  if (command === "handover:confirm") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "summary"]),
+      new Set(["json"]),
+    );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError("handover:confirm only accepts named options");
+    const result = await new ConfirmRepositoryUnderstanding(
+      context.projects,
+      context.profiles,
+      context.ids,
+      context.clock,
+      context.transactions,
+    ).execute({
+      projectId: requiredOption(parsed, "project"),
+      summary: requiredOption(parsed, "summary"),
+    });
+    if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(result));
+    else {
+      context.io.stdout("Handover repository review confirmed.");
+      context.io.stdout(`  project: ${result.projectId}`);
+      context.io.stdout(`  scan: ${result.scanId ?? "not recorded"}`);
+      context.io.stdout(`  evidence: ${result.fingerprint.slice(0, 16)}`);
+      context.io.stdout(
+        "  This records project knowledge only; it grants no capability.",
+      );
+    }
+    return 0;
+  }
 
   if (command === "next") {
     const parsed = parseArguments(args, new Set(), new Set(["json"]));

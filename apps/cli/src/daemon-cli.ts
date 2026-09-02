@@ -61,6 +61,7 @@ function withoutRepeatedPrefix(lines: string[], prefix: string[]): string[] {
 }
 
 const projectScopedCommands = new Set([
+  "handover:confirm",
   "project:answer",
   "project:profile",
   "project:export",

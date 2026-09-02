@@ -13,6 +13,7 @@ import type {
   ProjectProfileEntry,
   ProjectProfileOrigin,
   ProjectQuestion,
+  ProjectScanSummary,
 } from "@ai-office/domain/project/project-profile.ts";
 
 interface ProjectIdRow {
@@ -48,6 +49,17 @@ interface ProjectQuestionRow {
   generation_id: string | null;
   answer_json: string | null;
   answered_at: string | null;
+}
+
+interface ProjectScanRow {
+  id: string;
+  project_id: string;
+  scan_type: "deterministic_quick_scan";
+  status: "completed";
+  started_at: string;
+  completed_at: string | null;
+  source_revision: string | null;
+  summary_json: string | null;
 }
 
 interface ProjectProfileEntryRow {
@@ -266,6 +278,34 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
       );
   }
 
+  async findLatestScan(projectId: string): Promise<ProjectScan | null> {
+    const row = this.database
+      .query<ProjectScanRow, [string]>(
+        `SELECT id, project_id, scan_type, status, started_at, completed_at,
+                source_revision, summary_json
+         FROM project_scan
+         WHERE project_id = ? AND status = 'completed' AND summary_json IS NOT NULL
+         ORDER BY completed_at DESC, id DESC
+         LIMIT 1`,
+      )
+      .get(projectId);
+
+    return row === null || row.completed_at === null
+      ? null
+      : {
+          id: row.id,
+          projectId: row.project_id,
+          scanType: row.scan_type,
+          status: row.status,
+          startedAt: new Date(row.started_at),
+          completedAt: new Date(row.completed_at),
+          ...(row.source_revision === null
+            ? {}
+            : { sourceRevision: row.source_revision }),
+          summary: JSON.parse(row.summary_json!) as ProjectScanSummary,
+        };
+  }
+
   async replaceDetected(entries: ProjectProfileEntry[]): Promise<void> {
     const projectId = entries[0]?.projectId;
     if (projectId === undefined) return;
@@ -391,6 +431,22 @@ export class SqliteProjectProfileRepository implements ProjectProfileRepository 
         entry.confirmedAt?.toISOString() ?? null,
         entry.createdAt.toISOString(),
       );
+  }
+
+  async supersedeProfileEntries(
+    projectId: string,
+    category: string,
+    key: string,
+    supersededAt: Date,
+  ): Promise<void> {
+    this.database
+      .prepare(
+        `UPDATE project_profile_entry
+         SET superseded_at = ?
+         WHERE project_id = ? AND category = ? AND key = ?
+           AND superseded_at IS NULL`,
+      )
+      .run(supersededAt.toISOString(), projectId, category, key);
   }
 
   async listActiveProfileEntries(

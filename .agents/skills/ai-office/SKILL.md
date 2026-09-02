@@ -75,9 +75,12 @@ Follow this workflow when the user asks for anything equivalent to "take this pr
 8. Record confirmed answers in the office manifest through `office:validate` and `office:apply`; record delivery intent through `milestone:*` and `requirement:*`. Do not copy repository files into AI Office.
 9. Report existing tasks, runs, and pipelines as current work instead of recreating them.
 10. Present goals, constraints, current state, and a proposed roadmap as a proposal, and obtain confirmation before applying anything.
-11. Never invent missing information, never delete or rewrite committed project state to fit a proposal, and never start an agent run as part of handover.
-12. Finish by restating the recommended next action from `ai-office next`.
+11. Only after you have actually read the repository, compared it with the stored state, shown the user the result, and had the user confirm or correct it, record the review with `ai-office handover:confirm --project <projectId> --summary "<what the office understood>"`. An approved office manifest never certifies repository understanding, so never record this confirmation on the user's behalf or in advance.
+12. Answer open project questions through `project:answer` instead of guessing; unanswered goal and constraint questions keep the handover incomplete.
+13. Never invent missing information, never delete or rewrite committed project state to fit a proposal, and never start an agent run as part of handover.
+14. Finish by restating the recommended next action from `ai-office next`.
 
+- A confirmed repository review is evidence about the project, never permission to act on it.
 - Handover transfers organizational context ownership, not authority.
 - It grants no capability, bypasses no approval, changes no policy, and starts no autonomous work.
 - Discovery, proposal, and committed project state must stay clearly distinguishable to the user.

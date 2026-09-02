@@ -1,15 +1,22 @@
 import {
   assessProjectHandover,
+  type OpenHandoverQuestions,
   type ProjectHandoverAssessment,
   type ProjectHandoverConnection,
   type ProjectHandoverKnowledge,
-  type RepositorySignals,
+  type RepositoryReviewState,
 } from "@ai-office/domain/project/project-handover.ts";
-import type { ProjectProfileEntry } from "@ai-office/domain/project/project-profile.ts";
+import type { ProjectQuestion } from "@ai-office/domain/project/project-profile.ts";
 import type { GovernanceRepository } from "../ports/governance-repository.port.ts";
 import type { OfficeManifestRepository } from "../ports/office-manifest-repository.port.ts";
 import type { ProjectProfileRepository } from "../ports/project-profile-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
+import {
+  readRecordedRepositoryReview,
+  repositoryFactsFromProfile,
+  repositorySignalsFromFacts,
+  repositoryUnderstandingFingerprint,
+} from "./repository-understanding.ts";
 import type {
   ManageProjectLifecycle,
   ProjectLifecycleStatus,
@@ -48,6 +55,13 @@ const workInProgressStatuses = new Set([
   "waiting_review",
 ]);
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
+
+/**
+ * Goal and constraint answers define product direction and the working
+ * agreement, so an unanswered one is missing handover context. Preference and
+ * permission answers refine an existing agreement and stay advisory.
+ */
+const blockingAnswerCategories = new Set(["goal", "constraint"]);
 
 export function handoverConnectionFromStatus(
   status: ProjectLifecycleStatus,
@@ -106,53 +120,13 @@ function report(
   };
 }
 
-function detectedValue(
-  entries: readonly ProjectProfileEntry[],
-  category: string,
-  key: string,
-): unknown {
-  return entries.find(
-    (entry) =>
-      entry.origin === "detected" &&
-      entry.category === category &&
-      entry.key === key,
-  )?.value;
-}
-
-function listLength(value: unknown): number {
-  return Array.isArray(value) ? value.length : 0;
-}
-
-function presentText(value: unknown): boolean {
-  return typeof value === "string" && value.trim() !== "";
-}
-
-function repositorySignals(
-  entries: readonly ProjectProfileEntry[],
-): RepositorySignals {
-  return {
-    languageCount: listLength(detectedValue(entries, "stack", "languages")),
-    frameworkCount: listLength(detectedValue(entries, "stack", "frameworks")),
-    documentationCount: listLength(
-      detectedValue(entries, "documentation", "files"),
-    ),
-    testingCount: listLength(detectedValue(entries, "quality", "testing")),
-    hasPackageManager: presentText(
-      detectedValue(entries, "tooling", "package_manager"),
-    ),
-    hasGitHistory: presentText(
-      detectedValue(entries, "repository", "current_branch"),
-    ),
-  };
-}
-
-function userEntryCount(
-  entries: readonly ProjectProfileEntry[],
-  category: string,
-): number {
-  return entries.filter(
-    (entry) => entry.origin === "user" && entry.category === category,
+function openQuestionCounts(
+  questions: readonly ProjectQuestion[],
+): OpenHandoverQuestions {
+  const blocking = questions.filter((question) =>
+    blockingAnswerCategories.has(question.answerCategory),
   ).length;
+  return { blocking, advisory: questions.length - blocking };
 }
 
 export class AssessProjectHandover {
@@ -182,39 +156,54 @@ export class AssessProjectHandover {
   ): Promise<ProjectHandoverKnowledge> {
     const [entries, questions, office, governance, tasks] = await Promise.all([
       this.dependencies.profiles.listActiveProfileEntries(projectId),
-      this.dependencies.profiles.listQuestions(projectId),
+      this.dependencies.profiles.listOpenQuestions(projectId),
       this.dependencies.manifests.findLatest(projectId),
       this.dependencies.governance.getSnapshot(projectId),
       this.dependencies.tasks.listByProject(projectId),
     ]);
-    const detected = entries.filter((entry) => entry.origin === "detected");
+    const facts = repositoryFactsFromProfile(entries);
+    const recorded = readRecordedRepositoryReview(entries);
+    // An approved office manifest records the organizational model; it never
+    // certifies that this repository was reviewed. Only an explicit, confirmed
+    // review does, and only for the repository evidence it was confirmed
+    // against.
+    const repositoryReview: RepositoryReviewState =
+      facts === null || recorded === null
+        ? "not_reviewed"
+        : recorded.review.fingerprint ===
+            repositoryUnderstandingFingerprint(facts)
+          ? "current"
+          : "stale";
     const project = office?.manifest.project;
     const snapshots = tasks.map((task) => task.snapshot());
     return {
-      repositoryScanned: detected.length > 0,
-      repositorySignals: repositorySignals(entries),
+      repositoryScanned: facts !== null,
+      repositorySignals:
+        facts === null
+          ? {
+              languageCount: 0,
+              frameworkCount: 0,
+              documentationCount: 0,
+              sourceFileCount: null,
+              hasCommitHistory: null,
+            }
+          : repositorySignalsFromFacts(facts),
+      repositoryReview,
       officeConfigured: status.office.state === "configured",
-      mission: project?.mission ?? null,
       goalCount: project?.goals.length ?? 0,
       constraintCount: project?.constraints.length ?? 0,
       preferenceCount: project?.preferences.length ?? 0,
-      roleCount: office?.manifest.office.roles.length ?? 0,
-      userGoalCount: userEntryCount(entries, "goal"),
-      userConstraintCount: userEntryCount(entries, "constraint"),
-      openQuestionCount: questions.filter(
-        (question) => question.answer === undefined,
-      ).length,
       milestoneTotal: governance.milestones.length,
       activeMilestones: governance.milestones.filter(
         (milestone) => milestone.status === "active",
       ).length,
       requirementTotal: governance.requirements.length,
-      taskTotal: snapshots.length,
       tasksOpen: snapshots.filter((task) => !terminalStatuses.has(task.status))
         .length,
       tasksInProgress: snapshots.filter((task) =>
         workInProgressStatuses.has(task.status),
       ).length,
+      openQuestions: openQuestionCounts(questions),
     };
   }
 }

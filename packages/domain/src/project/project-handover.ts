@@ -3,8 +3,21 @@
  * virtual office: AI Office understands the project, records the management
  * state that belongs to its own domain, and can propose what to do next.
  *
- * Handover is deliberately not an authorization concept. Nothing in this module
- * grants a capability, approves an action, or widens any policy decision.
+ * Four concepts are deliberately kept apart:
+ *
+ * - discovery: deterministic repository evidence produced by the scanner;
+ * - repository review: an agent reading the repository and comparing it with
+ *   the stored state, then presenting the result to the user;
+ * - user confirmation: the user accepting or correcting that review, which is
+ *   the only thing that makes repository understanding authoritative;
+ * - approved organizational model: the office manifest, which records mission,
+ *   goals, constraints, preferences, roles, and pipelines.
+ *
+ * An approved office manifest never certifies repository understanding: it
+ * carries no architecture, implementation state, or review acceptance.
+ *
+ * Handover is not an authorization concept. Nothing in this module grants a
+ * capability, approves an action, or widens any policy decision.
  */
 
 export type HandoverDimensionId =
@@ -33,6 +46,12 @@ export type ProjectHandoverState =
 
 export type RepositoryMaturity = "new" | "existing" | "unknown";
 
+/**
+ * Whether an explicit repository review has been confirmed for the repository
+ * evidence AI Office currently holds.
+ */
+export type RepositoryReviewState = "not_reviewed" | "stale" | "current";
+
 export type RecommendedActionKind = "conversational" | "command";
 
 export type RecommendedActionPriority = "high" | "medium" | "low";
@@ -54,38 +73,64 @@ export interface HandoverDimension {
   detail: string;
 }
 
+/**
+ * Structural repository signals used to classify maturity. `null` means the
+ * recorded scan predates the signal, not that the signal is absent.
+ */
 export interface RepositorySignals {
   languageCount: number;
   frameworkCount: number;
   documentationCount: number;
-  testingCount: number;
-  hasPackageManager: boolean;
-  hasGitHistory: boolean;
+  sourceFileCount: number | null;
+  hasCommitHistory: boolean | null;
+}
+
+/**
+ * The material repository facts a repository review is confirmed against. The
+ * fingerprint built from them changes on structural change, not on every edit.
+ */
+export interface RepositoryUnderstandingFacts {
+  languages: readonly string[];
+  frameworks: readonly string[];
+  databases: readonly string[];
+  testing: readonly string[];
+  documentation: readonly string[];
+  packageManager: string | null;
+  remoteUrl: string | null;
+  sourceFileCount: number | null;
+  hasCommitHistory: boolean | null;
+}
+
+/**
+ * Open onboarding questions split by whether their answer is material to the
+ * handover. Goal and constraint questions define product direction and the
+ * working agreement, so they block readiness; preference and permission
+ * questions stay advisory.
+ */
+export interface OpenHandoverQuestions {
+  blocking: number;
+  advisory: number;
 }
 
 /**
  * Management knowledge AI Office already owns for this project. Every field is
- * derived from authoritative runtime state; none of it duplicates repository
- * content.
+ * derived from authoritative runtime state, is used by this module, and none
+ * of it duplicates repository content.
  */
 export interface ProjectHandoverKnowledge {
   repositoryScanned: boolean;
   repositorySignals: RepositorySignals;
+  repositoryReview: RepositoryReviewState;
   officeConfigured: boolean;
-  mission: string | null;
   goalCount: number;
   constraintCount: number;
   preferenceCount: number;
-  roleCount: number;
-  userGoalCount: number;
-  userConstraintCount: number;
-  openQuestionCount: number;
   milestoneTotal: number;
   activeMilestones: number;
   requirementTotal: number;
-  taskTotal: number;
   tasksOpen: number;
   tasksInProgress: number;
+  openQuestions: OpenHandoverQuestions;
 }
 
 export interface HandoverClientState {
@@ -113,6 +158,7 @@ export interface ProjectHandoverAssessment {
   schemaVersion: 1;
   state: ProjectHandoverState;
   repository: RepositoryMaturity;
+  openQuestions: OpenHandoverQuestions;
   dimensions: readonly HandoverDimension[];
   recommendedActions: readonly RecommendedAction[];
   suggestedPrompts: readonly string[];
@@ -120,6 +166,11 @@ export interface ProjectHandoverAssessment {
 
 export const maximumRecommendedActions = 4;
 export const maximumSuggestedPrompts = 4;
+
+const noOpenQuestions: OpenHandoverQuestions = Object.freeze({
+  blocking: 0,
+  advisory: 0,
+});
 
 const priorityOrder: Record<RecommendedActionPriority, number> = {
   high: 0,
@@ -130,22 +181,88 @@ const priorityOrder: Record<RecommendedActionPriority, number> = {
 const handoverPrompt =
   "Take this project in charge. Review the repository and the current AI Office state, then help me complete the project handover.";
 
+const reviewPrompt =
+  "Review this repository against what AI Office already knows, show me the result, and record the confirmed handover review.";
+
 /**
- * Deterministic repository-maturity heuristic. A repository counts as existing
- * when at least two independent structural signals are present, so a single
- * README or an empty scaffold is not mistaken for an established codebase.
+ * Coarse size buckets keep the review fingerprint stable across ordinary edits
+ * while still reacting to structural growth or removal.
+ */
+export function repositoryScaleBucket(count: number | null): string {
+  if (count === null) return "unrecorded";
+  if (count === 0) return "none";
+  if (count < 10) return "tiny";
+  if (count < 25) return "small";
+  if (count < 100) return "medium";
+  if (count < 500) return "large";
+  return "very_large";
+}
+
+/**
+ * Files AI Office itself installs as coding-client integration. They are not
+ * repository documentation evidence, so installing them must not change the
+ * repository fingerprint or its maturity classification.
+ */
+export const officeManagedDocumentationFiles: readonly string[] = Object.freeze(
+  ["AI-OFFICE.md", "AGENTS.md", "CLAUDE.md", "CODEX.md"],
+);
+
+export function repositoryDocumentation(
+  files: readonly string[],
+): readonly string[] {
+  return files.filter(
+    (file) => !officeManagedDocumentationFiles.includes(file),
+  );
+}
+
+function factList(values: readonly string[]): string {
+  return [...values].sort().join(",");
+}
+
+/**
+ * Deterministic, order-independent projection of the repository facts a review
+ * was confirmed against. The caller hashes it; the domain stays free of
+ * cryptography.
+ */
+export function repositoryUnderstandingFingerprintSource(
+  facts: RepositoryUnderstandingFacts,
+): string {
+  return [
+    "repository-understanding-v1",
+    `languages=${factList(facts.languages)}`,
+    `frameworks=${factList(facts.frameworks)}`,
+    `databases=${factList(facts.databases)}`,
+    `testing=${factList(facts.testing)}`,
+    `documentation=${factList(facts.documentation)}`,
+    `packageManager=${facts.packageManager ?? ""}`,
+    `remote=${facts.remoteUrl ?? ""}`,
+    `scale=${repositoryScaleBucket(facts.sourceFileCount)}`,
+    `history=${facts.hasCommitHistory === null ? "unrecorded" : String(facts.hasCommitHistory)}`,
+  ].join("\n");
+}
+
+/**
+ * Deterministic repository-maturity heuristic based on the amount of existing
+ * application code rather than on tooling presence: a fresh scaffold already
+ * declares a language, a framework, and a package manager, while a long-lived
+ * single-language repository may declare none of them.
+ *
+ * A repository counts as existing when it carries a substantial amount of
+ * source code, or a moderate amount together with real commit history and more
+ * than one documentation file. Without recorded file evidence the honest
+ * answer is `unknown`; re-importing the repository records it.
  */
 export function classifyRepositoryMaturity(
   signals: RepositorySignals,
-): "new" | "existing" {
-  const score = [
-    signals.languageCount > 0,
-    signals.frameworkCount > 0,
-    signals.testingCount > 0,
-    signals.hasPackageManager,
-    signals.documentationCount > 1,
-  ].filter(Boolean).length;
-  return score >= 2 ? "existing" : "new";
+): RepositoryMaturity {
+  const sourceFiles = signals.sourceFileCount;
+  if (sourceFiles === null) return "unknown";
+  if (sourceFiles >= 25) return "existing";
+  return sourceFiles >= 8 &&
+    signals.hasCommitHistory === true &&
+    signals.documentationCount >= 2
+    ? "existing"
+    : "new";
 }
 
 function dimension(
@@ -253,6 +370,14 @@ function clientsDimension(
   );
 }
 
+function discoveredEvidence(signals: RepositorySignals): string {
+  const files =
+    signals.sourceFileCount === null
+      ? "source files not recorded"
+      : `${signals.sourceFileCount} source file(s)`;
+  return `${signals.languageCount} language(s), ${signals.frameworkCount} framework(s), ${signals.documentationCount} documentation file(s), ${files}`;
+}
+
 function understandingDimension(
   knowledge: ProjectHandoverKnowledge,
 ): HandoverDimension {
@@ -263,21 +388,27 @@ function understandingDimension(
       "not_started",
       "This repository has not been scanned into the project profile",
     );
-  const signals = knowledge.repositorySignals;
-  const detail = `Scanned: ${signals.languageCount} language(s), ${signals.frameworkCount} framework(s), ${signals.documentationCount} documentation file(s)`;
-  return knowledge.officeConfigured
-    ? dimension(
-        "repository_understanding",
-        "Repository understanding",
-        "ready",
-        `${detail}; confirmed through an approved office manifest`,
-      )
-    : dimension(
-        "repository_understanding",
-        "Repository understanding",
-        "discovered",
-        `${detail}; not yet confirmed with you`,
-      );
+  const evidence = discoveredEvidence(knowledge.repositorySignals);
+  if (knowledge.repositoryReview === "not_reviewed")
+    return dimension(
+      "repository_understanding",
+      "Repository understanding",
+      "discovered",
+      `Discovered ${evidence}; no confirmed handover repository review is recorded`,
+    );
+  if (knowledge.repositoryReview === "stale")
+    return dimension(
+      "repository_understanding",
+      "Repository understanding",
+      "needs_input",
+      `Discovered ${evidence}; the repository changed materially since the confirmed review`,
+    );
+  return dimension(
+    "repository_understanding",
+    "Repository understanding",
+    "ready",
+    `Reviewed and confirmed against the current repository evidence: ${evidence}`,
+  );
 }
 
 function directionDimension(
@@ -295,7 +426,7 @@ function directionDimension(
       "product_direction",
       "Product direction",
       "needs_input",
-      "The office still uses the default baseline; goals and mission are not yours yet",
+      "The office still uses the default baseline; its mission and goals are not yours yet",
     );
   if (knowledge.goalCount === 0)
     return dimension(
@@ -308,7 +439,7 @@ function directionDimension(
     "product_direction",
     "Product direction",
     "ready",
-    `Mission and ${knowledge.goalCount} goal${knowledge.goalCount === 1 ? "" : "s"} are recorded`,
+    `The approved office records ${knowledge.goalCount} goal${knowledge.goalCount === 1 ? "" : "s"}`,
   );
 }
 
@@ -344,13 +475,14 @@ function deliveryDimension(
   );
 }
 
+/**
+ * The working agreement is the approved office configuration. Project profile
+ * evidence is separately sourced discovery and is never summed into it.
+ */
 function agreementDimension(
   knowledge: ProjectHandoverKnowledge,
 ): HandoverDimension {
-  const recorded =
-    knowledge.constraintCount +
-    knowledge.preferenceCount +
-    knowledge.userConstraintCount;
+  const detail = `The approved office records ${knowledge.constraintCount} constraint(s) and ${knowledge.preferenceCount} preference(s)`;
   if (!knowledge.officeConfigured)
     return dimension(
       "working_agreement",
@@ -358,31 +490,26 @@ function agreementDimension(
       "not_started",
       "Constraints and preferences still come from the default baseline",
     );
-  if (recorded === 0)
-    return dimension(
-      "working_agreement",
-      "Working agreement",
-      "needs_input",
-      "The approved office records no constraint or working preference",
-    );
-  return dimension(
-    "working_agreement",
-    "Working agreement",
-    "ready",
-    `${knowledge.constraintCount} constraint(s) and ${knowledge.preferenceCount} preference(s) recorded`,
-  );
+  return knowledge.constraintCount + knowledge.preferenceCount === 0
+    ? dimension("working_agreement", "Working agreement", "needs_input", detail)
+    : dimension("working_agreement", "Working agreement", "ready", detail);
 }
 
 function overallState(
   dimensions: readonly HandoverDimension[],
+  knowledge: ProjectHandoverKnowledge,
 ): ProjectHandoverState {
   const byId = new Map(dimensions.map((item) => [item.id, item.state]));
-  if (byId.get("project_connection") === "not_started") return "not_connected";
-  if (byId.get("project_connection") === "needs_input") return "not_connected";
+  if (
+    byId.get("project_connection") === "not_started" ||
+    byId.get("project_connection") === "needs_input"
+  )
+    return "not_connected";
   if (byId.get("repository_understanding") === "not_started")
     return "not_imported";
   if (byId.get("product_direction") !== "ready") return "needs_handover";
-  return dimensions.some((item) => item.state !== "ready")
+  return dimensions.some((item) => item.state !== "ready") ||
+    knowledge.openQuestions.blocking > 0
     ? "in_progress"
     : "ready";
 }
@@ -421,6 +548,7 @@ function unavailableAssessment(): ProjectHandoverAssessment {
     schemaVersion: 1,
     state: "unknown",
     repository: "unknown",
+    openQuestions: noOpenQuestions,
     dimensions: Object.freeze(unknownDimensions(detail)),
     recommendedActions: Object.freeze([
       {
@@ -447,6 +575,7 @@ function notConnectedAssessment(
     schemaVersion: 1,
     state: "not_connected",
     repository: "unknown",
+    openQuestions: noOpenQuestions,
     dimensions: Object.freeze([
       connectionState,
       dimension(
@@ -493,36 +622,18 @@ function notConnectedAssessment(
   };
 }
 
-export function assessProjectHandover(
-  input: ProjectHandoverInput,
-): ProjectHandoverAssessment {
-  const { connection, knowledge } = input;
-  const connectionState = connectionDimension(connection);
-  // A repository with no usable identity is genuinely not connected, and that
-  // is knowable without the runtime. Anything beyond it is not: when the
-  // runtime cannot be consulted the honest answer is `unknown`, never advice
-  // to reinstall a project that may already be fully handed over.
-  if (
-    connection.repositoryIdentity === "missing" ||
-    connection.repositoryIdentity === "invalid"
-  )
-    return notConnectedAssessment(connection, connectionState);
-  if (!connection.daemonReachable) return unavailableAssessment();
-  if (!connection.authoritativeStateAvailable || knowledge === null)
-    return notConnectedAssessment(connection, connectionState);
-
-  const dimensions: readonly HandoverDimension[] = Object.freeze([
-    connectionState,
-    understandingDimension(knowledge),
-    clientsDimension(connection),
-    directionDimension(knowledge),
-    deliveryDimension(knowledge),
-    agreementDimension(knowledge),
-  ]);
-  const state = overallState(dimensions);
-  const repository = knowledge.repositoryScanned
-    ? classifyRepositoryMaturity(knowledge.repositorySignals)
-    : "unknown";
+/**
+ * Recommended actions in a fixed priority order: blocking lifecycle
+ * correctness, unresolved handover, existing work, planning gaps, then
+ * optional improvements. Equal priorities keep this insertion order.
+ */
+function recommendedActions(
+  connection: ProjectHandoverConnection,
+  knowledge: ProjectHandoverKnowledge,
+  dimensions: readonly HandoverDimension[],
+  state: ProjectHandoverState,
+  repository: RepositoryMaturity,
+): readonly RecommendedAction[] {
   const byId = new Map(dimensions.map((item) => [item.id, item]));
   const actions: RecommendedAction[] = [];
 
@@ -553,9 +664,41 @@ export function assessProjectHandover(
       title: "Hand this project over to your virtual office",
       reason:
         repository === "existing"
-          ? "AI Office scanned an existing codebase but has no approved product context for it"
+          ? "AI Office scanned an existing codebase but has neither a confirmed repository review nor approved product context for it"
           : "AI Office has no approved product context for this project",
       prompt: handoverPrompt,
+    });
+  else if (knowledge.repositoryReview === "not_reviewed")
+    actions.push({
+      id: "confirm_repository_review",
+      kind: "conversational",
+      priority: "high",
+      title: "Confirm the handover repository review",
+      reason:
+        "The office holds an approved organizational model but no confirmed review of this repository",
+      prompt: reviewPrompt,
+    });
+  else if (knowledge.repositoryReview === "stale")
+    actions.push({
+      id: "review_repository_changes",
+      kind: "conversational",
+      priority: "high",
+      title: "Review the repository changes since the last handover",
+      reason: byId.get("repository_understanding")!.detail,
+      prompt:
+        "The repository changed since the last handover review. Compare it with the AI Office state and confirm the updated review.",
+    });
+
+  if (knowledge.openQuestions.blocking > 0)
+    actions.push({
+      id: "answer_open_questions",
+      kind: "conversational",
+      priority: "high",
+      title: `Complete ${knowledge.openQuestions.blocking} remaining project question(s)`,
+      reason:
+        "Open goal or constraint questions describe context the handover still needs",
+      prompt:
+        "Show me the open AI Office project questions and help me answer the ones that matter.",
     });
 
   if (knowledge.tasksOpen > 0)
@@ -570,20 +713,6 @@ export function assessProjectHandover(
       reason:
         "Work the office already tracks should be reviewed before new work starts",
       command: "ai-office task:list",
-    });
-
-  if (
-    byId.get("product_direction")?.state === "needs_input" &&
-    state !== "needs_handover"
-  )
-    actions.push({
-      id: "define_product_goals",
-      kind: "conversational",
-      priority: "medium",
-      title: "Record the product goals",
-      reason: byId.get("product_direction")!.detail,
-      prompt:
-        "Review what AI Office knows about this project and help me record its mission, goals and constraints.",
     });
 
   if (byId.get("delivery_plan")?.state === "needs_input")
@@ -612,21 +741,11 @@ export function assessProjectHandover(
     actions.push({
       id: "record_working_agreement",
       kind: "conversational",
-      priority: "low",
+      priority: "medium",
       title: "Record how the office should work on this project",
       reason: byId.get("working_agreement")!.detail,
       prompt:
         "Help me record the constraints and working preferences the office must respect in this project.",
-    });
-
-  if (byId.get("agent_clients")?.state === "needs_input")
-    actions.push({
-      id: "reconcile_agent_clients",
-      kind: "command",
-      priority: "low",
-      title: "Configure the detected agent client",
-      reason: byId.get("agent_clients")!.detail,
-      command: "ai-office install .",
     });
 
   if (state === "ready")
@@ -640,22 +759,17 @@ export function assessProjectHandover(
         "Here is what I want to build next. Let the office assess it against the current roadmap before we start.",
     });
 
-  const recommendedActions = orderedActions(actions);
-  const shown = new Set(
-    recommendedActions
-      .map((action) => action.prompt)
-      .filter((prompt): prompt is string => prompt !== undefined),
-  );
-  return {
-    schemaVersion: 1,
-    state,
-    repository,
-    dimensions,
-    recommendedActions,
-    suggestedPrompts: Object.freeze(
-      suggestedPrompts(state, knowledge).filter((prompt) => !shown.has(prompt)),
-    ),
-  };
+  if (byId.get("agent_clients")?.state === "needs_input")
+    actions.push({
+      id: "reconcile_agent_clients",
+      kind: "command",
+      priority: "low",
+      title: "Configure the detected agent client",
+      reason: byId.get("agent_clients")!.detail,
+      command: "ai-office install .",
+    });
+
+  return orderedActions(actions);
 }
 
 function suggestedPrompts(
@@ -681,5 +795,60 @@ function suggestedPrompts(
     prompts.push(
       "I want to implement a new capability. Let the office assess it before starting.",
     );
-  return Object.freeze(prompts.slice(0, maximumSuggestedPrompts));
+  return prompts.slice(0, maximumSuggestedPrompts);
+}
+
+export function assessProjectHandover(
+  input: ProjectHandoverInput,
+): ProjectHandoverAssessment {
+  const { connection, knowledge } = input;
+  const connectionState = connectionDimension(connection);
+  // A repository with no usable identity is genuinely not connected, and that
+  // is knowable without the runtime. Anything beyond it is not: when the
+  // runtime cannot be consulted the honest answer is `unknown`, never advice
+  // to reinstall a project that may already be fully handed over.
+  if (
+    connection.repositoryIdentity === "missing" ||
+    connection.repositoryIdentity === "invalid"
+  )
+    return notConnectedAssessment(connection, connectionState);
+  if (!connection.daemonReachable) return unavailableAssessment();
+  if (!connection.authoritativeStateAvailable || knowledge === null)
+    return notConnectedAssessment(connection, connectionState);
+
+  const dimensions: readonly HandoverDimension[] = Object.freeze([
+    connectionState,
+    understandingDimension(knowledge),
+    clientsDimension(connection),
+    directionDimension(knowledge),
+    deliveryDimension(knowledge),
+    agreementDimension(knowledge),
+  ]);
+  const state = overallState(dimensions, knowledge);
+  const repository = knowledge.repositoryScanned
+    ? classifyRepositoryMaturity(knowledge.repositorySignals)
+    : "unknown";
+  const actions = recommendedActions(
+    connection,
+    knowledge,
+    dimensions,
+    state,
+    repository,
+  );
+  const shown = new Set(
+    actions
+      .map((action) => action.prompt)
+      .filter((prompt): prompt is string => prompt !== undefined),
+  );
+  return {
+    schemaVersion: 1,
+    state,
+    repository,
+    openQuestions: knowledge.openQuestions,
+    dimensions,
+    recommendedActions: actions,
+    suggestedPrompts: Object.freeze(
+      suggestedPrompts(state, knowledge).filter((prompt) => !shown.has(prompt)),
+    ),
+  };
 }
