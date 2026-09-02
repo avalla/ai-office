@@ -214,16 +214,29 @@ repository.
 charge. The installed skill carries one client-neutral handover workflow, so
 Codex and Claude Code follow the same steps.
 
-**What happens during handover.** The office reads the current AI Office state,
-reads the repository, separates what it already knows from what it is missing,
-asks only the questions that materially change the outcome, and proposes goals,
-constraints, current state, and a roadmap. It asks for confirmation before
-applying anything.
+**What happens during handover.** Four things stay deliberately distinct:
+
+1. **Discovery** — the deterministic repository scan records languages,
+   frameworks, tooling, documentation, file counts, and commit evidence.
+2. **Repository review** — the agent reads the repository and compares it with
+   what AI Office already stores.
+3. **User confirmation** — you accept or correct that review. Only this makes
+   repository understanding authoritative, and it is recorded with
+   `ai-office handover:confirm --project <id> --summary "<what the office understood>"`.
+4. **Approved organizational model** — `office:apply` records mission, goals,
+   constraints, preferences, roles, and pipelines.
+
+An approved office manifest never certifies repository understanding: it
+carries no architecture, implementation state, or review acceptance. A project
+configured before this feature existed therefore reports repository
+understanding as `discovered` and asks you to confirm a review, rather than
+silently claiming to be ready.
 
 **What AI Office persists.** Only management state it owns: office manifest
-revisions, governance records such as milestones and requirements, tasks, and
-deterministic repository scan evidence in the project profile. The repository
-stays authoritative for code, configuration, and technical documentation.
+revisions, governance records such as milestones and requirements, tasks,
+deterministic repository scan evidence, and the confirmed repository review.
+The repository stays authoritative for code, configuration, and technical
+documentation.
 
 **Asking "what next?".** `ai-office next` answers from real state:
 
@@ -231,14 +244,19 @@ stays authoritative for code, configuration, and technical documentation.
 AI Office · Next steps
 
 Handover
-  state: needs_handover
+  state: in_progress
   repository: existing
   ✓ Project connection        Repository identity and runtime association are valid
-  ~ Repository understanding  Scanned: 1 language(s), 0 framework(s), 2 documentation file(s); not yet confirmed with you
+  ~ Repository understanding  Discovered 1 language(s), 0 framework(s), 2 documentation file(s), 30 source file(s); no confirmed handover repository review is recorded
   ✓ Agent clients             2 configured agent clients
-  ! Product direction         The office still uses the default baseline; goals and mission are not yours yet
-  - Delivery plan             Delivery planning starts after the office is configured
-  - Working agreement         Constraints and preferences still come from the default baseline
+  ✓ Product direction         The approved office records 1 goal
+  ✓ Delivery plan             1 active milestone, 0 requirement(s)
+  ✓ Working agreement         The approved office records 1 constraint(s) and 1 preference(s)
+
+Next
+  1. Confirm the handover repository review
+     The office holds an approved organizational model but no confirmed
+     review of this repository
 ```
 
 Dimension states are `not_started`, `discovered`, `needs_input`, `ready`, or
@@ -247,6 +265,13 @@ Dimension states are `not_started`, `discovered`, `needs_input`, `ready`, or
 returns the same assessment as a stable schema-version `1` payload with
 structured `recommendedActions`; it is versioned independently from
 `ai-office status --json`, which is unchanged.
+
+**Keeping the review honest.** The confirmation is bound to a fingerprint of
+the material repository facts. Ordinary edits keep it valid; a structural
+change such as a new language or an order-of-magnitude growth in source files
+makes it `stale`, and the office asks you to review the changes before
+declaring the project ready again. Unanswered goal and constraint questions
+also keep the handover incomplete.
 
 **Checking state and resuming later.** `ai-office status` reports lifecycle
 health and ends with a compact pointer to the recommended next action.
@@ -275,7 +300,11 @@ state before proposing what we should do next.
 The office distinguishes an existing repository from a new one. For an existing
 repository it reconstructs what was already built and what is in progress
 before proposing anything. For a nearly empty repository it guides goals,
-constraints, architecture, and a first milestone instead.
+constraints, architecture, and a first milestone instead. The classification is
+deterministic and measures existing application code rather than tooling
+presence, because a fresh scaffold already declares a language, a framework,
+and a package manager while a long-lived single-language repository may declare
+none of them.
 
 Handover transfers organizational context ownership. It is not an
 authorization change: it grants no capability, bypasses no approval or

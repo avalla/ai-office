@@ -74,19 +74,35 @@ never trusts another machine's absolute path or overwrites different local
 state. SQLite remains an adapter detail rather than the transfer format.
 
 Project handover is the organizational transfer of a repository to the virtual
-office, and it is derived rather than separately stored. `packages/domain`
-owns the pure readiness model: handover states, readiness dimensions, the
-repository-maturity heuristic, and the recommended-action catalogue.
-`AssessProjectHandover` in the application layer reads lifecycle status, project
-profile evidence, the current office manifest, governance records, and tasks,
+office. `packages/domain` owns the pure readiness model: handover states,
+readiness dimensions, the repository-maturity heuristic, the review fingerprint
+projection, and the recommended-action catalogue. `AssessProjectHandover` in
+the application layer reads lifecycle status, project profile evidence, the
+current office manifest, governance records, tasks, and open project questions,
 maps them onto that domain input, and returns a schema-versioned handover
 report. The CLI only renders it: the welcome banner, contextual status
-guidance, and `ai-office next` share one deterministic assessment. Handover
-introduces no persistence of its own and no authority: it never creates a
-capability grant, approves a controlled action, changes pipeline enforcement,
-or starts an agent run. The client-neutral handover workflow has a single
-definition in the application layer, which the projected repository skill
-embeds and the checked-in distribution skill is validated against.
+guidance, and `ai-office next` share one deterministic assessment.
+
+Handover keeps four concepts separate: deterministic discovery from the
+repository scan, an agent's repository review, the user's confirmation of that
+review, and the approved organizational model in the office manifest. The
+manifest records mission, goals, constraints, preferences, roles, and pipelines
+and therefore never certifies repository understanding. Only an explicit
+confirmation does, recorded by `ConfirmRepositoryUnderstanding` as a
+user-origin project profile entry (`handover` / `repository_review`) holding
+the review summary, the scan it was bound to, and a fingerprint of the material
+repository facts. Reusing the existing profile entry table keeps the evidence
+portable in `.aioffice` snapshots, survives repository re-imports, and requires
+no migration; the existing `superseded_at` column supersedes an earlier
+confirmation instead of accumulating duplicates. A structural change to the
+repository invalidates the fingerprint, so a completed handover degrades to a
+stale review rather than a permanent false readiness.
+
+Handover carries no authority: it never creates a capability grant, approves a
+controlled action, changes pipeline enforcement, or starts an agent run. The
+client-neutral handover workflow has a single definition in the application
+layer, which the projected repository skill embeds and the checked-in
+distribution skill is validated against.
 
 The M6D-lite bridge routes a structured action intent from an agent run through
 an executor-facing gateway. The agent-runtime package depends on the gateway
