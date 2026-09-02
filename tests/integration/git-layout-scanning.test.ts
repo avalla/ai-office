@@ -94,6 +94,12 @@ function linkedWorktree(mainCheckout: string, branch: string): string {
   return worktree;
 }
 
+function nestedWorktree(mainCheckout: string, branch: string): string {
+  const worktree = join(mainCheckout, ".worktrees", branch);
+  git(mainCheckout, "worktree", "add", "-b", branch, worktree);
+  return worktree;
+}
+
 function importHarness() {
   const root = temporaryRoot();
   const database = openDatabase(join(root, "project.sqlite"));
@@ -198,6 +204,72 @@ describeGit("LocalProjectScanner Git layout resolution", () => {
   });
 });
 
+describeGit("repository evidence with nested linked worktrees", () => {
+  test("excludes a registered worktree that lives inside the scanned root", async () => {
+    const mainCheckout = committedRepository(60);
+    const scanner = new LocalProjectScanner();
+    const before = await scanner.scan(mainCheckout);
+
+    nestedWorktree(mainCheckout, "nested");
+    const after = await scanner.scan(mainCheckout);
+
+    expect(after.detectedFiles.length).toBe(before.detectedFiles.length);
+    expect(after.detectedFiles).toEqual(before.detectedFiles);
+  });
+
+  test("scans a registered worktree normally when it is the scanned root", async () => {
+    const mainCheckout = committedRepository(60);
+    const worktree = nestedWorktree(mainCheckout, "nested");
+    const scanner = new LocalProjectScanner();
+
+    const scan = await scanner.scan(worktree);
+
+    expect(scan.detectedFiles).toEqual(
+      (await scanner.scan(mainCheckout)).detectedFiles,
+    );
+    expect(scan.currentBranch).toBe("nested");
+  });
+
+  test("excludes every registered worktree under the scanned root", async () => {
+    const mainCheckout = committedRepository(60);
+    const scanner = new LocalProjectScanner();
+    const before = await scanner.scan(mainCheckout);
+
+    nestedWorktree(mainCheckout, "first");
+    nestedWorktree(mainCheckout, "second");
+    git(mainCheckout, "worktree", "add", "-b", "third", join(mainCheckout, "review"));
+    const after = await scanner.scan(mainCheckout);
+
+    expect(after.detectedFiles).toEqual(before.detectedFiles);
+  });
+
+  test("ignores worktrees registered outside the scanned root", async () => {
+    const mainCheckout = committedRepository(60);
+    const scanner = new LocalProjectScanner();
+    const before = await scanner.scan(mainCheckout);
+
+    linkedWorktree(mainCheckout, "elsewhere");
+
+    expect((await scanner.scan(mainCheckout)).detectedFiles).toEqual(
+      before.detectedFiles,
+    );
+  });
+
+  test("keeps a plain .worktrees directory that Git never registered", async () => {
+    const root = temporaryRoot();
+    writeSources(root, 10);
+    mkdirSync(join(root, ".worktrees", "notes"), { recursive: true });
+    writeFileSync(join(root, ".worktrees", "notes", "draft.ts"), "export const a = 1;\n");
+    git(root, "init", "-b", "main");
+    git(root, "add", ".");
+    git(root, "commit", "-m", "Initial commit");
+
+    const scan = await new LocalProjectScanner().scan(root);
+
+    expect(scan.detectedFiles).toContain(join(".worktrees", "notes", "draft.ts"));
+  });
+});
+
 describeGit("handover facts across equivalent Git checkouts", () => {
   test("a linked worktree yields the same repository understanding as its main checkout", async () => {
     const mainCheckout = committedRepository(10);
@@ -224,5 +296,40 @@ describeGit("handover facts across equivalent Git checkouts", () => {
     expect(repositoryUnderstandingFingerprint(fromWorktree!)).toBe(
       repositoryUnderstandingFingerprint(fromMain!),
     );
+  });
+  test("creating a nested worktree leaves the review fingerprint untouched", async () => {
+    const mainCheckout = committedRepository(60);
+    const { database, profiles, importer } = importHarness();
+    const facts = async (projectId: string) =>
+      repositoryFactsFromProfile(
+        await profiles.listActiveProfileEntries(projectId),
+      )!;
+    const imported = await importer.execute({ rootPath: mainCheckout });
+    const before = await facts(imported.projectId);
+
+    nestedWorktree(mainCheckout, "review");
+    await importer.execute({ rootPath: mainCheckout });
+    const after = await facts(imported.projectId);
+
+    expect(after.sourceFileCount).toBe(before.sourceFileCount);
+    expect(after).toEqual(before);
+    expect(classifyRepositoryMaturity(repositorySignalsFromFacts(after))).toBe(
+      classifyRepositoryMaturity(repositorySignalsFromFacts(before)),
+    );
+    expect(repositoryUnderstandingFingerprint(after)).toBe(
+      repositoryUnderstandingFingerprint(before),
+    );
+
+    // A real structural change must still move the fingerprint.
+    for (let index = 0; index < 300; index += 1)
+      writeFileSync(join(mainCheckout, "src", `service-${index}.py`), `VALUE = ${index}\n`);
+    await importer.execute({ rootPath: mainCheckout });
+    const changed = await facts(imported.projectId);
+
+    expect(changed.sourceFileCount!).toBeGreaterThan(before.sourceFileCount!);
+    expect(repositoryUnderstandingFingerprint(changed)).not.toBe(
+      repositoryUnderstandingFingerprint(before),
+    );
+    database.close();
   });
 });

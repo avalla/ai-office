@@ -1,4 +1,4 @@
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import type { ProjectScanner } from "@ai-office/application/ports/project-scanner.port.ts";
 import type { ProjectScanSummary } from "@ai-office/domain/project/project-profile.ts";
@@ -132,7 +132,53 @@ function detectCommitHistory(layout: GitLayout | undefined): boolean {
     && hasBranchReference(layout.worktreeGitDir);
 }
 
-function collectFiles(rootPath: string, limit = 20_000): string[] {
+function canonicalDirectory(path: string): string | undefined {
+  try {
+    return statSync(path).isDirectory() ? realpathSync(path) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Canonical roots of the linked worktrees Git has registered for this
+ * repository, read from `<commonGitDir>/worktrees/<name>/gitdir`, which points
+ * at the `.git` pointer file of each checkout. Entries left behind by a deleted
+ * worktree are dropped.
+ */
+function registeredWorktreeRoots(layout: GitLayout | undefined): string[] {
+  if (layout === undefined) return [];
+  const registry = join(layout.commonGitDir, "worktrees");
+  if (!existsSync(registry)) return [];
+
+  const roots: string[] = [];
+  for (const entry of readdirSync(registry)) {
+    const pointer = readText(join(registry, entry, "gitdir"))?.trim();
+    if (pointer === undefined || pointer.length === 0) continue;
+    const root = canonicalDirectory(dirname(resolve(registry, entry, pointer)));
+    if (root !== undefined) roots.push(root);
+  }
+  return roots;
+}
+
+/**
+ * A linked worktree placed inside the project is an alternative checkout of the
+ * same repository, not part of the project. Counting its files would make the
+ * repository evidence describe how the checkout is materialized. The worktree
+ * being scanned is itself registered, so only strict descendants are excluded.
+ */
+function nestedWorktrees(rootPath: string, layout: GitLayout | undefined): Set<string> {
+  const prefix = rootPath.endsWith(sep) ? rootPath : `${rootPath}${sep}`;
+  return new Set(
+    registeredWorktreeRoots(layout).filter((root) => root.startsWith(prefix))
+  );
+}
+
+function collectFiles(
+  rootPath: string,
+  excludedDirectories: ReadonlySet<string>,
+  limit = 20_000
+): string[] {
   const files: string[] = [];
   const pending = [rootPath];
 
@@ -146,12 +192,22 @@ function collectFiles(rootPath: string, limit = 20_000): string[] {
       const relativePath = absolutePath.slice(rootPath.length + 1);
       const stats = statSync(absolutePath);
 
-      if (stats.isDirectory()) pending.push(absolutePath);
+      if (stats.isDirectory()) {
+        if (isExcluded(absolutePath, excludedDirectories)) continue;
+        pending.push(absolutePath);
+      }
       else if (stats.isFile()) files.push(relativePath);
     }
   }
 
   return files;
+}
+
+function isExcluded(path: string, excludedDirectories: ReadonlySet<string>): boolean {
+  if (excludedDirectories.size === 0) return false;
+  if (excludedDirectories.has(path)) return true;
+  const canonical = canonicalDirectory(path);
+  return canonical !== undefined && excludedDirectories.has(canonical);
 }
 
 function detectLanguages(files: string[]): string[] {
@@ -178,7 +234,7 @@ export class LocalProjectScanner implements ProjectScanner {
     }
 
     const gitLayout = resolveGitLayout(rootPath);
-    const files = collectFiles(rootPath).sort();
+    const files = collectFiles(rootPath, nestedWorktrees(rootPath, gitLayout)).sort();
     const fileSet = new Set(files);
     const packageJson = readText(join(rootPath, "package.json"));
     const manifest = packageJson === undefined
