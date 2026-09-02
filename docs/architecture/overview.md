@@ -3,7 +3,7 @@
 ## Product boundary
 
 AI Office presents one logical local office to the user. `install`, `status`,
-and `uninstall` are the user-facing repository lifecycle; a repository-scoped
+`next`, and `uninstall` are the user-facing repository lifecycle; a repository-scoped
 skill is the primary conversational interface when project-specific reasoning
 or office revision is needed. The lower-level CLI remains the stable machine
 interface used by the lifecycle, skill, and automation. Web and MCP may use the
@@ -72,6 +72,21 @@ creates a new runtime-local project ID or attaches an identical verified
 checkout; it replays governance decisions through existing constraints and
 never trusts another machine's absolute path or overwrites different local
 state. SQLite remains an adapter detail rather than the transfer format.
+
+Project handover is the organizational transfer of a repository to the virtual
+office, and it is derived rather than separately stored. `packages/domain`
+owns the pure readiness model: handover states, readiness dimensions, the
+repository-maturity heuristic, and the recommended-action catalogue.
+`AssessProjectHandover` in the application layer reads lifecycle status, project
+profile evidence, the current office manifest, governance records, and tasks,
+maps them onto that domain input, and returns a schema-versioned handover
+report. The CLI only renders it: the welcome banner, contextual status
+guidance, and `ai-office next` share one deterministic assessment. Handover
+introduces no persistence of its own and no authority: it never creates a
+capability grant, approves a controlled action, changes pipeline enforcement,
+or starts an agent run. The client-neutral handover workflow has a single
+definition in the application layer, which the projected repository skill
+embeds and the checked-in distribution skill is validated against.
 
 The M6D-lite bridge routes a structured action intent from an agent run through
 an executor-facing gateway. The agent-runtime package depends on the gateway

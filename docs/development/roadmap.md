@@ -375,6 +375,37 @@ Delivered:
 
 See [Project portability and sync](project-portability-and-sync.md).
 
+## M7.7 — Welcome, onboarding, and project handover
+
+Status: implemented.
+
+Focus: make the product entry point explicit after installation and give the
+office a deterministic answer to "what should I do next?".
+
+Delivered:
+
+- a pure domain handover model: handover states, six readiness dimensions with
+  explicit `not_started`/`discovered`/`needs_input`/`ready`/`unknown` values, a
+  testable existing-versus-new repository heuristic, and a deterministic
+  recommended-action catalogue;
+- `AssessProjectHandover`, an application service that derives that model from
+  lifecycle status, project profile evidence, the current office manifest,
+  governance records, and tasks;
+- `ai-office next [path] [--json]` with an independently versioned
+  schema-version `1` report carrying structured recommended actions;
+- a first-connection welcome on `install`, compact contextual guidance on human
+  `status`, and no change to the `install` or `status` JSON envelopes;
+- a single client-neutral handover workflow compiled into the projected
+  repository skill, validated against the checked-in distribution skill, and
+  pointed at from the derived `AI-OFFICE.md` guide;
+- a degraded assessment when the runtime is unreachable that reports `unknown`
+  instead of advising an unnecessary reinstall.
+
+No migration was introduced. Handover readiness is derived from state AI Office
+already owns, so uninstall and reinstall preserve it. Handover transfers
+organizational context ownership only: it grants no capability, bypasses no
+approval, alters no policy, and starts no agent run.
+
 ## M8 — Code intelligence
 
 Status: future.

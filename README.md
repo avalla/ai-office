@@ -14,6 +14,7 @@ The current implementation on `main` includes:
 
 - a local daemon and daemon-backed CLI;
 - project creation, deterministic offline repository import, and host-skill conversational onboarding without runtime provider credentials;
+- a first-connection welcome, deterministic project-handover readiness, and `ai-office next` recommended actions;
 - stable project identity plus portable, integrity-checked project backup and restore across machine paths;
 - versioned virtual-office manifests with roles and default task pipelines;
 - tasks, agent definitions, scheduled runs, locking, and persisted run events;
@@ -83,6 +84,7 @@ Then install AI Office from the repository you want to manage:
 cd /path/to/my-project
 ai-office install .
 ai-office status
+ai-office next
 ```
 
 `install` imports or reuses the project, applies the default office baseline
@@ -169,6 +171,116 @@ The legacy development
 commands `bun run daemon` and `bun run cli -- ...` remain supported and retain
 their current-working-directory runtime semantics. See
 [Local storage and state](#local-storage-and-state) for the advanced path model.
+
+## After installation
+
+The first time a repository becomes known to the runtime, `install` prints a
+short welcome and the recommended next steps:
+
+```text
+╭────────────────────────────────╮
+│  AI OFFICE                     │
+│  Your virtual office is ready  │
+╰────────────────────────────────╯
+
+AI Office installed.
+...
+Next
+  1. Hand this project over to your virtual office
+     AI Office scanned an existing codebase but has no approved product
+     context for it
+     Ask your AI client:
+       "Take this project in charge. Review the repository and the
+       current AI Office state, then help me complete the project
+       handover."
+
+Try asking your AI client
+  "Review the current project and tell me what the office thinks we
+  should do next."
+  "Show me the current roadmap, milestones and active work."
+
+Commands
+  ai-office next
+  ai-office status
+```
+
+**What was installed.** A committable repository identity in
+`.ai-office/project.json`, the shared derived `AI-OFFICE.md` guide, a minimal
+pointer for each detected coding client, and a repository-local `ai-office`
+skill. Nothing was granted, and no authoritative database was copied into the
+repository.
+
+**What to do in the project.** Ask your AI client to take the project in
+charge. The installed skill carries one client-neutral handover workflow, so
+Codex and Claude Code follow the same steps.
+
+**What happens during handover.** The office reads the current AI Office state,
+reads the repository, separates what it already knows from what it is missing,
+asks only the questions that materially change the outcome, and proposes goals,
+constraints, current state, and a roadmap. It asks for confirmation before
+applying anything.
+
+**What AI Office persists.** Only management state it owns: office manifest
+revisions, governance records such as milestones and requirements, tasks, and
+deterministic repository scan evidence in the project profile. The repository
+stays authoritative for code, configuration, and technical documentation.
+
+**Asking "what next?".** `ai-office next` answers from real state:
+
+```text
+AI Office · Next steps
+
+Handover
+  state: needs_handover
+  repository: existing
+  ✓ Project connection        Repository identity and runtime association are valid
+  ~ Repository understanding  Scanned: 1 language(s), 0 framework(s), 2 documentation file(s); not yet confirmed with you
+  ✓ Agent clients             2 configured agent clients
+  ! Product direction         The office still uses the default baseline; goals and mission are not yours yet
+  - Delivery plan             Delivery planning starts after the office is configured
+  - Working agreement         Constraints and preferences still come from the default baseline
+```
+
+Dimension states are `not_started`, `discovered`, `needs_input`, `ready`, or
+`unknown`. Handover states are `not_connected`, `not_imported`,
+`needs_handover`, `in_progress`, `ready`, or `unknown`. `ai-office next --json`
+returns the same assessment as a stable schema-version `1` payload with
+structured `recommendedActions`; it is versioned independently from
+`ai-office status --json`, which is unchanged.
+
+**Checking state and resuming later.** `ai-office status` reports lifecycle
+health and ends with a compact pointer to the recommended next action.
+Reinstalling an already connected repository reconciles managed files without
+replaying the welcome, and uninstall followed by reinstall preserves the
+handover state because that state lives in the runtime, not in the repository.
+
+## Hand your project to the virtual office
+
+AI Office is not only a CLI that stores tasks. It is a persistent management
+layer around the repository, so agents can work as a virtual office instead of
+rebuilding the project context in every session.
+
+Handing a project over means the office understands the project, records the
+management state that belongs to its own domain, and can then evaluate a
+request such as "I want to add subscription billing" against the recorded
+roadmap, milestones, and requirements.
+
+Ask your AI client:
+
+```text
+Take this project in charge and use AI Office to understand its current
+state before proposing what we should do next.
+```
+
+The office distinguishes an existing repository from a new one. For an existing
+repository it reconstructs what was already built and what is in progress
+before proposing anything. For a nearly empty repository it guides goals,
+constraints, architecture, and a first milestone instead.
+
+Handover transfers organizational context ownership. It is not an
+authorization change: it grants no capability, bypasses no approval or
+governance gate, alters no policy, starts no agent run, and never rewrites
+committed project state to match a proposal.
 
 ## Project lifecycle
 
@@ -291,6 +403,9 @@ automatic semantic merge are roadmap work, not current commands. See
 [Project portability and synchronization](docs/development/project-portability-and-sync.md).
 
 ## Conversational onboarding
+
+Onboarding is the office-configuration part of the handover described in
+[Hand your project to the virtual office](#hand-your-project-to-the-virtual-office).
 
 Open this repository in Codex and ask:
 
