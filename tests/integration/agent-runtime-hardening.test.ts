@@ -254,6 +254,42 @@ describe("task lock ownership and expiry", () => {
     expect(await runtime.releaseTaskLock("run-1")).toBe(true);
     database.close();
   });
+  test.each(["completed", "failed", "cancelled"] as const)(
+    "does not renew a surviving lock after its run becomes %s",
+    async (status) => {
+      const { database, runtime, now } = await setup();
+      const originalExpiry = new Date(now.getTime() + 1000);
+      expect(
+        await runtime.acquireTaskLock("task", "run-1", now, originalExpiry),
+      ).toBe(true);
+      const run = await runtime.findRun("run-1");
+      if (status === "completed") {
+        run!.transition("preparing", now);
+        run!.transition("running", now);
+        run!.transition("completed", now);
+      } else if (status === "failed") {
+        run!.transition("preparing", now);
+        run!.transition("failed", now);
+      } else run!.transition("cancelled", now);
+      await runtime.saveRun(run!);
+
+      expect(
+        await runtime.renewTaskLock(
+          "run-1",
+          now,
+          new Date(now.getTime() + 2000),
+        ),
+      ).toBe(false);
+      expect(
+        database
+          .query<{ expires_at: string }, []>(
+            "SELECT expires_at FROM task_lock WHERE run_id='run-1'",
+          )
+          .get()?.expires_at,
+      ).toBe(originalExpiry.toISOString());
+      database.close();
+    },
+  );
 });
 
 describe("ExecuteAgentRun result and cleanup", () => {

@@ -231,15 +231,24 @@ profile knowledge, office manifest revisions, governance records, agent/role
 definitions, terminal run summaries, an immutable state revision, and SHA-256
 integrity metadata. It excludes absolute paths, active processes/runs/pipelines,
 locks, caches, global memory, pricing/cost state, resources, capability grants,
-controlled-action authority, audit payloads, credentials, and secrets. Restore
-validates the complete envelope through the daemon and refuses a mismatched
-identity, corrupt archive, unsupported version, or different existing local
-state or revision head. There is no destructive force-restore option.
+controlled-action authority, audit payloads, managed credentials, and profile
+values explicitly labelled as credential/secret data. Nested structured fields
+with sensitive names are also rejected. Free-form human descriptions are not
+content-scanned for possible secrets; users must not place credentials in prose.
+Restore validates the complete envelope through the daemon and refuses a
+mismatched identity, corrupt archive, unsupported version, or different
+existing local state or revision head. There is no destructive force-restore
+option.
 
 Project descriptions are semantic user/domain text and are transferred
-verbatim, including text that happens to start with `Imported from`. New source
-imports no longer encode checkout provenance in that field; checkout paths and
-scan provenance remain structured, machine-local source metadata.
+verbatim, including text that happens to start with `Imported from`. The sole
+legacy exception is an exact `Imported from <path>` match against a structured
+local source binding or detachment record for that same project: the portable
+projection omits that historically generated machine metadata without mutating
+the stored description. An unmatched or differently cased description is
+preserved. New source imports no longer encode checkout provenance in that
+field; checkout paths and scan provenance remain structured, machine-local
+source metadata.
 
 A backup is a coherent semantic snapshot, not an allowlist of unrelated rows.
 Task lifecycle status is portable semantic state, not execution authority.
@@ -254,8 +263,9 @@ milestone, or terminal agent-run subject is included too. Terminal run summaries
 cannot resume execution or carry action intent, pipeline authority, results,
 errors, events, or worktree paths. Source provenance records only sanitized
 network Git remotes: URL credentials, query strings, and fragments are removed,
-while `file://`, absolute, relative, Windows, UNC, and ambiguous local remotes
-are omitted entirely. Multiple checkout sources contribute provenance only
+while `file://`, absolute, relative, Windows, UNC, and ambiguous local remotes,
+including Windows drive-relative forms such as `C:repo.git`, are omitted
+entirely. Multiple checkout sources contribute provenance only
 when their sanitized network remotes agree; conflicting remotes are omitted
 rather than selected by row order.
 
@@ -265,6 +275,14 @@ archive write fails, an identical retry safely reuses that revision. The local
 writer uses a private synchronized temporary file and an atomic hard-link
 publication during normal process execution, but does not claim power-loss
 durability after return.
+
+Schema, referential-closure, sensitive-profile, checksum, manifest, and other
+intrinsic portability validation completes before a changed state advances the
+snapshot head. A valid observed snapshot may remain after later filesystem
+publication failure; state that cannot form a valid archive creates no revision.
+Shallow parent and base revision IDs receive lightweight project ownership
+reservations, so another project cannot claim them before their full revision
+payload arrives.
 
 `project:import` remains the offline source scanner, and `project:export`
 remains the Markdown profile projection; `project:backup` and

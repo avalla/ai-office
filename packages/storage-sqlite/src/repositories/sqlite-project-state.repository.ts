@@ -152,6 +152,10 @@ interface RevisionRow {
   created_at: string;
 }
 
+interface RevisionIdentityRow {
+  project_id: string;
+}
+
 interface BlockingAgentRunRow {
   id: string;
   task_id: string;
@@ -228,7 +232,25 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
   async loadPortableState(projectId: string): Promise<PortableProjectState> {
     const project = this.database
       .query<ProjectRow, [string]>(
-        `SELECT name, description, created_at, updated_at
+        `SELECT name,
+                CASE
+                  WHEN description IS NOT NULL AND (
+                    EXISTS (
+                      SELECT 1 FROM project_source source
+                      WHERE source.project_id = project.id
+                        AND source.source_type = 'local'
+                        AND project.description =
+                              'Imported from ' || source.local_path
+                    ) OR EXISTS (
+                      SELECT 1 FROM project_checkout_detachment detachment
+                      WHERE detachment.project_id = project.id
+                        AND project.description =
+                              'Imported from ' || detachment.local_path
+                    )
+                  ) THEN NULL
+                  ELSE description
+                END AS description,
+                created_at, updated_at
          FROM project WHERE id = ?`,
       )
       .get(projectId);
@@ -743,6 +765,11 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
     revision: ProjectStateRevision,
     baseRevisionId?: string,
   ): Promise<void> {
+    this.assertRevisionIdentityProject(
+      revision.id,
+      revision.projectId,
+      "revision",
+    );
     this.assertValidParentLineage(revision);
     if (baseRevisionId !== undefined && baseRevisionId !== revision.id)
       this.assertKnownRevisionProject(
@@ -815,7 +842,14 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
            FROM project_state_revision WHERE id = ?`,
         )
         .get(parentRevisionId);
-      if (parent === null) return;
+      if (parent === null) {
+        this.assertRevisionIdentityProject(
+          parentRevisionId,
+          revision.projectId,
+          "parent",
+        );
+        return;
+      }
       if (parent.project_id !== revision.projectId)
         throw new Error(
           `Project state revision ${revision.id} has a parent from another project`,
@@ -829,14 +863,25 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
     projectId: string,
     relationship: "base",
   ): void {
+    this.assertRevisionIdentityProject(revisionId, projectId, relationship);
+  }
+
+  private assertRevisionIdentityProject(
+    revisionId: string,
+    projectId: string,
+    relationship: "revision" | "parent" | "base",
+  ): void {
     const stored = this.database
-      .query<{ project_id: string }, [string]>(
-        "SELECT project_id FROM project_state_revision WHERE id = ?",
+      .query<RevisionIdentityRow, [string]>(
+        `SELECT project_id FROM project_state_revision_identity
+         WHERE revision_id = ?`,
       )
       .get(revisionId);
     if (stored !== null && stored.project_id !== projectId)
       throw new Error(
-        `Project state revision ${revisionId} is a ${relationship} from another project`,
+        relationship === "revision"
+          ? `Project state revision ${revisionId} conflicts with another project`
+          : `Project state revision ${revisionId} is a ${relationship} from another project`,
       );
   }
 }

@@ -399,6 +399,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0021_agent_action_provenance.sql",
       "0022_project_portability.sql",
       "0023_project_snapshot_observations.sql",
+      "0024_project_revision_identity.sql",
     ]);
     expect(
       database

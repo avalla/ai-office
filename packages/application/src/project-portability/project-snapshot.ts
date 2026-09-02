@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import * as z from "zod";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
-import { assertNoSensitiveFields } from "@ai-office/domain/capability/sensitive-fields.ts";
+import {
+  assertNoSensitiveFields,
+  isSensitiveFieldKey,
+  normalizeSensitiveFieldKey,
+} from "@ai-office/domain/capability/sensitive-fields.ts";
 import { officeManifestSchema } from "../office/office-manifest-schema.ts";
 import { portableGitRemote } from "./project-git-provenance.ts";
 
@@ -392,6 +396,47 @@ export class PortableProjectArchiveError extends Error {
   }
 }
 
+const sensitiveProfileLabelSuffixes = [
+  "apikey",
+  "accesstoken",
+  "password",
+  "secret",
+  "credential",
+  "credentialref",
+  "credentials",
+  "authorization",
+  "token",
+] as const;
+
+function sensitiveProfileLabel(value: string): boolean {
+  if (isSensitiveFieldKey(value)) return true;
+  const normalized = normalizeSensitiveFieldKey(value);
+  return sensitiveProfileLabelSuffixes.some(
+    (suffix) => normalized.length > suffix.length && normalized.endsWith(suffix),
+  );
+}
+
+export function assertPortableProfileEntriesSafe(
+  entries: PortableProjectState["profileEntries"],
+): void {
+  for (const entry of entries) {
+    const sensitiveLabel = [entry.key, entry.category].find(
+      sensitiveProfileLabel,
+    );
+    if (sensitiveLabel === undefined) continue;
+    throw new PortableProjectArchiveError(
+      `Portable snapshot rejected: project profile entry ${entry.id} is labelled as sensitive credential data (${sensitiveLabel}). Move credentials to the AI Office credential/secret mechanism before creating a backup.`,
+    );
+  }
+}
+
+export function assertPortableProjectStateSafe(
+  state: PortableProjectState,
+): void {
+  assertNoSensitiveFields(state, "Portable project state");
+  assertPortableProfileEntriesSafe(state.profileEntries);
+}
+
 export function sha256Canonical(value: unknown): string {
   return createHash("sha256")
     .update(canonicalStringify(value), "utf8")
@@ -407,7 +452,7 @@ export function createPortableProjectArchive(input: {
   state: PortableProjectState;
 }): PortableProjectArchive {
   const state = portableProjectStateSchema.parse(input.state);
-  assertNoSensitiveFields(state, "Portable project state");
+  assertPortableProjectStateSafe(state);
   const stateChecksum = portableStateChecksum(state);
   if (input.manifest.revision.stateChecksum !== stateChecksum)
     throw new PortableProjectArchiveError(
@@ -447,7 +492,7 @@ export function parsePortableProjectArchive(
         : `Portable project archive ${issue.path.join(".") || "root"}: ${issue.message}`,
     );
   }
-  assertNoSensitiveFields(parsed.data.state, "Portable project state");
+  assertPortableProjectStateSafe(parsed.data.state);
   const expectedState = portableStateChecksum(parsed.data.state);
   if (parsed.data.manifest.revision.stateChecksum !== expectedState)
     throw new PortableProjectArchiveError(

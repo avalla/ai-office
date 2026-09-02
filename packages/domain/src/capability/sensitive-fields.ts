@@ -11,6 +11,14 @@ const sensitiveFieldKeys = new Set([
   "token",
 ]);
 
+export function normalizeSensitiveFieldKey(key: string): string {
+  return key.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
+}
+
+export function isSensitiveFieldKey(key: string): boolean {
+  return sensitiveFieldKeys.has(normalizeSensitiveFieldKey(key));
+}
+
 export function assertNoSensitiveFields(value: unknown, path: string): void {
   if (Array.isArray(value)) {
     value.forEach((item, index) =>
@@ -21,8 +29,7 @@ export function assertNoSensitiveFields(value: unknown, path: string): void {
   if (typeof value !== "object" || value === null) return;
 
   for (const [key, item] of Object.entries(value)) {
-    const normalizedKey = key.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
-    if (sensitiveFieldKeys.has(normalizedKey))
+    if (isSensitiveFieldKey(key))
       throw new CapabilityValidationError(
         `${path} cannot contain sensitive field ${key}`,
       );

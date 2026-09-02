@@ -358,14 +358,17 @@ Delivered:
 - machine-local bindings from that identity to the current checkout;
 - versioned, checksummed `.aioffice` semantic snapshots;
 - daemon-authoritative `project:backup` and transactional `project:restore`;
-- explicit portable-state allowlisting that excludes secrets, capabilities,
-  controlled-action approvals, audit authority, active execution state, and
-  absolute paths;
+- explicit portable-state allowlisting that excludes managed credentials,
+  structured credential-labelled profile state, capabilities, controlled-action
+  approvals, audit authority, active execution state, and absolute paths;
 - execution-quiescent capture, referential closure, trigger-valid governance
   replay, and network-safe Git provenance;
 - authority-based quiescence that preserves task lifecycle semantics while
   excluding live runs, pipelines, and locks;
 - state-observation revisions separated from no-clobber archive publication;
+- intrinsic portability and structured credential-label validation before
+  snapshot-head advancement;
+- project-owned identity reservations for materialized and shallow lineage IDs;
 - deterministic multi-checkout provenance selection with ambiguity omission;
 - idempotent migration for projects that predate portable identity;
 - immutable state revision metadata and a provider-neutral remote port.

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCli, type CliIo } from "../../apps/cli/src/cli.ts";
@@ -44,12 +50,89 @@ class FailOnceArchiveAdapter implements ProjectArchiveAdapter {
   }
 }
 
+class RecordingArchiveAdapter implements ProjectArchiveAdapter {
+  writes = 0;
+
+  async read(): Promise<string> {
+    throw new Error("not used");
+  }
+
+  async write(): Promise<void> {
+    this.writes += 1;
+  }
+}
+
 afterEach(() => {
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
 
 describe("portable backup publication", () => {
+  test("rejects non-portable profile state before head advancement or archive publication", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-sensitive-publication-"));
+    roots.push(root);
+    writeFileSync(join(root, "package.json"), '{"name":"sensitive"}\n');
+    const imported = capture();
+    expect(
+      await runCli(["project:import", root, "--json"], {
+        projectRoot: root,
+        io: imported.io,
+      }),
+    ).toBe(0);
+    const projectId = (JSON.parse(imported.stdout[0]!) as { projectId: string })
+      .projectId;
+    const databasePath = join(root, ".ai-office", "project.sqlite");
+    const database = openDatabase(databasePath);
+    database
+      .prepare(
+        `INSERT INTO project_profile_entry(
+           id, project_id, category, key, value_json, origin, confidence,
+           source_reference, confirmed_at, superseded_at, created_at
+         ) VALUES ('credential-profile', ?, 'constraint', 'OPENAI_API_KEY',
+                   '"sk-test"', 'user', 1, NULL, NULL, NULL, ?)`,
+      )
+      .run(projectId, new Date().toISOString());
+    database.close();
+
+    const adapter = new RecordingArchiveAdapter();
+    const archivePath = join(root, "rejected.aioffice");
+    const backup = capture();
+    expect(
+      await runCli(
+        [
+          "project:backup",
+          "--project",
+          projectId,
+          "--output",
+          archivePath,
+        ],
+        { projectRoot: root, io: backup.io, projectArchives: adapter },
+      ),
+    ).toBe(1);
+    expect(backup.stderr[0]).toContain(
+      "profile entry credential-profile is labelled as sensitive credential data (OPENAI_API_KEY)",
+    );
+    expect(adapter.writes).toBe(0);
+    expect(existsSync(archivePath)).toBe(false);
+
+    const after = openDatabase(databasePath);
+    expect(
+      after
+        .query<{ count: number }, [string]>(
+          "SELECT COUNT(*) AS count FROM project_state_revision WHERE project_id = ?",
+        )
+        .get(projectId)?.count,
+    ).toBe(0);
+    expect(
+      after
+        .query<{ count: number }, [string]>(
+          "SELECT COUNT(*) AS count FROM project_state_head WHERE project_id = ?",
+        )
+        .get(projectId)?.count,
+    ).toBe(0);
+    after.close();
+  });
+
   test("keeps a local state observation when publication fails and reuses it on retry", async () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-publication-"));
     roots.push(root);

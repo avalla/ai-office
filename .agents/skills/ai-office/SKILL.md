@@ -67,10 +67,11 @@ cross-machine identifier. On explicit request, create a portable snapshot with
 `ai-office project:backup --project <projectId> --output <file.aioffice>`. Restore
 only after confirming the target checkout with
 `ai-office project:restore <file.aioffice> --root <path>`. Never use restore to
-overwrite different local state. Portable snapshots omit secrets, grants,
-controlled-action approvals, audit authority, active executions, and
-machine-local paths; diagnose and re-establish required credentials and
-security authority locally. Backup requires execution-authority quiescence: if
+overwrite different local state. Portable snapshots omit managed credentials,
+structured profile values labelled as credentials, grants, controlled-action
+approvals, audit authority, active executions, and generated machine-local
+paths; they do not content-scan arbitrary human prose. Diagnose and re-establish
+required credentials and security authority locally. Backup requires execution-authority quiescence: if
 it reports active runs, pipelines, or locks, finish or cancel that work and
 retry; task lifecycle status is portable semantic state and must not be
 rewritten merely to make a snapshot succeed.

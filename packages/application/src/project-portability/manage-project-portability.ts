@@ -135,71 +135,71 @@ export class ManageProjectPortability {
         `Project ${projectId} has no portable identity; run ai-office install . first`,
       );
 
+    const source = selectPortableGitProvenance(
+      await this.dependencies.profiles.listSources(projectId),
+    );
     const now = this.dependencies.clock.now();
-    const { state, revision } = await this.dependencies.transactions.run(
-      async () => {
-        const blockers = await this.dependencies.states.findPortabilityBlockers(
-          projectId,
-          now,
-        );
-        if (blockers.length > 0) throw portabilityBlocked(blockers);
-        const state =
-          await this.dependencies.states.loadPortableState(projectId);
-        const stateChecksum = portableStateChecksum(state);
-        const head = await this.dependencies.states.findHead(projectId);
-        if (head?.revision.stateChecksum === stateChecksum)
-          return { state, revision: head.revision };
-        const revision = {
-          id: `rev_${this.dependencies.ids.generate()}`,
-          projectId,
-          ...(head === null ? {} : { parentRevisionId: head.revision.id }),
-          stateChecksum,
-          origin: "local_snapshot" as const,
-          createdAt: now,
-        };
+    return this.dependencies.transactions.run(async () => {
+      const blockers = await this.dependencies.states.findPortabilityBlockers(
+        projectId,
+        now,
+      );
+      if (blockers.length > 0) throw portabilityBlocked(blockers);
+      const state = await this.dependencies.states.loadPortableState(projectId);
+      const stateChecksum = portableStateChecksum(state);
+      const head = await this.dependencies.states.findHead(projectId);
+      const revision =
+        head?.revision.stateChecksum === stateChecksum
+          ? head.revision
+          : {
+              id: `rev_${this.dependencies.ids.generate()}`,
+              projectId,
+              ...(head === null
+                ? {}
+                : { parentRevisionId: head.revision.id }),
+              stateChecksum,
+              origin: "local_snapshot" as const,
+              createdAt: now,
+            };
+      const manifest: PortableProjectManifest = {
+        format: portableProjectFormat,
+        formatVersion: portableProjectFormatVersion,
+        projectIdentity,
+        createdAt: revision.createdAt.toISOString(),
+        revision: {
+          id: revision.id,
+          ...(revision.parentRevisionId === undefined
+            ? {}
+            : { parentRevisionId: revision.parentRevisionId }),
+          stateChecksum: revision.stateChecksum,
+        },
+        ...(source === undefined ? {} : { source }),
+        contents: [
+          "project",
+          "tasks",
+          "profile",
+          "office_manifests",
+          "governance",
+          "agent_definitions",
+          "terminal_run_summaries",
+        ],
+      };
+      const archive = createPortableProjectArchive({ manifest, state });
+      if (head?.revision.stateChecksum !== stateChecksum)
         await this.dependencies.states.saveRevision(
           revision,
           head?.baseRevisionId,
         );
-        return { state, revision };
-      },
-    );
-
-    const source = selectPortableGitProvenance(
-      await this.dependencies.profiles.listSources(projectId),
-    );
-    const manifest: PortableProjectManifest = {
-      format: portableProjectFormat,
-      formatVersion: portableProjectFormatVersion,
-      projectIdentity,
-      createdAt: revision.createdAt.toISOString(),
-      revision: {
-        id: revision.id,
-        ...(revision.parentRevisionId === undefined
-          ? {}
-          : { parentRevisionId: revision.parentRevisionId }),
+      return {
+        schemaVersion: 1,
+        projectId,
+        projectIdentity,
+        revisionId: revision.id,
+        parentRevisionId: revision.parentRevisionId ?? null,
         stateChecksum: revision.stateChecksum,
-      },
-      ...(source === undefined ? {} : { source }),
-      contents: [
-        "project",
-        "tasks",
-        "profile",
-        "office_manifests",
-        "governance",
-        "agent_definitions",
-        "terminal_run_summaries",
-      ],
-    };
-    return {
-      schemaVersion: 1,
-      projectId,
-      projectIdentity,
-      revisionId: revision.id,
-      parentRevisionId: revision.parentRevisionId ?? null,
-      stateChecksum: revision.stateChecksum,
-      archive: createPortableProjectArchive({ manifest, state }),
-    };
+        archive,
+      };
+    });
   }
 
   async restore(input: {

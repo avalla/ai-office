@@ -238,8 +238,10 @@ describe("project portability", () => {
 
   test.each([
     "Imported from another system as part of a customer migration",
+    "Imported from another system",
     "Imported from",
     "imported from",
+    "imported from /some/path",
     "Imported from /some/path",
   ])(
     "preserves semantic project description %j exactly",
@@ -275,6 +277,140 @@ describe("project portability", () => {
       destination.database.close();
     },
   );
+
+  test("omits only an exact legacy generated description backed by this project's source path", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-legacy-description-source-");
+    const targetRuntime = temporaryRoot("ai-office-legacy-description-target-");
+    const source = temporaryRoot("ai-office-legacy-description-checkout-a-");
+    const target = temporaryRoot("ai-office-legacy-description-checkout-b-");
+    writeFileSync(join(source, "package.json"), '{"name":"legacy-description"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"legacy-description"}\n');
+
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const knownSource = (await origin.profiles.listSources(imported.projectId))[0]!
+      .localPath;
+    origin.database
+      .prepare("UPDATE project SET description = ? WHERE id = ?")
+      .run(`Imported from ${knownSource}`, imported.projectId);
+    expect(
+      (await origin.states.loadPortableState(imported.projectId)).project
+        .description,
+    ).toBeUndefined();
+    expect(
+      await origin.profiles.removeSource(imported.projectId, knownSource),
+    ).toBe(true);
+    const backup = await origin.service.backup(imported.projectId);
+    expect(backup.archive.state.project.description).toBeUndefined();
+    expect(serializePortableProjectArchive(backup.archive)).not.toContain(
+      knownSource,
+    );
+    expect(
+      origin.database
+        .query<{ description: string }, [string]>(
+          "SELECT description FROM project WHERE id = ?",
+        )
+        .get(imported.projectId)?.description,
+    ).toBe(`Imported from ${knownSource}`);
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: backup.archive,
+      rootPath: target,
+    });
+    expect(
+      (await destination.projects.findById(restored.projectId))?.snapshot()
+        .description,
+    ).toBeUndefined();
+    expect(
+      await destination.states.loadPortableState(restored.projectId),
+    ).toEqual(backup.archive.state);
+    destination.database.close();
+  });
+
+  test.each(["OPENAI_API_KEY", "github_token"])(
+    "rejects structured profile credential key %s before advancing the snapshot head",
+    async (key) => {
+      const runtimeRoot = temporaryRoot("ai-office-sensitive-profile-");
+      const source = temporaryRoot("ai-office-sensitive-profile-source-");
+      writeFileSync(join(source, "package.json"), '{"name":"sensitive-profile"}\n');
+      const runtime = openRuntime(runtimeRoot);
+      const imported = await importProject(runtime, source);
+      const initial = await runtime.service.backup(imported.projectId);
+      const createdAt = runtime.clock.now().toISOString();
+      runtime.database
+        .prepare(
+          `INSERT INTO project_profile_entry(
+             id, project_id, category, key, value_json, origin, confidence,
+             source_reference, confirmed_at, superseded_at, created_at
+           ) VALUES (?, ?, 'constraint', ?, ?, 'user', 1, NULL, NULL, NULL, ?)`,
+        )
+        .run(`profile-${key}`, imported.projectId, key, '"sk-test"', createdAt);
+
+      await expect(runtime.service.backup(imported.projectId)).rejects.toThrow(
+        `sensitive credential data (${key})`,
+      );
+      expect(await runtime.states.findHead(imported.projectId)).toMatchObject({
+        revision: { id: initial.revisionId },
+      });
+      expect(
+        runtime.database
+          .query<{ count: number }, [string]>(
+            "SELECT COUNT(*) AS count FROM project_state_revision WHERE project_id = ?",
+          )
+          .get(imported.projectId)?.count,
+      ).toBe(1);
+      runtime.database.close();
+    },
+  );
+
+  test("rejects a nested sensitive profile field while preserving ordinary profile data", async () => {
+    const runtimeRoot = temporaryRoot("ai-office-nested-sensitive-profile-");
+    const source = temporaryRoot("ai-office-nested-sensitive-source-");
+    writeFileSync(join(source, "package.json"), '{"name":"nested-sensitive"}\n');
+    const runtime = openRuntime(runtimeRoot);
+    const imported = await importProject(runtime, source);
+    const createdAt = runtime.clock.now().toISOString();
+    const insert = runtime.database.prepare(
+      `INSERT INTO project_profile_entry(
+         id, project_id, category, key, value_json, origin, confidence,
+         source_reference, confirmed_at, superseded_at, created_at
+       ) VALUES (?, ?, ?, ?, ?, 'user', 1, NULL, NULL, NULL, ?)`,
+    );
+    insert.run(
+      "profile-preference",
+      imported.projectId,
+      "preference",
+      "review_style",
+      '"Prefer concise reviews"',
+      createdAt,
+    );
+    const valid = await runtime.service.backup(imported.projectId);
+    expect(valid.archive.state.profileEntries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "profile-preference",
+          value: "Prefer concise reviews",
+        }),
+      ]),
+    );
+    insert.run(
+      "profile-nested-secret",
+      imported.projectId,
+      "constraint",
+      "provider_configuration",
+      '{"token":"secret"}',
+      createdAt,
+    );
+    await expect(runtime.service.backup(imported.projectId)).rejects.toThrow(
+      "sensitive field token",
+    );
+    expect(await runtime.states.findHead(imported.projectId)).toMatchObject({
+      revision: { id: valid.revisionId },
+    });
+    runtime.database.close();
+  });
 
   test("creates parented revisions and rejects rollback over changed local state", async () => {
     const runtimeRoot = temporaryRoot("ai-office-portable-revision-");
@@ -363,6 +499,75 @@ describe("project portability", () => {
         revisionA.revisionId,
       ),
     ).rejects.toThrow("base from another project");
+
+    await runtime.states.saveRevision({
+      id: "rev_shallow_child_a",
+      projectId: projectA.projectId,
+      parentRevisionId: "rev_reserved_parent",
+      stateChecksum: revisionA.stateChecksum,
+      origin: "local_snapshot",
+      createdAt: runtime.clock.now(),
+    });
+    expect(
+      runtime.database
+        .query<{ project_id: string }, []>(
+          `SELECT project_id FROM project_state_revision_identity
+           WHERE revision_id = 'rev_reserved_parent'`,
+        )
+        .get()?.project_id,
+    ).toBe(projectA.projectId);
+    expect(() =>
+      runtime.database
+        .prepare(
+          `INSERT INTO project_state_revision(
+             id, project_id, parent_revision_id, state_checksum, origin,
+             created_at
+           ) VALUES ('rev_reserved_parent', ?, NULL, ?, 'local_snapshot', ?)`,
+        )
+        .run(
+          projectB.projectId,
+          revisionB.stateChecksum,
+          runtime.clock.now().toISOString(),
+        ),
+    ).toThrow("revision identity belongs to another project");
+    await expect(
+      runtime.states.saveRevision({
+        id: "rev_reserved_parent",
+        projectId: projectB.projectId,
+        stateChecksum: revisionB.stateChecksum,
+        origin: "local_snapshot",
+        createdAt: runtime.clock.now(),
+      }),
+    ).rejects.toThrow("conflicts with another project");
+    await expect(
+      runtime.states.saveRevision({
+        id: "rev_reserved_parent",
+        projectId: projectA.projectId,
+        stateChecksum: revisionA.stateChecksum,
+        origin: "portable_import",
+        createdAt: runtime.clock.now(),
+      }),
+    ).resolves.toBeUndefined();
+
+    await runtime.states.saveRevision(
+      {
+        id: "rev_with_shallow_base",
+        projectId: projectA.projectId,
+        stateChecksum: revisionA.stateChecksum,
+        origin: "local_snapshot",
+        createdAt: runtime.clock.now(),
+      },
+      "rev_reserved_base",
+    );
+    await expect(
+      runtime.states.saveRevision({
+        id: "rev_reserved_base",
+        projectId: projectB.projectId,
+        stateChecksum: revisionB.stateChecksum,
+        origin: "local_snapshot",
+        createdAt: runtime.clock.now(),
+      }),
+    ).rejects.toThrow("conflicts with another project");
 
     await runtime.states.saveRevision({
       id: "rev_cycle_a",
@@ -769,6 +974,30 @@ describe("project portability", () => {
           new Date(destination.clock.now().getTime() + 60_000),
         ),
       ).toBe(false);
+      const survivingExpiry = new Date(
+        destination.clock.now().getTime() + 60_000,
+      );
+      destination.database
+        .prepare(
+          `INSERT INTO task_lock(task_id, run_id, acquired_at, expires_at)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(
+          taskId,
+          runId,
+          destination.clock.now().toISOString(),
+          survivingExpiry.toISOString(),
+        );
+      expect(
+        await destination.agentRuntime.renewTaskLock(
+          runId,
+          destination.clock.now(),
+          new Date(survivingExpiry.getTime() + 60_000),
+        ),
+      ).toBe(false);
+      destination.database
+        .prepare("DELETE FROM task_lock WHERE run_id = ?")
+        .run(runId);
     }
     destination.database.close();
   });

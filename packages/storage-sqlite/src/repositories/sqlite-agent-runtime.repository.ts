@@ -362,7 +362,15 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
     return (
       this.database
         .prepare(
-          "UPDATE task_lock SET expires_at=? WHERE run_id=? AND expires_at>? ",
+          `UPDATE task_lock SET expires_at=?
+           WHERE run_id=? AND expires_at>?
+             AND EXISTS (
+               SELECT 1 FROM agent_run
+               WHERE agent_run.id = task_lock.run_id
+                 AND agent_run.status IN (
+                   'queued','preparing','running','reviewing'
+                 )
+             )`,
         )
         .run(newExpiresAt.toISOString(), runId, now.toISOString()).changes === 1
     );

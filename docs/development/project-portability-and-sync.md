@@ -75,7 +75,8 @@ revalidate the archive checksums after download.
 
 ### Included
 
-- project name, user-owned description, and timestamps;
+- project name, user-owned description, and timestamps, except exact legacy
+  generated descriptions proven by a matching local source binding;
 - task lifecycle state, including assigned, running, blocked, or review-waiting
   semantics when no live execution authority remains;
 - active profile knowledge except detected checkout root paths, raw remote URL
@@ -91,22 +92,31 @@ revalidate the archive checksums after download.
   sources agree.
 
 Project descriptions are semantic user/domain data and are preserved verbatim;
-the snapshot layer never infers meaning from prefixes such as `Imported from`.
-New repository imports no longer inject checkout paths into descriptions.
-Existing descriptions remain intact because historical generated text cannot
-be distinguished reliably from user text. Structured `project_source` rows and
-detected profile entries own checkout/import provenance and are excluded.
+the snapshot layer never infers meaning from a prefix such as `Imported from`.
+One historical importer generated exactly `Imported from <root>`. The portable
+projection omits that description only when `<root>` exactly equals a
+`project_source.local_path` or historical
+`project_checkout_detachment.local_path` belonging to the same project. It does
+not mutate the database. Unmatched paths, arbitrary suffixes, and different
+casing remain user data. New repository imports no longer inject checkout paths
+into descriptions. Structured source/detachment rows own that local provenance.
 
 Network Git provenance accepts HTTP(S), SSH, Git-protocol, and normalized
 scp-style remotes. URL user information, query strings, and fragments are
-removed. `file://`, POSIX, relative, Windows-drive, UNC, and ambiguous remote
-strings are machine-local and omitted. Source-row ordering has no meaning: if
+removed. `file://`, POSIX, relative, Windows drive-absolute or drive-relative,
+UNC, and ambiguous remote strings are machine-local and omitted. Source-row
+ordering has no meaning: if
 all sanitized network remotes resolve to one comparable remote, that remote is
 recorded; if distinct network remotes remain, source provenance is omitted.
 Branch is included only when the contributing sources agree. The remote never
-becomes project identity. A sensitive-key check rejects snapshot state
-containing fields such as token, password, credential, authorization, secret,
-or API key; backup fails rather than exporting the suspect value.
+becomes project identity. Recursive sensitive-field validation rejects nested
+structured fields such as token, password, credential, authorization, secret,
+or API key. Profile entry `key` and `category` labels additionally fail closed
+when their normalized structured meaning denotes an API key, access token,
+password, secret, credential/reference, authorization, or token. Backup reports
+the entry ID and label without its value. AI Office does not regex-scan arbitrary
+free-form descriptions or prose and cannot promise that a user never pasted a
+secret there.
 
 ### Excluded
 
@@ -117,7 +127,7 @@ or API key; backup fails rather than exporting the suspect value.
 - run action intents, results, errors, and event payloads;
 - resources, credential references, capability grants, action requests,
   simulations, local approvals, executions, and audit events;
-- secret values and connector/provider credentials;
+- managed secret values and connector/provider credentials;
 - global reusable memory in `global.sqlite`;
 - pricing, budgets, reservations, usage, and cost accounting;
 - source files and binary artifacts.
@@ -165,10 +175,13 @@ another machine.
 
 Backup is a daemon-backed project command. The application service checks
 execution-authority quiescence and loads one consistent semantic snapshot in a
-short database transaction. It records or reuses a `local_snapshot` revision:
-that revision means the daemon observed this semantic state, not that an output
-artifact was published. The infrastructure adapter then writes the envelope as
-a separate filesystem result.
+short database transaction. It constructs and validates the complete archive
+schema, semantic profile safety, closure, checksums, and manifest before it
+records a changed `local_snapshot` revision. State that is intrinsically
+non-portable therefore leaves revision/head state unchanged. The revision means
+the daemon observed this semantic state, not that an output artifact was
+published. The infrastructure adapter then writes the envelope as a separate
+filesystem result.
 
 This deliberately avoids pretending SQLite and the filesystem share one
 transaction. The normal-process publication protocol is:
@@ -247,14 +260,19 @@ but many AI Office revisions may occur without any source commit.
 Revision IDs use globally unique generated identifiers and are globally unique
 inside one runtime database. A collision with another project fails closed;
 `ON CONFLICT` never aliases the rows because stored project, parent, checksum,
-and observation time are revalidated. A known parent must belong to the same
-project, self/cyclic lineage is rejected, and an absent parent is allowed as an
-intentional shallow lineage anchor when restoring an archive from another
-installation. The restored archive revision becomes both local head and known
-base. Attaching another checkout to an already identical headed project changes
-only the machine-local source association; it does not rewrite head, base, or
-revision metadata. Repeated restore is idempotent. Binding failure after a new
-restore commit retains the documented partial recovery path.
+and observation time are revalidated. `project_state_revision_identity`
+reserves one project owner for every materialized revision ID and every
+referenced-but-unmaterialized parent/base ID. A shallow parent may later be
+materialized only by that project; another project cannot retroactively capture
+the identifier. A known parent must belong to the same project, self/cyclic
+lineage is rejected (including cycles exposed by later materialization), and an
+absent parent remains an intentional shallow lineage anchor when restoring an
+archive from another installation. The restored archive revision becomes both
+local head and known base. Attaching another checkout to an already identical
+headed project changes only the machine-local source association; it does not
+rewrite head, base, or revision metadata. Repeated restore is idempotent.
+Binding failure after a new restore commit retains the documented partial
+recovery path.
 
 The application-layer `ProjectStateRemote` port is backend-neutral:
 
@@ -289,6 +307,12 @@ opaque identity exactly once; pre-feature imported repositories continue
 through normal binding migration/install so their committed identity remains
 authoritative. New `project:create` and `project:import` commands associate an
 identity transactionally. Repeated migration is a no-op.
+
+Migration 0023 names local revision acquisition honestly as a semantic
+`local_snapshot` observation. Migration 0024 creates lightweight project-owned
+revision identities for every materialized revision and shallow parent/base
+reference. It preserves valid lineage exactly and aborts atomically if
+historical rows assign one revision ID to more than one project.
 
 Repository uninstall preserves `.ai-office/project.json` and all external
 `.aioffice` files. Runtime purge owns the revision tables only as part of

@@ -1,6 +1,6 @@
 # Project portability assessment
 
-Date: 2026-09-01
+Date: 2026-09-01; hardened through 2026-09-02
 
 ## Current architecture
 
@@ -27,7 +27,9 @@ Date: 2026-09-01
    references, capability grants, controlled actions/approvals/executions,
    audit payloads, daemon state, caches, projections, and client configuration
    must not transfer. Global memory, pricing, reservations, usage/cost data,
-   and purge state also have separate ownership. Secrets are never portable.
+   and purge state also have separate ownership. Managed credentials and
+   structured profile values explicitly labelled as credentials are never
+   portable; arbitrary human prose is not content-scanned.
 
 5. **Migration.** Migration 0019 introduced portable identity mapping but raw
    pre-M7.5 projects can remain unmapped until install. A forward migration
@@ -39,10 +41,14 @@ Date: 2026-09-01
    metadata must not rewrite project history.
 
    Historical imports encoded `Imported from <root>` in `project.description`.
-   The exact-match lookup remains only as a compatibility fallback for locating
-   a legacy project that has no `project_source` row. Snapshot loading no longer
-   interprets that text: descriptions are preserved, while new imports store
-   path provenance only in structured source/profile records.
+   Snapshot projection omits it only when the complete description exactly
+   matches a structured `project_source.local_path` or checkout-detachment path
+   for the same project; the authoritative description is not mutated. All
+   unmatched or differently cased descriptions remain user data. New imports
+   store path provenance only in structured source/profile records. Revision
+   ownership migration reserves materialized IDs plus shallow parent/base IDs
+   and fails on contradictory historical ownership rather than choosing a
+   project.
 
 6. **Archive format.** A strict, size-bounded JSON envelope with the
    `.aioffice` extension is the safest v1. It is one self-describing,
@@ -74,6 +80,7 @@ Date: 2026-09-01
     database/filesystem coordination. Mitigations are strict bounds, canonical
     checksums, no extraction or embedded write paths, sensitive-key rejection,
     regular-file checks, identity matching, foreign keys, a short transaction,
+    semantic profile-label validation before revision creation,
     normal-process atomic/no-clobber publication, and fail-closed conflicts.
     Parent-directory crash durability is not claimed. The CLI remains a daemon
     client.
@@ -84,7 +91,8 @@ Date: 2026-09-01
     observations; archive publication is a separate no-clobber filesystem
     result. Portable Git provenance accepts only sanitized network remotes and
     is included only when all portable checkout remotes agree. Governance and
-    agent records must form a closed reference graph.
+    agent records must form a closed reference graph. Shallow revision IDs have
+    stable project ownership before their full revision payload is present.
 
 11. **Documentation.** README needs the workflow and ownership map. Storage and
     overview docs need snapshot/revision boundaries. A focused development

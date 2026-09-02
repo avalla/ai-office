@@ -7,7 +7,7 @@ function isLocalPath(value: string): boolean {
     value.startsWith("../") ||
     value.startsWith("~/") ||
     value.startsWith("\\\\") ||
-    /^[a-zA-Z]:[\\/]/u.test(value)
+    /^[a-zA-Z]:/u.test(value)
   );
 }
 
@@ -39,7 +39,7 @@ function portableScpRemote(value: string): string | undefined {
     path.split("/").some((segment) => segment === ".." || segment === "")
   )
     return undefined;
-  return `ssh://${host}/${path}`;
+  return portableNetworkUrl(`ssh://${host}/${path}`);
 }
 
 /** Returns network-safe Git provenance or omits local/ambiguous remotes. */

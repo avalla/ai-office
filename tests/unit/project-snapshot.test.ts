@@ -112,6 +112,58 @@ describe("portable project snapshot", () => {
     ).toThrow("integrity checksum mismatch");
   });
 
+  test.each([
+    "OPENAI_API_KEY",
+    "apikey",
+    "github_token",
+    "access_token",
+    "database_password",
+    "client_secret",
+    "credential_ref",
+    "authorization",
+  ])(
+    "rejects a profile entry labelled as structured credential data by key %s",
+    (key) => {
+      const value = state("sk-test");
+      value.profileEntries[0]!.key = key;
+      expect(() =>
+        createPortableProjectArchive({
+          state: value,
+          manifest: manifest(value),
+        }),
+      ).toThrow(`profile entry profile-1 is labelled as sensitive credential data (${key})`);
+    },
+  );
+
+  test("rejects sensitive profile categories and nested sensitive fields without guessing prose", () => {
+    const categorized = state("machine credential");
+    categorized.profileEntries[0]!.category = "credential";
+    expect(() =>
+      createPortableProjectArchive({
+        state: categorized,
+        manifest: manifest(categorized),
+      }),
+    ).toThrow("sensitive credential data (credential)");
+
+    const nested = state({ token: "secret" });
+    expect(() =>
+      createPortableProjectArchive({
+        state: nested,
+        manifest: manifest(nested),
+      }),
+    ).toThrow("sensitive field token");
+
+    const ordinary = state("Prefer short-lived API sessions in documentation");
+    ordinary.profileEntries[0]!.category = "preference";
+    ordinary.profileEntries[0]!.key = "authentication_documentation";
+    expect(() =>
+      createPortableProjectArchive({
+        state: ordinary,
+        manifest: manifest(ordinary),
+      }),
+    ).not.toThrow();
+  });
+
   test("rejects unsupported formats, embedded paths, and sensitive fields", () => {
     const value = state();
     const archive = createPortableProjectArchive({
@@ -370,7 +422,11 @@ describe("portable Git provenance", () => {
     "/Users/alice/dev/upstream.git",
     "../upstream.git",
     "./upstream.git",
+    String.raw`C:\repo.git`,
     String.raw`C:\Users\Alice\repo.git`,
+    "C:/repo.git",
+    "C:repo.git",
+    "C:folder/repo.git",
     String.raw`\\server\share\repo.git`,
     "ambiguous/repo.git",
   ])("omits machine-local or ambiguous remote %s", (remote) => {
@@ -391,6 +447,15 @@ describe("portable Git provenance", () => {
         },
       }),
     ).toThrow("must be normalized network-safe Git provenance");
+  });
+
+  test.each([
+    "git@example.test:team/repo.git",
+    "example.test:team/repo.git",
+  ])("normalizes SCP provenance idempotently for %s", (remote) => {
+    const normalized = portableGitRemote(remote);
+    expect(normalized).toBe("ssh://example.test/team/repo.git");
+    expect(portableGitRemote(normalized)).toBe(normalized);
   });
 
   test("selects agreed provenance independently of source insertion order", () => {

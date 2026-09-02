@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0023_project_snapshot_observations.sql",
+        "0024_project_revision_identity.sql",
       );
       expect(
         database
@@ -110,6 +110,7 @@ describe("migration upgrades", () => {
       "0021_agent_action_provenance.sql",
       "0022_project_portability.sql",
       "0023_project_snapshot_observations.sql",
+      "0024_project_revision_identity.sql",
     ]);
     expect(
       database
@@ -169,6 +170,7 @@ describe("migration upgrades", () => {
 
     expect(migrate(database, migrations).applied).toEqual([
       "0023_project_snapshot_observations.sql",
+      "0024_project_revision_identity.sql",
     ]);
     expect(
       database
@@ -193,7 +195,89 @@ describe("migration upgrades", () => {
       parent_revision_id: "unknown-parent",
       base_revision_id: "known-base",
     });
+    expect(
+      database
+        .query<{ revision_id: string; project_id: string }, []>(
+          `SELECT revision_id, project_id
+           FROM project_state_revision_identity
+           ORDER BY revision_id`,
+        )
+        .all(),
+    ).toEqual([
+      { revision_id: "known-base", project_id: "project" },
+      { revision_id: "revision", project_id: "project" },
+      { revision_id: "unknown-parent", project_id: "project" },
+    ]);
     expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    database.prepare("DELETE FROM project WHERE id = 'project'").run();
+    expect(
+      database
+        .query<{ count: number }, []>(
+          `SELECT
+             (SELECT COUNT(*) FROM project_state_revision_identity) +
+             (SELECT COUNT(*) FROM project_state_revision) +
+             (SELECT COUNT(*) FROM project_state_head) AS count`,
+        )
+        .get()?.count,
+    ).toBe(0);
+    database.close();
+  });
+
+  test("fails migration rather than guessing contradictory shallow revision ownership", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-lineage-conflict-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0023_project_snapshot_observations.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    }
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    const createdAt = "2026-09-01T00:00:00.000Z";
+    for (const projectId of ["project-a", "project-b"])
+      database
+        .prepare(
+          `INSERT INTO project(id,name,description,created_at,updated_at)
+           VALUES (?,?,NULL,?,?)`,
+        )
+        .run(projectId, projectId, createdAt, createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_state_revision(
+           id,project_id,parent_revision_id,state_checksum,origin,created_at
+         ) VALUES ('revision-a','project-a','shared-parent',?,'portable_import',?)`,
+      )
+      .run("a".repeat(64), createdAt);
+    database
+      .prepare(
+        `INSERT INTO project_state_revision(
+           id,project_id,parent_revision_id,state_checksum,origin,created_at
+         ) VALUES ('shared-parent','project-b',NULL,?,'local_snapshot',?)`,
+      )
+      .run("b".repeat(64), createdAt);
+
+    expect(() => migrate(database, migrations)).toThrow(
+      "contradictory project state revision identity ownership",
+    );
+    expect(
+      database
+        .query<{ count: number }, []>(
+          `SELECT COUNT(*) AS count FROM schema_migration
+           WHERE version = '0024_project_revision_identity.sql'`,
+        )
+        .get()?.count,
+    ).toBe(0);
+    expect(
+      database
+        .query<{ id: string; project_id: string }, []>(
+          "SELECT id, project_id FROM project_state_revision ORDER BY id",
+        )
+        .all(),
+    ).toEqual([
+      { id: "revision-a", project_id: "project-a" },
+      { id: "shared-parent", project_id: "project-b" },
+    ]);
     database.close();
   });
 
@@ -224,6 +308,7 @@ describe("migration upgrades", () => {
       "0021_agent_action_provenance.sql",
       "0022_project_portability.sql",
       "0023_project_snapshot_observations.sql",
+      "0024_project_revision_identity.sql",
     ]);
     expect(
       database
@@ -267,6 +352,7 @@ describe("migration upgrades", () => {
       "0021_agent_action_provenance.sql",
       "0022_project_portability.sql",
       "0023_project_snapshot_observations.sql",
+      "0024_project_revision_identity.sql",
     ]);
     database
       .prepare(
