@@ -323,9 +323,14 @@ describe("dashboard loopback host", () => {
       let seen = "";
       let pump: Promise<void> = Promise.resolve();
       try {
+        // Bounded on purpose: if the proxy ever buffers instead of streaming,
+        // this surfaces as an abort here rather than as an opaque test timeout.
         const response = await get("/api/events", {
           headers: { cookie: `ai_office_dashboard=${host.token}` },
-          signal: controller.signal,
+          signal: AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(15_000),
+          ]),
         });
         expect(response.headers.get("content-type")).toBe("text/event-stream");
 

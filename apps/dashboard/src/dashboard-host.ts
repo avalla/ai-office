@@ -54,6 +54,46 @@ export class DashboardHostError extends Error {
 
 const loopbackHostnames = new Set(["127.0.0.1", "::1", "localhost"]);
 
+/**
+ * Forwards an upstream body chunk by chunk.
+ *
+ * Handing the upstream `ReadableStream` straight to `Response` lets the server
+ * decide when to flush it, and an event stream that is only flushed at
+ * completion never arrives — it has no completion. Pumping explicitly keeps
+ * delivery incremental, which is the whole point of the stream.
+ */
+function relay(
+  body: ReadableStream<Uint8Array> | null,
+): ReadableStream<Uint8Array> | null {
+  if (body === null) return null;
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      // Deliberately not awaited: the stream must be usable immediately, and
+      // the pump outlives `start`.
+      void (async () => {
+        try {
+          for (;;) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            controller.enqueue(chunk.value);
+          }
+        } catch {
+          // The upstream ended or the client went away.
+        }
+        try {
+          controller.close();
+        } catch {
+          // Already closed by the consumer disconnecting.
+        }
+      })();
+    },
+    cancel() {
+      void reader.cancel().catch(() => {});
+    },
+  });
+}
+
 function json(
   value: unknown,
   status: number,
@@ -249,7 +289,10 @@ export async function startDashboardHost(
       "cache-control": "no-store",
       ...cookieHeaders,
     });
-    return new Response(upstream.body, { status: upstream.status, headers });
+    return new Response(relay(upstream.body), {
+      status: upstream.status,
+      headers,
+    });
   }
 
   return {
