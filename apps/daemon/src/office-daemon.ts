@@ -214,6 +214,11 @@ export class OfficeDaemon {
             durationMs: Math.max(0, this.now().getTime() - startedAt.getTime()),
           },
         });
+        // A failed command is not a command that changed nothing: it may have
+        // committed part of its work before failing, and it always appended
+        // audit rows. Publishing the same conservative topic set as the success
+        // path is the only assumption that cannot leave a dashboard stale.
+        this.options.queryEvents?.publish(commandInvalidationTopics(command));
         const timedOut = error instanceof DaemonCommandTimeoutError;
         return this.errorResponse(
           value.requestId,
