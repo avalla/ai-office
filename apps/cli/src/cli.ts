@@ -134,6 +134,7 @@ import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
 import { ProjectLifecycleError } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 import { ProjectSourceAssociationError } from "@ai-office/application/commands/import-project.ts";
+import { RepositoryUnderstandingError } from "@ai-office/application/project-lifecycle/confirm-repository-understanding.ts";
 import {
   ActivePipelineRunExistsError,
   ConcurrentPipelineTransitionError,
@@ -161,6 +162,11 @@ Commands:
     reconciles repository identity, shared AI-OFFICE.md guidance, and detected host skills
     exit 0: installed; exit 2: installed with warnings; exit 1: failed/partial
   status [path] [--json]
+  next [path] [--json]
+    reports project handover readiness and the recommended next action
+    exit 0: assessed; exit 1: authoritative state unavailable
+  handover:confirm --project <id> --summary <text> [--json]
+    records a confirmed handover repository review; evidence only, grants nothing
   uninstall [path] [--approve <plan-hash>] [--json]
   daemon  # available through the linkable ai-office entry point
   daemon:health
@@ -238,6 +244,8 @@ Environment (linkable ai-office entry point):
 const commands = [
   "install",
   "status",
+  "next",
+  "handover:confirm",
   "uninstall",
   "project:create",
   "project:import",
@@ -436,6 +444,7 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ProjectLifecycleError ||
     error instanceof ProjectSourceAssociationError ||
     error instanceof ProjectBindingError ||
+    error instanceof RepositoryUnderstandingError ||
     error instanceof ActivePipelineRunExistsError ||
     error instanceof ConcurrentPipelineTransitionError ||
     error instanceof PipelineActorUnauthorizedError ||

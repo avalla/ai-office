@@ -99,6 +99,12 @@ export interface ProjectScanSummary {
   projectName: string;
   remoteUrl?: string;
   currentBranch?: string;
+  /**
+   * Whether the checkout carries at least one commit. A checked-out branch
+   * pointer is not history: `git init` produces one before any commit exists.
+   * Absent on scans recorded before this evidence was collected.
+   */
+  hasCommitHistory?: boolean;
   packageManager?: string;
   languages: string[];
   frameworks: string[];
@@ -106,4 +112,44 @@ export interface ProjectScanSummary {
   testing: string[];
   documentation: string[];
   detectedFiles: string[];
+}
+
+/**
+ * Extensions that count as application source code. Configuration, assets, and
+ * documentation are deliberately excluded so repository scale reflects work
+ * done rather than scaffolding.
+ */
+export const sourceFileExtensions: readonly string[] = Object.freeze([
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cs",
+  ".ex",
+  ".exs",
+  ".go",
+  ".h",
+  ".hpp",
+  ".java",
+  ".js",
+  ".jsx",
+  ".kt",
+  ".mjs",
+  ".php",
+  ".py",
+  ".rb",
+  ".rs",
+  ".scala",
+  ".sh",
+  ".sql",
+  ".svelte",
+  ".swift",
+  ".ts",
+  ".tsx",
+  ".vue",
+]);
+
+export function countSourceFiles(files: readonly string[]): number {
+  return files.filter((file) =>
+    sourceFileExtensions.some((extension) => file.endsWith(extension)),
+  ).length;
 }

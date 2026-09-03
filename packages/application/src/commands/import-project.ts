@@ -1,7 +1,8 @@
 import { Project } from "@ai-office/domain/project/project.ts";
-import type {
-  ProjectProfileEntry,
-  ProjectScanSummary,
+import {
+  countSourceFiles,
+  type ProjectProfileEntry,
+  type ProjectScanSummary,
 } from "@ai-office/domain/project/project-profile.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
@@ -42,6 +43,19 @@ function profileEntries(
     ["repository", "root_path", scan.rootPath, scan.rootPath],
     ["repository", "remote_url", scan.remoteUrl, ".git/config"],
     ["repository", "current_branch", scan.currentBranch, ".git/HEAD"],
+    [
+      "repository",
+      "has_commit_history",
+      scan.hasCommitHistory,
+      ".git/refs/heads",
+    ],
+    ["repository", "file_count", scan.detectedFiles.length, "repository scan"],
+    [
+      "repository",
+      "source_file_count",
+      countSourceFiles(scan.detectedFiles),
+      "repository scan",
+    ],
     ["tooling", "package_manager", scan.packageManager, "lockfile"],
     ["stack", "languages", scan.languages, "file extensions"],
     ["stack", "frameworks", scan.frameworks, "manifest files"],

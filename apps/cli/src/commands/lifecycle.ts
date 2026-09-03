@@ -17,11 +17,23 @@ import {
   type ProjectUninstallResult,
 } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
+import {
+  AssessProjectHandover,
+  type ProjectHandoverReport,
+} from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
 import { InvalidProjectInstructionContractError } from "@ai-office/domain/agent/project-instruction-contract.ts";
 import { LocalProjectScanner } from "../local-project-scanner.ts";
 import {
+  renderHandoverReport,
+  renderNextSteps,
+  renderStatusGuidance,
+  renderWelcome,
+} from "../handover-view.ts";
+import { ConfirmRepositoryUnderstanding } from "@ai-office/application/project-lifecycle/confirm-repository-understanding.ts";
+import {
   CliUsageError,
   parseArguments,
+  requiredOption,
   type CommandContext,
 } from "./shared.ts";
 
@@ -58,6 +70,29 @@ function service(context: CommandContext): ManageProjectLifecycle {
     runtimeHome: context.runtimeHome,
     defaultManifest: context.defaultOfficeManifest,
   });
+}
+
+function handoverService(context: CommandContext): AssessProjectHandover {
+  return new AssessProjectHandover({
+    lifecycle: service(context),
+    profiles: context.profiles,
+    manifests: context.officeManifests,
+    governance: context.governance,
+    tasks: context.tasks,
+  });
+}
+
+/**
+ * A first connection is the moment this repository became known to this
+ * runtime. Reinstalling an already connected repository is reconciliation and
+ * must not replay the welcome.
+ */
+function isFirstConnection(result: ProjectInstallResult): boolean {
+  return (
+    result.project.created ||
+    result.project.association === "created" ||
+    result.repositoryIdentity.action === "create"
+  );
 }
 
 function clientLine(client: LifecycleClientStatus): string {
@@ -103,8 +138,10 @@ function printJsonFailure(
 
 function printInstall(
   result: ProjectInstallResult,
+  handover: ProjectHandoverReport,
   context: CommandContext,
 ): void {
+  if (isFirstConnection(result)) renderWelcome(context.io);
   context.io.stdout(
     result.outcome === "installed"
       ? "AI Office installed."
@@ -142,14 +179,13 @@ function printInstall(
       context.io.stdout(`    ${issue.recovery}`);
   }
   context.io.stdout("");
-  context.io.stdout("Next");
-  context.io.stdout("  ai-office status");
-  context.io.stdout("  ai-office task:list");
+  renderNextSteps(handover.handover, context.io);
 }
 
 export function printProjectLifecycleStatus(
   result: ProjectLifecycleStatus,
   context: Pick<CommandContext, "io">,
+  handover?: ProjectHandoverReport,
 ): void {
   context.io.stdout("AI Office");
   context.io.stdout("");
@@ -217,6 +253,8 @@ export function printProjectLifecycleStatus(
   }
   context.io.stdout("");
   context.io.stdout(`Status: ${result.health}`);
+  if (handover !== undefined)
+    renderStatusGuidance(handover.handover, context.io);
 }
 
 function printUninstallPlan(
@@ -268,8 +306,57 @@ export async function handleLifecycleCommand(
   args: string[],
   context: CommandContext,
 ): Promise<number | null> {
-  if (command !== "install" && command !== "status" && command !== "uninstall")
+  if (
+    command !== "install" &&
+    command !== "status" &&
+    command !== "uninstall" &&
+    command !== "next" &&
+    command !== "handover:confirm"
+  )
     return null;
+
+  if (command === "handover:confirm") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "summary"]),
+      new Set(["json"]),
+    );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError("handover:confirm only accepts named options");
+    const result = await new ConfirmRepositoryUnderstanding(
+      context.projects,
+      context.profiles,
+      context.ids,
+      context.clock,
+      context.transactions,
+    ).execute({
+      projectId: requiredOption(parsed, "project"),
+      summary: requiredOption(parsed, "summary"),
+    });
+    if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(result));
+    else {
+      context.io.stdout("Handover repository review confirmed.");
+      context.io.stdout(`  project: ${result.projectId}`);
+      context.io.stdout(`  scan: ${result.scanId ?? "not recorded"}`);
+      context.io.stdout(`  evidence: ${result.fingerprint.slice(0, 16)}`);
+      context.io.stdout(
+        "  This records project knowledge only; it grants no capability.",
+      );
+    }
+    return 0;
+  }
+
+  if (command === "next") {
+    const parsed = parseArguments(args, new Set(), new Set(["json"]));
+    if (parsed.positionals.length > 1)
+      throw new CliUsageError("next accepts at most one project path");
+    const report = await handoverService(context).execute(
+      parsed.positionals[0] ?? context.projectRoot,
+    );
+    if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(report));
+    else renderHandoverReport(report, context.io);
+    return report.handover.state === "unknown" ? 1 : 0;
+  }
 
   if (command === "install") {
     const parsed = parseArguments(args, new Set(), new Set(["json", "rebind"]));
@@ -281,7 +368,12 @@ export async function handleLifecycleCommand(
         rebind: parsed.flags.has("rebind"),
       });
       if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(result));
-      else printInstall(result, context);
+      else
+        printInstall(
+          result,
+          await handoverService(context).execute(result.project.root),
+          context,
+        );
       return result.outcome === "installed" ? 0 : 2;
     } catch (error) {
       if (error instanceof ProjectInstallPartialError) {
@@ -311,7 +403,12 @@ export async function handleLifecycleCommand(
       parsed.positionals[0] ?? context.projectRoot,
     );
     if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(result));
-    else printProjectLifecycleStatus(result, context);
+    else
+      printProjectLifecycleStatus(
+        result,
+        context,
+        await handoverService(context).fromStatus(result),
+      );
     return result.health === "healthy" ? 0 : 1;
   }
 

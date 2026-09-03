@@ -375,6 +375,51 @@ Delivered:
 
 See [Project portability and sync](project-portability-and-sync.md).
 
+## M7.7 — Welcome, onboarding, and project handover
+
+Status: implemented.
+
+Focus: make the product entry point explicit after installation and give the
+office a deterministic answer to "what should I do next?".
+
+Delivered:
+
+- a pure domain handover model: handover states, six readiness dimensions with
+  explicit `not_started`/`discovered`/`needs_input`/`ready`/`unknown` values, a
+  testable existing-versus-new repository heuristic, a stable review
+  fingerprint projection, and a deterministic recommended-action catalogue;
+- explicit repository-review evidence: `ConfirmRepositoryUnderstanding` records
+  a user-origin `handover` / `repository_review` project profile entry with the
+  review summary, the bound scan, and a fingerprint of the material repository
+  facts, superseding any earlier confirmation;
+- `AssessProjectHandover`, an application service that derives the model from
+  lifecycle status, project profile evidence, the current office manifest,
+  governance records, tasks, and open project questions;
+- `ai-office next [path] [--json]` with an independently versioned
+  schema-version `1` report carrying structured recommended actions, and
+  `ai-office handover:confirm` for the confirmation itself;
+- a first-connection welcome on `install`, compact contextual guidance on human
+  `status`, and no change to the `install` or `status` JSON envelopes;
+- a single client-neutral handover workflow compiled into the projected
+  repository skill, validated against the checked-in distribution skill, and
+  pointed at from the derived `AI-OFFICE.md` guide;
+- a degraded assessment when the runtime is unreachable that reports `unknown`
+  instead of advising an unnecessary reinstall.
+
+No migration was introduced: the confirmation reuses the existing project
+profile entry table and its `superseded_at` column, so it is portable in
+`.aioffice` snapshots and survives repository re-imports, uninstall, and
+reinstall. The repository scan additionally records source-file counts and
+commit evidence; projects imported by earlier releases lack them and report
+`unknown` maturity until they are re-imported.
+
+An approved office manifest is never treated as proof of repository
+understanding, so a project configured before this milestone reports
+`in_progress` with a `discovered` repository review rather than becoming ready
+automatically. Handover transfers organizational context ownership only: it
+grants no capability, bypasses no approval, alters no policy, and starts no
+agent run.
+
 ## M8 — Code intelligence
 
 Status: future.

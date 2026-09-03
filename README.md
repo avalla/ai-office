@@ -14,6 +14,7 @@ The current implementation on `main` includes:
 
 - a local daemon and daemon-backed CLI;
 - project creation, deterministic offline repository import, and host-skill conversational onboarding without runtime provider credentials;
+- a first-connection welcome, deterministic project-handover readiness, and `ai-office next` recommended actions;
 - stable project identity plus portable, integrity-checked project backup and restore across machine paths;
 - versioned virtual-office manifests with roles and default task pipelines;
 - tasks, agent definitions, scheduled runs, locking, and persisted run events;
@@ -83,6 +84,7 @@ Then install AI Office from the repository you want to manage:
 cd /path/to/my-project
 ai-office install .
 ai-office status
+ai-office next
 ```
 
 `install` imports or reuses the project, applies the default office baseline
@@ -169,6 +171,145 @@ The legacy development
 commands `bun run daemon` and `bun run cli -- ...` remain supported and retain
 their current-working-directory runtime semantics. See
 [Local storage and state](#local-storage-and-state) for the advanced path model.
+
+## After installation
+
+The first time a repository becomes known to the runtime, `install` prints a
+short welcome and the recommended next steps:
+
+```text
+╭────────────────────────────────╮
+│  AI OFFICE                     │
+│  Your virtual office is ready  │
+╰────────────────────────────────╯
+
+AI Office installed.
+...
+Next
+  1. Hand this project over to your virtual office
+     AI Office scanned an existing codebase but has no approved product
+     context for it
+     Ask your AI client:
+       "Take this project in charge. Review the repository and the
+       current AI Office state, then help me complete the project
+       handover."
+
+Try asking your AI client
+  "Review the current project and tell me what the office thinks we
+  should do next."
+  "Show me the current roadmap, milestones and active work."
+
+Commands
+  ai-office next
+  ai-office status
+```
+
+**What was installed.** A committable repository identity in
+`.ai-office/project.json`, the shared derived `AI-OFFICE.md` guide, a minimal
+pointer for each detected coding client, and a repository-local `ai-office`
+skill. Nothing was granted, and no authoritative database was copied into the
+repository.
+
+**What to do in the project.** Ask your AI client to take the project in
+charge. The installed skill carries one client-neutral handover workflow, so
+Codex and Claude Code follow the same steps.
+
+**What happens during handover.** Four things stay deliberately distinct:
+
+1. **Discovery** — the deterministic repository scan records languages,
+   frameworks, tooling, documentation, file counts, and commit evidence.
+2. **Repository review** — the agent reads the repository and compares it with
+   what AI Office already stores.
+3. **User confirmation** — you accept or correct that review. Only this makes
+   repository understanding authoritative, and it is recorded with
+   `ai-office handover:confirm --project <id> --summary "<what the office understood>"`.
+4. **Approved organizational model** — `office:apply` records mission, goals,
+   constraints, preferences, roles, and pipelines.
+
+An approved office manifest never certifies repository understanding: it
+carries no architecture, implementation state, or review acceptance. A project
+configured before this feature existed therefore reports repository
+understanding as `discovered` and asks you to confirm a review, rather than
+silently claiming to be ready.
+
+**What AI Office persists.** Only management state it owns: office manifest
+revisions, governance records such as milestones and requirements, tasks,
+deterministic repository scan evidence, and the confirmed repository review.
+The repository stays authoritative for code, configuration, and technical
+documentation.
+
+**Asking "what next?".** `ai-office next` answers from real state:
+
+```text
+AI Office · Next steps
+
+Handover
+  state: in_progress
+  repository: existing
+  ✓ Project connection        Repository identity and runtime association are valid
+  ~ Repository understanding  Discovered 1 language(s), 0 framework(s), 2 documentation file(s), 30 source file(s); no confirmed handover repository review is recorded
+  ✓ Agent clients             2 configured agent clients
+  ✓ Product direction         The approved office records 1 goal
+  ✓ Delivery plan             1 active milestone, 0 requirement(s)
+  ✓ Working agreement         The approved office records 1 constraint(s) and 1 preference(s)
+
+Next
+  1. Confirm the handover repository review
+     The office holds an approved organizational model but no confirmed
+     review of this repository
+```
+
+Dimension states are `not_started`, `discovered`, `needs_input`, `ready`, or
+`unknown`. Handover states are `not_connected`, `not_imported`,
+`needs_handover`, `in_progress`, `ready`, or `unknown`. `ai-office next --json`
+returns the same assessment as a stable schema-version `1` payload with
+structured `recommendedActions`; it is versioned independently from
+`ai-office status --json`, which is unchanged.
+
+**Keeping the review honest.** The confirmation is bound to a fingerprint of
+the material repository facts. Ordinary edits keep it valid; a structural
+change such as a new language or an order-of-magnitude growth in source files
+makes it `stale`, and the office asks you to review the changes before
+declaring the project ready again. Unanswered goal and constraint questions
+also keep the handover incomplete.
+
+**Checking state and resuming later.** `ai-office status` reports lifecycle
+health and ends with a compact pointer to the recommended next action.
+Reinstalling an already connected repository reconciles managed files without
+replaying the welcome, and uninstall followed by reinstall preserves the
+handover state because that state lives in the runtime, not in the repository.
+
+## Hand your project to the virtual office
+
+AI Office is not only a CLI that stores tasks. It is a persistent management
+layer around the repository, so agents can work as a virtual office instead of
+rebuilding the project context in every session.
+
+Handing a project over means the office understands the project, records the
+management state that belongs to its own domain, and can then evaluate a
+request such as "I want to add subscription billing" against the recorded
+roadmap, milestones, and requirements.
+
+Ask your AI client:
+
+```text
+Take this project in charge and use AI Office to understand its current
+state before proposing what we should do next.
+```
+
+The office distinguishes an existing repository from a new one. For an existing
+repository it reconstructs what was already built and what is in progress
+before proposing anything. For a nearly empty repository it guides goals,
+constraints, architecture, and a first milestone instead. The classification is
+deterministic and measures existing application code rather than tooling
+presence, because a fresh scaffold already declares a language, a framework,
+and a package manager while a long-lived single-language repository may declare
+none of them.
+
+Handover transfers organizational context ownership. It is not an
+authorization change: it grants no capability, bypasses no approval or
+governance gate, alters no policy, starts no agent run, and never rewrites
+committed project state to match a proposal.
 
 ## Project lifecycle
 
@@ -291,6 +432,9 @@ automatic semantic merge are roadmap work, not current commands. See
 [Project portability and synchronization](docs/development/project-portability-and-sync.md).
 
 ## Conversational onboarding
+
+Onboarding is the office-configuration part of the handover described in
+[Hand your project to the virtual office](#hand-your-project-to-the-virtual-office).
 
 Open this repository in Codex and ask:
 

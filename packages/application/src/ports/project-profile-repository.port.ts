@@ -51,6 +51,7 @@ export interface ProjectProfileRepository {
   saveSource(source: ProjectSource): Promise<void>;
   removeSource(projectId: string, localPath: string): Promise<boolean>;
   saveScan(scan: ProjectScan): Promise<void>;
+  findLatestScan(projectId: string): Promise<ProjectScan | null>;
   replaceDetected(entries: ProjectProfileEntry[]): Promise<void>;
   ensureQuestions(questions: NewProjectQuestion[]): Promise<void>;
   findQuestion(
@@ -65,5 +66,15 @@ export interface ProjectProfileRepository {
     answeredAt: Date,
   ): Promise<void>;
   saveProfileEntry(entry: ProjectProfileEntry): Promise<void>;
+  /**
+   * Marks the currently active entries for one category/key as superseded so a
+   * replacement can be recorded without losing the previous evidence.
+   */
+  supersedeProfileEntries(
+    projectId: string,
+    category: string,
+    key: string,
+    supersededAt: Date,
+  ): Promise<void>;
   listActiveProfileEntries(projectId: string): Promise<ProjectProfileEntry[]>;
 }
