@@ -95,7 +95,10 @@ export class QueryApi {
   constructor(options: QueryApiOptions) {
     this.queries = options.queries;
     this.events = options.events;
-    this.heartbeatMs = options.heartbeatMs ?? 20_000;
+    // Deliberately shorter than the shortest server idle timeout Bun
+    // applies by default, so a quiet stream is never mistaken for a dead
+    // connection. On a local socket the cost is one comment line.
+    this.heartbeatMs = options.heartbeatMs ?? 5_000;
   }
 
   /** Returns `null` when the request is not addressed to the query surface. */

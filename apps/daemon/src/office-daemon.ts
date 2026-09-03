@@ -63,6 +63,9 @@ export class OfficeDaemon {
       await this.prepareSocket();
       mkdirSync(dirname(this.options.socketPath), { recursive: true });
       this.startedAt = this.now();
+      // A Unix-socket server takes no idle-timeout option, so the event
+      // stream stays alive through its heartbeat rather than by relaxing a
+      // server bound. See QueryApi's heartbeat interval.
       server = Bun.serve({
         unix: this.options.socketPath,
         fetch: (request) => this.route(request),

@@ -134,7 +134,10 @@ export async function startDashboardHost(
   const server = Bun.serve({
     hostname,
     port: options.port ?? 0,
-    idleTimeout: 0,
+    // Bun's maximum, so a quiet event stream is not closed as idle. The
+    // stream's own heartbeat is the primary keep-alive; this only avoids
+    // fighting a short default.
+    idleTimeout: 255,
     fetch: (request) => handle(request),
   });
 
@@ -220,6 +223,10 @@ export async function startDashboardHost(
         method: "GET",
         unix: options.socketPath,
         headers: { accept: request.headers.get("accept") ?? "*/*" },
+        // A browser closing an event stream must close the upstream one too;
+        // without this the daemon would keep a subscriber for a client that is
+        // already gone.
+        signal: request.signal,
       });
     } catch {
       return json(

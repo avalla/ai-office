@@ -320,45 +320,52 @@ describe("dashboard loopback host", () => {
   test("streams invalidation through to the browser", async () => {
     await withHost(async ({ host, client, get }) => {
       const controller = new AbortController();
-      const response = await get("/api/events", {
-        headers: { cookie: `ai_office_dashboard=${host.token}` },
-        signal: controller.signal,
-      });
-      expect(response.headers.get("content-type")).toBe("text/event-stream");
-
-      const reader = response.body!.getReader();
-      const decoder = new TextDecoder();
       let seen = "";
-      const pump = (async () => {
-        try {
-          while (!seen.includes("event: invalidate")) {
-            const chunk = await reader.read();
-            if (chunk.done) break;
-            seen += decoder.decode(chunk.value);
+      let pump: Promise<void> = Promise.resolve();
+      try {
+        const response = await get("/api/events", {
+          headers: { cookie: `ai_office_dashboard=${host.token}` },
+          signal: controller.signal,
+        });
+        expect(response.headers.get("content-type")).toBe("text/event-stream");
+
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+        pump = (async () => {
+          try {
+            while (!seen.includes("event: invalidate")) {
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              seen += decoder.decode(chunk.value);
+            }
+          } catch {
+            // Aborting the request is how this loop is expected to end.
           }
-        } catch {
-          // Aborting the request is how this loop is expected to end.
-        }
-      })();
+        })();
 
-      for (
-        let attempt = 0;
-        attempt < 200 && !seen.includes("ready");
-        attempt += 1
-      )
-        await Bun.sleep(5);
-      await client.execute(["project:create", "Streamed"]);
-      for (
-        let attempt = 0;
-        attempt < 400 && !seen.includes("event: invalidate");
-        attempt += 1
-      )
-        await Bun.sleep(5);
+        // Named waits so a stall reports which step never happened instead of
+        // surfacing as an opaque test timeout.
+        const waitFor = async (fragment: string, label: string) => {
+          for (let attempt = 0; attempt < 600; attempt += 1) {
+            if (seen.includes(fragment)) return;
+            await Bun.sleep(10);
+          }
+          throw new Error(
+            `Timed out waiting for ${label}. Received so far: ${JSON.stringify(seen)}`,
+          );
+        };
 
-      expect(seen).toContain("event: invalidate");
-      expect(seen).toContain('"topic":"project.updated"');
-      controller.abort();
-      await pump;
+        await waitFor("event: ready", "the proxied ready event");
+        await client.execute(["project:create", "Streamed"]);
+        await waitFor("event: invalidate", "the proxied invalidation event");
+
+        expect(seen).toContain('"topic":"project.updated"');
+      } finally {
+        // Always release the stream: leaving it open would block the daemon's
+        // graceful stop in the surrounding cleanup.
+        controller.abort();
+        await pump;
+      }
     });
   }, 30_000);
 
