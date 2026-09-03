@@ -1,6 +1,12 @@
 import { CapabilityValidationError } from "./errors.ts";
 
-const sensitiveFieldKeys = new Set([
+/**
+ * Canonical sensitive field names, already normalized. Exported so that
+ * publication boundaries can apply a stricter containment rule without
+ * inventing a second vocabulary; authorization itself keeps the exact-match
+ * semantics below.
+ */
+export const sensitiveFieldNames = [
   "apikey",
   "authorization",
   "credential",
@@ -9,7 +15,9 @@ const sensitiveFieldKeys = new Set([
   "password",
   "secret",
   "token",
-]);
+] as const;
+
+const sensitiveFieldKeys = new Set<string>(sensitiveFieldNames);
 
 export function normalizeSensitiveFieldKey(key: string): string {
   return key.toLowerCase().replaceAll(/[^a-z0-9]/g, "");
