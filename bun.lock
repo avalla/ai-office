@@ -23,6 +23,9 @@
     "apps/daemon": {
       "name": "@ai-office/daemon",
     },
+    "apps/dashboard": {
+      "name": "@ai-office/dashboard",
+    },
     "packages/agent-client-integrations": {
       "name": "@ai-office/agent-client-integrations",
     },
@@ -71,6 +74,8 @@
     "@ai-office/connector-sdk": ["@ai-office/connector-sdk@workspace:packages/connector-sdk"],
 
     "@ai-office/daemon": ["@ai-office/daemon@workspace:apps/daemon"],
+
+    "@ai-office/dashboard": ["@ai-office/dashboard@workspace:apps/dashboard"],
 
     "@ai-office/domain": ["@ai-office/domain@workspace:packages/domain"],
 
