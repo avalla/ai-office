@@ -11,6 +11,8 @@
 import type {
   ActivityEntry,
   AgentRunDetail,
+  AgentRunEventEntry,
+  BoundedList,
   AgentRunState,
   AgentState,
   AttentionReason,
@@ -201,12 +203,37 @@ export interface EmptyState {
   detail: string;
 }
 
+/**
+ * A displayed sample plus the sentence that says what it leaves out.
+ *
+ * The dashboard renders `items`, but it must never let a reader mistake that
+ * page for the count: `note` is non-null exactly when the sample is truncated.
+ */
+export interface SampleView<T> {
+  items: readonly T[];
+  total: number;
+  note: string | null;
+}
+
+export function sampleView<T>(
+  list: BoundedList<T>,
+  noun: string,
+): SampleView<T> {
+  return {
+    items: list.items,
+    total: list.total,
+    note: list.truncated
+      ? `showing ${list.items.length} of ${list.total} ${noun}`
+      : null,
+  };
+}
+
 export interface OverviewView {
   generatedAt: string;
   totals: DashboardOverview["totals"];
   projects: readonly ProjectSummary[];
-  attention: readonly AttentionReason[];
-  activeRuns: readonly AgentRunState[];
+  attention: SampleView<AttentionReason>;
+  activeRuns: SampleView<AgentRunState>;
   activity: readonly ActivityEntry[];
   empty: EmptyState | null;
 }
@@ -218,9 +245,9 @@ export function overviewViewModel(dashboard: DashboardOverview): OverviewView {
     projects: [...dashboard.projects].sort((left, right) =>
       left.name.localeCompare(right.name),
     ),
-    attention: dashboard.attentionReasons,
-    activeRuns: dashboard.activeRuns,
-    activity: dashboard.recentActivity,
+    attention: sampleView(dashboard.attention, "items needing attention"),
+    activeRuns: sampleView(dashboard.activeRuns, "active runs"),
+    activity: dashboard.recentActivity.items,
     empty:
       dashboard.projects.length > 0
         ? null
@@ -235,13 +262,13 @@ export function overviewViewModel(dashboard: DashboardOverview): OverviewView {
 export interface ProjectView {
   generatedAt: string;
   summary: ProjectSummary;
-  attention: readonly AttentionReason[];
-  tasks: readonly TaskOperationalState[];
+  attention: SampleView<AttentionReason>;
+  tasks: SampleView<TaskOperationalState>;
   divergentTasks: readonly TaskOperationalState[];
-  pipelines: readonly PipelineRunState[];
+  pipelines: SampleView<PipelineRunState>;
   activePipelines: readonly PipelineRunState[];
   agents: readonly AgentState[];
-  reviews: readonly ReviewState[];
+  reviews: SampleView<ReviewState>;
   pendingReviews: readonly ReviewState[];
   activity: readonly ActivityEntry[];
   empty: EmptyState | null;
@@ -259,7 +286,9 @@ const taskOrder: readonly TaskOperationalStatus[] = [
 ];
 
 export function projectViewModel(detail: ProjectDetail): ProjectView {
-  const tasks = [...detail.tasks].sort((left, right) => {
+  // Sorting reorders the displayed page only; which tasks are on it, and every
+  // count beside them, were decided by the query surface.
+  const tasks = [...detail.tasks.items].sort((left, right) => {
     const byStatus =
       taskOrder.indexOf(left.operationalStatus) -
       taskOrder.indexOf(right.operationalStatus);
@@ -271,23 +300,29 @@ export function projectViewModel(detail: ProjectDetail): ProjectView {
   return {
     generatedAt: formatTimestamp(detail.generatedAt),
     summary: detail.summary,
-    attention: detail.summary.attentionReasons,
-    tasks,
+    attention: sampleView(detail.summary.attention, "items needing attention"),
+    tasks: {
+      items: tasks,
+      total: detail.tasks.total,
+      note: detail.tasks.truncated
+        ? `showing ${tasks.length} of ${detail.tasks.total} tasks`
+        : null,
+    },
     divergentTasks: tasks.filter((task) => task.divergesFromRecordedStatus),
-    pipelines: detail.pipelines,
-    activePipelines: detail.pipelines.filter(
+    pipelines: sampleView(detail.pipelines, "pipeline runs"),
+    activePipelines: detail.pipelines.items.filter(
       (pipeline) => pipeline.status === "active",
     ),
     agents: detail.agents,
-    reviews: detail.reviews,
-    pendingReviews: detail.reviews.filter(
+    reviews: sampleView(detail.reviews, "reviews"),
+    pendingReviews: detail.reviews.items.filter(
       (review) => review.status === "pending",
     ),
-    activity: detail.recentActivity,
+    activity: detail.recentActivity.items,
     empty:
-      detail.tasks.length === 0 &&
-      detail.pipelines.length === 0 &&
-      detail.runs.length === 0
+      detail.tasks.total === 0 &&
+      detail.pipelines.total === 0 &&
+      detail.runs.total === 0
         ? {
             headline: "No activity yet",
             detail:
@@ -300,7 +335,7 @@ export function projectViewModel(detail: ProjectDetail): ProjectView {
 export interface RunView {
   run: AgentRunState;
   duration: string;
-  events: AgentRunDetail["events"];
+  events: SampleView<AgentRunEventEntry>;
   actions: AgentRunDetail["actions"];
   pipeline: PipelineRunState | null;
   reviews: readonly ReviewState[];
@@ -312,11 +347,11 @@ export function runViewModel(detail: AgentRunDetail): RunView {
   return {
     run: detail.run,
     duration: formatDuration(detail.run.durationMs),
-    events: detail.events,
+    events: sampleView(detail.events, "run events"),
     actions: detail.actions,
     pipeline: detail.pipeline,
     reviews: detail.reviews,
-    activity: detail.activity,
+    activity: detail.activity.items,
     attention: detail.attentionReasons,
   };
 }

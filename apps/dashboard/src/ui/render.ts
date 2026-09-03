@@ -27,6 +27,7 @@ import {
   taskStatusLabel,
   taskStatusTone,
   type OverviewView,
+  type SampleView,
   type ProjectView,
   type RunView,
   type ToneName,
@@ -56,9 +57,13 @@ function empty(headline: string, detail: string): string {
   return `<div class="empty"><p class="empty-headline">${escapeHtml(headline)}</p><p class="empty-detail">${escapeHtml(detail)}</p></div>`;
 }
 
-function section(title: string, body: string, note?: string): string {
+function section(
+  title: string,
+  body: string,
+  note?: string | null,
+): string {
   const heading =
-    note === undefined
+    note === undefined || note === null
       ? escapeHtml(title)
       : `${escapeHtml(title)} <span class="section-note">${escapeHtml(note)}</span>`;
   return `<section class="panel"><h2>${heading}</h2>${body}</section>`;
@@ -68,10 +73,21 @@ function section(title: string, body: string, note?: string): string {
 /* Shared fragments                                                            */
 /* -------------------------------------------------------------------------- */
 
-function attentionList(reasons: readonly AttentionReason[]): string {
-  if (reasons.length === 0)
+/** Exact, entity-scoped attention: no total to compare against. */
+function attentionReasonList(reasons: readonly AttentionReason[]): string {
+  return attentionList({
+    items: reasons,
+    total: reasons.length,
+    note: null,
+  });
+}
+
+function attentionList(sample: SampleView<AttentionReason>): string {
+  if (sample.total === 0)
     return `<p class="calm">Nothing is waiting for a human.</p>`;
-  const items = reasons
+  if (sample.items.length === 0)
+    return `<p class="calm">${sample.total} items need attention.</p>`;
+  const items = sample.items
     .map(
       (reason) =>
         `<li class="attention-item">${badge(attentionLabel(reason.kind), "attention")}<span class="attention-summary">${escapeHtml(reason.summary)}</span><span class="meta">${escapeHtml(reason.subjectType)} ${escapeHtml(shortId(reason.subjectId))} · ${escapeHtml(formatTimestamp(reason.since))}</span></li>`,
@@ -183,7 +199,7 @@ function projectCard(project: ProjectSummary): string {
         : "no active milestone"
       : `${project.currentMilestone.title}`;
   const attention = project.attentionRequired
-    ? badge(`needs attention: ${project.attentionReasons.length}`, "attention")
+    ? badge(`needs attention: ${project.attention.total}`, "attention")
     : badge("clear", "good");
   const path = project.repository.localPaths[0];
   return `<article class="project-card">
@@ -212,9 +228,9 @@ export function renderOverview(view: OverviewView): string {
 
   const projects = view.projects.map(projectCard).join("");
   const runs =
-    view.activeRuns.length === 0
+    view.activeRuns.total === 0
       ? `<p class="calm">No agent runs are in flight.</p>`
-      : `<div class="table-scroll"><table><thead><tr><th>Run</th><th>Status</th><th>Task</th><th>Agent</th><th>Updated</th></tr></thead><tbody>${view.activeRuns
+      : `<div class="table-scroll"><table><thead><tr><th>Run</th><th>Status</th><th>Task</th><th>Agent</th><th>Updated</th></tr></thead><tbody>${view.activeRuns.items
           .map(
             (run) =>
               `<tr><td><a class="mono" href="${routeHref({ kind: "run", runId: run.runId })}">${escapeHtml(shortId(run.runId))}</a></td><td>${badge(run.status, runStatusTone(run.status))}</td><td>${escapeHtml(run.task?.title ?? run.runId)}</td><td>${escapeHtml(run.agent?.name ?? "—")}</td><td class="mono">${escapeHtml(formatTimestamp(run.updatedAt))}</td></tr>`,
@@ -223,9 +239,13 @@ export function renderOverview(view: OverviewView): string {
 
   return [
     renderStats(view),
-    section("Needs attention", attentionList(view.attention)),
+    section(
+      "Needs attention",
+      attentionList(view.attention),
+      view.attention.note,
+    ),
     section("Projects", `<div class="project-grid">${projects}</div>`),
-    section("Active runs", runs),
+    section("Active runs", runs, view.activeRuns.note),
     section("Recent activity", activityList(view.activity)),
   ].join("");
 }
@@ -262,9 +282,9 @@ export function renderProject(view: ProjectView): string {
       : `<p><strong>${escapeHtml(summary.currentMilestone.title)}</strong> — ${summary.currentMilestone.requirements.open} open / ${summary.currentMilestone.requirements.verified} verified of ${summary.currentMilestone.requirements.total} requirements</p>`;
 
   const pipelines =
-    view.pipelines.length === 0
+    view.pipelines.total === 0
       ? `<p class="calm">No pipeline runs recorded.</p>`
-      : view.pipelines
+      : view.pipelines.items
           .map(
             (pipeline) =>
               `<div class="pipeline"><p class="pipeline-title">${escapeHtml(pipeline.pipelineName)} <span class="meta">${escapeHtml(pipeline.task?.title ?? pipeline.pipelineRunId)}</span> ${badge(pipeline.status, pipeline.status === "active" ? "active" : pipeline.status === "completed" ? "good" : "muted")}</p>${pipelineTrack(pipeline)}</div>`,
@@ -283,12 +303,20 @@ export function renderProject(view: ProjectView): string {
   return [
     header,
     section("Milestone", milestones),
-    section("Needs attention", attentionList(view.attention)),
-    section("Pipelines", pipelines),
-    section("Tasks", taskRows(view.tasks), `${view.tasks.length}`),
+    section(
+      "Needs attention",
+      attentionList(view.attention),
+      view.attention.note,
+    ),
+    section("Pipelines", pipelines, view.pipelines.note),
+    section(
+      "Tasks",
+      taskRows(view.tasks.items),
+      view.tasks.note ?? `${view.tasks.total}`,
+    ),
     divergence,
     section("Agents", agentRows(view.agents)),
-    section("Reviews", reviewRows(view.reviews)),
+    section("Reviews", reviewRows(view.reviews.items), view.reviews.note),
     section("Recent activity", activityList(view.activity)),
   ].join("");
 }
@@ -316,9 +344,9 @@ export function renderRun(view: RunView): string {
           .join("")}</ul>`;
 
   const events =
-    view.events.length === 0
+    view.events.total === 0
       ? `<p class="calm">No run events recorded.</p>`
-      : `<div class="table-scroll"><table><thead><tr><th>When</th><th>Status</th><th>Result</th><th>Error</th></tr></thead><tbody>${view.events
+      : `<div class="table-scroll"><table><thead><tr><th>When</th><th>Status</th><th>Result</th><th>Error</th></tr></thead><tbody>${view.events.items
           .map(
             (event) =>
               `<tr><td class="mono">${escapeHtml(formatTimestamp(event.occurredAt))}</td><td>${escapeHtml(event.status)}</td><td>${event.hasResult ? "yes" : "no"}</td><td>${event.hasError ? "yes" : "no"}</td></tr>`,
@@ -345,12 +373,12 @@ export function renderRun(view: RunView): string {
   return [
     `<div class="project-header"><h2>Run ${escapeHtml(shortId(run.runId))}</h2><p class="meta"><a href="${routeHref({ kind: "project", projectId: run.projectId })}">back to project</a></p></div>`,
     section("Overview", facts),
-    section("Needs attention", attentionList(view.attention)),
+    section("Needs attention", attentionReasonList(view.attention)),
     section("Pipeline", pipeline),
     section("Action intent", intent),
     section("Failure", failure),
     section("Controlled actions", actions),
-    section("Run events", events),
+    section("Run events", events, view.events.note),
     section("Reviews", reviewRows(view.reviews)),
     section("Run activity", activityList(view.activity)),
   ].join("");

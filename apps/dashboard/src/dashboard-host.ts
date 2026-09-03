@@ -211,8 +211,10 @@ export async function startDashboardHost(
         decision.status,
       );
 
-    // The token arrives once in the URL the CLI prints; it is exchanged for a
-    // cookie and redirected away so it never lingers in history or a referrer.
+    // The token arrives in the URL the CLI prints and is exchanged for a
+    // cookie, then redirected away so it stops travelling on later requests.
+    // The original URL is still whatever the browser recorded in history; see
+    // dashboard-session.ts for what this does and does not guarantee.
     const cookieHeaders =
       decision.kind === "adopt_token"
         ? { "set-cookie": sessionCookieValue(token) }

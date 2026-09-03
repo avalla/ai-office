@@ -1,28 +1,36 @@
 /**
  * Access rules for the loopback dashboard host.
  *
- * What these rules genuinely provide, and nothing more:
+ * What these rules genuinely provide:
  *
  * - the daemon itself keeps its owner-only Unix socket; opening a TCP port is
  *   this process's decision, made explicitly by the user, and it dies with the
  *   process;
- * - a loopback TCP port is reachable by *every* local Unix account, unlike a
- *   0600 socket. The per-process session token restores that separation: it is
- *   printed to the starting terminal and never written to disk, so another
- *   local user cannot read project state through this port;
  * - a `Host` allowlist blocks DNS rebinding, where a page the user visits
  *   resolves an attacker-controlled name to 127.0.0.1 and then reads responses
- *   as same-origin.
+ *   as same-origin;
+ * - the session token is a **process-local capability**. It is generated per
+ *   host process, held only in memory, never written to disk, and dies with the
+ *   command. Nothing reaches the query surface without it, so a process that
+ *   merely finds the open port — or a web page that guesses it — gets nothing.
  *
  * What they do NOT provide, and must never be described as providing:
  *
  * - authentication of a human. Nobody proves who they are here.
  * - separation between same-UID processes. Any process running as this user can
  *   read the terminal, the process environment, or simply talk to the daemon
- *   socket directly. That limit is the same one recorded in the existing trust
- *   model, and this surface does not change it.
+ *   socket directly.
+ * - **secrecy of the token from other local users.** The CLI hands the complete
+ *   URL, token included, to the platform opener (`open`, `cmd /c start`,
+ *   `xdg-open`), so it appears in that process's arguments, and the browser
+ *   records it in history. Whether another local account can read either is
+ *   platform-dependent, so this code claims neither. `--no-open` keeps the token
+ *   out of opener arguments; it cannot keep it out of browser history.
+ *
+ * Treat the token as a barrier to accidental and blind access, not as a secret.
+ * A loopback TCP port is reachable by every local account, and this mechanism
+ * narrows but does not close that.
  */
-
 export const sessionCookieName = "ai_office_dashboard";
 export const sessionTokenParameter = "token";
 
