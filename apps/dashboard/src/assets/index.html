@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>AI Office — operations</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="#/">AI Office</a>
+      <span class="top-note">read-only operations console</span>
+      <span id="connection" class="badge" data-tone="neutral">connecting</span>
+    </header>
+    <main id="app" class="app">
+      <section class="panel">
+        <div class="empty">
+          <p class="empty-headline">Loading operational state…</p>
+        </div>
+      </section>
+    </main>
+    <footer class="foot">
+      Local same-user observability surface. State is computed by the daemon;
+      this page renders it and never writes.
+    </footer>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
