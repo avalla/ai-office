@@ -3,8 +3,10 @@
  *
  * The shell owns everything impure: fetching, the invalidation stream, and the
  * single DOM write. Deciding what a thing means happens in the daemon; deciding
- * how it looks happens in `view-model.ts` and `render.ts`. Both of those are
- * pure and unit tested, so this file stays small enough to read in one sitting.
+ * how it looks happens in `view-model.ts` and `render.ts`; deciding *when* the
+ * view is trustworthy happens in `sync-controller.ts`. All three are pure or
+ * injected and unit tested, so this file stays small enough to read in one
+ * sitting.
  */
 
 import type {
@@ -18,6 +20,12 @@ import {
   renderProject,
   renderRun,
 } from "./render.ts";
+import {
+  connectionLabel,
+  connectionTone,
+  createSyncController,
+  type ConnectionState,
+} from "./sync-controller.ts";
 import {
   overviewViewModel,
   parseRoute,
@@ -52,6 +60,10 @@ async function getJson<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+/**
+ * Queries and renders one route. It rethrows after rendering the failure so the
+ * sync controller can tell a completed synchronization from a failed one.
+ */
 async function renderRoute(
   route: DashboardRoute,
   root: DashboardElement,
@@ -80,66 +92,45 @@ async function renderRoute(
       "Could not load operational state",
       error instanceof Error ? error.message : "Unknown error",
     );
+    throw error;
   }
 }
 
-function setStatus(text: string, tone: string): void {
+function setStatus(state: ConnectionState): void {
   const element = document.getElementById("connection");
   if (element === null) return;
-  element.textContent = text;
-  element.setAttribute("data-tone", tone);
+  element.textContent = connectionLabel(state);
+  element.setAttribute("data-tone", connectionTone(state));
 }
 
 export function start(): void {
   const root = mount();
-  let pending: number | undefined;
-  let inFlight = false;
-  let queued = false;
 
-  const refresh = async () => {
-    if (inFlight) {
-      queued = true;
-      return;
-    }
-    inFlight = true;
-    try {
-      await renderRoute(parseRoute(window.location.hash), root);
-    } finally {
-      inFlight = false;
-      if (queued) {
-        queued = false;
-        void refresh();
-      }
-    }
-  };
-
-  // Invalidation events arrive in bursts — one command can publish several
-  // topics — so coalesce them into a single refetch.
-  const scheduleRefresh = () => {
-    if (pending !== undefined) window.clearTimeout(pending);
-    pending = window.setTimeout(() => {
-      pending = undefined;
-      void refresh();
-    }, refreshDebounceMs);
-  };
-
-  window.addEventListener("hashchange", () => {
-    void refresh();
+  const controller = createSyncController({
+    refresh: (route) => renderRoute(route, root),
+    currentRoute: () => parseRoute(window.location.hash),
+    onStateChange: setStatus,
+    schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+    cancel: (handle) => window.clearTimeout(handle),
+    debounceMs: refreshDebounceMs,
   });
+
+  window.addEventListener("hashchange", () => controller.routeChanged());
 
   const BrowserEventSource =
     EventSource as unknown as DashboardEventSourceConstructor;
   const source = new BrowserEventSource("/api/events", {
     withCredentials: true,
   });
-  source.addEventListener("ready", () => setStatus("live", "good"));
-  source.addEventListener("invalidate", () => scheduleRefresh());
-  source.addEventListener("error", () =>
-    // EventSource reconnects on its own; the daemon sends a retry hint. The
-    // status line exists so a stale view is never mistaken for a live one.
-    setStatus("reconnecting", "attention"),
-  );
-  source.addEventListener("open", () => setStatus("live", "good"));
+  // `ready` and `open` both mean "a stream is established". Either one starts a
+  // fresh synchronization: the stream carries hints, not state, and it has no
+  // replay, so a reconnect alone proves nothing about what is displayed.
+  source.addEventListener("ready", () => controller.streamEstablished());
+  source.addEventListener("open", () => controller.streamEstablished());
+  source.addEventListener("invalidate", () => controller.invalidated());
+  // EventSource reconnects on its own; the daemon sends a retry hint. The
+  // status line exists so a stale view is never mistaken for a live one.
+  source.addEventListener("error", () => controller.streamLost());
 
-  void refresh();
+  controller.start();
 }

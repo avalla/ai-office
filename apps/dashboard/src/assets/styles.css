@@ -380,3 +380,8 @@ tr:last-child td {
   color: var(--ink-dim);
   font-size: 13px;
 }
+
+.more {
+  color: var(--muted);
+  font-size: 12px;
+}
