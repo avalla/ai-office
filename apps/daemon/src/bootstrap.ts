@@ -6,8 +6,14 @@ import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.por
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
+import { SqliteOperationalReadRepository } from "@ai-office/storage-sqlite/repositories/sqlite-operational-read.repository.ts";
+import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
+import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import { OperationalEventBus } from "@ai-office/application/events/operational-event-bus.ts";
+import { OperationalQueryService } from "@ai-office/application/queries/operational-query-service.ts";
 import { LocalCommandHandler } from "./local-command-handler.ts";
 import { OfficeDaemon } from "./office-daemon.ts";
+import { QueryApi } from "./query-api.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
@@ -63,8 +69,20 @@ export async function bootstrap(
     new SystemClock(),
   );
 
+  // The query surface reuses the daemon's already-migrated connection. It is
+  // read-only, so it needs no transaction runner and adds no write path.
+  const queryEvents = new OperationalEventBus();
+  const queries = new OperationalQueryService({
+    reads: new SqliteOperationalReadRepository(database),
+    tasks: new SqliteTaskRepository(database),
+    pipelines: new SqlitePipelineRunRepository(database),
+    clock: new SystemClock(),
+  });
+
   return new OfficeDaemon({
     socketPath: runtimePaths.socketPath,
+    queryApi: new QueryApi({ queries, events: queryEvents }),
+    queryEvents,
     handler: new LocalCommandHandler(
       runtimePaths,
       commandRoot,
