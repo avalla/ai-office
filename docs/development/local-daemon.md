@@ -43,7 +43,14 @@ The transport is HTTP over a Unix domain socket. No TCP port is opened.
 ```text
 GET  /health
 POST /commands
+GET  /api/*        # read-only query surface
+GET  /api/events   # invalidation stream
 ```
+
+`/commands` is the command side and is unchanged. `/api` is a separate,
+separately versioned read-only contract used by the operational dashboard; it
+accepts `GET` only and adds no mutation path. See the
+[operational dashboard](dashboard.md).
 
 Requests and responses carry `protocolVersion: 1` and a caller-generated
 `requestId`. The daemon validates requests before dispatch and returns captured
@@ -101,6 +108,11 @@ payloads so secrets are not copied into the audit trail.
 - Unix domain sockets target macOS and Linux; Windows named pipes are not yet supported.
 - The daemon is foreground-only; service installation and background supervision are future work.
 - Authentication relies on local filesystem permissions and the owner-only socket mode.
+- The daemon opens no TCP port. `ai-office dashboard` runs a separate foreground
+  loopback host that serves the console and forwards `/api/*` to this socket;
+  the port is released when that command stops. Its session token and `Host`
+  check exclude other local users and rebound DNS names but authenticate no
+  human and separate no same-UID process.
 - Interrupted agent runs and expired budget reservations are discoverable and
   recoverable, but recovery is explicit: restart does not silently retry runs,
   remove worktrees, or finalize accounting records.

@@ -134,6 +134,21 @@ sends stateful product commands to that socket. Help and the explicitly offline
 `runtime:purge` lifecycle command are local; purge refuses to run while a
 healthy daemon is reachable and requires approval of its exact plan hash.
 
+The same socket carries a second, separately versioned contract: a read-only
+query surface under `/api`. Commands and queries are distinct sides of the same
+daemon, and the query side adds no mutation path.
+
+```text
+                  AI OFFICE DAEMON
+                         |
+        +----------------+----------------+
+        |                |                |
+     Commands          Queries          Events
+        |                |                |
+       CLI          Dashboard/API    invalidation
+      Agents          Humans            stream
+```
+
 Short commands enter a FIFO queue. Long-running run execution is dispatched outside that global queue. SQLite runs in WAL mode, and transactions remain short: repository scans, prompts, LLM calls, simulated agent work, and filesystem mutations happen outside open transactions.
 
 Daemon lifecycle and sanitized command outcomes are appended to `audit_event`. Agent-run transitions have their own append-only event stream. Generated project and governance Markdown views are deterministic projections and are not read back as authoritative state.
@@ -173,6 +188,36 @@ manifest crosses into the daemon. LangChain does not cross into
 application/domain code or own orchestration.
 
 Governance stores milestones, requirements, ADRs, reviews, and approval decisions as structured project state. This M5 governance approval model is separate from M6C-lite `ActionApproval`, which binds a controlled filesystem mutation to its authorization and simulation artifact.
+
+## Operational read models
+
+Operational state is computed once, in the application layer, and published as
+explicit read models. Every observability surface consumes those models rather
+than re-deriving semantics from persisted rows.
+
+```text
+apps/dashboard -> daemon query API -> application query service
+               -> operational read models -> repository ports -> SQLite
+```
+
+HTTP query handlers parse, validate, and serialize; they hold no SQL and no
+domain logic, so a future CLI query command or MCP tool can consume the same
+models without HTTP. Query responses carry `queryApiVersion`, versioned
+independently of `daemonProtocolVersion`.
+
+Persisted records do not always express their operational meaning, and the read
+models say so rather than guessing. `ScheduleAgentRun` deliberately does not
+transition the task it schedules, so a task legitimately reads `pending` while a
+run for it executes; `TaskOperationalState` therefore reports the persisted
+`recordedStatus`, the derived `operationalStatus`, and the reasons they differ.
+Relationships the domain does not model — task to requirement, task to milestone
+— are published as explicitly unavailable rather than defaulted.
+
+An in-memory bus publishes invalidation topics after a command completes. Topics
+carry no state and nothing new is persisted, so the stream cannot become a
+competing source of truth. See the
+[operational dashboard](../development/dashboard.md) and
+[ADR-0015](../adr/ADR-0015-operational-read-models-and-loopback-dashboard.md).
 
 ## Controlled resources and side effects
 
@@ -240,7 +285,16 @@ copied identities fail closed.
 
 M6C-lite is a trusted-local, single-user boundary. It protects against accidental or unauthorized agent access, traversal and path escape, sensitive paths, stale simulation or authorization, replay, and mutation without approval.
 
-It does not defend against a hostile process with the same Unix credentials concurrently renaming or unlinking entries in the same filesystem namespace. Approval uses a caller-supplied audit identity rather than cryptographic user presence. The Rust/`openat2` spike, authenticated approval research, tamper-evident audit, and stronger crash reconciliation are preserved as M10 hardening baselines and are not linked into production.
+It does not defend against a hostile process with the same Unix credentials concurrently renaming or unlinking entries in the same filesystem namespace. Approval uses a caller-supplied audit identity rather than cryptographic user presence.
+
+The dashboard is a local, same-user observability surface and introduces no new
+authenticated human or operator boundary. The daemon still opens no TCP
+listener; `ai-office dashboard` owns a loopback port for as long as the command
+runs. A loopback TCP port is reachable by every local Unix account, unlike the
+0600 socket, so that host requires a per-process session token and validates the
+`Host` header. Those measures exclude other local users and rebound DNS names;
+they do not authenticate a human and do not separate same-UID processes. The
+surface is read-only and changes no authorization. The Rust/`openat2` spike, authenticated approval research, tamper-evident audit, and stronger crash reconciliation are preserved as M10 hardening baselines and are not linked into production.
 
 ## Evolution boundaries
 
