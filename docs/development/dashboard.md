@@ -218,6 +218,115 @@ carries both:
 The project page lists divergent tasks in their own section, so the mismatch is
 visible rather than silently resolved.
 
+### A task may have several active runs, and the lease says which one owns it
+
+`task_lock` is a **lease**, not a mutex. `acquireTaskLock` deliberately lets an
+expired lease be taken over —
+`ON CONFLICT(task_id) DO UPDATE ... WHERE task_lock.expires_at <= excluded.acquired_at`
+— and taking it over does not terminate the previous run. `ExecuteAgentRun`
+never renews the lease while it runs; it releases it during final cleanup. So
+this is ordinary persisted state:
+
+```text
+run-A running, lease -> run-A
+lease expires
+run-B queued,  lease -> run-B
+run-A is still running
+```
+
+Two active runs, one task, and nothing wrong with the write model. The read
+model therefore carries a list:
+
+| Field | Guarantee |
+| --- | --- |
+| `activeAgentRuns` | `{ total, items, truncated }`; `total` is the exact active run count |
+| `primaryAgentRun` | `activeAgentRuns.items[0]` — a *representative*, not a uniqueness claim |
+| `lease` | the persisted `task_lock` row, or `null` when none exists |
+| `runsWithoutLeaseCount` | exact number of active runs that do not own the lease |
+
+Items are ordered by `updated_at` descending, ties broken by run id descending.
+Each `TaskActiveRunReference` carries its own agent, pipeline linkage, and
+`holdsLease`, because concurrent runs may belong to different agents — a single
+`assignedAgent` cannot describe them all, and it is documented as the
+representative's agent.
+
+**`TaskLeaseState`** answers one question: *which active run currently owns
+execution exclusivity for this task?* It reports `ownerRunId`, `acquiredAt`,
+`expiresAt`, `expired`, and `ownerRunStatus`, and it is `null` when no lease row
+exists rather than a guess. The read side never writes it.
+
+### Operational status under concurrent runs
+
+`operationalStatus` is derived from **exact task-scoped counts**, never from the
+representative:
+
+```text
+task.status terminal (cancelled / failed / completed)  -> that status
+task.status blocked                                    -> blocked
+pending review or stage awaiting approval              -> awaiting_review
+task.status waiting_review                             -> awaiting_review
+activeRunCount > 0 and executingRunCount > 0           -> in_progress
+activeRunCount > 0                                     -> scheduled
+no active run, latest run failed, no active stage      -> failed
+task.status running                                    -> in_progress
+otherwise                                              -> not_started
+```
+
+`executingRunCount` counts active runs whose status is `running` or `reviewing`.
+So `queued` + `running` is `in_progress` and `queued` + `preparing` is
+`scheduled` regardless of which run happens to sort first, and truncating the
+sample cannot change either. The review and approval precedence above the run
+rules is unchanged and deliberate: a task waiting on a human reads as waiting
+even while an agent run is still in flight. Terminal recorded task status keeps
+its existing precedence over everything.
+
+### Which lease conditions are actionable
+
+Concurrency itself is **not** an error, because lease takeover is intentionally
+supported. Only one condition is treated as actionable, and it gets the
+`task_run_without_lease` attention reason:
+
+| Condition | Treatment |
+| --- | --- |
+| Several active runs, one holds the lease | reported as facts; the non-owners raise attention |
+| An active run does not own the current lease | **attention** — it is executing without the exclusivity the runtime grants |
+| Active runs exist but no lease row does | **attention** — `ExecuteAgentRun` releases the lease before finalizing the run, so a crash in between strands it |
+| Lease expired, nobody took it over | reported as `lease.expired`, **no attention** — `ExecuteAgentRun` does not renew, so any long run reaches this normally. It means the lease is takeable, not broken |
+| Lease outlived a terminal owner | its active runs count as unleased, since no active run holds exclusivity |
+
+`ExecuteAgentRun` reaches the same conclusion independently: releasing a lease
+it no longer owns raises `TASK_LOCK_RELEASE_FAILED` during cleanup.
+
+The reason is counted per **task**, by the exact aggregate
+`countTasksWithUnleasedRuns`, and sampled by `listUnleasedTaskRuns` — same unit
+on both sides, so one attention item means one contested task and
+`attention.total` stays exact. A run that lost its lease is **never discarded**:
+it stays in `activeAgentRuns`, in `activeAgentRuns.total`, and in every run
+aggregate.
+
+**Deliberately not changed:** no write-side one-run-per-task restriction was
+added. Whether a run that loses its lease should stop executing is a scheduling
+and concurrency decision for the runtime, not something a dashboard should force
+by narrowing a read model. The read side names the distinction between a
+persisted `running` status and lost execution ownership; it does not resolve it.
+
+### What each run count counts
+
+| Count | Counts |
+| --- | --- |
+| `ProjectSummary.activeAgentRuns` | persisted runs whose status is non-terminal, project-wide |
+| `DashboardOverview.totals.activeAgentRuns` | the sum of the above across projects |
+| `TaskOperationalState.activeAgentRuns.total` | the same predicate scoped to one task |
+| `AgentState.activeRuns.total` | the same predicate scoped to one agent |
+| `ProjectSummary.agentsWorking` | distinct **enabled agents** holding at least one such run — never a run count |
+
+Every run count uses definition **A**: *persisted liveness*. None of them means
+"runs that still hold valid execution authority" — a run whose lease was taken
+over keeps its non-terminal status and stays counted. Execution authority is a
+separate, explicitly named concept carried by `TaskLeaseState` and
+`TaskActiveRunReference.holdsLease`. The dashboard never switches between the
+two meanings silently.
+
 ### Relationships the domain does not model
 
 Two things a dashboard would like to show do not exist in the current schema:

@@ -13,7 +13,11 @@ import {
   sanitizeActivityDetail,
 } from "@ai-office/application/read-models/activity-sanitization.ts";
 import type { AgentReference } from "@ai-office/application/read-models/operational-read-models.ts";
-import type { AgentActiveStageRecord } from "@ai-office/application/ports/operational-read.port.ts";
+import type {
+  AgentActiveStageRecord,
+  TaskLeaseRecord,
+} from "@ai-office/application/ports/operational-read.port.ts";
+import type { AgentRunStatus } from "@ai-office/domain/agent/agent-run.ts";
 import {
   agentRunAttentionReasons,
   isActiveAgentRunStatus,
@@ -207,20 +211,54 @@ function taskState(input: {
   pipelineRun?: PipelineRunProps | null;
   reviews?: readonly ReturnType<typeof projectReviewState>[];
   agentsById?: ReadonlyMap<string, AgentReference>;
+  lease?: TaskLeaseRecord | null;
+  now?: Date;
+  /* Overrides that hand the projection a deliberately truncated sample beside
+   * a larger exact count. */
+  activeRunSample?: readonly OperationalAgentRunRecord[];
+  activeRunCount?: number;
+  executingRunCount?: number;
 }) {
   const runs = [...(input.runs ?? [])].sort(byUpdatedDesc);
   const pending = (input.reviews ?? []).filter(
     (review) => review.status === "pending",
   );
+  // Every active run, not just the first: the task lock is a lease, so a task
+  // may legitimately hold several.
+  const active = runs.filter((run) => isActiveAgentRunStatus(run.status));
+  const executing = active.filter(
+    (run) => run.status === "running" || run.status === "reviewing",
+  );
   return projectTaskOperationalState({
     task: input.task,
-    activeRun: runs.find((run) => isActiveAgentRunStatus(run.status)) ?? null,
+    activeRuns: input.activeRunSample ?? active,
+    activeRunCount: input.activeRunCount ?? active.length,
+    executingRunCount: input.executingRunCount ?? executing.length,
     latestRun: runs[0] ?? null,
+    lease: input.lease ?? null,
+    now: input.now ?? at("2026-09-03T10:10:00.000Z"),
     pipelineRun: input.pipelineRun ?? null,
     pendingReviewCount: pending.length,
     earliestPendingReview: pending[0] ?? null,
     agentsById: input.agentsById ?? new Map(),
   });
+}
+
+/** A lease held by `runId`, expiring after the default evaluation instant. */
+function lease(input: {
+  runId: string;
+  ownerRunStatus?: AgentRunStatus | null;
+  expiresAt?: Date;
+  acquiredAt?: Date;
+}): TaskLeaseRecord {
+  return {
+    taskId: "task-1",
+    ownerRunId: input.runId,
+    acquiredAt: input.acquiredAt ?? at("2026-09-03T10:00:00.000Z"),
+    expiresAt: input.expiresAt ?? at("2026-09-03T10:30:00.000Z"),
+    ownerRunStatus:
+      input.ownerRunStatus === undefined ? "running" : input.ownerRunStatus,
+  };
 }
 
 function agentState(input: {
@@ -287,7 +325,8 @@ describe("task operational state", () => {
     expect(state.divergenceReasons).toEqual([
       "agent_run_scheduled_without_task_transition",
     ]);
-    expect(state.activeAgentRun?.runId).toBe("run-1");
+    expect(state.primaryAgentRun?.runId).toBe("run-1");
+    expect(state.activeAgentRuns.total).toBe(1);
   });
 
   test("reports a pending task with a running run as in progress and divergent", () => {
@@ -303,6 +342,171 @@ describe("task operational state", () => {
     expect(state.divergenceReasons).toEqual([
       "agent_run_active_without_task_transition",
     ]);
+  });
+
+  test("derives status from every active run, not from the representative", () => {
+    // `queued` sorts first here, but one run is executing, so the task is in
+    // progress. Reading the representative alone would report `scheduled`.
+    const inProgress = taskState({
+      task: task({ status: "pending" }),
+      runs: [
+        run({
+          id: "run-running",
+          status: "running",
+          updatedAt: at("2026-09-03T10:01:00.000Z"),
+        }),
+        run({
+          id: "run-queued",
+          status: "queued",
+          startedAt: null,
+          updatedAt: at("2026-09-03T10:09:00.000Z"),
+        }),
+      ],
+    });
+    expect(inProgress.primaryAgentRun?.runId).toBe("run-queued");
+    expect(inProgress.operationalStatus).toBe("in_progress");
+    expect(inProgress.divergenceReasons).toEqual([
+      "agent_run_active_without_task_transition",
+    ]);
+    expect(inProgress.activeAgentRuns.total).toBe(2);
+
+    // Nothing has started executing yet.
+    const scheduled = taskState({
+      task: task({ status: "pending" }),
+      runs: [
+        run({ id: "run-queued", status: "queued", startedAt: null }),
+        run({
+          id: "run-preparing",
+          status: "preparing",
+          updatedAt: at("2026-09-03T10:09:00.000Z"),
+        }),
+      ],
+    });
+    expect(scheduled.operationalStatus).toBe("scheduled");
+    expect(scheduled.divergenceReasons).toEqual([
+      "agent_run_scheduled_without_task_transition",
+    ]);
+
+    const reviewing = taskState({
+      task: task({ status: "running" }),
+      runs: [
+        run({ id: "run-running", status: "running" }),
+        run({
+          id: "run-reviewing",
+          status: "reviewing",
+          updatedAt: at("2026-09-03T10:09:00.000Z"),
+        }),
+      ],
+    });
+    expect(reviewing.operationalStatus).toBe("in_progress");
+    expect(reviewing.activeAgentRuns.total).toBe(2);
+  });
+
+  test("a truncated active-run sample never changes the task status", () => {
+    // The sample carries only the queued run; the exact counts say one of the
+    // task's active runs is executing.
+    const state = taskState({
+      task: task({ status: "pending" }),
+      runs: [],
+      activeRunSample: [run({ id: "run-queued", status: "queued" })],
+      activeRunCount: 4,
+      executingRunCount: 2,
+    });
+
+    expect(state.operationalStatus).toBe("in_progress");
+    expect(state.activeAgentRuns.total).toBe(4);
+    expect(state.activeAgentRuns.truncated).toBe(true);
+    expect(state.primaryAgentRun?.runId).toBe("run-queued");
+  });
+
+  test("reports which active run owns the task lease after a takeover", () => {
+    const state = taskState({
+      task: task({ status: "running" }),
+      runs: [
+        run({
+          id: "run-a",
+          status: "running",
+          updatedAt: at("2026-09-03T10:01:00.000Z"),
+        }),
+        run({
+          id: "run-b",
+          status: "queued",
+          startedAt: null,
+          updatedAt: at("2026-09-03T10:09:00.000Z"),
+        }),
+      ],
+      lease: lease({ runId: "run-b", ownerRunStatus: "queued" }),
+    });
+
+    expect(state.lease?.ownerRunId).toBe("run-b");
+    expect(state.lease?.expired).toBe(false);
+    const byId = new Map(
+      state.activeAgentRuns.items.map((item) => [item.runId, item]),
+    );
+    expect(byId.get("run-b")?.holdsLease).toBe(true);
+    expect(byId.get("run-a")?.holdsLease).toBe(false);
+
+    // Exactly one active run is executing without exclusivity.
+    expect(state.runsWithoutLeaseCount).toBe(1);
+    expect(
+      state.attentionReasons.find(
+        (reason) => reason.kind === "task_run_without_lease",
+      ),
+    ).toMatchObject({
+      subjectType: "task",
+      subjectId: "task-1",
+      summary: "1 active run of this task no longer owns its execution lease",
+    });
+  });
+
+  test("an expired lease with a single active run is a fact, not attention", () => {
+    // `ExecuteAgentRun` never renews the lease, so expiry during a long run is
+    // expected. Nothing is competing for the task, so nothing is actionable.
+    const state = taskState({
+      task: task({ status: "running" }),
+      runs: [run({ id: "run-a", status: "running" })],
+      lease: lease({
+        runId: "run-a",
+        expiresAt: at("2026-09-03T10:05:00.000Z"),
+      }),
+      now: at("2026-09-03T10:10:00.000Z"),
+    });
+
+    expect(state.lease?.expired).toBe(true);
+    expect(state.lease?.ownerRunId).toBe("run-a");
+    expect(state.runsWithoutLeaseCount).toBe(0);
+    expect(
+      state.attentionReasons.map((reason) => reason.kind),
+    ).not.toContain("task_run_without_lease");
+  });
+
+  test("an active run with no lease row is named as holding none", () => {
+    const state = taskState({
+      task: task({ status: "running" }),
+      runs: [run({ id: "run-a", status: "running" })],
+      lease: null,
+    });
+
+    expect(state.lease).toBeNull();
+    expect(state.primaryAgentRun?.holdsLease).toBe(false);
+    expect(state.runsWithoutLeaseCount).toBe(1);
+    expect(
+      state.attentionReasons.find(
+        (reason) => reason.kind === "task_run_without_lease",
+      )?.summary,
+    ).toBe("1 active run of this task holds no execution lease");
+  });
+
+  test("a lease that outlived its terminal owner leaves the live run unleased", () => {
+    const state = taskState({
+      task: task({ status: "running" }),
+      runs: [run({ id: "run-b", status: "running" })],
+      lease: lease({ runId: "run-a", ownerRunStatus: "completed" }),
+    });
+
+    // The lease owner is terminal, so no active run holds exclusivity.
+    expect(state.lease?.ownerRunStatus).toBe("completed");
+    expect(state.runsWithoutLeaseCount).toBe(1);
   });
 
   test("a running task with no run and a failed last run is reported as failed", () => {

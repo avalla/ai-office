@@ -208,15 +208,71 @@ export interface OperationalPipelineRunRecord {
 /**
  * The runs that decide one task's operational status.
  *
- * Only two facts matter to the projection — whether a run is in flight, and
- * what the most recent run did — so the query returns exactly those, scoped to
- * the task. A generic "latest N project runs" window would omit both for any
- * task whose runs fall outside it.
+ * Scoped to the task on purpose: a generic "latest N project runs" window would
+ * omit a task's own runs the moment they fell outside it.
+ *
+ * A task can hold several active runs at once. `task_lock` is a *lease*, and
+ * `acquireTaskLock` deliberately lets an expired lease be taken over
+ * (`ON CONFLICT ... WHERE task_lock.expires_at <= excluded.acquired_at`) without
+ * terminating the previous run, which `ExecuteAgentRun` never renews mid-flight.
+ * So the active runs are a bounded list beside exact counts, not one row.
  */
 export interface TaskRunFactsRecord {
   taskId: string;
-  activeRun: OperationalAgentRunRecord | null;
+  /**
+   * Bounded sample of the task's in-flight runs, most recently updated first,
+   * ties broken by run id descending.
+   */
+  activeRuns: readonly OperationalAgentRunRecord[];
+  /** Exact number of in-flight runs. Never `activeRuns.length`. */
+  activeRunCount: number;
+  /**
+   * Exact number of in-flight runs that are actually executing, that is whose
+   * status is `running` or `reviewing` rather than `queued` or `preparing`.
+   * The operational status reads this rather than inspecting a sample.
+   */
+  executingRunCount: number;
+  /** The task's most recently updated run of any status, or null. */
   latestRun: OperationalAgentRunRecord | null;
+}
+
+/**
+ * The current execution lease of one task.
+ *
+ * `task_lock` answers exactly one operationally meaningful question: which run
+ * currently owns execution exclusivity for this task. It is a lease with an
+ * expiry, so an owner can be present, expired, or absent, and the read side
+ * reports whichever it finds rather than inferring one from the runs.
+ */
+export interface TaskLeaseRecord {
+  taskId: string;
+  ownerRunId: string;
+  acquiredAt: Date;
+  expiresAt: Date;
+  /**
+   * Status of the owning run, or null when no run row matches. Lets the
+   * projection tell "the owner is still working" from "the lease outlived its
+   * owner" without a second query.
+   */
+  ownerRunStatus: AgentRunStatus | null;
+}
+
+/**
+ * A task whose active runs do not all hold its execution lease.
+ *
+ * Aggregated per task so that its exact count and this sample describe the same
+ * unit. `runsWithoutLease` is exact for the task named.
+ */
+export interface UnleasedTaskRunsRecord {
+  projectId: string;
+  taskId: string;
+  taskTitle: string | null;
+  /** Exact number of this task's active runs that do not own its lease. */
+  runsWithoutLease: number;
+  /** True when the task holds no lease row at all. */
+  leaseMissing: boolean;
+  /** Newest update among the offending runs. */
+  since: Date;
 }
 
 /**
@@ -372,6 +428,18 @@ export interface OperationalReadRepository {
   ): Promise<CountRecord[]>;
   /** Active stages that are awaiting approval or have no assigned agent. */
   countAttentionStages(projectIds: readonly string[]): Promise<CountRecord[]>;
+  /**
+   * Distinct tasks holding at least one active run that does not own the task's
+   * execution lease — either another run took the lease over after it expired,
+   * or no lease row exists at all.
+   *
+   * Counted per *task* rather than per run so that this exact total and
+   * {@link OperationalReadRepository.listUnleasedTaskRuns} describe the same
+   * unit, and so one attention item corresponds to one contested task.
+   */
+  countTasksWithUnleasedRuns(
+    projectIds: readonly string[],
+  ): Promise<CountRecord[]>;
   countPipelineRuns(projectId: string, activeOnly: boolean): Promise<number>;
   lastActivityAt(projectIds: readonly string[]): Promise<LastActivityRecord[]>;
 
@@ -390,10 +458,25 @@ export interface OperationalReadRepository {
 
   /* --- scoped projection inputs ------------------------------------------ */
 
+  /**
+   * Per-task run facts. `activeRunLimit` bounds the returned active-run sample
+   * only; `activeRunCount` and `executingRunCount` stay exact, so concurrent
+   * runs are never lost and no status is decided from a truncated list.
+   */
   listTaskRunFacts(
     projectId: string,
     taskIds: readonly string[],
+    activeRunLimit: number,
   ): Promise<TaskRunFactsRecord[]>;
+  /**
+   * Current execution lease of each named task. Tasks with no lease row are
+   * simply absent from the result — the read side reports the lease it finds
+   * and never invents one.
+   */
+  listTaskLeases(
+    projectId: string,
+    taskIds: readonly string[],
+  ): Promise<TaskLeaseRecord[]>;
   /**
    * Per-agent run facts. `activeRunLimit` bounds the returned active-run sample
    * only; `activeRunCount` stays exact, so concurrent runs are never lost.
@@ -440,6 +523,11 @@ export interface OperationalReadRepository {
     projectIds: readonly string[],
     limit: number,
   ): Promise<OperationalActivePipelineStageRecord[]>;
+  /** Bounded sample beside `countTasksWithUnleasedRuns`, newest offence first. */
+  listUnleasedTaskRuns(
+    projectIds: readonly string[],
+    limit: number,
+  ): Promise<UnleasedTaskRunsRecord[]>;
   listPipelineRuns(
     query: PipelineRunQuery,
   ): Promise<OperationalPipelineRunRecord[]>;

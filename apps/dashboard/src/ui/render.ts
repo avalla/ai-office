@@ -184,10 +184,17 @@ function taskRows(tasks: readonly TaskOperationalState[]): string {
         task.activePipelineRun === null
           ? "—"
           : `${escapeHtml(task.activePipelineRun.pipelineName)} · ${escapeHtml(task.activePipelineRun.currentStageName ?? "—")}`;
+      // One representative run plus the exact count of what it leaves out: a
+      // task may hold several active runs after a lease takeover.
+      const more = concurrencyNote(task.activeAgentRuns);
+      const lease =
+        task.primaryAgentRun !== null && !task.primaryAgentRun.holdsLease
+          ? ` <span class="more" title="This run does not own the task's execution lease">no lease</span>`
+          : "";
       const run =
-        task.activeAgentRun === null
+        task.primaryAgentRun === null
           ? "—"
-          : `<a class="mono" href="${routeHref({ kind: "run", runId: task.activeAgentRun.runId })}">${escapeHtml(shortId(task.activeAgentRun.runId))}</a>`;
+          : `<a class="mono" href="${routeHref({ kind: "run", runId: task.primaryAgentRun.runId })}">${escapeHtml(shortId(task.primaryAgentRun.runId))}</a>${more === null ? "" : ` <span class="more">${escapeHtml(more)}</span>`}${lease}`;
       const agent =
         task.assignedAgent === null ? "—" : escapeHtml(task.assignedAgent.name);
       const blocker =

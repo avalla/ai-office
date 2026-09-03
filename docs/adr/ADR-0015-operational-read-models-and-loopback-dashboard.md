@@ -116,6 +116,34 @@ deterministically selected `primaryRun` and `primaryStage` representatives. The
 derived state reads only the exact counts, so a truncated sample never changes
 it, and no concurrent work disappears silently.
 
+### A task's lease, not a uniqueness assumption
+
+`task_lock` is a lease. `acquireTaskLock` intentionally allows takeover of an
+expired lease without terminating the previous run, and `ExecuteAgentRun` does
+not renew it mid-flight, so several active runs for one task is supported
+persisted state. `TaskOperationalState` therefore publishes `activeAgentRuns` as
+a bounded list with an exact total plus a documented `primaryAgentRun`
+representative, and derives `operationalStatus` from exact task-scoped counts —
+`activeRunCount` and `executingRunCount` — rather than from any one run.
+
+The lease itself is published as `TaskLeaseState` because it answers the
+question concurrency makes urgent: which active run currently owns execution
+exclusivity. It is reported as found — held, expired, or absent — and never
+inferred from the runs.
+
+Concurrency after a takeover is not classified as invalid, because the write
+model supports it. Only the actionable part is: an active run that does not own
+the current lease, or that has no lease at all, raises
+`task_run_without_lease`, counted per contested task by an exact aggregate. An
+expired lease that nobody took over is reported as a fact and raises nothing,
+because a run outliving its unrenewed lease is expected. A run that lost its
+lease is never discarded from any count.
+
+Whether such a run should stop executing is a runtime scheduling decision. This
+ADR names the distinction between a persisted non-terminal status and lost
+execution ownership; it does not resolve it, and no write-side per-task run
+restriction was introduced to make the read model simpler.
+
 ### Activity is paged by a real keyset cursor
 
 Activity pages on `(occurred_at, id)`, with the SQL predicate and the ordering

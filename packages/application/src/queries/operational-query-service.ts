@@ -22,6 +22,7 @@ import type { Clock } from "../ports/clock.port.ts";
 import type {
   AgentActiveStagesRecord,
   AgentRunFactsRecord,
+  TaskLeaseRecord,
   OperationalActivePipelineStageRecord,
   OperationalAgentRecord,
   OperationalPipelineRunRecord,
@@ -42,6 +43,7 @@ import {
   projectAgentRunEvent,
   projectAgentRunState,
   projectAgentState,
+  unleasedTaskRunsAttention,
   projectMilestoneSummary,
   projectPipelineRunState,
   projectProjectSummary,
@@ -156,6 +158,7 @@ export class OperationalQueryService {
       pendingReviewCounts,
       activePipelineCounts,
       attentionStageCounts,
+      unleasedTaskCounts,
       lastActivity,
       milestones,
       // Bounded samples, each shown beside one of the totals above.
@@ -164,6 +167,7 @@ export class OperationalQueryService {
       pendingReviewSample,
       attentionTaskSample,
       attentionStageSample,
+      unleasedTaskSample,
       activity,
     ] = await Promise.all([
       this.reads.countTasksByStatus(projectIds),
@@ -180,6 +184,7 @@ export class OperationalQueryService {
       this.reads.countReviews({ projectIds, statuses: ["pending"] }),
       this.reads.countActivePipelineRuns(projectIds),
       this.reads.countAttentionStages(projectIds),
+      this.reads.countTasksWithUnleasedRuns(projectIds),
       this.reads.lastActivityAt(projectIds),
       this.reads.listMilestones(projectIds),
       this.reads.listAgentRuns({
@@ -199,6 +204,7 @@ export class OperationalQueryService {
       }),
       this.reads.listAttentionTasks(projectIds, attentionLimit),
       this.reads.listActivePipelineStages(projectIds, attentionLimit),
+      this.reads.listUnleasedTaskRuns(projectIds, attentionLimit),
       this.reads.listActivity({ limit: activityLimit }),
     ]);
 
@@ -214,6 +220,7 @@ export class OperationalQueryService {
     const pendingReviewCount = countsByProject(pendingReviewCounts);
     const pipelineCount = countsByProject(activePipelineCounts);
     const attentionStageCount = countsByProject(attentionStageCounts);
+    const unleasedTaskCount = countsByProject(unleasedTaskCounts);
     const activityAt = new Map(
       lastActivity.map((value) => [value.projectId, value.occurredAt]),
     );
@@ -234,6 +241,10 @@ export class OperationalQueryService {
       attentionStageSample,
       (value) => value.projectId,
     );
+    const unleasedTasksByProject = groupBy(
+      unleasedTaskSample,
+      (value) => value.projectId,
+    );
 
     const summaries: ProjectSummary[] = [];
     const attentionItems: AttentionReason[] = [];
@@ -246,6 +257,7 @@ export class OperationalQueryService {
         (pendingReviewCount.get(project.id) ?? 0) +
         (failedRunCount.get(project.id) ?? 0) +
         (attentionStageCount.get(project.id) ?? 0) +
+        (unleasedTaskCount.get(project.id) ?? 0) +
         this.attentionTaskTotal(tasksByProject.get(project.id) ?? []);
 
       const items: AttentionReason[] = [];
@@ -261,6 +273,8 @@ export class OperationalQueryService {
       }
       for (const task of attentionTasksByProject.get(project.id) ?? [])
         items.push(attentionTaskReason(task));
+      for (const task of unleasedTasksByProject.get(project.id) ?? [])
+        items.push(unleasedTaskRunsAttention(task));
 
       const attention: BoundedList<AttentionReason> = {
         total: projectAttentionTotal,
@@ -356,6 +370,7 @@ export class OperationalQueryService {
       reviewTotalCounts,
       activePipelineCounts,
       attentionStageCounts,
+      unleasedTaskCounts,
       pipelineTotal,
       runTotalCounts,
       lastActivity,
@@ -368,6 +383,7 @@ export class OperationalQueryService {
       pipelineSample,
       attentionTaskSample,
       attentionStageSample,
+      unleasedTaskSample,
       failedRunSample,
       pendingReviewSample,
       activity,
@@ -390,6 +406,7 @@ export class OperationalQueryService {
       }),
       this.reads.countActivePipelineRuns(projectIds),
       this.reads.countAttentionStages(projectIds),
+      this.reads.countTasksWithUnleasedRuns(projectIds),
       this.reads.countPipelineRuns(projectId, false),
       this.reads.countAgentRuns({ projectIds }),
       this.reads.lastActivityAt(projectIds),
@@ -404,6 +421,7 @@ export class OperationalQueryService {
       this.reads.listPipelineRuns({ projectId, limit: pipelineLimit }),
       this.reads.listAttentionTasks(projectIds, attentionLimit),
       this.reads.listActivePipelineStages(projectIds, attentionLimit),
+      this.reads.listUnleasedTaskRuns(projectIds, attentionLimit),
       this.reads.listAgentRuns({
         projectIds,
         statuses: failedRunStatuses,
@@ -427,6 +445,7 @@ export class OperationalQueryService {
       (pendingReviewCounts[0]?.count ?? 0) +
       (failedRunCounts[0]?.count ?? 0) +
       (attentionStageCounts[0]?.count ?? 0) +
+      (unleasedTaskCounts[0]?.count ?? 0) +
       this.attentionTaskTotal(taskCounts);
 
     const attentionItems: AttentionReason[] = [];
@@ -444,6 +463,8 @@ export class OperationalQueryService {
     }
     for (const task of attentionTaskSample)
       attentionItems.push(attentionTaskReason(task));
+    for (const task of unleasedTaskSample)
+      attentionItems.push(unleasedTaskRunsAttention(task));
 
     const summary = projectProjectSummary({
       project,
@@ -761,14 +782,25 @@ export class OperationalQueryService {
   ): Promise<TaskOperationalState[]> {
     if (tasks.length === 0) return [];
     const taskIds = tasks.map((task) => task.id);
-    const [runFacts, pipelineRuns, reviewFacts] = await Promise.all([
-      this.reads.listTaskRunFacts(projectId, taskIds),
+    const now = this.clock.now();
+    const [runFacts, leases, pipelineRuns, reviewFacts] = await Promise.all([
+      this.reads.listTaskRunFacts(
+        projectId,
+        taskIds,
+        queryLimits.concurrency.default,
+      ),
+      this.reads.listTaskLeases(projectId, taskIds),
       this.reads.listActivePipelineRunsForTasks(projectId, taskIds),
       this.reads.listTaskReviewFacts(projectId, taskIds),
     ]);
 
     const runsByTask = new Map<string, TaskRunFactsRecord>(
       runFacts.map((record) => [record.taskId, record]),
+    );
+    // At most one lease row exists per task, so keying by task id here loses
+    // nothing — unlike the runs, which are aggregated inside their record.
+    const leaseByTask = new Map<string, TaskLeaseRecord>(
+      leases.map((record) => [record.taskId, record]),
     );
     const pipelineByTask = new Map<string, OperationalPipelineRunRecord>(
       pipelineRuns.map((record) => [record.run.taskId, record]),
@@ -782,8 +814,12 @@ export class OperationalQueryService {
       const reviews = reviewsByTask.get(task.id);
       return projectTaskOperationalState({
         task,
-        activeRun: runs?.activeRun ?? null,
+        activeRuns: runs?.activeRuns ?? [],
+        activeRunCount: runs?.activeRunCount ?? 0,
+        executingRunCount: runs?.executingRunCount ?? 0,
         latestRun: runs?.latestRun ?? null,
+        lease: leaseByTask.get(task.id) ?? null,
+        now,
         pipelineRun: pipelineByTask.get(task.id)?.run ?? null,
         pendingReviewCount: reviews?.pendingCount ?? 0,
         earliestPendingReview:
@@ -803,7 +839,7 @@ export class OperationalQueryService {
   ): Promise<AgentState[]> {
     if (agents.length === 0) return [];
     const agentIds = agents.map((agent) => agent.id);
-    const concurrencyLimit = queryLimits.agentConcurrency.default;
+    const concurrencyLimit = queryLimits.concurrency.default;
     const [runFacts, stageFacts] = await Promise.all([
       this.reads.listAgentRunFacts(projectId, agentIds, concurrencyLimit),
       this.reads.listActiveStagesForAgents(

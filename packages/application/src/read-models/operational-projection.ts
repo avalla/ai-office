@@ -26,6 +26,7 @@ import type {
   OperationalReviewRecord,
   RequirementCountRecord,
   StatusCountRecord,
+  TaskLeaseRecord,
 } from "../ports/operational-read.port.ts";
 import {
   available,
@@ -54,7 +55,9 @@ import {
   type RequirementCounts,
   type ReviewState,
   type TaskCounts,
+  type TaskActiveRunReference,
   type TaskDivergenceReason,
+  type TaskLeaseState,
   type TaskOperationalState,
   type TaskOperationalStatus,
   type TaskReference,
@@ -104,11 +107,15 @@ export const activeAgentRunStatuses = [
 
 const activeAgentRunStatusSet = new Set<AgentRunStatus>(activeAgentRunStatuses);
 
-/** Statuses that mean the run has not started executing yet. */
-const scheduledAgentRunStatusSet = new Set<AgentRunStatus>([
-  "queued",
-  "preparing",
-]);
+/**
+ * Active statuses that mean the run is actually executing, as opposed to
+ * waiting to start. Exported so a read adapter can count them exactly instead
+ * of the projection inspecting a bounded sample.
+ */
+export const executingAgentRunStatuses = [
+  "running",
+  "reviewing",
+] as const satisfies readonly AgentRunStatus[];
 
 const terminalAgentRunStatuses = new Set<AgentRunStatus>([
   "completed",
@@ -600,6 +607,68 @@ const milestoneLinkageExplanation =
   "The current task record carries no milestone reference, so a task's " +
   "milestone cannot be resolved authoritatively.";
 
+function taskActiveRunReference(
+  record: OperationalAgentRunRecord,
+  leaseOwnerRunId: string | null,
+  agentsById: ReadonlyMap<string, AgentReference>,
+): TaskActiveRunReference {
+  return {
+    ...agentRunReference(record),
+    agent: agentsById.get(record.agentId) ?? null,
+    pipelineRunId: record.pipelineRunId,
+    createdAt: iso(record.createdAt),
+    holdsLease: leaseOwnerRunId !== null && leaseOwnerRunId === record.id,
+  };
+}
+
+/**
+ * When the lease anomaly became visible.
+ *
+ * The lease acquisition instant is the moment exclusivity moved away from the
+ * other runs, so it is the honest "since" when a lease exists. With no lease
+ * row there is nothing to date it by, and the task's own update instant is the
+ * closest persisted fact.
+ */
+function leaseAnomalySince(input: {
+  task: TaskProps;
+  lease: TaskLeaseRecord | null;
+}): Date {
+  return input.lease?.acquiredAt ?? input.task.updatedAt;
+}
+
+/**
+ * Attention for a task whose active runs do not all own its execution lease.
+ *
+ * Shared by the task projection and the project-wide attention list so both
+ * describe the condition identically — one item per contested task, matching
+ * the `countTasksWithUnleasedRuns` aggregate, which also counts tasks.
+ */
+export function unleasedTaskRunsAttention(input: {
+  projectId: string;
+  taskId: string;
+  taskTitle: string | null;
+  runsWithoutLease: number;
+  leaseMissing: boolean;
+  since: Date;
+}): AttentionReason {
+  const single = input.runsWithoutLease === 1;
+  const runs = single
+    ? "1 active run"
+    : `${input.runsWithoutLease} active runs`;
+  const holds = single ? "holds" : "hold";
+  const owns = single ? "owns" : "own";
+  return {
+    kind: "task_run_without_lease",
+    projectId: input.projectId,
+    subjectType: "task",
+    subjectId: input.taskId,
+    summary: input.leaseMissing
+      ? `${runs} of this task ${holds} no execution lease`
+      : `${runs} of this task no longer ${owns} its execution lease`,
+    since: iso(input.since),
+  };
+}
+
 /**
  * The single authoritative derivation of a task's operational status.
  *
@@ -617,19 +686,53 @@ const milestoneLinkageExplanation =
  */
 export function projectTaskOperationalState(input: {
   task: TaskProps;
-  /** The task's in-flight run, or null. */
-  activeRun: OperationalAgentRunRecord | null;
+  /** Bounded sample of the task's in-flight runs, newest-updated first. */
+  activeRuns: readonly OperationalAgentRunRecord[];
+  /** Exact number of in-flight runs. Authoritative; never a sample length. */
+  activeRunCount: number;
+  /** Exact number of in-flight runs that are `running` or `reviewing`. */
+  executingRunCount: number;
   /** The task's most recently updated run of any status, or null. */
   latestRun: OperationalAgentRunRecord | null;
+  /** The task's current execution lease, or null when no lease row exists. */
+  lease: TaskLeaseRecord | null;
   pipelineRun: PipelineRunProps | null;
   /** Exact number of pending reviews of this task. */
   pendingReviewCount: number;
   /** Oldest pending review of this task, for the attention reason. */
   earliestPendingReview: ReviewState | null;
   agentsById: ReadonlyMap<string, AgentReference>;
+  /** Evaluation instant, used only to decide whether the lease has expired. */
+  now: Date;
 }): TaskOperationalState {
-  const activeRun = input.activeRun ?? undefined;
   const latestRun = input.latestRun ?? undefined;
+  const leaseOwnerId = input.lease?.ownerRunId ?? null;
+  const activeRuns = input.activeRuns.map((record) =>
+    taskActiveRunReference(record, leaseOwnerId, input.agentsById),
+  );
+  const activeAgentRuns = boundedList(activeRuns, input.activeRunCount);
+  const primaryAgentRun = activeRuns[0] ?? null;
+
+  const lease: TaskLeaseState | null =
+    input.lease === null
+      ? null
+      : {
+          ownerRunId: input.lease.ownerRunId,
+          acquiredAt: iso(input.lease.acquiredAt),
+          expiresAt: iso(input.lease.expiresAt),
+          expired: input.lease.expiresAt.getTime() <= input.now.getTime(),
+          ownerRunStatus: input.lease.ownerRunStatus,
+        };
+
+  // Exact, not sample-derived: the lease is unique per task, so at most one
+  // active run can own it. Everything else active is running without the
+  // exclusivity the runtime grants.
+  const leaseOwnerIsActive =
+    input.lease !== null &&
+    input.lease.ownerRunStatus !== null &&
+    isActiveAgentRunStatus(input.lease.ownerRunStatus);
+  const runsWithoutLeaseCount =
+    input.activeRunCount - (leaseOwnerIsActive ? 1 : 0);
   const hasPendingReview = input.pendingReviewCount > 0;
   const pipelineStage =
     input.pipelineRun !== null && input.pipelineRun.status === "active"
@@ -643,7 +746,7 @@ export function projectTaskOperationalState(input: {
   // active pipeline stage counts as work in flight even when no agent run is,
   // so a stale failure never masks a live stage.
   const stoppedOnFailure =
-    activeRun === undefined &&
+    input.activeRunCount === 0 &&
     latestRun?.status === "failed" &&
     pipelineStage === null;
 
@@ -655,10 +758,12 @@ export function projectTaskOperationalState(input: {
     operationalStatus = "awaiting_review";
   else if (input.task.status === "waiting_review")
     operationalStatus = "awaiting_review";
-  else if (activeRun !== undefined)
-    operationalStatus = scheduledAgentRunStatusSet.has(activeRun.status)
-      ? "scheduled"
-      : "in_progress";
+  // Derived from exact counts over *all* the task's active runs, never from
+  // the representative: with `queued` + `running` in flight, the task is in
+  // progress whichever one happens to sort first.
+  else if (input.activeRunCount > 0)
+    operationalStatus =
+      input.executingRunCount > 0 ? "in_progress" : "scheduled";
   else if (stoppedOnFailure) operationalStatus = "failed";
   else if (input.task.status === "running") operationalStatus = "in_progress";
   else operationalStatus = "not_started";
@@ -667,12 +772,12 @@ export function projectTaskOperationalState(input: {
   // with a persisted fact, so a client can trust it as a defect signal.
   if (
     (input.task.status === "pending" || input.task.status === "assigned") &&
-    activeRun !== undefined
+    input.activeRunCount > 0
   )
     divergenceReasons.push(
-      scheduledAgentRunStatusSet.has(activeRun.status)
-        ? "agent_run_scheduled_without_task_transition"
-        : "agent_run_active_without_task_transition",
+      input.executingRunCount > 0
+        ? "agent_run_active_without_task_transition"
+        : "agent_run_scheduled_without_task_transition",
     );
   if (!terminalTaskStatuses.has(input.task.status) && stoppedOnFailure)
     divergenceReasons.push("agent_run_failed_without_task_transition");
@@ -719,9 +824,20 @@ export function projectTaskOperationalState(input: {
     attentionReasons.push(
       ...agentRunAttentionReasons(projectAgentRunState(latestRun)),
     );
+  if (runsWithoutLeaseCount > 0)
+    attentionReasons.push(
+      unleasedTaskRunsAttention({
+        projectId: input.task.projectId,
+        taskId: input.task.id,
+        taskTitle: input.task.title,
+        runsWithoutLease: runsWithoutLeaseCount,
+        leaseMissing: input.lease === null,
+        since: leaseAnomalySince(input),
+      }),
+    );
 
   const assignedAgentId =
-    pipelineStage?.assignedAgentId ?? activeRun?.agentId ?? undefined;
+    pipelineStage?.assignedAgentId ?? primaryAgentRun?.agentId ?? undefined;
 
   return {
     taskId: input.task.id,
@@ -741,8 +857,10 @@ export function projectTaskOperationalState(input: {
       "task_milestone_link_not_modelled",
       milestoneLinkageExplanation,
     ),
-    activeAgentRun:
-      activeRun === undefined ? null : agentRunReference(activeRun),
+    activeAgentRuns,
+    primaryAgentRun,
+    lease,
+    runsWithoutLeaseCount,
     activePipelineRun:
       input.pipelineRun === null || input.pipelineRun.status !== "active"
         ? null

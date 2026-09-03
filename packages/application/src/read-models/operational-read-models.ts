@@ -122,7 +122,19 @@ export type AttentionKind =
   | "pipeline_stage_unassigned"
   | "agent_run_failed"
   | "task_blocked"
-  | "task_failed";
+  | "task_failed"
+  /**
+   * A task has at least one active run that does not own its execution lease.
+   *
+   * `task_lock` is a lease and lease takeover after expiry is intentionally
+   * supported, so *concurrency itself* is not the anomaly — this reason names
+   * the actionable part: a run is still executing without the exclusivity the
+   * runtime grants through the lease, so either two agents are working the same
+   * task or a run was stranded when its lease disappeared. `ExecuteAgentRun`
+   * reaches the same conclusion at cleanup, where releasing a lease it no
+   * longer owns raises `TASK_LOCK_RELEASE_FAILED`.
+   */
+  | "task_run_without_lease";
 
 export type AttentionSubjectType =
   "task" | "agent_run" | "pipeline_run" | "review";
@@ -233,7 +245,29 @@ export interface ProjectSummary {
   activeMilestoneCount: number;
   tasks: TaskCounts;
   requirements: RequirementCounts;
-  /** Exact totals, never the length of a displayed sample. */
+  /**
+   * Exact number of **persisted agent runs whose status is non-terminal**
+   * (`queued`, `preparing`, `running`, `reviewing`) in this project.
+   *
+   * This is definition **A**: persisted liveness. It deliberately does *not*
+   * mean "runs that still hold valid execution authority" — a run whose task
+   * lease was taken over after expiry keeps a non-terminal status and is still
+   * counted here. The distinction is named rather than blurred: execution
+   * authority is reported by {@link TaskLeaseState} and
+   * {@link TaskActiveRunReference.holdsLease}, and a run executing without it
+   * raises a `task_run_without_lease` attention reason. Nothing in this project
+   * silently switches between the two meanings.
+   *
+   * Related counts and what each one counts:
+   *
+   * - `activeAgentRuns` — non-terminal runs, all agents, all tasks;
+   * - {@link TaskOperationalState.activeAgentRuns}`.total` — the same predicate
+   *   scoped to one task;
+   * - {@link AgentState.activeRuns}`.total` — the same predicate scoped to one
+   *   agent;
+   * - {@link ProjectSummary.agentsWorking} — distinct *enabled agents* holding
+   *   at least one such run, so it is never a run count.
+   */
   activeAgentRuns: number;
   activePipelineRuns: number;
   pendingReviews: number;
@@ -288,6 +322,51 @@ export type TaskDivergenceReason =
   | "pipeline_stage_awaiting_approval"
   | "review_pending";
 
+/**
+ * One in-flight run of a task.
+ *
+ * Carries its own agent and pipeline linkage because a task may have several
+ * concurrent runs belonging to different agents; a single `assignedAgent` on
+ * the task cannot describe them all.
+ */
+export interface TaskActiveRunReference extends AgentRunReference {
+  agent: AgentReference | null;
+  pipelineRunId: string | null;
+  createdAt: IsoTimestamp;
+  /**
+   * True when this run owns the task's current execution lease. Exact for the
+   * run named: it compares run ids against {@link TaskLeaseState.ownerRunId}.
+   */
+  holdsLease: boolean;
+}
+
+/**
+ * The task's current execution lease, as persisted in `task_lock`.
+ *
+ * Exposed because it answers one operationally meaningful question that
+ * concurrent runs make urgent: *which active run currently owns execution
+ * exclusivity for this task?* It is a lease, so it can be held, expired, or
+ * absent, and each of those is reported as found. `null` means no lease row
+ * exists — never a guess.
+ */
+export interface TaskLeaseState {
+  ownerRunId: string;
+  acquiredAt: IsoTimestamp;
+  expiresAt: IsoTimestamp;
+  /**
+   * True when `expiresAt` is in the past. Expiry alone is not an anomaly:
+   * `ExecuteAgentRun` does not renew the lease while it runs, so any run
+   * outliving the lease window reaches this state normally. It means the lease
+   * is now *takeable*, not that anything is wrong.
+   */
+  expired: boolean;
+  /**
+   * Status of the owning run, or `null` when no run row matches it. A terminal
+   * status here means the lease outlived its owner.
+   */
+  ownerRunStatus: AgentRunStatus | null;
+}
+
 export interface TaskRequirementSummary {
   total: number;
   open: number;
@@ -315,8 +394,36 @@ export interface TaskOperationalState {
   requirements: Maybe<TaskRequirementSummary>;
   /** Unavailable in the current domain: tasks carry no milestone reference. */
   milestone: Maybe<MilestoneSummary | null>;
-  activeAgentRun: AgentRunReference | null;
+  /**
+   * Every in-flight run of this task.
+   *
+   * A list rather than one reference because the write model does not enforce
+   * uniqueness: `task_lock` is a lease, an expired lease may be taken over
+   * without terminating its previous owner, and `ExecuteAgentRun` does not
+   * renew it mid-flight. `total` is the exact active-run count; `items` are
+   * ordered most recently updated first, ties broken by run id descending.
+   */
+  activeAgentRuns: BoundedList<TaskActiveRunReference>;
+  /**
+   * Representative run for a single-line display: `activeAgentRuns.items[0]`
+   * under the ordering documented above, or `null` when the task has none.
+   * Deterministic, but a *representative* — never a uniqueness claim, and never
+   * the input to `operationalStatus`.
+   */
+  primaryAgentRun: TaskActiveRunReference | null;
+  /** The task's execution lease, or `null` when no lease row exists. */
+  lease: TaskLeaseState | null;
+  /**
+   * Exact number of this task's active runs that do not own its lease. Derived
+   * from exact counts, so a truncated `activeAgentRuns` sample cannot change it.
+   */
+  runsWithoutLeaseCount: number;
   activePipelineRun: PipelineRunReference | null;
+  /**
+   * The agent of the active pipeline stage, or failing that of
+   * {@link TaskOperationalState.primaryAgentRun}. Representative when several
+   * runs are active; each run in `activeAgentRuns` carries its own agent.
+   */
   assignedAgent: AgentReference | null;
   pendingReviewCount: number;
   blockedReason: string | null;
@@ -603,6 +710,7 @@ export interface DashboardOverview {
   totals: {
     projects: number;
     openTasks: number;
+    /** Sum of every project's {@link ProjectSummary.activeAgentRuns}. */
     activeAgentRuns: number;
     activePipelineRuns: number;
     pendingReviews: number;

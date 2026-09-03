@@ -37,8 +37,10 @@ import type {
   RequirementCountRecord,
   ReviewQuery,
   StatusCountRecord,
+  TaskLeaseRecord,
   TaskReviewFactsRecord,
   TaskRunFactsRecord,
+  UnleasedTaskRunsRecord,
 } from "@ai-office/application/ports/operational-read.port.ts";
 
 /**
@@ -232,6 +234,31 @@ export class SqliteOperationalReadRepository
     );
   }
 
+  /**
+   * Tasks holding at least one active run that does not own their lease.
+   *
+   * Counts distinct *tasks*, so this exact total and `listUnleasedTaskRuns`
+   * describe the same unit and one attention item means one contested task.
+   * The left join makes "no lease row at all" match the same way "another run
+   * owns it" does.
+   */
+  async countTasksWithUnleasedRuns(
+    projectIds: readonly string[],
+  ): Promise<CountRecord[]> {
+    if (projectIds.length === 0) return [];
+    return this.groupedCounts(
+      `SELECT run.project_id AS project_id,
+              COUNT(DISTINCT run.task_id) AS count
+         FROM agent_run run
+         LEFT JOIN task_lock lock ON lock.task_id = run.task_id
+        WHERE run.project_id IN (${placeholders(projectIds.length)})
+          AND run.status IN (${placeholders(activeRunStatuses.length)})
+          AND (lock.run_id IS NULL OR lock.run_id <> run.id)
+        GROUP BY run.project_id`,
+      [...projectIds, ...activeRunStatuses],
+    );
+  }
+
   async countPipelineRuns(
     projectId: string,
     activeOnly: boolean,
@@ -340,15 +367,19 @@ export class SqliteOperationalReadRepository
   async listTaskRunFacts(
     projectId: string,
     taskIds: readonly string[],
+    activeRunLimit: number,
   ): Promise<TaskRunFactsRecord[]> {
     if (taskIds.length === 0) return [];
+    // `task_lock` is a lease, and an expired lease may be taken over without
+    // terminating its previous owner, so a task can hold several active runs.
+    // The sample is bounded; the counts that decide the status are exact.
     const active = this.topRunsPerPartition(
       "run.task_id",
       "run.task_id",
       projectId,
       taskIds,
       activeRunStatuses,
-      1,
+      Math.max(1, activeRunLimit),
     );
     const latest = this.topRunsPerPartition(
       "run.task_id",
@@ -358,13 +389,52 @@ export class SqliteOperationalReadRepository
       [],
       1,
     );
-    const activeByTask = new Map(active.map((run) => [run.taskId, run]));
+    const counts = this.countActiveRunsPerColumn("task_id", projectId, taskIds);
+    const activeByTask = groupRuns(active, (run) => run.taskId);
     const latestByTask = new Map(latest.map((run) => [run.taskId, run]));
     return taskIds.map((taskId) => ({
       taskId,
-      activeRun: activeByTask.get(taskId) ?? null,
+      activeRuns: activeByTask.get(taskId) ?? [],
+      activeRunCount: counts.get(taskId)?.count ?? 0,
+      executingRunCount: counts.get(taskId)?.executing ?? 0,
       latestRun: latestByTask.get(taskId) ?? null,
     }));
+  }
+
+  async listTaskLeases(
+    projectId: string,
+    taskIds: readonly string[],
+  ): Promise<TaskLeaseRecord[]> {
+    if (taskIds.length === 0) return [];
+    // Joined through `task` because `task_lock` carries no project column, and
+    // left-joined to the owning run so the projection can tell a live owner
+    // from a lease that outlived its owner without a second query.
+    return this.database
+      .query<
+        {
+          task_id: string;
+          run_id: string;
+          acquired_at: string;
+          expires_at: string;
+          owner_status: AgentRunStatus | null;
+        },
+        string[]
+      >(
+        `SELECT lock.task_id, lock.run_id, lock.acquired_at, lock.expires_at,
+                run.status AS owner_status
+           FROM task_lock lock
+           JOIN task t ON t.id = lock.task_id AND t.project_id = ?
+           LEFT JOIN agent_run run ON run.id = lock.run_id
+          WHERE lock.task_id IN (${placeholders(taskIds.length)})`,
+      )
+      .all(projectId, ...taskIds)
+      .map((row) => ({
+        taskId: row.task_id,
+        ownerRunId: row.run_id,
+        acquiredAt: new Date(row.acquired_at),
+        expiresAt: new Date(row.expires_at),
+        ownerRunStatus: row.owner_status,
+      }));
   }
 
   async listAgentRunFacts(
@@ -391,17 +461,17 @@ export class SqliteOperationalReadRepository
       [],
       1,
     );
-    const activeCounts = this.countRunsPerAgent(
+    const activeCounts = this.countActiveRunsPerColumn(
+      "agent_id",
       projectId,
       agentIds,
-      activeRunStatuses,
     );
     const activeByAgent = groupRuns(active, (run) => run.agentId);
     const latestByAgent = new Map(latest.map((run) => [run.agentId, run]));
     return agentIds.map((agentId) => ({
       agentId,
       activeRuns: activeByAgent.get(agentId) ?? [],
-      activeRunCount: activeCounts.get(agentId) ?? 0,
+      activeRunCount: activeCounts.get(agentId)?.count ?? 0,
       latestRun: latestByAgent.get(agentId) ?? null,
     }));
   }
@@ -688,6 +758,52 @@ export class SqliteOperationalReadRepository
    * dashboard the project's first runs forever. This query exists so the read
    * side can ask for what it actually displays.
    */
+  async listUnleasedTaskRuns(
+    projectIds: readonly string[],
+    limit: number,
+  ): Promise<UnleasedTaskRunsRecord[]> {
+    if (projectIds.length === 0) return [];
+    // Grouped per task, and limited in SQL, so the sample and the aggregate
+    // above count the same thing. `lease_missing` is constant within a group:
+    // `task_lock` has one row per task at most.
+    return this.database
+      .query<
+        {
+          project_id: string;
+          task_id: string;
+          task_title: string | null;
+          runs_without_lease: number;
+          lease_missing: number;
+          since: string;
+        },
+        (string | number)[]
+      >(
+        `SELECT run.project_id, run.task_id, t.title AS task_title,
+                COUNT(*) AS runs_without_lease,
+                MAX(CASE WHEN lock.run_id IS NULL THEN 1 ELSE 0 END)
+                  AS lease_missing,
+                MAX(run.updated_at) AS since
+           FROM agent_run run
+           LEFT JOIN task_lock lock ON lock.task_id = run.task_id
+           LEFT JOIN task t ON t.id = run.task_id
+          WHERE run.project_id IN (${placeholders(projectIds.length)})
+            AND run.status IN (${placeholders(activeRunStatuses.length)})
+            AND (lock.run_id IS NULL OR lock.run_id <> run.id)
+          GROUP BY run.project_id, run.task_id
+          ORDER BY since DESC, run.task_id
+          LIMIT ?`,
+      )
+      .all(...projectIds, ...activeRunStatuses, limit)
+      .map((row) => ({
+        projectId: row.project_id,
+        taskId: row.task_id,
+        taskTitle: row.task_title,
+        runsWithoutLease: row.runs_without_lease,
+        leaseMissing: row.lease_missing === 1,
+        since: new Date(row.since),
+      }));
+  }
+
   async listPipelineRuns(
     query: PipelineRunQuery,
   ): Promise<OperationalPipelineRunRecord[]> {
@@ -934,24 +1050,41 @@ export class SqliteOperationalReadRepository
       .map(agentRunRecord);
   }
 
-  /** Exact active-run count per agent; never the length of a bounded sample. */
-  private countRunsPerAgent(
+  /**
+   * Exact active-run counts grouped by `task_id` or `agent_id`, never the
+   * length of a bounded sample.
+   *
+   * `executing` counts the subset that is actually running rather than waiting
+   * to start, which is what decides a task's operational status.
+   */
+  private countActiveRunsPerColumn(
+    column: "task_id" | "agent_id",
     projectId: string,
-    agentIds: readonly string[],
-    statuses: readonly AgentRunStatus[],
-  ): Map<string, number> {
+    ids: readonly string[],
+  ): Map<string, { count: number; executing: number }> {
     return new Map(
       this.database
-        .query<{ agent_id: string; count: number }, string[]>(
-          `SELECT agent_id, COUNT(*) AS count
+        .query<{ key: string; count: number; executing: number }, string[]>(
+          `SELECT ${column} AS key, COUNT(*) AS count,
+                  SUM(CASE WHEN status IN (
+                    ${placeholders(executingRunStatuses.length)}
+                  ) THEN 1 ELSE 0 END) AS executing
              FROM agent_run
             WHERE project_id = ?
-              AND agent_id IN (${placeholders(agentIds.length)})
-              AND status IN (${placeholders(statuses.length)})
-            GROUP BY agent_id`,
+              AND ${column} IN (${placeholders(ids.length)})
+              AND status IN (${placeholders(activeRunStatuses.length)})
+            GROUP BY ${column}`,
         )
-        .all(projectId, ...agentIds, ...statuses)
-        .map((row) => [row.agent_id, row.count] as const),
+        .all(
+          ...executingRunStatuses,
+          projectId,
+          ...ids,
+          ...activeRunStatuses,
+        )
+        .map(
+          (row) =>
+            [row.key, { count: row.count, executing: row.executing }] as const,
+        ),
     );
   }
 
@@ -986,6 +1119,12 @@ export class SqliteOperationalReadRepository
 /* -------------------------------------------------------------------------- */
 /* Row shapes and helpers                                                      */
 /* -------------------------------------------------------------------------- */
+
+/** Active statuses that mean the run is executing rather than waiting. */
+const executingRunStatuses: readonly AgentRunStatus[] = [
+  "running",
+  "reviewing",
+];
 
 const activeRunStatuses: readonly AgentRunStatus[] = [
   "queued",

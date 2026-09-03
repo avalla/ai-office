@@ -246,13 +246,42 @@ const task: TaskOperationalState = {
     reason: "task_milestone_link_not_modelled",
     explanation: "not modelled",
   },
-  activeAgentRun: {
+  activeAgentRuns: {
+    total: 1,
+    truncated: false,
+    items: [
+      {
+        runId: "run-1",
+        status: "running",
+        agentId: "agent-1",
+        startedAt: now,
+        updatedAt: now,
+        createdAt: now,
+        pipelineRunId: "pipeline-1",
+        agent: null,
+        holdsLease: true,
+      },
+    ],
+  },
+  primaryAgentRun: {
     runId: "run-1",
     status: "running",
     agentId: "agent-1",
     startedAt: now,
     updatedAt: now,
+    createdAt: now,
+    pipelineRunId: "pipeline-1",
+    agent: null,
+    holdsLease: true,
   },
+  lease: {
+    ownerRunId: "run-1",
+    acquiredAt: now,
+    expiresAt: now,
+    expired: false,
+    ownerRunStatus: "running",
+  },
+  runsWithoutLeaseCount: 0,
   activePipelineRun: {
     pipelineRunId: "pipeline-1",
     pipelineId: "delivery",

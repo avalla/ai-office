@@ -213,6 +213,37 @@ async function seedAgent(
   await context.runtime.saveAgent(agent);
 }
 
+/**
+ * Takes the task's execution lease, exactly as `ScheduleAgentRun` does inside
+ * the transaction that creates a run. Fixtures that omit it would model a run
+ * that never held a lease, which the write model cannot produce.
+ */
+function seedLease(
+  context: Awaited<ReturnType<typeof fixture>>,
+  taskId: string,
+  runId: string,
+  options?: { acquiredAt?: Date; expiresAt?: Date },
+): void {
+  const acquiredAt = options?.acquiredAt ?? now;
+  context.database
+    .prepare(
+      `INSERT INTO task_lock(task_id, run_id, acquired_at, expires_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(task_id) DO UPDATE SET
+         run_id = excluded.run_id,
+         acquired_at = excluded.acquired_at,
+         expires_at = excluded.expires_at`,
+    )
+    .run(
+      taskId,
+      runId,
+      acquiredAt.toISOString(),
+      (
+        options?.expiresAt ?? new Date(acquiredAt.getTime() + 30 * 60_000)
+      ).toISOString(),
+    );
+}
+
 describe("operational read repository", () => {
   test("lists projects with repository identity and sources", async () => {
     const context = await fixture();
@@ -576,6 +607,7 @@ describe("operational query service", () => {
     run.transition("preparing", now);
     run.transition("running", now);
     await context.runtime.saveRun(run);
+    seedLease(context, "task-1", "run-1");
 
     const overview = await context.queries.getDashboardOverview();
     expect(overview.projects.map((project) => project.name)).toEqual([
@@ -890,6 +922,12 @@ describe("bounded evidence never decides authoritative state", () => {
       runId: string;
       status: "queued" | "running" | "failed" | "completed";
       updatedAt: Date;
+      /**
+       * Whether this run takes the task's lease, as `ScheduleAgentRun` does.
+       * Defaults to taking it for non-terminal runs and leaving it alone for
+       * terminal ones, which is what the write model produces.
+       */
+      lease?: boolean;
     },
   ): Promise<void> {
     context.database
@@ -912,6 +950,8 @@ describe("bounded evidence never decides authoritative state", () => {
           : null,
         input.updatedAt.toISOString(),
       );
+    const active = input.status === "queued" || input.status === "running";
+    if (input.lease ?? active) seedLease(context, input.taskId, input.runId);
   }
 
   test("active-run totals stay exact when the sample is truncated", async () => {
@@ -1013,7 +1053,8 @@ describe("bounded evidence never decides authoritative state", () => {
     expect(task?.divergenceReasons).toEqual([
       "agent_run_active_without_task_transition",
     ]);
-    expect(task?.activeAgentRun?.runId).toBe("run-old");
+    expect(task?.primaryAgentRun?.runId).toBe("run-old");
+    expect(task?.activeAgentRuns.total).toBe(1);
   });
 
   test("an agent's own run decides its state from outside any display window", async () => {
@@ -1054,6 +1095,188 @@ describe("bounded evidence never decides authoritative state", () => {
     expect(quiet?.state).toBe("working");
     expect(quiet?.primaryRun?.runId).toBe("run-quiet");
     expect(quiet?.activeRuns.total).toBe(1);
+  });
+
+  test("an expired-lease takeover leaves both runs visible on the task", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    await context.tasks.save(
+      Task.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Contested",
+        now,
+      }),
+    );
+
+    // Exactly the sequence `acquireTaskLock` supports: a short lease, then a
+    // takeover once it expires. Neither the repository nor `ExecuteAgentRun`
+    // terminalizes the previous run, and nothing renews the lease mid-flight.
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-1",
+      runId: "run-a",
+      status: "running",
+      updatedAt: now,
+      lease: false,
+    });
+    expect(
+      await context.runtime.acquireTaskLock(
+        "task-1",
+        "run-a",
+        now,
+        new Date(now.getTime() + 1_000),
+      ),
+    ).toBe(true);
+
+    const takeoverAt = new Date(now.getTime() + 60_000);
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-1",
+      runId: "run-b",
+      status: "queued",
+      updatedAt: takeoverAt,
+      lease: false,
+    });
+    expect(
+      await context.runtime.acquireTaskLock(
+        "task-1",
+        "run-b",
+        takeoverAt,
+        new Date(takeoverAt.getTime() + 30 * 60_000),
+      ),
+    ).toBe(true);
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    const task = detail.tasks.items.find((value) => value.taskId === "task-1");
+
+    // Neither run is silently dropped.
+    expect(task?.activeAgentRuns.total).toBe(2);
+    expect(task?.activeAgentRuns.truncated).toBe(false);
+    expect(
+      [...(task?.activeAgentRuns.items ?? [])].map((run) => run.runId).sort(),
+    ).toEqual(["run-a", "run-b"]);
+    // Newest-updated first, and explicitly a representative.
+    expect(task?.primaryAgentRun?.runId).toBe("run-b");
+
+    // The lease says which run owns execution exclusivity now.
+    expect(task?.lease?.ownerRunId).toBe("run-b");
+    expect(task?.lease?.expired).toBe(false);
+    expect(task?.lease?.ownerRunStatus).toBe("queued");
+    expect(
+      task?.activeAgentRuns.items.find((run) => run.runId === "run-a")
+        ?.holdsLease,
+    ).toBe(false);
+    expect(
+      task?.activeAgentRuns.items.find((run) => run.runId === "run-b")
+        ?.holdsLease,
+    ).toBe(true);
+
+    // run-a is still executing, so the task is in progress rather than merely
+    // scheduled — derived from every active run, not from the representative.
+    expect(task?.operationalStatus).toBe("in_progress");
+
+    // The stranded run is actionable, and the exact project total accounts for
+    // it rather than the task page happening to show it.
+    expect(task?.runsWithoutLeaseCount).toBe(1);
+    expect(
+      task?.attentionReasons.map((reason) => reason.kind),
+    ).toContain("task_run_without_lease");
+    expect(detail.summary.attention.total).toBe(1);
+    expect(detail.summary.attention.items[0]).toMatchObject({
+      kind: "task_run_without_lease",
+      subjectType: "task",
+      subjectId: "task-1",
+    });
+    expect(detail.summary.attentionRequired).toBe(true);
+
+    const overview = await context.queries.getDashboardOverview();
+    expect(overview.totals.attentionItems).toBe(1);
+    expect(overview.totals.activeAgentRuns).toBe(2);
+  });
+
+  test("an expired lease that nobody took over is reported, not flagged", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    await context.tasks.save(
+      Task.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Long runner",
+        now,
+      }),
+    );
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-1",
+      runId: "run-a",
+      status: "running",
+      updatedAt: now,
+      lease: false,
+    });
+    // `ExecuteAgentRun` never renews, so any run outliving the lease window
+    // reaches this state normally. It means the lease is takeable, not broken.
+    seedLease(context, "task-1", "run-a", {
+      acquiredAt: new Date(now.getTime() - 60 * 60_000),
+      expiresAt: new Date(now.getTime() - 30 * 60_000),
+    });
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    const task = detail.tasks.items.find((value) => value.taskId === "task-1");
+
+    expect(task?.lease?.ownerRunId).toBe("run-a");
+    expect(task?.lease?.expired).toBe(true);
+    expect(task?.primaryAgentRun?.holdsLease).toBe(true);
+    expect(task?.runsWithoutLeaseCount).toBe(0);
+    expect(
+      task?.attentionReasons.map((reason) => reason.kind),
+    ).not.toContain("task_run_without_lease");
+    expect(detail.summary.attention.total).toBe(0);
+  });
+
+  test("an active run with no lease row at all is reported explicitly", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    await context.tasks.save(
+      Task.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Stranded",
+        now,
+      }),
+    );
+    // `ExecuteAgentRun` releases the lease before it finalizes the run, so a
+    // crash in between leaves a non-terminal run owning nothing.
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-1",
+      runId: "run-a",
+      status: "running",
+      updatedAt: now,
+      lease: false,
+    });
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    const task = detail.tasks.items.find((value) => value.taskId === "task-1");
+
+    // `null` because no lease row exists — never a guessed one.
+    expect(task?.lease).toBeNull();
+    expect(task?.primaryAgentRun?.holdsLease).toBe(false);
+    expect(task?.runsWithoutLeaseCount).toBe(1);
+    expect(detail.summary.attention.total).toBe(1);
+    expect(detail.summary.attention.items[0]?.summary).toBe(
+      "1 active run of this task holds no execution lease",
+    );
+    // The run itself is still an ordinary active run for every aggregate.
+    expect(detail.summary.activeAgentRuns).toBe(1);
+    expect(detail.summary.agentsWorking).toBe(1);
   });
 
   test("an assigned stage with no run reports assigned, not working", async () => {
