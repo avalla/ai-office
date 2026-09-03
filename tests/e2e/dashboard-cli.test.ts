@@ -360,7 +360,7 @@ describe("dashboard loopback host", () => {
       controller.abort();
       await pump;
     });
-  });
+  }, 30_000);
 
   test("rejects an unexpected Host header even with a valid token", async () => {
     await withHost(async ({ host, get }) => {

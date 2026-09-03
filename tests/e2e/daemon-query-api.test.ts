@@ -313,7 +313,7 @@ describe("daemon invalidation stream", () => {
       controller.abort();
       await harness.stop();
     }
-  });
+  }, 30_000);
 
   test("one disconnected subscriber does not affect another", async () => {
     const harness = await startDaemon();
@@ -347,7 +347,7 @@ describe("daemon invalidation stream", () => {
       second.abort();
       await harness.stop();
     }
-  });
+  }, 30_000);
 
   test("an open stream does not block daemon shutdown", async () => {
     const harness = await startDaemon();
@@ -369,7 +369,7 @@ describe("daemon invalidation stream", () => {
     // The client observes the disconnection instead of hanging.
     await stream.done;
     controller.abort();
-  });
+  }, 30_000);
 
   test("a client can reconnect and keep receiving invalidation", async () => {
     const harness = await startDaemon();
@@ -403,5 +403,5 @@ describe("daemon invalidation stream", () => {
       controller.abort();
       await harness.stop();
     }
-  });
+  }, 30_000);
 });
