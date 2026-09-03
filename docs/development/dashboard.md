@@ -159,6 +159,40 @@ new is persisted, subscribers are bounded, a listener that throws is dropped
 without affecting the others, and disconnecting releases both the listener and
 its heartbeat timer.
 
+**Every new connection re-establishes the query baseline.** Because the stream
+carries hints and has no replay, restoring the *connection* does not restore the
+*view*:
+
+```text
+state A displayed -> stream drops -> a command changes A to B ->
+the invalidate event is missed -> stream reconnects -> nothing is replayed
+```
+
+So the browser shell treats a newly established stream exactly like an
+invalidation, and the connection badge distinguishes the two things a naive
+client conflates:
+
+| Badge          | Meaning                                                     |
+| -------------- | ----------------------------------------------------------- |
+| `connecting`   | no stream has been established yet                          |
+| `syncing`      | a stream is up; the displayed route has not been re-queried  |
+| `live`         | connected, and this route was queried under this connection  |
+| `reconnecting` | the stream dropped; `EventSource` is retrying                |
+
+The invariant is: **once the dashboard says `live`, the current route has been
+re-queried after the most recent stream connection was established.** It is
+expressed as a sync token pairing the connection epoch with the route key — a
+new connection bumps the epoch, a navigation changes the route key, and a
+refresh adopts the token it started under only when it *succeeds*. A failed
+query therefore never reads as `live`.
+
+The reconnect refresh reuses the same single-flight-plus-debounce path as
+invalidations, so a reconnect storm, an invalidate burst, a hash-route change,
+and a reconnect arriving mid-refresh all coalesce instead of racing. The state
+machine lives in `apps/dashboard/src/ui/sync-controller.ts` with its timers,
+fetch, and route accessor injected, and is unit tested in
+`tests/unit/dashboard-sync-controller.test.ts` — no headless browser needed.
+
 **Failed commands publish too.** A command that fails is not a command that
 changed nothing: it appended audit rows, and it may have committed part of its
 work before failing. The daemon publishes the same conservative topic set on the
@@ -199,10 +233,71 @@ contract.
 
 ### Derived states are limited to persisted facts
 
-Agent activity is `disabled`, `idle`, `working`, `awaiting_approval`, or
-`last_run_failed`. There is no heartbeat, so "unreachable" or "stalled" are not
-derivable and are not invented. Pipeline runs have no `failed` status — a
-rejected stage cancels the run — and the read model says so.
+There is no heartbeat, so "unreachable" or "stalled" are not derivable and are
+not invented. Pipeline runs have no `failed` status — a rejected stage cancels
+the run — and the read model says so.
+
+Agent activity has exactly one value, chosen by this precedence:
+
+| State              | Exact definition                                                                  |
+| ------------------ | --------------------------------------------------------------------------------- |
+| `disabled`         | `agent.enabled` is false. Nothing else can override it.                            |
+| `working`          | at least one active `AgentRun` (`queued`, `preparing`, `running`, `reviewing`).     |
+| `awaiting_approval`| no active run, and at least one assigned active stage is `awaiting_approval`.       |
+| `assigned`         | no active run, and at least one active pipeline stage is assigned to this agent.    |
+| `last_run_failed`  | no active run and no active stage, and the most recently updated run failed.        |
+| `idle`             | none of the above.                                                                  |
+
+`assigned` exists because a pipeline stage can legitimately be assigned before
+any `AgentRun` is scheduled. Calling that state `working` is what used to make
+the project summary contradict the agent row.
+
+`working` outranks `awaiting_approval` so that one definition of "working"
+holds everywhere:
+
+```text
+ProjectSummary.agentsWorking
+  = COUNT(DISTINCT agent_run.agent_id)
+    WHERE agent_run.status IN (queued, preparing, running, reviewing)
+      AND agent.enabled = 1
+  = the number of enabled AgentState values whose state is `working`
+```
+
+Both sides are the same predicate, so they cannot disagree. A pending approval
+on an agent that is also running something is not lost: it stays in that agent's
+`activeStages` and in the project's attention list.
+
+### Concurrency is reported, not assumed away
+
+Nothing in the persisted model enforces one active run per agent — the task lock
+is per *task* — and pipeline assignment does not reject an agent merely because
+another active stage already names it. Both are valid persisted facts, and
+inventing a write-side one-job-per-agent rule to simplify a read model would be
+a scheduling decision, not a dashboard decision.
+
+So `AgentState` carries lists rather than a single `currentRun`/`currentStage`
+that would silently drop real work:
+
+| Field                 | Guarantee                                                        |
+| --------------------- | ---------------------------------------------------------------- |
+| `activeRuns`          | `{ total, items, truncated }`; `total` is the exact active count  |
+| `activeStages`        | `{ total, items, truncated }`; `total` is the exact active count  |
+| `primaryRun`          | `activeRuns.items[0]` — a *representative*, not a uniqueness claim |
+| `primaryStage`        | `activeStages.items[0]` — likewise                                |
+
+Selection is deterministic: active runs are ordered by `updated_at` descending
+with ties broken by run id descending; active stages by their pipeline run's
+`updated_at` descending with ties broken by pipeline run id ascending. The
+derived state itself reads only the *exact counts* — including a separate exact
+count of assignments awaiting approval — so a truncated sample can never change
+it. The agent table renders the representative plus `+N more`, computed from
+`total`.
+
+The read port mirrors this: `listAgentRunFacts` returns `activeRuns` with an
+exact `activeRunCount`, and `listActiveStagesForAgents` returns `stages` with an
+exact `stageCount` and `awaitingApprovalCount`, one record per agent. Keying a
+map by `agentId` over raw rows — which would keep only the last row per agent —
+is exactly the collapse these shapes prevent.
 
 There is no aggregate "health score". Attention is a list of reasons, each
 backed by a persisted fact: a pending review, a stage awaiting approval, a stage

@@ -20,7 +20,7 @@ import type { AgentRunStatus } from "@ai-office/domain/agent/agent-run.ts";
 import type { TaskProps } from "@ai-office/domain/task/task.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type {
-  AgentActiveStageRecord,
+  AgentActiveStagesRecord,
   AgentRunFactsRecord,
   OperationalActivePipelineStageRecord,
   OperationalAgentRecord,
@@ -803,24 +803,37 @@ export class OperationalQueryService {
   ): Promise<AgentState[]> {
     if (agents.length === 0) return [];
     const agentIds = agents.map((agent) => agent.id);
-    const [runFacts, stages] = await Promise.all([
-      this.reads.listAgentRunFacts(projectId, agentIds),
-      this.reads.listActiveStagesForAgents(projectId, agentIds),
+    const concurrencyLimit = queryLimits.agentConcurrency.default;
+    const [runFacts, stageFacts] = await Promise.all([
+      this.reads.listAgentRunFacts(projectId, agentIds, concurrencyLimit),
+      this.reads.listActiveStagesForAgents(
+        projectId,
+        agentIds,
+        concurrencyLimit,
+      ),
     ]);
+    // Both queries already return one record per agent, with that agent's runs
+    // and stages aggregated inside it. Keying a map by `agentId` over raw rows
+    // would keep only the last row per agent and silently drop the rest.
     const runsByAgent = new Map<string, AgentRunFactsRecord>(
       runFacts.map((record) => [record.agentId, record]),
     );
-    const stageByAgent = new Map<string, AgentActiveStageRecord>(
-      stages.map((record) => [record.agentId, record]),
+    const stagesByAgent = new Map<string, AgentActiveStagesRecord>(
+      stageFacts.map((record) => [record.agentId, record]),
     );
-    return agents.map((agent) =>
-      projectAgentState({
+    return agents.map((agent) => {
+      const runs = runsByAgent.get(agent.id);
+      const stages = stagesByAgent.get(agent.id);
+      return projectAgentState({
         agent,
-        activeRun: runsByAgent.get(agent.id)?.activeRun ?? null,
-        latestRun: runsByAgent.get(agent.id)?.latestRun ?? null,
-        stage: stageByAgent.get(agent.id) ?? null,
-      }),
-    );
+        activeRuns: runs?.activeRuns ?? [],
+        activeRunCount: runs?.activeRunCount ?? 0,
+        latestRun: runs?.latestRun ?? null,
+        activeStages: stages?.stages ?? [],
+        activeStageCount: stages?.stageCount ?? 0,
+        awaitingApprovalStageCount: stages?.awaitingApprovalCount ?? 0,
+      });
+    });
   }
 
   /** Blocked plus failed tasks, taken from the exact per-status counts. */

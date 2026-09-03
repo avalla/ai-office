@@ -34,6 +34,15 @@ export const queryLimits = {
   pipelines: { default: 50, max: 200 },
   /** Bounded sample of attention items shown beside their authoritative total. */
   attention: { default: 50, max: 200 },
+  /**
+   * Bounded sample of one agent's concurrent active runs or active stage
+   * assignments, shown beside its exact count.
+   *
+   * The persisted model allows an agent to hold several of either at once, so
+   * these are lists rather than single values. The bound only truncates the
+   * sample; `activeRuns.total` and `activeStages.total` stay exact.
+   */
+  agentConcurrency: { default: 20, max: 20 },
   /** Upper bound on identifier length accepted from a route parameter. */
   maxIdentifierLength: 128,
 } as const;

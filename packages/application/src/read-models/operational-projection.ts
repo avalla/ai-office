@@ -30,6 +30,8 @@ import type {
 import {
   available,
   unavailable,
+  boundedList,
+  type AgentActiveRunReference,
   type AgentActivityState,
   type AgentReference,
   type AgentRunActionOutcome,
@@ -37,6 +39,7 @@ import {
   type AgentRunFailureSummary,
   type AgentRunReference,
   type AgentRunState,
+  type AgentStageReference,
   type AgentState,
   type ApprovalState,
   type AttentionReason,
@@ -779,42 +782,80 @@ export function availableTaskRequirementSummary(input: {
 /* Agent state                                                                 */
 /* -------------------------------------------------------------------------- */
 
+function agentActiveRunReference(
+  record: OperationalAgentRunRecord,
+): AgentActiveRunReference {
+  return {
+    ...agentRunReference(record),
+    task:
+      record.taskTitle === null
+        ? null
+        : { taskId: record.taskId, title: record.taskTitle },
+  };
+}
+
+function agentStageReference(
+  record: AgentActiveStageRecord,
+): AgentStageReference {
+  return {
+    pipelineRunId: record.pipelineRunId,
+    stageId: record.stageId,
+    name: record.stageName,
+    status: record.stageStatus,
+  };
+}
+
 /**
  * Derives one agent's activity from facts scoped to that agent.
  *
  * As with tasks, the inputs are per-agent on purpose: an agent's state must not
  * change because its run happens to sit outside a project-wide display window.
+ *
+ * The run and stage inputs are *lists with exact counts*, not single values,
+ * because neither the schema nor the scheduler enforces one active run or one
+ * active stage assignment per agent. Collapsing them here would make the read
+ * model disagree with what is persisted, which is the whole failure this
+ * projection exists to prevent.
+ *
+ * The state precedence is the one documented on {@link AgentActivityState}:
+ * `disabled` > `working` > `awaiting_approval` > `assigned` >
+ * `last_run_failed` > `idle`.
  */
 export function projectAgentState(input: {
   agent: OperationalAgentRecord;
-  /** The agent's in-flight run, or null. */
-  activeRun: OperationalAgentRunRecord | null;
+  /** Bounded sample of the agent's in-flight runs, ordered newest-updated. */
+  activeRuns: readonly OperationalAgentRunRecord[];
+  /** Exact number of in-flight runs. Authoritative; never `activeRuns.length`. */
+  activeRunCount: number;
   /** The agent's most recently updated run of any status, or null. */
   latestRun: OperationalAgentRunRecord | null;
-  /** The active pipeline stage assigned to this agent, or null. */
-  stage: AgentActiveStageRecord | null;
+  /** Bounded sample of the active pipeline stages assigned to this agent. */
+  activeStages: readonly AgentActiveStageRecord[];
+  /** Exact number of active stage assignments. Authoritative. */
+  activeStageCount: number;
+  /** Exact number of those assignments awaiting approval. Authoritative. */
+  awaitingApprovalStageCount: number;
 }): AgentState {
-  const activeRun = input.activeRun ?? undefined;
   const latestRun = input.latestRun ?? undefined;
-  const stage: AgentState["currentStage"] =
-    input.stage === null
-      ? null
-      : {
-          pipelineRunId: input.stage.pipelineRunId,
-          stageId: input.stage.stageId,
-          name: input.stage.stageName,
-          status: input.stage.stageStatus,
-        };
+  const runs = input.activeRuns.map(agentActiveRunReference);
+  const stages = input.activeStages.map(agentStageReference);
+  const activeRuns = boundedList(runs, input.activeRunCount);
+  const activeStages = boundedList(stages, input.activeStageCount);
+
+  // Every predicate below reads an exact count, never a sample length or a
+  // sample member: a truncated sample must not change the derived state.
+  const hasActiveRun = input.activeRunCount > 0;
+  const hasActiveStage = input.activeStageCount > 0;
+  const awaitingApproval = input.awaitingApprovalStageCount > 0;
 
   let state: AgentActivityState;
   if (!input.agent.enabled) state = "disabled";
-  else if (stage?.status === "awaiting_approval") state = "awaiting_approval";
-  else if (activeRun !== undefined) state = "working";
-  else if (stage !== null) state = "working";
+  else if (hasActiveRun) state = "working";
+  else if (awaitingApproval) state = "awaiting_approval";
+  else if (hasActiveStage) state = "assigned";
   else if (latestRun?.status === "failed") state = "last_run_failed";
   else state = "idle";
 
-  const currentRunRecord = activeRun ?? null;
   return {
     agentId: input.agent.id,
     projectId: input.agent.projectId,
@@ -824,16 +865,10 @@ export function projectAgentState(input: {
     roleName: input.agent.roleName,
     enabled: input.agent.enabled,
     state,
-    currentRun:
-      currentRunRecord === null ? null : agentRunReference(currentRunRecord),
-    currentTask:
-      currentRunRecord === null || currentRunRecord.taskTitle === null
-        ? null
-        : {
-            taskId: currentRunRecord.taskId,
-            title: currentRunRecord.taskTitle,
-          },
-    currentStage: stage,
+    activeRuns,
+    activeStages,
+    primaryRun: runs[0] ?? null,
+    primaryStage: stages[0] ?? null,
     lastActivityAt: latestRun === undefined ? null : iso(latestRun.updatedAt),
   };
 }

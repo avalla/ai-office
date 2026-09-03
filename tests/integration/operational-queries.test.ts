@@ -1052,7 +1052,205 @@ describe("bounded evidence never decides authoritative state", () => {
     const agents = await context.queries.listAgents("project-1");
     const quiet = agents.find((agent) => agent.agentId === "agent-quiet");
     expect(quiet?.state).toBe("working");
-    expect(quiet?.currentRun?.runId).toBe("run-quiet");
+    expect(quiet?.primaryRun?.runId).toBe("run-quiet");
+    expect(quiet?.activeRuns.total).toBe(1);
+  });
+
+  test("an assigned stage with no run reports assigned, not working", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    await context.tasks.save(
+      Task.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Ship it",
+        now,
+      }),
+    );
+    await context.manifests.save({
+      id: "manifest-1",
+      projectId: "project-1",
+      revision: 1,
+      manifest,
+      appliedAt: now,
+    });
+    const pipeline = PipelineRun.create({
+      id: "pipeline-1",
+      projectId: "project-1",
+      taskId: "task-1",
+      manifestRevisionId: "manifest-1",
+      manifestRevision: 1,
+      definition: manifest.pipelines[0]!,
+      startedBy: "operator",
+      stageRunIds: ["stage-1", "stage-2"],
+      now,
+    });
+    // A stage can legitimately be assigned before any AgentRun is scheduled.
+    pipeline.assign("agent-1", "architect", now);
+    await context.pipelines.insert(pipeline);
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    const agent = detail.agents.find((value) => value.agentId === "agent-1");
+
+    // The two authoritative statements must not contradict each other: there
+    // is no active run, so `agentsWorking` is 0 and the agent is `assigned`.
+    expect(detail.summary.agentsWorking).toBe(0);
+    expect(agent?.state).toBe("assigned");
+    expect(agent?.activeRuns.total).toBe(0);
+    expect(agent?.activeStages.total).toBe(1);
+    expect(agent?.primaryStage?.stageId).toBe("design");
+    expect(
+      detail.agents.filter(
+        (value) => value.enabled && value.state === "working",
+      ),
+    ).toHaveLength(0);
+  });
+
+  test("several active runs for one agent are all reported and counted once", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    for (const [index, taskId] of ["task-a", "task-b"].entries()) {
+      await context.tasks.save(
+        Task.create({
+          id: taskId,
+          projectId: "project-1",
+          title: `Task ${taskId}`,
+          now,
+        }),
+      );
+      // The task lock is per task, not per agent, so one agent legitimately
+      // holds two in-flight runs at once.
+      await seedRun(context, {
+        projectId: "project-1",
+        taskId,
+        agentId: "agent-1",
+        runId: `run-${taskId}`,
+        status: "running",
+        updatedAt: new Date(now.getTime() + index * 60_000),
+      });
+    }
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    const agent = detail.agents.find((value) => value.agentId === "agent-1");
+
+    // One distinct agent is working, and it reports both of its runs.
+    expect(detail.summary.agentsWorking).toBe(1);
+    expect(detail.summary.activeAgentRuns).toBe(2);
+    expect(agent?.state).toBe("working");
+    expect(agent?.activeRuns.total).toBe(2);
+    expect(agent?.activeRuns.truncated).toBe(false);
+    expect(
+      [...(agent?.activeRuns.items ?? [])].map((value) => value.runId).sort(),
+    ).toEqual(["run-task-a", "run-task-b"]);
+    // Newest-updated first, and named as a representative rather than the one.
+    expect(agent?.primaryRun?.runId).toBe("run-task-b");
+    expect(agent?.primaryRun?.task?.title).toBe("Task task-b");
+  });
+
+  test("several assigned stages for one agent are all reported", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    await context.manifests.save({
+      id: "manifest-1",
+      projectId: "project-1",
+      revision: 1,
+      manifest,
+      appliedAt: now,
+    });
+    for (const [index, taskId] of ["task-a", "task-b"].entries()) {
+      await context.tasks.save(
+        Task.create({
+          id: taskId,
+          projectId: "project-1",
+          title: `Task ${taskId}`,
+          now,
+        }),
+      );
+      const pipeline = PipelineRun.create({
+        id: `pipeline-${taskId}`,
+        projectId: "project-1",
+        taskId,
+        manifestRevisionId: "manifest-1",
+        manifestRevision: 1,
+        definition: manifest.pipelines[0]!,
+        startedBy: "operator",
+        stageRunIds: [`stage-a-${taskId}`, `stage-b-${taskId}`],
+        now: new Date(now.getTime() + index * 60_000),
+      });
+      // Pipeline assignment does not reject an agent that another active stage
+      // already names, so both assignments are valid persisted facts.
+      pipeline.assign("agent-1", "architect", now);
+      await context.pipelines.insert(pipeline);
+    }
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    const agent = detail.agents.find((value) => value.agentId === "agent-1");
+
+    expect(agent?.state).toBe("assigned");
+    expect(agent?.activeStages.total).toBe(2);
+    expect(agent?.activeStages.truncated).toBe(false);
+    expect(
+      [...(agent?.activeStages.items ?? [])]
+        .map((value) => value.pipelineRunId)
+        .sort(),
+    ).toEqual(["pipeline-task-a", "pipeline-task-b"]);
+    expect(detail.summary.agentsWorking).toBe(0);
+    expect(detail.summary.activePipelineRuns).toBe(2);
+  });
+
+  test("agentsWorking equals the enabled agents whose state is working", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-run", "developer");
+    await seedAgent(context, "project-1", "agent-off", "reviewer");
+    await context.tasks.save(
+      Task.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Ship it",
+        now,
+      }),
+    );
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-run",
+      runId: "run-1",
+      status: "running",
+      updatedAt: now,
+    });
+    // A disabled agent holding an active run reports `disabled`, so its run
+    // must not be counted by the aggregate either.
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-off",
+      runId: "run-2",
+      status: "running",
+      updatedAt: now,
+    });
+    context.database
+      .prepare("UPDATE agent SET enabled = 0 WHERE id = ?")
+      .run("agent-off");
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    const working = detail.agents.filter(
+      (agent) => agent.enabled && agent.state === "working",
+    );
+
+    expect(detail.summary.agentsWorking).toBe(working.length);
+    expect(detail.summary.agentsWorking).toBe(1);
+    expect(
+      detail.agents.find((agent) => agent.agentId === "agent-off")?.state,
+    ).toBe("disabled");
+    // The run itself is still an exact active run; only the agent count changes.
+    expect(detail.summary.activeAgentRuns).toBe(2);
+
+    const overview = await context.queries.getDashboardOverview();
+    expect(overview.totals.agentsWorking).toBe(1);
   });
 
   test("attention survives a blocked task outside the displayed page", async () => {

@@ -227,17 +227,26 @@ function agentState(input: {
   agent: OperationalAgentRecord;
   runs?: readonly OperationalAgentRunRecord[];
   pipelineRuns?: readonly PipelineRunProps[];
+  /* Overrides that let a test hand the projection a deliberately truncated
+   * sample beside a larger exact count. */
+  activeRunSample?: readonly OperationalAgentRunRecord[];
+  activeRunCount?: number;
+  activeStageSample?: readonly AgentActiveStageRecord[];
+  activeStageCount?: number;
+  awaitingApprovalCount?: number;
 }) {
   const runs = [...(input.runs ?? [])]
     .filter((run) => run.agentId === input.agent.id)
     .sort(byUpdatedDesc);
-  let stage: AgentActiveStageRecord | null = null;
+  // Every matching stage, not the first: an agent may hold several active
+  // assignments at once and the projection must see all of them.
+  const stages: AgentActiveStageRecord[] = [];
   for (const pipelineRun of input.pipelineRuns ?? []) {
     if (pipelineRun.status !== "active") continue;
     const current = pipelineRun.stages[pipelineRun.currentStageIndex];
     if (current === undefined || current.assignedAgentId !== input.agent.id)
       continue;
-    stage = {
+    stages.push({
       agentId: input.agent.id,
       pipelineRunId: pipelineRun.id,
       stageId: current.stageId,
@@ -245,14 +254,20 @@ function agentState(input: {
         pipelineRun.definition.stages[current.stageIndex]?.name ??
         current.stageId,
       stageStatus: current.status,
-    };
-    break;
+    });
   }
+  const activeRuns = runs.filter((run) => isActiveAgentRunStatus(run.status));
   return projectAgentState({
     agent: input.agent,
-    activeRun: runs.find((run) => isActiveAgentRunStatus(run.status)) ?? null,
+    activeRuns: input.activeRunSample ?? activeRuns,
+    activeRunCount: input.activeRunCount ?? activeRuns.length,
     latestRun: runs[0] ?? null,
-    stage,
+    activeStages: input.activeStageSample ?? stages,
+    activeStageCount: input.activeStageCount ?? stages.length,
+    awaitingApprovalStageCount:
+      input.awaitingApprovalCount ??
+      stages.filter((stage) => stage.stageStatus === "awaiting_approval")
+        .length,
   });
 }
 
@@ -522,8 +537,10 @@ describe("agent state", () => {
       pipelineRuns: [],
     });
     expect(state.state).toBe("working");
-    expect(state.currentTask?.title).toBe("Ship the thing");
-    expect(state.currentRun?.runId).toBe("run-1");
+    expect(state.primaryRun?.task?.title).toBe("Ship the thing");
+    expect(state.primaryRun?.runId).toBe("run-1");
+    expect(state.activeRuns.total).toBe(1);
+    expect(state.activeStages.total).toBe(0);
   });
 
   test("an agent on a stage awaiting approval is waiting", () => {
@@ -536,7 +553,127 @@ describe("agent state", () => {
       pipelineRuns: [{ ...source, stages }],
     });
     expect(state.state).toBe("awaiting_approval");
-    expect(state.currentStage?.name).toBe("Developer");
+    expect(state.primaryStage?.name).toBe("Developer");
+    expect(state.activeStages.total).toBe(1);
+  });
+
+  test("a stage assigned before any run is scheduled reports assigned", () => {
+    const state = agentState({
+      agent: agentRecord(),
+      runs: [],
+      pipelineRuns: [pipelineRun()],
+    });
+
+    // The stage is assigned and active, but no AgentRun exists yet. Calling
+    // this `working` is what made `agentsWorking` — a count of agents holding
+    // active runs — contradict the agent's own state.
+    expect(state.state).toBe("assigned");
+    expect(state.activeStages.total).toBe(1);
+    expect(state.activeRuns.total).toBe(0);
+    expect(state.primaryRun).toBeNull();
+    expect(state.primaryStage?.stageId).toBe("build");
+  });
+
+  test("an active run outranks a stage awaiting approval", () => {
+    const source = pipelineRun();
+    const stages = [...source.stages];
+    stages[1] = { ...stages[1]!, status: "awaiting_approval" };
+    const state = agentState({
+      agent: agentRecord(),
+      runs: [run({ status: "running" })],
+      pipelineRuns: [{ ...source, stages }],
+    });
+
+    // `agentsWorking` counts every enabled agent holding an active run, so an
+    // agent that holds one must report `working` for the two to agree. The
+    // pending approval is still published in `activeStages`.
+    expect(state.state).toBe("working");
+    expect(state.activeStages.items[0]?.status).toBe("awaiting_approval");
+  });
+
+  test("several concurrent runs are all reported, none silently dropped", () => {
+    const first = run({
+      id: "run-a",
+      taskId: "task-a",
+      status: "running",
+      updatedAt: at("2026-09-03T10:03:00.000Z"),
+    });
+    const second = run({
+      id: "run-b",
+      taskId: "task-b",
+      status: "queued",
+      updatedAt: at("2026-09-03T10:09:00.000Z"),
+    });
+    const state = agentState({
+      agent: agentRecord(),
+      runs: [first, second],
+      pipelineRuns: [],
+    });
+
+    expect(state.state).toBe("working");
+    expect(state.activeRuns.total).toBe(2);
+    expect(state.activeRuns.truncated).toBe(false);
+    expect(state.activeRuns.items.map((item) => item.runId)).toEqual([
+      "run-b",
+      "run-a",
+    ]);
+    // The representative is the newest-updated run, and it is labelled as one
+    // of several rather than as the only one.
+    expect(state.primaryRun?.runId).toBe("run-b");
+  });
+
+  test("several concurrent stage assignments are all reported", () => {
+    const first = pipelineRun();
+    const second = {
+      ...first,
+      id: "pipeline-2",
+      taskId: "task-b",
+      updatedAt: at("2026-09-03T10:20:00.000Z"),
+    };
+    const state = agentState({
+      agent: agentRecord(),
+      runs: [],
+      pipelineRuns: [first, second],
+    });
+
+    expect(state.state).toBe("assigned");
+    expect(state.activeStages.total).toBe(2);
+    expect(
+      state.activeStages.items.map((item) => item.pipelineRunId).sort(),
+    ).toEqual(["pipeline-1", "pipeline-2"]);
+  });
+
+  test("a truncated sample never changes the derived state or the counts", () => {
+    const active = run({ status: "running" });
+    const state = agentState({
+      agent: agentRecord(),
+      runs: [],
+      pipelineRuns: [],
+      // Nothing is in the samples; only the exact counts say work exists.
+      activeRunSample: [active],
+      activeRunCount: 7,
+      activeStageSample: [],
+      activeStageCount: 3,
+      awaitingApprovalCount: 2,
+    });
+
+    expect(state.state).toBe("working");
+    expect(state.activeRuns.total).toBe(7);
+    expect(state.activeRuns.truncated).toBe(true);
+    expect(state.activeStages.total).toBe(3);
+    expect(state.activeStages.truncated).toBe(true);
+    // The awaiting-approval fact is read from the exact count, so an empty
+    // sample cannot hide it — here it is outranked by the active run.
+    expect(
+      agentState({
+        agent: agentRecord(),
+        runs: [],
+        pipelineRuns: [],
+        activeStageSample: [],
+        activeStageCount: 3,
+        awaitingApprovalCount: 2,
+      }).state,
+    ).toBe("awaiting_approval");
   });
 
   test("an agent whose last run failed reports it and is otherwise idle", () => {
@@ -548,7 +685,8 @@ describe("agent state", () => {
       pipelineRuns: [],
     });
     expect(state.state).toBe("last_run_failed");
-    expect(state.currentRun).toBeNull();
+    expect(state.primaryRun).toBeNull();
+    expect(state.activeRuns.total).toBe(0);
   });
 
   test("an agent with no runs is idle and a disabled agent is disabled", () => {

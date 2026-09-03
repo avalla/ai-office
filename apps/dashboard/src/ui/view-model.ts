@@ -91,6 +91,7 @@ export function taskStatusTone(status: TaskOperationalStatus): ToneName {
 const agentStateLabels: Record<AgentState["state"], string> = {
   disabled: "disabled",
   idle: "idle",
+  assigned: "assigned",
   working: "working",
   awaiting_approval: "waiting",
   last_run_failed: "last run failed",
@@ -101,11 +102,22 @@ export function agentStateLabel(state: AgentState["state"]): string {
 }
 
 export function agentStateTone(state: AgentState["state"]): ToneName {
-  if (state === "working") return "active";
+  if (state === "working" || state === "assigned") return "active";
   if (state === "awaiting_approval" || state === "last_run_failed")
     return "attention";
   if (state === "disabled") return "muted";
   return "neutral";
+}
+
+/**
+ * "and N more" for an agent's concurrent runs or stage assignments.
+ *
+ * An agent may hold several of either, and the row shows one representative.
+ * This says how many the row does not name, read from the exact `total` rather
+ * than from the sample length, so a truncated sample never understates it.
+ */
+export function concurrencyNote<T>(list: BoundedList<T>): string | null {
+  return list.total > 1 ? `+${list.total - 1} more` : null;
 }
 
 export function runStatusTone(status: AgentRunState["status"]): ToneName {

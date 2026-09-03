@@ -219,20 +219,60 @@ export interface TaskRunFactsRecord {
   latestRun: OperationalAgentRunRecord | null;
 }
 
-/** The same two facts, scoped to one agent. */
+/**
+ * The runs that decide one agent's activity.
+ *
+ * Nothing in the persisted model enforces one active run per agent — the task
+ * lock is per task, not per agent — so this record carries *every* active run,
+ * bounded by an explicit limit and paired with the exact `activeRunCount`. A
+ * single `activeRun` field would silently drop valid persisted work.
+ */
 export interface AgentRunFactsRecord {
   agentId: string;
-  activeRun: OperationalAgentRunRecord | null;
+  /**
+   * Bounded sample of the agent's in-flight runs, most recently updated first,
+   * ties broken by run id descending.
+   */
+  activeRuns: readonly OperationalAgentRunRecord[];
+  /** Exact number of in-flight runs, independent of `activeRuns.length`. */
+  activeRunCount: number;
+  /** The agent's most recently updated run of any status, or null. */
   latestRun: OperationalAgentRunRecord | null;
 }
 
-/** The active pipeline stage one agent is currently assigned to. */
+/** One active pipeline stage assigned to an agent. */
 export interface AgentActiveStageRecord {
   agentId: string;
   pipelineRunId: string;
   stageId: string;
   stageName: string;
   stageStatus: PipelineStageRunStatus;
+}
+
+/**
+ * The active pipeline stages assigned to one agent.
+ *
+ * Pipeline assignment does not reject an agent merely because another active
+ * stage already names it, so this is a list with an exact count for the same
+ * reason {@link AgentRunFactsRecord} is.
+ */
+export interface AgentActiveStagesRecord {
+  agentId: string;
+  /**
+   * Bounded sample, ordered by the owning pipeline run's `updatedAt`
+   * descending, ties broken by pipeline run id ascending.
+   */
+  stages: readonly AgentActiveStageRecord[];
+  /** Exact number of active stage assignments, independent of `stages`. */
+  stageCount: number;
+  /**
+   * Exact number of those assignments whose stage is `awaiting_approval`.
+   *
+   * Counted separately because the derived agent state depends on it: reading
+   * it off the bounded `stages` sample would let a truncated page change an
+   * authoritative state.
+   */
+  awaitingApprovalCount: number;
 }
 
 /**
@@ -311,7 +351,14 @@ export interface OperationalReadRepository {
     projectIds?: readonly string[];
     statuses?: readonly AgentRunStatus[];
   }): Promise<CountRecord[]>;
-  /** Distinct agents holding at least one run in the given statuses. */
+  /**
+   * Distinct **enabled** agents holding at least one run in the given statuses.
+   *
+   * Restricted to enabled agents so the count matches the `working` state in
+   * `AgentActivityState`, which a disabled agent never reports. A run belonging
+   * to a deleted or unknown agent is not counted either: there is no
+   * `AgentState` for it to contradict.
+   */
   countDistinctRunAgents(query: {
     projectIds?: readonly string[];
     statuses?: readonly AgentRunStatus[];
@@ -347,18 +394,28 @@ export interface OperationalReadRepository {
     projectId: string,
     taskIds: readonly string[],
   ): Promise<TaskRunFactsRecord[]>;
+  /**
+   * Per-agent run facts. `activeRunLimit` bounds the returned active-run sample
+   * only; `activeRunCount` stays exact, so concurrent runs are never lost.
+   */
   listAgentRunFacts(
     projectId: string,
     agentIds: readonly string[],
+    activeRunLimit: number,
   ): Promise<AgentRunFactsRecord[]>;
   listActivePipelineRunsForTasks(
     projectId: string,
     taskIds: readonly string[],
   ): Promise<OperationalPipelineRunRecord[]>;
+  /**
+   * Per-agent active stage assignments. `stageLimit` bounds the sample only;
+   * `stageCount` stays exact.
+   */
   listActiveStagesForAgents(
     projectId: string,
     agentIds: readonly string[],
-  ): Promise<AgentActiveStageRecord[]>;
+    stageLimit: number,
+  ): Promise<AgentActiveStagesRecord[]>;
   listTaskReviewFacts(
     projectId: string,
     taskIds: readonly string[],

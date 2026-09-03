@@ -18,6 +18,7 @@ import type {
 import {
   agentStateLabel,
   agentStateTone,
+  concurrencyNote,
   attentionLabel,
   formatTimestamp,
   routeHref,
@@ -148,16 +149,24 @@ function agentRows(agents: readonly AgentState[]): string {
     return `<p class="calm">No agents are synchronized for this project.</p>`;
   const rows = agents
     .map((agent) => {
+      // One representative item per column, plus the exact count of what the
+      // representative leaves out. An agent may hold several concurrent runs
+      // and several concurrent stage assignments; the row must not imply that
+      // the one it names is the only one.
+      const runs = concurrencyNote(agent.activeRuns);
+      const stages = concurrencyNote(agent.activeStages);
       const task =
-        agent.currentTask === null
+        agent.primaryRun === null || agent.primaryRun.task === null
           ? "—"
-          : `<a href="${routeHref({ kind: "project", projectId: agent.projectId })}">${escapeHtml(agent.currentTask.title)}</a>`;
+          : `<a href="${routeHref({ kind: "project", projectId: agent.projectId })}">${escapeHtml(agent.primaryRun.task.title)}</a>`;
       const stage =
-        agent.currentStage === null ? "—" : escapeHtml(agent.currentStage.name);
-      const run =
-        agent.currentRun === null
+        agent.primaryStage === null
           ? "—"
-          : `<a class="mono" href="${routeHref({ kind: "run", runId: agent.currentRun.runId })}">${escapeHtml(shortId(agent.currentRun.runId))}</a>`;
+          : `${escapeHtml(agent.primaryStage.name)}${stages === null ? "" : ` <span class="more">${escapeHtml(stages)}</span>`}`;
+      const run =
+        agent.primaryRun === null
+          ? "—"
+          : `<a class="mono" href="${routeHref({ kind: "run", runId: agent.primaryRun.runId })}">${escapeHtml(shortId(agent.primaryRun.runId))}</a>${runs === null ? "" : ` <span class="more">${escapeHtml(runs)}</span>`}`;
       return `<tr><td>${escapeHtml(agent.name)}</td><td>${escapeHtml(agent.roleName ?? agent.roleKey ?? agent.roleId)}</td><td>${badge(agentStateLabel(agent.state), agentStateTone(agent.state))}</td><td>${task}</td><td>${stage}</td><td>${run}</td></tr>`;
     })
     .join("");

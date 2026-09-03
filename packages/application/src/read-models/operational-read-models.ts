@@ -237,6 +237,16 @@ export interface ProjectSummary {
   activeAgentRuns: number;
   activePipelineRuns: number;
   pendingReviews: number;
+  /**
+   * Exact count of distinct **enabled** agents holding at least one active
+   * agent run — `COUNT(DISTINCT agent_run.agent_id)` over the active run
+   * statuses, restricted to enabled agents.
+   *
+   * This is the same definition {@link AgentActivityState} uses for `working`,
+   * so it always equals the number of {@link AgentState} values in this project
+   * whose `state` is `working`. An agent that only holds an assigned pipeline
+   * stage is `assigned`, not `working`, and is not counted here.
+   */
   agentsWorking: number;
   /** Authoritative: derived from `attention.total`, not from `attention.items`. */
   attentionRequired: boolean;
@@ -373,10 +383,61 @@ export interface PipelineRunState {
 /**
  * Derived agent activity. Only states supported by persisted facts exist here:
  * there is no heartbeat, so "unreachable" or "stalled" are not derivable.
+ *
+ * Exactly one state applies, chosen by this precedence — the order matters,
+ * because an agent can legitimately hold several of these facts at once:
+ *
+ * 1. `disabled` — `enabled` is false. A disabled agent reports `disabled`
+ *    whatever else is persisted about it.
+ * 2. `working` — at least one active {@link AgentRunReference} exists, that is
+ *    `activeRuns.total > 0`.
+ * 3. `awaiting_approval` — no active run, and at least one active pipeline
+ *    stage assigned to this agent has status `awaiting_approval`.
+ * 4. `assigned` — no active run, and at least one active pipeline stage is
+ *    assigned to this agent. A stage can be assigned before a run is
+ *    scheduled, which is exactly the case this state names.
+ * 5. `last_run_failed` — no active run and no active stage, and the agent's
+ *    most recently updated run failed.
+ * 6. `idle` — none of the above.
+ *
+ * `working` outranks `awaiting_approval` on purpose: it is what keeps
+ * {@link ProjectSummary.agentsWorking} — the exact count of distinct *enabled*
+ * agents holding at least one active run — equal to the number of enabled
+ * agents whose state is `working`. An approval still pending on such an agent
+ * is not lost: it stays in `activeStages` and in the project's attention list.
  */
 export type AgentActivityState =
-  "disabled" | "idle" | "working" | "awaiting_approval" | "last_run_failed";
+  | "disabled"
+  | "idle"
+  | "assigned"
+  | "working"
+  | "awaiting_approval"
+  | "last_run_failed";
 
+/** One in-flight run of an agent, with the task it is running. */
+export interface AgentActiveRunReference extends AgentRunReference {
+  task: TaskReference | null;
+}
+
+/** One active pipeline stage assigned to an agent. */
+export interface AgentStageReference {
+  pipelineRunId: string;
+  stageId: string;
+  name: string;
+  status: PipelineStageRunStatus;
+}
+
+/**
+ * One agent's operational state.
+ *
+ * Neither the persisted model nor the scheduler enforces one active run or one
+ * active stage assignment per agent: the task lock is per task, and pipeline
+ * assignment does not reject an agent that another stage already names. So the
+ * read model carries *lists* rather than a single `currentRun`/`currentStage`
+ * that would silently drop real persisted work. `activeRuns.total` and
+ * `activeStages.total` are exact counts, independent of how many items the
+ * bounded samples carry.
+ */
 export interface AgentState {
   agentId: string;
   projectId: string;
@@ -386,14 +447,27 @@ export interface AgentState {
   roleName: string | null;
   enabled: boolean;
   state: AgentActivityState;
-  currentRun: AgentRunReference | null;
-  currentTask: TaskReference | null;
-  currentStage: {
-    pipelineRunId: string;
-    stageId: string;
-    name: string;
-    status: PipelineStageRunStatus;
-  } | null;
+  /**
+   * Every in-flight run of this agent. `total` is the exact active run count;
+   * `items` are ordered most recently updated first, ties broken by run id
+   * descending.
+   */
+  activeRuns: BoundedList<AgentActiveRunReference>;
+  /**
+   * Every active pipeline stage assigned to this agent. `total` is the exact
+   * active assignment count; `items` are ordered by their pipeline run's
+   * `updatedAt` descending, ties broken by pipeline run id ascending.
+   */
+  activeStages: BoundedList<AgentStageReference>;
+  /**
+   * Representative run for a single-line display: `activeRuns.items[0]` under
+   * the ordering documented above, or `null` when the agent has none. It is
+   * deterministic, but it is a *representative*, not the only one — read
+   * `activeRuns` for the whole picture.
+   */
+  primaryRun: AgentActiveRunReference | null;
+  /** Representative stage under the same rule: `activeStages.items[0]`. */
+  primaryStage: AgentStageReference | null;
   lastActivityAt: IsoTimestamp | null;
 }
 
@@ -532,6 +606,7 @@ export interface DashboardOverview {
     activeAgentRuns: number;
     activePipelineRuns: number;
     pendingReviews: number;
+    /** Sum of every project's {@link ProjectSummary.agentsWorking}. */
     agentsWorking: number;
     attentionItems: number;
   };

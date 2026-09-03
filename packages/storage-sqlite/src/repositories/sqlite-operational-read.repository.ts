@@ -17,6 +17,7 @@ import type { TaskProps, TaskStatus } from "@ai-office/domain/task/task.ts";
 import type {
   ActivityQuery,
   AgentActiveStageRecord,
+  AgentActiveStagesRecord,
   AgentRunFactsRecord,
   AgentRunQuery,
   CountRecord,
@@ -162,11 +163,20 @@ export class SqliteOperationalReadRepository
     if (scope === null) return [];
     const statuses = scopeClauses(query.statuses, "status");
     if (statuses === null) return [];
+    // Joined to `agent` and restricted to enabled agents so this count keeps
+    // exactly the meaning `AgentActivityState.working` has. A disabled agent
+    // never reports `working`, so counting its runs here would publish a total
+    // that no agent state can account for.
     return this.groupedCounts(
-      `SELECT project_id, COUNT(DISTINCT agent_id) AS count
-         FROM agent_run
-         ${where(scope.clause, statuses.clause)}
-         GROUP BY project_id`,
+      `SELECT run.project_id AS project_id,
+              COUNT(DISTINCT run.agent_id) AS count
+         FROM agent_run run
+         JOIN agent ag ON ag.id = run.agent_id AND ag.enabled = 1
+         ${where(
+           scope.clause === "" ? "" : `run.${scope.clause}`,
+           statuses.clause === "" ? "" : `run.${statuses.clause}`,
+         )}
+         GROUP BY run.project_id`,
       [...scope.parameters, ...statuses.parameters],
     );
   }
@@ -332,19 +342,21 @@ export class SqliteOperationalReadRepository
     taskIds: readonly string[],
   ): Promise<TaskRunFactsRecord[]> {
     if (taskIds.length === 0) return [];
-    const active = this.topRunPerPartition(
+    const active = this.topRunsPerPartition(
       "run.task_id",
       "run.task_id",
       projectId,
       taskIds,
       activeRunStatuses,
+      1,
     );
-    const latest = this.topRunPerPartition(
+    const latest = this.topRunsPerPartition(
       "run.task_id",
       "run.task_id",
       projectId,
       taskIds,
       [],
+      1,
     );
     const activeByTask = new Map(active.map((run) => [run.taskId, run]));
     const latestByTask = new Map(latest.map((run) => [run.taskId, run]));
@@ -358,27 +370,38 @@ export class SqliteOperationalReadRepository
   async listAgentRunFacts(
     projectId: string,
     agentIds: readonly string[],
+    activeRunLimit: number,
   ): Promise<AgentRunFactsRecord[]> {
     if (agentIds.length === 0) return [];
-    const active = this.topRunPerPartition(
+    // Nothing enforces one active run per agent, so the active runs are a
+    // bounded *list* beside an exact count rather than a single row.
+    const active = this.topRunsPerPartition(
       "run.agent_id",
       "run.agent_id",
       projectId,
       agentIds,
       activeRunStatuses,
+      Math.max(1, activeRunLimit),
     );
-    const latest = this.topRunPerPartition(
+    const latest = this.topRunsPerPartition(
       "run.agent_id",
       "run.agent_id",
       projectId,
       agentIds,
       [],
+      1,
     );
-    const activeByAgent = new Map(active.map((run) => [run.agentId, run]));
+    const activeCounts = this.countRunsPerAgent(
+      projectId,
+      agentIds,
+      activeRunStatuses,
+    );
+    const activeByAgent = groupRuns(active, (run) => run.agentId);
     const latestByAgent = new Map(latest.map((run) => [run.agentId, run]));
     return agentIds.map((agentId) => ({
       agentId,
-      activeRun: activeByAgent.get(agentId) ?? null,
+      activeRuns: activeByAgent.get(agentId) ?? [],
+      activeRunCount: activeCounts.get(agentId) ?? 0,
       latestRun: latestByAgent.get(agentId) ?? null,
     }));
   }
@@ -403,9 +426,13 @@ export class SqliteOperationalReadRepository
   async listActiveStagesForAgents(
     projectId: string,
     agentIds: readonly string[],
-  ): Promise<AgentActiveStageRecord[]> {
+    stageLimit: number,
+  ): Promise<AgentActiveStagesRecord[]> {
     if (agentIds.length === 0) return [];
-    return this.database
+    // Pipeline assignment does not reject an agent that another active stage
+    // already names, so an agent can hold several assignments at once. The
+    // sample is limited in SQL and the counts stay exact.
+    const rows = this.database
       .query<
         {
           assigned_agent_id: string;
@@ -415,19 +442,26 @@ export class SqliteOperationalReadRepository
           status: PipelineStageRunStatus;
           definition_json: string;
         },
-        string[]
+        (string | number)[]
       >(
-        `SELECT s.assigned_agent_id, r.id AS pipeline_run_id,
-                s.stage_id, s.stage_index, s.status, r.definition_json
-         FROM pipeline_run r
-         JOIN pipeline_stage_run s
-           ON s.pipeline_run_id = r.id AND s.stage_index = r.current_stage_index
-        WHERE r.project_id = ?
-          AND r.status = 'active'
-          AND s.assigned_agent_id IN (${placeholders(agentIds.length)})
-        ORDER BY r.updated_at DESC, r.id`,
+        `SELECT * FROM (
+           SELECT s.assigned_agent_id, r.id AS pipeline_run_id,
+                  s.stage_id, s.stage_index, s.status, r.definition_json,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY s.assigned_agent_id
+                    ORDER BY r.updated_at DESC, r.id
+                  ) AS rn
+             FROM pipeline_run r
+             JOIN pipeline_stage_run s
+               ON s.pipeline_run_id = r.id
+              AND s.stage_index = r.current_stage_index
+            WHERE r.project_id = ?
+              AND r.status = 'active'
+              AND s.assigned_agent_id IN (${placeholders(agentIds.length)})
+         ) WHERE rn <= ?
+         ORDER BY assigned_agent_id, rn`,
       )
-      .all(projectId, ...agentIds)
+      .all(projectId, ...agentIds, Math.max(1, stageLimit))
       .map((row) => ({
         agentId: row.assigned_agent_id,
         pipelineRunId: row.pipeline_run_id,
@@ -437,6 +471,51 @@ export class SqliteOperationalReadRepository
             ?.name ?? row.stage_id,
         stageStatus: row.status,
       }));
+
+    const counts = new Map(
+      this.database
+        .query<
+          {
+            assigned_agent_id: string;
+            count: number;
+            awaiting: number;
+          },
+          string[]
+        >(
+          `SELECT s.assigned_agent_id, COUNT(*) AS count,
+                  SUM(CASE WHEN s.status = 'awaiting_approval' THEN 1 ELSE 0 END)
+                    AS awaiting
+             FROM pipeline_run r
+             JOIN pipeline_stage_run s
+               ON s.pipeline_run_id = r.id
+              AND s.stage_index = r.current_stage_index
+            WHERE r.project_id = ?
+              AND r.status = 'active'
+              AND s.assigned_agent_id IN (${placeholders(agentIds.length)})
+            GROUP BY s.assigned_agent_id`,
+        )
+        .all(projectId, ...agentIds)
+        .map(
+          (row) =>
+            [
+              row.assigned_agent_id,
+              { count: row.count, awaiting: row.awaiting },
+            ] as const,
+        ),
+    );
+
+    const stagesByAgent = new Map<string, AgentActiveStageRecord[]>();
+    for (const row of rows) {
+      const list = stagesByAgent.get(row.agentId) ?? [];
+      list.push(row);
+      stagesByAgent.set(row.agentId, list);
+    }
+    return agentIds.map((agentId) => ({
+      agentId,
+      stages: stagesByAgent.get(agentId) ?? [],
+      stageCount: counts.get(agentId)?.count ?? 0,
+      awaitingApprovalCount: counts.get(agentId)?.awaiting ?? 0,
+    }));
   }
 
   async listTaskReviewFacts(
@@ -818,20 +897,26 @@ export class SqliteOperationalReadRepository
       .map((row) => ({ projectId: row.project_id, count: row.count }));
   }
 
-  /** Highest-ranked run per partition, at most one row per named entity. */
-  private topRunPerPartition(
+  /**
+   * Highest-ranked runs per partition, at most `limit` rows per named entity.
+   *
+   * Ranking is `updated_at` descending, ties broken by run id descending, and
+   * rows come back grouped by partition in that order.
+   */
+  private topRunsPerPartition(
     partition: string,
     column: string,
     projectId: string,
     ids: readonly string[],
     statuses: readonly AgentRunStatus[],
+    limit: number,
   ): OperationalAgentRunRecord[] {
     const statusClause =
       statuses.length === 0
         ? ""
         : `AND run.status IN (${placeholders(statuses.length)})`;
     return this.database
-      .query<AgentRunRow, string[]>(
+      .query<AgentRunRow, (string | number)[]>(
         `SELECT * FROM (
            ${agentRunColumns},
              ROW_NUMBER() OVER (
@@ -842,10 +927,32 @@ export class SqliteOperationalReadRepository
           WHERE run.project_id = ?
             AND ${column} IN (${placeholders(ids.length)})
             ${statusClause}
-         ) WHERE rn = 1`,
+         ) WHERE rn <= ?
+         ORDER BY rn`,
       )
-      .all(projectId, ...ids, ...statuses)
+      .all(projectId, ...ids, ...statuses, limit)
       .map(agentRunRecord);
+  }
+
+  /** Exact active-run count per agent; never the length of a bounded sample. */
+  private countRunsPerAgent(
+    projectId: string,
+    agentIds: readonly string[],
+    statuses: readonly AgentRunStatus[],
+  ): Map<string, number> {
+    return new Map(
+      this.database
+        .query<{ agent_id: string; count: number }, string[]>(
+          `SELECT agent_id, COUNT(*) AS count
+             FROM agent_run
+            WHERE project_id = ?
+              AND agent_id IN (${placeholders(agentIds.length)})
+              AND status IN (${placeholders(statuses.length)})
+            GROUP BY agent_id`,
+        )
+        .all(projectId, ...agentIds, ...statuses)
+        .map((row) => [row.agent_id, row.count] as const),
+    );
   }
 
   /** Attaches persisted stage state to pipeline-run rows in one extra query. */
@@ -889,6 +996,21 @@ const activeRunStatuses: readonly AgentRunStatus[] = [
 
 function placeholders(count: number): string {
   return new Array(count).fill("?").join(", ");
+}
+
+/** Groups already-ordered rows by key, preserving their SQL order. */
+function groupRuns<T>(
+  rows: readonly T[],
+  key: (row: T) => string,
+): Map<string, T[]> {
+  const grouped = new Map<string, T[]>();
+  for (const row of rows) {
+    const id = key(row);
+    const list = grouped.get(id) ?? [];
+    list.push(row);
+    grouped.set(id, list);
+  }
+  return grouped;
 }
 
 function where(...clauses: readonly string[]): string {

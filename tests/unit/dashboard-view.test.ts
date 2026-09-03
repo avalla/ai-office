@@ -295,15 +295,41 @@ function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
         roleName: "Developer",
         enabled: true,
         state: "working",
-        currentRun: {
+        activeRuns: {
+          total: 1,
+          truncated: false,
+          items: [
+            {
+              runId: "run-1",
+              status: "running",
+              agentId: "agent-1",
+              startedAt: now,
+              updatedAt: now,
+              task: { taskId: "task-1", title: "Ship the thing" },
+            },
+          ],
+        },
+        activeStages: {
+          total: 1,
+          truncated: false,
+          items: [
+            {
+              pipelineRunId: "pipeline-1",
+              stageId: "build",
+              name: "Developer",
+              status: "active",
+            },
+          ],
+        },
+        primaryRun: {
           runId: "run-1",
           status: "running",
           agentId: "agent-1",
           startedAt: now,
           updatedAt: now,
+          task: { taskId: "task-1", title: "Ship the thing" },
         },
-        currentTask: { taskId: "task-1", title: "Ship the thing" },
-        currentStage: {
+        primaryStage: {
           pipelineRunId: "pipeline-1",
           stageId: "build",
           name: "Developer",

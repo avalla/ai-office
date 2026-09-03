@@ -88,6 +88,34 @@ landed. Topics carry no state, so the stream cannot become a competing source of
 truth: a subscriber that misses an event is stale until the next one or until it
 reconnects, and can never be wrong. Nothing new is persisted.
 
+Because there is no replay, a client must treat *establishing a connection* as
+its own reason to re-query. Restoring a stream while state changed during the
+outage would otherwise leave a healthy-looking connection displaying stale data.
+The browser shell therefore refreshes the current route on every newly
+established stream, and reports `live` only once that refresh has succeeded; a
+connected-but-unsynchronized view reads `syncing`. The rule is expressed as a
+sync token pairing the connection epoch with the route key, and the reconnect
+refresh reuses the same single-flight-plus-debounce path as invalidations so
+reconnect storms, invalidate bursts, and navigation cannot race.
+
+### One definition of a working agent, and concurrency reported as it is
+
+`ProjectSummary.agentsWorking` counts distinct enabled agents holding at least
+one active `AgentRun`. `AgentActivityState.working` uses exactly that predicate,
+so the aggregate and the per-agent state cannot contradict each other. A stage
+assigned before any run is scheduled is a distinct state, `assigned`, rather
+than a second meaning of "working".
+
+Neither the schema nor the scheduler enforces one active run or one active stage
+assignment per agent: the task lock is per task, and pipeline assignment does
+not reject an agent another active stage already names. Adding such a write-side
+restriction to make a read model convenient would be a scheduling and
+concurrency product decision, not a dashboard one. So `AgentState` publishes
+`activeRuns` and `activeStages` as bounded lists with exact totals, plus
+deterministically selected `primaryRun` and `primaryStage` representatives. The
+derived state reads only the exact counts, so a truncated sample never changes
+it, and no concurrent work disappears silently.
+
 ### Activity is paged by a real keyset cursor
 
 Activity pages on `(occurred_at, id)`, with the SQL predicate and the ordering
