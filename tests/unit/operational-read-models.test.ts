@@ -12,8 +12,11 @@ import {
   projectActivityEntry,
   sanitizeActivityDetail,
 } from "@ai-office/application/read-models/activity-sanitization.ts";
+import type { AgentReference } from "@ai-office/application/read-models/operational-read-models.ts";
+import type { AgentActiveStageRecord } from "@ai-office/application/ports/operational-read.port.ts";
 import {
   agentRunAttentionReasons,
+  isActiveAgentRunStatus,
   projectAgentRunState,
   projectAgentState,
   projectPipelineRunState,
@@ -184,9 +187,78 @@ function reviewRecord(
   };
 }
 
+/**
+ * Test helper mirroring how the query service scopes facts to one entity.
+ *
+ * The projection takes an entity's own active/latest run rather than a list, so
+ * these helpers make that reduction explicit here instead of hiding it inside
+ * each case. The service's real scoping is covered by the integration tests.
+ */
+function byUpdatedDesc(
+  left: OperationalAgentRunRecord,
+  right: OperationalAgentRunRecord,
+): number {
+  return right.updatedAt.getTime() - left.updatedAt.getTime();
+}
+
+function taskState(input: {
+  task: TaskProps;
+  runs?: readonly OperationalAgentRunRecord[];
+  pipelineRun?: PipelineRunProps | null;
+  reviews?: readonly ReturnType<typeof projectReviewState>[];
+  agentsById?: ReadonlyMap<string, AgentReference>;
+}) {
+  const runs = [...(input.runs ?? [])].sort(byUpdatedDesc);
+  const pending = (input.reviews ?? []).filter(
+    (review) => review.status === "pending",
+  );
+  return projectTaskOperationalState({
+    task: input.task,
+    activeRun: runs.find((run) => isActiveAgentRunStatus(run.status)) ?? null,
+    latestRun: runs[0] ?? null,
+    pipelineRun: input.pipelineRun ?? null,
+    pendingReviewCount: pending.length,
+    earliestPendingReview: pending[0] ?? null,
+    agentsById: input.agentsById ?? new Map(),
+  });
+}
+
+function agentState(input: {
+  agent: OperationalAgentRecord;
+  runs?: readonly OperationalAgentRunRecord[];
+  pipelineRuns?: readonly PipelineRunProps[];
+}) {
+  const runs = [...(input.runs ?? [])]
+    .filter((run) => run.agentId === input.agent.id)
+    .sort(byUpdatedDesc);
+  let stage: AgentActiveStageRecord | null = null;
+  for (const pipelineRun of input.pipelineRuns ?? []) {
+    if (pipelineRun.status !== "active") continue;
+    const current = pipelineRun.stages[pipelineRun.currentStageIndex];
+    if (current === undefined || current.assignedAgentId !== input.agent.id)
+      continue;
+    stage = {
+      agentId: input.agent.id,
+      pipelineRunId: pipelineRun.id,
+      stageId: current.stageId,
+      stageName:
+        pipelineRun.definition.stages[current.stageIndex]?.name ??
+        current.stageId,
+      stageStatus: current.status,
+    };
+    break;
+  }
+  return projectAgentState({
+    agent: input.agent,
+    activeRun: runs.find((run) => isActiveAgentRunStatus(run.status)) ?? null,
+    latestRun: runs[0] ?? null,
+    stage,
+  });
+}
+
 describe("task operational state", () => {
   test("reports a pending task with a queued run as scheduled and divergent", () => {
-    const state = projectTaskOperationalState({
+    const state = taskState({
       task: task({ status: "pending" }),
       runs: [run({ status: "queued", startedAt: null })],
       pipelineRun: null,
@@ -204,7 +276,7 @@ describe("task operational state", () => {
   });
 
   test("reports a pending task with a running run as in progress and divergent", () => {
-    const state = projectTaskOperationalState({
+    const state = taskState({
       task: task({ status: "pending" }),
       runs: [run({ status: "running" })],
       pipelineRun: null,
@@ -219,7 +291,7 @@ describe("task operational state", () => {
   });
 
   test("a running task with no run and a failed last run is reported as failed", () => {
-    const state = projectTaskOperationalState({
+    const state = taskState({
       task: task({ status: "running" }),
       runs: [
         run({
@@ -245,7 +317,7 @@ describe("task operational state", () => {
   });
 
   test("a pending review makes the task await review and raises attention", () => {
-    const state = projectTaskOperationalState({
+    const state = taskState({
       task: task({ status: "running" }),
       runs: [],
       pipelineRun: null,
@@ -263,7 +335,7 @@ describe("task operational state", () => {
     const awaiting = pipelineRun();
     const stages = [...awaiting.stages];
     stages[1] = { ...stages[1]!, status: "awaiting_approval" };
-    const state = projectTaskOperationalState({
+    const state = taskState({
       task: task({ status: "running" }),
       runs: [],
       pipelineRun: { ...awaiting, stages },
@@ -279,7 +351,7 @@ describe("task operational state", () => {
 
   test("terminal task statuses win over run activity and never diverge", () => {
     for (const status of ["completed", "cancelled", "failed"] as const) {
-      const state = projectTaskOperationalState({
+      const state = taskState({
         task: task({ status }),
         runs: [run({ status: "failed", completedAt: at(base) })],
         pipelineRun: null,
@@ -292,7 +364,7 @@ describe("task operational state", () => {
   });
 
   test("a blocked task reports its blocker and needs attention", () => {
-    const state = projectTaskOperationalState({
+    const state = taskState({
       task: task({ status: "blocked" }),
       runs: [],
       pipelineRun: null,
@@ -308,7 +380,7 @@ describe("task operational state", () => {
   });
 
   test("a task with no runs and no reviews is not started", () => {
-    const state = projectTaskOperationalState({
+    const state = taskState({
       task: task(),
       runs: [],
       pipelineRun: null,
@@ -320,7 +392,7 @@ describe("task operational state", () => {
   });
 
   test("requirement and milestone linkage are reported unavailable, not guessed", () => {
-    const state = projectTaskOperationalState({
+    const state = taskState({
       task: task(),
       runs: [],
       pipelineRun: null,
@@ -337,7 +409,7 @@ describe("task operational state", () => {
   });
 
   test("the assigned agent comes from the active pipeline stage", () => {
-    const state = projectTaskOperationalState({
+    const state = taskState({
       task: task({ status: "running" }),
       runs: [],
       pipelineRun: pipelineRun(),
@@ -444,7 +516,7 @@ describe("pipeline run state", () => {
 
 describe("agent state", () => {
   test("an agent with an active run is working", () => {
-    const state = projectAgentState({
+    const state = agentState({
       agent: agentRecord(),
       runs: [run({ status: "running" })],
       pipelineRuns: [],
@@ -458,7 +530,7 @@ describe("agent state", () => {
     const source = pipelineRun();
     const stages = [...source.stages];
     stages[1] = { ...stages[1]!, status: "awaiting_approval" };
-    const state = projectAgentState({
+    const state = agentState({
       agent: agentRecord(),
       runs: [],
       pipelineRuns: [{ ...source, stages }],
@@ -468,7 +540,7 @@ describe("agent state", () => {
   });
 
   test("an agent whose last run failed reports it and is otherwise idle", () => {
-    const state = projectAgentState({
+    const state = agentState({
       agent: agentRecord(),
       runs: [
         run({ status: "failed", completedAt: at("2026-09-03T10:04:00.000Z") }),
@@ -481,11 +553,11 @@ describe("agent state", () => {
 
   test("an agent with no runs is idle and a disabled agent is disabled", () => {
     expect(
-      projectAgentState({ agent: agentRecord(), runs: [], pipelineRuns: [] })
+      agentState({ agent: agentRecord(), runs: [], pipelineRuns: [] })
         .state,
     ).toBe("idle");
     expect(
-      projectAgentState({
+      agentState({
         agent: agentRecord({ enabled: false }),
         runs: [run({ status: "running" })],
         pipelineRuns: [],
@@ -494,7 +566,7 @@ describe("agent state", () => {
   });
 
   test("runs belonging to other agents are ignored", () => {
-    const state = projectAgentState({
+    const state = agentState({
       agent: agentRecord({ id: "agent-9" }),
       runs: [run({ status: "running" })],
       pipelineRuns: [],
@@ -692,17 +764,21 @@ describe("project summary", () => {
       activePipelineRuns: 1,
       activeAgentRuns: 2,
       agentsWorking: 2,
-      reviews: [projectReviewState(reviewRecord())],
-      attentionReasons: [
-        {
-          kind: "review_pending",
-          projectId: "project-1",
-          subjectType: "review",
-          subjectId: "review-1",
-          summary: "Review of task task-1 is pending",
-          since: "2026-09-03T10:03:00.000Z",
-        },
-      ],
+      pendingReviews: 1,
+      attention: {
+        total: 1,
+        truncated: false,
+        items: [
+          {
+            kind: "review_pending",
+            projectId: "project-1",
+            subjectType: "review",
+            subjectId: "review-1",
+            summary: "Review of task task-1 is pending",
+            since: "2026-09-03T10:03:00.000Z",
+          },
+        ],
+      },
       lastActivityAt: at("2026-09-03T10:20:00.000Z"),
     });
 
@@ -726,8 +802,8 @@ describe("project summary", () => {
       activePipelineRuns: 0,
       activeAgentRuns: 0,
       agentsWorking: 0,
-      reviews: [],
-      attentionReasons: [],
+      pendingReviews: 0,
+      attention: { total: 0, items: [], truncated: false },
       lastActivityAt: null,
     });
     expect(summary.currentMilestone).toBeNull();

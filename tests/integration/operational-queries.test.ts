@@ -26,6 +26,10 @@ import {
   OperationalQueryService,
   OperationalResourceNotFoundError,
 } from "@ai-office/application/queries/operational-query-service.ts";
+import {
+  parseActivityCursor,
+  queryLimits,
+} from "@ai-office/application/protocol/query-protocol.ts";
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 
@@ -127,12 +131,7 @@ async function fixture() {
     clock,
   );
   const reads = new SqliteOperationalReadRepository(database);
-  const queries = new OperationalQueryService({
-    reads,
-    tasks,
-    pipelines,
-    clock,
-  });
+  const queries = new OperationalQueryService({ reads, clock });
 
   return {
     database,
@@ -335,7 +334,7 @@ describe("operational read repository", () => {
     expect(await context.reads.listAgents([])).toEqual([]);
     expect(await context.reads.countActivePipelineRuns([])).toEqual([]);
     expect(await context.reads.lastActivityAt([])).toEqual([]);
-    expect(await context.reads.listActivePipelineStages([])).toEqual([]);
+    expect(await context.reads.listActivePipelineStages([], 10)).toEqual([]);
     expect(await context.reads.listAttentionTasks([], 10)).toEqual([]);
     expect(
       await context.reads.listAgentRuns({ projectIds: [], limit: 10 }),
@@ -477,7 +476,7 @@ describe("operational read repository", () => {
     });
     await context.pipelines.insert(run);
 
-    const stages = await context.reads.listActivePipelineStages(["project-1"]);
+    const stages = await context.reads.listActivePipelineStages(["project-1"], 10);
     expect(stages).toHaveLength(1);
     expect(stages[0]).toMatchObject({
       pipelineRunId: "pipeline-1",
@@ -515,7 +514,7 @@ describe("operational read repository", () => {
 
     const older = await context.reads.listActivity({
       limit: 10,
-      before: new Date(now.getTime() + 2000),
+      cursor: { occurredAt: new Date(now.getTime() + 2000), id: "event-2" },
     });
     expect(older.map((entry) => entry.id)).toEqual(["event-1", "event-0"]);
 
@@ -539,7 +538,7 @@ describe("operational query service", () => {
       agentsWorking: 0,
       attentionItems: 0,
     });
-    expect(overview.recentActivity).toEqual([]);
+    expect(overview.recentActivity).toEqual({ items: [], nextCursor: null });
   });
 
   test("summarizes several projects and surfaces cross-project attention", async () => {
@@ -586,12 +585,12 @@ describe("operational query service", () => {
     expect(overview.totals.activeAgentRuns).toBe(1);
     expect(overview.totals.agentsWorking).toBe(1);
     expect(overview.totals.attentionItems).toBe(1);
-    expect(overview.attentionReasons[0]).toMatchObject({
+    expect(overview.attention.items[0]).toMatchObject({
       kind: "task_blocked",
       projectId: "project-2",
       subjectId: "task-blocked",
     });
-    expect(overview.activeRuns[0]?.runId).toBe("run-1");
+    expect(overview.activeRuns.items[0]?.runId).toBe("run-1");
   });
 
   test("project detail reports the divergence between stored and operational status", async () => {
@@ -618,7 +617,7 @@ describe("operational query service", () => {
     await context.runtime.saveRun(run);
 
     const detail = await context.queries.getProjectDetail("project-1");
-    const task = detail.tasks[0]!;
+    const task = detail.tasks.items[0]!;
     // schedule-agent-run deliberately does not transition the task, so the
     // stored status stays `pending` while the run is already executing.
     expect(task.recordedStatus).toBe("pending");
@@ -654,20 +653,20 @@ describe("operational query service", () => {
 
     const detail = await context.queries.getProjectDetail("project-1");
     expect(detail.summary.pendingReviews).toBe(1);
-    expect(detail.tasks[0]?.operationalStatus).toBe("awaiting_review");
-    expect(detail.summary.attentionReasons.map((r) => r.kind)).toContain(
+    expect(detail.tasks.items[0]?.operationalStatus).toBe("awaiting_review");
+    expect(detail.summary.attention.items.map((r) => r.kind)).toContain(
       "review_pending",
     );
     // The same pending review must not be counted twice.
     expect(
-      detail.summary.attentionReasons.filter(
+      detail.summary.attention.items.filter(
         (reason) => reason.kind === "review_pending",
       ),
     ).toHaveLength(1);
 
     const pending = await context.queries.listReviews({ pendingOnly: true });
-    expect(pending).toHaveLength(1);
-    expect(await context.queries.listApprovals({})).toEqual([]);
+    expect(pending.items).toHaveLength(1);
+    expect((await context.queries.listApprovals({})).items).toEqual([]);
   });
 
   test("an approved review moves from reviews to approvals", async () => {
@@ -702,10 +701,10 @@ describe("operational query service", () => {
     });
 
     expect(
-      await context.queries.listReviews({ pendingOnly: true }),
+      (await context.queries.listReviews({ pendingOnly: true })).items,
     ).toHaveLength(0);
     const approvals = await context.queries.listApprovals({});
-    expect(approvals[0]).toMatchObject({
+    expect(approvals.items[0]).toMatchObject({
       status: "approved",
       decision: { decision: "approved", rationale: "Looks right" },
     });
@@ -746,15 +745,15 @@ describe("operational query service", () => {
     const pipelines = await context.queries.listPipelineRuns("project-1", {
       activeOnly: true,
     });
-    expect(pipelines).toHaveLength(1);
-    expect(pipelines[0]?.stages.map((stage) => stage.name)).toEqual([
+    expect(pipelines.items).toHaveLength(1);
+    expect(pipelines.items[0]?.stages.map((stage) => stage.name)).toEqual([
       "Architecture",
       "Implementation",
     ]);
-    expect(pipelines[0]?.currentStage?.stageId).toBe("design");
-    expect(pipelines[0]?.task?.title).toBe("Ship it");
+    expect(pipelines.items[0]?.currentStage?.stageId).toBe("design");
+    expect(pipelines.items[0]?.task?.title).toBe("Ship it");
     // An active stage with no assigned agent is a real blocker.
-    expect(pipelines[0]?.attentionReasons[0]?.kind).toBe(
+    expect(pipelines.items[0]?.attentionReasons[0]?.kind).toBe(
       "pipeline_stage_unassigned",
     );
   });
@@ -803,7 +802,7 @@ describe("operational query service", () => {
       { requestId: "action-1", status: "approval_pending" },
     ]);
     expect(JSON.stringify(detail)).not.toContain("must not be published");
-    expect(detail.events.map((event) => event.status)).toEqual([
+    expect(detail.events.items.map((event) => event.status)).toEqual([
       "queued",
       "preparing",
       "running",
@@ -848,9 +847,11 @@ describe("operational query service", () => {
     const activity = await context.queries.listActivity({
       projectId: "project-1",
     });
-    expect(activity[0]?.detail).toEqual({ command: "project:create" });
-    expect(activity[0]?.detailTruncated).toBe(true);
-    expect(JSON.stringify(activity)).not.toContain("sk-live-should-not-appear");
+    expect(activity.items[0]?.detail).toEqual({ command: "project:create" });
+    expect(activity.items[0]?.detailTruncated).toBe(true);
+    expect(JSON.stringify(activity.items)).not.toContain(
+      "sk-live-should-not-appear",
+    );
   });
 
   test("task listing respects its limit", async () => {
@@ -865,6 +866,463 @@ describe("operational query service", () => {
           now,
         }),
       );
-    expect(await context.queries.listTasks("project-1", 2)).toHaveLength(2);
+    expect((await context.queries.listTasks("project-1", 2)).items).toHaveLength(
+      2,
+    );
+  });
+});
+
+/**
+ * Scale regressions.
+ *
+ * Every case here creates more records than the relevant display limit and then
+ * asserts the invariant this hardening exists for: a result may be bounded, but
+ * bounded evidence must never silently change an authoritative count, status,
+ * attention decision, or relationship.
+ */
+describe("bounded evidence never decides authoritative state", () => {
+  async function seedRun(
+    context: Awaited<ReturnType<typeof fixture>>,
+    input: {
+      projectId: string;
+      taskId: string;
+      agentId: string;
+      runId: string;
+      status: "queued" | "running" | "failed" | "completed";
+      updatedAt: Date;
+    },
+  ): Promise<void> {
+    context.database
+      .prepare(
+        `INSERT INTO agent_run(
+           id, project_id, task_id, agent_id, status,
+           created_at, started_at, completed_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.runId,
+        input.projectId,
+        input.taskId,
+        input.agentId,
+        input.status,
+        now.toISOString(),
+        input.status === "queued" ? null : now.toISOString(),
+        input.status === "failed" || input.status === "completed"
+          ? input.updatedAt.toISOString()
+          : null,
+        input.updatedAt.toISOString(),
+      );
+  }
+
+  test("active-run totals stay exact when the sample is truncated", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    const runsWanted = queryLimits.runs.default + 7;
+    for (let index = 0; index < runsWanted; index += 1) {
+      await seedAgent(context, "project-1", `agent-${index}`, `role${index}`);
+      await context.tasks.save(
+        Task.create({
+          id: `task-${index}`,
+          projectId: "project-1",
+          title: `Task ${index}`,
+          now,
+        }),
+      );
+      await seedRun(context, {
+        projectId: "project-1",
+        taskId: `task-${index}`,
+        agentId: `agent-${index}`,
+        runId: `run-${index}`,
+        status: "running",
+        updatedAt: new Date(now.getTime() + index * 1000),
+      });
+    }
+
+    const overview = await context.queries.getDashboardOverview();
+    const summary = overview.projects[0]!;
+
+    // Totals are exact even though the sample stopped at the limit.
+    expect(overview.totals.activeAgentRuns).toBe(runsWanted);
+    expect(overview.totals.agentsWorking).toBe(runsWanted);
+    expect(summary.activeAgentRuns).toBe(runsWanted);
+    expect(summary.agentsWorking).toBe(runsWanted);
+
+    // The sample is smaller, and says so.
+    expect(overview.activeRuns.items).toHaveLength(queryLimits.runs.default);
+    expect(overview.activeRuns.total).toBe(runsWanted);
+    expect(overview.activeRuns.truncated).toBe(true);
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    expect(detail.summary.activeAgentRuns).toBe(runsWanted);
+    expect(detail.summary.agentsWorking).toBe(runsWanted);
+    expect(detail.runs.total).toBe(runsWanted);
+    expect(detail.runs.items.length).toBeLessThan(runsWanted);
+    expect(detail.runs.truncated).toBe(true);
+  });
+
+  test("a task's own run decides its status from outside any display window", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+
+    // The task of interest, with an old but in-flight run.
+    await context.tasks.save(
+      Task.create({
+        id: "task-old",
+        projectId: "project-1",
+        title: "Old but running",
+        priority: 100,
+        now,
+      }),
+    );
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-old",
+      agentId: "agent-1",
+      runId: "run-old",
+      status: "running",
+      updatedAt: now,
+    });
+
+    // Enough newer, unrelated runs to push it out of any generic window.
+    const noise = queryLimits.runs.max + 20;
+    for (let index = 0; index < noise; index += 1) {
+      await context.tasks.save(
+        Task.create({
+          id: `noise-task-${index}`,
+          projectId: "project-1",
+          title: `Noise ${index}`,
+          now,
+        }),
+      );
+      await seedRun(context, {
+        projectId: "project-1",
+        taskId: `noise-task-${index}`,
+        agentId: "agent-1",
+        runId: `noise-run-${index}`,
+        status: "completed",
+        updatedAt: new Date(now.getTime() + (index + 1) * 60_000),
+      });
+    }
+
+    const tasks = await context.queries.listTasks("project-1", 5);
+    const task = tasks.items.find((value) => value.taskId === "task-old");
+    expect(task).toBeDefined();
+    expect(task?.operationalStatus).toBe("in_progress");
+    expect(task?.divergesFromRecordedStatus).toBe(true);
+    expect(task?.divergenceReasons).toEqual([
+      "agent_run_active_without_task_transition",
+    ]);
+    expect(task?.activeAgentRun?.runId).toBe("run-old");
+  });
+
+  test("an agent's own run decides its state from outside any display window", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-quiet", "quiet");
+    await seedAgent(context, "project-1", "agent-busy", "busy");
+    await context.tasks.save(
+      Task.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Held",
+        now,
+      }),
+    );
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-quiet",
+      runId: "run-quiet",
+      status: "running",
+      updatedAt: now,
+    });
+
+    const noise = queryLimits.runs.max + 20;
+    for (let index = 0; index < noise; index += 1)
+      await seedRun(context, {
+        projectId: "project-1",
+        taskId: "task-1",
+        agentId: "agent-busy",
+        runId: `noise-run-${index}`,
+        status: "completed",
+        updatedAt: new Date(now.getTime() + (index + 1) * 60_000),
+      });
+
+    const agents = await context.queries.listAgents("project-1");
+    const quiet = agents.find((agent) => agent.agentId === "agent-quiet");
+    expect(quiet?.state).toBe("working");
+    expect(quiet?.currentRun?.runId).toBe("run-quiet");
+  });
+
+  test("attention survives a blocked task outside the displayed page", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+
+    // Low-priority blocked task, so the first page of tasks never contains it.
+    const filler = queryLimits.tasks.default + 5;
+    for (let index = 0; index < filler; index += 1)
+      await context.tasks.save(
+        Task.create({
+          id: `task-${index}`,
+          projectId: "project-1",
+          title: `Task ${index}`,
+          priority: 50,
+          now,
+        }),
+      );
+    context.database
+      .prepare(
+        `INSERT INTO task(id, project_id, title, description, status, priority,
+                          created_at, updated_at)
+         VALUES (?, ?, ?, NULL, 'blocked', -100, ?, ?)`,
+      )
+      .run(
+        "task-blocked",
+        "project-1",
+        "Blocked and invisible",
+        now.toISOString(),
+        now.toISOString(),
+      );
+
+    const detail = await context.queries.getProjectDetail("project-1", {
+      taskLimit: 5,
+    });
+    expect(
+      detail.tasks.items.some((task) => task.taskId === "task-blocked"),
+    ).toBe(false);
+    expect(detail.tasks.truncated).toBe(true);
+    expect(detail.tasks.total).toBe(filler + 1);
+    expect(detail.summary.attentionRequired).toBe(true);
+    expect(detail.summary.attention.total).toBeGreaterThan(0);
+    expect(
+      detail.summary.attention.items.some(
+        (reason) => reason.subjectId === "task-blocked",
+      ),
+    ).toBe(true);
+
+    const overview = await context.queries.getDashboardOverview();
+    expect(overview.projects[0]?.attentionRequired).toBe(true);
+    expect(overview.totals.attentionItems).toBeGreaterThan(0);
+  });
+
+  test("pending review totals stay exact beyond the attention sample", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    const governance = new ManageGovernance(
+      context.projects,
+      context.governance,
+      context.ids,
+      context.clock,
+    );
+    const reviewsWanted = queryLimits.attention.default + 3;
+    for (let index = 0; index < reviewsWanted; index += 1) {
+      await context.tasks.save(
+        Task.create({
+          id: `task-${index}`,
+          projectId: "project-1",
+          title: `Task ${index}`,
+          now,
+        }),
+      );
+      await governance.createReview({
+        projectId: "project-1",
+        subjectType: "task",
+        subjectId: `task-${index}`,
+        reviewer: { type: "user", id: "alice" },
+      });
+    }
+
+    const overview = await context.queries.getDashboardOverview();
+    expect(overview.totals.pendingReviews).toBe(reviewsWanted);
+    expect(overview.projects[0]?.pendingReviews).toBe(reviewsWanted);
+    expect(overview.attention.total).toBeGreaterThanOrEqual(reviewsWanted);
+    expect(overview.attention.truncated).toBe(true);
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    expect(detail.summary.pendingReviews).toBe(reviewsWanted);
+  });
+
+  test("pipeline history returns the most recent runs, not the oldest", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await context.manifests.save({
+      id: "manifest-1",
+      projectId: "project-1",
+      revision: 1,
+      manifest,
+      appliedAt: now,
+    });
+
+    const total = 12;
+    const limit = 3;
+    for (let index = 0; index < total; index += 1) {
+      await context.tasks.save(
+        Task.create({
+          id: `task-${index}`,
+          projectId: "project-1",
+          title: `Task ${index}`,
+          now,
+        }),
+      );
+      const created = new Date(now.getTime() + index * 60_000);
+      const run = PipelineRun.create({
+        id: `pipeline-${String(index).padStart(2, "0")}`,
+        projectId: "project-1",
+        taskId: `task-${index}`,
+        manifestRevisionId: "manifest-1",
+        manifestRevision: 1,
+        definition: manifest.pipelines[0]!,
+        startedBy: "operator",
+        stageRunIds: [`stage-a-${index}`, `stage-b-${index}`],
+        now: created,
+      });
+      await context.pipelines.insert(run);
+    }
+
+    const page = await context.queries.listPipelineRuns("project-1", { limit });
+    expect(page.total).toBe(total);
+    expect(page.truncated).toBe(true);
+    expect(page.items.map((value) => value.pipelineRunId)).toEqual([
+      "pipeline-11",
+      "pipeline-10",
+      "pipeline-09",
+    ]);
+    // The persisted stage sequence still comes through the read-side query.
+    expect(page.items[0]?.stages.map((stage) => stage.name)).toEqual([
+      "Architecture",
+      "Implementation",
+    ]);
+    expect(page.items[0]?.task?.title).toBe("Task 11");
+
+    const detail = await context.queries.getProjectDetail("project-1", {
+      pipelineLimit: 2,
+    });
+    expect(detail.pipelines.total).toBe(total);
+    expect(detail.pipelines.items.map((value) => value.pipelineRunId)).toEqual([
+      "pipeline-11",
+      "pipeline-10",
+    ]);
+  });
+
+  test("run-scoped activity survives beyond the project activity window", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    await context.tasks.save(
+      Task.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Ship it",
+        now,
+      }),
+    );
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-1",
+      runId: "run-1",
+      status: "running",
+      updatedAt: now,
+    });
+
+    // The run's own event is the oldest thing in the project.
+    context.database
+      .prepare(
+        `INSERT INTO audit_event(id, project_id, event_type, actor_type,
+                                 actor_id, aggregate_type, aggregate_id,
+                                 payload_json, occurred_at)
+         VALUES (?, ?, 'run.started', 'daemon', NULL, 'agent_run', 'run-1', ?, ?)`,
+      )
+      .run("event-run", "project-1", JSON.stringify({ step: 1 }), now.toISOString());
+
+    const noise = queryLimits.activity.max + 20;
+    for (let index = 0; index < noise; index += 1)
+      context.database
+        .prepare(
+          `INSERT INTO audit_event(id, project_id, event_type, actor_type,
+                                   actor_id, aggregate_type, aggregate_id,
+                                   payload_json, occurred_at)
+           VALUES (?, ?, 'command.completed', 'daemon', NULL, NULL, NULL, ?, ?)`,
+        )
+        .run(
+          `noise-${index}`,
+          "project-1",
+          JSON.stringify({ command: "task:list" }),
+          new Date(now.getTime() + (index + 1) * 1000).toISOString(),
+        );
+
+    const detail = await context.queries.getRunDetail("run-1");
+    expect(detail.activity.items.map((entry) => entry.eventId)).toEqual([
+      "event-run",
+    ]);
+  });
+
+  test("activity paging never skips events sharing a timestamp", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+
+    // Nine events on the same instant, paged three at a time: the boundary
+    // falls inside the tie, which is exactly where a timestamp-only cursor
+    // loses rows.
+    const shared = now.toISOString();
+    const expected: string[] = [];
+    for (let index = 0; index < 9; index += 1) {
+      const id = `same-${String(index).padStart(2, "0")}`;
+      expected.push(id);
+      context.database
+        .prepare(
+          `INSERT INTO audit_event(id, project_id, event_type, actor_type,
+                                   actor_id, aggregate_type, aggregate_id,
+                                   payload_json, occurred_at)
+           VALUES (?, ?, 'command.completed', 'daemon', NULL, NULL, NULL, ?, ?)`,
+        )
+        .run(id, "project-1", JSON.stringify({ index }), shared);
+    }
+    // Plus one older event, so the last page is not exactly full.
+    context.database
+      .prepare(
+        `INSERT INTO audit_event(id, project_id, event_type, actor_type,
+                                 actor_id, aggregate_type, aggregate_id,
+                                 payload_json, occurred_at)
+         VALUES (?, ?, 'command.completed', 'daemon', NULL, NULL, NULL, ?, ?)`,
+      )
+      .run(
+        "older",
+        "project-1",
+        JSON.stringify({ index: -1 }),
+        new Date(now.getTime() - 1000).toISOString(),
+      );
+    expected.push("older");
+
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 20; page += 1) {
+      const parsed = cursor === null ? undefined : parseActivityCursor(cursor);
+      const result = await context.queries.listActivity({
+        projectId: "project-1",
+        limit: 3,
+        ...(parsed === undefined ? {} : { cursor: parsed }),
+      });
+      seen.push(...result.items.map((entry) => entry.eventId));
+      cursor = result.nextCursor;
+      if (cursor === null) break;
+    }
+
+    // Every event exactly once, newest first, ties broken by descending id.
+    expect(seen).toHaveLength(expected.length);
+    expect(new Set(seen).size).toBe(expected.length);
+    expect(seen).toEqual([
+      "same-08",
+      "same-07",
+      "same-06",
+      "same-05",
+      "same-04",
+      "same-03",
+      "same-02",
+      "same-01",
+      "same-00",
+      "older",
+    ]);
   });
 });

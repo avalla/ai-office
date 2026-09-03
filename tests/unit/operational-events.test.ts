@@ -7,7 +7,6 @@ import {
   commandInvalidationTopics,
   parseBoolean,
   parseIdentifier,
-  parseInstant,
   parseLimit,
   queryLimits,
   QueryValidationError,
@@ -178,13 +177,7 @@ describe("query parameter validation", () => {
     );
   });
 
-  test("instants and booleans are validated", () => {
-    expect(parseInstant(null, "before")).toBeUndefined();
-    expect(parseInstant("2026-09-03T12:00:00.000Z", "before")).toEqual(
-      new Date("2026-09-03T12:00:00.000Z"),
-    );
-    expect(() => parseInstant("nope", "before")).toThrow(QueryValidationError);
-
+  test("booleans are validated", () => {
     expect(parseBoolean(null, "active")).toBe(false);
     expect(parseBoolean("true", "active")).toBe(true);
     expect(parseBoolean("1", "active")).toBe(true);

@@ -2,8 +2,10 @@ import { describe, expect, test } from "vitest";
 import type {
   AgentRunDetail,
   DashboardOverview,
+  PipelineRunState,
   ProjectDetail,
   ProjectSummary,
+  TaskOperationalState,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
   escapeHtml,
@@ -100,16 +102,20 @@ function summary(overrides: Partial<ProjectSummary> = {}): ProjectSummary {
     pendingReviews: 1,
     agentsWorking: 2,
     attentionRequired: true,
-    attentionReasons: [
-      {
-        kind: "review_pending",
-        projectId: "project-1",
-        subjectType: "review",
-        subjectId: "review-1",
-        summary: "Review of task task-1 is pending",
-        since: now,
-      },
-    ],
+    attention: {
+      total: 1,
+      items: [
+        {
+          kind: "review_pending",
+          projectId: "project-1",
+          subjectType: "review",
+          subjectId: "review-1",
+          summary: "Review of task task-1 is pending",
+          since: now,
+        },
+      ],
+      truncated: false,
+    },
     lastActivityAt: now,
     createdAt: now,
     updatedAt: now,
@@ -132,14 +138,14 @@ function overview(
       agentsWorking: 2,
       attentionItems: 1,
     },
-    attentionReasons: summary().attentionReasons,
-    activeRuns: [],
-    recentActivity: [],
+    attention: summary().attention,
+    activeRuns: { total: 0, items: [], truncated: false },
+    recentActivity: { items: [], nextCursor: null },
     ...overrides,
   };
 }
 
-const pipeline: ProjectDetail["pipelines"][number] = {
+const pipeline: PipelineRunState = {
   pipelineRunId: "pipeline-1",
   projectId: "project-1",
   task: { taskId: "task-1", title: "Ship the thing" },
@@ -220,7 +226,7 @@ const pipeline: ProjectDetail["pipelines"][number] = {
   attentionReasons: [],
 };
 
-const task: ProjectDetail["tasks"][number] = {
+const task: TaskOperationalState = {
   taskId: "task-1",
   projectId: "project-1",
   title: "Ship the thing",
@@ -277,8 +283,8 @@ function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
     generatedAt: now,
     summary: summary(),
     milestones: [],
-    tasks: [task],
-    pipelines: [pipeline],
+    tasks: { total: 1, items: [task], truncated: false },
+    pipelines: { total: 1, items: [pipeline], truncated: false },
     agents: [
       {
         agentId: "agent-1",
@@ -306,9 +312,9 @@ function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
         lastActivityAt: now,
       },
     ],
-    runs: [],
-    reviews: [],
-    recentActivity: [],
+    runs: { total: 0, items: [], truncated: false },
+    reviews: { total: 0, items: [], truncated: false },
+    recentActivity: { items: [], nextCursor: null },
     ...overrides,
   };
 }
@@ -391,7 +397,7 @@ describe("view models", () => {
           agentsWorking: 0,
           attentionItems: 0,
         },
-        attentionReasons: [],
+        attention: { total: 0, items: [], truncated: false },
       }),
     );
     expect(view.empty?.headline).toBe("No projects yet");
@@ -402,7 +408,11 @@ describe("view models", () => {
 
   test("a project with no activity reports an empty state", () => {
     const view = projectViewModel(
-      projectDetail({ tasks: [], pipelines: [], runs: [] }),
+      projectDetail({
+        tasks: { total: 0, items: [], truncated: false },
+        pipelines: { total: 0, items: [], truncated: false },
+        runs: { total: 0, items: [], truncated: false },
+      }),
     );
     expect(view.empty?.headline).toBe("No activity yet");
   });
@@ -410,14 +420,18 @@ describe("view models", () => {
   test("tasks are ordered by urgency then priority", () => {
     const view = projectViewModel(
       projectDetail({
-        tasks: [
-          { ...task, taskId: "t-done", operationalStatus: "completed" },
-          { ...task, taskId: "t-blocked", operationalStatus: "blocked" },
-          { ...task, taskId: "t-active", operationalStatus: "in_progress" },
-        ],
+        tasks: {
+          total: 3,
+          truncated: false,
+          items: [
+            { ...task, taskId: "t-done", operationalStatus: "completed" },
+            { ...task, taskId: "t-blocked", operationalStatus: "blocked" },
+            { ...task, taskId: "t-active", operationalStatus: "in_progress" },
+          ],
+        },
       }),
     );
-    expect(view.tasks.map((value) => value.taskId)).toEqual([
+    expect(view.tasks.items.map((value) => value.taskId)).toEqual([
       "t-blocked",
       "t-active",
       "t-done",
@@ -438,14 +452,18 @@ describe("view models", () => {
   test("active pipelines are separated from historical ones", () => {
     const view = projectViewModel(
       projectDetail({
-        pipelines: [
-          pipeline,
-          { ...pipeline, pipelineRunId: "p2", status: "completed" },
-        ],
+        pipelines: {
+          total: 2,
+          truncated: false,
+          items: [
+            pipeline,
+            { ...pipeline, pipelineRunId: "p2", status: "completed" },
+          ],
+        },
       }),
     );
     expect(view.activePipelines).toHaveLength(1);
-    expect(view.pipelines).toHaveLength(2);
+    expect(view.pipelines.items).toHaveLength(2);
   });
 });
 
@@ -489,13 +507,19 @@ describe("rendering", () => {
         },
       ],
     };
-    const detail = projectDetail({ pipelines: [awaiting] });
+    const detail = projectDetail({
+      pipelines: { total: 1, items: [awaiting], truncated: false },
+    });
     const html = renderProject(
       projectViewModel({
         ...detail,
         summary: {
           ...detail.summary,
-          attentionReasons: awaiting.attentionReasons,
+          attention: {
+            total: 1,
+            items: awaiting.attentionReasons,
+            truncated: false,
+          },
         },
       }),
     );
@@ -533,18 +557,22 @@ describe("rendering", () => {
         updatedAt: now,
         durationMs: 1000,
       },
-      events: [
-        {
-          status: "running",
-          hasResult: false,
-          hasError: false,
-          occurredAt: now,
-        },
-      ],
+      events: {
+        total: 1,
+        truncated: false,
+        items: [
+          {
+            status: "running",
+            hasResult: false,
+            hasError: false,
+            occurredAt: now,
+          },
+        ],
+      },
       actions: [{ requestId: "action-1", status: "approval_pending" }],
       pipeline: null,
       reviews: [],
-      activity: [],
+      activity: { items: [], nextCursor: null },
       attentionReasons: [
         {
           kind: "agent_run_failed",
@@ -581,7 +609,11 @@ describe("html escaping", () => {
       projectViewModel(
         projectDetail({
           summary: summary({ name: `</h2><script>alert(1)</script>` }),
-          tasks: [{ ...task, title: `<script>alert("task")</script>` }],
+          tasks: {
+            total: 1,
+            truncated: false,
+            items: [{ ...task, title: `<script>alert("task")</script>` }],
+          },
         }),
       ),
     );

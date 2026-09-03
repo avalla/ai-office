@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
@@ -420,6 +427,87 @@ describe("dashboard loopback host", () => {
       });
     } finally {
       await host.stop();
+    }
+  });
+
+  test("the session token is per process and dies with the host", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-dashboard-token-"));
+    temporaryDirectories.push(projectRoot);
+    const socketPath = join(projectRoot, "missing.sock");
+
+    const first = await startDashboardHost({
+      socketPath,
+      port: 0,
+      clientScript: stubClientScript,
+    });
+    const firstToken = first.token;
+    await first.stop();
+
+    const second = await startDashboardHost({
+      socketPath,
+      port: 0,
+      clientScript: stubClientScript,
+    });
+    try {
+      // A token recovered from a previous session — from history, from a
+      // terminal, from another process's arguments — is useless here.
+      expect(second.token).not.toBe(firstToken);
+      const stale = await fetch(
+        `http://127.0.0.1:${second.port}/?token=${firstToken}`,
+        { redirect: "manual", signal: AbortSignal.timeout(5000) },
+      );
+      expect(stale.status).toBe(403);
+
+      const current = await fetch(
+        `http://127.0.0.1:${second.port}/?token=${second.token}`,
+        { redirect: "manual", signal: AbortSignal.timeout(5000) },
+      );
+      expect(current.status).toBe(302);
+
+      // The token is held in memory only: nothing under the runtime root
+      // records it, so stopping the command really does end the session.
+      const files = readdirSync(projectRoot, { recursive: true }) as string[];
+      for (const file of files) {
+        const path = join(projectRoot, file);
+        if (!statSync(path).isFile()) continue;
+        expect(readFileSync(path, "utf8")).not.toContain(second.token);
+      }
+    } finally {
+      await second.stop();
+    }
+  });
+
+  test("--no-open keeps the token out of platform opener arguments", async () => {
+    const runtime = await startRuntime();
+    const controller = new AbortController();
+    const output = captureIo();
+    const openerArguments: string[] = [];
+    try {
+      const command = runDaemonCli(["dashboard", "--port", "0", "--no-open"], {
+        projectRoot: runtime.projectRoot,
+        socketPath: runtime.socketPath,
+        io: output.io,
+        dashboardSignal: controller.signal,
+        openBrowser: async (url) => {
+          openerArguments.push(url);
+        },
+      });
+      for (
+        let attempt = 0;
+        attempt < 200 && output.stdout.length < 3;
+        attempt += 1
+      )
+        await Bun.sleep(5);
+
+      // The URL still carries the token — it has to — but nothing handed it to
+      // a subprocess. Browser history is a separate exposure the docs name.
+      expect(output.stdout[1]).toContain("token=");
+      expect(openerArguments).toEqual([]);
+      controller.abort();
+      expect(await command).toBe(0);
+    } finally {
+      controller.abort();
+      await runtime.stop();
     }
   });
 

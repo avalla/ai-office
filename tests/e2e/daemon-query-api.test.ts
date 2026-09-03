@@ -5,6 +5,17 @@ import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { queryApiVersion } from "@ai-office/application/protocol/query-protocol.ts";
+import { OfficeDaemon } from "../../apps/daemon/src/office-daemon.ts";
+import { QueryApi } from "../../apps/daemon/src/query-api.ts";
+import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
+import { OperationalEventBus } from "@ai-office/application/events/operational-event-bus.ts";
+import { OperationalQueryService } from "@ai-office/application/queries/operational-query-service.ts";
+import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
+import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
+import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
+import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
+import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
+import { SqliteOperationalReadRepository } from "@ai-office/storage-sqlite/repositories/sqlite-operational-read.repository.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -110,9 +121,13 @@ describe("daemon query API", () => {
 
       const detail = await harness.get(`/api/projects/${projectId}`);
       const project = detail.body.project as Record<string, unknown>;
-      const tasks = project.tasks as Record<string, unknown>[];
-      expect(tasks).toHaveLength(1);
-      expect(tasks[0]).toMatchObject({
+      const tasks = project.tasks as {
+        total: number;
+        truncated: boolean;
+        items: Record<string, unknown>[];
+      };
+      expect(tasks).toMatchObject({ total: 1, truncated: false });
+      expect(tasks.items[0]).toMatchObject({
         title: "Ship the thing",
         recordedStatus: "pending",
         operationalStatus: "not_started",
@@ -120,27 +135,31 @@ describe("daemon query API", () => {
         priority: 5,
       });
       expect(
-        (tasks[0]!.requirements as { availability: string }).availability,
+        (tasks.items[0]!.requirements as { availability: string }).availability,
       ).toBe("unavailable");
 
       const taskList = await harness.get(`/api/projects/${projectId}/tasks`);
-      expect(taskList.body.tasks).toHaveLength(1);
+      expect(taskList.body.tasks).toMatchObject({
+        total: 1,
+        truncated: false,
+      });
 
       const agents = await harness.get(`/api/projects/${projectId}/agents`);
       expect(agents.body.agents).toEqual([]);
 
+      const empty = { total: 0, items: [], truncated: false };
       const pipelines = await harness.get(
         `/api/projects/${projectId}/pipelines`,
       );
-      expect(pipelines.body.pipelines).toEqual([]);
+      expect(pipelines.body.pipelines).toEqual(empty);
 
       const runs = await harness.get(`/api/runs?project=${projectId}`);
-      expect(runs.body.runs).toEqual([]);
+      expect(runs.body.runs).toEqual(empty);
 
       const reviews = await harness.get("/api/reviews?pending=true");
-      expect(reviews.body.reviews).toEqual([]);
+      expect(reviews.body.reviews).toEqual(empty);
       const approvals = await harness.get("/api/approvals");
-      expect(approvals.body.approvals).toEqual([]);
+      expect(approvals.body.approvals).toEqual(empty);
     } finally {
       await harness.stop();
     }
@@ -153,20 +172,26 @@ describe("daemon query API", () => {
         await harness.client.execute(["project:create", `Project ${index}`]);
 
       const { body } = await harness.get("/api/activity?limit=3");
-      const activity = body.activity as Record<string, unknown>[];
-      expect(activity).toHaveLength(3);
-      const first = activity[0]!;
+      const page = body.activity as {
+        items: Record<string, unknown>[];
+        nextCursor: string | null;
+      };
+      expect(page.items).toHaveLength(3);
+      expect(page.nextCursor).toEqual(expect.any(String));
+      const first = page.items[0]!;
       expect(first.eventType).toBe("command.completed");
       // Command arguments never enter the audit payload, so they cannot appear.
-      expect(JSON.stringify(activity)).not.toContain("Project 3");
+      expect(JSON.stringify(page.items)).not.toContain("Project 3");
       expect(first.detail).toMatchObject({ command: "project:create" });
 
       const paged = await harness.get(
-        `/api/activity?limit=2&before=${encodeURIComponent(String(first.occurredAt))}`,
+        `/api/activity?limit=2&cursor=${encodeURIComponent(page.nextCursor!)}`,
       );
-      const older = paged.body.activity as { occurredAt: string }[];
-      for (const entry of older)
-        expect(entry.occurredAt < String(first.occurredAt)).toBe(true);
+      const older = (
+        paged.body.activity as { items: { eventId: string }[] }
+      ).items;
+      const seen = new Set(page.items.map((entry) => entry.eventId as string));
+      for (const entry of older) expect(seen.has(entry.eventId)).toBe(false);
     } finally {
       await harness.stop();
     }
@@ -191,8 +216,8 @@ describe("daemon query API", () => {
       const badLimit = await harness.get("/api/activity?limit=abc");
       expect(badLimit.status).toBe(400);
 
-      const badInstant = await harness.get("/api/activity?before=yesterday");
-      expect(badInstant.status).toBe(400);
+      const badCursor = await harness.get("/api/activity?cursor=not-a-cursor");
+      expect(badCursor.status).toBe(400);
 
       const badBoolean = await harness.get("/api/runs?active=maybe");
       expect(badBoolean.status).toBe(400);
@@ -229,7 +254,9 @@ describe("daemon query API", () => {
       expect(status).toBe(200);
       // The activity cap is 200; the fixture produces far fewer rows, so the
       // assertion is that the request succeeded instead of being refused.
-      expect((body.activity as unknown[]).length).toBeLessThanOrEqual(200);
+      expect(
+        (body.activity as { items: unknown[] }).items.length,
+      ).toBeLessThanOrEqual(200);
     } finally {
       await harness.stop();
     }
@@ -402,6 +429,138 @@ describe("daemon invalidation stream", () => {
     } finally {
       controller.abort();
       await harness.stop();
+    }
+  }, 30_000);
+});
+
+/**
+ * A failed command still changes observable state: it appends audit rows, and
+ * it may have committed part of its work before failing. The daemon therefore
+ * publishes invalidation on the failure path too, so a connected dashboard does
+ * not sit stale until some later successful command.
+ */
+describe("invalidation after a failed command", () => {
+  test("publishes invalidation and exposes the failure in activity", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-failed-command-"));
+    temporaryDirectories.push(projectRoot);
+    const socketPath = join(projectRoot, "daemon.sock");
+    const database = openDatabase(join(projectRoot, "project.sqlite"));
+    migrate(database, join(process.cwd(), "migrations", "project"));
+
+    const clock = new SystemClock();
+    const events = new RecordAuditEvent(
+      new SqliteAuditEventRepository(database),
+      new CryptoIdGenerator(),
+      clock,
+    );
+    const queryEvents = new OperationalEventBus();
+    const daemon = new OfficeDaemon({
+      socketPath,
+      // A handler that throws is the only way a command reaches the daemon's
+      // failure path; `runCli` converts every error it knows about into an
+      // exit code.
+      handler: {
+        execute: async () => {
+          throw new Error("handler exploded");
+        },
+      },
+      events,
+      queryEvents,
+      queryApi: new QueryApi({
+        queries: new OperationalQueryService({
+          reads: new SqliteOperationalReadRepository(database),
+          clock,
+        }),
+        events: queryEvents,
+      }),
+      onStopped: () => database.close(),
+    });
+
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const streamController = new AbortController();
+    try {
+      await waitForDaemon(socketPath);
+
+      const response = await fetch("http://localhost/api/events", {
+        unix: socketPath,
+        signal: streamController.signal,
+      });
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let seen = "";
+      const pump = (async () => {
+        try {
+          while (!seen.includes("event: invalidate")) {
+            const chunk = await reader.read();
+            if (chunk.done) break;
+            seen += decoder.decode(chunk.value);
+          }
+        } catch {
+          // Aborting the request ends this loop.
+        }
+      })();
+
+      for (
+        let attempt = 0;
+        attempt < 400 && !seen.includes("event: ready");
+        attempt += 1
+      )
+        await Bun.sleep(10);
+
+      const failed = await fetch("http://localhost/commands", {
+        unix: socketPath,
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          protocolVersion: 1,
+          requestId: "failing-request",
+          args: ["task:create"],
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      expect(failed.status).toBe(500);
+
+      for (
+        let attempt = 0;
+        attempt < 600 && !seen.includes("event: invalidate");
+        attempt += 1
+      )
+        await Bun.sleep(10);
+
+      expect(seen).toContain("event: invalidate");
+      expect(seen).toContain('"topic":"activity.created"');
+      // `task:create` maps to the task topics on the failure path too.
+      expect(seen).toContain('"topic":"task.updated"');
+
+      // The failure is persisted and immediately visible to a re-query.
+      const persisted = database
+        .query<{ event_type: string }, []>(
+          "SELECT event_type FROM audit_event ORDER BY rowid",
+        )
+        .all()
+        .map((row) => row.event_type);
+      expect(persisted).toContain("command.failed");
+
+      const activity = await fetch("http://localhost/api/activity", {
+        unix: socketPath,
+        signal: AbortSignal.timeout(10_000),
+      });
+      const body = (await activity.json()) as {
+        activity: { items: { eventType: string; detail: Record<string, unknown> }[] };
+      };
+      const failure = body.activity.items.find(
+        (entry) => entry.eventType === "command.failed",
+      );
+      expect(failure).toBeDefined();
+      expect(failure?.detail).toMatchObject({ command: "task:create" });
+
+      streamController.abort();
+      await pump;
+    } finally {
+      streamController.abort();
+      controller.abort();
+      await running;
     }
   }, 30_000);
 });
