@@ -68,9 +68,55 @@ without going through HTTP.
 ### Contract
 
 Query responses carry `queryApiVersion`, versioned independently of
-`daemonProtocolVersion`. Timestamps are ISO-8601 UTC strings. Unbounded
-collections take an explicit, clamped `limit`; activity additionally supports a
-`before` keyset cursor.
+`daemonProtocolVersion`. Timestamps are ISO-8601 UTC strings.
+
+#### Bounded evidence never decides authoritative state
+
+This is the rule the whole read side is built around:
+
+> A result may be bounded, but bounded evidence must never silently change an
+> authoritative count, status, attention decision, or relationship.
+
+Every query on this surface is exactly one of four things, and only the first two
+may be truncated:
+
+| Kind                           | Truncated?                  | Example                                                  |
+| ------------------------------ | --------------------------- | -------------------------------------------------------- |
+| Presentation sample            | yes, beside a total         | the active runs shown on the overview                    |
+| Pagination page                | yes, with a cursor          | `GET /api/activity`                                      |
+| Authoritative aggregate        | never                       | `activeAgentRuns`, `pendingReviews`, `attentionRequired` |
+| Authoritative projection input | never omits a relevant fact | a task's own in-flight and latest run                    |
+
+Samples are published as `{ total, items, truncated }`. `total` comes from a SQL
+aggregate over every matching row; `items` is what fits in the limit. A client
+that reads `items.length` as a count is reading the wrong field, and the shape
+makes that visible.
+
+Projection inputs are bounded only by the entities being projected. A task's
+operational status is computed from _that task's_ in-flight run, latest run,
+active pipeline run, and pending-review count — never from a "latest N runs of
+the project" window, which would change the task's status as unrelated history
+accumulated. The same holds for agent state.
+
+Attention works the same way: `attentionRequired` and the totals come from exact
+counts across the whole project, so a blocked task on page four of the task list
+still raises attention on page one.
+
+#### Pagination
+
+`GET /api/activity` takes an opaque `cursor` and returns `nextCursor`. The cursor
+encodes `(occurredAt, id)`, and the SQL predicate uses the same tuple as the
+ordering:
+
+```sql
+ORDER BY occurred_at DESC, id DESC
+WHERE occurred_at < ? OR (occurred_at = ? AND id < ?)
+```
+
+A timestamp-only cursor would permanently skip every event sharing an instant
+with the row that ended a page — audit rows written in the same millisecond are
+ordinary, so that is a real loss, not a theoretical one. The tie breaker is the
+audit event id; the SQLite `rowid` is deliberately not part of the contract.
 
 | Route                             | Returns                                          |
 | --------------------------------- | ------------------------------------------------ |
@@ -84,10 +130,19 @@ collections take an explicit, clamped `limit`; activity additionally supports a
 | `GET /api/runs/:id`               | Run detail: events, actions, pipeline, reviews   |
 | `GET /api/reviews`                | Reviews (`?pending=true`)                        |
 | `GET /api/approvals`              | Decided reviews                                  |
-| `GET /api/activity`               | Sanitized audit activity (`?before=`, `?limit=`) |
+| `GET /api/activity`               | Sanitized audit activity (`?cursor=`, `?limit=`) |
 | `GET /api/events`                 | Server-sent invalidation stream                  |
 
 The surface is read-only: any method other than `GET` returns `405`.
+
+Run detail filters activity by the run's own aggregate ids **in SQL, before the
+limit**, so a run whose events are older than the latest project window still
+reports them. `audit_event_aggregate_idx` serves that access path.
+
+Pipeline history is ordered and limited in SQL, newest first. The command-side
+`PipelineRunRepository` returns whole aggregates oldest-first and unbounded,
+which is right for its consumers; the read side has its own query rather than
+loading that history and discarding most of it.
 
 ### Live updates
 
@@ -103,6 +158,13 @@ more than a command changed; it never claims a change did not happen. Nothing
 new is persisted, subscribers are bounded, a listener that throws is dropped
 without affecting the others, and disconnecting releases both the listener and
 its heartbeat timer.
+
+**Failed commands publish too.** A command that fails is not a command that
+changed nothing: it appended audit rows, and it may have committed part of its
+work before failing. The daemon publishes the same conservative topic set on the
+failure path, after the `command.failed` audit event has landed, so a connected
+dashboard refreshes immediately instead of waiting for the next successful
+command.
 
 ## What the read models say, and what they refuse to say
 
@@ -171,20 +233,28 @@ What is genuinely enforced:
   unchanged. The TCP port belongs to `ai-office dashboard`, is bound to
   loopback, and is released when the command stops. A non-loopback bind is
   refused outright.
-- **A per-process session token.** A loopback TCP port is reachable by every
-  local Unix account, unlike a 0600 socket. The token — printed to the starting
-  terminal, never written to disk — restores that separation. It is exchanged
-  once for an `HttpOnly; SameSite=Strict` host-only cookie so it does not linger
-  in history or a referrer.
+- **A per-process session token.** Generated in memory, never written to disk,
+  and dead when the command exits. Every route requires it, so a process that
+  merely finds the open port — or a page that guesses it — gets nothing. It is
+  exchanged once for an `HttpOnly; SameSite=Strict` host-only cookie so it stops
+  travelling on later requests.
 - **A `Host` allowlist.** This blocks DNS rebinding, where a page the user
   visits resolves an attacker-controlled name to 127.0.0.1 and reads responses
   as same-origin.
 - **A strict Content-Security-Policy** on served documents: no inline script, no
   external origin, no framing.
 
-The token is a capability, not an identity. It is worth having because it
-excludes other local users and hostile web pages; it is not, and must not be
-presented as, authentication.
+The token is a capability against accidental and blind access — **not a
+secret**. `ai-office dashboard` hands the complete URL to the platform opener,
+so the token appears in that process's arguments, and the browser records it in
+history; whether another local account can read either is platform-dependent.
+So the honest claim is narrow: the port is unusable by anything that has never
+seen the URL, and the token dies with the command. It is not claimed to keep
+project state secret from other local users, and it is not authentication.
+
+`--no-open` keeps the token out of opener arguments. It cannot keep it out of
+browser history. If a machine has local accounts you would not show this data
+to, do not run the dashboard there.
 
 ### What reaches the browser
 

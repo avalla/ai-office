@@ -110,9 +110,10 @@ payloads so secrets are not copied into the audit trail.
 - Authentication relies on local filesystem permissions and the owner-only socket mode.
 - The daemon opens no TCP port. `ai-office dashboard` runs a separate foreground
   loopback host that serves the console and forwards `/api/*` to this socket;
-  the port is released when that command stops. Its session token and `Host`
-  check exclude other local users and rebound DNS names but authenticate no
-  human and separate no same-UID process.
+  the port is released when that command stops. Its `Host` check blocks DNS
+  rebinding and its per-process session token bars blind access, but the token
+  travels in the opened URL, so it is not a secret from other local accounts; it
+  authenticates no human and separates no same-UID process.
 - Interrupted agent runs and expired budget reservations are discoverable and
   recoverable, but recovery is explicit: restart does not silently retry runs,
   remove worktrees, or finalize accounting records.

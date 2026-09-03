@@ -291,10 +291,12 @@ The dashboard is a local, same-user observability surface and introduces no new
 authenticated human or operator boundary. The daemon still opens no TCP
 listener; `ai-office dashboard` owns a loopback port for as long as the command
 runs. A loopback TCP port is reachable by every local Unix account, unlike the
-0600 socket, so that host requires a per-process session token and validates the
-`Host` header. Those measures exclude other local users and rebound DNS names;
-they do not authenticate a human and do not separate same-UID processes. The
-surface is read-only and changes no authorization. The Rust/`openat2` spike, authenticated approval research, tamper-evident audit, and stronger crash reconciliation are preserved as M10 hardening baselines and are not linked into production.
+0600 socket, so that host validates the `Host` header and requires a per-process
+session token that dies with the command. The token bars accidental and blind
+access; it is not a secret, because the command passes the whole URL to the
+platform opener and the browser records it in history. It does not authenticate
+a human and does not separate same-UID processes. The surface is read-only and
+changes no authorization. The Rust/`openat2` spike, authenticated approval research, tamper-evident audit, and stronger crash reconciliation are preserved as M10 hardening baselines and are not linked into production.
 
 ## Evolution boundaries
 

@@ -48,9 +48,27 @@ representation, and the query contract is versioned (`queryApiVersion`)
 independently of `daemonProtocolVersion`, because the two change for different
 reasons.
 
-Where existing per-aggregate repositories can answer a question without a query
-per project, they are reused. `OperationalReadRepository` is added only for the
-cross-project roll-ups and joins they cannot serve without an N+1 explosion.
+The read side owns its own port. `OperationalReadRepository` groups its methods
+by the guarantee they carry, because that guarantee is the point:
+
+> A result may be bounded, but bounded evidence must never silently change an
+> authoritative count, status, attention decision, or relationship.
+
+- **Authoritative aggregates** are exact SQL counts over every matching row.
+  Every total, every status count, and `attentionRequired` come only from these.
+- **Scoped projection inputs** are restricted to the exact entities being
+  projected and return their current or latest facts — a task's own in-flight
+  run, an agent's own active stage. They are bounded by the size of the page
+  being rendered, never by a generic window, so the bound cannot omit a fact
+  relevant to the entity it describes.
+- **Bounded samples and pages** are the only truncatable results. Samples travel
+  as `{ total, items, truncated }`; activity travels with an opaque keyset
+  cursor.
+
+The command-side repositories stay the command side's. In particular the
+dashboard does not reuse `PipelineRunRepository.listByProject`, which returns
+whole aggregates oldest-first and unbounded: correct for its consumers, but
+slicing it in memory would show a dashboard the project's first runs forever.
 
 ### Divergence and unavailability are reported, never hidden
 
@@ -62,10 +80,22 @@ than as an invented or defaulted value.
 
 ### Invalidation hints, not a second event store
 
-An in-memory bus publishes topics after a command completes. Topics carry no
-state, so the stream cannot become a competing source of truth: a subscriber
-that misses an event is stale until the next one or until it reconnects, and can
-never be wrong. Nothing new is persisted.
+An in-memory bus publishes topics after a command settles — succeeded _or_
+failed. A failed command is not a command that changed nothing: it appended
+audit rows, and it may have committed part of its work before failing, so the
+failure path publishes the same conservative topic set once its audit event has
+landed. Topics carry no state, so the stream cannot become a competing source of
+truth: a subscriber that misses an event is stale until the next one or until it
+reconnects, and can never be wrong. Nothing new is persisted.
+
+### Activity is paged by a real keyset cursor
+
+Activity pages on `(occurred_at, id)`, with the SQL predicate and the ordering
+describing the same tuple. Filtering on the timestamp alone skips every event
+sharing an instant with the row that ended a page, and audit rows written in the
+same millisecond are ordinary. The cursor is opaque so clients cannot depend on
+its internals, and the tie breaker is the audit event id rather than the SQLite
+`rowid`, which is not a public contract.
 
 ### The daemon keeps its socket; the dashboard host owns the TCP port
 
@@ -83,18 +113,34 @@ privilege. Daemon command authorization is untouched.
 
 The loopback host does introduce one exposure the Unix socket did not have: a
 TCP port on 127.0.0.1 is reachable by every local Unix account, whereas a 0600
-socket is not. Two measures address that honestly:
+socket is not. Two measures narrow it:
 
-- a per-process session token, printed to the starting terminal and never
-  written to disk, restores separation from _other local users_;
 - a `Host` allowlist blocks DNS rebinding, where a page the user visits resolves
-  an attacker-controlled name to 127.0.0.1 and reads responses as same-origin.
+  an attacker-controlled name to 127.0.0.1 and reads responses as same-origin;
+- a per-process session token, generated in memory and never written to disk,
+  gates every route. Nothing reaches the query surface without it, so a process
+  that merely finds the open port — or a page that guesses it — gets nothing.
 
-Neither authenticates a human, and neither separates same-UID processes. Any
-process running as this user can read the terminal or talk to the daemon socket
-directly. That is the same limit already recorded in the current trust model,
-and this surface does not change it. The dashboard running in a browser is not
-authentication and must never be described as such.
+The token is a **capability against accidental and blind access, not a secret**.
+`ai-office dashboard` hands the complete URL to the platform opener, so the
+token appears in that process's arguments, and the browser records it in
+history. Whether another local account can read either is platform-dependent.
+This decision therefore does not claim the token keeps project state secret from
+other local users; it claims only that the port is not usable by something that
+has never seen the URL. `--no-open` keeps the token out of opener arguments but
+cannot keep it out of browser history.
+
+Neither measure authenticates a human, and neither separates same-UID processes.
+Any process running as this user can read the terminal or talk to the daemon
+socket directly. That is the same limit already recorded in the current trust
+model, and this surface does not change it. The dashboard running in a browser
+is not authentication and must never be described as such.
+
+A stronger bootstrap is available if that exposure ever matters: put a
+single-use, short-lived handoff code in the URL instead of the session token, so
+a code recovered later from argv or history is already dead. It was not adopted
+here because it breaks reopening the printed link, and the accurate narrower
+claim above is the smaller change.
 
 Audit payloads reaching the browser are sanitized at the publication boundary:
 only scalars survive, sensitive key names are dropped, strings are truncated,
@@ -117,7 +163,8 @@ directly.
 
 - The dashboard is a read surface. It cannot start, stop, retry, approve,
   assign, or cancel anything.
-- No index was added. These queries reuse existing access paths; speculative
-  indexes were not introduced.
+- One index was added: `audit_event_aggregate_idx`, for the run-scoped activity
+  query. Every other query reuses an existing access path, and no speculative
+  index was introduced.
 - Invalidation is coarse: a completed command may invalidate more than it
   changed. It never claims a change did not happen.
