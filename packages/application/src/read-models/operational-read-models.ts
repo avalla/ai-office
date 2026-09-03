@@ -70,6 +70,45 @@ export function unavailable(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Bounded results                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A truncated sample beside its authoritative total.
+ *
+ * The point of this type is that a client can never mistake a display page for
+ * a count. `total` is always exact; `items` may be shorter; `truncated` says so
+ * explicitly rather than leaving the reader to compare lengths.
+ */
+export interface BoundedList<T> {
+  /** Exact number of matching records, independent of `items`. */
+  total: number;
+  /** Bounded sample, at most the requested limit. */
+  items: readonly T[];
+  /** True when `items` does not contain every matching record. */
+  truncated: boolean;
+}
+
+export function boundedList<T>(
+  items: readonly T[],
+  total: number,
+): BoundedList<T> {
+  return { total, items, truncated: items.length < total };
+}
+
+/**
+ * One page of the activity stream.
+ *
+ * Activity is unbounded and append-only, so it is paged rather than counted:
+ * `nextCursor` is an opaque keyset position, and `null` means this page is the
+ * end of the stream.
+ */
+export interface ActivityPage {
+  items: readonly ActivityEntry[];
+  nextCursor: string | null;
+}
+
+/* -------------------------------------------------------------------------- */
 /* Attention                                                                   */
 /* -------------------------------------------------------------------------- */
 
@@ -194,12 +233,14 @@ export interface ProjectSummary {
   activeMilestoneCount: number;
   tasks: TaskCounts;
   requirements: RequirementCounts;
+  /** Exact totals, never the length of a displayed sample. */
   activeAgentRuns: number;
   activePipelineRuns: number;
   pendingReviews: number;
   agentsWorking: number;
+  /** Authoritative: derived from `attention.total`, not from `attention.items`. */
   attentionRequired: boolean;
-  attentionReasons: readonly AttentionReason[];
+  attention: BoundedList<AttentionReason>;
   lastActivityAt: IsoTimestamp | null;
   createdAt: IsoTimestamp;
   updatedAt: IsoTimestamp;
@@ -412,11 +453,12 @@ export interface AgentRunEventEntry {
 
 export interface AgentRunDetail {
   run: AgentRunState;
-  events: readonly AgentRunEventEntry[];
+  events: BoundedList<AgentRunEventEntry>;
   actions: readonly AgentRunActionOutcome[];
   pipeline: PipelineRunState | null;
   reviews: readonly ReviewState[];
-  activity: readonly ActivityEntry[];
+  /** Activity naming this run, filtered in SQL rather than after a page. */
+  activity: ActivityPage;
   attentionReasons: readonly AttentionReason[];
 }
 
@@ -481,7 +523,9 @@ export interface ActivityEntry {
 
 export interface DashboardOverview {
   generatedAt: IsoTimestamp;
+  /** Every known project; project count is inherently small. */
   projects: readonly ProjectSummary[];
+  /** Exact totals across every project, from aggregate queries only. */
   totals: {
     projects: number;
     openTasks: number;
@@ -491,19 +535,21 @@ export interface DashboardOverview {
     agentsWorking: number;
     attentionItems: number;
   };
-  attentionReasons: readonly AttentionReason[];
-  activeRuns: readonly AgentRunState[];
-  recentActivity: readonly ActivityEntry[];
+  attention: BoundedList<AttentionReason>;
+  activeRuns: BoundedList<AgentRunState>;
+  recentActivity: ActivityPage;
 }
 
 export interface ProjectDetail {
   generatedAt: IsoTimestamp;
+  /** Counts and attention here are exact regardless of the samples below. */
   summary: ProjectSummary;
   milestones: readonly MilestoneSummary[];
-  tasks: readonly TaskOperationalState[];
-  pipelines: readonly PipelineRunState[];
+  /** Every agent of the project; each state is projected from its own facts. */
   agents: readonly AgentState[];
-  runs: readonly AgentRunState[];
-  reviews: readonly ReviewState[];
-  recentActivity: readonly ActivityEntry[];
+  tasks: BoundedList<TaskOperationalState>;
+  pipelines: BoundedList<PipelineRunState>;
+  runs: BoundedList<AgentRunState>;
+  reviews: BoundedList<ReviewState>;
+  recentActivity: ActivityPage;
 }

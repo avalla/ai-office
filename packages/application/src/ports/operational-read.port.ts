@@ -1,12 +1,24 @@
 /**
  * Read-side port for operational queries.
  *
- * The existing per-aggregate repositories answer single-project questions well
- * and remain the source for project detail. They cannot answer cross-project
- * roll-up questions without issuing one query per project per aggregate, so
- * this port adds bounded, purpose-built reads for exactly those cases plus the
- * joins (agent -> role, run -> task/agent, audit activity) that the write-side
- * repositories deliberately do not model.
+ * The methods here are deliberately grouped by the guarantee they carry,
+ * because that guarantee is the whole point:
+ *
+ * 1. **Authoritative aggregates** — exact counts over every matching record.
+ *    Totals, attention decisions, and status counts come only from these.
+ * 2. **Scoped projection inputs** — queries restricted to the exact entities
+ *    being projected, returning their current or latest facts. They are bounded
+ *    by the number of entities asked about, never by a generic window, so they
+ *    cannot omit a fact relevant to the entity they describe.
+ * 3. **Bounded presentation samples and pagination pages** — truncated lists,
+ *    always accompanied by an authoritative total or a pagination cursor.
+ *
+ * A result may be bounded, but bounded evidence must never silently change an
+ * authoritative count, status, attention decision, or relationship.
+ *
+ * The existing per-aggregate repositories remain the command side's; this port
+ * exists so the read side can ask precisely what it needs without loading whole
+ * histories and discarding most of them.
  *
  * Records here are application-level values, not database rows: adapters own
  * the SQL and the schema stays out of the query contract.
@@ -19,8 +31,16 @@ import type {
   ReviewStatus,
   ReviewSubjectType,
 } from "@ai-office/domain/governance/governance.ts";
-import type { PipelineStageRunStatus } from "@ai-office/domain/pipeline/pipeline-run.ts";
-import type { TaskStatus } from "@ai-office/domain/task/task.ts";
+import type {
+  PipelineRunProps,
+  PipelineStageRunStatus,
+} from "@ai-office/domain/pipeline/pipeline-run.ts";
+import type { TaskProps, TaskStatus } from "@ai-office/domain/task/task.ts";
+import type { ActivityCursor } from "../protocol/query-protocol.ts";
+
+/* -------------------------------------------------------------------------- */
+/* Records                                                                     */
+/* -------------------------------------------------------------------------- */
 
 export interface OperationalProjectRecord {
   id: string;
@@ -42,6 +62,11 @@ export interface StatusCountRecord<TStatus extends string> {
 
 export interface RequirementCountRecord extends StatusCountRecord<RequirementStatus> {
   milestoneId: string | null;
+}
+
+export interface CountRecord {
+  projectId: string;
+  count: number;
 }
 
 export interface OperationalMilestoneRecord {
@@ -136,6 +161,11 @@ export interface OperationalActivityRecord {
   occurredAt: Date;
 }
 
+export interface LastActivityRecord {
+  projectId: string;
+  occurredAt: Date;
+}
+
 /**
  * A task whose persisted status already asks for human attention. Kept separate
  * from the full task projection so a cross-project overview stays one query.
@@ -148,7 +178,7 @@ export interface OperationalAttentionTaskRecord {
   updatedAt: Date;
 }
 
-/** The current stage of every active pipeline run, in one query. */
+/** The current stage of an active pipeline run. */
 export interface OperationalActivePipelineStageRecord {
   projectId: string;
   pipelineRunId: string;
@@ -162,15 +192,62 @@ export interface OperationalActivePipelineStageRecord {
   updatedAt: Date;
 }
 
-export interface LastActivityRecord {
-  projectId: string;
-  occurredAt: Date;
+/**
+ * A pipeline run with the persisted stage state the read model renders.
+ *
+ * The command-side `PipelineRunRepository` returns whole aggregates oldest
+ * first and unbounded, which is right for its consumers and wrong for a
+ * dashboard. This record is produced by a read-side query that limits and
+ * orders in SQL, and it still carries the full persisted definition and stages.
+ */
+export interface OperationalPipelineRunRecord {
+  run: PipelineRunProps;
+  taskTitle: string | null;
 }
 
-export interface CountRecord {
-  projectId: string;
-  count: number;
+/**
+ * The runs that decide one task's operational status.
+ *
+ * Only two facts matter to the projection — whether a run is in flight, and
+ * what the most recent run did — so the query returns exactly those, scoped to
+ * the task. A generic "latest N project runs" window would omit both for any
+ * task whose runs fall outside it.
+ */
+export interface TaskRunFactsRecord {
+  taskId: string;
+  activeRun: OperationalAgentRunRecord | null;
+  latestRun: OperationalAgentRunRecord | null;
 }
+
+/** The same two facts, scoped to one agent. */
+export interface AgentRunFactsRecord {
+  agentId: string;
+  activeRun: OperationalAgentRunRecord | null;
+  latestRun: OperationalAgentRunRecord | null;
+}
+
+/** The active pipeline stage one agent is currently assigned to. */
+export interface AgentActiveStageRecord {
+  agentId: string;
+  pipelineRunId: string;
+  stageId: string;
+  stageName: string;
+  stageStatus: PipelineStageRunStatus;
+}
+
+/**
+ * Pending-review facts for one task: the exact count, and the oldest pending
+ * review so an attention reason can name a real subject and instant.
+ */
+export interface TaskReviewFactsRecord {
+  taskId: string;
+  pendingCount: number;
+  earliestPending: OperationalReviewRecord | null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Queries                                                                     */
+/* -------------------------------------------------------------------------- */
 
 export interface AgentRunQuery {
   /** Restrict to these projects. Omitted means every project. */
@@ -189,18 +266,33 @@ export interface ReviewQuery {
 
 export interface ActivityQuery {
   projectId?: string;
-  /** Keyset cursor: only events strictly older than this instant. */
-  before?: Date;
+  /**
+   * Restrict to events naming one of these aggregates. Applied in SQL, before
+   * the limit, so a run's own events are never lost behind a project window.
+   */
+  aggregateIds?: readonly string[];
+  cursor?: ActivityCursor;
+  limit: number;
+}
+
+export interface PipelineRunQuery {
+  projectId: string;
+  activeOnly?: boolean;
   limit: number;
 }
 
 /**
- * Every method is read-only and bounded. Implementations must not mutate state
- * and must not return unbounded result sets.
+ * Every method is read-only. Aggregates are exact; sample lists are bounded and
+ * always paired with a total or a cursor; scoped queries are bounded by the
+ * entities they were asked about.
  */
 export interface OperationalReadRepository {
+  /* --- projects ---------------------------------------------------------- */
+
   listProjects(): Promise<OperationalProjectRecord[]>;
   findProject(projectId: string): Promise<OperationalProjectRecord | null>;
+
+  /* --- authoritative aggregates ------------------------------------------ */
 
   countTasksByStatus(
     projectIds: readonly string[],
@@ -208,32 +300,95 @@ export interface OperationalReadRepository {
   countRequirementsByStatus(
     projectIds: readonly string[],
   ): Promise<RequirementCountRecord[]>;
+  /**
+   * Exact run counts per project.
+   *
+   * An omitted filter means "no restriction"; an empty array means "nothing
+   * matches" and yields no rows. The distinction matters: `projectIds: []` must
+   * never be read as "every project".
+   */
+  countAgentRuns(query: {
+    projectIds?: readonly string[];
+    statuses?: readonly AgentRunStatus[];
+  }): Promise<CountRecord[]>;
+  /** Distinct agents holding at least one run in the given statuses. */
+  countDistinctRunAgents(query: {
+    projectIds?: readonly string[];
+    statuses?: readonly AgentRunStatus[];
+  }): Promise<CountRecord[]>;
+  countReviews(query: {
+    projectIds?: readonly string[];
+    statuses?: readonly ReviewStatus[];
+  }): Promise<CountRecord[]>;
   countActivePipelineRuns(
     projectIds: readonly string[],
   ): Promise<CountRecord[]>;
+  /** Active stages that are awaiting approval or have no assigned agent. */
+  countAttentionStages(projectIds: readonly string[]): Promise<CountRecord[]>;
+  countPipelineRuns(projectId: string, activeOnly: boolean): Promise<number>;
   lastActivityAt(projectIds: readonly string[]): Promise<LastActivityRecord[]>;
 
-  listAttentionTasks(
-    projectIds: readonly string[],
-    limit: number,
-  ): Promise<OperationalAttentionTaskRecord[]>;
-  listActivePipelineStages(
-    projectIds: readonly string[],
-  ): Promise<OperationalActivePipelineStageRecord[]>;
+  /* --- full authoritative sets ------------------------------------------- */
+  /*
+   * Returned complete and unbounded on purpose. Both are inherently small — a
+   * project's milestones and its synchronized agents — and both feed
+   * authoritative output: `activeMilestoneCount` and per-agent state would be
+   * wrong if either were truncated.
+   */
 
   listMilestones(
     projectIds: readonly string[],
   ): Promise<OperationalMilestoneRecord[]>;
   listAgents(projectIds: readonly string[]): Promise<OperationalAgentRecord[]>;
 
+  /* --- scoped projection inputs ------------------------------------------ */
+
+  listTaskRunFacts(
+    projectId: string,
+    taskIds: readonly string[],
+  ): Promise<TaskRunFactsRecord[]>;
+  listAgentRunFacts(
+    projectId: string,
+    agentIds: readonly string[],
+  ): Promise<AgentRunFactsRecord[]>;
+  listActivePipelineRunsForTasks(
+    projectId: string,
+    taskIds: readonly string[],
+  ): Promise<OperationalPipelineRunRecord[]>;
+  listActiveStagesForAgents(
+    projectId: string,
+    agentIds: readonly string[],
+  ): Promise<AgentActiveStageRecord[]>;
+  listTaskReviewFacts(
+    projectId: string,
+    taskIds: readonly string[],
+  ): Promise<TaskReviewFactsRecord[]>;
+
+  /* --- bounded samples and pages ----------------------------------------- */
+
+  listTasks(projectId: string, limit: number): Promise<TaskProps[]>;
   listAgentRuns(query: AgentRunQuery): Promise<OperationalAgentRunRecord[]>;
   findAgentRun(runId: string): Promise<OperationalAgentRunRecord | null>;
   listAgentRunEvents(
     runId: string,
     limit: number,
   ): Promise<OperationalAgentRunEventRecord[]>;
-
+  countAgentRunEvents(runId: string): Promise<number>;
   listReviews(query: ReviewQuery): Promise<OperationalReviewRecord[]>;
-
+  listAttentionTasks(
+    projectIds: readonly string[],
+    limit: number,
+  ): Promise<OperationalAttentionTaskRecord[]>;
+  listActivePipelineStages(
+    projectIds: readonly string[],
+    limit: number,
+  ): Promise<OperationalActivePipelineStageRecord[]>;
+  listPipelineRuns(
+    query: PipelineRunQuery,
+  ): Promise<OperationalPipelineRunRecord[]>;
+  findPipelineRun(
+    projectId: string,
+    pipelineRunId: string,
+  ): Promise<OperationalPipelineRunRecord | null>;
   listActivity(query: ActivityQuery): Promise<OperationalActivityRecord[]>;
 }

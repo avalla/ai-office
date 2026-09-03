@@ -4,29 +4,41 @@
  * This is the only place that decides which persisted facts feed which read
  * model. Transports call it; they never assemble read models themselves and
  * never reach a repository directly.
+ *
+ * The service keeps three kinds of query strictly apart:
+ *
+ * - **authoritative aggregates** decide totals, statuses, and attention;
+ * - **scoped projection inputs** describe exactly the entities being projected;
+ * - **bounded samples and pages** are displayed, and always travel with the
+ *   total or cursor that says what they leave out.
+ *
+ * A result may be bounded, but bounded evidence must never silently change an
+ * authoritative count, status, attention decision, or relationship.
  */
 
-import type { PipelineRunProps } from "@ai-office/domain/pipeline/pipeline-run.ts";
-import type { TaskProps, TaskStatus } from "@ai-office/domain/task/task.ts";
+import type { AgentRunStatus } from "@ai-office/domain/agent/agent-run.ts";
+import type { TaskProps } from "@ai-office/domain/task/task.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type {
+  AgentActiveStageRecord,
+  AgentRunFactsRecord,
   OperationalActivePipelineStageRecord,
   OperationalAgentRecord,
-  OperationalAgentRunRecord,
+  OperationalPipelineRunRecord,
   OperationalProjectRecord,
   OperationalReadRepository,
-  RequirementCountRecord,
-  StatusCountRecord,
+  TaskRunFactsRecord,
 } from "../ports/operational-read.port.ts";
-import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
-import type { TaskRepository } from "../ports/task-repository.port.ts";
-import { queryLimits } from "../protocol/query-protocol.ts";
+import {
+  encodeActivityCursor,
+  queryLimits,
+  type ActivityCursor,
+} from "../protocol/query-protocol.ts";
 import { projectActivityEntry } from "../read-models/activity-sanitization.ts";
 import {
   activeAgentRunStatuses,
   agentReference,
   agentRunAttentionReasons,
-  isActiveAgentRunStatus,
   projectAgentRunEvent,
   projectAgentRunState,
   projectAgentState,
@@ -38,21 +50,22 @@ import {
   projectTaskOperationalState,
   reviewAttentionReason,
 } from "../read-models/operational-projection.ts";
-import type {
-  ActivityEntry,
-  AgentReference,
-  AgentRunDetail,
-  AgentRunState,
-  AgentState,
-  AttentionReason,
-  DashboardOverview,
-  MilestoneSummary,
-  PipelineRunState,
-  ProjectDetail,
-  ProjectSummary,
-  ReviewState,
-  TaskOperationalState,
-  TaskReference,
+import {
+  boundedList,
+  type ActivityPage,
+  type AgentReference,
+  type AgentRunDetail,
+  type AgentRunState,
+  type AgentState,
+  type AttentionReason,
+  type BoundedList,
+  type DashboardOverview,
+  type MilestoneSummary,
+  type PipelineRunState,
+  type ProjectDetail,
+  type ProjectSummary,
+  type ReviewState,
+  type TaskOperationalState,
 } from "../read-models/operational-read-models.ts";
 
 export class OperationalResourceNotFoundError extends Error {
@@ -64,10 +77,10 @@ export class OperationalResourceNotFoundError extends Error {
 
 export interface OperationalQueryServiceDependencies {
   reads: OperationalReadRepository;
-  tasks: TaskRepository;
-  pipelines: PipelineRunRepository;
   clock: Clock;
 }
+
+const failedRunStatuses: readonly AgentRunStatus[] = ["failed"];
 
 function groupBy<T, K>(
   values: readonly T[],
@@ -82,6 +95,12 @@ function groupBy<T, K>(
   return result;
 }
 
+function countsByProject(
+  records: readonly { projectId: string; count: number }[],
+): Map<string, number> {
+  return new Map(records.map((record) => [record.projectId, record.count]));
+}
+
 function agentIndex(
   records: readonly OperationalAgentRecord[],
 ): Map<string, AgentReference> {
@@ -90,16 +109,23 @@ function agentIndex(
   );
 }
 
+/** Builds the next keyset cursor, or null when the page ended the stream. */
+function nextActivityCursor(
+  records: readonly { id: string; occurredAt: Date }[],
+  limit: number,
+): string | null {
+  if (records.length < limit) return null;
+  const last = records[records.length - 1];
+  if (last === undefined) return null;
+  return encodeActivityCursor({ occurredAt: last.occurredAt, id: last.id });
+}
+
 export class OperationalQueryService {
   private readonly reads: OperationalReadRepository;
-  private readonly tasks: TaskRepository;
-  private readonly pipelines: PipelineRunRepository;
   private readonly clock: Clock;
 
   constructor(dependencies: OperationalQueryServiceDependencies) {
     this.reads = dependencies.reads;
-    this.tasks = dependencies.tasks;
-    this.pipelines = dependencies.pipelines;
     this.clock = dependencies.clock;
   }
 
@@ -110,52 +136,70 @@ export class OperationalQueryService {
   async getDashboardOverview(options?: {
     activityLimit?: number;
     runLimit?: number;
+    attentionLimit?: number;
   }): Promise<DashboardOverview> {
     const projects = await this.reads.listProjects();
     const projectIds = projects.map((project) => project.id);
+    const runLimit = options?.runLimit ?? queryLimits.runs.default;
+    const attentionLimit =
+      options?.attentionLimit ?? queryLimits.attention.default;
+    const activityLimit =
+      options?.activityLimit ?? queryLimits.activity.default;
 
-    // Each of these is one bounded query across every project, so the number of
-    // queries stays constant as projects are added.
     const [
+      // Authoritative aggregates.
       taskCounts,
       requirementCounts,
-      milestones,
-      agents,
+      activeRunCounts,
+      failedRunCounts,
+      workingAgentCounts,
+      pendingReviewCounts,
       activePipelineCounts,
+      attentionStageCounts,
       lastActivity,
+      milestones,
+      // Bounded samples, each shown beside one of the totals above.
       activeRuns,
-      failedRuns,
-      pendingReviews,
+      failedRunSample,
+      pendingReviewSample,
+      attentionTaskSample,
+      attentionStageSample,
       activity,
-      attentionTasks,
-      activeStages,
     ] = await Promise.all([
       this.reads.countTasksByStatus(projectIds),
       this.reads.countRequirementsByStatus(projectIds),
-      this.reads.listMilestones(projectIds),
-      this.reads.listAgents(projectIds),
+      this.reads.countAgentRuns({
+        projectIds,
+        statuses: activeAgentRunStatuses,
+      }),
+      this.reads.countAgentRuns({ projectIds, statuses: failedRunStatuses }),
+      this.reads.countDistinctRunAgents({
+        projectIds,
+        statuses: activeAgentRunStatuses,
+      }),
+      this.reads.countReviews({ projectIds, statuses: ["pending"] }),
       this.reads.countActivePipelineRuns(projectIds),
+      this.reads.countAttentionStages(projectIds),
       this.reads.lastActivityAt(projectIds),
+      this.reads.listMilestones(projectIds),
       this.reads.listAgentRuns({
         projectIds,
         statuses: activeAgentRunStatuses,
-        limit: options?.runLimit ?? queryLimits.runs.default,
+        limit: runLimit,
       }),
       this.reads.listAgentRuns({
         projectIds,
-        statuses: ["failed"],
-        limit: queryLimits.runs.default,
+        statuses: failedRunStatuses,
+        limit: attentionLimit,
       }),
       this.reads.listReviews({
         projectIds,
         statuses: ["pending"],
-        limit: queryLimits.reviews.max,
+        limit: attentionLimit,
       }),
-      this.reads.listActivity({
-        limit: options?.activityLimit ?? queryLimits.activity.default,
-      }),
-      this.reads.listAttentionTasks(projectIds, queryLimits.tasks.default),
-      this.reads.listActivePipelineStages(projectIds),
+      this.reads.listAttentionTasks(projectIds, attentionLimit),
+      this.reads.listActivePipelineStages(projectIds, attentionLimit),
+      this.reads.listActivity({ limit: activityLimit }),
     ]);
 
     const tasksByProject = groupBy(taskCounts, (value) => value.projectId);
@@ -164,62 +208,65 @@ export class OperationalQueryService {
       (value) => value.projectId,
     );
     const milestonesByProject = groupBy(milestones, (value) => value.projectId);
-    const activeRunsByProject = groupBy(activeRuns, (value) => value.projectId);
-    const failedRunsByProject = groupBy(failedRuns, (value) => value.projectId);
-    const reviewsByProject = groupBy(
-      pendingReviews,
-      (value) => value.projectId,
-    );
-    const pipelineCounts = new Map(
-      activePipelineCounts.map((value) => [value.projectId, value.count]),
-    );
+    const activeRunCount = countsByProject(activeRunCounts);
+    const failedRunCount = countsByProject(failedRunCounts);
+    const workingAgentCount = countsByProject(workingAgentCounts);
+    const pendingReviewCount = countsByProject(pendingReviewCounts);
+    const pipelineCount = countsByProject(activePipelineCounts);
+    const attentionStageCount = countsByProject(attentionStageCounts);
     const activityAt = new Map(
       lastActivity.map((value) => [value.projectId, value.occurredAt]),
     );
-    const agentsByProject = groupBy(agents, (value) => value.projectId);
-    const attentionTasksByProject = groupBy(
-      attentionTasks,
+
+    const failedRunsByProject = groupBy(
+      failedRunSample,
       (value) => value.projectId,
     );
-    const activeStagesByProject = groupBy(
-      activeStages,
+    const reviewsByProject = groupBy(
+      pendingReviewSample,
+      (value) => value.projectId,
+    );
+    const attentionTasksByProject = groupBy(
+      attentionTaskSample,
+      (value) => value.projectId,
+    );
+    const attentionStagesByProject = groupBy(
+      attentionStageSample,
       (value) => value.projectId,
     );
 
     const summaries: ProjectSummary[] = [];
-    const allAttention: AttentionReason[] = [];
+    const attentionItems: AttentionReason[] = [];
+    let attentionTotal = 0;
 
     for (const project of projects) {
-      const reviews = (reviewsByProject.get(project.id) ?? []).map(
-        projectReviewState,
-      );
-      const attention: AttentionReason[] = [];
-      for (const review of reviews) {
-        const reason = reviewAttentionReason(review);
-        if (reason !== null) attention.push(reason);
+      // The total is the sum of exact counts; the items are what the samples
+      // happened to contain. The two are computed independently on purpose.
+      const projectAttentionTotal =
+        (pendingReviewCount.get(project.id) ?? 0) +
+        (failedRunCount.get(project.id) ?? 0) +
+        (attentionStageCount.get(project.id) ?? 0) +
+        this.attentionTaskTotal(tasksByProject.get(project.id) ?? []);
+
+      const items: AttentionReason[] = [];
+      for (const review of reviewsByProject.get(project.id) ?? []) {
+        const reason = reviewAttentionReason(projectReviewState(review));
+        if (reason !== null) items.push(reason);
       }
       for (const run of failedRunsByProject.get(project.id) ?? [])
-        attention.push(...agentRunAttentionReasons(projectAgentRunState(run)));
-      for (const stage of activeStagesByProject.get(project.id) ?? []) {
+        items.push(...agentRunAttentionReasons(projectAgentRunState(run)));
+      for (const stage of attentionStagesByProject.get(project.id) ?? []) {
         const reason = activePipelineStageAttention(stage);
-        if (reason !== null) attention.push(reason);
+        if (reason !== null) items.push(reason);
       }
       for (const task of attentionTasksByProject.get(project.id) ?? [])
-        attention.push({
-          kind: task.status === "blocked" ? "task_blocked" : "task_failed",
-          projectId: task.projectId,
-          subjectType: "task",
-          subjectId: task.taskId,
-          summary:
-            task.status === "blocked" ? "Task is blocked" : "Task failed",
-          since: task.updatedAt.toISOString(),
-        });
+        items.push(attentionTaskReason(task));
 
-      const projectActiveRuns = activeRunsByProject.get(project.id) ?? [];
-      const workingAgents = new Set(
-        projectActiveRuns.map((run) => run.agentId),
-      );
-      const projectAgents = agentsByProject.get(project.id) ?? [];
+      const attention: BoundedList<AttentionReason> = {
+        total: projectAttentionTotal,
+        items: items.slice(0, attentionLimit),
+        truncated: items.length < projectAttentionTotal,
+      };
 
       summaries.push(
         projectProjectSummary({
@@ -227,19 +274,19 @@ export class OperationalQueryService {
           taskCounts: tasksByProject.get(project.id) ?? [],
           requirementCounts: requirementsByProject.get(project.id) ?? [],
           milestones: milestonesByProject.get(project.id) ?? [],
-          activePipelineRuns: pipelineCounts.get(project.id) ?? 0,
-          activeAgentRuns: projectActiveRuns.length,
-          agentsWorking: projectAgents.filter((agent) =>
-            workingAgents.has(agent.id),
-          ).length,
-          reviews,
-          attentionReasons: attention,
+          activePipelineRuns: pipelineCount.get(project.id) ?? 0,
+          activeAgentRuns: activeRunCount.get(project.id) ?? 0,
+          agentsWorking: workingAgentCount.get(project.id) ?? 0,
+          pendingReviews: pendingReviewCount.get(project.id) ?? 0,
+          attention,
           lastActivityAt: activityAt.get(project.id) ?? null,
         }),
       );
-      allAttention.push(...attention);
+      attentionItems.push(...attention.items);
+      attentionTotal += projectAttentionTotal;
     }
 
+    const totalActiveRuns = sum(activeRunCounts);
     return {
       generatedAt: this.clock.now().toISOString(),
       projects: summaries,
@@ -249,21 +296,25 @@ export class OperationalQueryService {
           (total, summary) => total + summary.tasks.open,
           0,
         ),
-        activeAgentRuns: activeRuns.length,
-        activePipelineRuns: summaries.reduce(
-          (total, summary) => total + summary.activePipelineRuns,
-          0,
-        ),
-        pendingReviews: pendingReviews.length,
-        agentsWorking: summaries.reduce(
-          (total, summary) => total + summary.agentsWorking,
-          0,
-        ),
-        attentionItems: allAttention.length,
+        activeAgentRuns: totalActiveRuns,
+        activePipelineRuns: sum(activePipelineCounts),
+        pendingReviews: sum(pendingReviewCounts),
+        agentsWorking: sum(workingAgentCounts),
+        attentionItems: attentionTotal,
       },
-      attentionReasons: allAttention,
-      activeRuns: activeRuns.map(projectAgentRunState),
-      recentActivity: activity.map(projectActivityEntry),
+      attention: {
+        total: attentionTotal,
+        items: attentionItems.slice(0, attentionLimit),
+        truncated: attentionItems.length < attentionTotal,
+      },
+      activeRuns: boundedList(
+        activeRuns.map(projectAgentRunState),
+        totalActiveRuns,
+      ),
+      recentActivity: {
+        items: activity.map(projectActivityEntry),
+        nextCursor: nextActivityCursor(activity, activityLimit),
+      },
     };
   }
 
@@ -277,103 +328,137 @@ export class OperationalQueryService {
 
   async getProjectDetail(
     projectId: string,
-    options?: { taskLimit?: number; runLimit?: number; activityLimit?: number },
+    options?: {
+      taskLimit?: number;
+      runLimit?: number;
+      activityLimit?: number;
+      pipelineLimit?: number;
+    },
   ): Promise<ProjectDetail> {
     const project = await this.requireProject(projectId);
     const projectIds = [projectId];
+    const taskLimit = options?.taskLimit ?? queryLimits.tasks.default;
+    const runLimit = options?.runLimit ?? queryLimits.runs.default;
+    const pipelineLimit =
+      options?.pipelineLimit ?? queryLimits.pipelines.default;
+    const activityLimit =
+      options?.activityLimit ?? queryLimits.activity.default;
+    const attentionLimit = queryLimits.attention.default;
 
     const [
+      // Authoritative aggregates.
       taskCounts,
       requirementCounts,
+      activeRunCounts,
+      failedRunCounts,
+      workingAgentCounts,
+      pendingReviewCounts,
+      reviewTotalCounts,
+      activePipelineCounts,
+      attentionStageCounts,
+      pipelineTotal,
+      runTotalCounts,
+      lastActivity,
       milestoneRecords,
       agentRecords,
-      activePipelineCounts,
-      lastActivity,
-      runs,
-      reviewRecords,
+      // Bounded samples.
+      taskPage,
+      runSample,
+      reviewSample,
+      pipelineSample,
+      attentionTaskSample,
+      attentionStageSample,
+      failedRunSample,
+      pendingReviewSample,
       activity,
-      taskAggregates,
-      pipelineAggregates,
     ] = await Promise.all([
       this.reads.countTasksByStatus(projectIds),
       this.reads.countRequirementsByStatus(projectIds),
+      this.reads.countAgentRuns({
+        projectIds,
+        statuses: activeAgentRunStatuses,
+      }),
+      this.reads.countAgentRuns({ projectIds, statuses: failedRunStatuses }),
+      this.reads.countDistinctRunAgents({
+        projectIds,
+        statuses: activeAgentRunStatuses,
+      }),
+      this.reads.countReviews({ projectIds, statuses: ["pending"] }),
+      this.reads.countReviews({
+        projectIds,
+        statuses: ["pending", "approved", "rejected"],
+      }),
+      this.reads.countActivePipelineRuns(projectIds),
+      this.reads.countAttentionStages(projectIds),
+      this.reads.countPipelineRuns(projectId, false),
+      this.reads.countAgentRuns({ projectIds }),
+      this.reads.lastActivityAt(projectIds),
       this.reads.listMilestones(projectIds),
       this.reads.listAgents(projectIds),
-      this.reads.countActivePipelineRuns(projectIds),
-      this.reads.lastActivityAt(projectIds),
+      this.reads.listTasks(projectId, taskLimit),
+      this.reads.listAgentRuns({ projectIds, limit: runLimit }),
+      this.reads.listReviews({
+        projectIds,
+        limit: queryLimits.reviews.default,
+      }),
+      this.reads.listPipelineRuns({ projectId, limit: pipelineLimit }),
+      this.reads.listAttentionTasks(projectIds, attentionLimit),
+      this.reads.listActivePipelineStages(projectIds, attentionLimit),
       this.reads.listAgentRuns({
         projectIds,
-        limit: options?.runLimit ?? queryLimits.runs.default,
+        statuses: failedRunStatuses,
+        limit: attentionLimit,
       }),
       this.reads.listReviews({
         projectIds,
-        limit: queryLimits.reviews.max,
+        statuses: ["pending"],
+        limit: attentionLimit,
       }),
-      this.reads.listActivity({
-        projectId,
-        limit: options?.activityLimit ?? queryLimits.activity.default,
-      }),
-      this.tasks.listByProject(projectId),
-      this.pipelines.listByProject(projectId),
+      this.reads.listActivity({ projectId, limit: activityLimit }),
     ]);
 
     const agents = agentIndex(agentRecords);
-    const pipelineRuns = pipelineAggregates.map((run) => run.snapshot());
-    const reviews = reviewRecords.map(projectReviewState);
-    const taskLimit = options?.taskLimit ?? queryLimits.tasks.default;
-    const taskSnapshots = taskAggregates
-      .map((task) => task.snapshot())
-      .slice(0, taskLimit);
+    const tasks = await this.projectTasks(projectId, taskPage, agents);
+    const agentStates = await this.projectAgents(projectId, agentRecords);
 
-    const tasks = taskSnapshots.map((task) =>
-      this.taskState({ task, runs, pipelineRuns, reviews, agents }),
-    );
-    const pipelines = pipelineRuns.map((run) =>
-      projectPipelineRunState({
-        run,
-        task: this.taskReference(run.taskId, taskAggregates),
-        agentsById: agents,
-      }),
-    );
-    const agentStates = agentRecords.map((agent) =>
-      projectAgentState({ agent, runs, pipelineRuns }),
-    );
+    // Attention is computed from project-wide aggregates and samples, never
+    // from the displayed task page: a blocked task on page two still counts.
+    const attentionTotal =
+      (pendingReviewCounts[0]?.count ?? 0) +
+      (failedRunCounts[0]?.count ?? 0) +
+      (attentionStageCounts[0]?.count ?? 0) +
+      this.attentionTaskTotal(taskCounts);
 
-    const attention: AttentionReason[] = [];
-    for (const task of tasks) attention.push(...task.attentionReasons);
-    for (const pipeline of pipelines)
-      attention.push(...pipeline.attentionReasons);
-    for (const run of runs)
-      if (run.status === "failed")
-        attention.push(...agentRunAttentionReasons(projectAgentRunState(run)));
-    for (const review of reviews) {
-      const reason = reviewAttentionReason(review);
-      // Reviews already surfaced through their task must not be counted twice.
-      if (
-        reason !== null &&
-        !attention.some(
-          (existing) =>
-            existing.kind === reason.kind &&
-            existing.subjectId === reason.subjectId,
-        )
-      )
-        attention.push(reason);
+    const attentionItems: AttentionReason[] = [];
+    for (const review of pendingReviewSample) {
+      const reason = reviewAttentionReason(projectReviewState(review));
+      if (reason !== null) attentionItems.push(reason);
     }
-
-    const activeRuns = runs.filter((run) => isActiveAgentRunStatus(run.status));
-    const workingAgents = new Set(activeRuns.map((run) => run.agentId));
+    for (const run of failedRunSample)
+      attentionItems.push(
+        ...agentRunAttentionReasons(projectAgentRunState(run)),
+      );
+    for (const stage of attentionStageSample) {
+      const reason = activePipelineStageAttention(stage);
+      if (reason !== null) attentionItems.push(reason);
+    }
+    for (const task of attentionTaskSample)
+      attentionItems.push(attentionTaskReason(task));
 
     const summary = projectProjectSummary({
       project,
-      taskCounts: taskCounts as readonly StatusCountRecord<TaskStatus>[],
-      requirementCounts: requirementCounts as readonly RequirementCountRecord[],
+      taskCounts,
+      requirementCounts,
       milestones: milestoneRecords,
       activePipelineRuns: activePipelineCounts[0]?.count ?? 0,
-      activeAgentRuns: activeRuns.length,
-      agentsWorking: agentRecords.filter((agent) => workingAgents.has(agent.id))
-        .length,
-      reviews,
-      attentionReasons: attention,
+      activeAgentRuns: activeRunCounts[0]?.count ?? 0,
+      agentsWorking: workingAgentCounts[0]?.count ?? 0,
+      pendingReviews: pendingReviewCounts[0]?.count ?? 0,
+      attention: {
+        total: attentionTotal,
+        items: attentionItems.slice(0, attentionLimit),
+        truncated: attentionItems.length < attentionTotal,
+      },
       lastActivityAt: lastActivity[0]?.occurredAt ?? null,
     });
 
@@ -381,16 +466,42 @@ export class OperationalQueryService {
       projectMilestoneSummary(record, requirementCounts),
     );
 
+    const taskTotal = taskCounts.reduce(
+      (total, record) => total + record.count,
+      0,
+    );
+
     return {
       generatedAt: this.clock.now().toISOString(),
       summary,
       milestones,
-      tasks,
-      pipelines,
       agents: agentStates,
-      runs: runs.map(projectAgentRunState),
-      reviews,
-      recentActivity: activity.map(projectActivityEntry),
+      tasks: boundedList(tasks, taskTotal),
+      pipelines: boundedList(
+        pipelineSample.map((record) =>
+          projectPipelineRunState({
+            run: record.run,
+            task:
+              record.taskTitle === null
+                ? null
+                : { taskId: record.run.taskId, title: record.taskTitle },
+            agentsById: agents,
+          }),
+        ),
+        pipelineTotal,
+      ),
+      runs: boundedList(
+        runSample.map(projectAgentRunState),
+        runTotalCounts[0]?.count ?? 0,
+      ),
+      reviews: boundedList(
+        reviewSample.map(projectReviewState),
+        reviewTotalCounts[0]?.count ?? 0,
+      ),
+      recentActivity: {
+        items: activity.map(projectActivityEntry),
+        nextCursor: nextActivityCursor(activity, activityLimit),
+      },
     };
   }
 
@@ -401,63 +512,50 @@ export class OperationalQueryService {
   async listTasks(
     projectId: string,
     limit: number = queryLimits.tasks.default,
-  ): Promise<readonly TaskOperationalState[]> {
+  ): Promise<BoundedList<TaskOperationalState>> {
     await this.requireProject(projectId);
-    const [
-      taskAggregates,
-      runs,
-      reviewRecords,
-      pipelineAggregates,
-      agentRecords,
-    ] = await Promise.all([
-      this.tasks.listByProject(projectId),
-      this.reads.listAgentRuns({
-        projectIds: [projectId],
-        limit: queryLimits.runs.max,
-      }),
-      this.reads.listReviews({
-        projectIds: [projectId],
-        limit: queryLimits.reviews.max,
-      }),
-      this.pipelines.listActiveByProject(projectId),
+    const [taskPage, taskCounts, agentRecords] = await Promise.all([
+      this.reads.listTasks(projectId, limit),
+      this.reads.countTasksByStatus([projectId]),
       this.reads.listAgents([projectId]),
     ]);
-    const reviews = reviewRecords.map(projectReviewState);
-    const pipelineRuns = pipelineAggregates.map((run) => run.snapshot());
-    const agents = agentIndex(agentRecords);
-    return taskAggregates.slice(0, limit).map((task) =>
-      this.taskState({
-        task: task.snapshot(),
-        runs,
-        pipelineRuns,
-        reviews,
-        agents,
-      }),
+    const tasks = await this.projectTasks(
+      projectId,
+      taskPage,
+      agentIndex(agentRecords),
+    );
+    return boundedList(
+      tasks,
+      taskCounts.reduce((total, record) => total + record.count, 0),
     );
   }
 
   async listPipelineRuns(
     projectId: string,
     options?: { activeOnly?: boolean; limit?: number },
-  ): Promise<readonly PipelineRunState[]> {
+  ): Promise<BoundedList<PipelineRunState>> {
     await this.requireProject(projectId);
-    const [aggregates, taskAggregates, agentRecords] = await Promise.all([
-      options?.activeOnly === true
-        ? this.pipelines.listActiveByProject(projectId)
-        : this.pipelines.listByProject(projectId),
-      this.tasks.listByProject(projectId),
+    const activeOnly = options?.activeOnly === true;
+    const limit = options?.limit ?? queryLimits.pipelines.default;
+    const [records, total, agentRecords] = await Promise.all([
+      this.reads.listPipelineRuns({ projectId, activeOnly, limit }),
+      this.reads.countPipelineRuns(projectId, activeOnly),
       this.reads.listAgents([projectId]),
     ]);
     const agents = agentIndex(agentRecords);
-    return aggregates
-      .slice(0, options?.limit ?? queryLimits.pipelines.default)
-      .map((run) =>
+    return boundedList(
+      records.map((record) =>
         projectPipelineRunState({
-          run: run.snapshot(),
-          task: this.taskReference(run.snapshot().taskId, taskAggregates),
+          run: record.run,
+          task:
+            record.taskTitle === null
+              ? null
+              : { taskId: record.run.taskId, title: record.taskTitle },
           agentsById: agents,
         }),
-      );
+      ),
+      total,
+    );
   }
 
   /* ---------------------------------------------------------------------- */
@@ -468,19 +566,26 @@ export class OperationalQueryService {
     projectId?: string;
     activeOnly?: boolean;
     limit?: number;
-  }): Promise<readonly AgentRunState[]> {
+  }): Promise<BoundedList<AgentRunState>> {
     if (options?.projectId !== undefined)
       await this.requireProject(options.projectId);
-    const runs = await this.reads.listAgentRuns({
-      ...(options?.projectId === undefined
+    const projectFilter =
+      options?.projectId === undefined
         ? {}
-        : { projectIds: [options.projectId] }),
-      ...(options?.activeOnly === true
-        ? { statuses: activeAgentRunStatuses }
-        : {}),
-      limit: options?.limit ?? queryLimits.runs.default,
-    });
-    return runs.map(projectAgentRunState);
+        : { projectIds: [options.projectId] };
+    const statuses = options?.activeOnly === true ? activeAgentRunStatuses : [];
+    const [runs, counts] = await Promise.all([
+      this.reads.listAgentRuns({
+        ...projectFilter,
+        ...(options?.activeOnly === true ? { statuses } : {}),
+        limit: options?.limit ?? queryLimits.runs.default,
+      }),
+      this.reads.countAgentRuns({
+        ...projectFilter,
+        ...(options?.activeOnly === true ? { statuses } : {}),
+      }),
+    ]);
+    return boundedList(runs.map(projectAgentRunState), sum(counts));
   }
 
   async getRunDetail(runId: string): Promise<AgentRunDetail> {
@@ -488,8 +593,25 @@ export class OperationalQueryService {
     if (record === null)
       throw new OperationalResourceNotFoundError("Agent run", runId);
 
-    const [events, reviewRecords, activity, agentRecords] = await Promise.all([
+    // Activity is filtered to this run's aggregates inside SQL, before the
+    // limit. Filtering a project page afterwards would report "no activity"
+    // for any run whose events fell outside the latest project window.
+    const aggregateIds =
+      record.pipelineRunId === null ? [runId] : [runId, record.pipelineRunId];
+
+    const [
+      events,
+      eventTotal,
+      reviewRecords,
+      activity,
+      agentRecords,
+      pipeline,
+    ] = await Promise.all([
+      // Bounded page, published beside its exact total.
       this.reads.listAgentRunEvents(runId, queryLimits.runEvents.default),
+      this.reads.countAgentRunEvents(runId),
+      // Scoped to this one run's reviews, so the limit bounds work rather
+      // than evidence: a run's reviews are per-subject and few.
       this.reads.listReviews({
         projectIds: [record.projectId],
         subjectIds: [runId],
@@ -497,40 +619,36 @@ export class OperationalQueryService {
       }),
       this.reads.listActivity({
         projectId: record.projectId,
+        aggregateIds,
         limit: queryLimits.activity.default,
       }),
       this.reads.listAgents([record.projectId]),
+      record.pipelineRunId === null
+        ? Promise.resolve(null)
+        : this.reads.findPipelineRun(record.projectId, record.pipelineRunId),
     ]);
-
-    let pipeline: PipelineRunState | null = null;
-    if (record.pipelineRunId !== null) {
-      const aggregate = await this.pipelines.findById(
-        record.pipelineRunId,
-        record.projectId,
-      );
-      if (aggregate !== null)
-        pipeline = projectPipelineRunState({
-          run: aggregate.snapshot(),
-          task:
-            record.taskTitle === null
-              ? null
-              : { taskId: record.taskId, title: record.taskTitle },
-          agentsById: agentIndex(agentRecords),
-        });
-    }
 
     const run = projectAgentRunState(record);
     return {
       run,
-      events: events.map(projectAgentRunEvent),
+      events: boundedList(events.map(projectAgentRunEvent), eventTotal),
       actions: projectRunActions(record.result),
-      pipeline,
+      pipeline:
+        pipeline === null
+          ? null
+          : projectPipelineRunState({
+              run: pipeline.run,
+              task:
+                record.taskTitle === null
+                  ? null
+                  : { taskId: record.taskId, title: record.taskTitle },
+              agentsById: agentIndex(agentRecords),
+            }),
       reviews: reviewRecords.map(projectReviewState),
-      // Run-scoped activity is not persisted as such; the surrounding project
-      // activity is returned instead, filtered to events that name this run.
-      activity: activity
-        .filter((entry) => entry.aggregateId === runId)
-        .map(projectActivityEntry),
+      activity: {
+        items: activity.map(projectActivityEntry),
+        nextCursor: nextActivityCursor(activity, queryLimits.activity.default),
+      },
       attentionReasons: agentRunAttentionReasons(run),
     };
   }
@@ -543,66 +661,77 @@ export class OperationalQueryService {
     projectId?: string;
     pendingOnly?: boolean;
     limit?: number;
-  }): Promise<readonly ReviewState[]> {
+  }): Promise<BoundedList<ReviewState>> {
     if (options?.projectId !== undefined)
       await this.requireProject(options.projectId);
-    const records = await this.reads.listReviews({
-      ...(options?.projectId === undefined
+    const projectFilter =
+      options?.projectId === undefined
         ? {}
-        : { projectIds: [options.projectId] }),
-      ...(options?.pendingOnly === true ? { statuses: ["pending"] } : {}),
-      limit: options?.limit ?? queryLimits.reviews.default,
-    });
-    return records.map(projectReviewState);
+        : { projectIds: [options.projectId] };
+    const statusFilter =
+      options?.pendingOnly === true ? { statuses: ["pending" as const] } : {};
+    const [records, counts] = await Promise.all([
+      this.reads.listReviews({
+        ...projectFilter,
+        ...statusFilter,
+        limit: options?.limit ?? queryLimits.reviews.default,
+      }),
+      this.reads.countReviews({ ...projectFilter, ...statusFilter }),
+    ]);
+    return boundedList(records.map(projectReviewState), sum(counts));
   }
 
   async listApprovals(options?: {
     projectId?: string;
     limit?: number;
-  }): Promise<readonly ReviewState[]> {
+  }): Promise<BoundedList<ReviewState>> {
     if (options?.projectId !== undefined)
       await this.requireProject(options.projectId);
-    const records = await this.reads.listReviews({
-      ...(options?.projectId === undefined
+    const projectFilter =
+      options?.projectId === undefined
         ? {}
-        : { projectIds: [options.projectId] }),
-      statuses: ["approved", "rejected"],
-      limit: options?.limit ?? queryLimits.reviews.default,
-    });
-    return records.map(projectReviewState);
+        : { projectIds: [options.projectId] };
+    const [records, counts] = await Promise.all([
+      this.reads.listReviews({
+        ...projectFilter,
+        statuses: ["approved", "rejected"],
+        limit: options?.limit ?? queryLimits.reviews.default,
+      }),
+      this.reads.countReviews({
+        ...projectFilter,
+        statuses: ["approved", "rejected"],
+      }),
+    ]);
+    return boundedList(records.map(projectReviewState), sum(counts));
   }
 
   async listAgents(projectId: string): Promise<readonly AgentState[]> {
     await this.requireProject(projectId);
-    const [agentRecords, runs, pipelineAggregates] = await Promise.all([
-      this.reads.listAgents([projectId]),
-      this.reads.listAgentRuns({
-        projectIds: [projectId],
-        limit: queryLimits.runs.max,
-      }),
-      this.pipelines.listActiveByProject(projectId),
-    ]);
-    const pipelineRuns = pipelineAggregates.map((run) => run.snapshot());
-    return agentRecords.map((agent) =>
-      projectAgentState({ agent, runs, pipelineRuns }),
+    return this.projectAgents(
+      projectId,
+      await this.reads.listAgents([projectId]),
     );
   }
 
   async listActivity(options?: {
     projectId?: string;
-    before?: Date;
+    cursor?: ActivityCursor;
     limit?: number;
-  }): Promise<readonly ActivityEntry[]> {
+  }): Promise<ActivityPage> {
     if (options?.projectId !== undefined)
       await this.requireProject(options.projectId);
+    const limit = options?.limit ?? queryLimits.activity.default;
     const records = await this.reads.listActivity({
       ...(options?.projectId === undefined
         ? {}
         : { projectId: options.projectId }),
-      ...(options?.before === undefined ? {} : { before: options.before }),
-      limit: options?.limit ?? queryLimits.activity.default,
+      ...(options?.cursor === undefined ? {} : { cursor: options.cursor }),
+      limit,
     });
-    return records.map(projectActivityEntry);
+    return {
+      items: records.map(projectActivityEntry),
+      nextCursor: nextActivityCursor(records, limit),
+    };
   }
 
   /* ---------------------------------------------------------------------- */
@@ -618,35 +747,112 @@ export class OperationalQueryService {
     return project;
   }
 
-  private taskState(input: {
-    task: TaskProps;
-    runs: readonly OperationalAgentRunRecord[];
-    pipelineRuns: readonly PipelineRunProps[];
-    reviews: readonly ReviewState[];
-    agents: ReadonlyMap<string, AgentReference>;
-  }): TaskOperationalState {
-    return projectTaskOperationalState({
-      task: input.task,
-      runs: input.runs.filter((run) => run.taskId === input.task.id),
-      pipelineRun:
-        input.pipelineRuns.find(
-          (run) => run.taskId === input.task.id && run.status === "active",
-        ) ?? null,
-      reviews: input.reviews.filter(
-        (review) =>
-          review.subjectType === "task" && review.subjectId === input.task.id,
-      ),
-      agentsById: input.agents,
+  /**
+   * Projects a page of tasks from facts scoped to exactly those task IDs.
+   *
+   * The three follow-up queries are bounded by the size of the page, not by a
+   * project-wide window, so a task's status never depends on how much unrelated
+   * history exists.
+   */
+  private async projectTasks(
+    projectId: string,
+    tasks: readonly TaskProps[],
+    agents: ReadonlyMap<string, AgentReference>,
+  ): Promise<TaskOperationalState[]> {
+    if (tasks.length === 0) return [];
+    const taskIds = tasks.map((task) => task.id);
+    const [runFacts, pipelineRuns, reviewFacts] = await Promise.all([
+      this.reads.listTaskRunFacts(projectId, taskIds),
+      this.reads.listActivePipelineRunsForTasks(projectId, taskIds),
+      this.reads.listTaskReviewFacts(projectId, taskIds),
+    ]);
+
+    const runsByTask = new Map<string, TaskRunFactsRecord>(
+      runFacts.map((record) => [record.taskId, record]),
+    );
+    const pipelineByTask = new Map<string, OperationalPipelineRunRecord>(
+      pipelineRuns.map((record) => [record.run.taskId, record]),
+    );
+    const reviewsByTask = new Map(
+      reviewFacts.map((record) => [record.taskId, record]),
+    );
+
+    return tasks.map((task) => {
+      const runs = runsByTask.get(task.id);
+      const reviews = reviewsByTask.get(task.id);
+      return projectTaskOperationalState({
+        task,
+        activeRun: runs?.activeRun ?? null,
+        latestRun: runs?.latestRun ?? null,
+        pipelineRun: pipelineByTask.get(task.id)?.run ?? null,
+        pendingReviewCount: reviews?.pendingCount ?? 0,
+        earliestPendingReview:
+          reviews?.earliestPending === undefined ||
+          reviews.earliestPending === null
+            ? null
+            : projectReviewState(reviews.earliestPending),
+        agentsById: agents,
+      });
     });
   }
 
-  private taskReference(
-    taskId: string,
-    tasks: readonly { snapshot(): TaskProps }[],
-  ): TaskReference | null {
-    const task = tasks.find((value) => value.snapshot().id === taskId);
-    return task === undefined ? null : { taskId, title: task.snapshot().title };
+  /** Projects agent states from facts scoped to exactly those agent IDs. */
+  private async projectAgents(
+    projectId: string,
+    agents: readonly OperationalAgentRecord[],
+  ): Promise<AgentState[]> {
+    if (agents.length === 0) return [];
+    const agentIds = agents.map((agent) => agent.id);
+    const [runFacts, stages] = await Promise.all([
+      this.reads.listAgentRunFacts(projectId, agentIds),
+      this.reads.listActiveStagesForAgents(projectId, agentIds),
+    ]);
+    const runsByAgent = new Map<string, AgentRunFactsRecord>(
+      runFacts.map((record) => [record.agentId, record]),
+    );
+    const stageByAgent = new Map<string, AgentActiveStageRecord>(
+      stages.map((record) => [record.agentId, record]),
+    );
+    return agents.map((agent) =>
+      projectAgentState({
+        agent,
+        activeRun: runsByAgent.get(agent.id)?.activeRun ?? null,
+        latestRun: runsByAgent.get(agent.id)?.latestRun ?? null,
+        stage: stageByAgent.get(agent.id) ?? null,
+      }),
+    );
   }
+
+  /** Blocked plus failed tasks, taken from the exact per-status counts. */
+  private attentionTaskTotal(
+    counts: readonly { status: string; count: number }[],
+  ): number {
+    return counts
+      .filter(
+        (record) => record.status === "blocked" || record.status === "failed",
+      )
+      .reduce((total, record) => total + record.count, 0);
+  }
+}
+
+function sum(records: readonly { count: number }[]): number {
+  return records.reduce((total, record) => total + record.count, 0);
+}
+
+function attentionTaskReason(task: {
+  projectId: string;
+  taskId: string;
+  status: "blocked" | "failed";
+  updatedAt: Date;
+}): AttentionReason {
+  return {
+    kind: task.status === "blocked" ? "task_blocked" : "task_failed",
+    projectId: task.projectId,
+    subjectType: "task",
+    subjectId: task.taskId,
+    summary: task.status === "blocked" ? "Task is blocked" : "Task failed",
+    since: task.updatedAt.toISOString(),
+  };
 }
 
 /**

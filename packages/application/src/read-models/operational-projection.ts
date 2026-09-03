@@ -17,6 +17,7 @@ import type {
 } from "@ai-office/domain/pipeline/pipeline-run.ts";
 import type { TaskProps, TaskStatus } from "@ai-office/domain/task/task.ts";
 import type {
+  AgentActiveStageRecord,
   OperationalAgentRecord,
   OperationalAgentRunEventRecord,
   OperationalAgentRunRecord,
@@ -39,6 +40,7 @@ import {
   type AgentState,
   type ApprovalState,
   type AttentionReason,
+  type BoundedList,
   type IsoTimestamp,
   type MilestoneSummary,
   type PipelineRunReference,
@@ -599,26 +601,33 @@ const milestoneLinkageExplanation =
  * The single authoritative derivation of a task's operational status.
  *
  * Inputs are the persisted task record plus the persisted facts that the task
- * record does not currently reflect: its agent runs, its active pipeline run,
- * and its pending reviews. `schedule-agent-run` deliberately does not transition
- * the task, so a task can legitimately read `pending` while a run for it is
- * already executing; that difference is reported, never hidden.
+ * record does not currently reflect: its in-flight run, its most recent run,
+ * its active pipeline run, and its pending reviews. `schedule-agent-run`
+ * deliberately does not transition the task, so a task can legitimately read
+ * `pending` while a run for it is already executing; that difference is
+ * reported, never hidden.
+ *
+ * Every input is scoped to this task. Passing a generic "latest N runs of the
+ * project" window here would silently change a task's status the moment its own
+ * runs fell outside that window, which is exactly the failure this signature
+ * makes impossible to express.
  */
 export function projectTaskOperationalState(input: {
   task: TaskProps;
-  runs: readonly OperationalAgentRunRecord[];
+  /** The task's in-flight run, or null. */
+  activeRun: OperationalAgentRunRecord | null;
+  /** The task's most recently updated run of any status, or null. */
+  latestRun: OperationalAgentRunRecord | null;
   pipelineRun: PipelineRunProps | null;
-  reviews: readonly ReviewState[];
+  /** Exact number of pending reviews of this task. */
+  pendingReviewCount: number;
+  /** Oldest pending review of this task, for the attention reason. */
+  earliestPendingReview: ReviewState | null;
   agentsById: ReadonlyMap<string, AgentReference>;
 }): TaskOperationalState {
-  const runs = [...input.runs].sort(
-    (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
-  );
-  const activeRun = runs.find((run) => isActiveAgentRunStatus(run.status));
-  const latestRun = runs[0];
-  const pendingReviews = input.reviews.filter(
-    (review) => review.status === "pending",
-  );
+  const activeRun = input.activeRun ?? undefined;
+  const latestRun = input.latestRun ?? undefined;
+  const hasPendingReview = input.pendingReviewCount > 0;
   const pipelineStage =
     input.pipelineRun !== null && input.pipelineRun.status === "active"
       ? (input.pipelineRun.stages[input.pipelineRun.currentStageIndex] ?? null)
@@ -639,10 +648,7 @@ export function projectTaskOperationalState(input: {
   else if (input.task.status === "failed") operationalStatus = "failed";
   else if (input.task.status === "completed") operationalStatus = "completed";
   else if (input.task.status === "blocked") operationalStatus = "blocked";
-  else if (
-    pendingReviews.length > 0 ||
-    pipelineStage?.status === "awaiting_approval"
-  )
+  else if (hasPendingReview || pipelineStage?.status === "awaiting_approval")
     operationalStatus = "awaiting_review";
   else if (input.task.status === "waiting_review")
     operationalStatus = "awaiting_review";
@@ -672,13 +678,21 @@ export function projectTaskOperationalState(input: {
     pipelineStage?.status === "awaiting_approval"
   )
     divergenceReasons.push("pipeline_stage_awaiting_approval");
-  if (input.task.status !== "waiting_review" && pendingReviews.length > 0)
+  if (input.task.status !== "waiting_review" && hasPendingReview)
     divergenceReasons.push("review_pending");
 
   const attentionReasons: AttentionReason[] = [];
-  for (const review of pendingReviews) {
-    const reason = reviewAttentionReason(review);
-    if (reason !== null) attentionReasons.push(reason);
+  if (input.earliestPendingReview !== null) {
+    const reason = reviewAttentionReason(input.earliestPendingReview);
+    if (reason !== null)
+      attentionReasons.push(
+        input.pendingReviewCount === 1
+          ? reason
+          : {
+              ...reason,
+              summary: `${input.pendingReviewCount} reviews of task ${input.task.id} are pending`,
+            },
+      );
   }
   if (input.task.status === "blocked")
     attentionReasons.push({
@@ -734,7 +748,7 @@ export function projectTaskOperationalState(input: {
       assignedAgentId === undefined
         ? null
         : (input.agentsById.get(assignedAgentId) ?? null),
-    pendingReviewCount: pendingReviews.length,
+    pendingReviewCount: input.pendingReviewCount,
     blockedReason: input.task.status === "blocked" ? "Task is blocked" : null,
     attentionReasons,
     createdAt: iso(input.task.createdAt),
@@ -765,35 +779,32 @@ export function availableTaskRequirementSummary(input: {
 /* Agent state                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Derives one agent's activity from facts scoped to that agent.
+ *
+ * As with tasks, the inputs are per-agent on purpose: an agent's state must not
+ * change because its run happens to sit outside a project-wide display window.
+ */
 export function projectAgentState(input: {
   agent: OperationalAgentRecord;
-  runs: readonly OperationalAgentRunRecord[];
-  pipelineRuns: readonly PipelineRunProps[];
+  /** The agent's in-flight run, or null. */
+  activeRun: OperationalAgentRunRecord | null;
+  /** The agent's most recently updated run of any status, or null. */
+  latestRun: OperationalAgentRunRecord | null;
+  /** The active pipeline stage assigned to this agent, or null. */
+  stage: AgentActiveStageRecord | null;
 }): AgentState {
-  const runs = [...input.runs]
-    .filter((run) => run.agentId === input.agent.id)
-    .sort(
-      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
-    );
-  const activeRun = runs.find((run) => isActiveAgentRunStatus(run.status));
-  const latestRun = runs[0];
-
-  let stage: AgentState["currentStage"] = null;
-  for (const pipelineRun of input.pipelineRuns) {
-    if (pipelineRun.status !== "active") continue;
-    const current = pipelineRun.stages[pipelineRun.currentStageIndex];
-    if (current === undefined || current.assignedAgentId !== input.agent.id)
-      continue;
-    stage = {
-      pipelineRunId: pipelineRun.id,
-      stageId: current.stageId,
-      name:
-        pipelineRun.definition.stages[current.stageIndex]?.name ??
-        current.stageId,
-      status: current.status,
-    };
-    break;
-  }
+  const activeRun = input.activeRun ?? undefined;
+  const latestRun = input.latestRun ?? undefined;
+  const stage: AgentState["currentStage"] =
+    input.stage === null
+      ? null
+      : {
+          pipelineRunId: input.stage.pipelineRunId,
+          stageId: input.stage.stageId,
+          name: input.stage.stageName,
+          status: input.stage.stageStatus,
+        };
 
   let state: AgentActivityState;
   if (!input.agent.enabled) state = "disabled";
@@ -839,8 +850,10 @@ export function projectProjectSummary(input: {
   activePipelineRuns: number;
   activeAgentRuns: number;
   agentsWorking: number;
-  reviews: readonly ReviewState[];
-  attentionReasons: readonly AttentionReason[];
+  /** Exact count of pending reviews, never the length of a displayed sample. */
+  pendingReviews: number;
+  /** Bounded sample beside its authoritative total. */
+  attention: BoundedList<AttentionReason>;
   lastActivityAt: Date | null;
 }): ProjectSummary {
   const activeMilestones = input.milestones.filter(
@@ -850,10 +863,6 @@ export function projectProjectSummary(input: {
     activeMilestones.length === 1 && activeMilestones[0] !== undefined
       ? projectMilestoneSummary(activeMilestones[0], input.requirementCounts)
       : null;
-  const pendingReviews = input.reviews.filter(
-    (review) => review.status === "pending",
-  ).length;
-
   return {
     projectId: input.project.id,
     name: input.project.name,
@@ -871,10 +880,11 @@ export function projectProjectSummary(input: {
     requirements: projectRequirementCounts(input.requirementCounts),
     activeAgentRuns: input.activeAgentRuns,
     activePipelineRuns: input.activePipelineRuns,
-    pendingReviews,
+    pendingReviews: input.pendingReviews,
     agentsWorking: input.agentsWorking,
-    attentionRequired: input.attentionReasons.length > 0,
-    attentionReasons: input.attentionReasons,
+    // Authoritative: the total, not the length of the displayed sample.
+    attentionRequired: input.attention.total > 0,
+    attention: input.attention,
     lastActivityAt: latest(
       isoOrNull(input.lastActivityAt),
       iso(input.project.updatedAt),
