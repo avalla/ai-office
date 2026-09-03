@@ -13,9 +13,9 @@ import {
   OperationalResourceNotFoundError,
 } from "@ai-office/application/queries/operational-query-service.ts";
 import {
+  parseActivityCursor,
   parseBoolean,
   parseIdentifier,
-  parseInstant,
   parseLimit,
   queryApiPrefix,
   queryApiVersion,
@@ -246,13 +246,13 @@ export class QueryApi {
 
     if (first === "activity" && segments.length === 1) {
       const projectId = parameters.get("project");
-      const before = parseInstant(parameters.get("before"), "before");
+      const cursor = parseActivityCursor(parameters.get("cursor"));
       return json({
         activity: await this.queries.listActivity({
           ...(projectId === null
             ? {}
             : { projectId: parseIdentifier(projectId, "project") }),
-          ...(before === undefined ? {} : { before }),
+          ...(cursor === undefined ? {} : { cursor }),
           limit: parseLimit(parameters.get("limit"), queryLimits.activity),
         }),
       });

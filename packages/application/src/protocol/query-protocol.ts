@@ -16,6 +16,15 @@ export const queryApiVersion = 1 as const;
 /** Prefix of every read-only query route on the daemon socket. */
 export const queryApiPrefix = "/api";
 
+/**
+ * Bounds on **presentation samples and pagination pages** only.
+ *
+ * No authoritative count, status, attention decision, or relationship is ever
+ * derived from a list truncated by one of these. Totals come from aggregate
+ * queries; projection inputs come from queries scoped to the exact entity being
+ * projected. A bounded list that accompanies a total always reports whether it
+ * was truncated.
+ */
 export const queryLimits = {
   activity: { default: 50, max: 200 },
   tasks: { default: 100, max: 500 },
@@ -23,6 +32,8 @@ export const queryLimits = {
   runEvents: { default: 100, max: 500 },
   reviews: { default: 50, max: 200 },
   pipelines: { default: 50, max: 200 },
+  /** Bounded sample of attention items shown beside their authoritative total. */
+  attention: { default: 50, max: 200 },
   /** Upper bound on identifier length accepted from a route parameter. */
   maxIdentifierLength: 128,
 } as const;
@@ -109,15 +120,48 @@ export function parseLimit(
   return Math.min(parsed, bounds.max);
 }
 
-export function parseInstant(
+/**
+ * Position in the activity stream.
+ *
+ * A timestamp alone is not a cursor. Audit rows can share an instant, and
+ * paging with `occurred_at < last` would skip every sibling of the row that
+ * happened to end a page. The tie breaker is the event id, which is also the
+ * second ordering key in SQL, so the predicate and the ordering describe the
+ * same total order.
+ */
+export interface ActivityCursor {
+  occurredAt: Date;
+  /** Stable tie breaker; the audit event id, never a SQLite rowid. */
+  id: string;
+}
+
+const cursorSeparator = "\u0000";
+
+/** Encodes a cursor opaquely so clients cannot depend on its internals. */
+export function encodeActivityCursor(cursor: ActivityCursor): string {
+  const payload = `${cursor.occurredAt.toISOString()}${cursorSeparator}${cursor.id}`;
+  return Buffer.from(payload, "utf8").toString("base64url");
+}
+
+export function parseActivityCursor(
   value: string | null,
-  name: string,
-): Date | undefined {
+): ActivityCursor | undefined {
   if (value === null || value === "") return undefined;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime()))
-    throw new QueryValidationError(`${name} must be an ISO-8601 instant`);
-  return parsed;
+  if (value.length > 512) throw new QueryValidationError("cursor is too long");
+  let payload: string;
+  try {
+    payload = Buffer.from(value, "base64url").toString("utf8");
+  } catch {
+    throw new QueryValidationError("cursor is not a valid pagination cursor");
+  }
+  const separator = payload.indexOf(cursorSeparator);
+  if (separator === -1)
+    throw new QueryValidationError("cursor is not a valid pagination cursor");
+  const occurredAt = new Date(payload.slice(0, separator));
+  const id = payload.slice(separator + 1);
+  if (Number.isNaN(occurredAt.getTime()) || id === "")
+    throw new QueryValidationError("cursor is not a valid pagination cursor");
+  return { occurredAt, id };
 }
 
 export function parseBoolean(value: string | null, name: string): boolean {
