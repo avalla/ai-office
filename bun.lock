@@ -35,6 +35,9 @@
     "packages/application": {
       "name": "@ai-office/application",
     },
+    "packages/command-support": {
+      "name": "@ai-office/command-support",
+    },
     "packages/connector-sdk": {
       "name": "@ai-office/connector-sdk",
     },
@@ -55,6 +58,9 @@
     "packages/orchestration": {
       "name": "@ai-office/orchestration",
     },
+    "packages/project-binding": {
+      "name": "@ai-office/project-binding",
+    },
     "packages/runtime-host": {
       "name": "@ai-office/runtime-host",
     },
@@ -74,6 +80,8 @@
 
     "@ai-office/cli": ["@ai-office/cli@workspace:apps/cli"],
 
+    "@ai-office/command-support": ["@ai-office/command-support@workspace:packages/command-support"],
+
     "@ai-office/connector-sdk": ["@ai-office/connector-sdk@workspace:packages/connector-sdk"],
 
     "@ai-office/daemon": ["@ai-office/daemon@workspace:apps/daemon"],
@@ -87,6 +95,8 @@
     "@ai-office/llm-gateway": ["@ai-office/llm-gateway@workspace:packages/llm-gateway"],
 
     "@ai-office/orchestration": ["@ai-office/orchestration@workspace:packages/orchestration"],
+
+    "@ai-office/project-binding": ["@ai-office/project-binding@workspace:packages/project-binding"],
 
     "@ai-office/runtime-host": ["@ai-office/runtime-host@workspace:packages/runtime-host"],
 

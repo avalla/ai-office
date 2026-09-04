@@ -143,6 +143,18 @@ queue, query surface — and depends on that package and on application ports;
 presentation. `apps/daemon` does not import `apps/cli`, and an architecture test
 enforces the direction.
 
+`packages/command-support` owns shared command syntax, help, caller-path
+normalization/validation, and deterministic text views. Both the CLI and Runtime
+consume it; it imports neither Runtime composition nor SQLite.
+`packages/project-binding` exposes passive local binding discovery through
+`ProjectBindingReader`; binding writes remain in the Runtime adapter.
+An architecture test walks the transitive import graph from every CLI and
+neutral-support module and forbids Runtime-host, daemon, and SQLite dependencies.
+The linkable launcher loads daemon bootstrap lazily only for explicit host start;
+ordinary client invocation does not load server composition.
+`apps/daemon -> packages/runtime-host -> application -> domain` remains the
+authoritative execution direction; the CLI reaches it through `RuntimeClient`.
+
 There is exactly one authoritative Runtime owner for mutable state. Runtime
 unavailability never causes a stateful command to open SQLite locally or start
 an embedded writer. A future embedded deployment mode would need explicit,
@@ -167,16 +179,38 @@ retains compatible read-only degradation when the host is unavailable: it
 labels the host `unreachable`, authoritative state `unavailable`, and the
 Runtime association `unverified`, because a request was made and failed.
 Explicit `status --offline` makes no request at all, so it reports the host and
-authoritative state as `not_checked` and `health` as `unverified`. A host that
+authoritative state as `not_checked`; health is `unverified` when local
+inspection finds no problem, otherwise `needs_attention`. A host that
 was never contacted is not a host proved unreachable.
 
 Relative local filesystem semantics belong to the invoking client context; a
 persistent Runtime host must never infer client cwd from its own process cwd.
 Clients resolve caller-local path arguments against their own working directory
-before IPC, and the Runtime rejects a caller-local path that arrives relative
-instead of guessing. A path interpreted inside a root the caller already
+before IPC, and the Runtime rejects an omitted caller-cwd default or relative
+path instead of guessing. A path interpreted inside a root the caller already
 supplied as an absolute argument, such as `client:plan --contract` relative to
 `--root`, keeps its root-relative meaning.
+
+Caller-cwd defaults must be materialized before execution: lifecycle/import
+positionals, restore `--root`, and sync `--directory` are required absolute
+values at Runtime entry. Command handlers retain no host-root fallback.
+
+Manifest files are checked by the Runtime after canonicalizing file and allowed
+root. `office:apply --project` permits only files inside a local checkout recorded
+for that project. Projects without a recorded local source must use inline
+`--manifest`. Symlinks to outside files fail containment.
+`office:validate --file` requires an absolute `--root` at Runtime entry; the
+CLI defaults it to caller cwd. The Runtime resolves the nearest binding or Git
+worktree from that directory (rejecting invalid bindings); a standalone
+directory is its own root. The daemon's composition root is never a fallback.
+Both commands retain regular-file and 256 KiB limits.
+
+Explicit offline health is `unverified` only when local inspection finds no
+attention issue. The application client-attention classifier is shared with
+online lifecycle status: detected missing/unmanaged integrations and observed
+drift/conflicts produce `needs_attention` and exit 1, as does an invalid binding.
+Host and authoritative state remain `not_checked`; `runtime_not_checked` alone
+never fails inspection.
 
 The same socket carries a second, separately versioned contract: a read-only
 query surface under `/api`. Commands and queries are distinct sides of the same

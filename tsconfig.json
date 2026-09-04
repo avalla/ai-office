@@ -29,6 +29,8 @@
         "packages/filesystem-connector/src/*"
       ],
       "@ai-office/runtime-paths/*": ["packages/runtime-paths/src/*"],
+      "@ai-office/command-support/*": ["packages/command-support/src/*"],
+      "@ai-office/project-binding/*": ["packages/project-binding/src/*"],
       "@ai-office/runtime-host/*": ["packages/runtime-host/src/*"]
     }
   },
