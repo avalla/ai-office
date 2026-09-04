@@ -550,6 +550,17 @@ ai-office task:link-requirement --project <id> --task <id> --requirement <id>
 ai-office task:reconcile --project <id>   # read-only; reports stale state
 ```
 
+Reconciliation reports contradictions and refuses to guess: verified
+requirements are acceptance state and do not prove that operational work
+happened. Work that was completed before AI Office tracked it is recorded by an
+explicit operator attestation, with a mandatory rationale and an approved plan
+hash, and audited as a correction rather than as execution:
+
+```bash
+ai-office task:record-completion --project <id> --task <id> --reason <text>
+ai-office task:record-completion --project <id> --task <id> --reason <text> --approve <planHash>
+```
+
 See `docs/development/task-board.md`.
 
 `project:import` never calls a provider: its repository scan remains

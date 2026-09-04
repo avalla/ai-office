@@ -68,10 +68,93 @@ stale plan, and both deserve an error rather than silence.
 escape hatch that makes a lifecycle meaningless; the same danger was identified
 while probing `requirement:set-status`.
 
-`--reason` is mandatory for `block` and `fail` and optional for `cancel`. The
-reason is recorded on the audit event rather than on the aggregate: `task` has
-no column for it, and adding one is a schema decision this lifecycle does not
-need.
+`--reason` is mandatory for `block` and `fail` and optional for `cancel`. It is
+validated at the application boundary, not merely required at the CLI: a blank
+or whitespace-only reason is refused, and the text is trimmed and bounded at
+2000 characters before anything is written. The reason is recorded on the audit
+event rather than on the aggregate: `task` has no column for it, and adding one
+is a schema decision this lifecycle does not need.
+
+### Recording work completed outside the lifecycle
+
+`pending → completed` is not in the table, and it is not going to be. A task
+that never started cannot be completed by the lifecycle, because the lifecycle
+describes execution AI Office observed.
+
+Work that happened before AI Office tracked it is a different statement, so it
+has its own command:
+
+```bash
+# 1. read-only preflight; prints the evidence, the consequence, and a plan hash
+ai-office task:record-completion --project <id> --task <id> --reason <text>
+
+# 2. apply exactly that attestation
+ai-office task:record-completion --project <id> --task <id> --reason <text> \
+  --approve <planHash>
+```
+
+```text
+AUC-03  Deliver the audit slice
+  status: pending
+  linked requirements: 2/2 verified (0 open)
+
+  operation: historical correction, not a lifecycle transition
+  resulting status: completed
+  rationale (required): delivered in the M4 release before the board tracked it
+
+  This records that the work was already completed outside the lifecycle
+  AI Office holds. No task:start is emitted and no execution is claimed.
+```
+
+It means exactly one thing: *the operator attests that this work was already
+completed outside the lifecycle AI Office currently represents, and is recording
+that fact now.*
+
+It is **not** equivalent to `task:start` followed by `task:complete`. That
+sequence would enter a moment at which work began that nobody observed, in order
+to record work that happened outside the record — the opposite of what a
+correction is for. No `task.status_changed` event is written, so no fabricated
+`start` exists in the trail.
+
+It is **not** a generic `task:set-status` either. It is narrower than the
+lifecycle in every direction:
+
+| | Lifecycle | Historical correction |
+| --- | --- | --- |
+| target statuses | seven | exactly `completed` |
+| source statuses | per the table | only `pending`, `assigned`, `blocked` |
+| terminal states | irreversible | irreversible |
+| overlap with `task:complete` | — | refused; the preflight names `task:complete` instead |
+| rationale | mandatory for `block`/`fail` | always mandatory |
+| approval | none | plan hash from a preceding read-only run |
+
+The source set is *derived* from the transition table rather than restated
+beside it — it is the non-terminal statuses from which `completed` is not
+reachable — so the two can never drift apart. Where `task:complete` works, the
+correction is refused and points at it.
+
+The audit event is distinct from ordinary execution:
+
+```json
+{
+  "eventType": "task.completion_recorded",
+  "payload": {
+    "operation": "record-completion",
+    "from": "pending",
+    "to": "completed",
+    "reason": "delivered in the M4 release before the board tracked it",
+    "correction": true,
+    "evidence": { "total": 2, "verified": 2, "terminal": 2, "open": 0 },
+    "planHash": "…"
+  }
+}
+```
+
+`evidence` records what the operator was shown, not what the system concluded.
+The plan hash covers the task, the status it is corrected from, the rationale,
+and that evidence, so an operator can never approve one attestation and execute
+another; if any of them changes, the approval is refused and a fresh preflight
+is required.
 
 ### Preflight
 
@@ -176,8 +259,15 @@ ai-office task:reconcile --project <id> --fix --approve <planHash>
 `--fix` never runs without `--approve`, following the same convention as
 `client:apply` and `runtime:purge`. The hash covers the exact repairs listed, so
 a plan that has gone stale is refused rather than reapplied to different state.
-Every repair goes through the lifecycle service, so the domain guard, the
-transaction, and the audit event are the ones a manual command would produce.
+Every repair goes through the lifecycle service, so the domain guard and the
+audit event are the ones a manual command would produce.
+
+**One approved plan is one transaction.** The plan is re-derived inside that
+transaction and the approval checked against it, then every repair is applied
+through the lifecycle service without opening a nested transaction. Either all
+approved repairs commit or none do: committing a prefix would leave the project
+in a state nobody approved, while the plan hash the operator holds went on
+claiming otherwise.
 
 **Only one finding is repairable**: `terminal_pipeline_open_task`, whose correct
 outcome existing code already defines — it is what `syncTaskTerminal` would have
@@ -200,22 +290,36 @@ Evidence:
     AUC-03-R1 verified
     AUC-03-R2 verified
 
-Suggested action:
-  task:complete
-
 Automatic repair:
   REFUSED
 
 Reason:
   requirement completion alone is insufficient evidence that operational work
   completed.
+
+Available explicit correction:
+  task:record-completion
 ```
 
 Conservative refusal is deliberate. Requirements may be verified by work done
 elsewhere, one requirement may be delivered by several tasks, and implementation
 often finishes before governance verification — so "all requirements verified"
-does not prove this task executed. The operator runs `task:complete` if that is
-the truth.
+does not prove this task executed.
+
+Automatic reconciliation and explicit operator correction are not in tension:
+
+- reconciliation **cannot** complete a pending task from requirement evidence
+  alone, because that would be an inference;
+- the operator **may** record that already-completed work was omitted from
+  operational history, because that is an authoritative statement.
+
+The system never infers the second from the first.
+
+**Every suggestion is executable from the status shown beside it.** A report
+never names `task:complete` for a `pending` task: the lifecycle would reject it,
+and the only way to force it through would be to fabricate the intermediate
+history this board exists to protect. For stale pending work the suggestion is
+`task:record-completion`.
 
 ## Pipeline integration
 
@@ -239,8 +343,22 @@ statuses it had. After the upgrade, `task:reconcile` identifies questionable
 tasks and the operator corrects them explicitly, with an audit record for each
 decision.
 
-Portable archives carry the links. The field is omitted entirely when a project
-has none, so an archive written before this change still validates and a
-link-free project exports exactly the bytes it did before. Referential closure
-is enforced: a snapshot can never contain a link whose task or requirement is
-not inside it.
+Portable archives carry the links in **format version 2**. One `formatVersion`
+identifies one schema contract:
+
+| | version 1 | version 2 |
+| --- | --- | --- |
+| `governance.taskRequirements` | absent, and rejected if present | required |
+| `manifest.contents` | seven entries | those seven plus `task_requirements` |
+| written when | the project has no links | the project has links |
+| read by this build | yes | yes |
+| restores links | none | all of them |
+
+Version 1 stays frozen where it shipped. A link-free project still exports
+version 1, byte-identical to what it exported before version 2 existed, so
+existing archives and their checksums remain valid. A project that has links
+exports version 2; writing them into a version 1 envelope is refused rather than
+silently dropped, so no linkage is ever lost to a downgrade. Checksums are
+canonical within each version and validated independently. Referential closure
+is enforced in both: a snapshot can never contain a link whose task or
+requirement is not inside it.

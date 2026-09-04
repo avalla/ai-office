@@ -494,7 +494,16 @@ Delivered:
   active-pipeline/terminal-task, stale pending tasks, completed tasks with open
   requirements, and in-flight tasks with no execution. `--fix` requires an
   approved plan hash and repairs only the one finding whose correct outcome
-  existing code already defines.
+  existing code already defines. One approved plan is one transaction: all of
+  its repairs commit or none do. Every suggestion the report prints is
+  executable from the status shown beside it;
+- `task:record-completion`, an explicit operator attestation that work was
+  completed outside the lifecycle AI Office holds. It reaches only `completed`,
+  only from `pending`, `assigned`, and `blocked`, never from a terminal status,
+  always with a mandatory rationale and an approved plan hash, and it emits
+  `task.completion_recorded` with `correction: true` rather than any
+  `task.status_changed`. It is neither `task:set-status` nor a shorthand for
+  `task:start` followed by `task:complete`.
 
 Requirement verification deliberately does **not** complete a task: one
 requirement may be delivered by several tasks, one task may deliver several
@@ -502,9 +511,13 @@ requirements, and implementation routinely finishes before governance
 verification. Reconciliation surfaces the mismatch and an operator decides.
 
 Migration `0026` adds the linkage table and links nothing. Historical task state
-is not rewritten; reconciliation identifies questionable tasks after an upgrade.
-Portable archives carry links, omitted entirely when a project has none so
-pre-existing archives keep validating.
+is not rewritten; reconciliation identifies questionable tasks after an upgrade,
+and the operator corrects them explicitly.
+
+Portable archive format version 2 carries the links; version 1 stays frozen
+where it shipped and cannot express them. A project with no links still exports
+version 1, byte-identical to before, and both versions are readable. Writing
+links into a version 1 envelope is refused rather than silently dropped.
 
 ## M8 — Code intelligence
 

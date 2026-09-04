@@ -168,6 +168,27 @@ The CLI exposes one semantic command per transition — `task:start`,
 There is deliberately **no** generic `task:set-status`: an unrestricted terminal
 write is the escape hatch that makes a lifecycle meaningless.
 
+### Historical correction
+
+`pending -> completed` is absent from the table on purpose, and stays absent.
+Recording work that was completed outside the lifecycle AI Office holds is a
+different statement from progressing through it, so it is a separate aggregate
+operation — `recordHistoricalCompletion` — behind a separate command,
+`task:record-completion`.
+
+Its guard is stricter than the lifecycle's, and derived from the same table
+rather than restated beside it: it applies only where the status is non-terminal
+*and* `completed` is not already reachable, which is exactly `pending`,
+`assigned`, and `blocked`. Terminal states remain irreversible. Where
+`task:complete` works, the correction refuses and names it.
+
+It does not call `start`. Walking a task through `running` to reach `completed`
+would enter a moment at which work began that nobody observed, in order to
+record work that happened outside the record. The audit event is
+`task.completion_recorded`, carrying `correction: true`, the mandatory
+rationale, and the evidence the operator was shown — never `task.status_changed`,
+so no fabricated `start` can appear in the trail.
+
 ## Agent-run states
 
 ```text
