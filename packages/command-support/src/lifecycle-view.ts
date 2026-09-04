@@ -5,7 +5,7 @@ import type {
 } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
 import type { ProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
 import { renderStatusGuidance } from "./handover-view.ts";
-import type { CommandIo } from "./commands/shared.ts";
+import type { CommandIo } from "./arguments.ts";
 
 /**
  * Text rendering for a project lifecycle status.

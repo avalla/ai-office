@@ -46,8 +46,12 @@ Authoritative command execution and its composition belong to the Runtime, not
 to a client, so they live in `@ai-office/runtime-host` rather than in
 `apps/cli`. `apps/daemon` depends on that package and on application ports;
 `apps/cli` holds the client adapter, the IPC client, offline-only operations,
-and presentation. `apps/daemon` must never import `apps/cli`, and an
-architecture test enforces it. `RuntimeClient` lives with the Runtime contract
+and presentation. Shared syntax, help, path contracts, and text views live in
+`packages/command-support`; passive binding discovery lives in
+`packages/project-binding`, with mutation methods confined to the Runtime
+adapter. `apps/daemon` must never import `apps/cli`. The CLI and neutral
+support must have no transitive dependency on Runtime-host, daemon, or SQLite
+composition; architecture tests enforce both directions. `RuntimeClient` lives with the Runtime contract
 in `packages/application` because every local client adapter implements the same
 port.
 
@@ -80,7 +84,10 @@ reports `unreachable` and recommends starting one.
 
 `status` exit codes are the same in both modes: `0` when nothing needing
 attention was found in what was actually inspected, `1` when a problem was found
-or the repository is not installed.
+or the repository is not installed. Online and offline status share the pure
+client-attention classifier. Observed drift, conflicts, and detected
+missing/unmanaged integrations are problems even when authoritative state is
+`not_checked`; `runtime_not_checked` alone is not a failure.
 
 Runtime-first lifecycle syntax is additive. `ai-office runtime start` and
 `ai-office runtime status` are preferred; `ai-office daemon` and
@@ -129,8 +136,14 @@ cases behind the same Runtime boundary as those adapters become real.
   persistent Runtime host must never infer client cwd from its own process cwd.
   Clients resolve caller-local path arguments against their own working
   directory before IPC, and the Runtime rejects a caller-local path that arrives
-  relative instead of guessing. A path interpreted inside a root the caller
-  already supplied as an absolute argument keeps its root-relative meaning;
+  omitted or relative instead of guessing. A path interpreted inside a root
+  the caller already supplied as an absolute argument keeps its root-relative meaning;
+- handlers retain no caller-cwd defaults behind the entry guard;
+- local manifest containment is enforced by the Runtime on canonical paths.
+  Apply uses the project's recorded local checkout roots; validate uses the
+  nearest binding/Git root from an explicit caller-resolved directory, falling
+  back to that directory only for standalone projects. Symlink escapes fail.
+  See [local file semantics](../development/local-daemon.md#client-relative-filesystem-context);
 - multiple clients share policy, provenance, lifecycle, and audit rules;
 - work that must outlive a client remains in the persistent Runtime host;
 - daemon IPC and process management remain replaceable infrastructure;
