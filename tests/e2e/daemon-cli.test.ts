@@ -112,6 +112,90 @@ describe("CLI to daemon end-to-end", () => {
     }
   });
 
+  test("records a historical task completion through the socket", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-daemon-task-"));
+    temporaryDirectories.push(projectRoot);
+    writeFileSync(join(projectRoot, "README.md"), "# Board");
+    const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
+    const daemon = await bootstrap({ projectRoot, socketPath });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+
+    async function run(args: string[]): Promise<string[]> {
+      const output = captureIo();
+      const code = await runDaemonCli(args, {
+        projectRoot,
+        socketPath,
+        io: output.io,
+      });
+      expect({ args, code, stderr: output.stderr }).toMatchObject({
+        args,
+        code: 0,
+      });
+      return output.stdout;
+    }
+
+    try {
+      await waitForDaemon(socketPath);
+      const projectId = (await run(["project:create", "Board"]))[0]!.replace(
+        "Project created: ",
+        "",
+      );
+      const taskId = (
+        await run([
+          "task:create",
+          "--project",
+          projectId,
+          "--title",
+          "AUC-03",
+        ])
+      )[0]!.replace("Task created: ", "");
+
+      // Preflight and correction both cross the Unix socket; the plan hash the
+      // operator approves is the one the daemon produced.
+      const preview = (
+        await run([
+          "task:record-completion",
+          "--project",
+          projectId,
+          "--task",
+          taskId,
+          "--reason",
+          "shipped before this board existed",
+        ])
+      ).join("\n");
+      expect(preview).toContain(
+        "operation: historical correction, not a lifecycle transition",
+      );
+      const planHash = preview.match(/--approve ([0-9a-f]{64})/u)?.[1];
+      expect(planHash).toBeDefined();
+
+      expect(
+        (
+          await run([
+            "task:record-completion",
+            "--project",
+            projectId,
+            "--task",
+            taskId,
+            "--reason",
+            "shipped before this board existed",
+            "--approve",
+            planHash!,
+          ])
+        )[0],
+      ).toBe(
+        `Recorded completion of task ${taskId}: pending -> completed (historical correction)`,
+      );
+      expect((await run(["task:list", "--project", projectId]))[1]).toContain(
+        "completed",
+      );
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
   test("returns a typed actionable error when the daemon is unavailable", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-no-daemon-"));
     temporaryDirectories.push(projectRoot);

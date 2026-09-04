@@ -72,7 +72,11 @@ import {
 import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
 import { TransactionAlreadyActiveError } from "@ai-office/application/ports/transaction-runner.port.ts";
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
-import { DomainValidationError } from "@ai-office/domain/errors.ts";
+import {
+  DomainValidationError,
+  InvalidTaskCorrectionError,
+  InvalidTaskTransitionError,
+} from "@ai-office/domain/errors.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { migrateGlobal } from "@ai-office/storage-sqlite/database/migrate-global.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -83,6 +87,10 @@ import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositori
 import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
+import { RequirementNotFoundError } from "@ai-office/application/commands/manage-task-requirements.ts";
+import { TaskReconciliationApprovalError } from "@ai-office/application/commands/reconcile-tasks.ts";
+import { TaskCompletionApprovalError } from "@ai-office/application/commands/record-task-completion.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
 import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
@@ -199,6 +207,18 @@ Commands:
   runtime:purge [--approve <plan-hash>]  # local; daemon must be stopped
   task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
   task:list --project <id>
+  task:transitions --project <id> --task <id> [--json]   # read-only preflight
+  task:start --project <id> --task <id>
+  task:submit-review --project <id> --task <id>
+  task:complete --project <id> --task <id>
+  task:block --project <id> --task <id> --reason <text>
+  task:unblock --project <id> --task <id>
+  task:fail --project <id> --task <id> --reason <text>
+  task:cancel --project <id> --task <id> [--reason <text>]
+  task:record-completion --project <id> --task <id> --reason <text> [--approve <plan-hash>] [--json]  # historical correction; read-only preflight without --approve
+  task:link-requirement --project <id> --task <id> --requirement <id>
+  task:unlink-requirement --project <id> --task <id> --requirement <id>
+  task:reconcile --project <id> [--json]  # read-only; add --fix --approve <planHash> to repair
   agent:sync --project <id> [--directory <path>]
   agent:list --project <id>
   run:schedule --project <id> --task <id> --agent <id> [--resource <id> --operation <name> [--arguments <json>]]
@@ -275,6 +295,18 @@ const commands = [
   "client:uninstall",
   "task:create",
   "task:list",
+  "task:transitions",
+  "task:start",
+  "task:submit-review",
+  "task:complete",
+  "task:block",
+  "task:unblock",
+  "task:fail",
+  "task:cancel",
+  "task:record-completion",
+  "task:link-requirement",
+  "task:unlink-requirement",
+  "task:reconcile",
   "agent:sync",
   "agent:list",
   "run:schedule",
@@ -392,6 +424,11 @@ function formatKnownError(error: unknown): string | null {
     error instanceof OfficePipelineNotFoundError ||
     error instanceof AgentNotFoundError ||
     error instanceof TaskNotFoundError ||
+    error instanceof InvalidTaskTransitionError ||
+    error instanceof InvalidTaskCorrectionError ||
+    error instanceof RequirementNotFoundError ||
+    error instanceof TaskReconciliationApprovalError ||
+    error instanceof TaskCompletionApprovalError ||
     error instanceof TaskLockActiveError ||
     error instanceof TaskLockExpiredError ||
     error instanceof InvalidAgentDefinitionError ||
@@ -523,6 +560,7 @@ export async function runCli(
       officeManifests: new SqliteOfficeManifestRepository(database),
       pipelines: new SqlitePipelineRunRepository(database),
       tasks: new SqliteTaskRepository(database),
+      taskRequirements: new SqliteTaskRequirementRepository(database),
       runtime: new SqliteAgentRuntimeRepository(database),
       costs,
       governance: new SqliteGovernanceRepository(database),

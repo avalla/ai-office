@@ -465,6 +465,131 @@ dashboard command and is released with it. The console is a local same-user
 observability surface and introduces no authenticated human or operator
 boundary.
 
+## M7.9 — Task lifecycle completion and reconciliation
+
+Status: implemented.
+
+Focus: make `task.status` trustworthy. The lifecycle was designed as
+authoritative operational state and written by exactly one subsystem — the
+pipeline — so work finished any other way left the board stale forever, with no
+CLI surface able to correct it.
+
+Delivered:
+
+- the task lifecycle declared once as a transition table in the domain, with
+  `block`, `unblock`, `fail`, and `submitForReview` added so every status except
+  `assigned` is reachable, and terminal states provably unreachable in reverse;
+- one semantic CLI command per transition (`task:start`, `task:submit-review`,
+  `task:complete`, `task:block`, `task:unblock`, `task:fail`, `task:cancel`),
+  each validating the current state, refusing an impossible one with the allowed
+  set named, and committing its status write and audit event together. There is
+  deliberately no generic `task:set-status`;
+- `task:transitions`, a read-only preflight that publishes the allowed
+  transitions and the command that performs each one;
+- an explicit many-to-many `task_requirement` relation with project-ownership
+  triggers, CLI link/unlink commands, and no inference from titles or keys;
+- `task:list` showing linked requirement progress beside — never instead of —
+  the task status, and marking a contradiction rather than hiding it;
+- `task:reconcile`, read-only by default, detecting terminal-pipeline/open-task,
+  active-pipeline/terminal-task, stale pending tasks, completed tasks with open
+  requirements, and in-flight tasks with no execution. `--fix` requires an
+  approved plan hash and repairs only the one finding whose correct outcome
+  existing code already defines. One approved plan is one transaction: all of
+  its repairs commit or none do. Every suggestion the report prints is
+  executable from the status shown beside it;
+- `task:record-completion`, an explicit operator attestation that work was
+  completed outside the lifecycle AI Office holds. It reaches only `completed`,
+  only from `pending`, `assigned`, and `blocked`, never from a terminal status,
+  always with a mandatory rationale and an approved plan hash, and it emits
+  `task.completion_recorded` with `correction: true` rather than any
+  `task.status_changed`. It is neither `task:set-status` nor a shorthand for
+  `task:start` followed by `task:complete`.
+
+Requirement verification deliberately does **not** complete a task: one
+requirement may be delivered by several tasks, one task may deliver several
+requirements, and implementation routinely finishes before governance
+verification. Reconciliation surfaces the mismatch and an operator decides.
+
+Migration `0026` adds the linkage table and links nothing. Historical task state
+is not rewritten; reconciliation identifies questionable tasks after an upgrade,
+and the operator corrects them explicitly.
+
+Portable archive format version 2 carries the links; version 1 stays frozen
+where it shipped and cannot express them. A project with no links still exports
+version 1, byte-identical to before, and both versions are readable. Writing
+links into a version 1 envelope is refused rather than silently dropped.
+
+## M7.10 — Safe development CLI/runtime isolation
+
+Status: planned.
+
+Focus: running a development command from a source checkout must never mutate
+the user's authoritative runtime by accident.
+
+`bin/ai-office.ts` is the production-installed entry point, so it resolves
+`resolveRuntimePaths({ mode: "user" })` and talks to `AI_OFFICE_HOME` or
+`~/.ai-office`. That is correct for an installed CLI and wrong for a checkout:
+`bun bin/ai-office.ts`, and the `ai-office` package script that wraps it, write
+straight into the authoritative user runtime from a working tree. A linked Git
+worktree makes this worse, because the checkout looks like an isolated
+environment while the runtime it reaches is shared and real. Manual verification
+performed this way has already created throwaway projects in a live runtime.
+
+The other development entry points do not share the defect and show the shape of
+the fix: `bun run daemon`, `bun run cli`, and `scripts/migrate.ts` resolve
+`mode: "development"`, which selects `<root>/.ai-office`.
+
+Goals:
+
+- a dedicated development invocation — `bun run dev:cli` or whichever name fits
+  repository convention — that cannot silently select the authoritative user
+  runtime;
+- that invocation defaults to an isolated runtime: a temporary directory or a
+  repository-local development runtime;
+- the selected runtime path is visible in the command's output, so which runtime
+  was used is never a guess;
+- no silent fallback to `~/.ai-office`;
+- selecting a real runtime remains possible, but only through deliberate,
+  explicit opt-in;
+- daemon and CLI interact inside the same isolated runtime, so manual
+  end-to-end verification is possible;
+- correct behaviour from linked Git worktrees;
+- fixtures retained when explicitly requested, and temporary runtime state
+  cleaned up safely otherwise;
+- a guard that detects source-checkout execution combined with a user-mode
+  runtime and refuses unless an explicit override is supplied. An environment
+  variable such as `AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE` is one shape; the
+  interface is a design decision, the invariant is not.
+
+Two related gaps surfaced with this one and are in scope for the same work:
+
+- **Development mode still reaches the user home for global memory.**
+  `resolveRuntimePaths` defaults `globalMemoryHome` to `~/.ai-office` even under
+  `mode: "development"`, so `<root>/.ai-office/project.sqlite` is isolated while
+  `global.sqlite` is not. Any development or test path that opens the global
+  database without an explicit `globalDatabasePath` reaches the user's real one.
+  `tests/e2e/daemon-global-memory.test.ts` overrides it correctly, which makes
+  the isolation an per-call convention rather than a property of the mode.
+- **A project cannot be removed through any supported operation.** There is no
+  `project:delete`, `project:remove`, or per-project purge; `runtime:purge`
+  destroys the whole runtime and `client:uninstall` addresses host integration.
+  The schema is also self-contradictory here: `governance_event.project_id`
+  declares `ON DELETE CASCADE`, yet `governance_event_prevent_delete` aborts
+  every delete, including the cascaded one, so deleting a project row fails once
+  it has any governance history. Accidental project creation is therefore not
+  recoverable through supported means. Either project removal becomes an
+  explicit, audited, approval-gated application operation, or the append-only
+  guards and the cascade declarations are reconciled so the schema states one
+  intent.
+
+Automated tests must never depend on the user's real runtime. The current suite
+does not: every `mode: "user"` call in `tests/` passes an explicit `runtimeHome`
+or an explicit `userHome` plus `environment`, and every `bootstrap()` call
+passes a temporary `projectRoot`. A full `bun run check` leaves
+`~/.ai-office/project.sqlite` byte-identical and creates no `global.sqlite`.
+That property currently rests on each test remembering to override, so this
+milestone should make it structural rather than habitual.
+
 ## M8 — Code intelligence
 
 Status: future.

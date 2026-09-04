@@ -133,14 +133,61 @@ semantics into one status field.
 
 ## Task states
 
-The task status type recognizes `pending`, `assigned`, `running`, `blocked`, `waiting_review`, `completed`, `failed`, and `cancelled`. Current domain methods implement these transitions:
+`task.status` is **authoritative operational state**, not a reminder. The status
+type recognizes `pending`, `assigned`, `running`, `blocked`, `waiting_review`,
+`completed`, `failed`, and `cancelled`, and the domain declares the lifecycle
+once, as a table:
 
 ```text
-pending | assigned -> running
-running | waiting_review -> completed
+pending        -> running | blocked | cancelled
+assigned       -> running | blocked | cancelled
+running        -> waiting_review | completed | blocked | failed | cancelled
+blocked        -> pending | failed | cancelled
+waiting_review -> completed | blocked | failed | cancelled
+completed      -> (terminal)
+failed         -> (terminal)
+cancelled      -> (terminal)
 ```
 
-The current CLI creates and lists tasks; it does not expose a general task-transition command.
+`allowedTaskTransitions`, `isTaskTransitionAllowed`, and `terminalTaskStatuses`
+read that table; the aggregate's `start`, `submitForReview`, `complete`,
+`block`, `unblock`, `fail`, and `cancel` methods are the only writers, and each
+validates against it. **No terminal status can be left** — a board able to
+reverse one could fabricate project history.
+
+`assigned` deliberately has no transition into it: the `Task` aggregate stores
+no assignee, so the state could not say who it is assigned to. It remains a
+status a restored archive may carry, and `start` still accepts it.
+
+`unblock` returns to `pending` rather than to whatever preceded the block: the
+aggregate keeps no previous status, and guessing one would invent history.
+
+The CLI exposes one semantic command per transition — `task:start`,
+`task:submit-review`, `task:complete`, `task:block`, `task:unblock`,
+`task:fail`, `task:cancel` — plus the read-only `task:transitions` preflight.
+There is deliberately **no** generic `task:set-status`: an unrestricted terminal
+write is the escape hatch that makes a lifecycle meaningless.
+
+### Historical correction
+
+`pending -> completed` is absent from the table on purpose, and stays absent.
+Recording work that was completed outside the lifecycle AI Office holds is a
+different statement from progressing through it, so it is a separate aggregate
+operation — `recordHistoricalCompletion` — behind a separate command,
+`task:record-completion`.
+
+Its guard is stricter than the lifecycle's, and derived from the same table
+rather than restated beside it: it applies only where the status is non-terminal
+*and* `completed` is not already reachable, which is exactly `pending`,
+`assigned`, and `blocked`. Terminal states remain irreversible. Where
+`task:complete` works, the correction refuses and names it.
+
+It does not call `start`. Walking a task through `running` to reach `completed`
+would enter a moment at which work began that nobody observed, in order to
+record work that happened outside the record. The audit event is
+`task.completion_recorded`, carrying `correction: true`, the mandatory
+rationale, and the evidence the operator was shown — never `task.status_changed`,
+so no fabricated `start` can appear in the trail.
 
 ## Agent-run states
 
@@ -152,6 +199,29 @@ queued -> preparing -> running -> reviewing -> completed
 ```
 
 Every transition is checked by the domain model and projected into the append-only `agent_run_event` table. A task lock is acquired when a run is queued and released after completion, failure, or cancellation. The current executor and worktree manager are deterministic simulations.
+
+## Task, requirement, and pipeline ownership
+
+Three aggregates hold three different kinds of state, and none of them derives
+another's:
+
+| Aggregate | Owns | Answers |
+| --- | --- | --- |
+| `Requirement` | acceptance / specification state | what must be true and verified |
+| `Task` | operational work state | what the office is doing |
+| `PipelineRun` | execution / orchestration state | one concrete attempt at a task |
+
+`Task` and `Requirement` are linked explicitly and **many-to-many**
+(`task_requirement`): one task can deliver several requirements, and one
+requirement can need several tasks, so neither side can be a column on the
+other. Linkage is never inferred — matching a task title against a requirement
+key would be an unverifiable heuristic — and a link may never cross a project
+boundary.
+
+Verified requirements therefore do **not** complete a task automatically. The
+inference is unsound in both directions, and implementation frequently finishes
+before governance verification. Reconciliation surfaces the mismatch and an
+operator decides.
 
 ## Governance lifecycles
 

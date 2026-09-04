@@ -191,7 +191,7 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "fresh.sqlite"));
     expect(migrate(database, migrationSource).applied.at(-1)).toBe(
-      "0025_audit_event_aggregate_index.sql",
+      "0026_task_requirement_linkage.sql",
     );
     expect(
       database
@@ -247,6 +247,7 @@ describe("M6C-lite migration", () => {
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
+      "0026_task_requirement_linkage.sql",
     ]);
     expect(
       database

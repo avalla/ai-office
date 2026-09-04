@@ -10,7 +10,31 @@ import { officeManifestSchema } from "../office/office-manifest-schema.ts";
 import { portableGitRemote } from "./project-git-provenance.ts";
 
 export const portableProjectFormat = "ai-office-project" as const;
-export const portableProjectFormatVersion = 1 as const;
+
+/**
+ * Portable archive format versions, each identifying exactly one schema.
+ *
+ * Version 1 is frozen at the shape it shipped with: `governance` is strict and
+ * carries no `taskRequirements`, so a v1 archive cannot express a
+ * Task <-> Requirement link and a v1 reader never has to guess.
+ *
+ * Version 2 adds that link, as a required `governance.taskRequirements` array
+ * and a matching `contents` entry. Extending v1 to mean "sometimes with links"
+ * would have left one version number describing two contracts: an archive an
+ * old binary legitimately believes it understands, whose strict schema it then
+ * rejects.
+ *
+ * A project with no links still writes v1, so archives that were byte-identical
+ * before this version existed stay byte-identical. Readers accept both.
+ */
+export const portableProjectFormatVersions = [1, 2] as const;
+export type PortableProjectFormatVersion =
+  (typeof portableProjectFormatVersions)[number];
+
+/** The version written for a project with no Task <-> Requirement links. */
+export const portableProjectBaseFormatVersion = 1 as const;
+/** The version written for a project that has them. */
+export const portableProjectLinkedFormatVersion = 2 as const;
 export const portableProjectExtension = ".aioffice" as const;
 export const maximumPortableProjectBytes = 32 * 1024 * 1024;
 
@@ -44,7 +68,7 @@ const actor = z.strictObject({
   displayName: shortText.optional(),
 });
 
-const portableProjectStateShape = z.strictObject({
+const portableProjectCommonShape = {
   project: z.strictObject({
     name: z.string().trim().min(1).max(500),
     description: longText.optional(),
@@ -97,7 +121,28 @@ const portableProjectStateShape = z.strictObject({
       }),
     )
     .max(10_000),
-  governance: z.strictObject({
+} as const;
+
+/**
+ * Explicit Task <-> Requirement links. Present only in format version 2.
+ *
+ * It lives under `governance` rather than at the top level because the link is
+ * the requirement-side association the existing `governance` content entry
+ * already declares; version 2's `contents` tuple names it separately so the
+ * manifest still describes what the archive holds.
+ */
+const taskRequirementLinks = z
+  .array(
+    z.strictObject({
+      taskId: id,
+      requirementId: id,
+      createdAt: timestamp,
+    }),
+  )
+  .max(1_000_000);
+
+/** Governance exactly as format version 1 froze it. */
+const portableGovernanceShape = z.strictObject({
     milestones: z.array(
       z.strictObject({
         id,
@@ -173,8 +218,9 @@ const portableProjectStateShape = z.strictObject({
         createdAt: timestamp,
       }),
     ),
-  }),
-  agents: z.strictObject({
+});
+
+const portableAgentsShape = z.strictObject({
     roles: z.array(
       z.strictObject({
         id,
@@ -215,11 +261,44 @@ const portableProjectStateShape = z.strictObject({
         updatedAt: timestamp,
       }),
     ),
-  }),
 });
 
-export const portableProjectStateSchema = portableProjectStateShape.superRefine(
-  (state, context) => {
+/** The wire schema of a format version 1 archive's state. */
+const portableProjectStateShapeV1 = z.strictObject({
+  ...portableProjectCommonShape,
+  governance: portableGovernanceShape,
+  agents: portableAgentsShape,
+});
+
+/** The wire schema of a format version 2 archive's state. */
+const portableProjectStateShapeV2 = z.strictObject({
+  ...portableProjectCommonShape,
+  governance: portableGovernanceShape.extend({
+    taskRequirements: taskRequirementLinks,
+  }),
+  agents: portableAgentsShape,
+});
+
+/**
+ * The producer-side shape, where the linkage is optional.
+ *
+ * This is the type the runtime builds and restores; which of the two wire
+ * contracts it serializes into is decided by whether the links are there. It is
+ * never the schema an archive is parsed with — those are strict per version, so
+ * linkage can never appear in a v1 archive.
+ */
+const portableProjectStateShape = z.strictObject({
+  ...portableProjectCommonShape,
+  governance: portableGovernanceShape.extend({
+    taskRequirements: taskRequirementLinks.optional(),
+  }),
+  agents: portableAgentsShape,
+});
+
+const referentialClosure = (
+    state: z.infer<typeof portableProjectStateShape>,
+    context: z.RefinementCtx,
+  ) => {
     const milestones = new Set(
       state.governance.milestones.map((item) => item.id),
     );
@@ -321,6 +400,31 @@ export const portableProjectStateSchema = portableProjectStateShape.superRefine(
           ["agents", "definitions", index, "roleId"],
           `Referenced role ${item.roleId} is not portable`,
         );
+    const links = new Set<string>();
+    for (const [index, item] of (
+      state.governance.taskRequirements ?? []
+    ).entries()) {
+      const path = ["governance", "taskRequirements", index] as const;
+      // A link is meaningless without both ends inside the snapshot, so
+      // referential closure is enforced here rather than discovered at restore.
+      if (!tasks.has(item.taskId))
+        missing(
+          [...path, "taskId"],
+          `Referenced task ${item.taskId} is not portable`,
+        );
+      if (!requirements.has(item.requirementId))
+        missing(
+          [...path, "requirementId"],
+          `Referenced requirement ${item.requirementId} is not portable`,
+        );
+      const key = `${item.taskId}\u0000${item.requirementId}`;
+      if (links.has(key))
+        missing(
+          [...path],
+          `Task ${item.taskId} is linked to requirement ${item.requirementId} more than once`,
+        );
+      links.add(key);
+    }
     for (const [index, item] of state.agents.terminalRuns.entries()) {
       if (!tasks.has(item.taskId))
         missing(
@@ -333,14 +437,75 @@ export const portableProjectStateSchema = portableProjectStateShape.superRefine(
           `Referenced agent ${item.agentId} is not portable`,
         );
     }
-  },
-);
+};
+
+/**
+ * Referential closure is the same rule in both versions, applied once. A v1
+ * state simply has no links to close.
+ */
+export const portableProjectStateSchema =
+  portableProjectStateShape.superRefine(referentialClosure);
+export const portableProjectStateSchemaV1 =
+  portableProjectStateShapeV1.superRefine(referentialClosure);
+export const portableProjectStateSchemaV2 =
+  portableProjectStateShapeV2.superRefine(referentialClosure);
 
 export type PortableProjectState = z.infer<typeof portableProjectStateSchema>;
 
-export const portableProjectManifestSchema = z.strictObject({
+/** Task <-> Requirement links carried by a state, in either version. */
+export function portableTaskRequirementLinks(
+  state: PortableProjectState,
+): readonly { taskId: string; requirementId: string; createdAt: string }[] {
+  return state.governance.taskRequirements ?? [];
+}
+
+/**
+ * The lowest format version that can express this state without losing
+ * anything. A project with no links keeps writing version 1.
+ */
+export function portableProjectFormatVersionFor(
+  state: PortableProjectState,
+): PortableProjectFormatVersion {
+  return portableTaskRequirementLinks(state).length > 0
+    ? portableProjectLinkedFormatVersion
+    : portableProjectBaseFormatVersion;
+}
+
+const manifestContentsV1 = [
+  z.literal("project"),
+  z.literal("tasks"),
+  z.literal("profile"),
+  z.literal("office_manifests"),
+  z.literal("governance"),
+  z.literal("agent_definitions"),
+  z.literal("terminal_run_summaries"),
+] as const;
+
+/** The `contents` tuple each version declares. Frozen per version. */
+export const portableProjectContents = {
+  1: [
+    "project",
+    "tasks",
+    "profile",
+    "office_manifests",
+    "governance",
+    "agent_definitions",
+    "terminal_run_summaries",
+  ],
+  2: [
+    "project",
+    "tasks",
+    "profile",
+    "office_manifests",
+    "governance",
+    "agent_definitions",
+    "terminal_run_summaries",
+    "task_requirements",
+  ],
+} as const;
+
+const portableProjectManifestBase = {
   format: z.literal(portableProjectFormat),
-  formatVersion: z.literal(portableProjectFormatVersion),
   projectIdentity: id,
   createdAt: timestamp,
   revision: z.strictObject({
@@ -361,33 +526,83 @@ export const portableProjectManifestSchema = z.strictObject({
       branch: shortText.optional(),
     })
     .optional(),
-  contents: z.tuple([
-    z.literal("project"),
-    z.literal("tasks"),
-    z.literal("profile"),
-    z.literal("office_manifests"),
-    z.literal("governance"),
-    z.literal("agent_definitions"),
-    z.literal("terminal_run_summaries"),
-  ]),
+} as const;
+
+export const portableProjectManifestSchemaV1 = z.strictObject({
+  ...portableProjectManifestBase,
+  formatVersion: z.literal(portableProjectBaseFormatVersion),
+  contents: z.tuple([...manifestContentsV1]),
 });
+
+export const portableProjectManifestSchemaV2 = z.strictObject({
+  ...portableProjectManifestBase,
+  formatVersion: z.literal(portableProjectLinkedFormatVersion),
+  contents: z.tuple([...manifestContentsV1, z.literal("task_requirements")]),
+});
+
+/** Accepts either version. Which one is decided before the state is parsed. */
+export const portableProjectManifestSchema = z.union([
+  portableProjectManifestSchemaV1,
+  portableProjectManifestSchemaV2,
+]);
 
 export type PortableProjectManifest = z.infer<
   typeof portableProjectManifestSchema
 >;
 
-export const portableProjectArchiveSchema = z.strictObject({
-  manifest: portableProjectManifestSchema,
-  state: portableProjectStateSchema,
-  integrity: z.strictObject({
-    algorithm: z.literal("sha256"),
-    checksum,
-  }),
+/**
+ * Builds the manifest for one version, keeping `formatVersion` and `contents`
+ * correlated in the one place that knows they must be.
+ */
+export function portableProjectManifestFor(input: {
+  formatVersion: PortableProjectFormatVersion;
+  projectIdentity: string;
+  createdAt: string;
+  revision: PortableProjectManifest["revision"];
+  source?: PortableProjectManifest["source"];
+}): PortableProjectManifest {
+  const envelope = {
+    format: portableProjectFormat,
+    projectIdentity: input.projectIdentity,
+    createdAt: input.createdAt,
+    revision: input.revision,
+    ...(input.source === undefined ? {} : { source: input.source }),
+  };
+  return input.formatVersion === portableProjectLinkedFormatVersion
+    ? {
+        ...envelope,
+        formatVersion: portableProjectLinkedFormatVersion,
+        contents: [...portableProjectContents[2]],
+      }
+    : {
+        ...envelope,
+        formatVersion: portableProjectBaseFormatVersion,
+        contents: [...portableProjectContents[1]],
+      };
+}
+
+const integrityShape = z.strictObject({
+  algorithm: z.literal("sha256"),
+  checksum,
 });
 
-export type PortableProjectArchive = z.infer<
-  typeof portableProjectArchiveSchema
->;
+export const portableProjectArchiveSchemaV1 = z.strictObject({
+  manifest: portableProjectManifestSchemaV1,
+  state: portableProjectStateSchemaV1,
+  integrity: integrityShape,
+});
+
+export const portableProjectArchiveSchemaV2 = z.strictObject({
+  manifest: portableProjectManifestSchemaV2,
+  state: portableProjectStateSchemaV2,
+  integrity: integrityShape,
+});
+
+export interface PortableProjectArchive {
+  manifest: PortableProjectManifest;
+  state: PortableProjectState;
+  integrity: { algorithm: "sha256"; checksum: string };
+}
 
 export class PortableProjectArchiveError extends Error {
   constructor(message: string) {
@@ -447,18 +662,39 @@ export function portableStateChecksum(state: PortableProjectState): string {
   return sha256Canonical(state);
 }
 
+/**
+ * Builds an archive at the version its manifest declares, and refuses any
+ * combination where the version and the content disagree.
+ *
+ * The refusal matters in one direction especially: a state carrying links can
+ * never be written as version 1. Silently dropping them there would produce an
+ * archive that restores a project missing relationships it had, with a valid
+ * checksum over the loss.
+ */
 export function createPortableProjectArchive(input: {
   manifest: PortableProjectManifest;
   state: PortableProjectState;
 }): PortableProjectArchive {
-  const state = portableProjectStateSchema.parse(input.state);
+  const declared = input.manifest.formatVersion;
+  const required = portableProjectFormatVersionFor(input.state);
+  if (declared < required)
+    throw new PortableProjectArchiveError(
+      `Portable project archive format version ${declared} cannot carry Task/Requirement links; write format version ${required}`,
+    );
+  const state =
+    declared === portableProjectLinkedFormatVersion
+      ? portableProjectStateSchemaV2.parse(input.state)
+      : portableProjectStateSchemaV1.parse(input.state);
   assertPortableProjectStateSafe(state);
   const stateChecksum = portableStateChecksum(state);
   if (input.manifest.revision.stateChecksum !== stateChecksum)
     throw new PortableProjectArchiveError(
       "Snapshot revision checksum does not match portable state",
     );
-  const manifest = portableProjectManifestSchema.parse(input.manifest);
+  const manifest =
+    declared === portableProjectLinkedFormatVersion
+      ? portableProjectManifestSchemaV2.parse(input.manifest)
+      : portableProjectManifestSchemaV1.parse(input.manifest);
   const basis = { manifest, state };
   return {
     ...basis,
@@ -472,6 +708,22 @@ export function serializePortableProjectArchive(
   return `${canonicalStringify(archive)}\n`;
 }
 
+/**
+ * Reads the declared format version before choosing a schema.
+ *
+ * Returns null for anything this build does not read, so the caller can say so
+ * rather than reporting a pile of shape errors from the wrong schema.
+ */
+function declaredFormatVersion(
+  value: unknown,
+): PortableProjectFormatVersion | null {
+  if (typeof value !== "object" || value === null) return null;
+  const manifest = (value as { manifest?: unknown }).manifest;
+  if (typeof manifest !== "object" || manifest === null) return null;
+  const version = (manifest as { formatVersion?: unknown }).formatVersion;
+  return portableProjectFormatVersions.find((known) => known === version) ?? null;
+}
+
 export function parsePortableProjectArchive(
   text: string,
 ): PortableProjectArchive {
@@ -483,12 +735,21 @@ export function parsePortableProjectArchive(
       "Portable project archive is not valid JSON",
     );
   }
-  const parsed = portableProjectArchiveSchema.safeParse(value);
+  const version = declaredFormatVersion(value);
+  if (version === null)
+    throw new PortableProjectArchiveError(
+      `Portable project archive does not declare a supported format version (supported: ${portableProjectFormatVersions.join(", ")})`,
+    );
+  const parsed = (
+    version === portableProjectLinkedFormatVersion
+      ? portableProjectArchiveSchemaV2
+      : portableProjectArchiveSchemaV1
+  ).safeParse(value);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     throw new PortableProjectArchiveError(
       issue === undefined
-        ? "Portable project archive does not match format version 1"
+        ? `Portable project archive does not match format version ${version}`
         : `Portable project archive ${issue.path.join(".") || "root"}: ${issue.message}`,
     );
   }

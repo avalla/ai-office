@@ -63,6 +63,7 @@ describe("project database migrations", () => {
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
+      "0026_task_requirement_linkage.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -98,6 +99,7 @@ describe("project database migrations", () => {
       { version: "0023_project_snapshot_observations.sql" },
       { version: "0024_project_revision_identity.sql" },
       { version: "0025_audit_event_aggregate_index.sql" },
+      { version: "0026_task_requirement_linkage.sql" },
     ]);
     database.close();
   });

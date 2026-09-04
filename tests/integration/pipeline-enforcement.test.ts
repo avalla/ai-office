@@ -401,6 +401,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
+      "0026_task_requirement_linkage.sql",
     ]);
     expect(
       database
