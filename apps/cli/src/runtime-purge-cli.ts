@@ -9,7 +9,7 @@ import {
   CliUsageError,
   parseArguments,
   type CommandIo,
-} from "@ai-office/runtime-host/commands/shared.ts";
+} from "@ai-office/command-support/arguments.ts";
 import {
   LocalRuntimePurgeAdapter,
   LocalRuntimePurgeError,

@@ -5,13 +5,16 @@ import type {
   ProjectBindingWritePlan,
 } from "../project-lifecycle/project-binding.ts";
 
-export interface ProjectBindingAdapter {
+export interface ProjectBindingReader {
   /** Resolve the managed ancestor, Git worktree root, or standalone directory. */
   resolveProjectRoot(inputPath: string): Promise<string>;
   inspect(
     inputPath: string,
     options?: { ancestors?: boolean; stopAt?: string },
   ): Promise<ProjectBindingInspection>;
+}
+
+export interface ProjectBindingAdapter extends ProjectBindingReader {
   planWrite(
     rootPath: string,
     binding: ProjectBinding,

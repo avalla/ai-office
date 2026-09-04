@@ -2,7 +2,6 @@
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { bootstrap } from "../apps/daemon/src/bootstrap.ts";
 import { runRuntimeCli } from "../apps/cli/src/daemon-cli.ts";
 import { parseRuntimeHostStart } from "../apps/cli/src/runtime-lifecycle.ts";
 import {
@@ -63,6 +62,7 @@ if (runtimeHostStart !== null) {
     const controller = new AbortController();
     for (const signal of ["SIGINT", "SIGTERM"] as const)
       process.on(signal, () => controller.abort());
+    const { bootstrap } = await import("../apps/daemon/src/bootstrap.ts");
     const runtimeHost = await bootstrap({
       runtimePaths,
       projectRoot: distributionRoot,

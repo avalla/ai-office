@@ -1,10 +1,8 @@
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
-import { resolveCallerLocalPaths } from "@ai-office/runtime-host/caller-local-paths.ts";
-import {
-  cliHelp,
-  type CliIo,
-} from "@ai-office/runtime-host/runtime-command.ts";
+import { resolveCallerLocalPaths } from "@ai-office/command-support/caller-local-paths.ts";
+import { runtimeCommandHelp as cliHelp } from "@ai-office/command-support/help.ts";
+import type { CommandIo as CliIo } from "@ai-office/command-support/arguments.ts";
 import {
   IpcRuntimeClient,
   InvalidDaemonResponseError,
@@ -17,16 +15,16 @@ import { runDashboardCli } from "./dashboard-cli.ts";
 import {
   CliUsageError,
   parseArguments,
-} from "@ai-office/runtime-host/commands/shared.ts";
-import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
+} from "@ai-office/command-support/arguments.ts";
+import type { ProjectBindingReader } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
-import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
+import { LocalProjectBindingReader } from "@ai-office/project-binding/local-project-binding-reader.ts";
 import { getOfflineProjectStatus } from "./offline-project-status.ts";
 import {
   printProjectLifecycleStatus,
   projectStatusExitCode,
-} from "@ai-office/runtime-host/lifecycle-view.ts";
-import { renderHandoverReport } from "@ai-office/runtime-host/handover-view.ts";
+} from "@ai-office/command-support/lifecycle-view.ts";
+import { renderHandoverReport } from "@ai-office/command-support/handover-view.ts";
 import { degradedProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 import {
@@ -42,7 +40,7 @@ export interface RuntimeCliOptions {
   io?: CliIo;
   runtimePurgeAdapter?: RuntimePurgeAdapter;
   workingDirectory?: string;
-  projectBindings?: ProjectBindingAdapter;
+  projectBindings?: ProjectBindingReader;
   agentClients?: AgentClientCatalog;
   /** Stops the foreground `dashboard` host; supplied by tests. */
   dashboardSignal?: AbortSignal;
@@ -147,7 +145,7 @@ const projectScopedCommands = new Set([
 async function resolvedArguments(
   args: string[],
   workingDirectory: string,
-  bindings: ProjectBindingAdapter,
+  bindings: ProjectBindingReader,
 ): Promise<{ args: string[]; discoveredRoot?: string }> {
   const resolved = resolveCallerLocalPaths(args, workingDirectory);
   const command = resolved[0];
@@ -238,7 +236,7 @@ export async function runRuntimeCli(
   const socketPath = options.socketPath ?? runtimePaths.socketPath;
   const client = options.runtimeClient ?? new IpcRuntimeClient(socketPath);
   const workingDirectory = options.workingDirectory ?? process.cwd();
-  const bindings = options.projectBindings ?? new LocalProjectBindingAdapter();
+  const bindings = options.projectBindings ?? new LocalProjectBindingReader();
 
   try {
     if (
