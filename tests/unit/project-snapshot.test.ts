@@ -2,8 +2,12 @@ import { describe, expect, test } from "vitest";
 import {
   createPortableProjectArchive,
   parsePortableProjectArchive,
+  portableProjectFormatVersionFor,
+  portableProjectManifestFor,
   portableStateChecksum,
   serializePortableProjectArchive,
+  sha256Canonical,
+  type PortableProjectFormatVersion,
   type PortableProjectManifest,
   type PortableProjectState,
 } from "@ai-office/application/project-portability/project-snapshot.ts";
@@ -11,6 +15,7 @@ import {
   portableGitRemote,
   selectPortableGitProvenance,
 } from "@ai-office/application/project-portability/project-git-provenance.ts";
+import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 
 const timestamp = "2026-09-01T08:00:00.000Z";
 
@@ -51,26 +56,26 @@ function state(value: unknown = ["TypeScript"]): PortableProjectState {
   };
 }
 
-function manifest(value: PortableProjectState): PortableProjectManifest {
-  return {
-    format: "ai-office-project",
-    formatVersion: 1,
+/**
+ * The manifest a writer would produce for this state: version 1 while it has no
+ * Task/Requirement links, version 2 once it does. A test that wants the wrong
+ * pairing asks for it explicitly.
+ */
+function manifest(
+  value: PortableProjectState,
+  formatVersion: PortableProjectFormatVersion = portableProjectFormatVersionFor(
+    value,
+  ),
+): PortableProjectManifest {
+  return portableProjectManifestFor({
+    formatVersion,
     projectIdentity: "repo_portable",
     createdAt: timestamp,
     revision: {
       id: "rev-1",
       stateChecksum: portableStateChecksum(value),
     },
-    contents: [
-      "project",
-      "tasks",
-      "profile",
-      "office_manifests",
-      "governance",
-      "agent_definitions",
-      "terminal_run_summaries",
-    ],
-  };
+  });
 }
 
 describe("portable project snapshot", () => {
@@ -174,10 +179,10 @@ describe("portable project snapshot", () => {
       parsePortableProjectArchive(
         JSON.stringify({
           ...archive,
-          manifest: { ...archive.manifest, formatVersion: 2 },
+          manifest: { ...archive.manifest, formatVersion: 3 },
         }),
       ),
-    ).toThrow("formatVersion");
+    ).toThrow("does not declare a supported format version");
     expect(() =>
       parsePortableProjectArchive(
         JSON.stringify({ ...archive, artifacts: [{ path: "../../escape" }] }),
@@ -527,6 +532,212 @@ describe("portable task/requirement linkage", () => {
     expect(() => parsePortableProjectArchive(corrupted)).toThrow(
       /not portable|checksum/u,
     );
+  });
+});
+
+/**
+ * One `formatVersion` must identify one schema.
+ *
+ * Version 1 is frozen where it shipped and cannot express a Task/Requirement
+ * link at all; version 2 carries the link and says so in `contents`. A reader
+ * accepts both, a writer picks the lowest that loses nothing, and neither
+ * version's checksum depends on the other.
+ */
+describe("portable archive format versions", () => {
+  function linkedState(): PortableProjectState {
+    const value = state();
+    return {
+      ...value,
+      governance: {
+        ...value.governance,
+        requirements: [
+          {
+            id: "req-1",
+            key: "AUC-03-R1",
+            title: "Acceptance",
+            description: "Must hold",
+            status: "verified",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ],
+        taskRequirements: [
+          { taskId: "task-1", requirementId: "req-1", createdAt: timestamp },
+        ],
+      },
+    };
+  }
+
+  test("writes version 1 for a project with no links and version 2 once it has them", () => {
+    expect(portableProjectFormatVersionFor(state())).toBe(1);
+    expect(portableProjectFormatVersionFor(linkedState())).toBe(2);
+
+    const unlinked = createPortableProjectArchive({
+      state: state(),
+      manifest: manifest(state()),
+    });
+    expect(unlinked.manifest.formatVersion).toBe(1);
+    expect(unlinked.manifest.contents).not.toContain("task_requirements");
+
+    const value = linkedState();
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    expect(archive.manifest.formatVersion).toBe(2);
+    expect(archive.manifest.contents).toContain("task_requirements");
+  });
+
+  test("keeps a historical version 1 archive readable byte for byte", () => {
+    // Written by hand rather than by the current writer: this is the exact
+    // envelope a build that predates linkage produced, and it must still parse.
+    const value = state();
+    const historical = {
+      manifest: {
+        format: "ai-office-project",
+        formatVersion: 1,
+        projectIdentity: "repo_portable",
+        createdAt: timestamp,
+        revision: { id: "rev-1", stateChecksum: portableStateChecksum(value) },
+        contents: [
+          "project",
+          "tasks",
+          "profile",
+          "office_manifests",
+          "governance",
+          "agent_definitions",
+          "terminal_run_summaries",
+        ],
+      },
+      state: value,
+    };
+    const serialized = `${canonicalStringify({
+      ...historical,
+      integrity: {
+        algorithm: "sha256",
+        checksum: sha256Canonical(historical),
+      },
+    })}\n`;
+    expect(serialized).not.toContain("taskRequirements");
+    expect(serialized).not.toContain("task_requirements");
+    const parsed = parsePortableProjectArchive(serialized);
+    expect(parsed.manifest.formatVersion).toBe(1);
+    expect(parsed.state.governance.taskRequirements).toBeUndefined();
+    // Byte-compatible: the current writer reproduces it exactly.
+    expect(
+      serializePortableProjectArchive(
+        createPortableProjectArchive({ state: value, manifest: manifest(value) }),
+      ),
+    ).toBe(serialized);
+  });
+
+  test("round-trips a version 2 archive exactly", () => {
+    const value = linkedState();
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    const serialized = serializePortableProjectArchive(archive);
+    const parsed = parsePortableProjectArchive(serialized);
+    expect(parsed).toEqual(archive);
+    expect(serializePortableProjectArchive(parsed)).toBe(serialized);
+    expect(parsed.state.governance.taskRequirements).toEqual([
+      { taskId: "task-1", requirementId: "req-1", createdAt: timestamp },
+    ]);
+  });
+
+  test("refuses to write linkage into a version 1 archive", () => {
+    const value = linkedState();
+    expect(() =>
+      createPortableProjectArchive({ state: value, manifest: manifest(value, 1) }),
+    ).toThrow(
+      "format version 1 cannot carry Task/Requirement links; write format version 2",
+    );
+  });
+
+  test("refuses to read linkage out of a version 1 archive", () => {
+    // The strict v1 governance schema is what makes the version contract hold:
+    // a v1 envelope carrying links is not a v1 archive at all.
+    const value = linkedState();
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    const downgraded = {
+      ...archive,
+      manifest: {
+        ...archive.manifest,
+        formatVersion: 1,
+        contents: archive.manifest.contents.slice(0, 7),
+      },
+    };
+    expect(() =>
+      parsePortableProjectArchive(canonicalStringify(downgraded)),
+    ).toThrow(/taskRequirements|Unrecognized key/u);
+  });
+
+  test("refuses a version 2 archive that omits the linkage field", () => {
+    const value = linkedState();
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    const { taskRequirements: _dropped, ...governance } =
+      archive.state.governance;
+    expect(() =>
+      parsePortableProjectArchive(
+        canonicalStringify({
+          ...archive,
+          state: { ...archive.state, governance },
+        }),
+      ),
+    ).toThrow(/taskRequirements/u);
+  });
+
+  test("validates checksums independently within each version", () => {
+    for (const value of [state(), linkedState()]) {
+      const archive = createPortableProjectArchive({
+        state: value,
+        manifest: manifest(value),
+      });
+      // State tampering breaks the state checksum...
+      expect(() =>
+        parsePortableProjectArchive(
+          canonicalStringify({
+            ...archive,
+            state: {
+              ...archive.state,
+              project: { ...archive.state.project, name: "Tampered" },
+            },
+          }),
+        ),
+      ).toThrow("state checksum mismatch");
+      // ...and manifest tampering breaks the envelope checksum.
+      expect(() =>
+        parsePortableProjectArchive(
+          canonicalStringify({
+            ...archive,
+            manifest: { ...archive.manifest, projectIdentity: "repo_other" },
+          }),
+        ),
+      ).toThrow("integrity checksum mismatch");
+    }
+  });
+
+  test("rejects an unknown format version by name", () => {
+    const value = state();
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    expect(() =>
+      parsePortableProjectArchive(
+        JSON.stringify({
+          ...archive,
+          manifest: { ...archive.manifest, formatVersion: 99 },
+        }),
+      ),
+    ).toThrow("supported: 1, 2");
   });
 });
 

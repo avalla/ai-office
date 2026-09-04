@@ -17,8 +17,8 @@ import {
 } from "../project-lifecycle/project-binding.ts";
 import {
   createPortableProjectArchive,
-  portableProjectFormat,
-  portableProjectFormatVersion,
+  portableProjectFormatVersionFor,
+  portableProjectManifestFor,
   portableStateChecksum,
   type PortableProjectArchive,
   type PortableProjectManifest,
@@ -161,9 +161,12 @@ export class ManageProjectPortability {
               origin: "local_snapshot" as const,
               createdAt: now,
             };
-      const manifest: PortableProjectManifest = {
-        format: portableProjectFormat,
-        formatVersion: portableProjectFormatVersion,
+      // The lowest version that can carry this project's state without
+      // losing anything: version 1 while it has no Task/Requirement links,
+      // version 2 once it does. A link-free archive therefore stays
+      // byte-identical to one written before version 2 existed.
+      const manifest: PortableProjectManifest = portableProjectManifestFor({
+        formatVersion: portableProjectFormatVersionFor(state),
         projectIdentity,
         createdAt: revision.createdAt.toISOString(),
         revision: {
@@ -174,16 +177,7 @@ export class ManageProjectPortability {
           stateChecksum: revision.stateChecksum,
         },
         ...(source === undefined ? {} : { source }),
-        contents: [
-          "project",
-          "tasks",
-          "profile",
-          "office_manifests",
-          "governance",
-          "agent_definitions",
-          "terminal_run_summaries",
-        ],
-      };
+      });
       const archive = createPortableProjectArchive({ manifest, state });
       if (head?.revision.stateChecksum !== stateChecksum)
         await this.dependencies.states.saveRevision(

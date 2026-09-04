@@ -23,6 +23,7 @@ import type { ProjectBindingAdapter } from "@ai-office/application/ports/project
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
 import {
   createPortableProjectArchive,
+  portableProjectManifestFor,
   portableStateChecksum,
   parsePortableProjectArchive,
   serializePortableProjectArchive,
@@ -1244,6 +1245,10 @@ describe("project portability", () => {
       ).toBe(true);
 
     const backup = await origin.service.backup(imported.projectId);
+    // A project that carries links exports format version 2, and the manifest
+    // says so: one version number, one schema contract.
+    expect(backup.archive.manifest.formatVersion).toBe(2);
+    expect(backup.archive.manifest.contents).toContain("task_requirements");
     expect(
       backup.archive.state.governance.taskRequirements?.map((value) => ({
         taskId: value.taskId,
@@ -1276,6 +1281,41 @@ describe("project portability", () => {
     destination.database.close();
   });
 
+  test("keeps exporting format version 1 while a project has no links", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-portable-v1-");
+    const targetRuntime = temporaryRoot("ai-office-portable-v1-target-");
+    const source = temporaryRoot("ai-office-portable-v1-source-");
+    const target = temporaryRoot("ai-office-portable-v1-restore-");
+    writeFileSync(join(source, "package.json"), '{"name":"unlinked"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"unlinked"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    await createTask(origin, imported.projectId, "Unlinked work");
+
+    const backup = await origin.service.backup(imported.projectId);
+    expect(backup.archive.manifest.formatVersion).toBe(1);
+    expect(backup.archive.manifest.contents).not.toContain("task_requirements");
+    // Byte-compatible with archives written before version 2 existed: the key
+    // is absent, so the state checksum is the one those archives carried.
+    const serialized = serializePortableProjectArchive(backup.archive);
+    expect(serialized).not.toContain("taskRequirements");
+    expect(parsePortableProjectArchive(serialized)).toEqual(backup.archive);
+    origin.database.close();
+
+    // And a version 1 archive restores to a project with no links.
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: backup.archive,
+      rootPath: target,
+    });
+    expect(
+      await new SqliteTaskRequirementRepository(
+        destination.database,
+      ).listByProject(restored.projectId),
+    ).toEqual([]);
+    destination.database.close();
+  });
+
   test("refuses an archive whose link references an absent requirement", async () => {
     const sourceRuntime = temporaryRoot("ai-office-portable-links-c-");
     const source = temporaryRoot("ai-office-portable-links-c-source-");
@@ -1289,8 +1329,12 @@ describe("project portability", () => {
     // A snapshot must never carry a link it cannot resolve inside itself.
     expect(() =>
       createPortableProjectArchive({
-        manifest: {
-          ...backup.archive.manifest,
+        // The state now carries a link, so it is a version 2 archive; the
+        // referential check is what must reject it, not the version guard.
+        manifest: portableProjectManifestFor({
+          formatVersion: 2,
+          projectIdentity: backup.archive.manifest.projectIdentity,
+          createdAt: backup.archive.manifest.createdAt,
           revision: {
             ...backup.archive.manifest.revision,
             stateChecksum: portableStateChecksum({
@@ -1307,7 +1351,7 @@ describe("project portability", () => {
               },
             }),
           },
-        },
+        }),
         state: {
           ...backup.archive.state,
           governance: {
