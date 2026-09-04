@@ -4,7 +4,11 @@ AI Office is a local AI software office that coordinates agents, keeps structure
 
 ## What AI Office is
 
-AI Office is a Bun and strict TypeScript monorepo built around one local daemon. The daemon owns project state, exposes a versioned HTTP protocol over an owner-only Unix socket, and routes commands through application services and explicit infrastructure ports.
+AI Office is a Bun and strict TypeScript monorepo built around one authoritative
+**AI Office Runtime**. The Runtime owns mutable project state and long-lived
+orchestration semantics. A local persistent daemon is its current host; it
+exposes a versioned HTTP protocol over an owner-only Unix socket and routes
+clients through application services and explicit infrastructure ports.
 
 The product is local-first and auditable: SQLite is authoritative, generated Markdown is a projection, LLM usage is metered through a gateway, and protected resource operations are authorized through capability policy and connector boundaries.
 
@@ -12,7 +16,7 @@ The product is local-first and auditable: SQLite is authoritative, generated Mar
 
 The current implementation on `main` includes:
 
-- a local daemon and daemon-backed CLI;
+- an authoritative Runtime, a persistent local daemon host, and a Runtime-backed CLI;
 - project creation, deterministic offline repository import, and host-skill conversational onboarding without runtime provider credentials;
 - a first-connection welcome, deterministic project-handover readiness, and `ai-office next` recommended actions;
 - stable project identity plus portable, integrity-checked project backup and restore across machine paths;
@@ -40,21 +44,22 @@ to end.
 ## How it works
 
 ```text
-Codex / compatible host
-  -> ai-office install/status/task commands
-  -> repository-scoped ai-office skill when conversation is needed
-  -> machine-oriented CLI
-  -> HTTP over <runtime-home>/daemon.sock
-  -> local daemon command dispatch
+Codex / Claude / CLI / future clients
+  -> RuntimeClient
+  -> HTTP over <runtime-home>/daemon.sock (current local IPC)
+  -> persistent daemon host (current deployment mode)
+  -> AI Office Runtime
   -> application services and domain rules
   -> SQLite repositories / LLM gateway / controlled connectors
 ```
 
-Stateful product commands go through the daemon. Short writes use
+Stateful product commands go through the authoritative Runtime; there is no
+automatic embedded or direct-SQLite fallback. Short writes use
 application-level transactions; provider calls, scans, simulated agent work,
 and filesystem side effects do not run inside an open SQLite transaction. Help
-and the destructive `runtime:purge` lifecycle command run locally; purge is
-available only while the daemon is stopped.
+and explicit `status --offline` can run locally. The destructive
+`runtime:purge` lifecycle command is available only while the Runtime host is
+stopped.
 
 The daemon is not only a command execution surface. The same socket carries a
 separately versioned, read-only query surface that publishes authoritative
@@ -89,11 +94,13 @@ dangling bin link, rerun the bare `bun link` command from this checkout to
 repair it. The same entry point can also be run from this checkout as
 `bun run ai-office -- install /absolute/path/to/project`.
 
-Start the office daemon in one terminal:
+Start the persistent Runtime host in one terminal:
 
 ```bash
-ai-office daemon
+ai-office runtime start
 ```
+
+The existing `ai-office daemon` command remains a compatibility alias.
 
 Then install AI Office from the repository you want to manage:
 
@@ -116,7 +123,7 @@ actionable warnings, and `1` means failed or partial. JSON output uses the same
 `installed`, `installed_with_warnings`, or `partial` outcome semantics.
 
 `status` works from the project root or a descendant. It reports the project
-identity, runtime-association validity, daemon and authoritative-state availability, office
+identity, runtime-association validity, Runtime-host and authoritative-state availability, office
 revision, client integration, and lightweight task counts. Use
 `ai-office status --json` for the stable schema-version `3` machine output.
 Lifecycle commands first select the nearest valid AI Office binding within the
@@ -570,7 +577,7 @@ the skill. There is no provider-backed onboarding command in the daemon; Codex
 or Claude owns questions and synthesis, while SQLite remains authoritative for
 accepted manifests and project state.
 
-Operate an enforced pipeline with the daemon-backed machine surface:
+Operate an enforced pipeline through the Runtime-backed machine surface:
 
 ```bash
 ai-office pipeline:start --project <id> --task <task-id> --pipeline <pipeline-id>
@@ -587,10 +594,11 @@ actions use `--agent-run`; the runtime derives project, task, agent, and
 pipeline provenance from that persisted run. Direct actions do not select an
 unrelated task's pipeline by supplying a run identifier.
 
-The local daemon does not authenticate human presence. A same-user shell-capable
-worker can technically invoke the same CLI and daemon socket, so this release
-does not claim strong operator isolation. Strong isolation requires a future
-worker sandbox or authenticated operator-presence boundary.
+The Runtime and local daemon host do not authenticate human presence. A
+same-user shell-capable worker can technically invoke the same CLI and daemon
+socket, so this release does not claim strong operator isolation. Strong
+isolation requires a future worker sandbox or authenticated operator-presence
+boundary.
 
 When a project-scoped command is invoked without `--project`, the linkable CLI
 canonicalizes the current directory, walks same-filesystem ancestors, and uses
@@ -608,27 +616,24 @@ ai-office --help
 ## Architecture
 
 The primary interactive interface is the repository-scoped skill. The CLI is a
-machine interface to the daemon. Web and MCP are future product surfaces.
+client of the authoritative Runtime through its current daemon-hosted IPC
+transport. Web and MCP are future client adapters to the same authority.
 
 ```text
-Host agent + ai-office skill          Web / MCP (targets)
-               \                         /
-                +-- CLI / protocol --+
+Codex / Claude / CLI / future Web and MCP adapters
                           |
-                    local daemon
-                    |
-           application services
-          /          |           \
- agent runtime     memory       LLM gateway
-                         \          |
-                   controlled     providers
-                    actions
-                       |
-                capability policy
-                       |
-               connector registry
-                       |
-                resource adapters
+                    RuntimeClient
+                          |
+                 local daemon IPC
+                          |
+                 AI Office Runtime
+        +-----------------+-----------------+
+        |                 |                 |
+ application services  pipelines/policy  workers/schedulers
+        |                 |                 |
+        +-------- controlled actions -------+
+                          |
+               connectors / audit / SQLite
 ```
 
 The domain does not depend on Bun, SQLite, HTTP, Git, MCP, connector implementations, or provider SDKs. See the [architecture overview](docs/architecture/overview.md) for current boundaries and implementation notes.
@@ -740,7 +745,7 @@ The intended three-database layout is:
 ├── project.sqlite-shm            # SQLite sidecar while the database is open
 ├── daemon.sock                   # ephemeral local daemon IPC socket
 ├── global.sqlite                 # durable reusable memory
-├── index.sqlite                  # schema exists; not used by the daemon
+├── index.sqlite                  # schema exists; not used by the Runtime
 ├── drafts/                       # optional onboarding proposals
 └── generated/                    # regenerable Markdown projections
 
@@ -755,7 +760,7 @@ The intended three-database layout is:
 └── .claude/skills/ai-office/SKILL.md
 ```
 
-Normal daemon operation creates `project.sqlite`, its live SQLite sidecars, and
+Normal Runtime-host operation creates `project.sqlite`, its live SQLite sidecars, and
 `daemon.sock`. The first `memory:*` command creates or upgrades `global.sqlite`
 in the selected user runtime home. Runtime drafts, generated files, and
 integration artifacts appear only when their corresponding workflow is used.
@@ -838,14 +843,14 @@ integration root is the same directory as the runtime root.
 Separate runtimes are selected explicitly, not inferred from repositories:
 
 ```text
-AI_OFFICE_HOME=/Users/alice/.ai-office-work ai-office daemon
-AI_OFFICE_HOME=/Users/alice/.ai-office-personal ai-office daemon
+AI_OFFICE_HOME=/Users/alice/.ai-office-work ai-office runtime start
+AI_OFFICE_HOME=/Users/alice/.ai-office-personal ai-office runtime start
 ```
 
 By contrast, `<runtime-home>/global.sqlite` is user/runtime-scoped rather than
 repository-scoped. With the default runtime this is
 `~/.ai-office/global.sqlite`; an explicit `AI_OFFICE_HOME` selects the matching
-global-memory authority too. Daemon-backed `memory:*` commands store reusable roles,
+global-memory authority too. Runtime-backed `memory:*` commands store reusable roles,
 versioned patterns, and lessons there. Role versions are immutable revisions of
 one logical role key and can be retrieved exactly; deprecation applies to one
 exact revision without deleting history. Project pattern-adoption references
@@ -870,11 +875,11 @@ memory-write policy, poisoning protection, and quotas remain deferred.
   covers indexed files, symbols, code edges, chunks, and FTS. No production
   indexer opens or populates it today. Once implemented, it is designed to be
   derived data, unlike `project.sqlite`.
-- `daemon.sock` is an ephemeral owner-only Unix socket. A clean daemon shutdown
+- `daemon.sock` is an ephemeral owner-only Unix socket. A clean Runtime-host shutdown
   removes it; startup replaces an unreachable stale socket. It is not backup
   data.
 - `project.sqlite-wal` and `project.sqlite-shm` are SQLite runtime sidecars, not
-  independent databases. Never remove them while the daemon is running.
+  independent databases. Never remove them while the Runtime host is running.
 - `drafts/office-manifest.json` is an optional skill-created proposal. After
   `office:apply`, the accepted manifest revision is authoritative in SQLite;
   deleting an unapplied draft still loses that proposal.
@@ -888,7 +893,7 @@ memory-write policy, poisoning protection, and quotas remain deferred.
 
 ### Runtime state versus coding-client files
 
-The runtime home is daemon operational material and is
+The runtime home is persistent Runtime-host operational material and is
 conceptually separate from source such as `src/` and `docs/`. Coding-client
 integration is another concern and may target a different repository. Relative
 to the explicit `client:* --root`, the workflow may use
@@ -917,7 +922,7 @@ in source control.
 
 ### Backup, purge, and re-onboarding
 
-Use the daemon-backed portable workflow for project-owned state before a purge:
+Use the Runtime-backed portable workflow for project-owned state before a purge:
 
 ```bash
 ai-office project:backup --output /path/outside-the-runtime/project.aioffice
@@ -925,12 +930,12 @@ ai-office project:backup --output /path/outside-the-runtime/project.aioffice
 
 That snapshot intentionally excludes machine security authority, global memory,
 cost accounting, caches, drafts, and generated projections. For a full
-installation disaster-recovery copy, stop the daemon first and copy the entire
-runtime home so `project.sqlite` and its WAL are consistent; back up
+installation disaster-recovery copy, stop the Runtime host first and copy the
+entire runtime home so `project.sqlite` and its WAL are consistent; back up
 `global.sqlite` separately according to its user-level ownership. Never copy a
 live SQLite main file in isolation. Keep every backup outside the runtime home
 you intend to purge and verify it exists. Then inspect and apply the purge plan
-while the daemon remains stopped:
+while the Runtime host remains stopped:
 
 ```bash
 bun run cli -- runtime:purge
@@ -952,7 +957,7 @@ A clean re-onboarding sequence is conceptually:
 
 ```text
 inspect existing AI Office state
-  -> stop the daemon
+  -> stop the Runtime host
   -> create portable project backups (and any separate full-runtime backup)
   -> purge only that local runtime state
   -> start the current AI Office version
@@ -971,8 +976,8 @@ user-owned and survive repository uninstall and runtime purge.
 
 ```text
 apps/
-  daemon/                 local process and protocol boundary
-  cli/                    daemon-backed command-line client
+  daemon/                 persistent Runtime host and local protocol boundary
+  cli/                    Runtime-backed command-line client
   dashboard/              loopback host and read-only operations console
 packages/
   domain/                 entities, value objects, and rules
@@ -1041,7 +1046,8 @@ it, but AI Office does not claim that the supplied contract was installed. These
 do not modify global Codex/Claude configuration and remain separate from project
 onboarding. See the [client integration guide](docs/development/agent-client-integration.md).
 
-When the daemon is unavailable, status still verifies deterministic pointers
+With `status --offline`, or when the Runtime host is unavailable, status still
+verifies deterministic pointers
 and repository skills from their managed contracts and reports certain changes
 as `drifted`. The current `AI-OFFICE.md` body depends on the authoritative
 manifest, so an otherwise intact offline integration is `unverified`, never
@@ -1093,17 +1099,30 @@ remain future work.
 
 ## Security and current trust model
 
-M6C-lite assumes a local, single-user deployment in the user's trust domain. It protects against accidental or unauthorized agent access, path escape, sensitive-path access, stale simulations and capabilities, replay, and unapproved filesystem mutation.
+AI Office assumes a trusted-local, single-user deployment. Runtime mediation
+protects application invariants against accidental or unauthorized agent
+access, path escape, sensitive-path access, stale simulations and capabilities,
+replay, and unapproved filesystem mutation.
 
-It does not defend against a hostile process running with the same Unix credentials and concurrently mutating the same filesystem namespace. Local approval records an operator-supplied audit identity; it is not cryptographic proof of human presence. Rust/`openat2`, authenticated approvals, tamper-evident audit, and stronger crash reconciliation are M10 research and roadmap items, not production claims today.
+The Runtime is authoritative inside AI Office, but neither it nor its daemon
+host authenticates one arbitrary same-UID process against another. IPC routing,
+owner-only socket mode, executable identity, TTY ownership, and protocol
+privilege markers are not proof of human presence. A same-UID shell-capable
+worker can reach local administration unless future worker isolation or an
+authenticated operator-presence boundary prevents it. The current filesystem
+boundary also does not defend against a hostile same-UID process concurrently
+mutating the namespace. Local approval records an operator-supplied audit
+identity; it is not cryptographic proof of human presence. Rust/`openat2`,
+authenticated approvals, tamper-evident audit, and stronger crash
+reconciliation are M10 research and roadmap items, not production claims today.
 
 The operations dashboard is a local, same-user observability surface and adds no
 authenticated human or operator boundary. It is read-only and changes no
-authorization. The daemon still opens no TCP port; `ai-office dashboard` owns a
-loopback port only while it runs. Because a loopback TCP port is reachable by
-every local Unix account — unlike the owner-only socket — that host validates
-the `Host` header and requires a per-process session token that dies with the
-command.
+authorization. The Runtime host still opens no TCP port; `ai-office dashboard`
+owns a loopback port only while it runs. Because a loopback TCP port is
+reachable by every local Unix account — unlike the owner-only socket — that host
+validates the `Host` header and requires a per-process session token that dies
+with the command.
 
 The token is a barrier to accidental and blind access, not a secret: the command
 hands the whole URL to the platform opener, so it appears in that process's

@@ -1,6 +1,22 @@
-# Local daemon
+# Persistent local Runtime host (daemon)
 
-Milestone M2 moves authoritative project access behind one local process.
+Milestone M2 moves authoritative project access behind one local process. The
+application authority is the **AI Office Runtime**; the daemon is its current
+foreground local hosting mechanism. See ADR-0014.
+
+```text
+CLI / Codex / Claude / future clients
+              -> RuntimeClient
+              -> Unix IPC
+              -> persistent daemon host
+              -> AiOfficeRuntime
+              -> application services and authoritative state
+```
+
+This persistence provides one mutable-state owner, concurrent-client
+serialization, long-running work, centralized policy/provenance/audit, and a
+home for workers, schedulers, pipelines, retries, connectors, and events. It
+does not authenticate the local Unix user to itself.
 
 ## Lifecycle
 
@@ -8,8 +24,11 @@ The normal installed entry point selects a stable user runtime home and can be
 started from any directory:
 
 ```bash
-ai-office daemon
+ai-office runtime start
 ```
+
+`ai-office daemon` remains a compatibility alias. Both commands run the host in
+the foreground; there is no service supervisor-backed stop/restart command yet.
 
 It uses `AI_OFFICE_HOME` when explicitly set and otherwise `~/.ai-office`.
 Development commands retain an explicit checkout-local compatibility mode:
@@ -18,7 +37,7 @@ Development commands retain an explicit checkout-local compatibility mode:
 bun run daemon
 ```
 
-The daemon:
+The persistent host:
 
 - opens and migrates `<runtime-home>/project.sqlite`;
 - removes an unreachable stale `<runtime-home>/daemon.sock`;
@@ -59,14 +78,17 @@ Requests are limited to 64 KiB, 64 arguments, and bounded argument/prompt sizes.
 Protocol errors carry a stable code and never expose stack traces. Commands have
 a server-side timeout in addition to the client timeout.
 
-The production CLI is a daemon client. Help remains available while the daemon
-is stopped; stateful product commands return an actionable error instructing
-the user to run `bun run daemon`. `runtime:purge` is the narrow lifecycle
+The production CLI is a Runtime client whose current transport is this daemon
+protocol. Help remains available while the host is stopped; stateful product
+commands return an actionable error instructing the user to run
+`ai-office runtime start`. `runtime:purge` is the narrow destructive lifecycle
 exception: it runs locally because it destroys the database that normally owns
-command authority, refuses to operate while a healthy daemon is reachable, and
+command authority, refuses to operate while a healthy host is reachable, and
 requires approval of the exact current purge-plan hash.
 
-`status` is the other local-aware exception, but it is not a stateful command.
+`status --offline` is the explicit read-only local path. Ordinary `status`
+retains its compatible degraded behavior when the host is unavailable; neither
+form mutates authoritative state.
 The CLI inspects the repository binding before protocol dispatch. If the daemon
 is unavailable, it returns schema-version `3` status with the portable
 repository identity reported separately from an `unverified` runtime
@@ -107,13 +129,18 @@ payloads so secrets are not copied into the audit trail.
 
 - Unix domain sockets target macOS and Linux; Windows named pipes are not yet supported.
 - The daemon is foreground-only; service installation and background supervision are future work.
-- Authentication relies on local filesystem permissions and the owner-only socket mode.
-- The daemon opens no TCP port. `ai-office dashboard` runs a separate foreground
-  loopback host that serves the console and forwards `/api/*` to this socket;
-  the port is released when that command stops. Its `Host` check blocks DNS
-  rebinding and its per-process session token bars blind access, but the token
-  travels in the opened URL, so it is not a secret from other local accounts; it
-  authenticates no human and separates no same-UID process.
+- AI Office is trusted-local and single-user. Owner-only socket permissions
+  limit accidental cross-account access but do not authenticate one same-UID
+  process against another. Executable names, TTY ownership, and protocol fields
+  are not authentication. A same-UID shell-capable worker can reach the same
+  administrative surface until stronger worker isolation or authenticated
+  human presence exists.
+- The Runtime host opens no TCP port. `ai-office dashboard` runs a separate
+  foreground loopback host that serves the console and forwards `/api/*` to this
+  socket; the port is released when that command stops. Its `Host` check blocks
+  DNS rebinding and its per-process session token bars blind access, but the
+  token travels in the opened URL, so it is not a secret from other local
+  accounts; it authenticates no human and separates no same-UID process.
 - Interrupted agent runs and expired budget reservations are discoverable and
   recoverable, but recovery is explicit: restart does not silently retry runs,
   remove worktrees, or finalize accounting records.

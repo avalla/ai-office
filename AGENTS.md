@@ -2,7 +2,7 @@
 
 ## Mission
 
-Build and maintain AI Office as a local AI software office: one daemon coordinates agents, persists authoritative project state in SQLite, meters LLM usage and costs, and mediates protected resource access through capabilities and controlled actions.
+Build and maintain AI Office as a local AI software office: one authoritative Runtime coordinates agents, persists project state in SQLite, meters LLM usage and costs, and mediates protected resource access through capabilities and controlled actions. A local persistent daemon is the current Runtime host, not a same-UID security boundary.
 
 Prefer the smallest change that preserves the current architecture and advances the task's explicit acceptance criteria. Do not claim a roadmap feature before its end-to-end implementation exists.
 
@@ -32,7 +32,7 @@ A proposed mechanism is not automatically an architectural decision. When reposi
 - The domain must not import Bun, SQLite, HTTP, Git, MCP, connector implementations, LLM providers, or provider SDKs.
 - Application services own use-case orchestration. Infrastructure adapters implement application ports.
 - Authoritative project state lives in SQLite; generated Markdown is a deterministic, one-way projection.
-- Stateful product commands go through the local daemon. The CLI is a daemon client, except for local help output and the explicitly offline `runtime:purge` lifecycle command, which refuses to run while the daemon is reachable.
+- Stateful product commands go through the authoritative Runtime, currently hosted by the local daemon. The CLI is a Runtime client over local IPC; it never falls back to an embedded writer. Local help, explicit `status --offline`, compatible degraded read-only status, and `runtime:purge` are the narrow offline paths. Purge refuses to run while the Runtime host is reachable.
 - Protected local or external resources are never exposed directly to agents. Side effects cross controlled application and connector boundaries.
 - Errors at domain and application boundaries are typed. External output must not expose secrets, raw credentials, or internal stack traces.
 
@@ -51,7 +51,7 @@ A proposed mechanism is not automatically an architectural decision. When reposi
 - Preserve migration order, foreign keys, constraints, and compatibility with existing project databases.
 - Migrations must run atomically and be idempotent through `schema_migration` tracking.
 - Test fresh databases and representative upgrades whenever persistence changes.
-- The current daemon opens `project.sqlite`; global reusable memory and the regenerable code index are separate roadmap concerns.
+- The current persistent Runtime host opens `project.sqlite`; global reusable memory and the regenerable code index are separate roadmap concerns.
 
 ## Transactions and side effects
 
@@ -69,6 +69,7 @@ A proposed mechanism is not automatically an architectural decision. When reposi
 - Every filesystem v2 mutation requires an explicit local approval bound to the action and simulation artifact. Execution then performs fresh authorization and revalidates resource state, grants, constraints, descriptor, simulation artifact, and preconditions.
 - One action has at most one execution attempt. Terminal and ambiguous states must not be replayed automatically.
 - The current execution boundary is trusted-local and path based. It does not defend against a hostile same-user process concurrently mutating the namespace.
+- Runtime centralization supplies application authority, consistency, provenance, and audit; Unix-socket routing, executable identity, TTY ownership, and protocol fields do not authenticate one same-UID process against another.
 - `spikes/m6c-native-filesystem/`, ADR-0003, ADR-0004, and the hardened M6C assessment are future M10 hardening baselines, not production components or M6D-lite requirements.
 - Agent-runtime action intents cross the controlled-action gateway. Do not bypass that boundary with direct filesystem or connector dependencies.
 

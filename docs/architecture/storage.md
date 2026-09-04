@@ -88,7 +88,7 @@ the operational history for every project recorded in that runtime.
 patterns plus lessons. A role `key` identifies one logical role, `(id, version)`
 identifies an exact revision, and creating a newer revision preserves both the
 stable ID and every older revision. Deprecation is revision-specific and does
-not delete history. The daemon-backed CLI opens and migrates the database lazily
+not delete history. The Runtime-backed CLI causes the persistent host to open and migrate the database lazily
 for `memory:*` commands through an application repository port. It is durable
 global memory authority at user scope, not project authority, and it is not
 inside the runtime purge boundary. Exact project adoption references remain in
