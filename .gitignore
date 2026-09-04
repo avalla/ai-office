@@ -11,3 +11,5 @@ coverage/
 .ai-office/generated/
 .ai-office/drafts/
 .idea
+.planning/
+.worktrees/
