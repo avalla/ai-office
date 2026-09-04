@@ -26,6 +26,7 @@ export interface PersistentRuntimeHostOptions {
   events: RecordAuditEvent;
   now?: () => Date;
   onStopped?: () => void;
+  onStopping?: () => Promise<void>;
   commandTimeoutMs?: number;
   /**
    * Read-only query surface. Optional so a daemon can be constructed without
@@ -90,6 +91,7 @@ export class PersistentRuntimeHost {
           // stop would wait for it forever. Ending the streams first also
           // releases their listeners and heartbeat timers.
           this.options.queryApi?.closeStreams();
+          await this.options.onStopping?.();
           await server.stop(false);
           await this.options.events.execute({
             eventType: "daemon.stopped",

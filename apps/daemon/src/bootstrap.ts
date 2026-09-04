@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import { fileURLToPath } from "node:url";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
@@ -26,6 +27,7 @@ import {
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 
 export interface BootstrapOptions {
+  agentExecutor?: AgentExecutor;
   runtimePaths?: RuntimePaths;
   projectRoot?: string;
   socketPath?: string;
@@ -85,6 +87,7 @@ export async function bootstrap(
     options.agentClients,
     options.projectBindings,
     options.defaultOfficeManifest,
+    options.agentExecutor,
   );
 
   return new PersistentRuntimeHost({
@@ -94,5 +97,6 @@ export async function bootstrap(
     handler: new LocalCommandHandler(runtime),
     events,
     onStopped: () => database.close(),
+    onStopping: () => runtime.stop(),
   });
 }

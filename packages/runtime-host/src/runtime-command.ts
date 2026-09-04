@@ -1,4 +1,6 @@
 import { dirname, join } from "node:path";
+import { RunExecutionControl } from "@ai-office/application/runtime/run-execution-control.ts";
+import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import {
@@ -231,6 +233,8 @@ Commands:
   agent:list --project <id>
   run:schedule --project <id> --task <id> --agent <id> [--resource <id> --operation <name> [--arguments <json>]]
   run:tick --project <id> [--capacity <1-100>] [--json]
+  run:cancel --project <id> --run <id> --reason <text> [--json]
+  run:reconcile --project <id> --run <id> --reason <text> [--approve <planHash>] [--json]
   run:list --project <id>
   run:show --project <id> --run <id>
   pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
@@ -320,6 +324,8 @@ const commands = [
   "agent:list",
   "run:schedule",
   "run:tick",
+  "run:cancel",
+  "run:reconcile",
   "run:list",
   "run:show",
   "pricing:set",
@@ -365,6 +371,8 @@ const defaultIo: RuntimeCommandIo = {
 };
 
 export interface RuntimeCommandOptions {
+  executionControl?: RunExecutionControl;
+  agentExecutor?: AgentExecutor;
   projectRoot: string;
   runtimePaths?: RuntimePaths;
   migrationDirectory?: string;
@@ -573,6 +581,11 @@ export async function executeRuntimeCommand(
     const controlled = new SqliteControlledExecutionRepository(database);
     const costs = new SqliteCostRepository(database);
     const context: CommandContext = {
+      executionControl:
+        options.executionControl ?? new RunExecutionControl(ids.generate()),
+      ...(options.agentExecutor === undefined
+        ? {}
+        : { agentExecutor: options.agentExecutor }),
       projectRoot: options.projectRoot,
       runtimeHome: runtimePaths.runtimeHome,
       io,

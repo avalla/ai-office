@@ -1,4 +1,5 @@
 import { CreateTask } from "@ai-office/application/commands/create-task.ts";
+import { manageAgentRuns } from "./run-services.ts";
 import { ManageTaskLifecycle } from "@ai-office/application/commands/manage-task-lifecycle.ts";
 import { ManageTaskRequirements } from "@ai-office/application/commands/manage-task-requirements.ts";
 import {
@@ -87,7 +88,9 @@ function printCompletionPlan(
 
 function issueLine(issue: TaskReconciliationIssue): string {
   const suffix =
-    issue.suggestedCommand === null ? "" : ` (suggested: ${issue.suggestedCommand})`;
+    issue.suggestedCommand === null
+      ? ""
+      : ` (suggested: ${issue.suggestedCommand})`;
   return `  ${issue.taskId}  ${issue.finding}: ${issue.summary}${suffix}`;
 }
 
@@ -117,6 +120,7 @@ export async function handleTaskCommand(
     audit,
     clock,
     transactions,
+    manageAgentRuns(context),
   );
 
   if (command === "task:create") {
@@ -282,7 +286,10 @@ export async function handleTaskCommand(
       printCompletionPlan(plan, io);
       return 0;
     }
-    const result = await service.record({ ...input, approvedPlanHash: approve });
+    const result = await service.record({
+      ...input,
+      approvedPlanHash: approve,
+    });
     if (parsed.flags.has("json")) {
       io.stdout(JSON.stringify(result));
       return 0;
@@ -293,7 +300,10 @@ export async function handleTaskCommand(
     return 0;
   }
 
-  if (command === "task:link-requirement" || command === "task:unlink-requirement") {
+  if (
+    command === "task:link-requirement" ||
+    command === "task:unlink-requirement"
+  ) {
     const parsed = parseArguments(
       args,
       new Set(["project", "task", "requirement"]),

@@ -5,6 +5,7 @@ import { InvokeControlledConnectorAction } from "@ai-office/application/capabili
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import { ExecuteAgentRun } from "@ai-office/application/commands/execute-agent-run.ts";
 import { AdmitAgentRun } from "@ai-office/application/commands/admit-agent-run.ts";
+import { manageAgentRuns } from "./run-services.ts";
 import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent-run.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
@@ -69,6 +70,34 @@ export async function handleRunCommand(
   context: CommandContext,
 ): Promise<number | null> {
   const { projects, tasks, runtime, ids, clock, transactions, io } = context;
+  if (command === "run:cancel" || command === "run:reconcile") {
+    const parsed = parseArguments(
+      args,
+      new Set([
+        "project",
+        "run",
+        "reason",
+        ...(command === "run:reconcile" ? ["approve"] : []),
+      ]),
+      new Set(["json"]),
+    );
+    const input = {
+      projectId: requiredOption(parsed, "project"),
+      runId: requiredOption(parsed, "run"),
+      reason: requiredOption(parsed, "reason"),
+      actorId: context.principal.id,
+    };
+    const approve = parsed.options.get("approve");
+    const result =
+      command === "run:cancel"
+        ? await manageAgentRuns(context).cancel(input)
+        : await manageAgentRuns(context).reconcile({
+            ...input,
+            ...(approve === undefined ? {} : { approve }),
+          });
+    io.stdout(JSON.stringify({ schemaVersion: 1, ...result }));
+    return 0;
+  }
   if (command === "run:schedule") {
     const parsed = parseArguments(
       args,
@@ -132,7 +161,7 @@ export async function handleRunCommand(
     const queued = await runtime.listQueuedRuns(projectId, capacity);
     const execute = new ExecuteAgentRun(
       runtime,
-      controlledActionExecutor(context),
+      context.agentExecutor ?? controlledActionExecutor(context),
       new InMemoryWorktreeManager(),
       clock,
     );
@@ -141,23 +170,34 @@ export async function handleRunCommand(
       tasks,
       context.pipelines,
       clock,
+      context.executionControl.ownerId,
     );
     const results = (
       await Promise.all(
         queued.map(async (value) => {
-          const claimed = await admission.execute(value);
-          if (claimed === null) return null;
-          if (claimed.snapshot().status === "cancelled")
-            return {
-              runId: claimed.snapshot().id,
-              status: "cancelled" as const,
-              actions: [],
-              error: {
-                code: "RUN_NOT_ELIGIBLE",
-                message: "Run authority is no longer eligible",
-              },
-            };
-          return execute.execute(claimed);
+          const id = value.snapshot().id;
+          const signal = context.executionControl.reserve(
+            id,
+            value.snapshot().taskId,
+          );
+          if (signal === null) return null;
+          try {
+            const claimed = await admission.execute(value);
+            if (claimed === null) return null;
+            if (claimed.snapshot().status === "cancelled")
+              return {
+                runId: claimed.snapshot().id,
+                status: "cancelled" as const,
+                actions: [],
+                error: {
+                  code: "RUN_NOT_ELIGIBLE",
+                  message: "Run authority is no longer eligible",
+                },
+              };
+            return await execute.execute(claimed, signal);
+          } finally {
+            context.executionControl.release(id);
+          }
         }),
       )
     ).filter((value) => value !== null);

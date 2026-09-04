@@ -125,6 +125,14 @@ export class ManageTaskLifecycle {
     private readonly audit: RecordAuditEvent,
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
+    private readonly runCancellation?: {
+      cancelTaskRuns(input: {
+        projectId: string;
+        taskId: string;
+        actorId: string;
+        reason: string;
+      }): Promise<void>;
+    },
   ) {}
 
   /**
@@ -192,11 +200,16 @@ export class ManageTaskLifecycle {
   async cancel(
     input: TaskCommandInput & { reason?: string },
   ): Promise<TaskStatus> {
-    return this.apply({
+    const status = await this.apply({
       ...input,
       operation: "cancel",
       ...(input.reason === undefined ? {} : { reason: input.reason }),
     });
+    await this.runCancellation?.cancelTaskRuns({
+      ...input,
+      reason: input.reason ?? "Task cancelled",
+    });
+    return status;
   }
 
   /**
@@ -273,9 +286,7 @@ export class ManageTaskLifecycle {
   ): string | undefined {
     if (value === undefined) {
       if (reasonRequiredOperations.has(operation))
-        throw new DomainValidationError(
-          `Task ${operation} requires a reason`,
-        );
+        throw new DomainValidationError(`Task ${operation} requires a reason`);
       return undefined;
     }
     if (!reasonAcceptedOperations.has(operation))
