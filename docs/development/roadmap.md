@@ -519,6 +519,77 @@ where it shipped and cannot express them. A project with no links still exports
 version 1, byte-identical to before, and both versions are readable. Writing
 links into a version 1 envelope is refused rather than silently dropped.
 
+## M7.10 — Safe development CLI/runtime isolation
+
+Status: planned.
+
+Focus: running a development command from a source checkout must never mutate
+the user's authoritative runtime by accident.
+
+`bin/ai-office.ts` is the production-installed entry point, so it resolves
+`resolveRuntimePaths({ mode: "user" })` and talks to `AI_OFFICE_HOME` or
+`~/.ai-office`. That is correct for an installed CLI and wrong for a checkout:
+`bun bin/ai-office.ts`, and the `ai-office` package script that wraps it, write
+straight into the authoritative user runtime from a working tree. A linked Git
+worktree makes this worse, because the checkout looks like an isolated
+environment while the runtime it reaches is shared and real. Manual verification
+performed this way has already created throwaway projects in a live runtime.
+
+The other development entry points do not share the defect and show the shape of
+the fix: `bun run daemon`, `bun run cli`, and `scripts/migrate.ts` resolve
+`mode: "development"`, which selects `<root>/.ai-office`.
+
+Goals:
+
+- a dedicated development invocation — `bun run dev:cli` or whichever name fits
+  repository convention — that cannot silently select the authoritative user
+  runtime;
+- that invocation defaults to an isolated runtime: a temporary directory or a
+  repository-local development runtime;
+- the selected runtime path is visible in the command's output, so which runtime
+  was used is never a guess;
+- no silent fallback to `~/.ai-office`;
+- selecting a real runtime remains possible, but only through deliberate,
+  explicit opt-in;
+- daemon and CLI interact inside the same isolated runtime, so manual
+  end-to-end verification is possible;
+- correct behaviour from linked Git worktrees;
+- fixtures retained when explicitly requested, and temporary runtime state
+  cleaned up safely otherwise;
+- a guard that detects source-checkout execution combined with a user-mode
+  runtime and refuses unless an explicit override is supplied. An environment
+  variable such as `AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE` is one shape; the
+  interface is a design decision, the invariant is not.
+
+Two related gaps surfaced with this one and are in scope for the same work:
+
+- **Development mode still reaches the user home for global memory.**
+  `resolveRuntimePaths` defaults `globalMemoryHome` to `~/.ai-office` even under
+  `mode: "development"`, so `<root>/.ai-office/project.sqlite` is isolated while
+  `global.sqlite` is not. Any development or test path that opens the global
+  database without an explicit `globalDatabasePath` reaches the user's real one.
+  `tests/e2e/daemon-global-memory.test.ts` overrides it correctly, which makes
+  the isolation an per-call convention rather than a property of the mode.
+- **A project cannot be removed through any supported operation.** There is no
+  `project:delete`, `project:remove`, or per-project purge; `runtime:purge`
+  destroys the whole runtime and `client:uninstall` addresses host integration.
+  The schema is also self-contradictory here: `governance_event.project_id`
+  declares `ON DELETE CASCADE`, yet `governance_event_prevent_delete` aborts
+  every delete, including the cascaded one, so deleting a project row fails once
+  it has any governance history. Accidental project creation is therefore not
+  recoverable through supported means. Either project removal becomes an
+  explicit, audited, approval-gated application operation, or the append-only
+  guards and the cascade declarations are reconciled so the schema states one
+  intent.
+
+Automated tests must never depend on the user's real runtime. The current suite
+does not: every `mode: "user"` call in `tests/` passes an explicit `runtimeHome`
+or an explicit `userHome` plus `environment`, and every `bootstrap()` call
+passes a temporary `projectRoot`. A full `bun run check` leaves
+`~/.ai-office/project.sqlite` byte-identical and creates no `global.sqlite`.
+That property currently rests on each test remembering to override, so this
+milestone should make it structural rather than habitual.
+
 ## M8 — Code intelligence
 
 Status: future.
