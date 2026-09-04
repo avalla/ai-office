@@ -65,8 +65,10 @@ export class ExecuteAgentRun {
         run.transition("cancelled", this.clock.now(), { error: primaryError });
         await this.runtime.saveRun(run);
       } else {
-        run.transition("preparing", this.clock.now());
-        await this.runtime.saveRun(run);
+        if (run.snapshot().status === "queued") {
+          run.transition("preparing", this.clock.now());
+          await this.runtime.saveRun(run);
+        }
         worktree = await this.worktrees.prepare(run.snapshot().id);
         run.transition("running", this.clock.now(), {
           worktreePath: worktree.path,
