@@ -149,14 +149,14 @@ async function resolvedArguments(
   workingDirectory: string,
   bindings: ProjectBindingAdapter,
 ): Promise<{ args: string[]; discoveredRoot?: string }> {
-  const lifecycle = resolveCallerLocalPaths(args, workingDirectory);
-  const command = lifecycle[0];
+  const resolved = resolveCallerLocalPaths(args, workingDirectory);
+  const command = resolved[0];
   if (
     command === undefined ||
     !projectScopedCommands.has(command) ||
-    lifecycle.includes("--project")
+    resolved.includes("--project")
   )
-    return { args: lifecycle };
+    return { args: resolved };
   const inspection = await bindings.inspect(workingDirectory, {
     ancestors: true,
   });
@@ -165,9 +165,9 @@ async function resolvedArguments(
       inspection.issue ?? "Project binding is invalid",
     );
   if (inspection.status !== "valid" || inspection.binding === undefined)
-    return { args: lifecycle };
+    return { args: resolved };
   return {
-    args: lifecycle,
+    args: resolved,
     discoveredRoot: inspection.rootPath,
   };
 }
