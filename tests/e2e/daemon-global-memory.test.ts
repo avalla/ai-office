@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
@@ -48,7 +48,6 @@ describe("daemon global memory", () => {
     const daemon = await bootstrap({
       projectRoot: root,
       socketPath,
-      globalDatabasePath: join(root, ".ai-office", "global.sqlite"),
     });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);
@@ -92,6 +91,7 @@ describe("daemon global memory", () => {
       expect(createdPattern.stdout).toEqual([
         "Global pattern saved: short-transactions",
       ]);
+      expect(existsSync(join(root, ".ai-office", "global.sqlite"))).toBe(true);
 
       const search = output();
       expect(

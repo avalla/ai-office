@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import {
@@ -6,7 +7,7 @@ import {
   resolveRuntimePaths,
 } from "@ai-office/runtime-paths/runtime-paths.ts";
 
-const projectRoot = process.cwd();
+const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimePaths = resolveRuntimePaths({
   mode: "development",
   developmentRoot: projectRoot,
@@ -18,7 +19,10 @@ const database = openDatabase(projectPath);
 
 try {
   const result = migrate(database, migrationsPath);
-  const detail = result.applied.length === 0 ? "already up to date" : result.applied.join(", ");
+  const detail =
+    result.applied.length === 0
+      ? "already up to date"
+      : result.applied.join(", ");
   console.log(`Migrated ${projectPath} (${detail})`);
 } finally {
   database.close();

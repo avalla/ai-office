@@ -64,6 +64,8 @@ Architectural decisions with explicit status. Accepted ADRs describe current dec
 
 Milestone assessments, implementation reports, and research notes. These documents preserve detailed context and evidence but may describe a point-in-time baseline rather than the current code.
 
+- [Project consolidation and first real worker plan](implementation/project-consolidation-and-worker-plan.md): proposed implementation sequence from the project review; it does not change current roadmap status.
+
 > Documents under `docs/implementation/` may describe historical designs,
 > rejected alternatives, security research or milestone-specific constraints.
 > README, architecture, roadmap and accepted ADRs describe the current project direction.

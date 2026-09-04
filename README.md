@@ -78,6 +78,18 @@ operational read models:
 
 ## Quick start
 
+This checkout is a source distribution, including when installed with `bun link`.
+To deliberately use the personal Runtime, set
+`AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1` in that terminal. Without this opt-in,
+the source bin refuses operational commands before contacting the Runtime.
+Help remains available. `AI_OFFICE_HOME` selects the destination but is not the
+opt-in. For isolated development, use `bun run dev:daemon` and
+`bun run dev:cli -- <command>`: both select this source checkout's `.ai-office/`
+regardless of the invoking directory or ambient `AI_OFFICE_HOME`. Project and
+global-memory databases are isolated together; diagnostics go to stderr.
+Development data persists until explicitly removed through supported lifecycle
+operations. Linked worktrees select their own source checkout's runtime.
+
 Install dependencies and expose the source checkout's linkable CLI:
 
 ```bash

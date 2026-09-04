@@ -17,6 +17,17 @@ const [command, ...arguments_] = Bun.argv.slice(2);
 let runtimePaths: RuntimePaths;
 
 try {
+  // This bin is explicitly the source distribution (including bun link).
+  // Packaging must supply its own installed entry point, not infer it from cwd.
+  if (
+    process.env.AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE !== "1" &&
+    command !== undefined &&
+    command !== "help" &&
+    command !== "--help"
+  )
+    throw new RuntimePathError(
+      "Source CLI user-runtime access requires AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1. For isolated development use bun run dev:daemon and bun run dev:cli.",
+    );
   runtimePaths = resolveRuntimePaths({ mode: "user" });
 } catch (error) {
   console.error(

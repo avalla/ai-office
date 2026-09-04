@@ -88,8 +88,7 @@ export function resolveRuntimePaths(
     "AI Office runtime home",
   );
   const globalMemoryHome = canonicalPotentialDirectory(
-    options.globalMemoryHome ??
-      (options.mode === "user" ? runtimeHome : join(userHome, ".ai-office")),
+    options.globalMemoryHome ?? runtimeHome,
     "AI Office global memory home",
   );
 
