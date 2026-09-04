@@ -55,6 +55,9 @@
     "packages/orchestration": {
       "name": "@ai-office/orchestration",
     },
+    "packages/runtime-host": {
+      "name": "@ai-office/runtime-host",
+    },
     "packages/runtime-paths": {
       "name": "@ai-office/runtime-paths",
     },
@@ -84,6 +87,8 @@
     "@ai-office/llm-gateway": ["@ai-office/llm-gateway@workspace:packages/llm-gateway"],
 
     "@ai-office/orchestration": ["@ai-office/orchestration@workspace:packages/orchestration"],
+
+    "@ai-office/runtime-host": ["@ai-office/runtime-host@workspace:packages/runtime-host"],
 
     "@ai-office/runtime-paths": ["@ai-office/runtime-paths@workspace:packages/runtime-paths"],
 
