@@ -19,6 +19,7 @@ import {
   type CommandContext,
   parseArguments,
   requiredOption,
+  requiredPositional,
 } from "./shared.ts";
 
 export async function handleProjectCommand(
@@ -90,7 +91,7 @@ export async function handleProjectCommand(
         clock,
       }).restore({
         archive,
-        rootPath: parsed.options.get("root") ?? context.projectRoot,
+        rootPath: requiredOption(parsed, "root"),
       });
       io.stdout(
         parsed.flags.has("json")
@@ -155,7 +156,7 @@ export async function handleProjectCommand(
       clock,
       transactions,
     ).execute({
-      rootPath: parsed.positionals[0] ?? context.projectRoot,
+      rootPath: requiredPositional(parsed, `${command} path`),
       ...(parsed.options.get("name") === undefined
         ? {}
         : { name: parsed.options.get("name")! }),

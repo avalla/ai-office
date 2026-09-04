@@ -25,17 +25,18 @@ import {
   renderHandoverReport,
   renderNextSteps,
   renderWelcome,
-} from "../handover-view.ts";
+} from "@ai-office/command-support/handover-view.ts";
 import {
   clientLine,
   printProjectLifecycleStatus,
   projectStatusExitCode,
-} from "../lifecycle-view.ts";
+} from "@ai-office/command-support/lifecycle-view.ts";
 import { ConfirmRepositoryUnderstanding } from "@ai-office/application/project-lifecycle/confirm-repository-understanding.ts";
 import {
   CliUsageError,
   parseArguments,
   requiredOption,
+  requiredPositional,
   type CommandContext,
 } from "./shared.ts";
 
@@ -268,7 +269,7 @@ export async function handleLifecycleCommand(
     if (parsed.positionals.length > 1)
       throw new CliUsageError("next accepts at most one project path");
     const report = await handoverService(context).execute(
-      parsed.positionals[0] ?? context.projectRoot,
+      requiredPositional(parsed, `${command} path`),
     );
     if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(report));
     else renderHandoverReport(report, context.io);
@@ -281,7 +282,7 @@ export async function handleLifecycleCommand(
       throw new CliUsageError("install accepts at most one project path");
     try {
       const result = await service(context).install({
-        rootPath: parsed.positionals[0] ?? context.projectRoot,
+        rootPath: requiredPositional(parsed, `${command} path`),
         rebind: parsed.flags.has("rebind"),
       });
       if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(result));
@@ -317,7 +318,7 @@ export async function handleLifecycleCommand(
     if (parsed.positionals.length > 1)
       throw new CliUsageError("status accepts at most one project path");
     const result = await service(context).status(
-      parsed.positionals[0] ?? context.projectRoot,
+      requiredPositional(parsed, `${command} path`),
     );
     if (parsed.flags.has("json")) context.io.stdout(JSON.stringify(result));
     else
@@ -332,7 +333,7 @@ export async function handleLifecycleCommand(
   const parsed = parseArguments(args, new Set(["approve"]), new Set(["json"]));
   if (parsed.positionals.length > 1)
     throw new CliUsageError("uninstall accepts at most one project path");
-  const rootPath = parsed.positionals[0] ?? context.projectRoot;
+  const rootPath = requiredPositional(parsed, `${command} path`);
   const approvedPlanHash = parsed.options.get("approve");
   if (approvedPlanHash === undefined) {
     try {

@@ -1,5 +1,5 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
-import { CliUsageError } from "./commands/shared.ts";
+import { isAbsolute, resolve } from "node:path";
+import { CliUsageError } from "./arguments.ts";
 
 /**
  * Where the meaning of a relative local filesystem path is decided.
@@ -12,7 +12,7 @@ import { CliUsageError } from "./commands/shared.ts";
  *
  * - the client resolves every caller-local path argument against its own
  *   working directory before IPC (`resolveCallerLocalPaths`);
- * - the Runtime refuses any caller-local path that arrives relative rather than
+ * - the Runtime refuses any caller-local path that arrives omitted or relative rather than
  *   interpreting it against its own cwd (`assertAbsoluteCallerLocalPaths`).
  *
  * Two kinds of path deliberately stay outside this contract: a path resolved
@@ -30,9 +30,9 @@ export interface CallerLocalPathSpec {
   /** Substitute the client working directory when no positional is given. */
   positionalDefaultsToWorkingDirectory?: boolean;
   /** Options defaulted from the client working directory when absent. */
-  optionDefaults?: Readonly<Record<string, readonly string[]>>;
-  /** Path options that must stay inside the client working directory. */
-  containedOptions?: readonly string[];
+  optionDefaults?: Readonly<
+    Record<string, { segments: readonly string[]; whenOption?: string }>
+  >;
 }
 
 export const callerLocalPathSpecs: Readonly<
@@ -76,22 +76,21 @@ export const callerLocalPathSpecs: Readonly<
     valueOptions: ["root"],
     pathOptions: ["root"],
     pathPositional: true,
-    optionDefaults: { root: [] },
+    optionDefaults: { root: { segments: [] } },
   },
   "office:validate": {
-    valueOptions: ["manifest", "file"],
-    pathOptions: ["file"],
-    containedOptions: ["file"],
+    valueOptions: ["manifest", "file", "root"],
+    pathOptions: ["file", "root"],
+    optionDefaults: { root: { segments: [], whenOption: "file" } },
   },
   "office:apply": {
     valueOptions: ["project", "manifest", "file"],
     pathOptions: ["file"],
-    containedOptions: ["file"],
   },
   "agent:sync": {
     valueOptions: ["project", "directory"],
     pathOptions: ["directory"],
-    optionDefaults: { directory: ["agents"] },
+    optionDefaults: { directory: { segments: ["agents"] } },
   },
   "client:inspect": { valueOptions: ["client", "root"], pathOptions: ["root"] },
   "client:validate": {
@@ -147,23 +146,18 @@ function optionValueIndex(
   return -1;
 }
 
-function assertInside(
-  workingDirectory: string,
-  candidate: string,
+function optionDefault(
+  spec: CallerLocalPathSpec,
+  args: readonly string[],
   option: string,
-): void {
-  const inside = relative(workingDirectory, candidate);
+): readonly string[] | undefined {
+  const value = spec.optionDefaults?.[option];
   if (
-    inside === "" ||
-    inside === ".." ||
-    inside.startsWith(`..${sep}`) ||
-    isAbsolute(inside)
+    value?.whenOption !== undefined &&
+    optionValueIndex(args, spec, value.whenOption) === -1
   )
-    throw new CliUsageError(
-      option === "file"
-        ? "Office manifest file must be inside the project root"
-        : `Option --${option} must identify a path inside ${workingDirectory}`,
-    );
+    return undefined;
+  return value?.segments;
 }
 
 /**
@@ -192,12 +186,10 @@ export function resolveCallerLocalPaths(
     const index = optionValueIndex(result, spec, option);
     if (index !== -1) {
       const resolved = resolve(workingDirectory, result[index]!);
-      if (spec.containedOptions?.includes(option) === true)
-        assertInside(resolve(workingDirectory), resolved, option);
       result[index] = resolved;
       continue;
     }
-    const segments = spec.optionDefaults?.[option];
+    const segments = optionDefault(spec, result, option);
     if (segments !== undefined && !result.includes(`--${option}`))
       result.push(`--${option}`, resolve(workingDirectory, ...segments));
   }
@@ -206,7 +198,7 @@ export function resolveCallerLocalPaths(
 }
 
 /**
- * Runtime-side guard. A caller-local path that is still relative here means the
+ * Runtime-side guard. An omitted caller-cwd default or relative path here means the
  * client did not establish its own context; resolving it against the host's
  * process working directory would silently answer about the wrong directory.
  */
@@ -216,23 +208,31 @@ export function assertAbsoluteCallerLocalPaths(args: readonly string[]): void {
     command === undefined ? undefined : callerLocalPathSpecs[command];
   if (spec === undefined) return;
 
-  const reject = (description: string, value: string): never => {
+  const reject = (description: string, value: string | undefined): never => {
     throw new CliUsageError(
-      `${description} must be an absolute path resolved by the calling client, but received "${value}". The persistent AI Office Runtime never interprets a relative path against its own working directory.`,
+      `${description} must be an absolute path resolved by the calling client, but received "${value ?? "omitted"}". The persistent AI Office Runtime never interprets a relative path against its own working directory.`,
     );
   };
 
   if (spec.pathPositional === true) {
     const index = firstPositionalIndex(args, spec);
     const value = index === -1 ? undefined : args[index];
-    if (value !== undefined && !isAbsolute(value))
+    if (
+      (value === undefined &&
+        spec.positionalDefaultsToWorkingDirectory === true) ||
+      (value !== undefined && !isAbsolute(value))
+    )
       reject(`${command} path`, value);
   }
 
   for (const option of spec.pathOptions) {
     const index = optionValueIndex(args, spec, option);
     const value = index === -1 ? undefined : args[index];
-    if (value !== undefined && !isAbsolute(value))
+    if (
+      (value === undefined &&
+        optionDefault(spec, args, option) !== undefined) ||
+      (value !== undefined && !isAbsolute(value))
+    )
       reject(`Option --${option}`, value);
   }
 }
