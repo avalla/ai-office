@@ -212,7 +212,7 @@ export function commandInvalidationTopics(
     command.startsWith("adr:") ||
     command.startsWith("governance:")
   )
-    add("project.updated", "review.updated");
+    add("project.updated", "review.updated", "task.updated");
   else if (command.startsWith("agent:")) add("project.updated", "run.updated");
   else if (
     command.startsWith("project:") ||

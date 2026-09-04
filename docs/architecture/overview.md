@@ -254,8 +254,10 @@ models say so rather than guessing. `ScheduleAgentRun` deliberately does not
 transition the task it schedules, so a task legitimately reads `pending` while a
 run for it executes; `TaskOperationalState` therefore reports the persisted
 `recordedStatus`, the derived `operationalStatus`, and the reasons they differ.
-Relationships the domain does not model — task to requirement, task to milestone
-— are published as explicitly unavailable rather than defaulted.
+Explicit task/requirement links feed exact per-task progress through the same
+application calculation used by the CLI board. An empty relation is available
+with zero counts. A task milestone is still explicitly unavailable: the
+many-to-many requirement relation does not imply one authoritative milestone.
 
 An in-memory bus publishes invalidation topics after a command completes. Topics
 carry no state and nothing new is persisted, so the stream cannot become a

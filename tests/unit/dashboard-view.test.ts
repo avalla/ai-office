@@ -237,9 +237,8 @@ const task: TaskOperationalState = {
   divergesFromRecordedStatus: true,
   divergenceReasons: ["agent_run_active_without_task_transition"],
   requirements: {
-    availability: "unavailable",
-    reason: "task_requirement_link_not_modelled",
-    explanation: "not modelled",
+    availability: "available",
+    value: { total: 2, verified: 1, rejected: 0, open: 1, terminal: 1 },
   },
   milestone: {
     availability: "unavailable",
@@ -504,6 +503,8 @@ describe("view models", () => {
     expect(html).toContain("Stored status differs from operational status");
     expect(html).toContain("stored: pending");
     expect(html).toContain("in progress");
+    expect(html).toContain("<th>Requirements</th>");
+    expect(html).toContain("1/2 verified");
   });
 
   test("active pipelines are separated from historical ones", () => {

@@ -81,6 +81,160 @@ async function startDaemon(): Promise<Harness> {
 }
 
 describe("daemon query API", () => {
+  test("task requirement summaries reflect explicit links and governance changes", async () => {
+    const harness = await startDaemon();
+    try {
+      const command = (args: string[]) => harness.client.execute(args);
+      const projectId = (
+        await command(["project:create", "Links"])
+      ).stdout[0]!.replace("Project created: ", "");
+      const taskId = (
+        await command([
+          "task:create",
+          "--project",
+          projectId,
+          "--title",
+          "Linked task",
+        ])
+      ).stdout[0]!.replace("Task created: ", "");
+      const secondTask = (
+        await command([
+          "task:create",
+          "--project",
+          projectId,
+          "--title",
+          "Shared requirement",
+        ])
+      ).stdout[0]!.replace("Task created: ", "");
+      const requirement = async (key: string) =>
+        (
+          await command([
+            "requirement:create",
+            "--project",
+            projectId,
+            "--key",
+            key,
+            "--title",
+            key,
+            "--description",
+            "Acceptance",
+          ])
+        ).stdout[0]!.replace("Requirement created: ", "");
+      const first = await requirement("R1"),
+        second = await requirement("R2");
+      for (const [task, req] of [
+        [taskId, first],
+        [taskId, second],
+        [secondTask, first],
+      ])
+        expect(
+          (
+            await command([
+              "task:link-requirement",
+              "--project",
+              projectId,
+              "--task",
+              task!,
+              "--requirement",
+              req!,
+            ])
+          ).exitCode,
+        ).toBe(0);
+      for (const status of ["accepted", "implemented", "verified"])
+        expect(
+          (
+            await command([
+              "requirement:set-status",
+              "--project",
+              projectId,
+              "--requirement",
+              first,
+              "--status",
+              status,
+            ])
+          ).exitCode,
+        ).toBe(0);
+      expect(
+        (
+          await command([
+            "requirement:set-status",
+            "--project",
+            projectId,
+            "--requirement",
+            second,
+            "--status",
+            "rejected",
+          ])
+        ).exitCode,
+      ).toBe(0);
+      const read = async () =>
+        (await harness.get(`/api/projects/${projectId}/tasks`)).body.tasks as {
+          items: {
+            taskId: string;
+            recordedStatus: string;
+            requirements: {
+              availability: string;
+              value: {
+                total: number;
+                verified: number;
+                rejected: number;
+                open: number;
+              };
+            };
+          }[];
+        };
+      const tasks = await read();
+      expect(
+        tasks.items.find((value) => value.taskId === taskId),
+      ).toMatchObject({
+        recordedStatus: "pending",
+        requirements: {
+          availability: "available",
+          value: { total: 2, verified: 1, rejected: 1, open: 0 },
+        },
+      });
+      expect(
+        tasks.items.find((value) => value.taskId === secondTask)?.requirements
+          .value.total,
+      ).toBe(1);
+      expect(
+        (await command(["task:list", "--project", projectId])).stdout.join(
+          "\n",
+        ),
+      ).toContain("1/2 verified");
+      await command([
+        "task:unlink-requirement",
+        "--project",
+        projectId,
+        "--task",
+        taskId,
+        "--requirement",
+        second,
+      ]);
+      expect(
+        (await read()).items.find((value) => value.taskId === taskId)
+          ?.requirements.value,
+      ).toMatchObject({ total: 1, verified: 1, rejected: 0 });
+      const foreign = (
+        await command(["project:create", "Foreign"])
+      ).stdout[0]!.replace("Project created: ", "");
+      expect(
+        (
+          await command([
+            "task:link-requirement",
+            "--project",
+            foreign,
+            "--task",
+            taskId,
+            "--requirement",
+            first,
+          ])
+        ).exitCode,
+      ).toBe(1);
+    } finally {
+      await harness.stop();
+    }
+  });
   test("serves an empty but well formed dashboard on a fresh runtime", async () => {
     const harness = await startDaemon();
     try {
@@ -136,7 +290,7 @@ describe("daemon query API", () => {
       });
       expect(
         (tasks.items[0]!.requirements as { availability: string }).availability,
-      ).toBe("unavailable");
+      ).toBe("available");
 
       const taskList = await harness.get(`/api/projects/${projectId}/tasks`);
       expect(taskList.body.tasks).toMatchObject({
@@ -187,9 +341,8 @@ describe("daemon query API", () => {
       const paged = await harness.get(
         `/api/activity?limit=2&cursor=${encodeURIComponent(page.nextCursor!)}`,
       );
-      const older = (
-        paged.body.activity as { items: { eventId: string }[] }
-      ).items;
+      const older = (paged.body.activity as { items: { eventId: string }[] })
+        .items;
       const seen = new Set(page.items.map((entry) => entry.eventId as string));
       for (const entry of older) expect(seen.has(entry.eventId)).toBe(false);
     } finally {
@@ -441,7 +594,9 @@ describe("daemon invalidation stream", () => {
  */
 describe("invalidation after a failed command", () => {
   test("publishes invalidation and exposes the failure in activity", async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-failed-command-"));
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-failed-command-"),
+    );
     temporaryDirectories.push(projectRoot);
     const socketPath = join(projectRoot, "daemon.sock");
     const database = openDatabase(join(projectRoot, "project.sqlite"));
@@ -547,7 +702,9 @@ describe("invalidation after a failed command", () => {
         signal: AbortSignal.timeout(10_000),
       });
       const body = (await activity.json()) as {
-        activity: { items: { eventType: string; detail: Record<string, unknown> }[] };
+        activity: {
+          items: { eventType: string; detail: Record<string, unknown> }[];
+        };
       };
       const failure = body.activity.items.find(
         (entry) => entry.eventType === "command.failed",

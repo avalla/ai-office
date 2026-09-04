@@ -790,16 +790,22 @@ export class OperationalQueryService {
   ): Promise<TaskOperationalState[]> {
     if (tasks.length === 0) return [];
     const taskIds = tasks.map((task) => task.id);
-    const [runFacts, leases, pipelineRuns, reviewFacts] = await Promise.all([
-      this.reads.listTaskRunFacts(
-        projectId,
-        taskIds,
-        queryLimits.concurrency.default,
-      ),
-      this.reads.listTaskLeases(projectId, taskIds),
-      this.reads.listActivePipelineRunsForTasks(projectId, taskIds),
-      this.reads.listTaskReviewFacts(projectId, taskIds),
-    ]);
+    const [runFacts, leases, pipelineRuns, reviewFacts, requirementCounts] =
+      await Promise.all([
+        this.reads.listTaskRunFacts(
+          projectId,
+          taskIds,
+          queryLimits.concurrency.default,
+        ),
+        this.reads.listTaskLeases(projectId, taskIds),
+        this.reads.listActivePipelineRunsForTasks(projectId, taskIds),
+        this.reads.listTaskReviewFacts(projectId, taskIds),
+        this.reads.listTaskRequirementCounts(projectId, taskIds),
+      ]);
+    const requirementsByTask = groupBy(
+      requirementCounts,
+      (value) => value.taskId,
+    );
 
     const runsByTask = new Map<string, TaskRunFactsRecord>(
       runFacts.map((record) => [record.taskId, record]),
@@ -821,6 +827,7 @@ export class OperationalQueryService {
       const reviews = reviewsByTask.get(task.id);
       return projectTaskOperationalState({
         task,
+        requirementCounts: requirementsByTask.get(task.id) ?? [],
         activeRuns: runs?.activeRuns ?? [],
         activeRunCount: runs?.activeRunCount ?? 0,
         executingRunCount: runs?.executingRunCount ?? 0,
