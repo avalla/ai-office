@@ -43,7 +43,7 @@ import {
   projectAgentRunEvent,
   projectAgentRunState,
   projectAgentState,
-  unleasedTaskRunsAttention,
+  taskLeaseAttention,
   projectMilestoneSummary,
   projectPipelineRunState,
   projectProjectSummary,
@@ -143,6 +143,9 @@ export class OperationalQueryService {
     const projects = await this.reads.listProjects();
     const projectIds = projects.map((project) => project.id);
     const runLimit = options?.runLimit ?? queryLimits.runs.default;
+    // One instant for the whole snapshot: lease validity in the aggregate, in
+    // its sample, and in every task projection must be decided identically.
+    const now = this.clock.now();
     const attentionLimit =
       options?.attentionLimit ?? queryLimits.attention.default;
     const activityLimit =
@@ -184,7 +187,7 @@ export class OperationalQueryService {
       this.reads.countReviews({ projectIds, statuses: ["pending"] }),
       this.reads.countActivePipelineRuns(projectIds),
       this.reads.countAttentionStages(projectIds),
-      this.reads.countTasksWithUnleasedRuns(projectIds),
+      this.reads.countTasksWithoutValidRunLease(projectIds, now),
       this.reads.lastActivityAt(projectIds),
       this.reads.listMilestones(projectIds),
       this.reads.listAgentRuns({
@@ -204,7 +207,7 @@ export class OperationalQueryService {
       }),
       this.reads.listAttentionTasks(projectIds, attentionLimit),
       this.reads.listActivePipelineStages(projectIds, attentionLimit),
-      this.reads.listUnleasedTaskRuns(projectIds, attentionLimit),
+      this.reads.listTasksWithoutValidRunLease(projectIds, attentionLimit, now),
       this.reads.listActivity({ limit: activityLimit }),
     ]);
 
@@ -274,7 +277,7 @@ export class OperationalQueryService {
       for (const task of attentionTasksByProject.get(project.id) ?? [])
         items.push(attentionTaskReason(task));
       for (const task of unleasedTasksByProject.get(project.id) ?? [])
-        items.push(unleasedTaskRunsAttention(task));
+        items.push(taskLeaseAttention(task));
 
       const attention: BoundedList<AttentionReason> = {
         total: projectAttentionTotal,
@@ -358,6 +361,8 @@ export class OperationalQueryService {
     const activityLimit =
       options?.activityLimit ?? queryLimits.activity.default;
     const attentionLimit = queryLimits.attention.default;
+    // Same rule as the overview: one instant decides lease validity everywhere.
+    const now = this.clock.now();
 
     const [
       // Authoritative aggregates.
@@ -406,7 +411,7 @@ export class OperationalQueryService {
       }),
       this.reads.countActivePipelineRuns(projectIds),
       this.reads.countAttentionStages(projectIds),
-      this.reads.countTasksWithUnleasedRuns(projectIds),
+      this.reads.countTasksWithoutValidRunLease(projectIds, now),
       this.reads.countPipelineRuns(projectId, false),
       this.reads.countAgentRuns({ projectIds }),
       this.reads.lastActivityAt(projectIds),
@@ -421,7 +426,7 @@ export class OperationalQueryService {
       this.reads.listPipelineRuns({ projectId, limit: pipelineLimit }),
       this.reads.listAttentionTasks(projectIds, attentionLimit),
       this.reads.listActivePipelineStages(projectIds, attentionLimit),
-      this.reads.listUnleasedTaskRuns(projectIds, attentionLimit),
+      this.reads.listTasksWithoutValidRunLease(projectIds, attentionLimit, now),
       this.reads.listAgentRuns({
         projectIds,
         statuses: failedRunStatuses,
@@ -436,7 +441,7 @@ export class OperationalQueryService {
     ]);
 
     const agents = agentIndex(agentRecords);
-    const tasks = await this.projectTasks(projectId, taskPage, agents);
+    const tasks = await this.projectTasks(projectId, taskPage, agents, now);
     const agentStates = await this.projectAgents(projectId, agentRecords);
 
     // Attention is computed from project-wide aggregates and samples, never
@@ -464,7 +469,7 @@ export class OperationalQueryService {
     for (const task of attentionTaskSample)
       attentionItems.push(attentionTaskReason(task));
     for (const task of unleasedTaskSample)
-      attentionItems.push(unleasedTaskRunsAttention(task));
+      attentionItems.push(taskLeaseAttention(task));
 
     const summary = projectProjectSummary({
       project,
@@ -544,6 +549,7 @@ export class OperationalQueryService {
       projectId,
       taskPage,
       agentIndex(agentRecords),
+      this.clock.now(),
     );
     return boundedList(
       tasks,
@@ -779,10 +785,11 @@ export class OperationalQueryService {
     projectId: string,
     tasks: readonly TaskProps[],
     agents: ReadonlyMap<string, AgentReference>,
+    /** Shared with this snapshot's aggregates so lease validity agrees. */
+    now: Date,
   ): Promise<TaskOperationalState[]> {
     if (tasks.length === 0) return [];
     const taskIds = tasks.map((task) => task.id);
-    const now = this.clock.now();
     const [runFacts, leases, pipelineRuns, reviewFacts] = await Promise.all([
       this.reads.listTaskRunFacts(
         projectId,

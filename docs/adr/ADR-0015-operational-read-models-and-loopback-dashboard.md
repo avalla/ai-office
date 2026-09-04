@@ -131,18 +131,43 @@ question concurrency makes urgent: which active run currently owns execution
 exclusivity. It is reported as found — held, expired, or absent — and never
 inferred from the runs.
 
+Owning the persisted `task_lock` row and holding a valid lease are **two
+different facts**, and conflating them would republish the same defect one level
+up. `acquireTaskLock` takes a task over the moment
+`task_lock.expires_at <= excluded.acquired_at`, so an expired owner keeps its
+row and holds no exclusivity. The read model therefore publishes
+`ownsLeaseRecord` (persisted ownership) beside `hasValidLease`
+(`ownsLeaseRecord && expiresAt > evaluationTime`), and only the latter ever
+means execution authority. `runsWithoutValidLeaseCount` and the project
+aggregate use that same predicate, evaluated at one instant taken from the
+application `Clock` and passed explicitly into the read port — never a SQLite
+wall-clock function, which would desynchronize the aggregate from the projection
+and make tests nondeterministic.
+
 Concurrency after a takeover is not classified as invalid, because the write
-model supports it. Only the actionable part is: an active run that does not own
-the current lease, or that has no lease at all, raises
-`task_run_without_lease`, counted per contested task by an exact aggregate. An
-expired lease that nobody took over is reported as a fact and raises nothing,
-because a run outliving its unrenewed lease is expected. A run that lost its
-lease is never discarded from any count.
+model supports it. Missing *valid* authority is: an active run whose task's
+lease is owned by another run, or absent, raises `task_run_without_lease`, and
+an expired lease raises `task_lease_expired`. Expiry gets its own reason rather
+than being treated as a mere fact, because `ExecuteAgentRun` never renews the
+lease: expiry is common but not valid, and the task is takeable while the old
+run may still be executing. Surfacing it exposes that scheduling weakness
+without changing write-side behaviour. Both reasons are counted per affected
+task by one exact aggregate, and one shared derivation produces their kind,
+subject, summary, and `since`, so the same condition reads identically from the
+task projection and from the project-wide list. A run without valid authority is
+never discarded from any count.
+
+An active run with no lease row is an **integrity/recovery anomaly**, not an
+ordinary lifecycle state: `ExecuteAgentRun` persists a run's terminal status
+before its `finally` releases the lock, so a crash before finalization leaves the
+row behind rather than removing it. The defensive handling is kept because an
+observability surface must describe corrupted, manually altered, or partially
+restored state honestly.
 
 Whether such a run should stop executing is a runtime scheduling decision. This
 ADR names the distinction between a persisted non-terminal status and lost
-execution ownership; it does not resolve it, and no write-side per-task run
-restriction was introduced to make the read model simpler.
+execution authority; it does not resolve it, and lease renewal and
+cancellation-on-lease-loss are recorded as follow-up runtime work.
 
 ### Activity is paged by a real keyset cursor
 

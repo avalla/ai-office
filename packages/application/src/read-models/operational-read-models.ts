@@ -124,17 +124,30 @@ export type AttentionKind =
   | "task_blocked"
   | "task_failed"
   /**
-   * A task has at least one active run that does not own its execution lease.
+   * A task has at least one active run without valid execution authority, and
+   * the reason is not expiry: either another run's still-valid lease owns the
+   * task, or no lease row exists at all.
    *
-   * `task_lock` is a lease and lease takeover after expiry is intentionally
-   * supported, so *concurrency itself* is not the anomaly — this reason names
-   * the actionable part: a run is still executing without the exclusivity the
-   * runtime grants through the lease, so either two agents are working the same
-   * task or a run was stranded when its lease disappeared. `ExecuteAgentRun`
-   * reaches the same conclusion at cleanup, where releasing a lease it no
-   * longer owns raises `TASK_LOCK_RELEASE_FAILED`.
+   * `task_lock` is a lease and takeover after expiry is intentionally
+   * supported, so *concurrency itself* is not the anomaly. This reason names
+   * the actionable part — a run executing without the exclusivity the runtime
+   * grants. `ExecuteAgentRun` reaches the same conclusion at cleanup, where
+   * releasing a lease it no longer owns raises `TASK_LOCK_RELEASE_FAILED`.
    */
-  | "task_run_without_lease";
+  | "task_run_without_lease"
+  /**
+   * A task's execution lease has expired while at least one of its runs is
+   * still active.
+   *
+   * Owning the persisted `task_lock` row is not the same as holding
+   * exclusivity: `acquireTaskLock` lets any scheduler take the task over once
+   * `expires_at` has passed. So the task is takeable *right now* while its
+   * previous run may still be executing. `ExecuteAgentRun` never renews the
+   * lease, which makes this reachable by any run outliving its lease window —
+   * common, but not therefore valid. Renewing the lease, or cancelling a run
+   * that loses it, is runtime scheduling work and deliberately not done here.
+   */
+  | "task_lease_expired";
 
 export type AttentionSubjectType =
   "task" | "agent_run" | "pipeline_run" | "review";
@@ -251,12 +264,13 @@ export interface ProjectSummary {
    *
    * This is definition **A**: persisted liveness. It deliberately does *not*
    * mean "runs that still hold valid execution authority" — a run whose task
-   * lease was taken over after expiry keeps a non-terminal status and is still
-   * counted here. The distinction is named rather than blurred: execution
-   * authority is reported by {@link TaskLeaseState} and
-   * {@link TaskActiveRunReference.holdsLease}, and a run executing without it
-   * raises a `task_run_without_lease` attention reason. Nothing in this project
-   * silently switches between the two meanings.
+   * lease was taken over, or whose lease merely expired, keeps a non-terminal
+   * status and is still counted here. The distinction is named rather than
+   * blurred: execution authority is
+   * {@link TaskActiveRunReference.hasValidLease}, never
+   * {@link TaskActiveRunReference.ownsLeaseRecord}, and a task holding active
+   * runs without it raises `task_run_without_lease` or `task_lease_expired`.
+   * Nothing in this project silently switches between the two meanings.
    *
    * Related counts and what each one counts:
    *
@@ -334,10 +348,23 @@ export interface TaskActiveRunReference extends AgentRunReference {
   pipelineRunId: string | null;
   createdAt: IsoTimestamp;
   /**
-   * True when this run owns the task's current execution lease. Exact for the
-   * run named: it compares run ids against {@link TaskLeaseState.ownerRunId}.
+   * This run's id is the one in the task's persisted `task_lock` row:
+   * `lease.ownerRunId === runId`.
+   *
+   * Evidence of *persisted ownership only*. It says nothing about whether the
+   * lease is still in force, so it is never on its own a claim of execution
+   * authority.
    */
-  holdsLease: boolean;
+  ownsLeaseRecord: boolean;
+  /**
+   * This run currently holds execution exclusivity for the task:
+   * `ownsLeaseRecord && lease.expiresAt > evaluationTime`.
+   *
+   * This is the field that means authority. Once `expiresAt` has passed,
+   * `acquireTaskLock` lets any scheduler take the task over, so an expired
+   * owner has a row and no exclusivity.
+   */
+  hasValidLease: boolean;
 }
 
 /**
@@ -350,14 +377,21 @@ export interface TaskActiveRunReference extends AgentRunReference {
  * exists — never a guess.
  */
 export interface TaskLeaseState {
+  /**
+   * Run named by the persisted `task_lock` row. Ownership of the row, not
+   * proof of exclusivity — read {@link TaskLeaseState.expired} with it.
+   */
   ownerRunId: string;
   acquiredAt: IsoTimestamp;
   expiresAt: IsoTimestamp;
   /**
-   * True when `expiresAt` is in the past. Expiry alone is not an anomaly:
-   * `ExecuteAgentRun` does not renew the lease while it runs, so any run
-   * outliving the lease window reaches this state normally. It means the lease
-   * is now *takeable*, not that anything is wrong.
+   * `expiresAt <= evaluationTime`, matching the takeover predicate in
+   * `acquireTaskLock` (`task_lock.expires_at <= excluded.acquired_at`).
+   *
+   * When true, nobody holds execution exclusivity for this task: the owner
+   * keeps its row, and any scheduler may take the task over. `ExecuteAgentRun`
+   * never renews the lease, so a long run reaches this state routinely —
+   * common, but not valid.
    */
   expired: boolean;
   /**
@@ -414,10 +448,15 @@ export interface TaskOperationalState {
   /** The task's execution lease, or `null` when no lease row exists. */
   lease: TaskLeaseState | null;
   /**
-   * Exact number of this task's active runs that do not own its lease. Derived
-   * from exact counts, so a truncated `activeAgentRuns` sample cannot change it.
+   * Exact number of this task's active runs without **valid** execution
+   * authority — that is, every active run except a lease owner whose lease has
+   * not expired.
+   *
+   * An expired lease grants nothing, so its owner is counted here too. Derived
+   * from exact counts, so a truncated `activeAgentRuns` sample cannot change
+   * it, and computed identically by the project-wide aggregate.
    */
-  runsWithoutLeaseCount: number;
+  runsWithoutValidLeaseCount: number;
   activePipelineRun: PipelineRunReference | null;
   /**
    * The agent of the active pipeline stage, or failing that of

@@ -609,63 +609,78 @@ const milestoneLinkageExplanation =
 
 function taskActiveRunReference(
   record: OperationalAgentRunRecord,
-  leaseOwnerRunId: string | null,
+  lease: TaskLeaseRecord | null,
+  leaseExpired: boolean,
   agentsById: ReadonlyMap<string, AgentReference>,
 ): TaskActiveRunReference {
+  // Two separate facts. Owning the row is persisted ownership; holding a
+  // non-expired lease is current exclusivity. `acquireTaskLock` takes a task
+  // over the moment `expires_at` passes, so an expired owner has the former
+  // and not the latter.
+  const ownsLeaseRecord = lease !== null && lease.ownerRunId === record.id;
   return {
     ...agentRunReference(record),
     agent: agentsById.get(record.agentId) ?? null,
     pipelineRunId: record.pipelineRunId,
     createdAt: iso(record.createdAt),
-    holdsLease: leaseOwnerRunId !== null && leaseOwnerRunId === record.id,
+    ownsLeaseRecord,
+    hasValidLease: ownsLeaseRecord && !leaseExpired,
   };
 }
 
 /**
- * When the lease anomaly became visible.
+ * The one derivation of a task's lease anomaly.
  *
- * The lease acquisition instant is the moment exclusivity moved away from the
- * other runs, so it is the honest "since" when a lease exists. With no lease
- * row there is nothing to date it by, and the task's own update instant is the
- * closest persisted fact.
- */
-function leaseAnomalySince(input: {
-  task: TaskProps;
-  lease: TaskLeaseRecord | null;
-}): Date {
-  return input.lease?.acquiredAt ?? input.task.updatedAt;
-}
-
-/**
- * Attention for a task whose active runs do not all own its execution lease.
+ * Shared by the task projection and the project-wide attention list so the same
+ * persisted condition always yields the same `kind`, `subject`, `summary`, and
+ * `since` whichever endpoint produced it. Counted per task, matching the
+ * `countTasksWithoutValidRunLease` aggregate, which also counts tasks.
  *
- * Shared by the task projection and the project-wide attention list so both
- * describe the condition identically — one item per contested task, matching
- * the `countTasksWithUnleasedRuns` aggregate, which also counts tasks.
+ * `since` is the instant authority was lost, never a run's `updated_at`: a run
+ * that keeps working after losing the lease must not push the anomaly's start
+ * time forward.
  */
-export function unleasedTaskRunsAttention(input: {
+export function taskLeaseAttention(input: {
   projectId: string;
   taskId: string;
-  taskTitle: string | null;
-  runsWithoutLease: number;
-  leaseMissing: boolean;
-  since: Date;
+  /** Exact number of active runs without valid authority. */
+  runsWithoutValidLease: number;
+  lease: { acquiredAt: Date; expiresAt: Date; expired: boolean } | null;
+  /** Documented fallback when no lease row exists. */
+  taskUpdatedAt: Date;
 }): AttentionReason {
-  const single = input.runsWithoutLease === 1;
+  const single = input.runsWithoutValidLease === 1;
   const runs = single
     ? "1 active run"
-    : `${input.runsWithoutLease} active runs`;
-  const holds = single ? "holds" : "hold";
-  const owns = single ? "owns" : "own";
-  return {
-    kind: "task_run_without_lease",
+    : `${input.runsWithoutValidLease} active runs`;
+  const base = {
     projectId: input.projectId,
     subjectType: "task",
     subjectId: input.taskId,
-    summary: input.leaseMissing
-      ? `${runs} of this task ${holds} no execution lease`
-      : `${runs} of this task no longer ${owns} its execution lease`,
-    since: iso(input.since),
+  } as const;
+
+  if (input.lease !== null && input.lease.expired)
+    return {
+      ...base,
+      kind: "task_lease_expired",
+      summary: `${runs} of this task ${single ? "continues" : "continue"} after its execution lease expired`,
+      // Exclusivity lapsed when the lease expired, not when it was taken.
+      since: iso(input.lease.expiresAt),
+    };
+  if (input.lease !== null)
+    return {
+      ...base,
+      kind: "task_run_without_lease",
+      summary: `${runs} of this task no longer ${single ? "owns" : "own"} its execution lease`,
+      // Ownership moved at the current lease's acquisition instant.
+      since: iso(input.lease.acquiredAt),
+    };
+  return {
+    ...base,
+    kind: "task_run_without_lease",
+    summary: `${runs} of this task ${single ? "holds" : "hold"} no execution lease`,
+    // Nothing dates a missing row; the task's own update is the closest fact.
+    since: iso(input.taskUpdatedAt),
   };
 }
 
@@ -706,9 +721,13 @@ export function projectTaskOperationalState(input: {
   now: Date;
 }): TaskOperationalState {
   const latestRun = input.latestRun ?? undefined;
-  const leaseOwnerId = input.lease?.ownerRunId ?? null;
+  // The same predicate `acquireTaskLock` uses to allow takeover, so the read
+  // model calls a lease expired exactly when the writer would let it go.
+  const leaseExpired =
+    input.lease !== null &&
+    input.lease.expiresAt.getTime() <= input.now.getTime();
   const activeRuns = input.activeRuns.map((record) =>
-    taskActiveRunReference(record, leaseOwnerId, input.agentsById),
+    taskActiveRunReference(record, input.lease, leaseExpired, input.agentsById),
   );
   const activeAgentRuns = boundedList(activeRuns, input.activeRunCount);
   const primaryAgentRun = activeRuns[0] ?? null;
@@ -720,19 +739,20 @@ export function projectTaskOperationalState(input: {
           ownerRunId: input.lease.ownerRunId,
           acquiredAt: iso(input.lease.acquiredAt),
           expiresAt: iso(input.lease.expiresAt),
-          expired: input.lease.expiresAt.getTime() <= input.now.getTime(),
+          expired: leaseExpired,
           ownerRunStatus: input.lease.ownerRunStatus,
         };
 
-  // Exact, not sample-derived: the lease is unique per task, so at most one
-  // active run can own it. Everything else active is running without the
-  // exclusivity the runtime grants.
-  const leaseOwnerIsActive =
+  // Exact, not sample-derived: at most one active run can hold valid authority,
+  // because the lease row is unique per task and an expired lease grants
+  // nothing. Every other active run is executing without exclusivity.
+  const validLeaseOwnerIsActive =
     input.lease !== null &&
+    !leaseExpired &&
     input.lease.ownerRunStatus !== null &&
     isActiveAgentRunStatus(input.lease.ownerRunStatus);
-  const runsWithoutLeaseCount =
-    input.activeRunCount - (leaseOwnerIsActive ? 1 : 0);
+  const runsWithoutValidLeaseCount =
+    input.activeRunCount - (validLeaseOwnerIsActive ? 1 : 0);
   const hasPendingReview = input.pendingReviewCount > 0;
   const pipelineStage =
     input.pipelineRun !== null && input.pipelineRun.status === "active"
@@ -824,15 +844,21 @@ export function projectTaskOperationalState(input: {
     attentionReasons.push(
       ...agentRunAttentionReasons(projectAgentRunState(latestRun)),
     );
-  if (runsWithoutLeaseCount > 0)
+  if (runsWithoutValidLeaseCount > 0)
     attentionReasons.push(
-      unleasedTaskRunsAttention({
+      taskLeaseAttention({
         projectId: input.task.projectId,
         taskId: input.task.id,
-        taskTitle: input.task.title,
-        runsWithoutLease: runsWithoutLeaseCount,
-        leaseMissing: input.lease === null,
-        since: leaseAnomalySince(input),
+        runsWithoutValidLease: runsWithoutValidLeaseCount,
+        lease:
+          input.lease === null
+            ? null
+            : {
+                acquiredAt: input.lease.acquiredAt,
+                expiresAt: input.lease.expiresAt,
+                expired: leaseExpired,
+              },
+        taskUpdatedAt: input.task.updatedAt,
       }),
     );
 
@@ -860,7 +886,7 @@ export function projectTaskOperationalState(input: {
     activeAgentRuns,
     primaryAgentRun,
     lease,
-    runsWithoutLeaseCount,
+    runsWithoutValidLeaseCount,
     activePipelineRun:
       input.pipelineRun === null || input.pipelineRun.status !== "active"
         ? null

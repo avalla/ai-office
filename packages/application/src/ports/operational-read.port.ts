@@ -258,21 +258,31 @@ export interface TaskLeaseRecord {
 }
 
 /**
- * A task whose active runs do not all hold its execution lease.
+ * A task holding at least one active run without valid execution authority.
  *
  * Aggregated per task so that its exact count and this sample describe the same
- * unit. `runsWithoutLease` is exact for the task named.
+ * unit. It carries the lease facts rather than a pre-rendered reason so the
+ * projection derives the attention kind, summary, and instant from exactly the
+ * same inputs the per-task projection uses.
  */
-export interface UnleasedTaskRunsRecord {
+export interface TaskLeaseAnomalyRecord {
   projectId: string;
   taskId: string;
   taskTitle: string | null;
-  /** Exact number of this task's active runs that do not own its lease. */
-  runsWithoutLease: number;
-  /** True when the task holds no lease row at all. */
-  leaseMissing: boolean;
-  /** Newest update among the offending runs. */
-  since: Date;
+  /**
+   * Exact number of this task's active runs without valid authority: every
+   * active run except a lease owner whose lease has not expired.
+   */
+  runsWithoutValidLease: number;
+  /** Lease row facts, or null when the task holds no lease row at all. */
+  lease: {
+    acquiredAt: Date;
+    expiresAt: Date;
+    /** `expiresAt <= now`, evaluated at the instant passed to the query. */
+    expired: boolean;
+  } | null;
+  /** Persisted fallback instant used when no lease row exists. */
+  taskUpdatedAt: Date;
 }
 
 /**
@@ -429,16 +439,25 @@ export interface OperationalReadRepository {
   /** Active stages that are awaiting approval or have no assigned agent. */
   countAttentionStages(projectIds: readonly string[]): Promise<CountRecord[]>;
   /**
-   * Distinct tasks holding at least one active run that does not own the task's
-   * execution lease — either another run took the lease over after it expired,
-   * or no lease row exists at all.
+   * Distinct tasks holding at least one active run without valid execution
+   * authority.
+   *
+   * A run has valid authority only when it owns the task's lease row *and*
+   * that lease has not expired — the same predicate `acquireTaskLock` uses to
+   * decide takeover. So this counts tasks whose lease is missing, expired,
+   * owned by a run that is not active, or owned by a different run.
+   *
+   * `now` is the evaluation instant, passed explicitly from the application
+   * clock rather than read from SQLite, so tests stay deterministic and the
+   * aggregate and the per-task projection agree exactly.
    *
    * Counted per *task* rather than per run so that this exact total and
-   * {@link OperationalReadRepository.listUnleasedTaskRuns} describe the same
-   * unit, and so one attention item corresponds to one contested task.
+   * {@link OperationalReadRepository.listTasksWithoutValidRunLease} describe
+   * the same unit, and one attention item is one affected task.
    */
-  countTasksWithUnleasedRuns(
+  countTasksWithoutValidRunLease(
     projectIds: readonly string[],
+    now: Date,
   ): Promise<CountRecord[]>;
   countPipelineRuns(projectId: string, activeOnly: boolean): Promise<number>;
   lastActivityAt(projectIds: readonly string[]): Promise<LastActivityRecord[]>;
@@ -523,11 +542,15 @@ export interface OperationalReadRepository {
     projectIds: readonly string[],
     limit: number,
   ): Promise<OperationalActivePipelineStageRecord[]>;
-  /** Bounded sample beside `countTasksWithUnleasedRuns`, newest offence first. */
-  listUnleasedTaskRuns(
+  /**
+   * Bounded sample beside `countTasksWithoutValidRunLease`, newest first by the
+   * same instant the projection reports as the anomaly's `since`.
+   */
+  listTasksWithoutValidRunLease(
     projectIds: readonly string[],
     limit: number,
-  ): Promise<UnleasedTaskRunsRecord[]>;
+    now: Date,
+  ): Promise<TaskLeaseAnomalyRecord[]>;
   listPipelineRuns(
     query: PipelineRunQuery,
   ): Promise<OperationalPipelineRunRecord[]>;

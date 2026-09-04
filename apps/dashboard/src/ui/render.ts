@@ -187,10 +187,14 @@ function taskRows(tasks: readonly TaskOperationalState[]): string {
       // One representative run plus the exact count of what it leaves out: a
       // task may hold several active runs after a lease takeover.
       const more = concurrencyNote(task.activeAgentRuns);
+      // Owning the lease row is not the same as holding it: an expired lease
+      // grants no exclusivity, so the chip reads from `hasValidLease`.
       const lease =
-        task.primaryAgentRun !== null && !task.primaryAgentRun.holdsLease
-          ? ` <span class="more" title="This run does not own the task's execution lease">no lease</span>`
-          : "";
+        task.primaryAgentRun === null || task.primaryAgentRun.hasValidLease
+          ? ""
+          : task.primaryAgentRun.ownsLeaseRecord
+            ? ` <span class="more" title="This run owns the task's lease row, but the lease has expired">lease expired</span>`
+            : ` <span class="more" title="This run does not hold the task's execution lease">no lease</span>`;
       const run =
         task.primaryAgentRun === null
           ? "—"

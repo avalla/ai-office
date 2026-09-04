@@ -37,10 +37,10 @@ import type {
   RequirementCountRecord,
   ReviewQuery,
   StatusCountRecord,
+  TaskLeaseAnomalyRecord,
   TaskLeaseRecord,
   TaskReviewFactsRecord,
   TaskRunFactsRecord,
-  UnleasedTaskRunsRecord,
 } from "@ai-office/application/ports/operational-read.port.ts";
 
 /**
@@ -235,15 +235,17 @@ export class SqliteOperationalReadRepository
   }
 
   /**
-   * Tasks holding at least one active run that does not own their lease.
+   * Tasks holding at least one active run without valid execution authority.
    *
-   * Counts distinct *tasks*, so this exact total and `listUnleasedTaskRuns`
-   * describe the same unit and one attention item means one contested task.
-   * The left join makes "no lease row at all" match the same way "another run
-   * owns it" does.
+   * Counts distinct *tasks*, so this exact total and
+   * `listTasksWithoutValidRunLease` describe the same unit and one attention
+   * item means one affected task. `now` comes from the application clock, not
+   * from a SQLite wall-clock function, so the aggregate, the per-task
+   * projection, and the tests all evaluate validity at the same instant.
    */
-  async countTasksWithUnleasedRuns(
+  async countTasksWithoutValidRunLease(
     projectIds: readonly string[],
+    now: Date,
   ): Promise<CountRecord[]> {
     if (projectIds.length === 0) return [];
     return this.groupedCounts(
@@ -253,9 +255,9 @@ export class SqliteOperationalReadRepository
          LEFT JOIN task_lock lock ON lock.task_id = run.task_id
         WHERE run.project_id IN (${placeholders(projectIds.length)})
           AND run.status IN (${placeholders(activeRunStatuses.length)})
-          AND (lock.run_id IS NULL OR lock.run_id <> run.id)
+          AND ${invalidLeasePredicate}
         GROUP BY run.project_id`,
-      [...projectIds, ...activeRunStatuses],
+      [...projectIds, ...activeRunStatuses, now.toISOString()],
     );
   }
 
@@ -758,49 +760,62 @@ export class SqliteOperationalReadRepository
    * dashboard the project's first runs forever. This query exists so the read
    * side can ask for what it actually displays.
    */
-  async listUnleasedTaskRuns(
+  async listTasksWithoutValidRunLease(
     projectIds: readonly string[],
     limit: number,
-  ): Promise<UnleasedTaskRunsRecord[]> {
+    now: Date,
+  ): Promise<TaskLeaseAnomalyRecord[]> {
     if (projectIds.length === 0) return [];
-    // Grouped per task, and limited in SQL, so the sample and the aggregate
-    // above count the same thing. `lease_missing` is constant within a group:
-    // `task_lock` has one row per task at most.
+    // Grouped per task and limited in SQL, so the sample and the aggregate
+    // above count the same thing. The lease columns are functionally dependent
+    // within a group: `task_lock` holds at most one row per task.
+    //
+    // Ordering uses the same instant the projection reports as `since` — never
+    // `MAX(run.updated_at)`, which would let a run that keeps working after
+    // losing the lease push the anomaly's start time forward.
+    const instant = now.toISOString();
     return this.database
       .query<
         {
           project_id: string;
           task_id: string;
           task_title: string | null;
-          runs_without_lease: number;
-          lease_missing: number;
-          since: string;
+          task_updated_at: string;
+          acquired_at: string | null;
+          expires_at: string | null;
+          runs_without_valid_lease: number;
         },
         (string | number)[]
       >(
         `SELECT run.project_id, run.task_id, t.title AS task_title,
-                COUNT(*) AS runs_without_lease,
-                MAX(CASE WHEN lock.run_id IS NULL THEN 1 ELSE 0 END)
-                  AS lease_missing,
-                MAX(run.updated_at) AS since
+                t.updated_at AS task_updated_at,
+                lock.acquired_at, lock.expires_at,
+                COUNT(*) AS runs_without_valid_lease
            FROM agent_run run
            LEFT JOIN task_lock lock ON lock.task_id = run.task_id
            LEFT JOIN task t ON t.id = run.task_id
           WHERE run.project_id IN (${placeholders(projectIds.length)})
             AND run.status IN (${placeholders(activeRunStatuses.length)})
-            AND (lock.run_id IS NULL OR lock.run_id <> run.id)
+            AND ${invalidLeasePredicate}
           GROUP BY run.project_id, run.task_id
-          ORDER BY since DESC, run.task_id
+          ORDER BY ${leaseAnomalySinceExpression} DESC, run.task_id
           LIMIT ?`,
       )
-      .all(...projectIds, ...activeRunStatuses, limit)
+      .all(...projectIds, ...activeRunStatuses, instant, instant, limit)
       .map((row) => ({
         projectId: row.project_id,
         taskId: row.task_id,
         taskTitle: row.task_title,
-        runsWithoutLease: row.runs_without_lease,
-        leaseMissing: row.lease_missing === 1,
-        since: new Date(row.since),
+        runsWithoutValidLease: row.runs_without_valid_lease,
+        lease:
+          row.acquired_at === null || row.expires_at === null
+            ? null
+            : {
+                acquiredAt: new Date(row.acquired_at),
+                expiresAt: new Date(row.expires_at),
+                expired: row.expires_at <= instant,
+              },
+        taskUpdatedAt: new Date(row.task_updated_at),
       }));
   }
 
@@ -1119,6 +1134,31 @@ export class SqliteOperationalReadRepository
 /* -------------------------------------------------------------------------- */
 /* Row shapes and helpers                                                      */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * A run lacks valid execution authority unless it owns a lease row that has
+ * not expired.
+ *
+ * `acquireTaskLock` allows takeover when `task_lock.expires_at <= acquired_at`,
+ * so this uses `<=` against the injected instant for the same reason. Binds one
+ * parameter: the evaluation instant.
+ */
+const invalidLeasePredicate = `(
+  lock.run_id IS NULL
+  OR lock.run_id <> run.id
+  OR lock.expires_at <= ?
+)`;
+
+/**
+ * The instant an anomaly began, matching `taskLeaseAttention` exactly: the
+ * expiry for an expired lease, the acquisition for a takeover, and the task's
+ * own update when no lease row exists. Binds one parameter.
+ */
+const leaseAnomalySinceExpression = `CASE
+  WHEN lock.expires_at IS NULL THEN t.updated_at
+  WHEN lock.expires_at <= ? THEN lock.expires_at
+  ELSE lock.acquired_at
+END`;
 
 /** Active statuses that mean the run is executing rather than waiting. */
 const executingRunStatuses: readonly AgentRunStatus[] = [

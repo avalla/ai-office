@@ -242,18 +242,35 @@ model therefore carries a list:
 | `activeAgentRuns` | `{ total, items, truncated }`; `total` is the exact active run count |
 | `primaryAgentRun` | `activeAgentRuns.items[0]` — a *representative*, not a uniqueness claim |
 | `lease` | the persisted `task_lock` row, or `null` when none exists |
-| `runsWithoutLeaseCount` | exact number of active runs that do not own the lease |
+| `runsWithoutValidLeaseCount` | exact number of active runs without valid execution authority |
 
 Items are ordered by `updated_at` descending, ties broken by run id descending.
-Each `TaskActiveRunReference` carries its own agent, pipeline linkage, and
-`holdsLease`, because concurrent runs may belong to different agents — a single
+Each `TaskActiveRunReference` carries its own agent and pipeline linkage,
+because concurrent runs may belong to different agents — a single
 `assignedAgent` cannot describe them all, and it is documented as the
 representative's agent.
 
-**`TaskLeaseState`** answers one question: *which active run currently owns
-execution exclusivity for this task?* It reports `ownerRunId`, `acquiredAt`,
-`expiresAt`, `expired`, and `ownerRunStatus`, and it is `null` when no lease row
-exists rather than a guess. The read side never writes it.
+### Owning the lease row is not holding the lease
+
+These are two different facts and the read model keeps them apart:
+
+```text
+ownsLeaseRecord = lease.ownerRunId === run.id
+hasValidLease   = ownsLeaseRecord AND lease.expiresAt > evaluationTime
+```
+
+A lease **row** is evidence of persisted ownership. A **non-expired** lease is
+evidence of current exclusivity. `acquireTaskLock` takes a task over the moment
+`task_lock.expires_at <= excluded.acquired_at`, so once `expiresAt` has passed
+the previous owner still names the row and holds nothing. `hasValidLease` is the
+only field that means execution authority; `ownsLeaseRecord` never does.
+
+The boundary uses `<=`, matching the writer: a lease at exactly its expiry
+instant is already takeable.
+
+**`TaskLeaseState`** reports `ownerRunId`, `acquiredAt`, `expiresAt`, `expired`,
+and `ownerRunStatus`. It is `null` when no lease row exists rather than a guess,
+and the read side never writes it.
 
 ### Operational status under concurrent runs
 
@@ -283,26 +300,72 @@ its existing precedence over everything.
 ### Which lease conditions are actionable
 
 Concurrency itself is **not** an error, because lease takeover is intentionally
-supported. Only one condition is treated as actionable, and it gets the
-`task_run_without_lease` attention reason:
+supported. Missing *valid* execution authority is, and it produces one attention
+item per affected task:
 
-| Condition | Treatment |
-| --- | --- |
-| Several active runs, one holds the lease | reported as facts; the non-owners raise attention |
-| An active run does not own the current lease | **attention** — it is executing without the exclusivity the runtime grants |
-| Active runs exist but no lease row does | **attention** — `ExecuteAgentRun` releases the lease before finalizing the run, so a crash in between strands it |
-| Lease expired, nobody took it over | reported as `lease.expired`, **no attention** — `ExecuteAgentRun` does not renew, so any long run reaches this normally. It means the lease is takeable, not broken |
-| Lease outlived a terminal owner | its active runs count as unleased, since no active run holds exclusivity |
+| Condition | `hasValidLease` | Attention |
+| --- | --- | --- |
+| Lease valid, owned by this active run | `true` | none — this run has authority |
+| Lease valid, owned by another run | `false` | `task_run_without_lease` |
+| Lease expired, nobody took it over | `false` | `task_lease_expired` |
+| Lease outlived a terminal or missing owner | `false` | `task_run_without_lease` |
+| No lease row at all | `false` | `task_run_without_lease` |
+
+`task_lease_expired` is a deliberate policy choice, not an oversight.
+`ExecuteAgentRun` never renews the lease, so a long run reaches expiry
+routinely — but common is not the same as valid: the task is takeable *right
+now* while the old run may still be executing. Surfacing it exposes the
+underlying scheduling weakness without changing write-side behaviour. Renewing
+the lease, or cancelling a run that loses it, is runtime work and deliberately
+**not** done in this change.
 
 `ExecuteAgentRun` reaches the same conclusion independently: releasing a lease
 it no longer owns raises `TASK_LOCK_RELEASE_FAILED` during cleanup.
 
-The reason is counted per **task**, by the exact aggregate
-`countTasksWithUnleasedRuns`, and sampled by `listUnleasedTaskRuns` — same unit
-on both sides, so one attention item means one contested task and
-`attention.total` stays exact. A run that lost its lease is **never discarded**:
-it stays in `activeAgentRuns`, in `activeAgentRuns.total`, and in every run
+**An active run with no lease row is an integrity/recovery anomaly**, not an
+ordinary lifecycle state. `ExecuteAgentRun` persists the run's terminal status
+*before* its `finally` releases the lock, and a crash before finalization skips
+the `finally` entirely — leaving the lock row behind rather than removing it. So
+this shape comes from corrupted, manually altered, or partially restored state.
+The defensive handling stays: an observability surface must describe
+inconsistent state honestly rather than assume it away.
+
+Both reasons are counted per **task** by the exact aggregate
+`countTasksWithoutValidRunLease` and sampled by `listTasksWithoutValidRunLease`
+— same unit on both sides, so one attention item means one affected task and
+`attention.total` stays exact. A run without valid authority is **never
+discarded**: it stays in `activeAgentRuns`, in its total, and in every run
 aggregate.
+
+### One condition, one `since`
+
+`taskLeaseAttention` is the single derivation of `kind`, `subject`, `summary`,
+and `since`, shared by the per-task projection and the project-wide sample, so
+the same persisted condition reads identically from
+`TaskOperationalState.attentionReasons`, `ProjectSummary.attention`, and the
+overview.
+
+| Case | `since` |
+| --- | --- |
+| Lease expired | `lease.expiresAt` — when exclusivity lapsed |
+| Lease valid, owned by another run | `lease.acquiredAt` — when ownership moved |
+| No lease row | `task.updatedAt` — the documented fallback |
+
+It is never a run's `updated_at`: a run that keeps working after losing the
+lease must not push the anomaly's start time forward.
+
+### Lease validity is evaluated at the application clock
+
+`countTasksWithoutValidRunLease` and `listTasksWithoutValidRunLease` take the
+evaluation instant as a parameter; neither uses a SQLite wall-clock function.
+One `clock.now()` per query snapshot is threaded into the aggregate, its sample,
+and every task projection, so the exact total and the per-task state cannot
+disagree and tests stay deterministic against the injected `Clock`. The SQL
+predicate is the semantic definition, verbatim:
+
+```sql
+lock.run_id IS NULL OR lock.run_id <> run.id OR lock.expires_at <= :now
+```
 
 **Deliberately not changed:** no write-side one-run-per-task restriction was
 added. Whether a run that loses its lease should stop executing is a scheduling
@@ -322,10 +385,11 @@ persisted `running` status and lost execution ownership; it does not resolve it.
 
 Every run count uses definition **A**: *persisted liveness*. None of them means
 "runs that still hold valid execution authority" — a run whose lease was taken
-over keeps its non-terminal status and stays counted. Execution authority is a
-separate, explicitly named concept carried by `TaskLeaseState` and
-`TaskActiveRunReference.holdsLease`. The dashboard never switches between the
-two meanings silently.
+over, or whose lease merely expired, keeps its non-terminal status and stays
+counted. Execution authority is a separate, explicitly named concept:
+`TaskActiveRunReference.hasValidLease` and `runsWithoutValidLeaseCount`, never
+`ownsLeaseRecord`. The dashboard never switches between the two meanings
+silently.
 
 ### Relationships the domain does not model
 

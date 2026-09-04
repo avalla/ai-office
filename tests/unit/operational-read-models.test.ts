@@ -443,11 +443,15 @@ describe("task operational state", () => {
     const byId = new Map(
       state.activeAgentRuns.items.map((item) => [item.runId, item]),
     );
-    expect(byId.get("run-b")?.holdsLease).toBe(true);
-    expect(byId.get("run-a")?.holdsLease).toBe(false);
+    // run-b owns the row and the lease is still in force, so it has authority.
+    expect(byId.get("run-b")?.ownsLeaseRecord).toBe(true);
+    expect(byId.get("run-b")?.hasValidLease).toBe(true);
+    // run-a owns nothing and holds nothing.
+    expect(byId.get("run-a")?.ownsLeaseRecord).toBe(false);
+    expect(byId.get("run-a")?.hasValidLease).toBe(false);
 
     // Exactly one active run is executing without exclusivity.
-    expect(state.runsWithoutLeaseCount).toBe(1);
+    expect(state.runsWithoutValidLeaseCount).toBe(1);
     expect(
       state.attentionReasons.find(
         (reason) => reason.kind === "task_run_without_lease",
@@ -459,9 +463,7 @@ describe("task operational state", () => {
     });
   });
 
-  test("an expired lease with a single active run is a fact, not attention", () => {
-    // `ExecuteAgentRun` never renews the lease, so expiry during a long run is
-    // expected. Nothing is competing for the task, so nothing is actionable.
+  test("an expired lease is row ownership, not execution authority", () => {
     const state = taskState({
       task: task({ status: "running" }),
       runs: [run({ id: "run-a", status: "running" })],
@@ -474,13 +476,52 @@ describe("task operational state", () => {
 
     expect(state.lease?.expired).toBe(true);
     expect(state.lease?.ownerRunId).toBe("run-a");
-    expect(state.runsWithoutLeaseCount).toBe(0);
+    // The row still names run-a, but `acquireTaskLock` would hand the task to
+    // anyone now, so run-a holds no exclusivity.
+    expect(state.primaryAgentRun?.ownsLeaseRecord).toBe(true);
+    expect(state.primaryAgentRun?.hasValidLease).toBe(false);
+    expect(state.runsWithoutValidLeaseCount).toBe(1);
     expect(
-      state.attentionReasons.map((reason) => reason.kind),
-    ).not.toContain("task_run_without_lease");
+      state.attentionReasons.find(
+        (reason) => reason.kind === "task_lease_expired",
+      ),
+    ).toEqual({
+      kind: "task_lease_expired",
+      projectId: "project-1",
+      subjectType: "task",
+      subjectId: "task-1",
+      summary:
+        "1 active run of this task continues after its execution lease expired",
+      // Exclusivity lapsed at expiry, not at acquisition.
+      since: "2026-09-03T10:05:00.000Z",
+    });
+  });
+
+  test("a lease exactly at its expiry instant is already takeable", () => {
+    // `acquireTaskLock` takes over on `expires_at <= acquired_at`, so the read
+    // model must call the boundary expired for the same reason.
+    const state = taskState({
+      task: task({ status: "running" }),
+      runs: [run({ id: "run-a", status: "running" })],
+      lease: lease({
+        runId: "run-a",
+        expiresAt: at("2026-09-03T10:10:00.000Z"),
+      }),
+      now: at("2026-09-03T10:10:00.000Z"),
+    });
+
+    expect(state.lease?.expired).toBe(true);
+    expect(state.primaryAgentRun?.hasValidLease).toBe(false);
+    expect(state.runsWithoutValidLeaseCount).toBe(1);
   });
 
   test("an active run with no lease row is named as holding none", () => {
+    // An integrity/recovery anomaly, not an ordinary lifecycle state:
+    // `ExecuteAgentRun` persists the run's terminal status *before* its
+    // `finally` releases the lock, and a crash before finalization skips the
+    // `finally` entirely — leaving the lock row behind, not removing it. This
+    // shape comes from corrupted, manually altered, or partially restored
+    // state, and the read model stays honest about it rather than guessing.
     const state = taskState({
       task: task({ status: "running" }),
       runs: [run({ id: "run-a", status: "running" })],
@@ -488,8 +529,9 @@ describe("task operational state", () => {
     });
 
     expect(state.lease).toBeNull();
-    expect(state.primaryAgentRun?.holdsLease).toBe(false);
-    expect(state.runsWithoutLeaseCount).toBe(1);
+    expect(state.primaryAgentRun?.ownsLeaseRecord).toBe(false);
+    expect(state.primaryAgentRun?.hasValidLease).toBe(false);
+    expect(state.runsWithoutValidLeaseCount).toBe(1);
     expect(
       state.attentionReasons.find(
         (reason) => reason.kind === "task_run_without_lease",
@@ -506,7 +548,7 @@ describe("task operational state", () => {
 
     // The lease owner is terminal, so no active run holds exclusivity.
     expect(state.lease?.ownerRunStatus).toBe("completed");
-    expect(state.runsWithoutLeaseCount).toBe(1);
+    expect(state.runsWithoutValidLeaseCount).toBe(1);
   });
 
   test("a running task with no run and a failed last run is reported as failed", () => {

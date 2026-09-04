@@ -135,6 +135,7 @@ const attentionLabels: Record<AttentionReason["kind"], string> = {
   task_blocked: "Task blocked",
   task_failed: "Task failed",
   task_run_without_lease: "Run without lease",
+  task_lease_expired: "Lease expired",
 };
 
 export function attentionLabel(kind: AttentionReason["kind"]): string {

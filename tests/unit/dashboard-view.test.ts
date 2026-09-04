@@ -259,7 +259,8 @@ const task: TaskOperationalState = {
         createdAt: now,
         pipelineRunId: "pipeline-1",
         agent: null,
-        holdsLease: true,
+        ownsLeaseRecord: true,
+        hasValidLease: true,
       },
     ],
   },
@@ -272,7 +273,8 @@ const task: TaskOperationalState = {
     createdAt: now,
     pipelineRunId: "pipeline-1",
     agent: null,
-    holdsLease: true,
+    ownsLeaseRecord: true,
+    hasValidLease: true,
   },
   lease: {
     ownerRunId: "run-1",
@@ -281,7 +283,7 @@ const task: TaskOperationalState = {
     expired: false,
     ownerRunStatus: "running",
   },
-  runsWithoutLeaseCount: 0,
+  runsWithoutValidLeaseCount: 0,
   activePipelineRun: {
     pipelineRunId: "pipeline-1",
     pipelineId: "delivery",

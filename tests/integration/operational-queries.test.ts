@@ -1166,14 +1166,15 @@ describe("bounded evidence never decides authoritative state", () => {
     expect(task?.lease?.ownerRunId).toBe("run-b");
     expect(task?.lease?.expired).toBe(false);
     expect(task?.lease?.ownerRunStatus).toBe("queued");
-    expect(
-      task?.activeAgentRuns.items.find((run) => run.runId === "run-a")
-        ?.holdsLease,
-    ).toBe(false);
-    expect(
-      task?.activeAgentRuns.items.find((run) => run.runId === "run-b")
-        ?.holdsLease,
-    ).toBe(true);
+    const byId = new Map(
+      (task?.activeAgentRuns.items ?? []).map((run) => [run.runId, run]),
+    );
+    // run-a owns neither the row nor any exclusivity.
+    expect(byId.get("run-a")?.ownsLeaseRecord).toBe(false);
+    expect(byId.get("run-a")?.hasValidLease).toBe(false);
+    // run-b owns the row and its lease is still in force.
+    expect(byId.get("run-b")?.ownsLeaseRecord).toBe(true);
+    expect(byId.get("run-b")?.hasValidLease).toBe(true);
 
     // run-a is still executing, so the task is in progress rather than merely
     // scheduled — derived from every active run, not from the representative.
@@ -1181,7 +1182,7 @@ describe("bounded evidence never decides authoritative state", () => {
 
     // The stranded run is actionable, and the exact project total accounts for
     // it rather than the task page happening to show it.
-    expect(task?.runsWithoutLeaseCount).toBe(1);
+    expect(task?.runsWithoutValidLeaseCount).toBe(1);
     expect(
       task?.attentionReasons.map((reason) => reason.kind),
     ).toContain("task_run_without_lease");
@@ -1198,7 +1199,78 @@ describe("bounded evidence never decides authoritative state", () => {
     expect(overview.totals.activeAgentRuns).toBe(2);
   });
 
-  test("an expired lease that nobody took over is reported, not flagged", async () => {
+  test("the same lease anomaly reports one since from every endpoint", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    await context.tasks.save(
+      Task.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Contested",
+        now,
+      }),
+    );
+
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-1",
+      runId: "run-a",
+      status: "running",
+      updatedAt: now,
+      lease: false,
+    });
+    expect(
+      await context.runtime.acquireTaskLock(
+        "task-1",
+        "run-a",
+        now,
+        new Date(now.getTime() + 1_000),
+      ),
+    ).toBe(true);
+
+    const takeoverAt = new Date(now.getTime() + 60_000);
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-1",
+      runId: "run-b",
+      status: "queued",
+      updatedAt: takeoverAt,
+      lease: false,
+    });
+    expect(
+      await context.runtime.acquireTaskLock(
+        "task-1",
+        "run-b",
+        takeoverAt,
+        new Date(takeoverAt.getTime() + 30 * 60_000),
+      ),
+    ).toBe(true);
+
+    // run-a keeps working long after losing the lease. A `since` taken from
+    // MAX(run.updated_at) would drift forward with it; the anomaly started
+    // when ownership moved and must not move again.
+    context.database
+      .prepare("UPDATE agent_run SET updated_at = ? WHERE id = 'run-a'")
+      .run(new Date(takeoverAt.getTime() + 20 * 60_000).toISOString());
+
+    const detail = await context.queries.getProjectDetail("project-1");
+    const overview = await context.queries.getDashboardOverview();
+    const task = detail.tasks.items.find((value) => value.taskId === "task-1");
+    const fromTask = task?.attentionReasons.find(
+      (reason) => reason.kind === "task_run_without_lease",
+    );
+
+    expect(fromTask?.since).toBe(takeoverAt.toISOString());
+    // Identical kind, subject, summary, and since from all three endpoints.
+    expect(detail.summary.attention.items[0]).toEqual(fromTask);
+    expect(overview.attention.items[0]).toEqual(fromTask);
+    expect(overview.projects[0]?.attention.items[0]).toEqual(fromTask);
+  });
+
+  test("an expired lease that nobody took over is takeable, not authority", async () => {
     const context = await fixture();
     await seedProject(context, "project-1", "One");
     await seedAgent(context, "project-1", "agent-1", "developer");
@@ -1219,11 +1291,12 @@ describe("bounded evidence never decides authoritative state", () => {
       updatedAt: now,
       lease: false,
     });
-    // `ExecuteAgentRun` never renews, so any run outliving the lease window
-    // reaches this state normally. It means the lease is takeable, not broken.
+    // `ExecuteAgentRun` never renews the lease, so a run outliving its window
+    // reaches this routinely — common, but the task is takeable right now.
+    const expiresAt = new Date(now.getTime() - 30 * 60_000);
     seedLease(context, "task-1", "run-a", {
       acquiredAt: new Date(now.getTime() - 60 * 60_000),
-      expiresAt: new Date(now.getTime() - 30 * 60_000),
+      expiresAt,
     });
 
     const detail = await context.queries.getProjectDetail("project-1");
@@ -1231,12 +1304,25 @@ describe("bounded evidence never decides authoritative state", () => {
 
     expect(task?.lease?.ownerRunId).toBe("run-a");
     expect(task?.lease?.expired).toBe(true);
-    expect(task?.primaryAgentRun?.holdsLease).toBe(true);
-    expect(task?.runsWithoutLeaseCount).toBe(0);
-    expect(
-      task?.attentionReasons.map((reason) => reason.kind),
-    ).not.toContain("task_run_without_lease");
-    expect(detail.summary.attention.total).toBe(0);
+    // The row still names run-a; the exclusivity is gone.
+    expect(task?.primaryAgentRun?.ownsLeaseRecord).toBe(true);
+    expect(task?.primaryAgentRun?.hasValidLease).toBe(false);
+    expect(task?.runsWithoutValidLeaseCount).toBe(1);
+
+    // The exact project aggregate uses the same predicate as the projection.
+    expect(detail.summary.attention.total).toBe(1);
+    expect(detail.summary.attention.items[0]).toEqual({
+      kind: "task_lease_expired",
+      projectId: "project-1",
+      subjectType: "task",
+      subjectId: "task-1",
+      summary:
+        "1 active run of this task continues after its execution lease expired",
+      since: expiresAt.toISOString(),
+    });
+    expect(task?.attentionReasons).toContainEqual(
+      detail.summary.attention.items[0],
+    );
   });
 
   test("an active run with no lease row at all is reported explicitly", async () => {
@@ -1251,8 +1337,12 @@ describe("bounded evidence never decides authoritative state", () => {
         now,
       }),
     );
-    // `ExecuteAgentRun` releases the lease before it finalizes the run, so a
-    // crash in between leaves a non-terminal run owning nothing.
+    // An integrity/recovery anomaly, deliberately injected: `ExecuteAgentRun`
+    // persists the run's terminal status *before* its `finally` releases the
+    // lock, and a crash before finalization skips the `finally` — leaving the
+    // lock row behind rather than removing it. So this shape comes from
+    // corrupted, manually altered, or partially restored state, and the test
+    // exists to prove the read model stays honest about it defensively.
     await seedRun(context, {
       projectId: "project-1",
       taskId: "task-1",
@@ -1268,8 +1358,9 @@ describe("bounded evidence never decides authoritative state", () => {
 
     // `null` because no lease row exists — never a guessed one.
     expect(task?.lease).toBeNull();
-    expect(task?.primaryAgentRun?.holdsLease).toBe(false);
-    expect(task?.runsWithoutLeaseCount).toBe(1);
+    expect(task?.primaryAgentRun?.ownsLeaseRecord).toBe(false);
+    expect(task?.primaryAgentRun?.hasValidLease).toBe(false);
+    expect(task?.runsWithoutValidLeaseCount).toBe(1);
     expect(detail.summary.attention.total).toBe(1);
     expect(detail.summary.attention.items[0]?.summary).toBe(
       "1 active run of this task holds no execution lease",
