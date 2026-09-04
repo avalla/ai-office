@@ -230,7 +230,7 @@ Commands:
   agent:sync --project <id> [--directory <path>]
   agent:list --project <id>
   run:schedule --project <id> --task <id> --agent <id> [--resource <id> --operation <name> [--arguments <json>]]
-  run:tick --project <id> [--capacity <integer>]
+  run:tick --project <id> [--capacity <1-100>] [--json]
   run:list --project <id>
   run:show --project <id> --run <id>
   pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
