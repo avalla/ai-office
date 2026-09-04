@@ -216,7 +216,7 @@ user runtime `~/.ai-office`, so moving or relinking the program does not select
 a different authority. One daemon can manage multiple installed repositories.
 The legacy development
 commands `bun run daemon` and `bun run cli -- ...` remain supported and retain
-their current-working-directory runtime semantics. See
+the isolated source-checkout runtime semantics of `dev:daemon` and `dev:cli`. See
 [Local storage and state](#local-storage-and-state) for the advanced path model.
 
 ## After installation
@@ -735,10 +735,10 @@ program checkout. It selects `AI_OFFICE_HOME` when explicitly set and otherwise
 uses `~/.ai-office` as the **runtime data root**. Starting the daemon creates and
 migrates `<runtime-home>/project.sqlite` before opening
 `<runtime-home>/daemon.sock`. The legacy `bun run daemon` and `bun run cli`
-development scripts deliberately retain `<cwd>/.ai-office` semantics. The
+development scripts select `<source-checkout>/.ai-office` regardless of cwd. The
 production CLI is only a daemon client (except for local help), so the daemon
 owns operational access to that database. `bun run db:migrate` can also migrate
-the same current-working-directory database directly.
+the same isolated source-checkout database directly.
 
 Three path roles are independent in the current implementation:
 

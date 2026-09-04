@@ -298,6 +298,7 @@ describe("ExecuteAgentRun result and cleanup", () => {
     worktrees: FakeWorktrees,
     signal?: AbortSignal,
     lockReleaseError?: Error,
+    resultPersistenceError?: Error,
   ) {
     const { database, runtime, now } = await setup();
     await runtime.acquireTaskLock(
@@ -310,6 +311,13 @@ describe("ExecuteAgentRun result and cleanup", () => {
       runtime.releaseTaskLock = async () => {
         throw lockReleaseError;
       };
+    if (resultPersistenceError !== undefined) {
+      const save = runtime.saveRun.bind(runtime);
+      runtime.saveRun = async (run) => {
+        if (run.snapshot().status === "completed") throw resultPersistenceError;
+        await save(run);
+      };
+    }
     const run = await runtime.findRun("run-1");
     const result = await new ExecuteAgentRun(
       runtime,
@@ -355,6 +363,22 @@ describe("ExecuteAgentRun result and cleanup", () => {
     });
     expect(value.locks).toBe(0);
     expect(value.events.at(-1)).toBe("failed");
+  });
+  test("a terminal persistence failure reports interruption and preserves recovery evidence", async () => {
+    const value = await execute(
+      new FakeExecutor(),
+      new FakeWorktrees(),
+      undefined,
+      undefined,
+      new Error("secret=never-expose"),
+    );
+    expect(value.result).toMatchObject({
+      status: "interrupted",
+      error: { code: "RUN_STATE_PERSISTENCE_FAILED" },
+    });
+    expect(value.locks).toBe(1);
+    expect(value.events.at(-1)).toBe("reviewing");
+    expect(JSON.stringify(value.result)).not.toContain("never-expose");
   });
   test("cancels before worktree preparation when already aborted", async () => {
     const controller = new AbortController();
