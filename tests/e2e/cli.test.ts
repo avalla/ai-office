@@ -146,7 +146,7 @@ describe("Project/Task CLI vertical slice", () => {
     const projectRoot = prepareExistingProjectRoot();
     const importedOutput = captureIo();
     expect(
-      await runCli(["project:import", "."], {
+      await runCli(["project:import", projectRoot], {
         projectRoot,
         io: importedOutput.io,
       }),

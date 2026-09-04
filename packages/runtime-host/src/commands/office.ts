@@ -1,5 +1,4 @@
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
 import { ApplyOfficeManifest } from "@ai-office/application/commands/apply-office-manifest.ts";
 import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
 import { OfficeManifestNotFoundError } from "@ai-office/application/errors.ts";
@@ -33,7 +32,6 @@ function isTaskKind(value: string): value is OfficeTaskKind {
 
 function manifestFromOptions(
   options: ReadonlyMap<string, string>,
-  projectRoot: string,
 ): OfficeManifest {
   const inline = options.get("manifest");
   const file = options.get("file");
@@ -44,23 +42,13 @@ function manifestFromOptions(
   }
   if (inline !== undefined) return parseBoundedManifest(inline);
 
-  const canonicalRoot = realpathSync(projectRoot);
+  // The path arrives already resolved and containment-checked in the caller's
+  // filesystem context; this process only revalidates what it can observe.
   let canonicalFile: string;
   try {
-    canonicalFile = realpathSync(resolve(projectRoot, file!));
+    canonicalFile = realpathSync(file!);
   } catch {
     throw new CliUsageError(`Office manifest file was not found: ${file}`);
-  }
-  const relativePath = relative(canonicalRoot, canonicalFile);
-  if (
-    relativePath === "" ||
-    relativePath === ".." ||
-    relativePath.startsWith(`..${sep}`) ||
-    isAbsolute(relativePath)
-  ) {
-    throw new CliUsageError(
-      "Office manifest file must be inside the project root",
-    );
   }
   const fileStatus = statSync(canonicalFile);
   if (!fileStatus.isFile()) {
@@ -97,7 +85,7 @@ export async function handleOfficeCommand(
     const parsed = parseArguments(args, new Set(["manifest", "file"]));
     if (parsed.positionals.length > 0)
       throw new CliUsageError("office:validate only accepts named options");
-    const manifest = manifestFromOptions(parsed.options, context.projectRoot);
+    const manifest = manifestFromOptions(parsed.options);
     context.io.stdout(
       JSON.stringify({ valid: true, schemaVersion: manifest.schemaVersion }),
     );
@@ -111,7 +99,7 @@ export async function handleOfficeCommand(
     );
     if (parsed.positionals.length > 0)
       throw new CliUsageError("office:apply only accepts named options");
-    const manifest = manifestFromOptions(parsed.options, context.projectRoot);
+    const manifest = manifestFromOptions(parsed.options);
     const revision = await new ApplyOfficeManifest(
       context.projects,
       context.officeManifests,

@@ -139,6 +139,7 @@ import type { ProjectBindingAdapter } from "@ai-office/application/ports/project
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
 import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
+import { assertAbsoluteCallerLocalPaths } from "./caller-local-paths.ts";
 import { ProjectLifecycleError } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 import { ProjectSourceAssociationError } from "@ai-office/application/commands/import-project.ts";
@@ -522,6 +523,19 @@ export async function executeRuntimeCommand(
   if (!isCommand(command)) {
     io.stderr(`Unknown command: ${command}\n\n${runtimeCommandHelp}`);
     return 1;
+  }
+
+  // Checked before any state is opened: a relative caller-local path means the
+  // client failed to establish its own filesystem context, and this process
+  // must never substitute its own working directory for it.
+  try {
+    assertAbsoluteCallerLocalPaths(args);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      io.stderr(error.message);
+      return 1;
+    }
+    throw error;
   }
 
   const runtimePaths = withRuntimePathOverrides(

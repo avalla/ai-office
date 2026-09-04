@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
+import { resolveCallerLocalPaths } from "@ai-office/runtime-host/caller-local-paths.ts";
 import {
   cliHelp,
   type CliIo,
@@ -143,77 +144,12 @@ const projectScopedCommands = new Set([
   "action:show",
 ]);
 
-function lifecycleArguments(
-  args: string[],
-  workingDirectory: string,
-): string[] {
-  const command = args[0];
-  if (
-    command !== "install" &&
-    command !== "status" &&
-    command !== "uninstall" &&
-    command !== "next"
-  )
-    return args;
-  const result = [...args];
-  let positionalIndex = -1;
-  for (let index = 1; index < result.length; index += 1) {
-    const argument = result[index];
-    if (argument === "--approve") {
-      index += 1;
-      continue;
-    }
-    if (argument?.startsWith("--") === true) continue;
-    positionalIndex = index;
-    break;
-  }
-  if (positionalIndex === -1) result.splice(1, 0, workingDirectory);
-  else
-    result[positionalIndex] = resolve(
-      workingDirectory,
-      result[positionalIndex]!,
-    );
-  return result;
-}
-
-function portableProjectArguments(
-  args: string[],
-  workingDirectory: string,
-): string[] {
-  const command = args[0];
-  if (command !== "project:backup" && command !== "project:restore")
-    return args;
-  const result = [...args];
-  for (let index = 1; index < result.length; index += 1) {
-    const argument = result[index];
-    if (argument === "--output" || argument === "--root") {
-      const value = result[index + 1];
-      if (value !== undefined && !value.startsWith("--"))
-        result[index + 1] = resolve(workingDirectory, value);
-      index += 1;
-      continue;
-    }
-    if (
-      command === "project:restore" &&
-      argument !== undefined &&
-      !argument.startsWith("--")
-    )
-      result[index] = resolve(workingDirectory, argument);
-  }
-  if (command === "project:restore" && !result.includes("--root"))
-    result.push("--root", resolve(workingDirectory));
-  return result;
-}
-
 async function resolvedArguments(
   args: string[],
   workingDirectory: string,
   bindings: ProjectBindingAdapter,
 ): Promise<{ args: string[]; discoveredRoot?: string }> {
-  const lifecycle = lifecycleArguments(
-    portableProjectArguments(args, workingDirectory),
-    workingDirectory,
-  );
+  const lifecycle = resolveCallerLocalPaths(args, workingDirectory);
   const command = lifecycle[0];
   if (
     command === undefined ||
@@ -432,7 +368,7 @@ export async function runRuntimeCli(
       error instanceof RuntimeUnavailableError &&
       (args[0] === "status" || args[0] === "next")
     ) {
-      const prepared = lifecycleArguments(args, workingDirectory);
+      const prepared = resolveCallerLocalPaths(args, workingDirectory);
       const status = await getOfflineProjectStatus(prepared[1]!, {
         runtimeHome: runtimePaths.runtimeHome,
         // A request to the host was made and failed, so "unreachable" is
