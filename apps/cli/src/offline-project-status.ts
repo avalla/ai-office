@@ -88,8 +88,8 @@ export async function getOfflineProjectStatus(
       severity: "error",
       code: "daemon_unavailable",
       message:
-        "The project binding exists, but the AI Office runtime is currently unreachable",
-      recovery: "Start the AI Office daemon and run status again",
+        "The project binding exists, but the authoritative AI Office Runtime is currently unreachable",
+      recovery: "Run: ai-office runtime start",
     });
 
   const clientStatuses: LifecycleClientStatus[] = [];

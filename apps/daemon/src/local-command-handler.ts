@@ -3,89 +3,26 @@ import type {
   DaemonCommandResponse,
 } from "@ai-office/application/protocol/daemon-protocol.ts";
 import { daemonProtocolVersion } from "@ai-office/application/protocol/daemon-protocol.ts";
-import {
-  CliPromptRequiredError,
-  runCli,
-  type CliIo,
-} from "../../cli/src/cli.ts";
-import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
-import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
-import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
-import type { RuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
+import type { AiOfficeRuntime } from "@ai-office/application/runtime/ai-office-runtime.ts";
 
 export interface DaemonCommandHandler {
   execute(request: DaemonCommandRequest): Promise<DaemonCommandResponse>;
 }
 
 export class LocalCommandHandler implements DaemonCommandHandler {
-  constructor(
-    private readonly runtimePaths: RuntimePaths,
-    private readonly commandRoot: string,
-    private readonly migrationDirectory?: string,
-    private readonly globalMigrationDirectory?: string,
-    private readonly agentClients?: AgentClientCatalog,
-    private readonly projectBindings?: ProjectBindingAdapter,
-    private readonly defaultOfficeManifest?: OfficeManifest,
-  ) {}
+  constructor(private readonly runtime: AiOfficeRuntime) {}
 
   async execute(request: DaemonCommandRequest): Promise<DaemonCommandResponse> {
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    let promptAnswerConsumed = false;
-    const io: CliIo = {
-      stdout: (message) => stdout.push(message),
-      stderr: (message) => stderr.push(message),
-      prompt: async (message) => {
-        if (request.promptAnswer === undefined || promptAnswerConsumed) {
-          throw new CliPromptRequiredError(message);
-        }
-        promptAnswerConsumed = true;
-        return request.promptAnswer;
-      },
+    const result = await this.runtime.execute({
+      args: request.args,
+      ...(request.promptAnswer === undefined
+        ? {}
+        : { promptAnswer: request.promptAnswer }),
+    });
+    return {
+      protocolVersion: daemonProtocolVersion,
+      requestId: request.requestId,
+      ...result,
     };
-
-    try {
-      const exitCode = await runCli(request.args, {
-        projectRoot: this.commandRoot,
-        runtimePaths: this.runtimePaths,
-        ...(this.migrationDirectory === undefined
-          ? {}
-          : { migrationDirectory: this.migrationDirectory }),
-        ...(this.globalMigrationDirectory === undefined
-          ? {}
-          : { globalMigrationDirectory: this.globalMigrationDirectory }),
-        ...(this.agentClients === undefined
-          ? {}
-          : { agentClients: this.agentClients }),
-        ...(this.projectBindings === undefined
-          ? {}
-          : { projectBindings: this.projectBindings }),
-        ...(this.defaultOfficeManifest === undefined
-          ? {}
-          : { defaultOfficeManifest: this.defaultOfficeManifest }),
-        io,
-        propagatePromptRequired: true,
-      });
-
-      return {
-        protocolVersion: daemonProtocolVersion,
-        requestId: request.requestId,
-        exitCode,
-        stdout,
-        stderr,
-      };
-    } catch (error) {
-      if (error instanceof CliPromptRequiredError) {
-        return {
-          protocolVersion: daemonProtocolVersion,
-          requestId: request.requestId,
-          exitCode: null,
-          stdout,
-          stderr,
-          prompt: { message: error.prompt },
-        };
-      }
-      throw error;
-    }
   }
 }

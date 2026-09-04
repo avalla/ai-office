@@ -2,10 +2,11 @@ import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { cliHelp, type CliIo } from "./cli.ts";
 import {
-  DaemonClient,
-  DaemonUnavailableError,
+  IpcRuntimeClient,
   InvalidDaemonResponseError,
+  RuntimeUnavailableError,
 } from "./daemon-client.ts";
+import type { RuntimeClient } from "./runtime-client.ts";
 import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
 import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
 import { runDashboardCli } from "./dashboard-cli.ts";
@@ -24,7 +25,7 @@ import {
   type RuntimePaths,
 } from "@ai-office/runtime-paths/runtime-paths.ts";
 
-export interface DaemonCliOptions {
+export interface RuntimeCliOptions {
   projectRoot?: string;
   runtimePaths?: RuntimePaths;
   socketPath?: string;
@@ -36,7 +37,11 @@ export interface DaemonCliOptions {
   /** Stops the foreground `dashboard` host; supplied by tests. */
   dashboardSignal?: AbortSignal;
   openBrowser?: (url: string) => Promise<void>;
+  runtimeClient?: RuntimeClient;
 }
+
+/** @deprecated Use RuntimeCliOptions. */
+export type DaemonCliOptions = RuntimeCliOptions;
 
 const defaultIo: CliIo = {
   stdout: (message) => console.log(message),
@@ -223,7 +228,7 @@ async function resolvedArguments(
 }
 
 async function resolveDiscoveredProject(
-  client: DaemonClient,
+  client: RuntimeClient,
   rootPath: string,
 ): Promise<string> {
   const response = await client.execute(["status", rootPath, "--json"]);
@@ -263,9 +268,9 @@ async function resolveDiscoveredProject(
   return status.project.id;
 }
 
-export async function runDaemonCli(
+export async function runRuntimeCli(
   args: string[],
-  options: DaemonCliOptions,
+  options: RuntimeCliOptions,
 ): Promise<number> {
   const io = options.io ?? defaultIo;
   let runtimePaths: RuntimePaths;
@@ -284,7 +289,7 @@ export async function runDaemonCli(
     throw error;
   }
   const socketPath = options.socketPath ?? runtimePaths.socketPath;
-  const client = new DaemonClient(socketPath);
+  const client = options.runtimeClient ?? new IpcRuntimeClient(socketPath);
   const workingDirectory = options.workingDirectory ?? process.cwd();
   const bindings = options.projectBindings ?? new LocalProjectBindingAdapter();
 
@@ -299,14 +304,27 @@ export async function runDaemonCli(
       return 0;
     }
 
-    if (args[0] === "daemon:health") {
+    if (
+      args[0] === "daemon:health" ||
+      args[0] === "runtime:health" ||
+      (args[0] === "runtime" && args[1] === "status" && args.length === 2)
+    ) {
       const health = await client.health();
-      io.stdout(`Daemon status: ${health.status}`);
+      io.stdout(
+        `${args[0] === "daemon:health" ? "Daemon" : "Runtime"} status: ${health.status}`,
+      );
       io.stdout(`Started at: ${health.startedAt}`);
       return 0;
     }
 
-    // The dashboard is a foreground local host, not a daemon command: it is
+    if (args[0] === "runtime" && args[1] === "start") {
+      io.stderr(
+        'Start the persistent AI Office Runtime host with "ai-office runtime start" through the linkable CLI.',
+      );
+      return 1;
+    }
+
+    // The dashboard is a foreground local host, not a Runtime command: it is
     // handled before protocol dispatch for the same reason runtime:purge is.
     // Awaited on purpose: returning the promise from inside the try would let
     // a rejection bypass the catch below.
@@ -331,6 +349,21 @@ export async function runDaemonCli(
           ? {}
           : { adapter: options.runtimePurgeAdapter }),
       });
+
+    if (args[0] === "status" && args.includes("--offline")) {
+      const offlineArgs = args.filter((argument) => argument !== "--offline");
+      const prepared = lifecycleArguments(offlineArgs, workingDirectory);
+      const status = await getOfflineProjectStatus(prepared[1]!, {
+        runtimeHome: runtimePaths.runtimeHome,
+        bindings,
+        ...(options.agentClients === undefined
+          ? {}
+          : { clients: options.agentClients }),
+      });
+      if (offlineArgs.includes("--json")) io.stdout(JSON.stringify(status));
+      else printProjectLifecycleStatus(status, { io });
+      return status.health === "not_installed" ? 1 : 0;
+    }
 
     const prepared = await resolvedArguments(args, workingDirectory, bindings);
     const commandArguments =
@@ -369,7 +402,7 @@ export async function runDaemonCli(
     }
   } catch (error) {
     if (
-      error instanceof DaemonUnavailableError &&
+      error instanceof RuntimeUnavailableError &&
       (args[0] === "status" || args[0] === "next")
     ) {
       const prepared = lifecycleArguments(args, workingDirectory);
@@ -394,7 +427,7 @@ export async function runDaemonCli(
       return 1;
     }
     if (
-      error instanceof DaemonUnavailableError ||
+      error instanceof RuntimeUnavailableError ||
       error instanceof InvalidDaemonResponseError ||
       error instanceof ProjectBindingError ||
       error instanceof RuntimePathError ||
@@ -406,3 +439,6 @@ export async function runDaemonCli(
     throw error;
   }
 }
+
+/** @deprecated Use runRuntimeCli. */
+export const runDaemonCli = runRuntimeCli;

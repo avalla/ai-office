@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from "vitest";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
+import {
+  DaemonClient,
+  IpcRuntimeClient,
+} from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { DaemonAlreadyRunningError } from "../../apps/daemon/src/office-daemon.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -43,35 +46,67 @@ describe("local daemon", () => {
       expect(health.status).toBe("ok");
       expect(Number.isNaN(Date.parse(health.startedAt))).toBe(false);
 
-      const response = await client.execute(["project:create", "Sensitive project name"]);
+      const response = await client.execute([
+        "project:create",
+        "Sensitive project name",
+      ]);
       expect(response.exitCode).toBe(0);
       expect(response.stdout[0]).toMatch(/^Project created: /);
       expect(response.stderr).toEqual([]);
       expect(existsSync(socketPath)).toBe(true);
+
+      const projectId = response.stdout[0]!.replace("Project created: ", "");
+      const secondClient = new IpcRuntimeClient(socketPath);
+      const createdTask = await secondClient.execute([
+        "task:create",
+        "--project",
+        projectId,
+        "--title",
+        "Created by another client",
+      ]);
+      expect(createdTask.exitCode).toBe(0);
+      const observedByFirstClient = await client.execute([
+        "task:list",
+        "--project",
+        projectId,
+      ]);
+      expect(observedByFirstClient.stdout.join("\n")).toContain(
+        "Created by another client",
+      );
     } finally {
       controller.abort();
       await running;
     }
 
     expect(existsSync(socketPath)).toBe(false);
-    const database = openDatabase(join(projectRoot, ".ai-office", "project.sqlite"));
+    const database = openDatabase(
+      join(projectRoot, ".ai-office", "project.sqlite"),
+    );
     const events = database
       .query<{ event_type: string; payload_json: string }, []>(
-        "SELECT event_type, payload_json FROM audit_event ORDER BY rowid"
+        "SELECT event_type, payload_json FROM audit_event ORDER BY rowid",
       )
       .all();
     expect(events.map((event) => event.event_type)).toEqual([
       "daemon.started",
       "command.received",
       "command.completed",
-      "daemon.stopped"
+      "command.received",
+      "command.completed",
+      "command.received",
+      "command.completed",
+      "daemon.stopped",
     ]);
-    expect(events.some((event) => event.payload_json.includes("Sensitive project name"))).toBe(false);
-    expect(() => database.exec("UPDATE audit_event SET event_type = 'changed'")).toThrow(
-      "audit_event is append-only"
-    );
+    expect(
+      events.some((event) =>
+        event.payload_json.includes("Sensitive project name"),
+      ),
+    ).toBe(false);
+    expect(() =>
+      database.exec("UPDATE audit_event SET event_type = 'changed'"),
+    ).toThrow("audit_event is append-only");
     expect(() => database.exec("DELETE FROM audit_event")).toThrow(
-      "audit_event is append-only"
+      "audit_event is append-only",
     );
     database.close();
   });
@@ -90,9 +125,9 @@ describe("local daemon", () => {
     try {
       await waitForHealth(client);
       const second = await bootstrap({ projectRoot, socketPath });
-      await expect(second.start(new AbortController().signal)).rejects.toBeInstanceOf(
-        DaemonAlreadyRunningError
-      );
+      await expect(
+        second.start(new AbortController().signal),
+      ).rejects.toBeInstanceOf(DaemonAlreadyRunningError);
       expect((await client.health()).status).toBe("ok");
     } finally {
       firstController.abort();

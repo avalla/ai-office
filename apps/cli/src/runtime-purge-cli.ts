@@ -3,7 +3,8 @@ import {
   RuntimePurgeApprovalError,
 } from "@ai-office/application/runtime/manage-runtime-purge.ts";
 import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
-import { DaemonClient, DaemonUnavailableError } from "./daemon-client.ts";
+import { RuntimeUnavailableError } from "./daemon-client.ts";
+import type { RuntimeClient } from "./runtime-client.ts";
 import {
   CliUsageError,
   parseArguments,
@@ -16,7 +17,7 @@ import {
 
 export interface RuntimePurgeCliOptions {
   runtimeRoot: string;
-  daemonClient: Pick<DaemonClient, "health">;
+  daemonClient: Pick<RuntimeClient, "health">;
   io: CommandIo;
   adapter?: RuntimePurgeAdapter;
 }
@@ -33,7 +34,7 @@ export async function runRuntimePurgeCli(
       );
       return 1;
     } catch (error) {
-      if (!(error instanceof DaemonUnavailableError)) throw error;
+      if (!(error instanceof RuntimeUnavailableError)) throw error;
     }
 
     const parsed = parseArguments(args, new Set(["approve"]));

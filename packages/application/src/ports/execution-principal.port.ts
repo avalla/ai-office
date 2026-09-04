@@ -1,9 +1,11 @@
 /**
  * Principal established by an application boundary.
  *
- * The local CLI is the trusted single-user operator surface. Agent principals
- * are intentionally run-bound so an agent cannot manufacture authority by
- * supplying an arbitrary agent identifier.
+ * In the trusted-local single-user model, local client commands receive the
+ * application operator role. This is routing inside AI Office, not
+ * authentication of a human or of one same-UID process against another. Agent
+ * principals are intentionally run-bound so callers cannot manufacture
+ * authority by supplying an arbitrary agent identifier.
  */
 export interface OperatorPrincipal {
   readonly kind: "operator";

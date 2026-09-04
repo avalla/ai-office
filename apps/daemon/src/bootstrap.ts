@@ -10,7 +10,8 @@ import { SqliteOperationalReadRepository } from "@ai-office/storage-sqlite/repos
 import { OperationalEventBus } from "@ai-office/application/events/operational-event-bus.ts";
 import { OperationalQueryService } from "@ai-office/application/queries/operational-query-service.ts";
 import { LocalCommandHandler } from "./local-command-handler.ts";
-import { OfficeDaemon } from "./office-daemon.ts";
+import { ApplicationRuntime } from "./application-runtime.ts";
+import { PersistentRuntimeHost } from "./office-daemon.ts";
 import { QueryApi } from "./query-api.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
@@ -38,7 +39,7 @@ export interface BootstrapOptions {
 
 export async function bootstrap(
   options: BootstrapOptions = {},
-): Promise<OfficeDaemon> {
+): Promise<PersistentRuntimeHost> {
   const commandRoot = options.projectRoot ?? process.cwd();
   const runtimePaths = withRuntimePathOverrides(
     options.runtimePaths ??
@@ -67,27 +68,30 @@ export async function bootstrap(
     new SystemClock(),
   );
 
-  // The query surface reuses the daemon's already-migrated connection. It is
-  // read-only, so it needs no transaction runner and adds no write path.
+  // The query surface reuses the persistent host's already-migrated
+  // connection. It is read-only, so it needs no transaction runner and adds no
+  // write path.
   const queryEvents = new OperationalEventBus();
   const queries = new OperationalQueryService({
     reads: new SqliteOperationalReadRepository(database),
     clock: new SystemClock(),
   });
 
-  return new OfficeDaemon({
+  const runtime = new ApplicationRuntime(
+    runtimePaths,
+    commandRoot,
+    migrationDirectory,
+    options.globalMigrationDirectory,
+    options.agentClients,
+    options.projectBindings,
+    options.defaultOfficeManifest,
+  );
+
+  return new PersistentRuntimeHost({
     socketPath: runtimePaths.socketPath,
     queryApi: new QueryApi({ queries, events: queryEvents }),
     queryEvents,
-    handler: new LocalCommandHandler(
-      runtimePaths,
-      commandRoot,
-      migrationDirectory,
-      options.globalMigrationDirectory,
-      options.agentClients,
-      options.projectBindings,
-      options.defaultOfficeManifest,
-    ),
+    handler: new LocalCommandHandler(runtime),
     events,
     onStopped: () => database.close(),
   });

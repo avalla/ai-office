@@ -13,14 +13,14 @@ import { CommandQueue } from "./command-queue.ts";
 import type { DaemonCommandHandler } from "./local-command-handler.ts";
 import type { QueryApi } from "./query-api.ts";
 
-export class DaemonAlreadyRunningError extends Error {
+export class RuntimeHostAlreadyRunningError extends Error {
   constructor(socketPath: string) {
-    super(`AI Office daemon is already running at ${socketPath}`);
-    this.name = "DaemonAlreadyRunningError";
+    super(`AI Office Runtime host is already running at ${socketPath}`);
+    this.name = "RuntimeHostAlreadyRunningError";
   }
 }
 
-export interface OfficeDaemonOptions {
+export interface PersistentRuntimeHostOptions {
   socketPath: string;
   handler: DaemonCommandHandler;
   events: RecordAuditEvent;
@@ -43,13 +43,13 @@ function json(value: unknown, status = 200): Response {
   });
 }
 
-export class OfficeDaemon {
+export class PersistentRuntimeHost {
   private readonly queue = new CommandQueue();
   private readonly now: () => Date;
   private startedAt?: Date;
   private started = false;
 
-  constructor(private readonly options: OfficeDaemonOptions) {
+  constructor(private readonly options: PersistentRuntimeHostOptions) {
     this.now = options.now ?? (() => new Date());
   }
 
@@ -281,9 +281,9 @@ export class OfficeDaemon {
         signal: AbortSignal.timeout(500),
       });
       if (response.ok)
-        throw new DaemonAlreadyRunningError(this.options.socketPath);
+        throw new RuntimeHostAlreadyRunningError(this.options.socketPath);
     } catch (error) {
-      if (error instanceof DaemonAlreadyRunningError) throw error;
+      if (error instanceof RuntimeHostAlreadyRunningError) throw error;
     }
 
     this.removeSocket();
@@ -295,6 +295,14 @@ export class OfficeDaemon {
     }
   }
 }
+
+// Compatibility exports: daemon remains the name of the current local hosting
+// mechanism and of the version-1 protocol/audit vocabulary.
+export {
+  PersistentRuntimeHost as OfficeDaemon,
+  RuntimeHostAlreadyRunningError as DaemonAlreadyRunningError,
+};
+export type OfficeDaemonOptions = PersistentRuntimeHostOptions;
 
 class DaemonCommandTimeoutError extends Error {
   constructor() {

@@ -169,15 +169,17 @@ Commands:
   install [path] [--rebind] [--json]
     reconciles repository identity, shared AI-OFFICE.md guidance, and detected host skills
     exit 0: installed; exit 2: installed with warnings; exit 1: failed/partial
-  status [path] [--json]
+  status [path] [--offline] [--json]
   next [path] [--json]
     reports project handover readiness and the recommended next action
     exit 0: assessed; exit 1: authoritative state unavailable
   handover:confirm --project <id> --summary <text> [--json]
     records a confirmed handover repository review; evidence only, grants nothing
   uninstall [path] [--approve <plan-hash>] [--json]
-  daemon  # available through the linkable ai-office entry point
-  daemon:health
+  runtime start   # foreground persistent host; linkable ai-office entry point
+  runtime status
+  daemon          # compatibility alias for runtime start
+  daemon:health   # compatibility alias for runtime status
   dashboard [--port <port>] [--host <loopback-address>] [--no-open]
     serves the read-only operations console on loopback until interrupted;
     requires a running daemon and prints the URL carrying the session token
@@ -262,7 +264,8 @@ Commands:
 Environment (linkable ai-office entry point):
   AI_OFFICE_HOME  runtime data home; defaults to ~/.ai-office`;
 
-// runtime:purge is intentionally absent: the daemon client handles that
+// runtime lifecycle commands are intentionally absent: the Runtime client
+// handles host health and the destructive offline purge before dispatch.
 // destructive offline lifecycle boundary before protocol dispatch.
 const commands = [
   "install",

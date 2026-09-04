@@ -1,11 +1,22 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
+import { runDaemonCli, runRuntimeCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "../../apps/cli/src/cli.ts";
-import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
+import {
+  DaemonClient,
+  RuntimeUnavailableError,
+} from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
+import type { RuntimeClient } from "../../apps/cli/src/runtime-client.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -84,6 +95,16 @@ describe("CLI to daemon end-to-end", () => {
         }),
       ).toBe(0);
       expect(healthOutput.stdout[0]).toBe("Daemon status: ok");
+
+      const runtimeHealthOutput = captureIo();
+      expect(
+        await runRuntimeCli(["runtime", "status"], {
+          projectRoot,
+          socketPath,
+          io: runtimeHealthOutput.io,
+        }),
+      ).toBe(0);
+      expect(runtimeHealthOutput.stdout[0]).toBe("Runtime status: ok");
 
       const importOutput = captureIo();
       expect(
@@ -207,7 +228,7 @@ describe("CLI to daemon end-to-end", () => {
         io: output.io,
       }),
     ).toBe(1);
-    expect(output.stderr[0]).toContain('Start it with "bun run daemon"');
+    expect(output.stderr[0]).toContain('"ai-office runtime start"');
 
     const helpOutput = captureIo();
     expect(
@@ -215,5 +236,97 @@ describe("CLI to daemon end-to-end", () => {
     ).toBe(0);
     expect(helpOutput.stdout[0]).toContain("daemon:health");
     expect(helpOutput.stderr).toEqual([]);
+  });
+
+  test("never falls back to a local writer when the Runtime is unavailable", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-no-fallback-"));
+    temporaryDirectories.push(projectRoot);
+    const runtimeHome = join(projectRoot, "runtime");
+    mkdirSync(runtimeHome);
+    const runtimePaths = resolveRuntimePaths({
+      mode: "user",
+      runtimeHome,
+    });
+    let executeAttempts = 0;
+    const unavailableRuntime: RuntimeClient = {
+      health: async () => {
+        throw new RuntimeUnavailableError(runtimePaths.socketPath);
+      },
+      execute: async () => {
+        executeAttempts += 1;
+        throw new RuntimeUnavailableError(runtimePaths.socketPath);
+      },
+    };
+    const output = captureIo();
+
+    expect(
+      await runRuntimeCli(["project:create", "No local writer"], {
+        projectRoot,
+        runtimePaths,
+        runtimeClient: unavailableRuntime,
+        io: output.io,
+      }),
+    ).toBe(1);
+    expect(executeAttempts).toBe(1);
+    expect(existsSync(runtimePaths.projectDatabasePath)).toBe(false);
+    expect(output.stderr).toEqual([
+      expect.stringContaining("AI Office Runtime is not available"),
+    ]);
+  });
+
+  test("supports explicit offline status without contacting the Runtime", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-offline-status-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const runtimeHome = join(projectRoot, "runtime");
+    mkdirSync(runtimeHome);
+    mkdirSync(join(projectRoot, ".ai-office"));
+    writeFileSync(
+      join(projectRoot, ".ai-office", "project.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        managedBy: "ai-office",
+        repositoryId: "repo_offline-status-test",
+      }),
+    );
+    const runtimePaths = resolveRuntimePaths({
+      mode: "user",
+      runtimeHome,
+    });
+    let contacted = false;
+    const runtimeClient: RuntimeClient = {
+      health: async () => {
+        contacted = true;
+        throw new Error("unexpected health request");
+      },
+      execute: async () => {
+        contacted = true;
+        throw new Error("unexpected command request");
+      },
+    };
+    const output = captureIo();
+
+    expect(
+      await runRuntimeCli(["status", ".", "--offline", "--json"], {
+        projectRoot,
+        workingDirectory: projectRoot,
+        runtimePaths,
+        runtimeClient,
+        io: output.io,
+      }),
+    ).toBe(0);
+    expect(contacted).toBe(false);
+    expect(JSON.parse(output.stdout[0]!)).toMatchObject({
+      runtime: {
+        daemon: "unreachable",
+        authoritativeState: "unavailable",
+      },
+      project: {
+        repositoryIdentity: { state: "valid" },
+        runtimeAssociation: { state: "unverified" },
+      },
+    });
+    expect(existsSync(runtimePaths.projectDatabasePath)).toBe(false);
   });
 });

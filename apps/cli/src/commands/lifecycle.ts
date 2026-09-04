@@ -208,7 +208,7 @@ export function printProjectLifecycleStatus(
     );
   context.io.stdout("");
   context.io.stdout("Runtime");
-  context.io.stdout(`  daemon: ${result.runtime.daemon}`);
+  context.io.stdout(`  persistent host: ${result.runtime.daemon}`);
   context.io.stdout(`  home: ${result.runtime.home}`);
   context.io.stdout(`  state: ${result.runtime.authoritativeState}`);
   context.io.stdout("");

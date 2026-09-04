@@ -7,13 +7,14 @@ import {
   isDaemonErrorResponse,
   isDaemonCommandResponse,
 } from "@ai-office/application/protocol/daemon-protocol.ts";
+import type { RuntimeClient } from "./runtime-client.ts";
 
-export class DaemonUnavailableError extends Error {
+export class RuntimeUnavailableError extends Error {
   constructor(socketPath: string) {
     super(
-      `AI Office daemon is not available at ${socketPath}. Start it with "bun run daemon" in development mode or "ai-office daemon" through the linkable CLI.`,
+      `AI Office Runtime is not available at ${socketPath}. Start its persistent local host with "ai-office runtime start" or, in development mode, "bun run daemon".`,
     );
-    this.name = "DaemonUnavailableError";
+    this.name = "RuntimeUnavailableError";
   }
 }
 
@@ -34,7 +35,7 @@ function isHealthResponse(value: unknown): value is DaemonHealthResponse {
   );
 }
 
-export class DaemonClient {
+export class IpcRuntimeClient implements RuntimeClient {
   constructor(private readonly socketPath: string) {}
 
   async health(): Promise<DaemonHealthResponse> {
@@ -80,7 +81,7 @@ export class DaemonClient {
         signal: AbortSignal.timeout(10_000),
       });
     } catch {
-      throw new DaemonUnavailableError(this.socketPath);
+      throw new RuntimeUnavailableError(this.socketPath);
     }
 
     let value: unknown;
@@ -102,3 +103,9 @@ export class DaemonClient {
     return value;
   }
 }
+
+/** @deprecated Use IpcRuntimeClient; retained for public API compatibility. */
+export class DaemonClient extends IpcRuntimeClient {}
+
+/** @deprecated Use RuntimeUnavailableError. */
+export { RuntimeUnavailableError as DaemonUnavailableError };
