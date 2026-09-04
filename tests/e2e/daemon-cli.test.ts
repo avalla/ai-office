@@ -1,6 +1,12 @@
+import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
+import { ManageAgentClientIntegration } from "@ai-office/application/agent-client/manage-agent-client-integration.ts";
+import { buildProjectInstructionContract } from "@ai-office/application/project-lifecycle/build-project-instructions.ts";
+import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   existsSync,
+  chmodSync,
+  readFileSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -83,6 +89,37 @@ function offlineRuntimePaths(projectRoot: string) {
   const runtimeHome = join(projectRoot, "runtime");
   if (!existsSync(runtimeHome)) mkdirSync(runtimeHome);
   return resolveRuntimePaths({ mode: "user", runtimeHome });
+}
+
+async function cleanLocalIntegration(
+  projectRoot: string,
+): Promise<DefaultAgentClientCatalog> {
+  const bin = join(projectRoot, "bin");
+  mkdirSync(bin);
+  writeFileSync(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
+  chmodSync(join(bin, "codex"), 0o755);
+  const catalog = new DefaultAgentClientCatalog({ pathValue: bin });
+  const service = new ManageAgentClientIntegration(catalog);
+  const manifest = parseOfficeManifestJson(
+    readFileSync(
+      new URL(
+        "../../.agents/skills/ai-office/assets/default-office-manifest.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const input = {
+    clientId: "codex" as const,
+    rootPath: projectRoot,
+    contract: buildProjectInstructionContract({
+      projectName: "Offline fixture",
+      manifest,
+    }),
+  };
+  const plan = await service.plan(input);
+  await service.apply({ ...input, approvedPlanHash: plan.planHash });
+  return catalog;
 }
 
 /**
@@ -325,6 +362,7 @@ describe("CLI to daemon end-to-end", () => {
 
   test("explicit offline status never contacts the Runtime and never claims it is unreachable", async () => {
     const projectRoot = installedRepository("ai-office-offline-status-");
+    const agentClients = await cleanLocalIntegration(projectRoot);
     const runtimePaths = offlineRuntimePaths(projectRoot);
     const runtime = rejectingRuntimeClient();
     const output = captureIo();
@@ -334,6 +372,7 @@ describe("CLI to daemon end-to-end", () => {
         projectRoot,
         workingDirectory: projectRoot,
         runtimePaths,
+        agentClients,
         runtimeClient: runtime.client,
         io: output.io,
       }),
@@ -379,6 +418,7 @@ describe("CLI to daemon end-to-end", () => {
 
   test("explicit offline status renders host state as not checked", async () => {
     const projectRoot = installedRepository("ai-office-offline-render-");
+    const agentClients = await cleanLocalIntegration(projectRoot);
     const runtimePaths = offlineRuntimePaths(projectRoot);
     const runtime = rejectingRuntimeClient();
     const output = captureIo();
@@ -388,6 +428,7 @@ describe("CLI to daemon end-to-end", () => {
         projectRoot,
         workingDirectory: projectRoot,
         runtimePaths,
+        agentClients,
         runtimeClient: runtime.client,
         io: output.io,
       }),
@@ -399,6 +440,76 @@ describe("CLI to daemon end-to-end", () => {
     expect(output.stdout).toContain("Status: unverified");
     expect(output.stdout.join("\n")).not.toContain("ai-office runtime start");
   });
+
+  test.each([
+    "drifted",
+    "conflict",
+    "missing",
+    "unmanaged",
+    "binding_invalid",
+  ] as const)(
+    "explicit offline status fails for locally observed %s without a Runtime request",
+    async (problem) => {
+      const projectRoot = installedRepository("ai-office-offline-problem-");
+      const agentClients = await cleanLocalIntegration(projectRoot);
+      const skill = join(
+        projectRoot,
+        ".agents",
+        "skills",
+        "ai-office",
+        "SKILL.md",
+      );
+      if (problem === "drifted")
+        writeFileSync(skill, readFileSync(skill, "utf8") + "\nLocal drift\n");
+      if (problem === "conflict") {
+        writeFileSync(
+          join(projectRoot, "CLAUDE.md"),
+          "<!-- >>> ai-office managed: canonical-project-instructions -->\n@OTHER.md\n",
+        );
+        writeFileSync(
+          join(projectRoot, "bin", "claude"),
+          "#!/bin/sh\nexit 0\n",
+        );
+        chmodSync(join(projectRoot, "bin", "claude"), 0o755);
+      }
+      if (problem === "missing") rmSync(skill);
+      if (problem === "unmanaged")
+        writeFileSync(
+          join(projectRoot, "AI-OFFICE.md"),
+          "# User-owned instructions\n",
+        );
+      if (problem === "binding_invalid")
+        writeFileSync(join(projectRoot, ".ai-office", "project.json"), "{}");
+      const runtime = rejectingRuntimeClient();
+      const output = captureIo();
+      expect(
+        await runRuntimeCli(["status", "--offline", "--json"], {
+          projectRoot,
+          workingDirectory: projectRoot,
+          runtimePaths: offlineRuntimePaths(projectRoot),
+          agentClients,
+          runtimeClient: runtime.client,
+          io: output.io,
+        }),
+      ).toBe(1);
+      expect(runtime.healthCalls + runtime.executeCalls).toBe(0);
+      const status = JSON.parse(output.stdout[0]!) as {
+        health: string;
+        runtime: { daemon: string; authoritativeState: string };
+        issues: { code: string }[];
+      };
+      expect(status.health).toBe("needs_attention");
+      expect(status.runtime).toMatchObject({
+        daemon: "not_checked",
+        authoritativeState: "not_checked",
+      });
+      expect(status.issues.map((issue) => issue.code)).toContain(
+        problem === "binding_invalid"
+          ? problem
+          : `client_${problem === "conflict" ? "claude" : "codex"}_${problem}`,
+      );
+    },
+  );
 
   test("a failed Runtime connection still reports the host as unreachable", async () => {
     const projectRoot = installedRepository("ai-office-offline-degraded-");
