@@ -1,5 +1,6 @@
+import { isAbsolute, relative, sep } from "node:path";
+import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
 import { ApplyOfficeManifest } from "@ai-office/application/commands/apply-office-manifest.ts";
 import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
 import { OfficeManifestNotFoundError } from "@ai-office/application/errors.ts";
@@ -33,7 +34,7 @@ function isTaskKind(value: string): value is OfficeTaskKind {
 
 function manifestFromOptions(
   options: ReadonlyMap<string, string>,
-  projectRoot: string,
+  allowedRoots: readonly string[],
 ): OfficeManifest {
   const inline = options.get("manifest");
   const file = options.get("file");
@@ -44,24 +45,34 @@ function manifestFromOptions(
   }
   if (inline !== undefined) return parseBoundedManifest(inline);
 
-  const canonicalRoot = realpathSync(projectRoot);
+  // Containment is enforced here against canonical paths, before reading.
+  // Client normalization establishes path meaning, never authorization.
   let canonicalFile: string;
   try {
-    canonicalFile = realpathSync(resolve(projectRoot, file!));
+    canonicalFile = realpathSync(file!);
   } catch {
     throw new CliUsageError(`Office manifest file was not found: ${file}`);
   }
-  const relativePath = relative(canonicalRoot, canonicalFile);
-  if (
-    relativePath === "" ||
-    relativePath === ".." ||
-    relativePath.startsWith(`..${sep}`) ||
-    isAbsolute(relativePath)
-  ) {
+  const contained = allowedRoots.some((root) => {
+    let canonicalRoot: string;
+    try {
+      canonicalRoot = realpathSync(root);
+      if (!statSync(canonicalRoot).isDirectory()) return false;
+    } catch {
+      return false; // A stale/unavailable checkout grants no local file access.
+    }
+    const path = relative(canonicalRoot, canonicalFile);
+    return (
+      path !== "" &&
+      path !== ".." &&
+      !path.startsWith(`..${sep}`) &&
+      !isAbsolute(path)
+    );
+  });
+  if (!contained)
     throw new CliUsageError(
       "Office manifest file must be inside the project root",
     );
-  }
   const fileStatus = statSync(canonicalFile);
   if (!fileStatus.isFile()) {
     throw new CliUsageError(
@@ -94,10 +105,22 @@ export async function handleOfficeCommand(
   context: CommandContext,
 ): Promise<number | null> {
   if (command === "office:validate") {
-    const parsed = parseArguments(args, new Set(["manifest", "file"]));
+    const parsed = parseArguments(args, new Set(["manifest", "file", "root"]));
     if (parsed.positionals.length > 0)
       throw new CliUsageError("office:validate only accepts named options");
-    const manifest = manifestFromOptions(parsed.options, context.projectRoot);
+    let roots: string[] = [];
+    if (parsed.options.has("file")) {
+      const root = await context.projectBindings.resolveProjectRoot(
+        requiredOption(parsed, "root"),
+      );
+      const inspection = await context.projectBindings.inspect(root);
+      if (inspection.status === "invalid")
+        throw new ProjectBindingError(
+          inspection.issue ?? "Project binding is invalid",
+        );
+      roots = [root];
+    }
+    const manifest = manifestFromOptions(parsed.options, roots);
     context.io.stdout(
       JSON.stringify({ valid: true, schemaVersion: manifest.schemaVersion }),
     );
@@ -111,7 +134,13 @@ export async function handleOfficeCommand(
     );
     if (parsed.positionals.length > 0)
       throw new CliUsageError("office:apply only accepts named options");
-    const manifest = manifestFromOptions(parsed.options, context.projectRoot);
+    const projectId = requiredOption(parsed, "project");
+    const roots = parsed.options.has("file")
+      ? (await context.profiles.listSources(projectId)).map(
+          (source) => source.localPath,
+        )
+      : [];
+    const manifest = manifestFromOptions(parsed.options, roots);
     const revision = await new ApplyOfficeManifest(
       context.projects,
       context.officeManifests,
@@ -119,7 +148,7 @@ export async function handleOfficeCommand(
       context.ids,
       context.clock,
       context.transactions,
-    ).execute(requiredOption(parsed, "project"), manifest);
+    ).execute(projectId, manifest);
     context.io.stdout(revisionJson(revision));
     return 0;
   }

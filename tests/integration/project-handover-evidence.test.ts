@@ -26,7 +26,7 @@ import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/re
 import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
-import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
+import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
 
 const temporaryDirectories: string[] = [];
 const migrationDirectory = join(process.cwd(), "migrations", "project");
@@ -63,7 +63,7 @@ function lifecycleStatus(
   office: ProjectLifecycleStatus["office"]["state"],
 ): ProjectLifecycleStatus {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     installed: true,
     health: "healthy",
     project: {

@@ -83,6 +83,10 @@ Status: implemented on `main`.
 - deterministic offline runtime purge with exact plan-hash approval and
   preservation of foreign `.ai-office/` entries.
 
+The daemon is now described as the current persistent host for the AI Office
+Runtime. This terminology clarification does not change the implemented M2
+socket protocol, process lifecycle, or compatibility surface; see ADR-0014.
+
 ## M3 — Agent runtime
 
 Status: implemented on `main`.

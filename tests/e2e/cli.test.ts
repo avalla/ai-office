@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCli, type CliIo } from "../../apps/cli/src/cli.ts";
+import { runCli, type CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -146,7 +146,7 @@ describe("Project/Task CLI vertical slice", () => {
     const projectRoot = prepareExistingProjectRoot();
     const importedOutput = captureIo();
     expect(
-      await runCli(["project:import", "."], {
+      await runCli(["project:import", projectRoot], {
         projectRoot,
         io: importedOutput.io,
       }),

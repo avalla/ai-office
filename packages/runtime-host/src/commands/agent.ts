@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { YamlAgentDefinitionLoader } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
 import { SyncAgentDefinitions } from "@ai-office/application/commands/sync-agent-definitions.ts";
 import {
@@ -16,8 +15,7 @@ export async function handleAgentCommand(
   if (command === "agent:sync") {
     const parsed = parseArguments(args, new Set(["project", "directory"]));
     const projectId = requiredOption(parsed, "project");
-    const directory =
-      parsed.options.get("directory") ?? join(context.projectRoot, "agents");
+    const directory = requiredOption(parsed, "directory");
     const count = await new SyncAgentDefinitions(
       projects,
       runtime,

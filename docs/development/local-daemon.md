@@ -1,6 +1,22 @@
-# Local daemon
+# Persistent local Runtime host (daemon)
 
-Milestone M2 moves authoritative project access behind one local process.
+Milestone M2 moves authoritative project access behind one local process. The
+application authority is the **AI Office Runtime**; the daemon is its current
+foreground local hosting mechanism. See ADR-0014.
+
+```text
+CLI / Codex / Claude / future clients
+              -> RuntimeClient
+              -> Unix IPC
+              -> persistent daemon host
+              -> AiOfficeRuntime
+              -> application services and authoritative state
+```
+
+This persistence provides one mutable-state owner, concurrent-client
+serialization, long-running work, centralized policy/provenance/audit, and a
+home for workers, schedulers, pipelines, retries, connectors, and events. It
+does not authenticate the local Unix user to itself.
 
 ## Lifecycle
 
@@ -8,8 +24,11 @@ The normal installed entry point selects a stable user runtime home and can be
 started from any directory:
 
 ```bash
-ai-office daemon
+ai-office runtime start
 ```
+
+`ai-office daemon` remains a compatibility alias. Both commands run the host in
+the foreground; there is no service supervisor-backed stop/restart command yet.
 
 It uses `AI_OFFICE_HOME` when explicitly set and otherwise `~/.ai-office`.
 Development commands retain an explicit checkout-local compatibility mode:
@@ -18,7 +37,7 @@ Development commands retain an explicit checkout-local compatibility mode:
 bun run daemon
 ```
 
-The daemon:
+The persistent host:
 
 - opens and migrates `<runtime-home>/project.sqlite`;
 - removes an unreachable stale `<runtime-home>/daemon.sock`;
@@ -59,23 +78,87 @@ Requests are limited to 64 KiB, 64 arguments, and bounded argument/prompt sizes.
 Protocol errors carry a stable code and never expose stack traces. Commands have
 a server-side timeout in addition to the client timeout.
 
-The production CLI is a daemon client. Help remains available while the daemon
-is stopped; stateful product commands return an actionable error instructing
-the user to run `bun run daemon`. `runtime:purge` is the narrow lifecycle
+The production CLI is a Runtime client whose current transport is this daemon
+protocol. Help remains available while the host is stopped; stateful product
+commands return an actionable error instructing the user to run
+`ai-office runtime start`. `runtime:purge` is the narrow destructive lifecycle
 exception: it runs locally because it destroys the database that normally owns
-command authority, refuses to operate while a healthy daemon is reachable, and
+command authority, refuses to operate while a healthy host is reachable, and
 requires approval of the exact current purge-plan hash.
 
-`status` is the other local-aware exception, but it is not a stateful command.
-The CLI inspects the repository binding before protocol dispatch. If the daemon
-is unavailable, it returns schema-version `3` status with the portable
-repository identity reported separately from an `unverified` runtime
-association, authoritative state unavailable, and repository-local client
-inspection where possible. Deterministic host pointers and skills can still be
-classified as missing, unmanaged, conflicting, or drifted. The manifest-derived
+`status --offline` is the explicit read-only local path. Ordinary `status`
+retains its compatible degraded behavior when the host is unavailable; neither
+form mutates authoritative state. The CLI inspects the repository binding before
+protocol dispatch and reports the portable repository identity separately from
+an `unverified` runtime association, with repository-local client inspection
+where possible. Deterministic host pointers and skills can still be classified
+as missing, unmanaged, conflicting, or drifted. The manifest-derived
 `AI-OFFICE.md` body cannot be attested without authority, so an otherwise intact
-client integration is `unverified`. Identity existence and daemon reachability
-are separate facts.
+client integration is `unverified`. Identity existence and host reachability are
+separate facts.
+
+The two offline paths differ in what they know, and status schema version `4`
+lets them say so:
+
+| | host contacted | `runtime.daemon` | `runtime.authoritativeState` | `health` | issue |
+| --- | --- | --- | --- | --- | --- |
+| clean `status --offline` | no | `not_checked` | `not_checked` | `unverified` | `runtime_not_checked` (warning) |
+| `status` with the host down | yes, and it failed | `unreachable` | `unavailable` | `needs_attention` | `daemon_unavailable` (error) |
+
+A host that was never contacted is not a host proved unreachable, so explicit
+offline inspection never emits `daemon_unavailable` and never tells the operator
+to start a Runtime that may already be running. Only the degraded fallback,
+which has evidence, does.
+
+Explicit offline inspection parses the same `status [path] [--offline] [--json]`
+grammar as ordinary `status`, before any request is made: unknown options,
+repeated `--offline` or `--json`, and a second positional path are rejected as
+usage errors without contacting the Runtime.
+
+`status` exit codes mean the same thing in both modes: `0` when nothing needing
+attention was found in what was actually inspected — `healthy` online,
+`unverified` offline — and `1` when a problem was found or the repository is not
+installed. Locally observed drift, conflicts, detected missing/unmanaged client
+integration, and invalid bindings produce `needs_attention` and exit 1 even
+when host and authoritative state remain `not_checked`. Online and offline
+status share the application client-attention classifier; `runtime_not_checked`
+alone never causes failure.
+
+## Client-relative filesystem context
+
+The host is persistent: it was started once, from some directory, and keeps
+running while clients come and go from unrelated repositories. Its process
+working directory therefore says nothing about what a client meant by a relative
+path.
+
+> Relative local filesystem semantics belong to the invoking client context; a
+> persistent Runtime host must never infer client cwd from its own process cwd.
+
+The CLI resolves every caller-local path argument against its own working
+directory before building a request — the `install`/`status`/`next`/`uninstall`
+and `project:import` paths, `project:backup --output`, the `project:restore`
+archive and `--root`, `office:apply`/`office:validate --file`, `agent:sync
+--directory`, and `client:* --root`. The shared `packages/command-support`
+contract requires omitted caller-cwd defaults to be materialized too. The Runtime
+refuses missing lifecycle/import paths, restore `--root`, sync `--directory`,
+and relative caller-local paths, so
+bypassing the client boundary fails loudly instead of answering about the wrong
+directory. Handlers have no caller-cwd fallback.
+
+Manifest containment is enforced by the Runtime on canonical file and root
+paths, retaining regular-file and 256 KiB checks. `office:apply --project` uses
+local checkout roots recorded for that project, rejecting outside absolute paths
+and symlink escapes. `office:validate --file` accepts `--root`, defaulted by
+the CLI to caller cwd and required at Runtime entry. Its nearest binding/Git root
+is the boundary; without either, that explicit directory is the boundary.
+A descendant invocation can therefore read a manifest at project root. Invalid
+bindings fail closed, and the host composition root never selects eligibility.
+
+Two things stay outside that rule: a path interpreted inside a root the caller
+already supplied as an absolute argument, such as `client:plan --contract`
+relative to `--root`, and a string that merely looks like a path, such as a task
+title. Protocol version 1 is unchanged, because resolution happens before the
+request exists.
 
 For project-scoped commands without `--project`, the linkable CLI discovers the
 nearest valid binding from its current working directory and appends that
@@ -107,13 +190,18 @@ payloads so secrets are not copied into the audit trail.
 
 - Unix domain sockets target macOS and Linux; Windows named pipes are not yet supported.
 - The daemon is foreground-only; service installation and background supervision are future work.
-- Authentication relies on local filesystem permissions and the owner-only socket mode.
-- The daemon opens no TCP port. `ai-office dashboard` runs a separate foreground
-  loopback host that serves the console and forwards `/api/*` to this socket;
-  the port is released when that command stops. Its `Host` check blocks DNS
-  rebinding and its per-process session token bars blind access, but the token
-  travels in the opened URL, so it is not a secret from other local accounts; it
-  authenticates no human and separates no same-UID process.
+- AI Office is trusted-local and single-user. Owner-only socket permissions
+  limit accidental cross-account access but do not authenticate one same-UID
+  process against another. Executable names, TTY ownership, and protocol fields
+  are not authentication. A same-UID shell-capable worker can reach the same
+  administrative surface until stronger worker isolation or authenticated
+  human presence exists.
+- The Runtime host opens no TCP port. `ai-office dashboard` runs a separate
+  foreground loopback host that serves the console and forwards `/api/*` to this
+  socket; the port is released when that command stops. Its `Host` check blocks
+  DNS rebinding and its per-process session token bars blind access, but the
+  token travels in the opened URL, so it is not a secret from other local
+  accounts; it authenticates no human and separates no same-UID process.
 - Interrupted agent runs and expired budget reservations are discoverable and
   recoverable, but recovery is explicit: restart does not silently retry runs,
   remove worktrees, or finalize accounting records.

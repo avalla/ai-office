@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
-import type { CliIo } from "../../apps/cli/src/cli.ts";
+import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -85,6 +85,7 @@ describe("skill-first onboarding through the daemon", () => {
       expect(
         await runDaemonCli(["project:import", ".", "--json"], {
           projectRoot,
+          workingDirectory: projectRoot,
           socketPath,
           io: imported.io,
         }),
@@ -121,7 +122,12 @@ describe("skill-first onboarding through the daemon", () => {
       expect(
         await runDaemonCli(
           ["office:context", "--project", importResult.projectId],
-          { projectRoot, socketPath, io: before.io },
+          {
+            projectRoot,
+            workingDirectory: projectRoot,
+            socketPath,
+            io: before.io,
+          },
         ),
       ).toBe(0);
       const initialContext = JSON.parse(before.stdout[0]!) as {
@@ -145,7 +151,12 @@ describe("skill-first onboarding through the daemon", () => {
             "--file",
             ".ai-office/drafts/office-manifest.json",
           ],
-          { projectRoot, socketPath, io: validation.io },
+          {
+            projectRoot,
+            workingDirectory: projectRoot,
+            socketPath,
+            io: validation.io,
+          },
         ),
       ).toBe(0);
       expect(JSON.parse(validation.stdout[0]!)).toEqual({
@@ -163,7 +174,12 @@ describe("skill-first onboarding through the daemon", () => {
             "--file",
             ".ai-office/drafts/office-manifest.json",
           ],
-          { projectRoot, socketPath, io: applied.io },
+          {
+            projectRoot,
+            workingDirectory: projectRoot,
+            socketPath,
+            io: applied.io,
+          },
         ),
       ).toBe(0);
       expect(JSON.parse(applied.stdout[0]!)).toMatchObject({ revision: 1 });
@@ -178,7 +194,12 @@ describe("skill-first onboarding through the daemon", () => {
             "--task-kind",
             "bugfix",
           ],
-          { projectRoot, socketPath, io: pipeline.io },
+          {
+            projectRoot,
+            workingDirectory: projectRoot,
+            socketPath,
+            io: pipeline.io,
+          },
         ),
       ).toBe(0);
       expect(JSON.parse(pipeline.stdout[0]!)).toMatchObject({ id: "bugfix" });
@@ -195,7 +216,12 @@ describe("skill-first onboarding through the daemon", () => {
             "--file",
             ".ai-office/drafts/office-manifest.json",
           ],
-          { projectRoot, socketPath, io: secondApply.io },
+          {
+            projectRoot,
+            workingDirectory: projectRoot,
+            socketPath,
+            io: secondApply.io,
+          },
         ),
       ).toBe(0);
       expect(JSON.parse(secondApply.stdout[0]!)).toMatchObject({ revision: 2 });
@@ -204,7 +230,12 @@ describe("skill-first onboarding through the daemon", () => {
       expect(
         await runDaemonCli(
           ["office:context", "--project", importResult.projectId],
-          { projectRoot, socketPath, io: contextOutput.io },
+          {
+            projectRoot,
+            workingDirectory: projectRoot,
+            socketPath,
+            io: contextOutput.io,
+          },
         ),
       ).toBe(0);
       const context = JSON.parse(contextOutput.stdout[0]!) as {
@@ -316,7 +347,12 @@ describe("skill-first onboarding through the daemon", () => {
       expect(
         await runDaemonCli(
           ["office:validate", "--file", join(outsideRoot, "manifest.json")],
-          { projectRoot, socketPath, io: output.io },
+          {
+            projectRoot,
+            workingDirectory: projectRoot,
+            socketPath,
+            io: output.io,
+          },
         ),
       ).toBe(1);
       expect(output.stderr).toEqual([

@@ -7,13 +7,14 @@ import {
   isDaemonErrorResponse,
   isDaemonCommandResponse,
 } from "@ai-office/application/protocol/daemon-protocol.ts";
+import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
 
-export class DaemonUnavailableError extends Error {
+export class RuntimeUnavailableError extends Error {
   constructor(socketPath: string) {
     super(
-      `AI Office daemon is not available at ${socketPath}. Start it with "bun run daemon" in development mode or "ai-office daemon" through the linkable CLI.`,
+      `AI Office Runtime is not available at ${socketPath}. Start its persistent local host with "ai-office runtime start" or, in development mode, "bun run daemon".`,
     );
-    this.name = "DaemonUnavailableError";
+    this.name = "RuntimeUnavailableError";
   }
 }
 
@@ -34,7 +35,7 @@ function isHealthResponse(value: unknown): value is DaemonHealthResponse {
   );
 }
 
-export class DaemonClient {
+export class IpcRuntimeClient implements RuntimeClient {
   constructor(private readonly socketPath: string) {}
 
   async health(): Promise<DaemonHealthResponse> {
@@ -80,7 +81,7 @@ export class DaemonClient {
         signal: AbortSignal.timeout(10_000),
       });
     } catch {
-      throw new DaemonUnavailableError(this.socketPath);
+      throw new RuntimeUnavailableError(this.socketPath);
     }
 
     let value: unknown;
@@ -102,3 +103,21 @@ export class DaemonClient {
     return value;
   }
 }
+
+/**
+ * Pre-Runtime names, kept so existing importers keep compiling and keep
+ * behaving the same at the points that can be depended on.
+ *
+ * The compatibility contract is deliberately narrow and is asserted by
+ * `tests/unit/deprecated-runtime-aliases.test.ts`:
+ *
+ * - the legacy export names resolve;
+ * - each is the *same* class object as its Runtime-first name, so `instanceof`
+ *   holds in both directions and a subclass never splits the hierarchy;
+ * - version-1 daemon protocol behaviour is unchanged.
+ *
+ * It deliberately does not cover `error.name`, `constructor.name`, or message
+ * text: those now read in Runtime terms, which is the point of the rename.
+ */
+export { IpcRuntimeClient as DaemonClient };
+export { RuntimeUnavailableError as DaemonUnavailableError };

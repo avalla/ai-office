@@ -2,44 +2,33 @@
 
 ## Product boundary
 
-AI Office presents one logical local office to the user. `install`, `status`,
-`next`, and `uninstall` are the user-facing repository lifecycle; a repository-scoped
-skill is the primary conversational interface when project-specific reasoning
-or office revision is needed. The lower-level CLI remains the stable machine
-interface used by the lifecycle, skill, and automation. Web and MCP may use the
-same daemon protocol in future milestones.
+AI Office presents one logical local office to the user. The **AI Office
+Runtime** is the single application authority for stateful and persistent
+operations. `install`, `status`, `next`, and `uninstall` are the user-facing
+repository lifecycle; a repository-scoped skill is the primary conversational
+interface when project-specific reasoning or office revision is needed. The
+lower-level CLI remains the stable machine interface used by lifecycle, skills,
+and automation. Future Web, GitHub, API, or MCP adapters must reach the same
+Runtime authority rather than duplicate application rules or open SQLite
+directly.
 
 ```text
-Codex / compatible host
-          |
-          v
- lifecycle CLI                 Web / MCP (targets)
-          |                           |
- repository-scoped skill             |
-          |                           |
-          +------ CLI / protocol -----+
-                      |
-                      v
-                local daemon
-                    |
-                    v
-          application services
-       +------------+-------------+
-       |            |             |
- agent runtime    office      LLM gateway
-                  manifests
-       |                          |
-       v                          v
-controlled actions            providers
-       |
-       v
-capability policy
-       |
-       v
-connector registry
-       |
-       v
-resource adapters
+Codex / Claude / CLI / future Web, GitHub, API, or MCP adapters
+                              |
+                        RuntimeClient
+                              |
+                    local IPC (current transport)
+                              |
+                 persistent daemon (current host)
+                              |
+                       AI Office Runtime
+          +-------------------+-------------------+
+          |                   |                   |
+  application services   policy/pipelines   workers/schedulers
+          |                   |                   |
+          +---------- controlled actions --------+
+                              |
+                  connectors / audit / SQLite
 ```
 
 External coding clients use a separate application port. AI Office compiles a
@@ -124,15 +113,104 @@ apps and infrastructure adapters
 
 The domain owns entities, value objects, policies, and state transitions. It does not depend on Bun, SQLite, HTTP, Git, MCP, connector implementations, LLM providers, or provider SDKs.
 
-Application services orchestrate use cases through ports. Composition roots in the daemon and CLI supply SQLite repositories, clocks, IDs, the LLM gateway, connector registry, and other adapters. All authoritative project writes pass through these application boundaries.
+Application services orchestrate use cases through ports. The Runtime
+composition supplies SQLite repositories, clocks, IDs, connector registry, and
+other adapters. The current daemon bootstrap is the only authoritative
+composition root; the CLI is a client adapter and does not compose an embedded
+writer when IPC is unavailable. All authoritative project writes pass through
+these application boundaries.
 
-## Local daemon and concurrency
+## Runtime authority and persistent daemon host
 
-The TypeScript daemon exposes protocol version 1 as HTTP over
+`AiOfficeRuntime` is the application execution boundary. It receives command
+semantics and returns command outcomes without transport request IDs, protocol
+versions, socket paths, process IDs, or host lifecycle. The current
+`PersistentRuntimeHost` maps the version-1 daemon protocol to this boundary.
+The current command-shaped API deliberately reuses the stable machine contract;
+it does not create a parallel implementation of every application use case.
+
+`RuntimeClient` is the client-side boundary and lives with the Runtime contract
+in `packages/application`, because every local client adapter implements the
+same port. Its current implementation uses HTTP over a Unix domain socket.
+Codex, Claude, the CLI, and future clients must route authoritative operations
+through the selected Runtime. They do not need or receive direct SQLite access.
+
+The code layout follows that split. `packages/runtime-host` owns Runtime command
+execution, the command handlers, and the local infrastructure adapters they
+compose; `apps/daemon` is the persistent host — socket, protocol, admission
+queue, query surface — and depends on that package and on application ports;
+`apps/cli` is the client adapter, IPC client, offline-only operations, and
+presentation. `apps/daemon` does not import `apps/cli`, and an architecture test
+enforces the direction.
+
+`packages/command-support` owns shared command syntax, help, caller-path
+normalization/validation, and deterministic text views. Both the CLI and Runtime
+consume it; it imports neither Runtime composition nor SQLite.
+`packages/project-binding` exposes passive local binding discovery through
+`ProjectBindingReader`; binding writes remain in the Runtime adapter.
+An architecture test walks the transitive import graph from every CLI and
+neutral-support module and forbids Runtime-host, daemon, and SQLite dependencies.
+The linkable launcher loads daemon bootstrap lazily only for explicit host start;
+ordinary client invocation does not load server composition.
+`apps/daemon -> packages/runtime-host -> application -> domain` remains the
+authoritative execution direction; the CLI reaches it through `RuntimeClient`.
+
+There is exactly one authoritative Runtime owner for mutable state. Runtime
+unavailability never causes a stateful command to open SQLite locally or start
+an embedded writer. A future embedded deployment mode would need explicit,
+exclusive ownership for its whole lifecycle; it cannot be an availability
+fallback.
+
+The persistent host owns responsibilities that must outlive one client command:
+concurrent admission and serialization, workers, queued jobs, schedulers,
+retries, pipeline continuation, asynchronous connector work, event processing,
+and lifecycle audit. Some are current foundations and some remain roadmap work,
+but none belongs to CLI process lifetime.
+
+## Local daemon transport and concurrency
+
+The TypeScript daemon host exposes protocol version 1 as HTTP over
 `<runtime-home>/daemon.sock`; it does not open a TCP listener. The production CLI
-sends stateful product commands to that socket. Help and the explicitly offline
-`runtime:purge` lifecycle command are local; purge refuses to run while a
-healthy daemon is reachable and requires approval of its exact plan hash.
+sends stateful product commands to that socket through `RuntimeClient`. Help,
+explicit `status --offline`, and the explicitly offline `runtime:purge`
+lifecycle command are local; purge refuses to run while a healthy host is
+reachable and requires approval of its exact plan hash. Ordinary `status`
+retains compatible read-only degradation when the host is unavailable: it
+labels the host `unreachable`, authoritative state `unavailable`, and the
+Runtime association `unverified`, because a request was made and failed.
+Explicit `status --offline` makes no request at all, so it reports the host and
+authoritative state as `not_checked`; health is `unverified` when local
+inspection finds no problem, otherwise `needs_attention`. A host that
+was never contacted is not a host proved unreachable.
+
+Relative local filesystem semantics belong to the invoking client context; a
+persistent Runtime host must never infer client cwd from its own process cwd.
+Clients resolve caller-local path arguments against their own working directory
+before IPC, and the Runtime rejects an omitted caller-cwd default or relative
+path instead of guessing. A path interpreted inside a root the caller already
+supplied as an absolute argument, such as `client:plan --contract` relative to
+`--root`, keeps its root-relative meaning.
+
+Caller-cwd defaults must be materialized before execution: lifecycle/import
+positionals, restore `--root`, and sync `--directory` are required absolute
+values at Runtime entry. Command handlers retain no host-root fallback.
+
+Manifest files are checked by the Runtime after canonicalizing file and allowed
+root. `office:apply --project` permits only files inside a local checkout recorded
+for that project. Projects without a recorded local source must use inline
+`--manifest`. Symlinks to outside files fail containment.
+`office:validate --file` requires an absolute `--root` at Runtime entry; the
+CLI defaults it to caller cwd. The Runtime resolves the nearest binding or Git
+worktree from that directory (rejecting invalid bindings); a standalone
+directory is its own root. The daemon's composition root is never a fallback.
+Both commands retain regular-file and 256 KiB limits.
+
+Explicit offline health is `unverified` only when local inspection finds no
+attention issue. The application client-attention classifier is shared with
+online lifecycle status: detected missing/unmanaged integrations and observed
+drift/conflicts produce `needs_attention` and exit 1, as does an invalid binding.
+Host and authoritative state remain `not_checked`; `runtime_not_checked` alone
+never fails inspection.
 
 The same socket carries a second, separately versioned contract: a read-only
 query surface under `/api`. Commands and queries are distinct sides of the same
@@ -153,13 +231,13 @@ Short commands enter a FIFO queue. Long-running run execution is dispatched outs
 
 Daemon lifecycle and sanitized command outcomes are appended to `audit_event`. Agent-run transitions have their own append-only event stream. Generated project and governance Markdown views are deterministic projections and are not read back as authoritative state.
 
-Project backup/restore also remains inside the daemon command boundary. Snapshot
-reads and revision writes use short transactions. Repository scanning and
-archive file I/O occur outside those transactions; binding reconciliation uses
-the established atomic file adapter and reports the narrow database/filesystem
-partial case explicitly.
+Project backup/restore also remains inside the Runtime command boundary.
+Snapshot reads and revision writes use short transactions. Repository scanning
+and archive file I/O occur outside those transactions; binding reconciliation
+uses the established atomic file adapter and reports the narrow
+database/filesystem partial case explicitly.
 
-## Runtime, gateway, and governance
+## Agent execution, gateway, and governance
 
 Agent definitions are validated from YAML and synchronized into project storage.
 Scheduling validates project, task, and agent, acquires a task lock, persists a
@@ -251,7 +329,7 @@ The architecture distinguishes three databases by authority and rebuildability:
 | Database                        | Responsibility                                                                                                                                                                                | Current implementation                                                       |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `<runtime-home>/project.sqlite` | Authoritative state for the projects known to that daemon runtime: repository mappings, office manifests, onboarding, tasks, agents/runs, costs, governance, capabilities, actions, and audit | Implemented, opened and migrated by the daemon and project migration command |
-| `<runtime-home>/global.sqlite`  | Durable versioned global roles and patterns plus lessons; isolated with an explicit `AI_OFFICE_HOME`                                                                                          | Implemented and migrated lazily by daemon-backed `memory:*` commands         |
+| `<runtime-home>/global.sqlite`  | Durable versioned global roles and patterns plus lessons; isolated with an explicit `AI_OFFICE_HOME`                                                                                          | Implemented and migrated lazily by Runtime-backed `memory:*` commands        |
 | `<runtime-home>/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                                              | Initial schema only; indexing and daemon integration are future work         |
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
@@ -283,12 +361,25 @@ copied identities fail closed.
 
 ## Current trust model
 
-M6C-lite is a trusted-local, single-user boundary. It protects against accidental or unauthorized agent access, traversal and path escape, sensitive paths, stale simulation or authorization, replay, and mutation without approval.
+AI Office is trusted-local and single-user. Runtime mediation protects its own
+application invariants against accidental or unauthorized agent access,
+traversal and path escape, sensitive paths, stale simulation or authorization,
+replay, and mutation without approval.
 
-It does not defend against a hostile process with the same Unix credentials concurrently renaming or unlinking entries in the same filesystem namespace. Approval uses a caller-supplied audit identity rather than cryptographic user presence.
+The Runtime is an authority inside AI Office; it is not an authentication or
+process-isolation boundary against the local Unix user. An arbitrary same-UID,
+shell-capable worker or process can reach the same local administration surface
+unless additional isolation or authenticated human presence is introduced.
+IPC routing is not authentication. Socket ownership, executable identity, TTY
+ownership, and protocol privilege markers are not authentication. Approval uses
+a caller-supplied audit identity rather than cryptographic user presence.
+
+The trusted-local path boundary also does not defend against a hostile same-UID
+process concurrently renaming or unlinking entries in the same filesystem
+namespace.
 
 The dashboard is a local, same-user observability surface and introduces no new
-authenticated human or operator boundary. The daemon still opens no TCP
+authenticated human or operator boundary. The Runtime host still opens no TCP
 listener; `ai-office dashboard` owns a loopback port for as long as the command
 runs. A loopback TCP port is reachable by every local Unix account, unlike the
 0600 socket, so that host validates the `Host` header and requires a per-process
@@ -296,11 +387,20 @@ session token that dies with the command. The token bars accidental and blind
 access; it is not a secret, because the command passes the whole URL to the
 platform opener and the browser records it in history. It does not authenticate
 a human and does not separate same-UID processes. The surface is read-only and
-changes no authorization. The Rust/`openat2` spike, authenticated approval research, tamper-evident audit, and stronger crash reconciliation are preserved as M10 hardening baselines and are not linked into production.
+changes no authorization.
+
+The Rust/`openat2` spike, authenticated approval research, tamper-evident audit,
+and stronger crash reconciliation are preserved as M10 hardening baselines and
+are not linked into production.
 
 ## Evolution boundaries
 
-The daemon protocol and application ports keep future interface, provider, storage, and native-security changes replaceable. TypeScript remains the production implementation. A future Rust boundary is justified only for scoped hardening work accepted by the roadmap and ADR process; the existing native filesystem spike is research, not a production adapter.
+The Runtime contract, daemon protocol, and application ports keep future
+client, host, transport, provider, storage, and native-security changes
+replaceable. TypeScript remains the production implementation. A future Rust
+boundary is justified only for scoped hardening work accepted by the roadmap
+and ADR process; the existing native filesystem spike is research, not a
+production adapter. See ADR-0014.
 
 ## Virtual engineering organization
 

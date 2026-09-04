@@ -17,6 +17,9 @@ AI Office keeps different kinds of documentation separate so current product tru
   accepted identity, discovery, portability, and lifecycle decision.
 - [Stable user runtime home](adr/ADR-0009-stable-user-runtime-home.md):
   accepted separation of program location from authoritative user data.
+- [Runtime authority and persistent daemon host](adr/ADR-0014-runtime-authority-and-persistent-daemon-host.md):
+  accepted separation of application authority, local hosting, client
+  transport, offline behavior, and trusted-local assumptions.
 - [Host-only onboarding](adr/ADR-0010-host-only-onboarding.md): accepted
   removal of the daemon/provider onboarding path and compatibility policy for
   historical onboarding data.

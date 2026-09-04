@@ -1,13 +1,14 @@
+import { clientIssues } from "@ai-office/application/project-lifecycle/client-attention.ts";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
 import { ManageAgentClientIntegration } from "@ai-office/application/agent-client/manage-agent-client-integration.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
-import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
+import type { ProjectBindingReader } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type {
   LifecycleClientStatus,
   LifecycleIssue,
   ProjectLifecycleStatus,
 } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
-import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
+import { LocalProjectBindingReader } from "@ai-office/project-binding/local-project-binding-reader.ts";
 import { repositoryIdFromLegacyProjectId } from "@ai-office/application/project-lifecycle/project-binding.ts";
 
 function offlineConfiguration(input: {
@@ -52,15 +53,26 @@ function offlineConfiguration(input: {
   return input.detected ? "missing" : "not_configured";
 }
 
+/**
+ * What this inspection knows about the persistent Runtime host.
+ *
+ * `unreachable` is only legitimate after a request to the host actually
+ * failed. `not_checked` is the explicit `--offline` case: no request was made,
+ * so the host may be running perfectly well.
+ */
+export type RuntimeHostEvidence = "unreachable" | "not_checked";
+
 export async function getOfflineProjectStatus(
   rootPath: string,
   input: {
     runtimeHome: string;
-    bindings?: ProjectBindingAdapter;
+    hostEvidence: RuntimeHostEvidence;
+    bindings?: ProjectBindingReader;
     clients?: AgentClientCatalog;
   },
 ): Promise<ProjectLifecycleStatus> {
-  const bindings = input.bindings ?? new LocalProjectBindingAdapter();
+  const notChecked = input.hostEvidence === "not_checked";
+  const bindings = input.bindings ?? new LocalProjectBindingReader();
   const clients = new ManageAgentClientIntegration(
     input.clients ?? new DefaultAgentClientCatalog(),
   );
@@ -83,13 +95,24 @@ export async function getOfflineProjectStatus(
       message: inspection.issue ?? "Project binding is invalid",
       recovery: "Repair or remove .ai-office/project.json explicitly",
     });
+  else if (notChecked)
+    // Requesting offline inspection is not evidence that the Runtime is down,
+    // so this reports a gap in knowledge and never tells the operator to start
+    // a host that may already be running.
+    issues.push({
+      severity: "warning",
+      code: "runtime_not_checked",
+      message:
+        "Offline inspection was requested, so authoritative AI Office Runtime state was not checked",
+      recovery: "Run: ai-office status to inspect authoritative Runtime state",
+    });
   else
     issues.push({
       severity: "error",
       code: "daemon_unavailable",
       message:
-        "The project binding exists, but the AI Office runtime is currently unreachable",
-      recovery: "Start the AI Office daemon and run status again",
+        "The project binding exists, but the authoritative AI Office Runtime is currently unreachable",
+      recovery: "Run: ai-office runtime start",
     });
 
   const clientStatuses: LifecycleClientStatus[] = [];
@@ -137,11 +160,17 @@ export async function getOfflineProjectStatus(
     }
   }
 
+  const localIssues = clientIssues(clientStatuses);
+  if (bindingValid) issues.push(...localIssues);
+
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     installed: bindingValid ? null : false,
-    health:
-      bindingValid || inspection.status === "invalid"
+    health: bindingValid
+      ? notChecked && localIssues.length === 0
+        ? "unverified"
+        : "needs_attention"
+      : inspection.status === "invalid"
         ? "needs_attention"
         : "not_installed",
     project: {
@@ -171,9 +200,9 @@ export async function getOfflineProjectStatus(
       },
     },
     runtime: {
-      daemon: "unreachable",
+      daemon: notChecked ? "not_checked" : "unreachable",
       home: input.runtimeHome,
-      authoritativeState: "unavailable",
+      authoritativeState: notChecked ? "not_checked" : "unavailable",
     },
     office: {
       state: "unavailable",

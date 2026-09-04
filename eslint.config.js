@@ -3,7 +3,14 @@ import { defineConfig, globalIgnores } from "eslint/config";
 import tseslint from "typescript-eslint";
 
 export default defineConfig(
-  globalIgnores([".ai-office/", ".planning/", "coverage/", "dist/", "spikes/"]),
+  globalIgnores([
+    ".ai-office/",
+    ".planning/",
+    ".worktrees/",
+    "coverage/",
+    "dist/",
+    "spikes/",
+  ]),
   eslint.configs.recommended,
   tseslint.configs.recommended,
   {

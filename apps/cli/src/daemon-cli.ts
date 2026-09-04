@@ -1,21 +1,30 @@
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
-import { cliHelp, type CliIo } from "./cli.ts";
+import { resolveCallerLocalPaths } from "@ai-office/command-support/caller-local-paths.ts";
+import { runtimeCommandHelp as cliHelp } from "@ai-office/command-support/help.ts";
+import type { CommandIo as CliIo } from "@ai-office/command-support/arguments.ts";
 import {
-  DaemonClient,
-  DaemonUnavailableError,
+  IpcRuntimeClient,
   InvalidDaemonResponseError,
+  RuntimeUnavailableError,
 } from "./daemon-client.ts";
+import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
 import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
 import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
 import { runDashboardCli } from "./dashboard-cli.ts";
-import { CliUsageError } from "./commands/shared.ts";
-import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
+import {
+  CliUsageError,
+  parseArguments,
+} from "@ai-office/command-support/arguments.ts";
+import type { ProjectBindingReader } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
-import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
+import { LocalProjectBindingReader } from "@ai-office/project-binding/local-project-binding-reader.ts";
 import { getOfflineProjectStatus } from "./offline-project-status.ts";
-import { printProjectLifecycleStatus } from "./commands/lifecycle.ts";
-import { renderHandoverReport } from "./handover-view.ts";
+import {
+  printProjectLifecycleStatus,
+  projectStatusExitCode,
+} from "@ai-office/command-support/lifecycle-view.ts";
+import { renderHandoverReport } from "@ai-office/command-support/handover-view.ts";
 import { degradedProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 import {
@@ -24,19 +33,23 @@ import {
   type RuntimePaths,
 } from "@ai-office/runtime-paths/runtime-paths.ts";
 
-export interface DaemonCliOptions {
+export interface RuntimeCliOptions {
   projectRoot?: string;
   runtimePaths?: RuntimePaths;
   socketPath?: string;
   io?: CliIo;
   runtimePurgeAdapter?: RuntimePurgeAdapter;
   workingDirectory?: string;
-  projectBindings?: ProjectBindingAdapter;
+  projectBindings?: ProjectBindingReader;
   agentClients?: AgentClientCatalog;
   /** Stops the foreground `dashboard` host; supplied by tests. */
   dashboardSignal?: AbortSignal;
   openBrowser?: (url: string) => Promise<void>;
+  runtimeClient?: RuntimeClient;
 }
+
+/** @deprecated Use RuntimeCliOptions. */
+export type DaemonCliOptions = RuntimeCliOptions;
 
 const defaultIo: CliIo = {
   stdout: (message) => console.log(message),
@@ -129,84 +142,19 @@ const projectScopedCommands = new Set([
   "action:show",
 ]);
 
-function lifecycleArguments(
-  args: string[],
-  workingDirectory: string,
-): string[] {
-  const command = args[0];
-  if (
-    command !== "install" &&
-    command !== "status" &&
-    command !== "uninstall" &&
-    command !== "next"
-  )
-    return args;
-  const result = [...args];
-  let positionalIndex = -1;
-  for (let index = 1; index < result.length; index += 1) {
-    const argument = result[index];
-    if (argument === "--approve") {
-      index += 1;
-      continue;
-    }
-    if (argument?.startsWith("--") === true) continue;
-    positionalIndex = index;
-    break;
-  }
-  if (positionalIndex === -1) result.splice(1, 0, workingDirectory);
-  else
-    result[positionalIndex] = resolve(
-      workingDirectory,
-      result[positionalIndex]!,
-    );
-  return result;
-}
-
-function portableProjectArguments(
-  args: string[],
-  workingDirectory: string,
-): string[] {
-  const command = args[0];
-  if (command !== "project:backup" && command !== "project:restore")
-    return args;
-  const result = [...args];
-  for (let index = 1; index < result.length; index += 1) {
-    const argument = result[index];
-    if (argument === "--output" || argument === "--root") {
-      const value = result[index + 1];
-      if (value !== undefined && !value.startsWith("--"))
-        result[index + 1] = resolve(workingDirectory, value);
-      index += 1;
-      continue;
-    }
-    if (
-      command === "project:restore" &&
-      argument !== undefined &&
-      !argument.startsWith("--")
-    )
-      result[index] = resolve(workingDirectory, argument);
-  }
-  if (command === "project:restore" && !result.includes("--root"))
-    result.push("--root", resolve(workingDirectory));
-  return result;
-}
-
 async function resolvedArguments(
   args: string[],
   workingDirectory: string,
-  bindings: ProjectBindingAdapter,
+  bindings: ProjectBindingReader,
 ): Promise<{ args: string[]; discoveredRoot?: string }> {
-  const lifecycle = lifecycleArguments(
-    portableProjectArguments(args, workingDirectory),
-    workingDirectory,
-  );
-  const command = lifecycle[0];
+  const resolved = resolveCallerLocalPaths(args, workingDirectory);
+  const command = resolved[0];
   if (
     command === undefined ||
     !projectScopedCommands.has(command) ||
-    lifecycle.includes("--project")
+    resolved.includes("--project")
   )
-    return { args: lifecycle };
+    return { args: resolved };
   const inspection = await bindings.inspect(workingDirectory, {
     ancestors: true,
   });
@@ -215,15 +163,15 @@ async function resolvedArguments(
       inspection.issue ?? "Project binding is invalid",
     );
   if (inspection.status !== "valid" || inspection.binding === undefined)
-    return { args: lifecycle };
+    return { args: resolved };
   return {
-    args: lifecycle,
+    args: resolved,
     discoveredRoot: inspection.rootPath,
   };
 }
 
 async function resolveDiscoveredProject(
-  client: DaemonClient,
+  client: RuntimeClient,
   rootPath: string,
 ): Promise<string> {
   const response = await client.execute(["status", rootPath, "--json"]);
@@ -250,7 +198,9 @@ async function resolveDiscoveredProject(
     runtime?: { authoritativeState?: unknown };
   };
   if (
-    (status.schemaVersion !== 2 && status.schemaVersion !== 3) ||
+    (status.schemaVersion !== 2 &&
+      status.schemaVersion !== 3 &&
+      status.schemaVersion !== 4) ||
     typeof status.project?.id !== "string" ||
     (status.project.repositoryIdentity?.state !== "valid" &&
       status.project.repositoryIdentity?.state !== "legacy") ||
@@ -263,9 +213,9 @@ async function resolveDiscoveredProject(
   return status.project.id;
 }
 
-export async function runDaemonCli(
+export async function runRuntimeCli(
   args: string[],
-  options: DaemonCliOptions,
+  options: RuntimeCliOptions,
 ): Promise<number> {
   const io = options.io ?? defaultIo;
   let runtimePaths: RuntimePaths;
@@ -284,9 +234,9 @@ export async function runDaemonCli(
     throw error;
   }
   const socketPath = options.socketPath ?? runtimePaths.socketPath;
-  const client = new DaemonClient(socketPath);
+  const client = options.runtimeClient ?? new IpcRuntimeClient(socketPath);
   const workingDirectory = options.workingDirectory ?? process.cwd();
-  const bindings = options.projectBindings ?? new LocalProjectBindingAdapter();
+  const bindings = options.projectBindings ?? new LocalProjectBindingReader();
 
   try {
     if (
@@ -299,14 +249,27 @@ export async function runDaemonCli(
       return 0;
     }
 
-    if (args[0] === "daemon:health") {
+    if (
+      args[0] === "daemon:health" ||
+      args[0] === "runtime:health" ||
+      (args[0] === "runtime" && args[1] === "status" && args.length === 2)
+    ) {
       const health = await client.health();
-      io.stdout(`Daemon status: ${health.status}`);
+      io.stdout(
+        `${args[0] === "daemon:health" ? "Daemon" : "Runtime"} status: ${health.status}`,
+      );
       io.stdout(`Started at: ${health.startedAt}`);
       return 0;
     }
 
-    // The dashboard is a foreground local host, not a daemon command: it is
+    if (args[0] === "runtime" && args[1] === "start") {
+      io.stderr(
+        'Start the persistent AI Office Runtime host with "ai-office runtime start" through the linkable CLI.',
+      );
+      return 1;
+    }
+
+    // The dashboard is a foreground local host, not a Runtime command: it is
     // handled before protocol dispatch for the same reason runtime:purge is.
     // Awaited on purpose: returning the promise from inside the try would let
     // a rejection bypass the catch below.
@@ -331,6 +294,37 @@ export async function runDaemonCli(
           ? {}
           : { adapter: options.runtimePurgeAdapter }),
       });
+
+    if (args[0] === "status" && args.includes("--offline")) {
+      // Explicit offline inspection is still `status [path] [--offline]
+      // [--json]`. Validating with the shared parser before anything else
+      // keeps one grammar and stops a malformed invocation from being answered
+      // as if it were well formed.
+      const parsed = parseArguments(
+        args.slice(1),
+        new Set(),
+        new Set(["offline", "json"]),
+      );
+      if (parsed.positionals.length > 1)
+        throw new CliUsageError("status accepts at most one project path");
+      const status = await getOfflineProjectStatus(
+        resolve(workingDirectory, parsed.positionals[0] ?? "."),
+        {
+          runtimeHome: runtimePaths.runtimeHome,
+          // No health or command request is made on this path, so the only
+          // honest thing the report can say about the host is that it was not
+          // checked.
+          hostEvidence: "not_checked",
+          bindings,
+          ...(options.agentClients === undefined
+            ? {}
+            : { clients: options.agentClients }),
+        },
+      );
+      if (parsed.flags.has("json")) io.stdout(JSON.stringify(status));
+      else printProjectLifecycleStatus(status, { io });
+      return projectStatusExitCode(status.health);
+    }
 
     const prepared = await resolvedArguments(args, workingDirectory, bindings);
     const commandArguments =
@@ -369,12 +363,15 @@ export async function runDaemonCli(
     }
   } catch (error) {
     if (
-      error instanceof DaemonUnavailableError &&
+      error instanceof RuntimeUnavailableError &&
       (args[0] === "status" || args[0] === "next")
     ) {
-      const prepared = lifecycleArguments(args, workingDirectory);
+      const prepared = resolveCallerLocalPaths(args, workingDirectory);
       const status = await getOfflineProjectStatus(prepared[1]!, {
         runtimeHome: runtimePaths.runtimeHome,
+        // A request to the host was made and failed, so "unreachable" is
+        // supported by evidence here in a way it never is under --offline.
+        hostEvidence: "unreachable",
         bindings,
         ...(options.agentClients === undefined
           ? {}
@@ -394,7 +391,7 @@ export async function runDaemonCli(
       return 1;
     }
     if (
-      error instanceof DaemonUnavailableError ||
+      error instanceof RuntimeUnavailableError ||
       error instanceof InvalidDaemonResponseError ||
       error instanceof ProjectBindingError ||
       error instanceof RuntimePathError ||
@@ -406,3 +403,6 @@ export async function runDaemonCli(
     throw error;
   }
 }
+
+/** @deprecated Use runRuntimeCli. */
+export const runDaemonCli = runRuntimeCli;

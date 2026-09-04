@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
-import type { CliIo } from "../../apps/cli/src/cli.ts";
+import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import {
   DashboardHostError,
   startDashboardHost,
@@ -152,7 +152,7 @@ describe("ai-office dashboard", () => {
     }
   });
 
-  test("reports an actionable error when the daemon is not running", async () => {
+  test("reports an actionable error when the Runtime host is not running", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-dashboard-off-"));
     temporaryDirectories.push(projectRoot);
     const output = captureIo();
@@ -166,7 +166,7 @@ describe("ai-office dashboard", () => {
 
     expect(code).toBe(1);
     expect(output.stdout).toEqual([]);
-    expect(output.stderr[0]).toContain("daemon is not available");
+    expect(output.stderr[0]).toContain("Runtime is not available");
   });
 
   test("rejects an invalid port before touching the daemon", async () => {

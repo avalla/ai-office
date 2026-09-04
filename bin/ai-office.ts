@@ -2,8 +2,8 @@
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { bootstrap } from "../apps/daemon/src/bootstrap.ts";
-import { runDaemonCli } from "../apps/cli/src/daemon-cli.ts";
+import { runRuntimeCli } from "../apps/cli/src/daemon-cli.ts";
+import { parseRuntimeHostStart } from "../apps/cli/src/runtime-lifecycle.ts";
 import {
   legacyCheckoutDatabasePath,
   resolveRuntimePaths,
@@ -35,20 +35,37 @@ if (legacyDatabase !== null)
     `Legacy checkout runtime detected at ${legacyDatabase}. It was not moved. To select it explicitly, set AI_OFFICE_HOME=${dirname(legacyDatabase)}.`,
   );
 
-if (command === "daemon") {
-  if (arguments_.length > 0) {
-    console.error("daemon does not accept arguments");
+const runtimeHostStart = parseRuntimeHostStart(
+  command === undefined ? [] : [command, ...arguments_],
+);
+
+if (runtimeHostStart !== null) {
+  if (runtimeHostStart.unexpectedArguments.length > 0) {
+    console.error(
+      runtimeHostStart.compatibilityAlias
+        ? "daemon does not accept arguments"
+        : "runtime start does not accept arguments",
+    );
     process.exitCode = 1;
   } else {
     const controller = new AbortController();
     for (const signal of ["SIGINT", "SIGTERM"] as const)
       process.on(signal, () => controller.abort());
-    const daemon = await bootstrap({ runtimePaths, projectRoot: distributionRoot });
-    console.log(`AI Office daemon using ${runtimePaths.runtimeHome}`);
-    await daemon.start(controller.signal);
+    const { bootstrap } = await import("../apps/daemon/src/bootstrap.ts");
+    const runtimeHost = await bootstrap({
+      runtimePaths,
+      projectRoot: distributionRoot,
+    });
+    if (runtimeHostStart.compatibilityAlias)
+      console.log(`AI Office daemon using ${runtimePaths.runtimeHome}`);
+    else {
+      console.log(`AI Office Runtime using ${runtimePaths.runtimeHome}`);
+      console.log("Persistent host: local daemon");
+    }
+    await runtimeHost.start(controller.signal);
   }
 } else {
-  process.exitCode = await runDaemonCli(
+  process.exitCode = await runRuntimeCli(
     command === undefined ? [] : [command, ...arguments_],
     {
       runtimePaths,

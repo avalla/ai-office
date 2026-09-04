@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { LocalProjectBindingAdapter } from "../../apps/cli/src/local-project-binding-adapter.ts";
+import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { parseProjectBinding } from "@ai-office/application/project-lifecycle/project-binding.ts";
 
 const roots: string[] = [];

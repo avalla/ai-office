@@ -47,8 +47,8 @@ import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/reposito
 import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
-import { LocalProjectBindingAdapter } from "../../apps/cli/src/local-project-binding-adapter.ts";
-import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
+import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
+import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
 
 const roots: string[] = [];
 const migrations = join(process.cwd(), "migrations", "project");

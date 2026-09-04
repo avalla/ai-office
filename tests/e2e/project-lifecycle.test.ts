@@ -16,9 +16,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
 import type { LocalAgentClientFilesHooks } from "@ai-office/agent-client-integrations/local-agent-client-files.ts";
-import { LocalProjectBindingAdapter } from "../../apps/cli/src/local-project-binding-adapter.ts";
+import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
-import type { CliIo } from "../../apps/cli/src/cli.ts";
+import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
@@ -314,7 +314,7 @@ describe("project lifecycle UX", () => {
     expect(firstStatus.exitCode).toBe(0);
     expect(firstStatus.stdout).toEqual(secondStatus.stdout);
     expect(JSON.parse(firstStatus.stdout[0]!)).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       installed: true,
       health: "healthy",
       project: {
@@ -912,7 +912,7 @@ describe("project lifecycle UX", () => {
     const offline = await run(harness, ["status", "--json"]);
     expect(offline.exitCode).toBe(1);
     expect(JSON.parse(offline.stdout[0]!)).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       installed: null,
       project: {
         id: null,

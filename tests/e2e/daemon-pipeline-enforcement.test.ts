@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
-import type { CliIo } from "../../apps/cli/src/cli.ts";
+import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
