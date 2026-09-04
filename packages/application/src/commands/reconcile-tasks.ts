@@ -17,10 +17,10 @@ import { createHash } from "node:crypto";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import {
   allowedTaskTransitions,
+  isHistoricalCompletionApplicable,
   isTerminalTaskStatus,
   type TaskStatus,
 } from "@ai-office/domain/task/task.ts";
-import type { RequirementStatus } from "@ai-office/domain/governance/governance.ts";
 import { ProjectNotFoundError } from "../errors.ts";
 import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
@@ -28,7 +28,17 @@ import type { PipelineRunRepository } from "../ports/pipeline-run-repository.por
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TaskRequirementRepository } from "../ports/task-requirement-repository.port.ts";
-import type { ManageTaskLifecycle } from "./manage-task-lifecycle.ts";
+import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import {
+  taskLifecycleOperations,
+  type ManageTaskLifecycle,
+  type TaskLifecycleOperation,
+} from "./manage-task-lifecycle.ts";
+import { taskCompletionRecordCommand } from "./record-task-completion.ts";
+import {
+  requirementProgress,
+  type RequirementProgress,
+} from "./task-requirement-progress.ts";
 
 /** Every contradiction reconciliation knows how to name. */
 export type TaskReconciliationFinding =
@@ -53,8 +63,21 @@ export interface TaskReconciliationIssue {
   status: TaskStatus;
   /** Safe human text naming the persisted facts that disagree. */
   summary: string;
-  /** The lifecycle command an operator would most likely run. Never executed here. */
+  /**
+   * The command an operator would run next, or null when none applies.
+   *
+   * Always executable from `status` as shown. A suggestion the current state
+   * would reject is worse than no suggestion: it sends an operator to a command
+   * that refuses, and the only way to force it through would be to fabricate the
+   * intermediate history this board exists to protect.
+   */
   suggestedCommand: string | null;
+  /**
+   * The lifecycle operation `--fix` would apply. Null whenever the repair is
+   * refused, including when the suggestion is a manual correction rather than a
+   * lifecycle transition.
+   */
+  repairOperation: TaskLifecycleOperation | null;
   /**
    * Whether `--fix` will act on this issue. False means the evidence does not
    * determine a single correct outcome, so the repair is refused with a reason.
@@ -62,13 +85,6 @@ export interface TaskReconciliationIssue {
   repairable: boolean;
   /** Why a repair is refused. Null when `repairable` is true. */
   refusalReason: string | null;
-}
-
-export interface RequirementProgress {
-  total: number;
-  verified: number;
-  terminal: number;
-  open: number;
 }
 
 export interface TaskReconciliationReport {
@@ -90,7 +106,7 @@ export interface TaskRepairResult {
     taskId: string;
     from: TaskStatus;
     to: TaskStatus;
-    operation: string;
+    operation: TaskLifecycleOperation;
   }[];
   refused: readonly TaskReconciliationIssue[];
 }
@@ -103,11 +119,6 @@ export class TaskReconciliationApprovalError extends Error {
     this.name = "TaskReconciliationApprovalError";
   }
 }
-
-const terminalRequirementStatuses = new Set<RequirementStatus>([
-  "verified",
-  "rejected",
-]);
 
 const activeRunStatuses = new Set([
   "queued",
@@ -123,20 +134,9 @@ const inFlightTaskStatuses = new Set<TaskStatus>([
   "waiting_review",
 ]);
 
-export function requirementProgress(
-  requirements: readonly { status: RequirementStatus }[],
-): RequirementProgress {
-  const terminal = requirements.filter((value) =>
-    terminalRequirementStatuses.has(value.status),
-  ).length;
-  return {
-    total: requirements.length,
-    verified: requirements.filter((value) => value.status === "verified")
-      .length,
-    terminal,
-    open: requirements.length - terminal,
-  };
-}
+// Re-exported so existing callers keep one import for "the board's numbers",
+// while the calculation itself lives outside this command.
+export { requirementProgress, type RequirementProgress };
 
 export class ReconcileTasks {
   constructor(
@@ -147,6 +147,7 @@ export class ReconcileTasks {
     private readonly links: TaskRequirementRepository,
     private readonly lifecycle: ManageTaskLifecycle,
     private readonly clock: Clock,
+    private readonly transactions: TransactionRunner,
   ) {}
 
   /** Detection. Performs no write of any kind. */
@@ -213,15 +214,23 @@ export class ReconcileTasks {
         )
           ? "completed"
           : "cancelled";
-        const operation = target === "completed" ? "complete" : "cancel";
+        const operation: TaskLifecycleOperation =
+          target === "completed" ? "complete" : "cancel";
         const reachable = this.lifecycleAllows(task.status, target);
+        const repairable = !ambiguous && reachable;
         issues.push({
           ...base,
           finding: "terminal_pipeline_open_task",
           severity: "inconsistent",
           summary: `pipeline ${[...outcomes].join("/")} while task is ${task.status}`,
-          suggestedCommand: `task:${operation}`,
-          repairable: !ambiguous && reachable,
+          // When the lifecycle cannot reach the pipeline's outcome, the honest
+          // next step is the explicit operator correction, not a transition the
+          // task would reject.
+          suggestedCommand: reachable
+            ? taskLifecycleOperations[operation].command
+            : correctionCommandFor(task.status, target),
+          repairOperation: repairable ? operation : null,
+          repairable,
           refusalReason: ambiguous
             ? "pipelines for this task disagree or one is still active"
             : reachable
@@ -238,6 +247,7 @@ export class ReconcileTasks {
           severity: "inconsistent",
           summary: `pipeline still active while task is ${task.status}`,
           suggestedCommand: null,
+          repairOperation: null,
           repairable: false,
           refusalReason:
             "a terminal task cannot be reopened, and cancelling live execution is not a reconciliation decision",
@@ -254,7 +264,14 @@ export class ReconcileTasks {
           finding: "stale_pending_task",
           severity: "warning",
           summary: `task is ${task.status} while ${progress.terminal}/${progress.total} linked requirements are terminal`,
-          suggestedCommand: "task:complete",
+          // `task:complete` is deliberately not named here: the lifecycle
+          // refuses it from a task that never started, and the workaround —
+          // task:start followed by task:complete — would enter a moment at
+          // which work began that nobody observed. What is offered instead is
+          // the explicit attestation, which the operator makes and the system
+          // never infers.
+          suggestedCommand: correctionCommandFor(task.status, "completed"),
+          repairOperation: null,
           repairable: false,
           refusalReason:
             "requirement completion alone is insufficient evidence that operational work completed",
@@ -268,6 +285,7 @@ export class ReconcileTasks {
           severity: "warning",
           summary: `task is completed while ${progress.open}/${progress.total} linked requirements are still open`,
           suggestedCommand: null,
+          repairOperation: null,
           repairable: false,
           refusalReason:
             "requirement acceptance is governance state and is never changed by task reconciliation",
@@ -290,6 +308,7 @@ export class ReconcileTasks {
           severity: "warning",
           summary: `task is ${task.status} with no active pipeline run and no active agent run`,
           suggestedCommand: null,
+          repairOperation: null,
           repairable: false,
           refusalReason:
             "absence of execution does not distinguish finished, abandoned, and blocked work",
@@ -308,52 +327,74 @@ export class ReconcileTasks {
 
   /**
    * Applies only the repairs whose outcome existing code already defines, and
-   * only against the exact plan the operator approved. Every mutation goes
-   * through the lifecycle service, so the domain guard, the transaction, and
-   * the audit event are the same ones a manual command would use.
+   * only against the exact plan the operator approved.
+   *
+   * One approved plan is one transaction. The operator approved a set of
+   * repairs, not a prefix of one: committing repair A and then failing on
+   * repair B would leave the project in a state nobody approved and no result
+   * object describes, while the plan hash they hold would go on claiming
+   * otherwise. So the whole batch commits or none of it does.
+   *
+   * The plan is re-derived *inside* that transaction and the approval is
+   * checked against it, because the hash must describe the state actually being
+   * mutated rather than a reading taken before the transaction opened.
+   *
+   * Every mutation still goes through the lifecycle service, so the domain
+   * guard and the audit event are the same ones a manual command would use;
+   * only transaction ownership moves out here. No status is written by this
+   * command, in SQL or otherwise.
    */
   async repair(input: {
     projectId: string;
     approvedPlanHash: string;
     actorId: string;
   }): Promise<TaskRepairResult> {
-    const report = await this.inspect(input.projectId);
-    const repairs = report.issues.filter((issue) => issue.repairable);
-    if (
-      report.planHash === null ||
-      report.planHash !== input.approvedPlanHash
-    )
-      throw new TaskReconciliationApprovalError();
+    return this.transactions.run(async () => {
+      const report = await this.inspect(input.projectId);
+      if (
+        report.planHash === null ||
+        report.planHash !== input.approvedPlanHash
+      )
+        throw new TaskReconciliationApprovalError();
 
-    const applied: {
-      taskId: string;
-      from: TaskStatus;
-      to: TaskStatus;
-      operation: string;
-    }[] = [];
-    for (const issue of repairs) {
-      const command = { projectId: input.projectId, taskId: issue.taskId, actorId: input.actorId };
-      const to =
-        issue.suggestedCommand === "task:complete" ? "completed" : "cancelled";
-      const operation = to === "completed" ? "complete" : "cancel";
-      const result =
-        to === "completed"
-          ? await this.lifecycle.complete(command)
-          : await this.lifecycle.cancel({
-              ...command,
-              reason: "reconciled with terminal pipeline",
-            });
-      applied.push({
-        taskId: issue.taskId,
-        from: issue.status,
-        to: result,
-        operation,
-      });
-    }
-    return {
-      applied,
-      refused: report.issues.filter((issue) => !issue.repairable),
-    };
+      // Narrowed once, from the same `repairable` flag the plan hash was
+      // computed over, so the batch applied is exactly the batch approved.
+      const repairs = report.issues.flatMap((issue) =>
+        issue.repairable && issue.repairOperation !== null
+          ? [{ issue, operation: issue.repairOperation }]
+          : [],
+      );
+      if (repairs.length !== report.issues.filter((i) => i.repairable).length)
+        throw new TaskReconciliationApprovalError();
+
+      const applied: {
+        taskId: string;
+        from: TaskStatus;
+        to: TaskStatus;
+        operation: TaskLifecycleOperation;
+      }[] = [];
+      for (const { issue, operation } of repairs) {
+        const to = await this.lifecycle.applyWithinCurrentTransaction({
+          projectId: input.projectId,
+          taskId: issue.taskId,
+          actorId: input.actorId,
+          operation,
+          ...(operation === "cancel"
+            ? { reason: "reconciled with terminal pipeline" }
+            : {}),
+        });
+        applied.push({
+          taskId: issue.taskId,
+          from: issue.status,
+          to,
+          operation,
+        });
+      }
+      return {
+        applied,
+        refused: report.issues.filter((issue) => !issue.repairable),
+      };
+    });
   }
 
   /**
@@ -368,6 +409,19 @@ export class ReconcileTasks {
   }
 }
 
+/**
+ * The explicit correction available from this state, or null when none is.
+ *
+ * Reconciliation never performs it — it is an operator attestation — but naming
+ * it keeps the report's advice executable instead of leaving a dead end where
+ * the lifecycle cannot help.
+ */
+function correctionCommandFor(from: TaskStatus, to: TaskStatus): string | null {
+  return to === "completed" && isHistoricalCompletionApplicable(from)
+    ? taskCompletionRecordCommand
+    : null;
+}
+
 function planHash(
   projectId: string,
   repairs: readonly TaskReconciliationIssue[],
@@ -380,7 +434,9 @@ function planHash(
           taskId: issue.taskId,
           finding: issue.finding,
           from: issue.status,
-          command: issue.suggestedCommand,
+          // The operation, not the human-facing suggestion: the hash must
+          // cover what would be executed.
+          operation: issue.repairOperation,
         })),
       }),
       "utf8",

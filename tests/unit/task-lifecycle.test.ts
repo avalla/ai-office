@@ -8,11 +8,17 @@
  */
 
 import { describe, expect, test } from "vitest";
-import { InvalidTaskTransitionError } from "@ai-office/domain/errors.ts";
+import {
+  InvalidTaskCorrectionError,
+  InvalidTaskTransitionError,
+} from "@ai-office/domain/errors.ts";
 import {
   allowedTaskTransitions,
+  isHistoricalCompletionApplicable,
   isTaskTransitionAllowed,
   isTerminalTaskStatus,
+  maximumTaskReasonLength,
+  normalizeTaskReason,
   Task,
   terminalTaskStatuses,
   type TaskStatus,
@@ -177,5 +183,105 @@ describe("Task transitions", () => {
         "completed is terminal",
       );
     }
+  });
+});
+
+/**
+ * Historical completion correction.
+ *
+ * The correction exists because the transition table deliberately refuses
+ * `pending -> completed`. These tests pin that it did not become a way around
+ * the table: it is narrower than the lifecycle everywhere, it never touches a
+ * terminal status, and it is unavailable precisely where `task:complete` works.
+ */
+describe("historical completion correction", () => {
+  test("applies exactly where the lifecycle cannot reach completed", () => {
+    for (const status of everyStatus)
+      expect(isHistoricalCompletionApplicable(status)).toBe(
+        status === "pending" || status === "assigned" || status === "blocked",
+      );
+  });
+
+  test("is derived from the transition table rather than restated", () => {
+    for (const status of everyStatus) {
+      const reachable = isTaskTransitionAllowed(status, "completed");
+      const terminal = isTerminalTaskStatus(status);
+      // The correction never overlaps a legal transition and never touches a
+      // terminal status. Those two facts are the whole guard.
+      expect(isHistoricalCompletionApplicable(status)).toBe(
+        !terminal && !reachable,
+      );
+    }
+  });
+
+  test("records completion without passing through running", () => {
+    const value = task("pending");
+    value.recordHistoricalCompletion(later(1));
+    const snapshot = value.snapshot();
+    expect(snapshot.status).toBe("completed");
+    expect(snapshot.updatedAt).toEqual(later(1));
+  });
+
+  test("refuses every terminal status", () => {
+    for (const status of terminalTaskStatuses()) {
+      const value = task(status);
+      expect(() => value.recordHistoricalCompletion(later(1))).toThrow(
+        InvalidTaskCorrectionError,
+      );
+      expect(value.snapshot().status).toBe(status);
+    }
+  });
+
+  test("refuses a status the ordinary lifecycle already completes", () => {
+    for (const status of ["running", "waiting_review"] as const) {
+      const value = task(status);
+      try {
+        value.recordHistoricalCompletion(later(1));
+        throw new Error("expected a refusal");
+      } catch (error) {
+        expect(error).toBeInstanceOf(InvalidTaskCorrectionError);
+        expect((error as InvalidTaskCorrectionError).message).toContain(
+          "use task:complete",
+        );
+      }
+      expect(value.snapshot().status).toBe(status);
+    }
+  });
+
+  test("leaves the transition table untouched", () => {
+    // The correction must not have been implemented by widening the table: if
+    // it had, `task:complete` would work from pending for every future task.
+    expect(allowedTaskTransitions("pending")).not.toContain("completed");
+    expect(allowedTaskTransitions("assigned")).not.toContain("completed");
+    expect(allowedTaskTransitions("blocked")).not.toContain("completed");
+    expect(() => task("pending").complete(later(1))).toThrow(
+      InvalidTaskTransitionError,
+    );
+  });
+});
+
+describe("lifecycle rationale", () => {
+  test("refuses a blank or whitespace-only reason", () => {
+    for (const value of ["", "   ", "\t\n"])
+      expect(() => normalizeTaskReason(value, "block reason")).toThrow(
+        /block reason cannot be empty/u,
+      );
+  });
+
+  test("bounds the length and trims what it keeps", () => {
+    expect(normalizeTaskReason("  waiting on vendor  ", "block reason")).toBe(
+      "waiting on vendor",
+    );
+    expect(
+      normalizeTaskReason("x".repeat(maximumTaskReasonLength), "fail reason"),
+    ).toHaveLength(maximumTaskReasonLength);
+    expect(() =>
+      normalizeTaskReason("x".repeat(maximumTaskReasonLength + 1), "fail reason"),
+    ).toThrow(/cannot exceed 2000 characters/u);
+    // Trimming happens before the bound, so surrounding space cannot push a
+    // legitimate reason over it.
+    expect(
+      normalizeTaskReason(` ${"x".repeat(maximumTaskReasonLength)} `, "fail reason"),
+    ).toHaveLength(maximumTaskReasonLength);
   });
 });

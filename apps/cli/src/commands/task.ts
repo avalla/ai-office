@@ -3,9 +3,14 @@ import { ManageTaskLifecycle } from "@ai-office/application/commands/manage-task
 import { ManageTaskRequirements } from "@ai-office/application/commands/manage-task-requirements.ts";
 import {
   ReconcileTasks,
-  requirementProgress,
   type TaskReconciliationIssue,
 } from "@ai-office/application/commands/reconcile-tasks.ts";
+import {
+  RecordTaskCompletion,
+  taskCompletionRecordCommand,
+  type TaskCompletionRecordPlan,
+} from "@ai-office/application/commands/record-task-completion.ts";
+import { requirementProgress } from "@ai-office/application/commands/task-requirement-progress.ts";
 import { ListTaskBoard } from "@ai-office/application/queries/list-task-board.ts";
 import type { LinkedRequirement } from "@ai-office/application/ports/task-requirement-repository.port.ts";
 import {
@@ -42,6 +47,42 @@ function requirementCell(requirements: readonly LinkedRequirement[]): string {
   if (requirements.length === 0) return "—";
   const progress = requirementProgress(requirements);
   return `${progress.verified}/${progress.total} verified`;
+}
+
+/**
+ * The preflight for a historical completion record.
+ *
+ * It states which of the two things is on offer — a lifecycle transition or a
+ * correction to history — so an operator is never left to infer that from a
+ * command name.
+ */
+function printCompletionPlan(
+  plan: TaskCompletionRecordPlan,
+  io: CommandContext["io"],
+): void {
+  io.stdout(`${plan.taskId}  ${plan.title}`);
+  io.stdout(`  status: ${plan.status}`);
+  io.stdout(
+    plan.evidence.total === 0
+      ? "  linked requirements: none"
+      : `  linked requirements: ${plan.evidence.verified}/${plan.evidence.total} verified (${plan.evidence.open} open)`,
+  );
+  io.stdout("");
+  io.stdout("  operation: historical correction, not a lifecycle transition");
+  io.stdout(`  resulting status: ${plan.resultingStatus}`);
+  io.stdout(`  rationale (required): ${plan.reason}`);
+  io.stdout("");
+  io.stdout(
+    "  This records that the work was already completed outside the lifecycle",
+  );
+  io.stdout(
+    "  AI Office holds. No task:start is emitted and no execution is claimed.",
+  );
+  io.stdout("");
+  io.stdout("Approve this exact attestation with:");
+  io.stdout(
+    `  ai-office ${taskCompletionRecordCommand} --project ${plan.projectId} --task ${plan.taskId} --reason ${JSON.stringify(plan.reason)} --approve ${plan.planHash}`,
+  );
 }
 
 function issueLine(issue: TaskReconciliationIssue): string {
@@ -197,6 +238,61 @@ export async function handleTaskCommand(
     return 0;
   }
 
+  if (command === taskCompletionRecordCommand) {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "task", "reason", "approve"]),
+      new Set(["json"]),
+    );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError(
+        `${taskCompletionRecordCommand} only accepts named options`,
+      );
+    const service = new RecordTaskCompletion(
+      projects,
+      tasks,
+      taskRequirements,
+      audit,
+      clock,
+      transactions,
+    );
+    const input = {
+      projectId: requiredOption(parsed, "project"),
+      taskId: requiredOption(parsed, "task"),
+      reason: requiredOption(parsed, "reason"),
+      actorId: principal.id,
+    };
+    const approve = parsed.options.get("approve");
+    if (approve === undefined) {
+      // Preflight. Reads only, exactly like `uninstall` and `client:plan`.
+      const plan = await service.plan(input);
+      if (parsed.flags.has("json")) {
+        io.stdout(JSON.stringify(plan));
+        return 0;
+      }
+      if (!plan.available) {
+        io.stdout(`${plan.taskId}  ${plan.title}`);
+        io.stdout(`  status: ${plan.status}`);
+        io.stdout("");
+        io.stdout(`  refused: ${plan.refusalReason ?? "not applicable"}`);
+        if (plan.suggestedCommand !== null)
+          io.stdout(`  use instead: ${plan.suggestedCommand}`);
+        return 1;
+      }
+      printCompletionPlan(plan, io);
+      return 0;
+    }
+    const result = await service.record({ ...input, approvedPlanHash: approve });
+    if (parsed.flags.has("json")) {
+      io.stdout(JSON.stringify(result));
+      return 0;
+    }
+    io.stdout(
+      `Recorded completion of task ${result.taskId}: ${result.from} -> ${result.to} (historical correction)`,
+    );
+    return 0;
+  }
+
   if (command === "task:link-requirement" || command === "task:unlink-requirement") {
     const parsed = parseArguments(
       args,
@@ -254,6 +350,7 @@ export async function handleTaskCommand(
       taskRequirements,
       lifecycle,
       clock,
+      transactions,
     );
 
     const approve = parsed.options.get("approve");
@@ -324,7 +421,7 @@ export async function handleTaskCommand(
     io.stdout("");
     if (report.planHash === null)
       io.stdout(
-        "No automatic repair is available. Use the task lifecycle commands to correct state explicitly.",
+        "No automatic repair is available. Use the command suggested beside each finding to correct state explicitly.",
       );
     else
       io.stdout(

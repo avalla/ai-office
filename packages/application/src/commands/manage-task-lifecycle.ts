@@ -10,15 +10,21 @@
  * The domain owns *whether* a transition is legal; this service owns project
  * scoping, transactionality, and the audit record. Neither writes the status
  * column directly.
+ *
+ * Historical correction of work that happened outside this lifecycle is *not*
+ * here. It is a different statement about the project, so it is a different
+ * command: see `RecordTaskCompletion`.
  */
 
 import {
   allowedTaskTransitions,
   isTerminalTaskStatus,
+  normalizeTaskReason,
   terminalTaskStatuses,
   type Task,
   type TaskStatus,
 } from "@ai-office/domain/task/task.ts";
+import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { ProjectNotFoundError } from "../errors.ts";
 import { TaskNotFoundError } from "./schedule-agent-run.ts";
 import type { Clock } from "../ports/clock.port.ts";
@@ -46,6 +52,40 @@ export const taskLifecycleOperations = {
 
 export type TaskLifecycleOperation = keyof typeof taskLifecycleOperations;
 
+/**
+ * The domain call each operation makes. One entry per operation, so an
+ * operation named by a batch caller resolves to the same aggregate method a
+ * direct command would use rather than to a second hand-written branch.
+ */
+const lifecycleMutations = {
+  start: (task, now) => task.start(now),
+  "submit-review": (task, now) => task.submitForReview(now),
+  complete: (task, now) => task.complete(now),
+  block: (task, now) => task.block(now),
+  unblock: (task, now) => task.unblock(now),
+  fail: (task, now) => task.fail(now),
+  cancel: (task, now) => task.cancel(now),
+} as const satisfies Readonly<
+  Record<TaskLifecycleOperation, (task: Task, now: Date) => void>
+>;
+
+/**
+ * Operations whose rationale is mandatory, and those that merely accept one.
+ *
+ * Enforced here rather than only at the CLI: "mandatory" has to hold for the
+ * daemon protocol and for reconciliation too, not just for an operator who
+ * typed the option.
+ */
+const reasonRequiredOperations = new Set<TaskLifecycleOperation>([
+  "block",
+  "fail",
+]);
+const reasonAcceptedOperations = new Set<TaskLifecycleOperation>([
+  "block",
+  "fail",
+  "cancel",
+]);
+
 /** One transition an operator may perform right now. */
 export interface AvailableTaskTransition {
   to: TaskStatus;
@@ -71,6 +111,12 @@ const operationsByTarget = new Map<TaskStatus, TaskLifecycleOperation>(
       [value.to, operation as TaskLifecycleOperation] as const,
   ),
 );
+
+/** One lifecycle operation, named rather than passed as a callback. */
+export interface TaskLifecycleRequest extends TaskCommandInput {
+  operation: TaskLifecycleOperation;
+  reason?: string;
+}
 
 export class ManageTaskLifecycle {
   constructor(
@@ -111,17 +157,15 @@ export class ManageTaskLifecycle {
   }
 
   async start(input: TaskCommandInput): Promise<TaskStatus> {
-    return this.apply(input, "start", (task, now) => task.start(now));
+    return this.apply({ ...input, operation: "start" });
   }
 
   async submitForReview(input: TaskCommandInput): Promise<TaskStatus> {
-    return this.apply(input, "submit-review", (task, now) =>
-      task.submitForReview(now),
-    );
+    return this.apply({ ...input, operation: "submit-review" });
   }
 
   async complete(input: TaskCommandInput): Promise<TaskStatus> {
-    return this.apply(input, "complete", (task, now) => task.complete(now));
+    return this.apply({ ...input, operation: "complete" });
   }
 
   /**
@@ -132,38 +176,47 @@ export class ManageTaskLifecycle {
   async block(
     input: TaskCommandInput & { reason: string },
   ): Promise<TaskStatus> {
-    return this.apply(
-      input,
-      "block",
-      (task, now) => task.block(now),
-      { reason: input.reason },
-    );
+    return this.apply({ ...input, operation: "block" });
   }
 
   async unblock(input: TaskCommandInput): Promise<TaskStatus> {
-    return this.apply(input, "unblock", (task, now) => task.unblock(now));
+    return this.apply({ ...input, operation: "unblock" });
   }
 
   async fail(
     input: TaskCommandInput & { reason: string },
   ): Promise<TaskStatus> {
-    return this.apply(
-      input,
-      "fail",
-      (task, now) => task.fail(now),
-      { reason: input.reason },
-    );
+    return this.apply({ ...input, operation: "fail" });
   }
 
   async cancel(
     input: TaskCommandInput & { reason?: string },
   ): Promise<TaskStatus> {
-    return this.apply(
-      input,
-      "cancel",
-      (task, now) => task.cancel(now),
-      input.reason === undefined ? {} : { reason: input.reason },
-    );
+    return this.apply({
+      ...input,
+      operation: "cancel",
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+    });
+  }
+
+  /**
+   * The same validated mutation, persistence, and audit record as the public
+   * commands, without owning a transaction.
+   *
+   * Transaction ownership is the only thing separated out. A batch caller — one
+   * approved reconciliation plan — opens a single transaction and drives several
+   * of these, so the whole plan commits or none of it does. It may not open a
+   * nested one: `SqliteTransactionRunner` rejects that by design, and a plan
+   * that committed one repair at a time would make an approved plan hash
+   * describe something the operator never approved.
+   *
+   * Callers that do not already hold a transaction must use the named commands
+   * above instead.
+   */
+  async applyWithinCurrentTransaction(
+    request: TaskLifecycleRequest,
+  ): Promise<TaskStatus> {
+    return this.perform(request);
   }
 
   /**
@@ -179,30 +232,57 @@ export class ManageTaskLifecycle {
    * is refused rather than silently accepted. A repeated lifecycle event is
    * either an operator mistake or a stale plan, and both deserve an error.
    */
-  private async apply(
-    input: TaskCommandInput,
-    operation: TaskLifecycleOperation,
-    mutate: (task: Task, now: Date) => void,
-    payload: Readonly<Record<string, unknown>> = {},
-  ): Promise<TaskStatus> {
-    const task = await this.requireTask(input.projectId, input.taskId);
+  private async apply(request: TaskLifecycleRequest): Promise<TaskStatus> {
+    return this.transactions.run(() => this.perform(request));
+  }
+
+  private async perform(request: TaskLifecycleRequest): Promise<TaskStatus> {
+    const { operation } = request;
+    const reason = this.resolveReason(operation, request.reason);
+    const task = await this.requireTask(request.projectId, request.taskId);
     const from = task.snapshot().status;
     const now = this.clock.now();
-    mutate(task, now);
+    lifecycleMutations[operation](task, now);
     const after = task.snapshot();
-    await this.transactions.run(async () => {
-      await this.tasks.save(task);
-      await this.audit.execute({
-        eventType: "task.status_changed",
-        actorType: "cli",
-        actorId: input.actorId,
-        projectId: after.projectId,
-        aggregateType: "task",
-        aggregateId: after.id,
-        payload: { operation, from, to: after.status, ...payload },
-      });
+    await this.tasks.save(task);
+    await this.audit.execute({
+      eventType: "task.status_changed",
+      actorType: "cli",
+      actorId: request.actorId,
+      projectId: after.projectId,
+      aggregateType: "task",
+      aggregateId: after.id,
+      payload: {
+        operation,
+        from,
+        to: after.status,
+        ...(reason === undefined ? {} : { reason }),
+      },
     });
     return after.status;
+  }
+
+  /**
+   * Validates the rationale before anything is mutated. A mandatory reason that
+   * is blank or absurdly long is refused here, so the refusal costs nothing and
+   * no partial record survives it.
+   */
+  private resolveReason(
+    operation: TaskLifecycleOperation,
+    value: string | undefined,
+  ): string | undefined {
+    if (value === undefined) {
+      if (reasonRequiredOperations.has(operation))
+        throw new DomainValidationError(
+          `Task ${operation} requires a reason`,
+        );
+      return undefined;
+    }
+    if (!reasonAcceptedOperations.has(operation))
+      throw new DomainValidationError(
+        `Task ${operation} does not accept a reason`,
+      );
+    return normalizeTaskReason(value, `${operation} reason`);
   }
 
   private async requireTask(projectId: string, taskId: string): Promise<Task> {

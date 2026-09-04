@@ -74,6 +74,7 @@ import { TransactionAlreadyActiveError } from "@ai-office/application/ports/tran
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import {
   DomainValidationError,
+  InvalidTaskCorrectionError,
   InvalidTaskTransitionError,
 } from "@ai-office/domain/errors.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
@@ -89,6 +90,7 @@ import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sql
 import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
 import { RequirementNotFoundError } from "@ai-office/application/commands/manage-task-requirements.ts";
 import { TaskReconciliationApprovalError } from "@ai-office/application/commands/reconcile-tasks.ts";
+import { TaskCompletionApprovalError } from "@ai-office/application/commands/record-task-completion.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
 import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
@@ -213,6 +215,7 @@ Commands:
   task:unblock --project <id> --task <id>
   task:fail --project <id> --task <id> --reason <text>
   task:cancel --project <id> --task <id> [--reason <text>]
+  task:record-completion --project <id> --task <id> --reason <text> [--approve <plan-hash>] [--json]  # historical correction; read-only preflight without --approve
   task:link-requirement --project <id> --task <id> --requirement <id>
   task:unlink-requirement --project <id> --task <id> --requirement <id>
   task:reconcile --project <id> [--json]  # read-only; add --fix --approve <planHash> to repair
@@ -300,6 +303,7 @@ const commands = [
   "task:unblock",
   "task:fail",
   "task:cancel",
+  "task:record-completion",
   "task:link-requirement",
   "task:unlink-requirement",
   "task:reconcile",
@@ -421,8 +425,10 @@ function formatKnownError(error: unknown): string | null {
     error instanceof AgentNotFoundError ||
     error instanceof TaskNotFoundError ||
     error instanceof InvalidTaskTransitionError ||
+    error instanceof InvalidTaskCorrectionError ||
     error instanceof RequirementNotFoundError ||
     error instanceof TaskReconciliationApprovalError ||
+    error instanceof TaskCompletionApprovalError ||
     error instanceof TaskLockActiveError ||
     error instanceof TaskLockExpiredError ||
     error instanceof InvalidAgentDefinitionError ||

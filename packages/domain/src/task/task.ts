@@ -1,6 +1,7 @@
 import type { ProjectId } from "../project/project.ts";
 import {
   DomainValidationError,
+  InvalidTaskCorrectionError,
   InvalidTaskTransitionError,
 } from "../errors.ts";
 
@@ -72,6 +73,62 @@ export function isTaskTransitionAllowed(
   to: TaskStatus,
 ): boolean {
   return (taskTransitions[from] as readonly TaskStatus[]).includes(to);
+}
+
+/**
+ * Whether an operator may record that this task's work was already completed
+ * outside the lifecycle AI Office holds.
+ *
+ * Derived from the one transition table rather than restated beside it, so the
+ * two can never disagree. Two states are excluded, for opposite reasons:
+ *
+ * - a terminal task, because terminal states are irreversible and a correction
+ *   that could rewrite one would be the escape hatch this lifecycle refuses;
+ * - a task that can already reach `completed` normally, because there the
+ *   honest operation is `task:complete` and the correction would be a way of
+ *   avoiding the ordinary record.
+ *
+ * What remains — `pending`, `assigned`, `blocked` — is exactly the set where
+ * the work is known to have happened but the board never observed it.
+ */
+export function isHistoricalCompletionApplicable(from: TaskStatus): boolean {
+  return !isTerminalTaskStatus(from) && !isTaskTransitionAllowed(from, "completed");
+}
+
+/** Why a historical completion cannot be recorded from `from`. Null when it can. */
+export function historicalCompletionRefusal(from: TaskStatus): string | null {
+  if (isTerminalTaskStatus(from))
+    return `${from} is terminal and terminal state is never rewritten`;
+  if (isTaskTransitionAllowed(from, "completed"))
+    return `${from} can reach completed through the ordinary lifecycle, so use task:complete`;
+  return null;
+}
+
+/**
+ * The longest rationale a lifecycle or correction record accepts.
+ *
+ * Bounded because the value is copied verbatim into an audit payload and into
+ * CLI output; unbounded operator text there is a storage and rendering hazard,
+ * not a feature.
+ */
+export const maximumTaskReasonLength = 2_000;
+
+/**
+ * A mandatory rationale, normalized once.
+ *
+ * "Mandatory" has to mean the operator said something, not that the option was
+ * present: `--reason ""` and `--reason "   "` are refused here rather than
+ * stored as an empty explanation of an irreversible state change.
+ */
+export function normalizeTaskReason(value: string, label: string): string {
+  const reason = value.trim();
+  if (reason.length === 0)
+    throw new DomainValidationError(`Task ${label} cannot be empty`);
+  if (reason.length > maximumTaskReasonLength)
+    throw new DomainValidationError(
+      `Task ${label} cannot exceed ${maximumTaskReasonLength} characters`,
+    );
+  return reason;
 }
 
 export interface TaskProps {
@@ -170,6 +227,31 @@ export class Task {
   /** The work will not be done. Allowed from any non-terminal status. */
   cancel(now: Date): void {
     this.transition("cancelled", now);
+  }
+
+  /**
+   * Historical correction, not lifecycle progression.
+   *
+   * The operator attests that this work was already completed outside the
+   * lifecycle AI Office recorded, and is entering that fact now. It deliberately
+   * does not read `taskTransitions`: adding `pending -> completed` there to make
+   * this convenient would let ordinary `task:complete` skip the whole lifecycle,
+   * and routing the correction through `start()` first would fabricate a moment
+   * at which work began that nobody observed.
+   *
+   * The guard is stricter than the lifecycle's, not looser: it refuses every
+   * terminal state and refuses any state from which `task:complete` already
+   * works.
+   */
+  recordHistoricalCompletion(now: Date): void {
+    const refusal = historicalCompletionRefusal(this.props.status);
+    if (refusal !== null)
+      throw new InvalidTaskCorrectionError(
+        this.props.status,
+        "completed",
+        refusal,
+      );
+    this.props = { ...this.props, status: "completed", updatedAt: now };
   }
 
   private transition(to: TaskStatus, now: Date): void {

@@ -26,3 +26,22 @@ export class InvalidTaskTransitionError extends Error {
     this.name = "InvalidTaskTransitionError";
   }
 }
+
+/**
+ * A historical correction the task's current state cannot carry.
+ *
+ * Correction is not lifecycle progression, so it does not reuse
+ * `InvalidTaskTransitionError`: the allowed-transitions list that error carries
+ * would point an operator at the ordinary commands, which are exactly what the
+ * correction exists to avoid.
+ */
+export class InvalidTaskCorrectionError extends Error {
+  constructor(
+    readonly from: string,
+    readonly to: string,
+    readonly detail: string,
+  ) {
+    super(`Cannot record ${to} for a task that is ${from}: ${detail}`);
+    this.name = "InvalidTaskCorrectionError";
+  }
+}

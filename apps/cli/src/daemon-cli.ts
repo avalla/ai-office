@@ -90,6 +90,7 @@ const projectScopedCommands = new Set([
   "task:unblock",
   "task:fail",
   "task:cancel",
+  "task:record-completion",
   "task:link-requirement",
   "task:unlink-requirement",
   "task:reconcile",
