@@ -13,7 +13,7 @@ import {
   startDashboardHost,
   DashboardHostError,
 } from "../../dashboard/src/dashboard-host.ts";
-import { DaemonClient, DaemonUnavailableError } from "./daemon-client.ts";
+import { IpcRuntimeClient, RuntimeUnavailableError } from "./daemon-client.ts";
 import {
   CliUsageError,
   parseArguments,
@@ -68,9 +68,9 @@ export async function runDashboardCli(
     throw new CliUsageError("Port must be an integer between 0 and 65535");
 
   try {
-    await new DaemonClient(options.socketPath).health();
+    await new IpcRuntimeClient(options.socketPath).health();
   } catch (error) {
-    if (error instanceof DaemonUnavailableError) {
+    if (error instanceof RuntimeUnavailableError) {
       options.io.stderr(error.message);
       return 1;
     }

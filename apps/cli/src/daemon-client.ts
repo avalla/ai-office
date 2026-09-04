@@ -104,8 +104,20 @@ export class IpcRuntimeClient implements RuntimeClient {
   }
 }
 
-/** @deprecated Use IpcRuntimeClient; retained for public API compatibility. */
-export class DaemonClient extends IpcRuntimeClient {}
-
-/** @deprecated Use RuntimeUnavailableError. */
+/**
+ * Pre-Runtime names, kept so existing importers keep compiling and keep
+ * behaving the same at the points that can be depended on.
+ *
+ * The compatibility contract is deliberately narrow and is asserted by
+ * `tests/unit/deprecated-runtime-aliases.test.ts`:
+ *
+ * - the legacy export names resolve;
+ * - each is the *same* class object as its Runtime-first name, so `instanceof`
+ *   holds in both directions and a subclass never splits the hierarchy;
+ * - version-1 daemon protocol behaviour is unchanged.
+ *
+ * It deliberately does not cover `error.name`, `constructor.name`, or message
+ * text: those now read in Runtime terms, which is the point of the rename.
+ */
+export { IpcRuntimeClient as DaemonClient };
 export { RuntimeUnavailableError as DaemonUnavailableError };

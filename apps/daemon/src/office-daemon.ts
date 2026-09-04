@@ -298,6 +298,11 @@ export class PersistentRuntimeHost {
 
 // Compatibility exports: daemon remains the name of the current local hosting
 // mechanism and of the version-1 protocol/audit vocabulary.
+/**
+ * Pre-Runtime names. Identity aliases, not subclasses, so `instanceof`
+ * behaves identically through either name. See the compatibility contract in
+ * `apps/cli/src/daemon-client.ts`.
+ */
 export {
   PersistentRuntimeHost as OfficeDaemon,
   RuntimeHostAlreadyRunningError as DaemonAlreadyRunningError,
