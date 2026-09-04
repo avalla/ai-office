@@ -1,6 +1,9 @@
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
-import { cliHelp, type CliIo } from "@ai-office/runtime-host/runtime-command.ts";
+import {
+  cliHelp,
+  type CliIo,
+} from "@ai-office/runtime-host/runtime-command.ts";
 import {
   IpcRuntimeClient,
   InvalidDaemonResponseError,
@@ -10,12 +13,18 @@ import type { RuntimeClient } from "@ai-office/application/runtime/runtime-clien
 import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
 import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
 import { runDashboardCli } from "./dashboard-cli.ts";
-import { CliUsageError } from "@ai-office/runtime-host/commands/shared.ts";
+import {
+  CliUsageError,
+  parseArguments,
+} from "@ai-office/runtime-host/commands/shared.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { getOfflineProjectStatus } from "./offline-project-status.ts";
-import { printProjectLifecycleStatus } from "@ai-office/runtime-host/lifecycle-view.ts";
+import {
+  printProjectLifecycleStatus,
+  projectStatusExitCode,
+} from "@ai-office/runtime-host/lifecycle-view.ts";
 import { renderHandoverReport } from "@ai-office/runtime-host/handover-view.ts";
 import { degradedProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
@@ -255,7 +264,9 @@ async function resolveDiscoveredProject(
     runtime?: { authoritativeState?: unknown };
   };
   if (
-    (status.schemaVersion !== 2 && status.schemaVersion !== 3) ||
+    (status.schemaVersion !== 2 &&
+      status.schemaVersion !== 3 &&
+      status.schemaVersion !== 4) ||
     typeof status.project?.id !== "string" ||
     (status.project.repositoryIdentity?.state !== "valid" &&
       status.project.repositoryIdentity?.state !== "legacy") ||
@@ -351,18 +362,34 @@ export async function runRuntimeCli(
       });
 
     if (args[0] === "status" && args.includes("--offline")) {
-      const offlineArgs = args.filter((argument) => argument !== "--offline");
-      const prepared = lifecycleArguments(offlineArgs, workingDirectory);
-      const status = await getOfflineProjectStatus(prepared[1]!, {
-        runtimeHome: runtimePaths.runtimeHome,
-        bindings,
-        ...(options.agentClients === undefined
-          ? {}
-          : { clients: options.agentClients }),
-      });
-      if (offlineArgs.includes("--json")) io.stdout(JSON.stringify(status));
+      // Explicit offline inspection is still `status [path] [--offline]
+      // [--json]`. Validating with the shared parser before anything else
+      // keeps one grammar and stops a malformed invocation from being answered
+      // as if it were well formed.
+      const parsed = parseArguments(
+        args.slice(1),
+        new Set(),
+        new Set(["offline", "json"]),
+      );
+      if (parsed.positionals.length > 1)
+        throw new CliUsageError("status accepts at most one project path");
+      const status = await getOfflineProjectStatus(
+        resolve(workingDirectory, parsed.positionals[0] ?? "."),
+        {
+          runtimeHome: runtimePaths.runtimeHome,
+          // No health or command request is made on this path, so the only
+          // honest thing the report can say about the host is that it was not
+          // checked.
+          hostEvidence: "not_checked",
+          bindings,
+          ...(options.agentClients === undefined
+            ? {}
+            : { clients: options.agentClients }),
+        },
+      );
+      if (parsed.flags.has("json")) io.stdout(JSON.stringify(status));
       else printProjectLifecycleStatus(status, { io });
-      return status.health === "not_installed" ? 1 : 0;
+      return projectStatusExitCode(status.health);
     }
 
     const prepared = await resolvedArguments(args, workingDirectory, bindings);
@@ -408,6 +435,9 @@ export async function runRuntimeCli(
       const prepared = lifecycleArguments(args, workingDirectory);
       const status = await getOfflineProjectStatus(prepared[1]!, {
         runtimeHome: runtimePaths.runtimeHome,
+        // A request to the host was made and failed, so "unreachable" is
+        // supported by evidence here in a way it never is under --offline.
+        hostEvidence: "unreachable",
         bindings,
         ...(options.agentClients === undefined
           ? {}

@@ -63,7 +63,7 @@ function lifecycleStatus(
   office: ProjectLifecycleStatus["office"]["state"],
 ): ProjectLifecycleStatus {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     installed: true,
     health: "healthy",
     project: {

@@ -314,7 +314,7 @@ describe("project lifecycle UX", () => {
     expect(firstStatus.exitCode).toBe(0);
     expect(firstStatus.stdout).toEqual(secondStatus.stdout);
     expect(JSON.parse(firstStatus.stdout[0]!)).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       installed: true,
       health: "healthy",
       project: {
@@ -912,7 +912,7 @@ describe("project lifecycle UX", () => {
     const offline = await run(harness, ["status", "--json"]);
     expect(offline.exitCode).toBe(1);
     expect(JSON.parse(offline.stdout[0]!)).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       installed: null,
       project: {
         id: null,

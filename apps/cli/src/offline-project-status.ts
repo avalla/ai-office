@@ -52,14 +52,25 @@ function offlineConfiguration(input: {
   return input.detected ? "missing" : "not_configured";
 }
 
+/**
+ * What this inspection knows about the persistent Runtime host.
+ *
+ * `unreachable` is only legitimate after a request to the host actually
+ * failed. `not_checked` is the explicit `--offline` case: no request was made,
+ * so the host may be running perfectly well.
+ */
+export type RuntimeHostEvidence = "unreachable" | "not_checked";
+
 export async function getOfflineProjectStatus(
   rootPath: string,
   input: {
     runtimeHome: string;
+    hostEvidence: RuntimeHostEvidence;
     bindings?: ProjectBindingAdapter;
     clients?: AgentClientCatalog;
   },
 ): Promise<ProjectLifecycleStatus> {
+  const notChecked = input.hostEvidence === "not_checked";
   const bindings = input.bindings ?? new LocalProjectBindingAdapter();
   const clients = new ManageAgentClientIntegration(
     input.clients ?? new DefaultAgentClientCatalog(),
@@ -82,6 +93,17 @@ export async function getOfflineProjectStatus(
       code: "binding_invalid",
       message: inspection.issue ?? "Project binding is invalid",
       recovery: "Repair or remove .ai-office/project.json explicitly",
+    });
+  else if (notChecked)
+    // Requesting offline inspection is not evidence that the Runtime is down,
+    // so this reports a gap in knowledge and never tells the operator to start
+    // a host that may already be running.
+    issues.push({
+      severity: "warning",
+      code: "runtime_not_checked",
+      message:
+        "Offline inspection was requested, so authoritative AI Office Runtime state was not checked",
+      recovery: "Run: ai-office status to inspect authoritative Runtime state",
     });
   else
     issues.push({
@@ -138,10 +160,13 @@ export async function getOfflineProjectStatus(
   }
 
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     installed: bindingValid ? null : false,
-    health:
-      bindingValid || inspection.status === "invalid"
+    health: bindingValid
+      ? notChecked
+        ? "unverified"
+        : "needs_attention"
+      : inspection.status === "invalid"
         ? "needs_attention"
         : "not_installed",
     project: {
@@ -171,9 +196,9 @@ export async function getOfflineProjectStatus(
       },
     },
     runtime: {
-      daemon: "unreachable",
+      daemon: notChecked ? "not_checked" : "unreachable",
       home: input.runtimeHome,
-      authoritativeState: "unavailable",
+      authoritativeState: notChecked ? "not_checked" : "unavailable",
     },
     office: {
       state: "unavailable",

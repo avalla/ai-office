@@ -33,7 +33,15 @@ import {
 } from "./project-binding.ts";
 import { buildProjectInstructionContract } from "./build-project-instructions.ts";
 
-export type LifecycleHealth = "healthy" | "needs_attention" | "not_installed";
+/**
+ * Operator-facing verdict for one repository.
+ *
+ * `unverified` exists because explicit offline inspection deliberately does not
+ * contact the Runtime: local evidence showed no problem, but authoritative
+ * state was never read, so neither `healthy` nor `needs_attention` is true.
+ */
+export type LifecycleHealth =
+  "healthy" | "needs_attention" | "not_installed" | "unverified";
 export type RepositoryIdentityState =
   "valid" | "legacy" | "missing" | "invalid";
 export type RuntimeAssociationState =
@@ -62,7 +70,13 @@ export interface LifecycleClientStatus {
 }
 
 export interface ProjectLifecycleStatus {
-  schemaVersion: 3;
+  /**
+   * Version 4 widens `runtime.daemon`, `runtime.authoritativeState`, and
+   * `health` so a report can say the Runtime host was not checked instead of
+   * claiming it was proved unreachable. Version 3 consumers keep reading every
+   * value they already understood.
+   */
+  schemaVersion: 4;
   installed: boolean | null;
   health: LifecycleHealth;
   project: {
@@ -85,13 +99,18 @@ export interface ProjectLifecycleStatus {
     };
   };
   runtime: {
-    daemon: "reachable" | "unreachable";
+    /**
+     * `unreachable` requires evidence: a health or command request that
+     * actually failed. `not_checked` means no request was made.
+     */
+    daemon: "reachable" | "unreachable" | "not_checked";
     home: string;
     authoritativeState:
       | "available"
       | "unavailable"
       | "project_missing"
-      | "repository_unassociated";
+      | "repository_unassociated"
+      | "not_checked";
   };
   office: {
     state: "default_baseline" | "configured" | "missing" | "unavailable";
@@ -711,7 +730,7 @@ export class ManageProjectLifecycle {
     if (inspection.status !== "valid" || inspection.binding === undefined) {
       const invalid = inspection.status === "invalid";
       return {
-        schemaVersion: 3,
+        schemaVersion: 4,
         installed: false,
         health: invalid ? "needs_attention" : "not_installed",
         project: baseProject,
@@ -909,7 +928,7 @@ export class ManageProjectLifecycle {
         recovery: "Assign a matching registered agent with pipeline:assign",
       });
     return {
-      schemaVersion: 3,
+      schemaVersion: 4,
       installed,
       health: installed && issues.length === 0 ? "healthy" : "needs_attention",
       project: {

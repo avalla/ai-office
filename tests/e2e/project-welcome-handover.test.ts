@@ -296,7 +296,7 @@ describe("welcome and machine output", () => {
     const machine = await run(harness, ["status", "--json"]);
     expect(machine.stdout).toHaveLength(1);
     const status = JSON.parse(machine.stdout[0]!) as Record<string, unknown>;
-    expect(status.schemaVersion).toBe(3);
+    expect(status.schemaVersion).toBe(4);
     expect(status).not.toHaveProperty("handover");
 
     const human = await run(harness, ["status"]);

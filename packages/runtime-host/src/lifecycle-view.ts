@@ -1,5 +1,6 @@
 import type {
   LifecycleClientStatus,
+  LifecycleHealth,
   ProjectLifecycleStatus,
 } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
 import type { ProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
@@ -96,4 +97,16 @@ export function printProjectLifecycleStatus(
   context.io.stdout(`Status: ${result.health}`);
   if (handover !== undefined)
     renderStatusGuidance(handover.handover, context.io);
+}
+
+/**
+ * Process exit code for `status`, online or offline.
+ *
+ * `0` means nothing that needs attention was found in what was actually
+ * inspected; `1` means a problem was found or the repository is not installed.
+ * `unverified` maps to `0` because explicit offline inspection found no local
+ * problem — it simply did not read authoritative state, which the report says.
+ */
+export function projectStatusExitCode(health: LifecycleHealth): number {
+  return health === "healthy" || health === "unverified" ? 0 : 1;
 }

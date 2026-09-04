@@ -63,6 +63,61 @@ afterEach(() => {
   }
 });
 
+function installedRepository(prefix: string): string {
+  const projectRoot = mkdtempSync(join(tmpdir(), prefix));
+  temporaryDirectories.push(projectRoot);
+  mkdirSync(join(projectRoot, "runtime"));
+  mkdirSync(join(projectRoot, ".ai-office"));
+  writeFileSync(
+    join(projectRoot, ".ai-office", "project.json"),
+    JSON.stringify({
+      schemaVersion: 2,
+      managedBy: "ai-office",
+      repositoryId: "repo_offline-status-test",
+    }),
+  );
+  return projectRoot;
+}
+
+function offlineRuntimePaths(projectRoot: string) {
+  const runtimeHome = join(projectRoot, "runtime");
+  if (!existsSync(runtimeHome)) mkdirSync(runtimeHome);
+  return resolveRuntimePaths({ mode: "user", runtimeHome });
+}
+
+/**
+ * A Runtime client that counts every crossing of the client boundary, so a
+ * test can prove an offline path made no request at all rather than only
+ * checking what the request returned.
+ */
+function rejectingRuntimeClient(failure?: () => Error): {
+  client: RuntimeClient;
+  readonly healthCalls: number;
+  readonly executeCalls: number;
+} {
+  let healthCalls = 0;
+  let executeCalls = 0;
+  const fail = failure ?? (() => new Error("unexpected Runtime request"));
+  return {
+    client: {
+      health: async () => {
+        healthCalls += 1;
+        throw fail();
+      },
+      execute: async () => {
+        executeCalls += 1;
+        throw fail();
+      },
+    },
+    get healthCalls() {
+      return healthCalls;
+    },
+    get executeCalls() {
+      return executeCalls;
+    },
+  };
+}
+
 describe("CLI to daemon end-to-end", () => {
   test("runs persisted project commands through the socket", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-daemon-cli-"));
@@ -163,13 +218,7 @@ describe("CLI to daemon end-to-end", () => {
         "",
       );
       const taskId = (
-        await run([
-          "task:create",
-          "--project",
-          projectId,
-          "--title",
-          "AUC-03",
-        ])
+        await run(["task:create", "--project", projectId, "--title", "AUC-03"])
       )[0]!.replace("Task created: ", "");
 
       // Preflight and correction both cross the Unix socket; the plan hash the
@@ -274,37 +323,10 @@ describe("CLI to daemon end-to-end", () => {
     ]);
   });
 
-  test("supports explicit offline status without contacting the Runtime", async () => {
-    const projectRoot = mkdtempSync(
-      join(tmpdir(), "ai-office-offline-status-"),
-    );
-    temporaryDirectories.push(projectRoot);
-    const runtimeHome = join(projectRoot, "runtime");
-    mkdirSync(runtimeHome);
-    mkdirSync(join(projectRoot, ".ai-office"));
-    writeFileSync(
-      join(projectRoot, ".ai-office", "project.json"),
-      JSON.stringify({
-        schemaVersion: 2,
-        managedBy: "ai-office",
-        repositoryId: "repo_offline-status-test",
-      }),
-    );
-    const runtimePaths = resolveRuntimePaths({
-      mode: "user",
-      runtimeHome,
-    });
-    let contacted = false;
-    const runtimeClient: RuntimeClient = {
-      health: async () => {
-        contacted = true;
-        throw new Error("unexpected health request");
-      },
-      execute: async () => {
-        contacted = true;
-        throw new Error("unexpected command request");
-      },
-    };
+  test("explicit offline status never contacts the Runtime and never claims it is unreachable", async () => {
+    const projectRoot = installedRepository("ai-office-offline-status-");
+    const runtimePaths = offlineRuntimePaths(projectRoot);
+    const runtime = rejectingRuntimeClient();
     const output = captureIo();
 
     expect(
@@ -312,21 +334,173 @@ describe("CLI to daemon end-to-end", () => {
         projectRoot,
         workingDirectory: projectRoot,
         runtimePaths,
-        runtimeClient,
+        runtimeClient: runtime.client,
         io: output.io,
       }),
     ).toBe(0);
-    expect(contacted).toBe(false);
-    expect(JSON.parse(output.stdout[0]!)).toMatchObject({
-      runtime: {
-        daemon: "unreachable",
-        authoritativeState: "unavailable",
-      },
+
+    expect(runtime.healthCalls).toBe(0);
+    expect(runtime.executeCalls).toBe(0);
+    const status = JSON.parse(output.stdout[0]!) as {
+      schemaVersion: number;
+      health: string;
+      runtime: { daemon: string; authoritativeState: string };
       project: {
-        repositoryIdentity: { state: "valid" },
-        runtimeAssociation: { state: "unverified" },
-      },
+        repositoryIdentity: { state: string };
+        runtimeAssociation: { state: string };
+      };
+      issues: { code: string; severity: string; recovery?: string }[];
+    };
+
+    expect(status.schemaVersion).toBe(4);
+    expect(status.runtime.daemon).toBe("not_checked");
+    expect(status.runtime.authoritativeState).toBe("not_checked");
+    expect(status.health).toBe("unverified");
+    expect(status.project).toMatchObject({
+      repositoryIdentity: { state: "valid" },
+      runtimeAssociation: { state: "unverified" },
     });
+    expect(status.issues.map((issue) => issue.code)).not.toContain(
+      "daemon_unavailable",
+    );
+    expect(status.issues).toContainEqual(
+      expect.objectContaining({
+        code: "runtime_not_checked",
+        severity: "warning",
+      }),
+    );
+    expect(
+      status.issues.some((issue) =>
+        (issue.recovery ?? "").includes("runtime start"),
+      ),
+    ).toBe(false);
     expect(existsSync(runtimePaths.projectDatabasePath)).toBe(false);
+  });
+
+  test("explicit offline status renders host state as not checked", async () => {
+    const projectRoot = installedRepository("ai-office-offline-render-");
+    const runtimePaths = offlineRuntimePaths(projectRoot);
+    const runtime = rejectingRuntimeClient();
+    const output = captureIo();
+
+    expect(
+      await runRuntimeCli(["status", "--offline"], {
+        projectRoot,
+        workingDirectory: projectRoot,
+        runtimePaths,
+        runtimeClient: runtime.client,
+        io: output.io,
+      }),
+    ).toBe(0);
+
+    expect(runtime.healthCalls + runtime.executeCalls).toBe(0);
+    expect(output.stdout).toContain("  persistent host: not_checked");
+    expect(output.stdout).toContain("  state: not_checked");
+    expect(output.stdout).toContain("Status: unverified");
+    expect(output.stdout.join("\n")).not.toContain("ai-office runtime start");
+  });
+
+  test("a failed Runtime connection still reports the host as unreachable", async () => {
+    const projectRoot = installedRepository("ai-office-offline-degraded-");
+    const runtimePaths = offlineRuntimePaths(projectRoot);
+    const runtime = rejectingRuntimeClient(
+      () => new RuntimeUnavailableError(runtimePaths.socketPath),
+    );
+    const output = captureIo();
+
+    expect(
+      await runRuntimeCli(["status", ".", "--json"], {
+        projectRoot,
+        workingDirectory: projectRoot,
+        runtimePaths,
+        runtimeClient: runtime.client,
+        io: output.io,
+      }),
+    ).toBe(1);
+
+    expect(runtime.executeCalls).toBeGreaterThan(0);
+    const status = JSON.parse(output.stdout[0]!) as {
+      health: string;
+      runtime: { daemon: string; authoritativeState: string };
+      issues: { code: string; recovery?: string }[];
+    };
+    expect(status.runtime.daemon).toBe("unreachable");
+    expect(status.runtime.authoritativeState).toBe("unavailable");
+    expect(status.health).toBe("needs_attention");
+    expect(status.issues.map((issue) => issue.code)).toContain(
+      "daemon_unavailable",
+    );
+    expect(
+      status.issues.some((issue) =>
+        (issue.recovery ?? "").includes("runtime start"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rejects malformed explicit offline invocations before contacting the Runtime", async () => {
+    const projectRoot = installedRepository("ai-office-offline-usage-");
+    const runtimePaths = offlineRuntimePaths(projectRoot);
+    const invocations: [string[], string][] = [
+      [["status", "--offline", "--unknown"], "Unknown option --unknown"],
+      [
+        ["status", "--offline", "--offline"],
+        "Flag --offline can only be provided once",
+      ],
+      [
+        ["status", "--offline", "--json", "--json"],
+        "Flag --json can only be provided once",
+      ],
+      [
+        ["status", ".", "..", "--offline"],
+        "status accepts at most one project path",
+      ],
+      [["status", "--offline", "--project"], "Unknown option --project"],
+    ];
+
+    for (const [args, message] of invocations) {
+      const runtime = rejectingRuntimeClient();
+      const output = captureIo();
+
+      expect(
+        await runRuntimeCli(args, {
+          projectRoot,
+          workingDirectory: projectRoot,
+          runtimePaths,
+          runtimeClient: runtime.client,
+          io: output.io,
+        }),
+      ).toBe(1);
+      expect(runtime.healthCalls + runtime.executeCalls).toBe(0);
+      expect(output.stdout).toEqual([]);
+      expect(output.stderr).toEqual([message]);
+    }
+  });
+
+  test("explicit offline status reports an uninstalled repository without blaming the Runtime", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-offline-none-"));
+    temporaryDirectories.push(projectRoot);
+    const runtimePaths = offlineRuntimePaths(projectRoot);
+    const runtime = rejectingRuntimeClient();
+    const output = captureIo();
+
+    expect(
+      await runRuntimeCli(["status", ".", "--offline", "--json"], {
+        projectRoot,
+        workingDirectory: projectRoot,
+        runtimePaths,
+        runtimeClient: runtime.client,
+        io: output.io,
+      }),
+    ).toBe(1);
+
+    expect(runtime.healthCalls + runtime.executeCalls).toBe(0);
+    const status = JSON.parse(output.stdout[0]!) as {
+      health: string;
+      runtime: { daemon: string };
+      issues: { code: string }[];
+    };
+    expect(status.health).toBe("not_installed");
+    expect(status.runtime.daemon).toBe("not_checked");
+    expect(status.issues.map((issue) => issue.code)).toEqual(["not_installed"]);
   });
 });

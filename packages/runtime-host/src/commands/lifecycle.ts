@@ -26,7 +26,11 @@ import {
   renderNextSteps,
   renderWelcome,
 } from "../handover-view.ts";
-import { clientLine, printProjectLifecycleStatus } from "../lifecycle-view.ts";
+import {
+  clientLine,
+  printProjectLifecycleStatus,
+  projectStatusExitCode,
+} from "../lifecycle-view.ts";
 import { ConfirmRepositoryUnderstanding } from "@ai-office/application/project-lifecycle/confirm-repository-understanding.ts";
 import {
   CliUsageError,
@@ -322,7 +326,7 @@ export async function handleLifecycleCommand(
         context,
         await handoverService(context).fromStatus(result),
       );
-    return result.health === "healthy" ? 0 : 1;
+    return projectStatusExitCode(result.health);
   }
 
   const parsed = parseArguments(args, new Set(["approve"]), new Set(["json"]));
