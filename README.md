@@ -1067,7 +1067,9 @@ misreported as fully `configured`.
 
 The two cases are reported differently, because they know different things.
 `status --offline` deliberately contacts nothing, so it reports the Runtime host
-and authoritative state as `not_checked` and overall health as `unverified`; it
+and authoritative state as `not_checked`. Health is `unverified` (exit 0) when
+local inspection finds no problem; observed drift, conflicts, missing/unmanaged
+client integration, or an invalid binding yield `needs_attention` (exit 1). It
 never claims the host is down and never tells you to start it. Ordinary `status`
 with the host actually unreachable reports `unreachable`, `unavailable`, and
 `needs_attention`, and does recommend starting the Runtime — that case has

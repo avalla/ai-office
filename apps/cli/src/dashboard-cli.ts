@@ -18,7 +18,7 @@ import {
   CliUsageError,
   parseArguments,
   type CommandIo,
-} from "@ai-office/runtime-host/commands/shared.ts";
+} from "@ai-office/command-support/arguments.ts";
 
 /** Default loopback port for the dashboard host. */
 export const dashboardDefaultPort = 4278;
