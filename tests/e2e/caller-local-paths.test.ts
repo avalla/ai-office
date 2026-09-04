@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -244,6 +245,154 @@ describe("caller-local filesystem paths across the Runtime boundary", () => {
     }
   });
 
+  test("the Runtime enforces canonical manifest containment independently of client and host cwd", async () => {
+    const hostRoot = repository("ai-office-manifest-host-", "host");
+    const root = repository("ai-office-manifest-project-", "project");
+    const src = join(root, "src");
+    mkdirSync(src);
+    mkdirSync(join(root, ".git")); // Nearest repository root for validate.
+    const manifest = JSON.stringify(officeManifest());
+    writeFileSync(join(root, "office.json"), manifest);
+    writeFileSync(join(hostRoot, "outside.json"), manifest);
+    symlinkSync(join(hostRoot, "outside.json"), join(root, "escape.json"));
+    symlinkSync(join(root, "office.json"), join(root, "inside-link.json"));
+    writeFileSync(join(root, "oversize.json"), " ".repeat(256 * 1024 + 1));
+    const socketPath = join(hostRoot, "daemon.sock");
+    const daemon = await bootstrap({ projectRoot: hostRoot, socketPath });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    try {
+      await waitForDaemon(socketPath);
+      const client = new DaemonClient(socketPath);
+      const imported = await client.execute(["project:import", root, "--json"]);
+      expect(imported.exitCode).toBe(0);
+      const { projectId } = JSON.parse(imported.stdout[0]!) as {
+        projectId: string;
+      };
+      const apply = (file: string) =>
+        client.execute([
+          "office:apply",
+          "--project",
+          projectId,
+          "--file",
+          file,
+        ]);
+      expect((await apply(join(root, "office.json"))).exitCode).toBe(0);
+      expect((await apply(join(root, "inside-link.json"))).exitCode).toBe(0);
+      for (const command of ["office:apply", "office:validate"]) {
+        const output = captureIo();
+        expect(
+          await runRuntimeCli(
+            [
+              command,
+              "--file",
+              "../office.json",
+              ...(command === "office:apply" ? ["--project", projectId] : []),
+            ],
+            {
+              projectRoot: hostRoot,
+              workingDirectory: src,
+              socketPath,
+              io: output.io,
+            },
+          ),
+          output.stderr.join("\n"),
+        ).toBe(0);
+        const prefix =
+          command === "office:apply"
+            ? [command, "--project", projectId]
+            : [command, "--root", src];
+        for (const file of [
+          join(root, "escape.json"),
+          join(hostRoot, "outside.json"),
+          root + "/../" + hostRoot.split("/").at(-1) + "/outside.json",
+        ]) {
+          const result = await client.execute([...prefix, "--file", file]);
+          expect(result.exitCode).toBe(1);
+          expect(result.stderr[0]).toContain("must be inside the project root");
+        }
+        const directory = await client.execute([...prefix, "--file", src]);
+        expect(directory.stderr[0]).toContain("regular file");
+        const oversize = await client.execute([
+          ...prefix,
+          "--file",
+          join(root, "oversize.json"),
+        ]);
+        expect(oversize.stderr[0]).toContain("262144-byte limit");
+      }
+      // A valid nested binding takes precedence over the enclosing Git root.
+      mkdirSync(join(src, ".ai-office"));
+      writeFileSync(
+        join(src, ".ai-office", "project.json"),
+        JSON.stringify({
+          schemaVersion: 2,
+          managedBy: "ai-office",
+          repositoryId: "repo_nested_manifest",
+        }),
+      );
+      writeFileSync(join(src, "nested.json"), manifest);
+      expect(
+        (
+          await client.execute([
+            "office:validate",
+            "--root",
+            src,
+            "--file",
+            join(src, "nested.json"),
+          ])
+        ).exitCode,
+      ).toBe(0);
+      const beyondBinding = await client.execute([
+        "office:validate",
+        "--root",
+        src,
+        "--file",
+        join(root, "office.json"),
+      ]);
+      expect(beyondBinding.stderr[0]).toContain(
+        "must be inside the project root",
+      );
+      writeFileSync(join(src, ".ai-office", "project.json"), "{}");
+      expect(
+        (
+          await client.execute([
+            "office:validate",
+            "--root",
+            src,
+            "--file",
+            join(src, "nested.json"),
+          ])
+        ).exitCode,
+      ).toBe(1);
+
+      // Standalone validate uses the explicit caller directory, with no host fallback.
+      const standalone = repository(
+        "ai-office-manifest-standalone-",
+        "standalone",
+      );
+      writeFileSync(join(standalone, "office.json"), manifest);
+      const valid = await client.execute([
+        "office:validate",
+        "--root",
+        standalone,
+        "--file",
+        join(standalone, "office.json"),
+      ]);
+      expect(valid.exitCode).toBe(0);
+      const invalid = await client.execute([
+        "office:validate",
+        "--root",
+        standalone,
+        "--file",
+        join(hostRoot, "outside.json"),
+      ]);
+      expect(invalid.stderr[0]).toContain("must be inside the project root");
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
   test("the Runtime refuses a caller-local path it would have to guess", async () => {
     const hostRoot = repository("ai-office-host-a-", "hostrepo");
     const socketPath = join(hostRoot, "daemon.sock");
@@ -275,6 +424,25 @@ describe("caller-local filesystem paths across the Runtime boundary", () => {
       ]);
       expect(inspected.exitCode).toBe(1);
       expect(inspected.stderr[0]).toContain("Option --root");
+
+      for (const args of [
+        ["install"],
+        ["status"],
+        ["next"],
+        ["uninstall"],
+        ["project:import"],
+        ["project:restore", join(hostRoot, "archive.aioffice")],
+        ["agent:sync", "--project", "p1"],
+        ["office:validate", "--file", join(hostRoot, "office.json")],
+      ]) {
+        const response = await client.execute(args);
+        expect(response.exitCode, args.join(" ")).toBe(1);
+        expect(response.stdout).toEqual([]);
+        expect(response.stderr[0]).toContain(
+          "must be an absolute path resolved by the calling client",
+        );
+        expect(response.stderr[0]).toContain('received "omitted"');
+      }
 
       // An absolute path is accepted and interpreted exactly as given.
       const absolute = await client.execute([

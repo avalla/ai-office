@@ -1,13 +1,14 @@
+import { clientIssues } from "@ai-office/application/project-lifecycle/client-attention.ts";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
 import { ManageAgentClientIntegration } from "@ai-office/application/agent-client/manage-agent-client-integration.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
-import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
+import type { ProjectBindingReader } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type {
   LifecycleClientStatus,
   LifecycleIssue,
   ProjectLifecycleStatus,
 } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
-import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
+import { LocalProjectBindingReader } from "@ai-office/project-binding/local-project-binding-reader.ts";
 import { repositoryIdFromLegacyProjectId } from "@ai-office/application/project-lifecycle/project-binding.ts";
 
 function offlineConfiguration(input: {
@@ -66,12 +67,12 @@ export async function getOfflineProjectStatus(
   input: {
     runtimeHome: string;
     hostEvidence: RuntimeHostEvidence;
-    bindings?: ProjectBindingAdapter;
+    bindings?: ProjectBindingReader;
     clients?: AgentClientCatalog;
   },
 ): Promise<ProjectLifecycleStatus> {
   const notChecked = input.hostEvidence === "not_checked";
-  const bindings = input.bindings ?? new LocalProjectBindingAdapter();
+  const bindings = input.bindings ?? new LocalProjectBindingReader();
   const clients = new ManageAgentClientIntegration(
     input.clients ?? new DefaultAgentClientCatalog(),
   );
@@ -159,11 +160,14 @@ export async function getOfflineProjectStatus(
     }
   }
 
+  const localIssues = clientIssues(clientStatuses);
+  if (bindingValid) issues.push(...localIssues);
+
   return {
     schemaVersion: 4,
     installed: bindingValid ? null : false,
     health: bindingValid
-      ? notChecked
+      ? notChecked && localIssues.length === 0
         ? "unverified"
         : "needs_attention"
       : inspection.status === "invalid"

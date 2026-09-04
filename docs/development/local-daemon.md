@@ -102,7 +102,7 @@ lets them say so:
 
 | | host contacted | `runtime.daemon` | `runtime.authoritativeState` | `health` | issue |
 | --- | --- | --- | --- | --- | --- |
-| `status --offline` | no | `not_checked` | `not_checked` | `unverified` | `runtime_not_checked` (warning) |
+| clean `status --offline` | no | `not_checked` | `not_checked` | `unverified` | `runtime_not_checked` (warning) |
 | `status` with the host down | yes, and it failed | `unreachable` | `unavailable` | `needs_attention` | `daemon_unavailable` (error) |
 
 A host that was never contacted is not a host proved unreachable, so explicit
@@ -118,7 +118,11 @@ usage errors without contacting the Runtime.
 `status` exit codes mean the same thing in both modes: `0` when nothing needing
 attention was found in what was actually inspected — `healthy` online,
 `unverified` offline — and `1` when a problem was found or the repository is not
-installed.
+installed. Locally observed drift, conflicts, detected missing/unmanaged client
+integration, and invalid bindings produce `needs_attention` and exit 1 even
+when host and authoritative state remain `not_checked`. Online and offline
+status share the application client-attention classifier; `runtime_not_checked`
+alone never causes failure.
 
 ## Client-relative filesystem context
 
@@ -134,11 +138,21 @@ The CLI resolves every caller-local path argument against its own working
 directory before building a request — the `install`/`status`/`next`/`uninstall`
 and `project:import` paths, `project:backup --output`, the `project:restore`
 archive and `--root`, `office:apply`/`office:validate --file`, `agent:sync
---directory`, and `client:* --root` — and enforces containment where the command
-already required it. The Runtime refuses a caller-local path that arrives
-relative rather than resolving it against its own working directory, so
+--directory`, and `client:* --root`. The shared `packages/command-support`
+contract requires omitted caller-cwd defaults to be materialized too. The Runtime
+refuses missing lifecycle/import paths, restore `--root`, sync `--directory`,
+and relative caller-local paths, so
 bypassing the client boundary fails loudly instead of answering about the wrong
-directory.
+directory. Handlers have no caller-cwd fallback.
+
+Manifest containment is enforced by the Runtime on canonical file and root
+paths, retaining regular-file and 256 KiB checks. `office:apply --project` uses
+local checkout roots recorded for that project, rejecting outside absolute paths
+and symlink escapes. `office:validate --file` accepts `--root`, defaulted by
+the CLI to caller cwd and required at Runtime entry. Its nearest binding/Git root
+is the boundary; without either, that explicit directory is the boundary.
+A descendant invocation can therefore read a manifest at project root. Invalid
+bindings fail closed, and the host composition root never selects eligibility.
 
 Two things stay outside that rule: a path interpreted inside a root the caller
 already supplied as an absolute argument, such as `client:plan --contract`

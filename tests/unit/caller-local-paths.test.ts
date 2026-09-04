@@ -3,8 +3,8 @@ import {
   assertAbsoluteCallerLocalPaths,
   callerLocalPathSpecs,
   resolveCallerLocalPaths,
-} from "@ai-office/runtime-host/caller-local-paths.ts";
-import { CliUsageError } from "@ai-office/runtime-host/commands/shared.ts";
+} from "@ai-office/command-support/caller-local-paths.ts";
+import { CliUsageError } from "@ai-office/command-support/arguments.ts";
 
 const caller = "/caller/repository";
 
@@ -116,13 +116,19 @@ describe("caller-local path resolution at the client boundary", () => {
     ]);
   });
 
-  test("rejects a contained option that escapes the client working directory", () => {
-    expect(() =>
+  test("leaves containment to the Runtime's authoritative project root", () => {
+    expect(
       resolveCallerLocalPaths(
-        ["office:apply", "--project", "p1", "--file", "../outside.json"],
+        ["office:apply", "--project", "p1", "--file", "../office.json"],
         caller,
       ),
-    ).toThrow(CliUsageError);
+    ).toEqual([
+      "office:apply",
+      "--project",
+      "p1",
+      "--file",
+      "/caller/office.json",
+    ]);
   });
 
   test("does not treat an option value as the path positional", () => {
@@ -135,6 +141,14 @@ describe("caller-local path resolution at the client boundary", () => {
 describe("caller-local path enforcement inside the Runtime", () => {
   test.each([
     [["project:import", "."], "project:import path"],
+    [["project:import"], "project:import path"],
+    [["install"], "install path"],
+    [["status"], "status path"],
+    [["next"], "next path"],
+    [["uninstall"], "uninstall path"],
+    [["project:restore", "/archive.aioffice"], "Option --root"],
+    [["agent:sync", "--project", "p1"], "Option --directory"],
+    [["office:validate", "--file", "/repo/office.json"], "Option --root"],
     [["status", "sub"], "status path"],
     [["project:restore", "snapshot.aioffice"], "project:restore path"],
     [
@@ -169,7 +183,6 @@ describe("caller-local path enforcement inside the Runtime", () => {
       ],
     ],
     [["task:create", "--project", "p1", "--title", "relative/looking"]],
-    [["project:import"]],
   ])("accepts %j", (args) => {
     expect(() => assertAbsoluteCallerLocalPaths(args)).not.toThrow();
   });
