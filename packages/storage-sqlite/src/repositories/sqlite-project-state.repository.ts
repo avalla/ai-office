@@ -338,6 +338,25 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       }));
+    // Omitted entirely when empty so a link-free project exports exactly the
+    // bytes it did before this table existed, keeping v1 archives valid.
+    const taskRequirementRows = this.database
+      .query<
+        { task_id: string; requirement_id: string; created_at: string },
+        [string]
+      >(
+        `SELECT link.task_id, link.requirement_id, link.created_at
+           FROM task_requirement link
+           JOIN task t ON t.id = link.task_id
+          WHERE t.project_id = ?
+          ORDER BY link.task_id, link.requirement_id`,
+      )
+      .all(projectId)
+      .map((row) => ({
+        taskId: row.task_id,
+        requirementId: row.requirement_id,
+        createdAt: row.created_at,
+      }));
     const adrs = this.database
       .query<AdrRow, [string]>(
         `SELECT id, title, context, decision, consequences, status,
@@ -490,7 +509,16 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
       tasks,
       profileEntries,
       officeManifests,
-      governance: { milestones, requirements, adrs, reviews, approvals },
+      governance: {
+        milestones,
+        requirements,
+        adrs,
+        ...(taskRequirementRows.length === 0
+          ? {}
+          : { taskRequirements: taskRequirementRows }),
+        reviews,
+        approvals,
+      },
       agents: { roles, definitions, terminalRuns },
     });
   }
@@ -590,6 +618,15 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
           item.createdAt,
           item.updatedAt,
         );
+    // Restored after tasks and requirements: both ends must already exist for
+    // the project-ownership trigger to accept the link.
+    for (const item of value.governance.taskRequirements ?? [])
+      this.database
+        .prepare(
+          `INSERT INTO task_requirement(task_id, requirement_id, created_at)
+           VALUES (?, ?, ?)`,
+        )
+        .run(item.taskId, item.requirementId, item.createdAt);
     for (const item of value.governance.adrs)
       this.database
         .prepare(

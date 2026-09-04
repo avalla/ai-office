@@ -401,6 +401,135 @@ describe("portable project snapshot", () => {
   });
 });
 
+describe("portable task/requirement linkage", () => {
+  function linked(): PortableProjectState {
+    const value = state();
+    return {
+      ...value,
+      governance: {
+        ...value.governance,
+        requirements: [
+          {
+            id: "req-1",
+            key: "AUC-03-R1",
+            title: "Acceptance",
+            description: "Must hold",
+            status: "verified",
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          },
+        ],
+        taskRequirements: [
+          {
+            taskId: "task-1",
+            requirementId: "req-1",
+            createdAt: timestamp,
+          },
+        ],
+      },
+    };
+  }
+
+  test("round-trips links through a checksummed archive", () => {
+    const value = linked();
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    const parsed = parsePortableProjectArchive(
+      serializePortableProjectArchive(archive),
+    );
+    expect(parsed.state.governance.taskRequirements).toEqual([
+      { taskId: "task-1", requirementId: "req-1", createdAt: timestamp },
+    ]);
+  });
+
+  test("stays byte-identical to a pre-linkage archive when there are none", () => {
+    // The archive checksum is recomputed over the *parsed* state, so a field
+    // that were always present would invalidate every existing v1 archive. A
+    // project with no links must therefore serialize exactly as it did before
+    // the field existed.
+    const value = state();
+    expect(Object.hasOwn(value.governance, "taskRequirements")).toBe(false);
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    const serialized = serializePortableProjectArchive(archive);
+    expect(serialized).not.toContain("taskRequirements");
+    // And an archive written before this field existed still validates.
+    expect(parsePortableProjectArchive(serialized)).toEqual(archive);
+  });
+
+  test("requires both ends of a link to be inside the snapshot", () => {
+    const value = linked();
+    expect(() =>
+      createPortableProjectArchive({
+        state: {
+          ...value,
+          governance: {
+            ...value.governance,
+            taskRequirements: [
+              { taskId: "task-9", requirementId: "req-1", createdAt: timestamp },
+            ],
+          },
+        },
+        manifest: manifest(value),
+      }),
+    ).toThrow(/Referenced task task-9 is not portable/u);
+
+    expect(() =>
+      createPortableProjectArchive({
+        state: {
+          ...value,
+          governance: {
+            ...value.governance,
+            taskRequirements: [
+              { taskId: "task-1", requirementId: "req-9", createdAt: timestamp },
+            ],
+          },
+        },
+        manifest: manifest(value),
+      }),
+    ).toThrow(/Referenced requirement req-9 is not portable/u);
+  });
+
+  test("rejects a duplicated link", () => {
+    const value = linked();
+    const duplicated = {
+      ...value,
+      governance: {
+        ...value.governance,
+        taskRequirements: [
+          { taskId: "task-1", requirementId: "req-1", createdAt: timestamp },
+          { taskId: "task-1", requirementId: "req-1", createdAt: timestamp },
+        ],
+      },
+    };
+    expect(() =>
+      createPortableProjectArchive({
+        state: duplicated,
+        manifest: manifest(duplicated),
+      }),
+    ).toThrow(/linked to requirement req-1 more than once/u);
+  });
+
+  test("rejects a corrupted link reference in a serialized archive", () => {
+    const value = linked();
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    const corrupted = serializePortableProjectArchive(archive).replace(
+      '"requirementId":"req-1"',
+      '"requirementId":"req-tampered"',
+    );
+    expect(() => parsePortableProjectArchive(corrupted)).toThrow(
+      /not portable|checksum/u,
+    );
+  });
+});
+
 describe("portable Git provenance", () => {
   test.each([
     [

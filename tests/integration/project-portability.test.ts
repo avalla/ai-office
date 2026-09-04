@@ -23,6 +23,7 @@ import type { ProjectBindingAdapter } from "@ai-office/application/ports/project
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
 import {
   createPortableProjectArchive,
+  portableStateChecksum,
   parsePortableProjectArchive,
   serializePortableProjectArchive,
 } from "@ai-office/application/project-portability/project-snapshot.ts";
@@ -40,6 +41,7 @@ import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/re
 import { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
+import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
 import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
@@ -1202,6 +1204,125 @@ describe("project portability", () => {
       await destination.states.loadPortableState(restored.projectId),
     ).toEqual(backup.archive.state);
     destination.database.close();
+  });
+
+  test("round-trips task/requirement links and enforces their closure", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-portable-links-a-");
+    const targetRuntime = temporaryRoot("ai-office-portable-links-b-");
+    const source = temporaryRoot("ai-office-portable-links-source-");
+    const target = temporaryRoot("ai-office-portable-links-target-");
+    writeFileSync(join(source, "package.json"), '{"name":"links"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"links"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const governanceService = new ManageGovernance(
+      origin.projects,
+      origin.governance,
+      origin.ids,
+      origin.clock,
+    );
+    const links = new SqliteTaskRequirementRepository(origin.database);
+
+    const taskA = await createTask(origin, imported.projectId, "Deliver AUC-03");
+    const taskB = await createTask(origin, imported.projectId, "Document AUC-03");
+    const requirement = await governanceService.createRequirement({
+      projectId: imported.projectId,
+      key: "AUC-03-R1",
+      title: "Acceptance",
+      description: "Must hold",
+    });
+    // One requirement delivered by two tasks: the many-to-many shape has to
+    // survive the round trip, not just a single pair.
+    for (const taskId of [taskA, taskB])
+      expect(
+        await links.link({
+          projectId: imported.projectId,
+          taskId,
+          requirementId: requirement,
+          now: origin.clock.now(),
+        }),
+      ).toBe(true);
+
+    const backup = await origin.service.backup(imported.projectId);
+    expect(
+      backup.archive.state.governance.taskRequirements?.map((value) => ({
+        taskId: value.taskId,
+        requirementId: value.requirementId,
+      })),
+    ).toEqual(
+      [taskA, taskB]
+        .sort()
+        .map((taskId) => ({ taskId, requirementId: requirement })),
+    );
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: backup.archive,
+      rootPath: target,
+    });
+    // `restorePortableState` reloads and compares canonically, so an exact
+    // match here is also proof that restore is byte-for-byte round-trippable.
+    expect(
+      await destination.states.loadPortableState(restored.projectId),
+    ).toEqual(backup.archive.state);
+    expect(
+      (
+        await new SqliteTaskRequirementRepository(
+          destination.database,
+        ).listForTask(restored.projectId, taskA)
+      ).map((value) => value.key),
+    ).toEqual(["AUC-03-R1"]);
+    destination.database.close();
+  });
+
+  test("refuses an archive whose link references an absent requirement", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-portable-links-c-");
+    const source = temporaryRoot("ai-office-portable-links-c-source-");
+    writeFileSync(join(source, "package.json"), '{"name":"links"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const taskId = await createTask(origin, imported.projectId, "Orphan");
+    const backup = await origin.service.backup(imported.projectId);
+    origin.database.close();
+
+    // A snapshot must never carry a link it cannot resolve inside itself.
+    expect(() =>
+      createPortableProjectArchive({
+        manifest: {
+          ...backup.archive.manifest,
+          revision: {
+            ...backup.archive.manifest.revision,
+            stateChecksum: portableStateChecksum({
+              ...backup.archive.state,
+              governance: {
+                ...backup.archive.state.governance,
+                taskRequirements: [
+                  {
+                    taskId,
+                    requirementId: "req-missing",
+                    createdAt: "2026-09-01T08:00:00.000Z",
+                  },
+                ],
+              },
+            }),
+          },
+        },
+        state: {
+          ...backup.archive.state,
+          governance: {
+            ...backup.archive.state.governance,
+            taskRequirements: [
+              {
+                taskId,
+                requirementId: "req-missing",
+                createdAt: "2026-09-01T08:00:00.000Z",
+              },
+            ],
+          },
+        },
+      }),
+    ).toThrow(/Referenced requirement req-missing is not portable/u);
   });
 
   test("rejects a repository/archive identity mismatch before state mutation", async () => {

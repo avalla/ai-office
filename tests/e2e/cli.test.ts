@@ -119,9 +119,13 @@ describe("Project/Task CLI vertical slice", () => {
         io: listOutput.io,
       }),
     ).toBe(0);
-    expect(listOutput.stdout[0]).toBe("ID\tSTATUS\tPRIORITY\tTITLE");
-    expect(listOutput.stdout[1]).toMatch(/\tpending\t10\tHigh$/);
-    expect(listOutput.stdout[2]).toMatch(/\tpending\t1\tLow$/);
+    expect(listOutput.stdout[0]).toBe(
+      "ID\tSTATUS\tREQUIREMENTS\tPRIORITY\tTITLE",
+    );
+    // No linked requirements yet, so the progress column is empty and the
+    // status column carries no inconsistency marker.
+    expect(listOutput.stdout[1]).toMatch(/\tpending\t—\t10\tHigh$/);
+    expect(listOutput.stdout[2]).toMatch(/\tpending\t—\t1\tLow$/);
     expect(listOutput.stderr).toEqual([]);
   });
 

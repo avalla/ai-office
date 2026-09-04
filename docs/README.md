@@ -27,6 +27,9 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
 - [Pipeline enforcement](development/pipeline-enforcement.md): guidance/enforced modes, operation, authorization, approvals, overrides, and compatibility.
+- [Task board, lifecycle, and reconciliation](development/task-board.md): the
+  task/requirement/pipeline ownership split, semantic lifecycle commands,
+  explicit requirement linkage, board output, and read-only reconciliation.
 - [Operational dashboard](development/dashboard.md): read-model layer, daemon query API, invalidation stream, `ai-office dashboard`, and the dashboard threat model.
 - [Operational read models and loopback dashboard](adr/ADR-0015-operational-read-models-and-loopback-dashboard.md):
   accepted separation of the query/read side from commands, and the decision to

@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0025_audit_event_aggregate_index.sql",
+        "0026_task_requirement_linkage.sql",
       );
       expect(
         database
@@ -112,6 +112,7 @@ describe("migration upgrades", () => {
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
+      "0026_task_requirement_linkage.sql",
     ]);
     expect(
       database
@@ -173,6 +174,7 @@ describe("migration upgrades", () => {
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
+      "0026_task_requirement_linkage.sql",
     ]);
     expect(
       database
@@ -312,6 +314,7 @@ describe("migration upgrades", () => {
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
+      "0026_task_requirement_linkage.sql",
     ]);
     expect(
       database
@@ -357,6 +360,7 @@ describe("migration upgrades", () => {
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
+      "0026_task_requirement_linkage.sql",
     ]);
     database
       .prepare(
@@ -676,6 +680,7 @@ describe("migration upgrades", () => {
       .run("2026-09-03T00:00:00.000Z");
     expect(migrate(upgraded, migrations).applied).toEqual([
       "0025_audit_event_aggregate_index.sql",
+      "0026_task_requirement_linkage.sql",
     ]);
     expect(
       upgraded

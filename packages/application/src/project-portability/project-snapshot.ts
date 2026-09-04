@@ -145,6 +145,32 @@ const portableProjectStateShape = z.strictObject({
         updatedAt: timestamp,
       }),
     ),
+    /**
+     * Explicit Task <-> Requirement links.
+     *
+     * Optional, and omitted entirely when a project has none, on purpose. The
+     * archive checksum is recomputed over the *parsed* state, so any key that
+     * is always present would change the checksum of every existing v1 archive
+     * and make it unreadable. Omitting it keeps a link-free project's archive
+     * byte-identical to one produced before this field existed, while an
+     * archive that does carry links is correctly refused by an older binary
+     * that could not restore them.
+     *
+     * It lives under `governance` rather than at the top level because
+     * `manifest.contents` is a frozen tuple in format version 1: adding an
+     * entry would break old manifests, and the link is the requirement-side
+     * association that the existing `governance` entry already declares.
+     */
+    taskRequirements: z
+      .array(
+        z.strictObject({
+          taskId: id,
+          requirementId: id,
+          createdAt: timestamp,
+        }),
+      )
+      .max(1_000_000)
+      .optional(),
     reviews: z.array(
       z.strictObject({
         id,
@@ -321,6 +347,31 @@ export const portableProjectStateSchema = portableProjectStateShape.superRefine(
           ["agents", "definitions", index, "roleId"],
           `Referenced role ${item.roleId} is not portable`,
         );
+    const links = new Set<string>();
+    for (const [index, item] of (
+      state.governance.taskRequirements ?? []
+    ).entries()) {
+      const path = ["governance", "taskRequirements", index] as const;
+      // A link is meaningless without both ends inside the snapshot, so
+      // referential closure is enforced here rather than discovered at restore.
+      if (!tasks.has(item.taskId))
+        missing(
+          [...path, "taskId"],
+          `Referenced task ${item.taskId} is not portable`,
+        );
+      if (!requirements.has(item.requirementId))
+        missing(
+          [...path, "requirementId"],
+          `Referenced requirement ${item.requirementId} is not portable`,
+        );
+      const key = `${item.taskId}\u0000${item.requirementId}`;
+      if (links.has(key))
+        missing(
+          [...path],
+          `Task ${item.taskId} is linked to requirement ${item.requirementId} more than once`,
+        );
+      links.add(key);
+    }
     for (const [index, item] of state.agents.terminalRuns.entries()) {
       if (!tasks.has(item.taskId))
         missing(

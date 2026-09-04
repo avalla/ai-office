@@ -465,6 +465,47 @@ dashboard command and is released with it. The console is a local same-user
 observability surface and introduces no authenticated human or operator
 boundary.
 
+## M7.9 — Task lifecycle completion and reconciliation
+
+Status: implemented.
+
+Focus: make `task.status` trustworthy. The lifecycle was designed as
+authoritative operational state and written by exactly one subsystem — the
+pipeline — so work finished any other way left the board stale forever, with no
+CLI surface able to correct it.
+
+Delivered:
+
+- the task lifecycle declared once as a transition table in the domain, with
+  `block`, `unblock`, `fail`, and `submitForReview` added so every status except
+  `assigned` is reachable, and terminal states provably unreachable in reverse;
+- one semantic CLI command per transition (`task:start`, `task:submit-review`,
+  `task:complete`, `task:block`, `task:unblock`, `task:fail`, `task:cancel`),
+  each validating the current state, refusing an impossible one with the allowed
+  set named, and committing its status write and audit event together. There is
+  deliberately no generic `task:set-status`;
+- `task:transitions`, a read-only preflight that publishes the allowed
+  transitions and the command that performs each one;
+- an explicit many-to-many `task_requirement` relation with project-ownership
+  triggers, CLI link/unlink commands, and no inference from titles or keys;
+- `task:list` showing linked requirement progress beside — never instead of —
+  the task status, and marking a contradiction rather than hiding it;
+- `task:reconcile`, read-only by default, detecting terminal-pipeline/open-task,
+  active-pipeline/terminal-task, stale pending tasks, completed tasks with open
+  requirements, and in-flight tasks with no execution. `--fix` requires an
+  approved plan hash and repairs only the one finding whose correct outcome
+  existing code already defines.
+
+Requirement verification deliberately does **not** complete a task: one
+requirement may be delivered by several tasks, one task may deliver several
+requirements, and implementation routinely finishes before governance
+verification. Reconciliation surfaces the mismatch and an operator decides.
+
+Migration `0026` adds the linkage table and links nothing. Historical task state
+is not rewritten; reconciliation identifies questionable tasks after an upgrade.
+Portable archives carry links, omitted entirely when a project has none so
+pre-existing archives keep validating.
+
 ## M8 — Code intelligence
 
 Status: future.
