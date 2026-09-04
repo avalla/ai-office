@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0024_project_revision_identity.sql",
+        "0025_audit_event_aggregate_index.sql",
       );
       expect(
         database
@@ -111,6 +111,7 @@ describe("migration upgrades", () => {
       "0022_project_portability.sql",
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
+      "0025_audit_event_aggregate_index.sql",
     ]);
     expect(
       database
@@ -171,6 +172,7 @@ describe("migration upgrades", () => {
     expect(migrate(database, migrations).applied).toEqual([
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
+      "0025_audit_event_aggregate_index.sql",
     ]);
     expect(
       database
@@ -309,6 +311,7 @@ describe("migration upgrades", () => {
       "0022_project_portability.sql",
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
+      "0025_audit_event_aggregate_index.sql",
     ]);
     expect(
       database
@@ -353,6 +356,7 @@ describe("migration upgrades", () => {
       "0022_project_portability.sql",
       "0023_project_snapshot_observations.sql",
       "0024_project_revision_identity.sql",
+      "0025_audit_event_aggregate_index.sql",
     ]);
     database
       .prepare(
@@ -621,5 +625,65 @@ describe("migration upgrades", () => {
         .get(),
     ).toEqual({ integrity_check: "ok" });
     database.close();
+  });
+
+  test("indexes run-scoped activity on fresh and upgraded databases", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-activity-index-"));
+    roots.push(root);
+
+    // Fresh database.
+    const fresh = openDatabase(join(root, "fresh.sqlite"));
+    migrate(fresh, migrations);
+    expect(
+      fresh
+        .query<{ name: string }, []>(
+          `SELECT name FROM sqlite_master
+            WHERE type='index' AND name='audit_event_aggregate_idx'`,
+        )
+        .get()?.name,
+    ).toBe("audit_event_aggregate_idx");
+    // The index must actually serve the run-scoped access path.
+    expect(
+      fresh
+        .query<{ detail: string }, []>(
+          `EXPLAIN QUERY PLAN
+           SELECT id FROM audit_event
+            WHERE aggregate_id IN ('run-1')
+            ORDER BY occurred_at DESC, id DESC LIMIT 10`,
+        )
+        .all()
+        .map((row) => row.detail)
+        .join(" "),
+    ).toContain("audit_event_aggregate_idx");
+    fresh.close();
+
+    // Database created before the index existed, then upgraded.
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort())
+      if (file <= "0024_project_revision_identity.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    const upgraded = openDatabase(join(root, "upgraded.sqlite"));
+    migrate(upgraded, partial);
+    upgraded
+      .prepare(
+        `INSERT INTO audit_event(id, project_id, event_type, actor_type,
+                                 actor_id, aggregate_type, aggregate_id,
+                                 payload_json, occurred_at)
+         VALUES ('event', NULL, 'run.started', 'daemon', NULL,
+                 'agent_run', 'run-1', '{}', ?)`,
+      )
+      .run("2026-09-03T00:00:00.000Z");
+    expect(migrate(upgraded, migrations).applied).toEqual([
+      "0025_audit_event_aggregate_index.sql",
+    ]);
+    expect(
+      upgraded
+        .query<{ id: string }, []>(
+          "SELECT id FROM audit_event WHERE aggregate_id = 'run-1'",
+        )
+        .get()?.id,
+    ).toBe("event");
+    upgraded.close();
   });
 });

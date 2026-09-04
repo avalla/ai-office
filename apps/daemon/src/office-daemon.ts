@@ -7,8 +7,11 @@ import {
   isDaemonCommandRequest,
   type DaemonHealthResponse,
 } from "@ai-office/application/protocol/daemon-protocol.ts";
+import { commandInvalidationTopics } from "@ai-office/application/protocol/query-protocol.ts";
+import type { OperationalEventBus } from "@ai-office/application/events/operational-event-bus.ts";
 import { CommandQueue } from "./command-queue.ts";
 import type { DaemonCommandHandler } from "./local-command-handler.ts";
+import type { QueryApi } from "./query-api.ts";
 
 export class DaemonAlreadyRunningError extends Error {
   constructor(socketPath: string) {
@@ -24,6 +27,13 @@ export interface OfficeDaemonOptions {
   now?: () => Date;
   onStopped?: () => void;
   commandTimeoutMs?: number;
+  /**
+   * Read-only query surface. Optional so a daemon can be constructed without
+   * it, but the production bootstrap always supplies one.
+   */
+  queryApi?: QueryApi;
+  /** Publishes invalidation hints after a command completes. */
+  queryEvents?: OperationalEventBus;
 }
 
 function json(value: unknown, status = 200): Response {
@@ -53,6 +63,9 @@ export class OfficeDaemon {
       await this.prepareSocket();
       mkdirSync(dirname(this.options.socketPath), { recursive: true });
       this.startedAt = this.now();
+      // A Unix-socket server takes no idle-timeout option, so the event
+      // stream stays alive through its heartbeat rather than by relaxing a
+      // server bound. See QueryApi's heartbeat interval.
       server = Bun.serve({
         unix: this.options.socketPath,
         fetch: (request) => this.route(request),
@@ -73,6 +86,10 @@ export class OfficeDaemon {
     } finally {
       try {
         if (server !== undefined) {
+          // A server-sent response never completes on its own, so a graceful
+          // stop would wait for it forever. Ending the streams first also
+          // releases their listeners and heartbeat timers.
+          this.options.queryApi?.closeStreams();
           await server.stop(false);
           await this.options.events.execute({
             eventType: "daemon.stopped",
@@ -81,6 +98,9 @@ export class OfficeDaemon {
           });
         }
       } finally {
+        // Event subscribers hold a listener and a heartbeat timer; dropping
+        // them here keeps a stopped daemon from retaining either.
+        this.options.queryEvents?.clear();
         if (server !== undefined) this.removeSocket();
         this.options.onStopped?.();
       }
@@ -97,6 +117,9 @@ export class OfficeDaemon {
       };
       return json(response);
     }
+
+    const query = await this.options.queryApi?.handle(request);
+    if (query !== undefined && query !== null) return query;
 
     if (path !== "/commands") return json({ error: "Not found" }, 404);
     if (request.method !== "POST")
@@ -176,6 +199,10 @@ export class OfficeDaemon {
             durationMs: Math.max(0, this.now().getTime() - startedAt.getTime()),
           },
         });
+        // Publishing here — after the command handler returned and its audit
+        // event was written — means every authoritative write the runtime
+        // performs has already landed before a subscriber is told to re-query.
+        this.options.queryEvents?.publish(commandInvalidationTopics(command));
         return json(response);
       } catch (error) {
         await this.options.events.execute({
@@ -187,6 +214,11 @@ export class OfficeDaemon {
             durationMs: Math.max(0, this.now().getTime() - startedAt.getTime()),
           },
         });
+        // A failed command is not a command that changed nothing: it may have
+        // committed part of its work before failing, and it always appended
+        // audit rows. Publishing the same conservative topic set as the success
+        // path is the only assumption that cannot leave a dashboard stale.
+        this.options.queryEvents?.publish(commandInvalidationTopics(command));
         const timedOut = error instanceof DaemonCommandTimeoutError;
         return this.errorResponse(
           value.requestId,

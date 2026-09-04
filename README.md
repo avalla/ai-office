@@ -27,6 +27,8 @@ The current implementation on `main` includes:
 - local approval plus trusted-local create, write, move, and delete execution;
 - structured agent-run action intents routed through the controlled-action gateway;
 - tool-independent project instruction contracts with safe Codex CLI and Claude Code integration;
+- authoritative operational read models plus a read-only daemon query API,
+  invalidation stream, and local `ai-office dashboard` operations console;
 - SQLite persistence, migrations, audit events, and daemon/CLI workflows.
 
 Runs without an action intent still use the deterministic simulated executor.
@@ -53,6 +55,21 @@ application-level transactions; provider calls, scans, simulated agent work,
 and filesystem side effects do not run inside an open SQLite transaction. Help
 and the destructive `runtime:purge` lifecycle command run locally; purge is
 available only while the daemon is stopped.
+
+The daemon is not only a command execution surface. The same socket carries a
+separately versioned, read-only query surface that publishes authoritative
+operational read models:
+
+```text
+                  AI OFFICE DAEMON
+                         |
+        +----------------+----------------+
+        |                |                |
+     Commands          Queries          Events
+        |                |                |
+       CLI          Dashboard/API    invalidation
+      Agents          Humans            stream
+```
 
 ## Quick start
 
@@ -310,6 +327,38 @@ Handover transfers organizational context ownership. It is not an
 authorization change: it grants no capability, bypasses no approval or
 governance gate, alters no policy, starts no agent run, and never rewrites
 committed project state to match a proposal.
+
+## Operations dashboard
+
+`ai-office dashboard` serves a local, read-only operations console. The daemon
+must already be running; the dashboard never starts it implicitly.
+
+```bash
+ai-office dashboard
+```
+
+```text
+AI Office dashboard
+http://127.0.0.1:4278/?token=1f0c…
+Read-only. Local same-user surface; the link carries this session's token.
+```
+
+It answers the questions you ask between commands: which projects exist, what is
+being worked on, which pipeline stage each run is in, which agent is doing what,
+what is waiting for a human, what failed, and what happened recently. The page
+updates itself as the daemon completes commands. `--port`, `--host`, and
+`--no-open` are available; Ctrl-C stops the host and releases the port.
+
+The dashboard does not infer operational state from raw SQLite records. It
+consumes the same authoritative application read models any other client would,
+so the console, the CLI, and future integrations cannot disagree about what a
+task's status means. Where the current domain cannot express something — there
+is no persisted task/requirement or task/milestone association — the surface
+reports it as unavailable instead of guessing.
+
+It is read-only: no task editing, no pipeline control, no approvals, no
+assignment. See the [operational dashboard guide](docs/development/dashboard.md)
+for the query API, the invalidation stream, and the threat model.
 
 ## Project lifecycle
 
@@ -892,6 +941,7 @@ user-owned and survive repository uninstall and runtime purge.
 apps/
   daemon/                 local process and protocol boundary
   cli/                    daemon-backed command-line client
+  dashboard/              loopback host and read-only operations console
 packages/
   domain/                 entities, value objects, and rules
   application/            use cases and ports
@@ -1014,3 +1064,17 @@ remain future work.
 M6C-lite assumes a local, single-user deployment in the user's trust domain. It protects against accidental or unauthorized agent access, path escape, sensitive-path access, stale simulations and capabilities, replay, and unapproved filesystem mutation.
 
 It does not defend against a hostile process running with the same Unix credentials and concurrently mutating the same filesystem namespace. Local approval records an operator-supplied audit identity; it is not cryptographic proof of human presence. Rust/`openat2`, authenticated approvals, tamper-evident audit, and stronger crash reconciliation are M10 research and roadmap items, not production claims today.
+
+The operations dashboard is a local, same-user observability surface and adds no
+authenticated human or operator boundary. It is read-only and changes no
+authorization. The daemon still opens no TCP port; `ai-office dashboard` owns a
+loopback port only while it runs. Because a loopback TCP port is reachable by
+every local Unix account — unlike the owner-only socket — that host validates
+the `Host` header and requires a per-process session token that dies with the
+command.
+
+The token is a barrier to accidental and blind access, not a secret: the command
+hands the whole URL to the platform opener, so it appears in that process's
+arguments and in browser history. It does not authenticate a human, does not
+separate same-UID processes, and is not claimed to keep project state secret
+from other local accounts. Running in a browser is not authentication.

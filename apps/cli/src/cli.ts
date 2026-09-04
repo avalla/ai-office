@@ -170,6 +170,9 @@ Commands:
   uninstall [path] [--approve <plan-hash>] [--json]
   daemon  # available through the linkable ai-office entry point
   daemon:health
+  dashboard [--port <port>] [--host <loopback-address>] [--no-open]
+    serves the read-only operations console on loopback until interrupted;
+    requires a running daemon and prints the URL carrying the session token
   project:create <name> [--description <description>] [--json]
   project:import [path] [--name <name>] [--json]
   project:answer --project <id> --question <id> --answer <value>  # legacy stored questions only

@@ -420,6 +420,51 @@ automatically. Handover transfers organizational context ownership only: it
 grants no capability, bypasses no approval, alters no policy, and starts no
 agent run.
 
+## M7.8 — Operational read models and dashboard
+
+Status: implemented.
+
+Focus: give AI Office one authoritative interpretation of operational state, and
+a human surface that consumes it without inventing a second one.
+
+Delivered:
+
+- explicit application read models for project summary, task operational state,
+  pipeline/run state, agent activity, reviews/approvals, and sanitized activity,
+  with a `queryApiVersion` contract versioned independently of the daemon
+  command protocol;
+- `OperationalQueryService`, the single place that decides which persisted facts
+  feed which read model, plus an `OperationalReadRepository` port added only for
+  the cross-project roll-ups the per-aggregate repositories cannot serve without
+  a query per project;
+- a read-only `GET /api/*` query surface on the existing Unix socket whose
+  handlers parse, validate, and serialize but hold no SQL and no domain logic;
+- an in-memory invalidation bus and `GET /api/events` server-sent stream that
+  carries topics only, persists nothing, and cannot become a second source of
+  truth;
+- `ai-office dashboard`, a foreground loopback host that serves a dependency-free
+  console and forwards `/api/*` to the daemon socket;
+- honest reporting of the gap between persisted and operational state: a task
+  scheduled for a run still reads `pending`, so the read model publishes
+  `recordedStatus`, `operationalStatus`, and the reasons they differ, and the UI
+  lists divergent tasks separately.
+
+The task/requirement and task/milestone relationships are not modelled in the
+current schema. They are published as explicitly unavailable rather than
+defaulted, so adding them later is a value change, not a contract change.
+
+No migration and no index were introduced: the queries reuse existing access
+paths. The dashboard is read-only by construction — it starts, stops, retries,
+approves, assigns, and cancels nothing. A Human Approval Inbox and an authorized
+control plane remain future work and must route through the existing command,
+capability, approval, and audit semantics; see
+[ADR-0015](../adr/ADR-0015-operational-read-models-and-loopback-dashboard.md).
+
+The daemon still opens no TCP listener. The loopback port belongs to the
+dashboard command and is released with it. The console is a local same-user
+observability surface and introduces no authenticated human or operator
+boundary.
+
 ## M8 — Code intelligence
 
 Status: future.
@@ -447,7 +492,7 @@ Status: future.
 
 Focus: user-facing product surfaces, packaging, and operability.
 
-- web UI;
+- web UI beyond the local read-only operations console shipped in M7.8;
 - plugin SDK;
 - MCP server;
 - packaged binaries;

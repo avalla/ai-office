@@ -8,6 +8,8 @@ import {
 } from "./daemon-client.ts";
 import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
 import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
+import { runDashboardCli } from "./dashboard-cli.ts";
+import { CliUsageError } from "./commands/shared.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
@@ -31,6 +33,9 @@ export interface DaemonCliOptions {
   workingDirectory?: string;
   projectBindings?: ProjectBindingAdapter;
   agentClients?: AgentClientCatalog;
+  /** Stops the foreground `dashboard` host; supplied by tests. */
+  dashboardSignal?: AbortSignal;
+  openBrowser?: (url: string) => Promise<void>;
 }
 
 const defaultIo: CliIo = {
@@ -289,6 +294,22 @@ export async function runDaemonCli(
       return 0;
     }
 
+    // The dashboard is a foreground local host, not a daemon command: it is
+    // handled before protocol dispatch for the same reason runtime:purge is.
+    // Awaited on purpose: returning the promise from inside the try would let
+    // a rejection bypass the catch below.
+    if (args[0] === "dashboard")
+      return await runDashboardCli(args.slice(1), {
+        socketPath,
+        io,
+        ...(options.dashboardSignal === undefined
+          ? {}
+          : { signal: options.dashboardSignal }),
+        ...(options.openBrowser === undefined
+          ? {}
+          : { openBrowser: options.openBrowser }),
+      });
+
     if (args[0] === "runtime:purge")
       return runRuntimePurgeCli(args.slice(1), {
         runtimeRoot: runtimePaths.runtimeHome,
@@ -364,7 +385,8 @@ export async function runDaemonCli(
       error instanceof DaemonUnavailableError ||
       error instanceof InvalidDaemonResponseError ||
       error instanceof ProjectBindingError ||
-      error instanceof RuntimePathError
+      error instanceof RuntimePathError ||
+      error instanceof CliUsageError
     ) {
       io.stderr(error.message);
       return 1;
