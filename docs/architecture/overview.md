@@ -129,10 +129,19 @@ versions, socket paths, process IDs, or host lifecycle. The current
 The current command-shaped API deliberately reuses the stable machine contract;
 it does not create a parallel implementation of every application use case.
 
-`RuntimeClient` is the client-side boundary. Its current implementation uses
-HTTP over a Unix domain socket. Codex, Claude, the CLI, and future clients must
-route authoritative operations through the selected Runtime. They do not need
-or receive direct SQLite access.
+`RuntimeClient` is the client-side boundary and lives with the Runtime contract
+in `packages/application`, because every local client adapter implements the
+same port. Its current implementation uses HTTP over a Unix domain socket.
+Codex, Claude, the CLI, and future clients must route authoritative operations
+through the selected Runtime. They do not need or receive direct SQLite access.
+
+The code layout follows that split. `packages/runtime-host` owns Runtime command
+execution, the command handlers, and the local infrastructure adapters they
+compose; `apps/daemon` is the persistent host — socket, protocol, admission
+queue, query surface — and depends on that package and on application ports;
+`apps/cli` is the client adapter, IPC client, offline-only operations, and
+presentation. `apps/daemon` does not import `apps/cli`, and an architecture test
+enforces the direction.
 
 There is exactly one authoritative Runtime owner for mutable state. Runtime
 unavailability never causes a stateful command to open SQLite locally or start
@@ -154,8 +163,20 @@ sends stateful product commands to that socket through `RuntimeClient`. Help,
 explicit `status --offline`, and the explicitly offline `runtime:purge`
 lifecycle command are local; purge refuses to run while a healthy host is
 reachable and requires approval of its exact plan hash. Ordinary `status`
-retains compatible read-only degradation when the host is unavailable, but
-labels authoritative state unavailable and its Runtime association unverified.
+retains compatible read-only degradation when the host is unavailable: it
+labels the host `unreachable`, authoritative state `unavailable`, and the
+Runtime association `unverified`, because a request was made and failed.
+Explicit `status --offline` makes no request at all, so it reports the host and
+authoritative state as `not_checked` and `health` as `unverified`. A host that
+was never contacted is not a host proved unreachable.
+
+Relative local filesystem semantics belong to the invoking client context; a
+persistent Runtime host must never infer client cwd from its own process cwd.
+Clients resolve caller-local path arguments against their own working directory
+before IPC, and the Runtime rejects a caller-local path that arrives relative
+instead of guessing. A path interpreted inside a root the caller already
+supplied as an absolute argument, such as `client:plan --contract` relative to
+`--root`, keeps its root-relative meaning.
 
 The same socket carries a second, separately versioned contract: a read-only
 query surface under `/api`. Commands and queries are distinct sides of the same

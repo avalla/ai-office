@@ -173,6 +173,9 @@ Commands:
     reconciles repository identity, shared AI-OFFICE.md guidance, and detected host skills
     exit 0: installed; exit 2: installed with warnings; exit 1: failed/partial
   status [path] [--offline] [--json]
+    exit 0: nothing needing attention found; exit 1: problem found or not installed
+    --offline inspects repository-local evidence only and does not contact the
+    Runtime, so it reports host state as not_checked, never as unreachable
   next [path] [--json]
     reports project handover readiness and the recommended next action
     exit 0: assessed; exit 1: authoritative state unavailable

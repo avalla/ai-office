@@ -18,7 +18,7 @@ Use the authenticated Codex or Claude host for conversation, adaptive onboarding
 ## Start
 
 1. Read \`AI-OFFICE.md\` at the repository root and preserve its project invariants.
-2. Run \`ai-office status . --json\` before project-scoped work. Distinguish repository identity, runtime association, authoritative state, office state, and client integration.
+2. Run \`ai-office status . --json\` before project-scoped work. Distinguish repository identity, runtime association, authoritative state, office state, and client integration. Add \`--offline\` only to inspect repository-local evidence deliberately without contacting the Runtime; it reports host state as \`not_checked\`, which does not mean the Runtime is down.
 3. Run \`ai-office next --json\` to read the recommended next action, the handover state, and each readiness dimension. Use it instead of inventing a next step.
 4. Check \`ai-office runtime status\` before stateful work and start \`ai-office runtime start\` if the selected Runtime is unavailable.
 5. If the executable is unavailable, explain that AI Office must be linked or installed; do not infer a distribution checkout from this skill location.

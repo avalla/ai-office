@@ -34,13 +34,16 @@ A proposed mechanism is not automatically an architectural decision. When reposi
 - Authoritative project state lives in SQLite; generated Markdown is a deterministic, one-way projection.
 - Stateful product commands go through the authoritative Runtime, currently hosted by the local daemon. The CLI is a Runtime client over local IPC; it never falls back to an embedded writer. Local help, explicit `status --offline`, compatible degraded read-only status, and `runtime:purge` are the narrow offline paths. Purge refuses to run while the Runtime host is reachable.
 - Protected local or external resources are never exposed directly to agents. Side effects cross controlled application and connector boundaries.
+- Relative local filesystem semantics belong to the invoking client context. Clients resolve caller-local path arguments against their own working directory before IPC; the persistent Runtime host never infers client cwd from its own process cwd and rejects a relative caller-local path instead of guessing.
+- Offline inspection reports local evidence only. A host that was not contacted must be reported as not checked, never as unreachable.
 - Errors at domain and application boundaries are typed. External output must not expose secrets, raw credentials, or internal stack traces.
 
 ## Domain boundaries
 
 - `packages/domain` contains aggregates, value objects, state transitions, and policies that are independent of runtime and storage.
 - `packages/application` contains commands, orchestration, and ports. It may depend on domain abstractions, not concrete adapters.
-- `packages/storage-sqlite`, `packages/llm-gateway`, connector packages, and app composition roots are infrastructure.
+- `packages/storage-sqlite`, `packages/llm-gateway`, `packages/runtime-host`, connector packages, and app composition roots are infrastructure.
+- `packages/runtime-host` owns Runtime command execution and local composition; `apps/daemon` hosts it; `apps/cli` is a client. `apps/daemon` must never import `apps/cli`.
 - Cross-project ownership and aggregate references must be validated explicitly; SQLite foreign keys are a backstop, not the only rule.
 - Keep provider details behind the LLM gateway and resource details behind connector descriptors and the registry.
 

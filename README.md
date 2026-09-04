@@ -125,7 +125,9 @@ actionable warnings, and `1` means failed or partial. JSON output uses the same
 `status` works from the project root or a descendant. It reports the project
 identity, runtime-association validity, Runtime-host and authoritative-state availability, office
 revision, client integration, and lightweight task counts. Use
-`ai-office status --json` for the stable schema-version `3` machine output.
+`ai-office status --json` for the stable schema-version `4` machine output.
+Exit code `0` means nothing needing attention was found in what was inspected
+and `1` means a problem was found or the repository is not installed.
 Lifecycle commands first select the nearest valid AI Office binding within the
 current Git worktree. On first install they select that worktree root; a
 standalone non-Git directory remains its own project root. Running `install .`,
@@ -136,7 +138,7 @@ The JSON envelope is versioned independently from the binding:
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "installed": true,
   "health": "healthy",
   "project": {
@@ -171,9 +173,18 @@ The JSON envelope is versioned independently from the binding:
 
 Repository identity states are `missing`, `invalid`, `legacy`, or `valid`;
 runtime association states are reported independently as `missing`, `unverified`,
-`conflicting`, `project_missing`, or `valid`. A future
-breaking field or semantic change requires a new `schemaVersion`; schema version
-`2` output keeps deterministic key and array ordering for identical state.
+`conflicting`, `project_missing`, or `valid`. `runtime.daemon` is `reachable`,
+`unreachable`, or `not_checked`, and `runtime.authoritativeState` adds
+`not_checked` alongside `available`, `unavailable`, `project_missing`, and
+`repository_unassociated`: a host that was never contacted is a different fact
+from a host proved unreachable. `health` is `healthy`, `needs_attention`,
+`not_installed`, or `unverified`, the last meaning local evidence found no
+problem while authoritative state was not read.
+
+Version `4` added those three values and left every version `3` value meaning
+what it meant. A future breaking field or semantic change requires a new
+`schemaVersion`; output keeps deterministic key and array ordering for identical
+state.
 
 Lifecycle paths are canonicalized through one repository-root resolver. A
 valid binding inside the nearest Git worktree wins; otherwise first install
@@ -982,6 +993,7 @@ apps/
 packages/
   domain/                 entities, value objects, and rules
   application/            use cases and ports
+  runtime-host/           Runtime command execution and local composition
   storage-sqlite/         SQLite adapters and migration runner
   agent-runtime/          agent definitions and simulated execution
   agent-client-integrations/ Codex and Claude detection/config adapters
@@ -1052,6 +1064,18 @@ and repository skills from their managed contracts and reports certain changes
 as `drifted`. The current `AI-OFFICE.md` body depends on the authoritative
 manifest, so an otherwise intact offline integration is `unverified`, never
 misreported as fully `configured`.
+
+The two cases are reported differently, because they know different things.
+`status --offline` deliberately contacts nothing, so it reports the Runtime host
+and authoritative state as `not_checked` and overall health as `unverified`; it
+never claims the host is down and never tells you to start it. Ordinary `status`
+with the host actually unreachable reports `unreachable`, `unavailable`, and
+`needs_attention`, and does recommend starting the Runtime — that case has
+evidence.
+
+A relative path always means the directory you ran the command in. The Runtime
+host is a long-lived process started from somewhere else entirely, and it never
+resolves your `.` against its own working directory.
 
 Uninstallation uses the same inspect-plan-approve discipline. Running the
 command without `--approve` returns the exact removal plan and hash; passing

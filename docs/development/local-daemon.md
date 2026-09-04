@@ -88,16 +88,63 @@ requires approval of the exact current purge-plan hash.
 
 `status --offline` is the explicit read-only local path. Ordinary `status`
 retains its compatible degraded behavior when the host is unavailable; neither
-form mutates authoritative state.
-The CLI inspects the repository binding before protocol dispatch. If the daemon
-is unavailable, it returns schema-version `3` status with the portable
-repository identity reported separately from an `unverified` runtime
-association, authoritative state unavailable, and repository-local client
-inspection where possible. Deterministic host pointers and skills can still be
-classified as missing, unmanaged, conflicting, or drifted. The manifest-derived
+form mutates authoritative state. The CLI inspects the repository binding before
+protocol dispatch and reports the portable repository identity separately from
+an `unverified` runtime association, with repository-local client inspection
+where possible. Deterministic host pointers and skills can still be classified
+as missing, unmanaged, conflicting, or drifted. The manifest-derived
 `AI-OFFICE.md` body cannot be attested without authority, so an otherwise intact
-client integration is `unverified`. Identity existence and daemon reachability
-are separate facts.
+client integration is `unverified`. Identity existence and host reachability are
+separate facts.
+
+The two offline paths differ in what they know, and status schema version `4`
+lets them say so:
+
+| | host contacted | `runtime.daemon` | `runtime.authoritativeState` | `health` | issue |
+| --- | --- | --- | --- | --- | --- |
+| `status --offline` | no | `not_checked` | `not_checked` | `unverified` | `runtime_not_checked` (warning) |
+| `status` with the host down | yes, and it failed | `unreachable` | `unavailable` | `needs_attention` | `daemon_unavailable` (error) |
+
+A host that was never contacted is not a host proved unreachable, so explicit
+offline inspection never emits `daemon_unavailable` and never tells the operator
+to start a Runtime that may already be running. Only the degraded fallback,
+which has evidence, does.
+
+Explicit offline inspection parses the same `status [path] [--offline] [--json]`
+grammar as ordinary `status`, before any request is made: unknown options,
+repeated `--offline` or `--json`, and a second positional path are rejected as
+usage errors without contacting the Runtime.
+
+`status` exit codes mean the same thing in both modes: `0` when nothing needing
+attention was found in what was actually inspected — `healthy` online,
+`unverified` offline — and `1` when a problem was found or the repository is not
+installed.
+
+## Client-relative filesystem context
+
+The host is persistent: it was started once, from some directory, and keeps
+running while clients come and go from unrelated repositories. Its process
+working directory therefore says nothing about what a client meant by a relative
+path.
+
+> Relative local filesystem semantics belong to the invoking client context; a
+> persistent Runtime host must never infer client cwd from its own process cwd.
+
+The CLI resolves every caller-local path argument against its own working
+directory before building a request — the `install`/`status`/`next`/`uninstall`
+and `project:import` paths, `project:backup --output`, the `project:restore`
+archive and `--root`, `office:apply`/`office:validate --file`, `agent:sync
+--directory`, and `client:* --root` — and enforces containment where the command
+already required it. The Runtime refuses a caller-local path that arrives
+relative rather than resolving it against its own working directory, so
+bypassing the client boundary fails loudly instead of answering about the wrong
+directory.
+
+Two things stay outside that rule: a path interpreted inside a root the caller
+already supplied as an absolute argument, such as `client:plan --contract`
+relative to `--root`, and a string that merely looks like a path, such as a task
+title. Protocol version 1 is unchanged, because resolution happens before the
+request exists.
 
 For project-scoped commands without `--project`, the linkable CLI discovers the
 nearest valid binding from its current working directory and appends that
