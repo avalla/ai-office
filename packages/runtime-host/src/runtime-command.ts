@@ -161,9 +161,11 @@ import {
 } from "@ai-office/application/project-portability/manage-project-portability.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
-export type CliIo = CommandIo;
 
-export const cliHelp = `AI Office CLI
+/** Text sink used by a Runtime command; the host captures it per request. */
+export type RuntimeCommandIo = CommandIo;
+
+export const runtimeCommandHelp = `AI Office CLI
 
 Commands:
   install [path] [--rebind] [--json]
@@ -353,18 +355,18 @@ const commands = [
 
 type Command = (typeof commands)[number];
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
-const defaultIo: CliIo = {
+const defaultIo: RuntimeCommandIo = {
   stdout: (message) => console.log(message),
   stderr: (message) => console.error(message),
 };
 
-export interface CliOptions {
+export interface RuntimeCommandOptions {
   projectRoot: string;
   runtimePaths?: RuntimePaths;
   migrationDirectory?: string;
   globalDatabasePath?: string;
   globalMigrationDirectory?: string;
-  io?: CliIo;
+  io?: RuntimeCommandIo;
   propagatePromptRequired?: boolean;
   agentClients?: AgentClientCatalog;
   projectBindings?: ProjectBindingAdapter;
@@ -502,9 +504,9 @@ function formatKnownError(error: unknown): string | null {
   return null;
 }
 
-export async function runCli(
+export async function executeRuntimeCommand(
   args: string[],
-  options: CliOptions,
+  options: RuntimeCommandOptions,
 ): Promise<number> {
   const io = options.io ?? defaultIo;
   const [command, ...commandArguments] = args;
@@ -514,11 +516,11 @@ export async function runCli(
     command === "--help" ||
     command === "-h"
   ) {
-    io.stdout(cliHelp);
+    io.stdout(runtimeCommandHelp);
     return 0;
   }
   if (!isCommand(command)) {
-    io.stderr(`Unknown command: ${command}\n\n${cliHelp}`);
+    io.stderr(`Unknown command: ${command}\n\n${runtimeCommandHelp}`);
     return 1;
   }
 
@@ -615,3 +617,19 @@ export async function runCli(
     database.close();
   }
 }
+
+/**
+ * Deprecated pre-Runtime names.
+ *
+ * They are identity aliases, not wrappers: `runCli === executeRuntimeCommand`.
+ * Only the exported names are guaranteed; message text and symbol names now use
+ * Runtime terminology.
+ */
+/** @deprecated Use executeRuntimeCommand. */
+export const runCli = executeRuntimeCommand;
+/** @deprecated Use runtimeCommandHelp. */
+export const cliHelp = runtimeCommandHelp;
+/** @deprecated Use RuntimeCommandIo. */
+export type CliIo = RuntimeCommandIo;
+/** @deprecated Use RuntimeCommandOptions. */
+export type CliOptions = RuntimeCommandOptions;

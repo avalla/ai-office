@@ -14,7 +14,7 @@ import { join } from "node:path";
 import {
   LocalProjectArchiveAdapter,
   nodeProjectArchiveFileSystem,
-} from "../../apps/cli/src/local-project-archive-adapter.ts";
+} from "@ai-office/runtime-host/local-project-archive-adapter.ts";
 
 const roots: string[] = [];
 

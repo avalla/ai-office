@@ -1,0 +1,5 @@
+{
+  "name": "@ai-office/runtime-host",
+  "private": true,
+  "type": "module"
+}

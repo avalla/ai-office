@@ -25,7 +25,7 @@ import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqli
 import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
-import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
+import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
 
 const temporaryDirectories: string[] = [];
 const migrationDirectory = join(process.cwd(), "migrations", "project");

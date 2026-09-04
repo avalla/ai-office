@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
-import type { CliIo } from "../../apps/cli/src/cli.ts";
+import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 
 const roots: string[] = [];

@@ -1,22 +1,22 @@
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
-import { cliHelp, type CliIo } from "./cli.ts";
+import { cliHelp, type CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import {
   IpcRuntimeClient,
   InvalidDaemonResponseError,
   RuntimeUnavailableError,
 } from "./daemon-client.ts";
-import type { RuntimeClient } from "./runtime-client.ts";
+import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
 import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
 import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
 import { runDashboardCli } from "./dashboard-cli.ts";
-import { CliUsageError } from "./commands/shared.ts";
+import { CliUsageError } from "@ai-office/runtime-host/commands/shared.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
-import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
+import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { getOfflineProjectStatus } from "./offline-project-status.ts";
-import { printProjectLifecycleStatus } from "./commands/lifecycle.ts";
-import { renderHandoverReport } from "./handover-view.ts";
+import { printProjectLifecycleStatus } from "@ai-office/runtime-host/lifecycle-view.ts";
+import { renderHandoverReport } from "@ai-office/runtime-host/handover-view.ts";
 import { degradedProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 import {

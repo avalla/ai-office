@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
+import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
 
 const temporaryDirectories: string[] = [];
 

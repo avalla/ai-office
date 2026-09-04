@@ -7,7 +7,7 @@ import {
   isDaemonErrorResponse,
   isDaemonCommandResponse,
 } from "@ai-office/application/protocol/daemon-protocol.ts";
-import type { RuntimeClient } from "./runtime-client.ts";
+import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
 
 export class RuntimeUnavailableError extends Error {
   constructor(socketPath: string) {

@@ -7,7 +7,7 @@ import type {
   LifecycleIssue,
   ProjectLifecycleStatus,
 } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
-import { LocalProjectBindingAdapter } from "./local-project-binding-adapter.ts";
+import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { repositoryIdFromLegacyProjectId } from "@ai-office/application/project-lifecycle/project-binding.ts";
 
 function offlineConfiguration(input: {

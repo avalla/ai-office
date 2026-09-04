@@ -10,9 +10,9 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
-import { LocalProjectBindingAdapter } from "../../apps/cli/src/local-project-binding-adapter.ts";
+import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
-import type { CliIo } from "../../apps/cli/src/cli.ts";
+import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";

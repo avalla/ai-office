@@ -4,12 +4,12 @@ import {
 } from "@ai-office/application/runtime/manage-runtime-purge.ts";
 import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
 import { RuntimeUnavailableError } from "./daemon-client.ts";
-import type { RuntimeClient } from "./runtime-client.ts";
+import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
 import {
   CliUsageError,
   parseArguments,
   type CommandIo,
-} from "./commands/shared.ts";
+} from "@ai-office/runtime-host/commands/shared.ts";
 import {
   LocalRuntimePurgeAdapter,
   LocalRuntimePurgeError,

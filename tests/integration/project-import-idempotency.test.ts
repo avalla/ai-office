@@ -12,7 +12,7 @@ import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/reposi
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
 import type { ProjectScan } from "@ai-office/application/ports/project-profile-repository.port.ts";
-import { LocalProjectScanner } from "../../apps/cli/src/local-project-scanner.ts";
+import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
 
 const temporaryDirectories: string[] = [];
 

@@ -9,9 +9,9 @@ import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts
 import type { RuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import {
   CliPromptRequiredError,
-  runCli,
-  type CliIo,
-} from "../../cli/src/cli.ts";
+  executeRuntimeCommand,
+  type RuntimeCommandIo,
+} from "./runtime-command.ts";
 
 /**
  * Current in-process composition of AI Office application services.
@@ -37,7 +37,7 @@ export class ApplicationRuntime implements AiOfficeRuntime {
     const stdout: string[] = [];
     const stderr: string[] = [];
     let promptAnswerConsumed = false;
-    const io: CliIo = {
+    const io: RuntimeCommandIo = {
       stdout: (message) => stdout.push(message),
       stderr: (message) => stderr.push(message),
       prompt: async (message) => {
@@ -50,7 +50,7 @@ export class ApplicationRuntime implements AiOfficeRuntime {
     };
 
     try {
-      const exitCode = await runCli(command.args, {
+      const exitCode = await executeRuntimeCommand(command.args, {
         projectRoot: this.commandRoot,
         runtimePaths: this.runtimePaths,
         ...(this.migrationDirectory === undefined

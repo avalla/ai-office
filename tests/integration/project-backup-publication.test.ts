@@ -8,11 +8,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCli, type CliIo } from "../../apps/cli/src/cli.ts";
+import { runCli, type CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import {
   LocalProjectArchiveAdapter,
   nodeProjectArchiveFileSystem,
-} from "../../apps/cli/src/local-project-archive-adapter.ts";
+} from "@ai-office/runtime-host/local-project-archive-adapter.ts";
 import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project-archive-adapter.port.ts";
 import { PortableProjectArchiveError } from "@ai-office/application/project-portability/project-snapshot.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";

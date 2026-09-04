@@ -10,9 +10,7 @@ import {
   ProjectInstallPartialError,
   ProjectLifecycleError,
   ProjectUninstallPartialError,
-  type LifecycleClientStatus,
   type ProjectInstallResult,
-  type ProjectLifecycleStatus,
   type ProjectUninstallPlan,
   type ProjectUninstallResult,
 } from "@ai-office/application/project-lifecycle/manage-project-lifecycle.ts";
@@ -26,9 +24,9 @@ import { LocalProjectScanner } from "../local-project-scanner.ts";
 import {
   renderHandoverReport,
   renderNextSteps,
-  renderStatusGuidance,
   renderWelcome,
 } from "../handover-view.ts";
+import { clientLine, printProjectLifecycleStatus } from "../lifecycle-view.ts";
 import { ConfirmRepositoryUnderstanding } from "@ai-office/application/project-lifecycle/confirm-repository-understanding.ts";
 import {
   CliUsageError,
@@ -93,16 +91,6 @@ function isFirstConnection(result: ProjectInstallResult): boolean {
     result.project.association === "created" ||
     result.repositoryIdentity.action === "create"
   );
-}
-
-function clientLine(client: LifecycleClientStatus): string {
-  const state =
-    client.detection === "detected"
-      ? client.configuration
-      : client.configuration === "not_configured"
-        ? "not detected"
-        : `${client.configuration} (client not detected)`;
-  return `  ${client.displayName}: ${state}`;
 }
 
 function lifecycleFailureMessage(error: unknown): string | null {
@@ -180,81 +168,6 @@ function printInstall(
   }
   context.io.stdout("");
   renderNextSteps(handover.handover, context.io);
-}
-
-export function printProjectLifecycleStatus(
-  result: ProjectLifecycleStatus,
-  context: Pick<CommandContext, "io">,
-  handover?: ProjectHandoverReport,
-): void {
-  context.io.stdout("AI Office");
-  context.io.stdout("");
-  context.io.stdout("Project");
-  context.io.stdout(`  name: ${result.project.name ?? "unavailable"}`);
-  context.io.stdout(`  id: ${result.project.id ?? "unavailable"}`);
-  context.io.stdout(`  root: ${result.project.root}`);
-  context.io.stdout(
-    `  repository identity: ${result.project.repositoryIdentity.state}`,
-  );
-  context.io.stdout(
-    `  repository id: ${result.project.repositoryIdentity.id ?? "unavailable"}`,
-  );
-  context.io.stdout(
-    `  runtime association: ${result.project.runtimeAssociation.state}`,
-  );
-  if (result.project.stateRevision !== undefined)
-    context.io.stdout(
-      `  state revision: ${result.project.stateRevision.head ?? "not exported"}`,
-    );
-  context.io.stdout("");
-  context.io.stdout("Runtime");
-  context.io.stdout(`  persistent host: ${result.runtime.daemon}`);
-  context.io.stdout(`  home: ${result.runtime.home}`);
-  context.io.stdout(`  state: ${result.runtime.authoritativeState}`);
-  context.io.stdout("");
-  context.io.stdout("Office");
-  context.io.stdout(`  state: ${result.office.state}`);
-  context.io.stdout(`  onboarding: ${result.office.onboarding}`);
-  context.io.stdout(`  revision: ${result.office.revision ?? "unavailable"}`);
-  context.io.stdout(`  roles: ${result.office.roles.length}`);
-  context.io.stdout("");
-  context.io.stdout("Clients");
-  if (result.clients.length === 0) context.io.stdout("  unavailable");
-  for (const client of result.clients) context.io.stdout(clientLine(client));
-  if (result.tasks !== null) {
-    context.io.stdout("");
-    context.io.stdout("Tasks");
-    context.io.stdout(`  open: ${result.tasks.open}`);
-    context.io.stdout(`  wip: ${result.tasks.wip}`);
-  }
-  if (result.pipeline !== undefined) {
-    context.io.stdout("");
-    context.io.stdout("Pipeline");
-    context.io.stdout(`  state: ${result.pipeline.state}`);
-    context.io.stdout(`  active runs: ${result.pipeline.activeRuns}`);
-    context.io.stdout(
-      `  configured: ${result.pipeline.configured
-        .map((pipeline) => `${pipeline.id} (${pipeline.mode})`)
-        .join(", ")}`,
-    );
-    if (result.pipeline.currentStages.length > 0)
-      context.io.stdout(
-        `  current stages: ${result.pipeline.currentStages.join(", ")}`,
-      );
-  }
-  if (result.issues.length > 0) {
-    context.io.stdout("");
-    context.io.stdout("Issues");
-    for (const issue of result.issues) {
-      context.io.stdout(`  ${issue.code}: ${issue.message}`);
-      if (issue.recovery !== undefined)
-        context.io.stdout(`    ${issue.recovery}`);
-    }
-  }
-  context.io.stdout("");
-  context.io.stdout(`Status: ${result.health}`);
-  if (handover !== undefined)
-    renderStatusGuidance(handover.handover, context.io);
 }
 
 function printUninstallPlan(

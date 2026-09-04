@@ -9,14 +9,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDaemonCli, runRuntimeCli } from "../../apps/cli/src/daemon-cli.ts";
-import type { CliIo } from "../../apps/cli/src/cli.ts";
+import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import {
   DaemonClient,
   RuntimeUnavailableError,
 } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
-import type { RuntimeClient } from "../../apps/cli/src/runtime-client.ts";
+import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
 
 const temporaryDirectories: string[] = [];
 

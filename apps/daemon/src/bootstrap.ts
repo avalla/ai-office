@@ -10,7 +10,7 @@ import { SqliteOperationalReadRepository } from "@ai-office/storage-sqlite/repos
 import { OperationalEventBus } from "@ai-office/application/events/operational-event-bus.ts";
 import { OperationalQueryService } from "@ai-office/application/queries/operational-query-service.ts";
 import { LocalCommandHandler } from "./local-command-handler.ts";
-import { ApplicationRuntime } from "./application-runtime.ts";
+import { ApplicationRuntime } from "@ai-office/runtime-host/application-runtime.ts";
 import { PersistentRuntimeHost } from "./office-daemon.ts";
 import { QueryApi } from "./query-api.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";

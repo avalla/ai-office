@@ -10,7 +10,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runCli, type CliIo } from "../../apps/cli/src/cli.ts";
+import { runCli, type CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 
 const temporaryDirectories: string[] = [];

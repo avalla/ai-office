@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeTextFileAtomic } from "../../apps/cli/src/atomic-file.ts";
+import { writeTextFileAtomic } from "@ai-office/runtime-host/atomic-file.ts";
 import { ManageGovernance } from "@ai-office/application/commands/manage-governance.ts";
 import {
   DuplicateRequirementKeyError,
