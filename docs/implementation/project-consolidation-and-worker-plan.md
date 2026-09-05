@@ -1,6 +1,7 @@
 # Project consolidation and first real worker plan
 
-- Status: proposed; no product changes implemented by this document.
+- Status: Delivery A implemented in the consolidation PR stack, pending merge;
+  Delivery B remains proposed.
 - Date: 2026-09-05
 - Origin: project, architecture, and roadmap review requested by the maintainer.
 - Roadmap authority: [development roadmap](../development/roadmap.md).
@@ -14,9 +15,21 @@ Deliver two independently verifiable outcomes:
 2. One task can produce a real change, test evidence, independent review, and
    an explicit human decision through the authoritative Runtime.
 
-The first outcome is ready for implementation planning. The second needs a
-worker/authority assessment before selecting an adapter. This proposal does not
-mark future milestones active, accept a new ADR, or authorize live worker calls.
+The first outcome has been implemented as six reviewable changes. The second
+still needs a worker/authority assessment before selecting an adapter. No real
+worker, provider call, project removal, or future milestone execution is claimed.
+
+Implementation refinements from repository evidence:
+
+- Runtime ownership fits the existing immutable run-event JSON; no migration
+  or separate ownership table was needed. Historical events remain readable.
+- Recovery also handles terminal runs with leftover locks, preserving their
+  original terminal outcome. Ambiguous controlled effects remain blocked.
+- Final review found that failure to persist a terminal outcome could report
+  success. The closing PR adds an `interrupted` result and preserves the lock,
+  with fault-injection coverage, alongside the documentation alignment.
+- Real-worker heartbeat, deadlines, isolation and dispatch remain Delivery B;
+  archival/removal remains a separate assessment.
 
 Keep Bun, strict TypeScript, SQLite, application ports, and the existing
 controlled-action model. Do not introduce another orchestration framework,

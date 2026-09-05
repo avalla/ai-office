@@ -6,9 +6,11 @@ AI Office separates authoritative project state, global reusable memory, and reg
 
 The linkable `ai-office` entry point selects a stable runtime data home from
 `AI_OFFICE_HOME` or, by default, `~/.ai-office`. Program location and current
-repository do not select authority. The legacy `bun run daemon` and
-`bun run cli` development scripts explicitly retain current-working-directory
-compatibility. The normal active database path is:
+repository do not select user authority. The source bin requires explicit
+user-mode opt-in, including `bun link`. The `dev:daemon`/`dev:cli` scripts and
+their legacy aliases select the source checkout's `.ai-office`, independent of
+caller cwd; global memory is isolated in the same directory. The normal active
+database path is:
 
 ```text
 <runtime-home>/project.sqlite

@@ -344,7 +344,9 @@ adapter or push/pull command is implemented yet.
 
 The linkable entry point uses `AI_OFFICE_HOME` or the default stable user home
 `~/.ai-office`; program location and current repository do not select authority.
-The legacy Bun development scripts explicitly use `<cwd>/.ai-office`. The source/import root is the
+The source bin requires explicit user-runtime opt-in; the Bun development
+scripts use `<source-checkout>/.ai-office` for both databases regardless of cwd.
+The source/import root is the
 repository path passed to `project:import`; importing stores scan state in the
 current daemon's database rather than creating a database under that repository.
 The independently supplied `client:* --root` is the integration root containing
