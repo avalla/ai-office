@@ -11,8 +11,18 @@ AI Office tests behavior at the narrowest useful boundary and adds integration c
 - **Fault injection:** audit, transaction, connector, and outcome-persistence failures, including rollback and `execution_unknown` behavior around filesystem side effects.
 - **Daemon/CLI E2E:** the real Unix-socket path from CLI through daemon dispatch, application services, SQLite or connectors, and rendered CLI output.
 - **Agent client integration:** isolated PATH and project roots, passive inspection, deterministic plan hashes, ownership-preserving updates, unmanaged canonical status, operational validation semantics, malformed markers, stale approvals, atomic cleanup, idempotence, and daemon CLI flows. Tests never use the developer's real client configuration.
+- **Source-linked update:** real local Git remotes cover exact approval drift,
+  absent target objects, unchanged planning refs/index/worktree, required temporary
+  ref cleanup, ancestry proof, untracked conflicts, and step-by-step failure/partial
+  outcomes without rollback. Injected runners never install real dependencies or
+  register global links during standard tests. Socket E2E tests cover both selected
+  user and distribution development homes, incompatible and nonresponding hosts,
+  rechecks after approval, and the source maintenance opt-in exception. Subprocess
+  instrumentation rejects SQLite/operational client access; architecture tests
+  traverse imports to exclude Runtime/SQLite composition. All help forms are
+  exercised before Runtime resolution and updater planning.
 - **Bun source-link smoke:** a copied real distribution uses temporary HOME,
-  install, global-package, global-bin, and runtime roots to prove frozen install,
+  install, cache, global-package, global-bin, config, and runtime roots to prove frozen install,
   bare link registration, launcher resolution, `ai-office --help`, and dangling
   link repair without touching developer or runner-global Bun state.
 

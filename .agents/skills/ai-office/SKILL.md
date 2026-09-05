@@ -11,7 +11,7 @@ AI Office remains authoritative for stored configuration, policy, controlled act
 
 ## Resolve the launcher and runtime
 
-Resolve the AI Office distribution root from this skill's location: it is three directories above `.agents/skills/ai-office`. Prefer the linkable `ai-office` executable. If it is not on `PATH`, run the same entry point from the distribution root as `bun run ai-office --`. Do not fall back to `bun run cli --`, because that command intentionally selects a development runtime from its current working directory.
+Resolve the AI Office distribution root from this skill's location: it is three directories above `.agents/skills/ai-office`. Prefer the linkable `ai-office` executable. If it is not on `PATH`, run the same entry point from the distribution root as `bun run ai-office --`. Do not fall back to `bun run cli --`, because that command intentionally selects a development runtime from its executable source checkout, including global memory.
 
 Before a stateful workflow other than offline `update` and `runtime:purge`:
 
@@ -19,6 +19,9 @@ Before a stateful workflow other than offline `update` and `runtime:purge`:
 2. If dependencies are absent, ask before installing them with `bun install --frozen-lockfile`.
 3. If the Runtime is unavailable, start `ai-office runtime start` in a persistent process and wait for health to succeed.
 
+Operational use of the source-linked command requires explicit
+`AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1`. Local help and program `update`
+need no such opt-in; update probes host presence only, never Runtime authority.
 The linkable command uses the stable user runtime selected by `AI_OFFICE_HOME` or `~/.ai-office`. Never infer runtime selection from the current repository. AI Office onboarding does not read or require provider credentials.
 
 ## Help
@@ -111,10 +114,12 @@ Program update is separate from project reconciliation: `install` manages a
 repository, while `update` advances the source-linked AI Office distribution.
 It does not update Bun itself or select, purge, copy, or rewrite runtime state.
 
-1. Ensure the AI Office daemon is stopped. Do not update program files while an
-   older daemon is serving the runtime. If the user explicitly operates several
-   `AI_OFFICE_HOME` runtimes from one distribution, ensure all their daemons are
-   stopped; the command can verify only the currently selected runtime.
+1. Stop the selected user Runtime host (`AI_OFFICE_HOME` or `~/.ai-office`) and
+   the distribution development Runtime host (`<distribution>/.ai-office`).
+   Keep them stopped throughout the update. The command checks both using only
+   health probes, without operational opt-in, SQLite, or commands. Other custom
+   homes used in separate terminals are not discoverable; stop those hosts too
+   when known. A timeout or uncertain probe blocks maintenance.
 2. Run `ai-office update --json`. This contacts the configured Git upstream but
    does not change the checkout. Report the canonical distribution root,
    branch, upstream ref, current and target revisions, preserved state, steps,
@@ -126,11 +131,13 @@ It does not update Bun itself or select, purge, copy, or rewrite runtime state.
 5. Obtain explicit confirmation before rerunning `ai-office update --approve
    <planHash> --json`. Never reuse an approval after the plan or upstream target
    changes.
-6. On `updated`, start the daemon again and verify `daemon:health`; normal daemon
-   startup applies forward SQLite migrations to the preserved runtime.
+6. On `updated`, explicitly restart the desired Runtime host and verify
+   `ai-office runtime status` (or the corresponding development CLI). User
+   Runtime operation still requires the source opt-in; update never enables it.
+   Normal host startup applies forward SQLite migrations to preserved state.
 7. On `failed`, report that no program revision changed. On `partial`, report
    the exact completed and failed steps and follow only the returned recovery;
-   do not claim rollback or restart the daemon with an incomplete installation.
+   do not claim rollback or restart a Runtime host with an incomplete installation.
 
 The current updater supports the repository's source-linked Bun distribution:
 an approved exact target is fetched and fast-forwarded, dependencies are

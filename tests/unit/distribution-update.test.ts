@@ -45,7 +45,9 @@ describe("distribution update orchestration", () => {
         };
       },
     };
-    const service = new ManageDistributionUpdate(adapter);
+    const service = new ManageDistributionUpdate(adapter, {
+      assertStopped: async () => {},
+    });
 
     const first = await service.plan("/distribution");
     const second = await service.plan("/distribution");
@@ -73,7 +75,9 @@ describe("distribution update orchestration", () => {
         throw new Error("must not apply");
       },
     };
-    const service = new ManageDistributionUpdate(adapter);
+    const service = new ManageDistributionUpdate(adapter, {
+      assertStopped: async () => {},
+    });
     const plan = await service.plan("/distribution");
     current = draft({ currentRevision: "c".repeat(40) });
 
@@ -93,7 +97,9 @@ describe("distribution update orchestration", () => {
         throw new Error("must not apply");
       },
     };
-    const service = new ManageDistributionUpdate(adapter);
+    const service = new ManageDistributionUpdate(adapter, {
+      assertStopped: async () => {},
+    });
     const plan = await service.plan("/distribution");
     current = draft({ remoteIdentity: `sha256:${"2".repeat(64)}` });
 
@@ -115,7 +121,9 @@ describe("distribution update orchestration", () => {
         throw new Error("must not apply");
       },
     };
-    const service = new ManageDistributionUpdate(adapter);
+    const service = new ManageDistributionUpdate(adapter, {
+      assertStopped: async () => {},
+    });
     const plan = await service.plan("/distribution");
 
     expect(
@@ -129,4 +137,64 @@ describe("distribution update orchestration", () => {
     });
     expect(applies).toBe(0);
   });
+});
+
+test("a Runtime host becoming active during replan blocks adapter mutation", async () => {
+  let present = false;
+  let replanning = false;
+  let applied = false;
+  const adapter: DistributionUpdateAdapter = {
+    plan: async () => {
+      if (replanning) present = true;
+      return draft();
+    },
+    apply: async () => {
+      applied = true;
+      throw new Error("must not apply");
+    },
+  };
+  const service = new ManageDistributionUpdate(adapter, {
+    assertStopped: async () => {
+      if (present) throw new Error("Runtime running");
+    },
+  });
+  const plan = await service.plan("/distribution");
+  replanning = true;
+  await expect(
+    service.apply({
+      distributionRoot: "/distribution",
+      approvedPlanHash: plan.planHash,
+    }),
+  ).rejects.toThrow("Runtime running");
+  expect(applied).toBe(false);
+});
+
+test("a failed Runtime presence check prevents even adapter planning", async () => {
+  let planned = false;
+  const service = new ManageDistributionUpdate(
+    {
+      plan: async () => {
+        planned = true;
+        return draft();
+      },
+      apply: async () => {
+        throw new Error("must not apply");
+      },
+    },
+    {
+      assertStopped: async () => {
+        throw new Error("Runtime running");
+      },
+    },
+  );
+  await expect(service.plan("/distribution")).rejects.toThrow(
+    "Runtime running",
+  );
+  await expect(
+    service.apply({
+      distributionRoot: "/distribution",
+      approvedPlanHash: "invalid",
+    }),
+  ).rejects.toThrow("Runtime running");
+  expect(planned).toBe(false);
 });

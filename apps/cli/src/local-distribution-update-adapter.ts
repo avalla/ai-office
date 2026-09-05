@@ -7,8 +7,9 @@ import type {
   DistributionUpdateResult,
   DistributionUpdateStep,
 } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
+import { DistributionUpdatePreconditionError } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
 
-export class LocalDistributionUpdateError extends Error {
+export class LocalDistributionUpdateError extends DistributionUpdatePreconditionError {
   constructor(message: string) {
     super(message);
     this.name = "LocalDistributionUpdateError";
@@ -36,7 +37,11 @@ class BunDistributionCommandRunner implements DistributionCommandRunner {
     try {
       const child = Bun.spawn([...command], {
         cwd,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: "0",
+          GIT_OPTIONAL_LOCKS: "0",
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -122,7 +127,7 @@ function failure(
   draft: DistributionUpdateDraft,
   completedSteps: readonly DistributionUpdateStep[],
   failedStep: DistributionUpdateStep,
-  toRevision: string,
+  toRevision: string | null,
   message: string,
 ): DistributionUpdateResult {
   return {
@@ -147,12 +152,67 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
     private readonly bunExecutable: string = process.execPath,
   ) {}
 
+  private async run(
+    command: readonly string[],
+    cwd: string,
+  ): Promise<DistributionCommandResult> {
+    try {
+      return await this.runner.run(command, cwd);
+    } catch {
+      return { exitCode: 127, stdout: "", stderr: "" };
+    }
+  }
+
+  private async observedHead(root: string): Promise<string | null> {
+    try {
+      return await this.head(root);
+    } catch {
+      return null;
+    }
+  }
+
+  private async requireSelection(
+    draft: Pick<
+      DistributionUpdateDraft,
+      | "distributionRoot"
+      | "branch"
+      | "remote"
+      | "upstreamRef"
+      | "trackingRef"
+      | "remoteIdentity"
+    >,
+  ): Promise<void> {
+    for (const [args, expected] of [
+      [["symbolic-ref", "--quiet", "--short", "HEAD"], draft.branch],
+      [["config", "--get", `branch.${draft.branch}.remote`], draft.remote],
+      [["config", "--get", `branch.${draft.branch}.merge`], draft.upstreamRef],
+      [["rev-parse", "--symbolic-full-name", "@{upstream}"], draft.trackingRef],
+    ] as const) {
+      const actual = await this.command(
+        draft.distributionRoot,
+        ["git", ...args],
+        "AI Office update could not revalidate its upstream selection",
+      );
+      if (trimmed(actual) !== expected)
+        throw new LocalDistributionUpdateError(
+          "The AI Office branch or upstream changed during update. Run ai-office update again.",
+        );
+    }
+    if (
+      (await this.remoteIdentity(draft.distributionRoot, draft.remote)) !==
+      draft.remoteIdentity
+    )
+      throw new LocalDistributionUpdateError(
+        "The AI Office upstream remote changed during update. Run ai-office update again.",
+      );
+  }
+
   private async command(
     distributionRoot: string,
     command: readonly string[],
     failureMessage: string,
   ): Promise<DistributionCommandResult> {
-    const result = await this.runner.run(command, distributionRoot);
+    const result = await this.run(command, distributionRoot);
     if (result.exitCode !== 0)
       throw new LocalDistributionUpdateError(failureMessage);
     return result;
@@ -187,7 +247,7 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
     upstreamRef: string;
     targetRevision: string;
   }): Promise<void> {
-    const existing = await this.runner.run(
+    const existing = await this.run(
       ["git", "cat-file", "-e", `${input.targetRevision}^{commit}`],
       input.distributionRoot,
     );
@@ -203,6 +263,8 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
           "git",
           "fetch",
           "--no-write-fetch-head",
+          "--refmap=",
+          "--no-auto-maintenance",
           "--no-tags",
           "--quiet",
           "--recurse-submodules=no",
@@ -228,7 +290,7 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       acquisitionFailed = true;
       acquisitionError = error;
     }
-    const cleanup = await this.runner.run(
+    const cleanup = await this.run(
       ["git", "update-ref", "-d", temporaryRef],
       input.distributionRoot,
     );
@@ -245,7 +307,7 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
     targetRevision: string;
   }): Promise<void> {
     if (input.currentRevision === input.targetRevision) return;
-    const currentIsAncestor = await this.runner.run(
+    const currentIsAncestor = await this.run(
       [
         "git",
         "merge-base",
@@ -261,7 +323,7 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
         "AI Office update could not prove that the upstream is a fast-forward",
       );
 
-    const targetIsAncestor = await this.runner.run(
+    const targetIsAncestor = await this.run(
       [
         "git",
         "merge-base",
@@ -298,8 +360,16 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       throw new LocalDistributionUpdateError(
         "The current AI Office upstream remote has no fetch URL",
       );
+    const effective = await this.command(
+      distributionRoot,
+      ["git", "remote", "get-url", "--all", remote],
+      "AI Office update could not resolve the effective upstream remote identity",
+    );
     return `sha256:${createHash("sha256")
-      .update(JSON.stringify(urls), "utf8")
+      .update(
+        JSON.stringify([urls, effective.stdout.split(/\r?\n/).filter(Boolean)]),
+        "utf8",
+      )
       .digest("hex")}`;
   }
 
@@ -400,12 +470,14 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       throw new LocalDistributionUpdateError(
         "The AI Office distribution revision changed during update planning. Run ai-office update again.",
       );
-    if (
-      (await this.remoteIdentity(distributionRoot, remote)) !== remoteIdentity
-    )
-      throw new LocalDistributionUpdateError(
-        "The AI Office upstream remote changed during update planning. Run ai-office update again.",
-      );
+    await this.requireSelection({
+      distributionRoot,
+      branch,
+      remote,
+      upstreamRef,
+      trackingRef,
+      remoteIdentity,
+    });
     await this.requireCleanTrackedWorktree(distributionRoot);
     await this.requireFastForward({
       distributionRoot,
@@ -432,12 +504,15 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
     draft: DistributionUpdateDraft,
   ): Promise<DistributionUpdateResult> {
     const completedSteps: DistributionUpdateStep[] = [];
-    const fetchResult = await this.runner.run(
+    const fetchResult = await this.run(
       [
         "git",
         "fetch",
         "--no-tags",
         "--quiet",
+        "--refmap=",
+        "--recurse-submodules=no",
+        "--no-auto-maintenance",
         draft.remote,
         `${draft.upstreamRef}:${draft.trackingRef}`,
       ],
@@ -448,22 +523,49 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
         draft,
         completedSteps,
         "fetch",
-        await this.head(draft.distributionRoot),
+        await this.observedHead(draft.distributionRoot),
         "The approved upstream could not be fetched. No program files were updated; check network access and run ai-office update again.",
       );
-    completedSteps.push("fetch");
-
-    const fetched = await this.headOfFetch(draft.distributionRoot);
+    let fetched: string;
+    try {
+      fetched = await this.headOfFetch(draft.distributionRoot);
+    } catch {
+      return failure(
+        draft,
+        completedSteps,
+        "fetch",
+        await this.observedHead(draft.distributionRoot),
+        "AI Office could not verify the fetched revision. Inspect the checkout and run ai-office update again.",
+      );
+    }
     if (fetched !== draft.targetRevision)
       return failure(
         draft,
         completedSteps,
         "fetch",
-        await this.head(draft.distributionRoot),
+        await this.observedHead(draft.distributionRoot),
         "The upstream changed after approval. No program files were updated; run ai-office update again to review a new plan.",
       );
 
-    const ancestor = await this.runner.run(
+    completedSteps.push("fetch");
+    try {
+      await this.requireSelection(draft);
+      await this.requireCleanTrackedWorktree(draft.distributionRoot);
+      if ((await this.head(draft.distributionRoot)) !== draft.currentRevision)
+        throw new LocalDistributionUpdateError(
+          "The checkout revision changed after approval",
+        );
+    } catch {
+      return failure(
+        draft,
+        completedSteps,
+        "fast_forward",
+        await this.observedHead(draft.distributionRoot),
+        "The checkout or upstream changed after approval. Run ai-office update again.",
+      );
+    }
+
+    const ancestor = await this.run(
       [
         "git",
         "merge-base",
@@ -478,23 +580,24 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
         draft,
         completedSteps,
         "fast_forward",
-        await this.head(draft.distributionRoot),
+        await this.observedHead(draft.distributionRoot),
         "The configured upstream is not a fast-forward from this installation. No program files were updated; reconcile the checkout manually.",
       );
 
-    const mergeResult = await this.runner.run(
+    const mergeResult = await this.run(
       [
         "git",
         "-c",
         "core.hooksPath=/dev/null",
         "merge",
         "--ff-only",
+        "--no-overwrite-ignore",
         "--quiet",
         draft.targetRevision,
       ],
       draft.distributionRoot,
     );
-    const afterMerge = await this.head(draft.distributionRoot);
+    const afterMerge = await this.observedHead(draft.distributionRoot);
     if (mergeResult.exitCode !== 0 || afterMerge !== draft.targetRevision)
       return failure(
         draft,
@@ -505,7 +608,7 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       );
     completedSteps.push("fast_forward");
 
-    const installResult = await this.runner.run(
+    const installResult = await this.run(
       [this.bunExecutable, "install", "--frozen-lockfile"],
       draft.distributionRoot,
     );
@@ -519,7 +622,7 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       );
     completedSteps.push("install_dependencies");
 
-    const linkResult = await this.runner.run(
+    const linkResult = await this.run(
       [this.bunExecutable, "link"],
       draft.distributionRoot,
     );

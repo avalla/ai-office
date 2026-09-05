@@ -57,7 +57,8 @@ Stateful product commands go through the authoritative Runtime; there is no
 automatic embedded or direct-SQLite fallback. Short writes use
 application-level transactions; provider calls, scans, simulated agent work,
 and filesystem side effects do not run inside an open SQLite transaction. Help
-and explicit `status --offline` can run locally. The destructive
+and explicit `status --offline` can run locally. Source-linked `update` is a
+local maintenance operation with a health-only Runtime preflight. The destructive
 `runtime:purge` lifecycle command is available only while the Runtime host is
 stopped.
 
@@ -218,6 +219,44 @@ The legacy development
 commands `bun run daemon` and `bun run cli -- ...` remain supported and retain
 the isolated source-checkout runtime semantics of `dev:daemon` and `dev:cli`. See
 [Local storage and state](#local-storage-and-state) for the advanced path model.
+
+### Update the source-linked installation
+
+```bash
+ai-office update --json
+# Review the exact source, target, steps and plan hash, then approve:
+ai-office update --approve <plan-hash> --json
+```
+
+Stop the selected user Runtime (`AI_OFFICE_HOME`, or `~/.ai-office`) and the
+Runtime development host in this distribution's `.ai-office` before updating.
+The command probes both homes using only `GET /health`, before Git planning and
+again during apply. Any responding listener blocks maintenance; a timeout or
+uncertain probe fails closed. Keep hosts stopped throughout the update. Other
+arbitrary runtime homes are not discoverable: stop those hosts manually too.
+
+`update` works without `AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1`. This grants
+no operational Runtime access: no commands, queries, SQLite reads, migrations,
+or project binding inspection occur. The ordinary source CLI still requires
+that opt-in. Help (`--help`, `help`, `-h`) stays entirely local before path
+resolution, probing, or Git work.
+
+The distribution comes from the source executable, never the current project.
+A clean tracked worktree and an upstream branch are required; detached, ahead,
+and divergent branches are refused. Planning binds the exact remote target and
+a credential-safe remote fingerprint. It may acquire missing Git objects using
+a temporary ref, cleaned before any plan is returned, without changing HEAD,
+index, worktree, FETCH_HEAD, or ordinary tracking refs. Untracked files do not
+invalidate approval; Git refuses conflicting incoming tracked paths.
+
+Apply repeats the preflight, rejects stale approval, and performs only a
+fast-forward, `bun install --frozen-lockfile`, and bare `bun link`. Runtime data,
+global memory, bindings, and project integrations are preserved. Results are
+`updated`, `already_current`, `failed`, or `partial`; errors after the checkout
+advances remain partial, with completed steps and manual repair instructions.
+There is no automatic rollback, stash, reset, branch switch, Bun update, or
+published-package update. Restart the desired host explicitly after a complete
+update. See [ADR-0011](docs/adr/ADR-0011-source-linked-program-update.md).
 
 ## After installation
 

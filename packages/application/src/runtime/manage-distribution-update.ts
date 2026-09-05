@@ -1,7 +1,9 @@
+import { DistributionUpdatePreconditionError } from "../ports/distribution-update-adapter.port.ts";
 import { createHash } from "node:crypto";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import type {
   DistributionUpdateAdapter,
+  DistributionUpdateRuntimeGuard,
   DistributionUpdateDraft,
   DistributionUpdateResult,
   DistributionUpdateStep,
@@ -61,9 +63,13 @@ function publicPlan(draft: DistributionUpdateDraft): DistributionUpdatePlan {
 }
 
 export class ManageDistributionUpdate {
-  constructor(private readonly adapter: DistributionUpdateAdapter) {}
+  constructor(
+    private readonly adapter: DistributionUpdateAdapter,
+    private readonly runtimeGuard: DistributionUpdateRuntimeGuard,
+  ) {}
 
   async plan(distributionRoot: string): Promise<DistributionUpdatePlan> {
+    await this.runtimeGuard.assertStopped(distributionRoot);
     return publicPlan(await this.adapter.plan(distributionRoot));
   }
 
@@ -71,7 +77,15 @@ export class ManageDistributionUpdate {
     distributionRoot: string;
     approvedPlanHash: string;
   }): Promise<DistributionUpdateResult> {
-    const draft = await this.adapter.plan(input.distributionRoot);
+    await this.runtimeGuard.assertStopped(input.distributionRoot);
+    let draft: DistributionUpdateDraft;
+    try {
+      draft = await this.adapter.plan(input.distributionRoot);
+    } catch (error) {
+      if (error instanceof DistributionUpdatePreconditionError)
+        throw new DistributionUpdateApprovalError();
+      throw error;
+    }
     if (hashDraft(draft) !== input.approvedPlanHash)
       throw new DistributionUpdateApprovalError();
     if (draft.currentRevision === draft.targetRevision)
@@ -84,6 +98,7 @@ export class ManageDistributionUpdate {
         completedSteps: [],
         message: "AI Office is already current",
       };
+    await this.runtimeGuard.assertStopped(input.distributionRoot);
     return this.adapter.apply(draft);
   }
 }

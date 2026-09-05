@@ -5,15 +5,20 @@ import {
 } from "@ai-office/application/runtime/manage-distribution-update.ts";
 import type {
   DistributionUpdateAdapter,
+  DistributionUpdateRuntimeGuard,
   DistributionUpdateResult,
   DistributionUpdateStep,
 } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
-import { DaemonUnavailableError } from "./daemon-client.ts";
+import {
+  LocalDistributionRuntimePreflight,
+  DistributionRuntimePreflightError,
+} from "./local-distribution-runtime-preflight.ts";
+import { RuntimePathError } from "@ai-office/runtime-paths/runtime-paths.ts";
 import {
   CliUsageError,
   parseArguments,
   type CommandIo,
-} from "./commands/shared.ts";
+} from "@ai-office/command-support/arguments.ts";
 import {
   LocalDistributionUpdateAdapter,
   LocalDistributionUpdateError,
@@ -21,13 +26,15 @@ import {
 
 export interface DistributionUpdateCliOptions {
   distributionRoot: string;
-  daemonClient: { health(): Promise<unknown> };
+  runtimeGuard?: DistributionUpdateRuntimeGuard;
   io: CommandIo;
   adapter?: DistributionUpdateAdapter;
 }
 
-function shortRevision(revision: string): string {
-  return revision.slice(0, 12);
+function shortRevision(revision: string | null): string {
+  return revision === null
+    ? "unknown (inspect checkout)"
+    : revision.slice(0, 12);
 }
 
 function stepLabel(step: DistributionUpdateStep): string {
@@ -106,26 +113,9 @@ export async function runDistributionUpdateCli(
       throw new CliUsageError("update only accepts named options");
     json = parsed.flags.has("json");
 
-    try {
-      await options.daemonClient.health();
-      const message =
-        "AI Office update requires the daemon to be stopped so program and daemon versions cannot diverge";
-      if (json)
-        options.io.stdout(
-          JSON.stringify({
-            contractVersion: 1,
-            status: "failed",
-            error: { code: "daemon_running", message },
-          }),
-        );
-      else options.io.stderr(message);
-      return 1;
-    } catch (error) {
-      if (!(error instanceof DaemonUnavailableError)) throw error;
-    }
-
     const service = new ManageDistributionUpdate(
       options.adapter ?? new LocalDistributionUpdateAdapter(),
+      options.runtimeGuard ?? new LocalDistributionRuntimePreflight(),
     );
     const approvedPlanHash = parsed.options.get("approve");
     if (approvedPlanHash === undefined) {
@@ -146,6 +136,8 @@ export async function runDistributionUpdateCli(
       : 1;
   } catch (error) {
     if (
+      error instanceof DistributionRuntimePreflightError ||
+      error instanceof RuntimePathError ||
       error instanceof CliUsageError ||
       error instanceof DistributionUpdateApprovalError ||
       error instanceof LocalDistributionUpdateError
@@ -157,11 +149,13 @@ export async function runDistributionUpdateCli(
             status: "failed",
             error: {
               code:
-                error instanceof CliUsageError
-                  ? "invalid_arguments"
-                  : error instanceof DistributionUpdateApprovalError
-                    ? "stale_plan"
-                    : "precondition_failed",
+                error instanceof DistributionRuntimePreflightError
+                  ? error.code
+                  : error instanceof CliUsageError
+                    ? "invalid_arguments"
+                    : error instanceof DistributionUpdateApprovalError
+                      ? "stale_plan"
+                      : "precondition_failed",
               message: error.message,
             },
           }),

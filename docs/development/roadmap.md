@@ -340,9 +340,13 @@ Status: implemented.
   project/runtime authority, other checkouts, runtime purge scope, and global
   reusable memory while reporting partial mutations honestly;
 - offline exact-plan `update` for the current source-linked Bun distribution,
-  with clean/upstream Git preconditions, daemon-stop enforcement, an approved
-  target revision, frozen dependency install, bare-link refresh, and explicit
-  partial recovery while preserving runtime and global state;
+  with clean/upstream Git preconditions, exact target and remote-identity binding,
+  isolated temporary-ref acquisition, selected-user and distribution-development
+  Runtime presence checks, frozen dependency install, bare-link refresh, and
+  explicit partial recovery while preserving Runtime and global state. This
+  source-maintenance exception requires no operational source opt-in and grants
+  no Runtime authority (ADR-0011); published-package and automatic updates remain
+  outside this feature;
 - linkable source-checkout `ai-office` bin while published packages, compiled
   binaries, and background service management remain M9 work.
 

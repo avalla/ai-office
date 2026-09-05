@@ -3,12 +3,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDistributionUpdateCli } from "../../apps/cli/src/distribution-update-cli.ts";
-import type { CliIo } from "../../apps/cli/src/cli.ts";
+import type { CommandIo as CliIo } from "@ai-office/command-support/arguments.ts";
 import type {
   DistributionUpdateAdapter,
   DistributionUpdateDraft,
 } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
-import { DaemonUnavailableError } from "../../apps/cli/src/daemon-client.ts";
+import { DistributionRuntimePreflightError } from "../../apps/cli/src/local-distribution-runtime-preflight.ts";
 
 const roots: string[] = [];
 
@@ -47,11 +47,7 @@ function updateDraft(root: string): DistributionUpdateDraft {
   };
 }
 
-const stoppedDaemon = {
-  health: async (): Promise<never> => {
-    throw new DaemonUnavailableError("/tmp/missing-ai-office.sock");
-  },
-};
+const stoppedRuntime = { assertStopped: async () => {} };
 
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -82,7 +78,7 @@ describe("source-linked distribution update CLI", () => {
     expect(
       await runDistributionUpdateCli(["--json"], {
         distributionRoot: root,
-        daemonClient: stoppedDaemon,
+        runtimeGuard: stoppedRuntime,
         io: planned.io,
         adapter,
       }),
@@ -94,7 +90,7 @@ describe("source-linked distribution update CLI", () => {
     expect(
       await runDistributionUpdateCli(["--approve", plan.planHash, "--json"], {
         distributionRoot: root,
-        daemonClient: stoppedDaemon,
+        runtimeGuard: stoppedRuntime,
         io: appliedOutput.io,
         adapter,
       }),
@@ -107,14 +103,21 @@ describe("source-linked distribution update CLI", () => {
     });
   });
 
-  test("refuses to mutate program files while the daemon is running", async () => {
+  test("refuses to mutate program files while a Runtime host is running", async () => {
     const root = temporaryRoot();
     let planned = false;
     const output = captureIo();
     expect(
       await runDistributionUpdateCli([], {
         distributionRoot: root,
-        daemonClient: { health: async () => ({ status: "ok" }) },
+        runtimeGuard: {
+          assertStopped: async () => {
+            throw new DistributionRuntimePreflightError(
+              "runtime_running",
+              "Runtime host must be stopped",
+            );
+          },
+        },
         io: output.io,
         adapter: {
           plan: async () => {
@@ -128,7 +131,7 @@ describe("source-linked distribution update CLI", () => {
       }),
     ).toBe(1);
     expect(planned).toBe(false);
-    expect(output.stderr[0]).toContain("daemon to be stopped");
+    expect(output.stderr[0]).toContain("Runtime host must be stopped");
   });
 
   test("reports a partial update and preserves runtime data", async () => {
@@ -154,7 +157,7 @@ describe("source-linked distribution update CLI", () => {
     const servicePlan = captureIo();
     await runDistributionUpdateCli(["--json"], {
       distributionRoot: root,
-      daemonClient: stoppedDaemon,
+      runtimeGuard: stoppedRuntime,
       io: servicePlan.io,
       adapter,
     });
@@ -165,7 +168,7 @@ describe("source-linked distribution update CLI", () => {
     expect(
       await runDistributionUpdateCli(["--approve", hash, "--json"], {
         distributionRoot: root,
-        daemonClient: stoppedDaemon,
+        runtimeGuard: stoppedRuntime,
         io: output.io,
         adapter,
       }),

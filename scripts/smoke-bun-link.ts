@@ -112,6 +112,9 @@ try {
   const environment = {
     ...process.env,
     HOME: isolatedHome,
+    XDG_CONFIG_HOME: join(isolatedHome, ".config"),
+    BUN_INSTALL_CACHE_DIR: join(temporaryRoot, "cache"),
+    AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE: "",
     BUN_INSTALL: bunInstallRoot,
     BUN_INSTALL_GLOBAL_DIR: globalDirectory,
     BUN_INSTALL_BIN: globalBinDirectory,

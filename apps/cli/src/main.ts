@@ -3,6 +3,16 @@ import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  isLocalHelpInvocation,
+  runtimeCommandHelp,
+} from "@ai-office/command-support/help.ts";
+
+if (isLocalHelpInvocation(Bun.argv.slice(2))) {
+  console.log(runtimeCommandHelp);
+  process.exit(0);
+}
+
 const projectRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../..",

@@ -23,7 +23,7 @@ export interface DistributionUpdateResult {
   status: DistributionUpdateResultStatus;
   distributionRoot: string;
   fromRevision: string;
-  toRevision: string;
+  toRevision: string | null;
   completedSteps: readonly DistributionUpdateStep[];
   failedStep?: DistributionUpdateStep;
   message: string;
@@ -33,3 +33,10 @@ export interface DistributionUpdateAdapter {
   plan(distributionRoot: string): Promise<DistributionUpdateDraft>;
   apply(draft: DistributionUpdateDraft): Promise<DistributionUpdateResult>;
 }
+
+/** Host presence only; no operational Runtime or persistence authority. */
+export interface DistributionUpdateRuntimeGuard {
+  assertStopped(distributionRoot: string): Promise<void>;
+}
+
+export class DistributionUpdatePreconditionError extends Error {}

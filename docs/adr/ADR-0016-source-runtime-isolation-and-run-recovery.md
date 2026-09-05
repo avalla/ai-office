@@ -17,6 +17,9 @@ including when linked. Operational user-runtime access requires
 `AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1`; `AI_OFFICE_HOME` still selects the
 destination. A future packaged entry point must declare its installed mode
 instead of guessing from cwd or Git metadata. Local help remains available.
+Source-linked `update` also remains available without operational opt-in: its
+health-only maintenance preflight covers selected-user and distribution-development
+hosts and never enables Runtime commands or SQLite access; see ADR-0011.
 
 Development CLI, daemon and migration entry points derive their source root
 from their own location. Project and global memory default to that root's
