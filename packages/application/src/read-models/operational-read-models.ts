@@ -422,8 +422,8 @@ export interface TaskOperationalState {
   divergesFromRecordedStatus: boolean;
   divergenceReasons: readonly TaskDivergenceReason[];
   /**
-   * Unavailable in the current domain: requirements are owned by projects and
-   * milestones, and no task/requirement association is persisted.
+   * Exact counts of explicitly linked requirements. No links means available
+   * with zero counts. The unavailable union remains readable for older hosts.
    */
   requirements: Maybe<TaskRequirementSummary>;
   /** Unavailable in the current domain: tasks carry no milestone reference. */

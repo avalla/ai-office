@@ -58,11 +58,7 @@ function empty(headline: string, detail: string): string {
   return `<div class="empty"><p class="empty-headline">${escapeHtml(headline)}</p><p class="empty-detail">${escapeHtml(detail)}</p></div>`;
 }
 
-function section(
-  title: string,
-  body: string,
-  note?: string | null,
-): string {
+function section(title: string, body: string, note?: string | null): string {
   const heading =
     note === undefined || note === null
       ? escapeHtml(title)
@@ -205,10 +201,14 @@ function taskRows(tasks: readonly TaskOperationalState[]): string {
         task.attentionReasons.length === 0
           ? ""
           : `<span class="blocker">${escapeHtml(task.attentionReasons[0]!.summary)}</span>`;
-      return `<tr><td class="mono">${escapeHtml(shortId(task.taskId))}</td><td>${escapeHtml(task.title)}${blocker}</td><td>${badge(taskStatusLabel(task.operationalStatus), taskStatusTone(task.operationalStatus))}${divergence}</td><td class="mono">${task.priority}</td><td>${agent}</td><td>${pipeline}</td><td>${run}</td></tr>`;
+      const requirements =
+        task.requirements.availability === "available"
+          ? `${task.requirements.value.verified}/${task.requirements.value.total} verified`
+          : "Unavailable";
+      return `<tr><td class="mono">${escapeHtml(shortId(task.taskId))}</td><td>${escapeHtml(task.title)}${blocker}</td><td>${badge(taskStatusLabel(task.operationalStatus), taskStatusTone(task.operationalStatus))}${divergence}</td><td>${requirements}</td><td class="mono">${task.priority}</td><td>${agent}</td><td>${pipeline}</td><td>${run}</td></tr>`;
     })
     .join("");
-  return `<div class="table-scroll"><table><thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Prio</th><th>Agent</th><th>Pipeline</th><th>Run</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="table-scroll"><table><thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Requirements</th><th>Prio</th><th>Agent</th><th>Pipeline</th><th>Run</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function projectCard(project: ProjectSummary): string {

@@ -1,5 +1,12 @@
 # Operational dashboard
 
+Task rows include progress across explicitly linked requirements. The query
+adapter groups all relevant links by task and requirement status, so exact
+counts do not depend on presentation limits or require per-row queries. Empty
+relations report zero counts; task status and milestone semantics remain
+independent. This uses the existing version-1 `available` requirement-summary
+contract; clients still accept the unavailable response from older hosts.
+
 The dashboard is a local, read-only operations console. It answers the questions
 an operator asks between commands: what projects exist, what is being worked on,
 which pipeline stage each run is in, which agent is doing what, what is waiting
