@@ -3,6 +3,10 @@ import {
   type AgentActionIntentInput,
 } from "@ai-office/domain/agent/agent-run.ts";
 import { ProjectNotFoundError } from "../errors.ts";
+import {
+  isTaskRunnable,
+  TaskNotRunnableError,
+} from "@ai-office/domain/agent/run-eligibility.ts";
 import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
@@ -57,6 +61,18 @@ export class ScheduleAgentRun {
     const task = await this.tasks.findById(input.taskId);
     if (task === null || task.snapshot().projectId !== input.projectId)
       throw new TaskNotFoundError(input.taskId);
+    if (!isTaskRunnable(task.snapshot().status))
+      throw new TaskNotRunnableError();
+    if (
+      (await this.runtime.listRuns(input.projectId)).some(
+        (value) =>
+          value.snapshot().taskId === input.taskId &&
+          !["completed", "failed", "cancelled"].includes(
+            value.snapshot().status,
+          ),
+      )
+    )
+      throw new TaskLockActiveError(input.taskId);
     const agent = await this.runtime.findAgent(input.agentId);
     if (agent === null || agent.projectId !== input.projectId || !agent.enabled)
       throw new AgentNotFoundError(input.agentId);

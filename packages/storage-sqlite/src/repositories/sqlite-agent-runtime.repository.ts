@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type {
   AgentRunEvent,
   AgentRuntimeRepository,
+  RunAdmission,
 } from "@ai-office/application/ports/agent-runtime-repository.port.ts";
 import type { Agent } from "@ai-office/domain/agent/agent.ts";
 import {
@@ -149,6 +150,86 @@ function parseStoredRoleLimits(json: string): RoleLimits {
 
 export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
   constructor(private readonly database: Database) {}
+  async admitQueuedRun(input: RunAdmission): Promise<AgentRun | null> {
+    return this.database.transaction(() => {
+      const current = this.database
+        .query<RunRow, [string]>(
+          `SELECT ${runColumns} FROM agent_run WHERE id=? AND status='queued'`,
+        )
+        .get(input.runId);
+      if (current === null) return null;
+      const a = input.authority;
+      let accepted = a !== null;
+      if (a !== null) {
+        const valid = this.database
+          .query(
+            `SELECT r.id FROM agent_run r
+          JOIN task t ON t.id=r.task_id AND t.project_id=r.project_id
+          JOIN agent g ON g.id=r.agent_id AND g.project_id=r.project_id
+          JOIN task_lock l ON l.run_id=r.id AND l.task_id=r.task_id
+          WHERE r.id=? AND t.status=? AND t.updated_at=?
+          AND g.enabled=1 AND g.role_id=? AND g.updated_at=? AND l.expires_at>?
+          AND ((? IS NULL AND r.pipeline_run_id IS NULL AND NOT EXISTS
+            (SELECT 1 FROM pipeline_run p WHERE p.task_id=r.task_id AND p.status='active'))
+            OR EXISTS (SELECT 1 FROM pipeline_run p WHERE p.id=? AND p.id=r.pipeline_run_id
+              AND p.task_id=r.task_id AND p.project_id=r.project_id AND p.version=? AND p.status='active'))`,
+          )
+          .get(
+            input.runId,
+            a.taskStatus,
+            a.taskUpdatedAt.toISOString(),
+            a.agentRoleId,
+            a.agentUpdatedAt.toISOString(),
+            input.now.toISOString(),
+            a.pipelineId,
+            a.pipelineId,
+            a.pipelineVersion,
+          );
+        accepted = valid !== null;
+      }
+      const value = run(current);
+      value.transition(
+        accepted ? "preparing" : "cancelled",
+        input.now,
+        !accepted
+          ? {
+              error: {
+                code: "RUN_NOT_ELIGIBLE",
+                message: "Run authority is no longer eligible",
+              },
+            }
+          : {},
+      );
+      const snapshot = value.snapshot();
+      this.database
+        .query(
+          "UPDATE agent_run SET status=?, updated_at=?, completed_at=?, error_json=? WHERE id=?",
+        )
+        .run(
+          snapshot.status,
+          input.now.toISOString(),
+          snapshot.completedAt?.toISOString() ?? null,
+          snapshot.error === undefined ? null : JSON.stringify(snapshot.error),
+          input.runId,
+        );
+      this.database
+        .query(
+          "INSERT INTO agent_run_event(id,run_id,status,payload_json,occurred_at) VALUES (?,?,?,?,?)",
+        )
+        .run(
+          `${input.runId}:${snapshot.status}`,
+          input.runId,
+          snapshot.status,
+          JSON.stringify({ hasResult: false, hasError: !accepted }),
+          input.now.toISOString(),
+        );
+      if (!accepted)
+        this.database
+          .query("DELETE FROM task_lock WHERE run_id=?")
+          .run(input.runId);
+      return value;
+    })();
+  }
   async saveRole(role: Role): Promise<void> {
     const v = role.snapshot();
     this.database
