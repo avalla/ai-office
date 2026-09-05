@@ -1,5 +1,21 @@
 import { runRuntimeCli } from "./daemon-cli.ts";
+import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const projectRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
+const runtimePaths = resolveRuntimePaths({
+  mode: "development",
+  developmentRoot: projectRoot,
+});
+console.error(`Development Runtime: ${runtimePaths.runtimeHome}`);
+console.error(`Global memory: ${runtimePaths.globalDatabasePath}`);
 
 process.exitCode = await runRuntimeCli(Bun.argv.slice(2), {
-  projectRoot: process.cwd(),
+  projectRoot,
+  runtimePaths,
+  workingDirectory: process.cwd(),
 });

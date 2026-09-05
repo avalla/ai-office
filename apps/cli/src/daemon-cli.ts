@@ -1,7 +1,10 @@
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { resolveCallerLocalPaths } from "@ai-office/command-support/caller-local-paths.ts";
-import { runtimeCommandHelp as cliHelp } from "@ai-office/command-support/help.ts";
+import {
+  isLocalHelpInvocation,
+  runtimeCommandHelp as cliHelp,
+} from "@ai-office/command-support/help.ts";
 import type { CommandIo as CliIo } from "@ai-office/command-support/arguments.ts";
 import {
   IpcRuntimeClient,
@@ -218,6 +221,10 @@ export async function runRuntimeCli(
   options: RuntimeCliOptions,
 ): Promise<number> {
   const io = options.io ?? defaultIo;
+  if (isLocalHelpInvocation(args)) {
+    io.stdout(cliHelp);
+    return 0;
+  }
   let runtimePaths: RuntimePaths;
   try {
     runtimePaths =
@@ -239,16 +246,6 @@ export async function runRuntimeCli(
   const bindings = options.projectBindings ?? new LocalProjectBindingReader();
 
   try {
-    if (
-      args.length === 0 ||
-      args[0] === "help" ||
-      args[0] === "--help" ||
-      args[0] === "-h"
-    ) {
-      io.stdout(cliHelp);
-      return 0;
-    }
-
     if (
       args[0] === "daemon:health" ||
       args[0] === "runtime:health" ||

@@ -105,7 +105,7 @@ describe("runtime path resolution", () => {
       join(realpathSync(developmentRoot), ".ai-office"),
     );
     expect(paths.globalDatabasePath).toBe(
-      join(realpathSync(workspace), "user", ".ai-office", "global.sqlite"),
+      join(paths.runtimeHome, "global.sqlite"),
     );
   });
 

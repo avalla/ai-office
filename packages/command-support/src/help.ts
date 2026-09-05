@@ -1,3 +1,8 @@
+/** Local help is decided before path resolution, state inspection, or IPC. */
+export function isLocalHelpInvocation(args: readonly string[]): boolean {
+  return args.length === 0 || ["help", "--help", "-h"].includes(args[0] ?? "");
+}
+
 export const runtimeCommandHelp = `AI Office CLI
 
 Commands:

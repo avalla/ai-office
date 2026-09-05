@@ -2,6 +2,10 @@
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  isLocalHelpInvocation,
+  runtimeCommandHelp,
+} from "@ai-office/command-support/help.ts";
 import { runRuntimeCli } from "../apps/cli/src/daemon-cli.ts";
 import { parseRuntimeHostStart } from "../apps/cli/src/runtime-lifecycle.ts";
 import {
@@ -12,10 +16,21 @@ import {
 } from "@ai-office/runtime-paths/runtime-paths.ts";
 
 const distributionRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const [command, ...arguments_] = Bun.argv.slice(2);
+const args = Bun.argv.slice(2);
+if (isLocalHelpInvocation(args)) {
+  console.log(runtimeCommandHelp);
+  process.exit(0);
+}
+const [command, ...arguments_] = args;
 let runtimePaths: RuntimePaths;
 
 try {
+  // This bin is explicitly the source distribution (including bun link).
+  // Packaging must supply its own installed entry point, not infer it from cwd.
+  if (process.env.AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE !== "1")
+    throw new RuntimePathError(
+      "Source CLI user-runtime access requires AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1. For isolated development use bun run dev:daemon and bun run dev:cli.",
+    );
   runtimePaths = resolveRuntimePaths({ mode: "user" });
 } catch (error) {
   console.error(
