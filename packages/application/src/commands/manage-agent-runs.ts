@@ -116,8 +116,27 @@ export class ManageAgentRuns {
         aggregateId: input.runId,
         payload: { reason },
       });
-      this.control.cancel(input.runId);
-      return { status: "cancellation_requested" };
+      if (this.control.cancel(input.runId))
+        return { status: "cancellation_requested" };
+      // The audit records operator intent, not delivery. Execution may have
+      // finished and released its handle while that intent was being persisted.
+      const current = await this.inspect(input.projectId, input.runId, reason);
+      if (current.classification === "terminal")
+        return { status: "already_terminal" };
+      if (current.classification === "ambiguous")
+        throw new DomainValidationError(
+          "Run has an ambiguous controlled effect; inspect its action before recovery",
+        );
+      if (
+        current.classification === "orphaned" ||
+        current.classification === "terminal_cleanup"
+      )
+        throw new DomainValidationError(
+          "Interrupted run requires run:reconcile with an approved plan",
+        );
+      throw new DomainValidationError(
+        "Run changed without cancellation delivery; inspect before cancelling",
+      );
     }
     if (report.classification !== "queued")
       throw new DomainValidationError(
