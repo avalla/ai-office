@@ -1,4 +1,7 @@
-import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
+import type {
+  AgentExecutor,
+  AgentControlledActionResult,
+} from "@ai-office/agent-runtime/executor.ts";
 import type { WorktreeManager } from "@ai-office/agent-runtime/worktree.ts";
 import type { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
@@ -13,19 +16,23 @@ export interface AgentRunExecutionResult {
   status: "completed" | "failed" | "cancelled";
   error?: AgentRunExecutionError;
   cleanupError?: AgentRunExecutionError;
+  actions: AgentControlledActionResult[];
 }
 
 function executionError(
-  error: unknown,
+  _error: unknown,
   fallbackCode: string,
 ): AgentRunExecutionError {
   return {
     message:
-      error instanceof Error ? error.message : "Unknown execution failure",
-    code:
-      error instanceof Error && error.name !== "Error"
-        ? error.name
-        : fallbackCode,
+      fallbackCode === "ABORTED"
+        ? "Execution cancelled"
+        : fallbackCode === "WORKTREE_RELEASE_FAILED"
+          ? "Worktree cleanup failed"
+          : fallbackCode === "TASK_LOCK_RELEASE_FAILED"
+            ? "Task lock cleanup failed"
+            : "Agent execution failed",
+    code: fallbackCode,
   };
 }
 function isCancelled(error: unknown, signal?: AbortSignal): boolean {
@@ -51,6 +58,7 @@ export class ExecuteAgentRun {
     let worktree: Awaited<ReturnType<WorktreeManager["prepare"]>> | undefined;
     let primaryError: AgentRunExecutionError | undefined;
     const cleanupErrors: AgentRunExecutionError[] = [];
+    let actions: AgentControlledActionResult[] = [];
     try {
       if (signal?.aborted === true) {
         primaryError = { message: "Execution cancelled", code: "ABORTED" };
@@ -65,6 +73,7 @@ export class ExecuteAgentRun {
         });
         await this.runtime.saveRun(run);
         const result = await this.executor.execute(run, signal);
+        actions = result.actions ?? [];
         run.transition("reviewing", this.clock.now(), { result });
         await this.runtime.saveRun(run);
         run.transition("completed", this.clock.now(), { result });
@@ -117,6 +126,7 @@ export class ExecuteAgentRun {
     return {
       runId: snapshot.id,
       status,
+      actions,
       ...(primaryError === undefined ? {} : { error: primaryError }),
       ...(cleanupError === undefined ? {} : { cleanupError }),
     };

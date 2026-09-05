@@ -119,11 +119,15 @@ export async function handleRunCommand(
     return 0;
   }
   if (command === "run:tick") {
-    const parsed = parseArguments(args, new Set(["project", "capacity"]));
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "capacity"]),
+      new Set(["json"]),
+    );
     const projectId = requiredOption(parsed, "project");
     const capacity = Number(parsed.options.get("capacity") ?? "1");
-    if (!Number.isSafeInteger(capacity) || capacity < 1)
-      throw new CliUsageError("Capacity must be a positive integer");
+    if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 100)
+      throw new CliUsageError("Capacity must be an integer between 1 and 100");
     const queued = await runtime.listQueuedRuns(projectId, capacity);
     const execute = new ExecuteAgentRun(
       runtime,
@@ -134,27 +138,32 @@ export async function handleRunCommand(
     const results = await Promise.all(
       queued.map((value) => execute.execute(value)),
     );
-    io.stdout(`Agent runs executed: ${queued.length}`);
-    for (const result of results) {
-      const run = await runtime.findRun(result.runId);
-      const value = run?.snapshot().result;
-      if (typeof value !== "object" || value === null || Array.isArray(value))
-        continue;
-      const actions = (value as { actions?: unknown }).actions;
-      if (!Array.isArray(actions)) continue;
-      for (const action of actions) {
-        if (typeof action !== "object" || action === null) continue;
-        const record = action as Record<string, unknown>;
-        if (
-          typeof record.requestId === "string" &&
-          typeof record.status === "string"
-        )
+    const unsuccessful = results.filter(
+      (result) =>
+        result.status !== "completed" || result.cleanupError !== undefined,
+    ).length;
+    if (parsed.flags.has("json"))
+      io.stdout(JSON.stringify({ schemaVersion: 1, results, unsuccessful }));
+    else {
+      io.stdout(`Agent runs executed: ${results.length}`);
+      for (const result of results) {
+        io.stdout(`Run ${result.runId}: ${result.status}`);
+        if (result.error !== undefined)
+          io.stderr(
+            `${result.runId}: ${result.error.code}: ${result.error.message}`,
+          );
+        if (result.cleanupError !== undefined)
+          io.stderr(
+            `${result.runId}: ${result.cleanupError.code}: ${result.cleanupError.message}`,
+          );
+        for (const action of result.actions)
           io.stdout(
-            `Run ${result.runId} action: ${record.requestId} (${record.status})`,
+            `Run ${result.runId} action: ${action.requestId} (${action.status})`,
           );
       }
+      io.stdout(`Unsuccessful runs: ${unsuccessful}`);
     }
-    return 0;
+    return unsuccessful === 0 ? 0 : 1;
   }
   if (command === "run:list") {
     const parsed = parseArguments(args, new Set(["project"]));

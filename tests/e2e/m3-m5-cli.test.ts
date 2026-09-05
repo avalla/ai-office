@@ -107,6 +107,8 @@ describe("M3-M5 CLI", () => {
     expect(locked.stderr[0]).toContain("already locked");
     expect(await run(["run:tick", "--project", projectId])).toEqual([
       "Agent runs executed: 1",
+      `Run ${runId}: completed`,
+      "Unsuccessful runs: 0",
     ]);
     expect((await run(["run:list", "--project", projectId]))[1]).toContain(
       `${runId}\tcompleted`,
