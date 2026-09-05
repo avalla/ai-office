@@ -41,6 +41,7 @@ import type {
   TaskLeaseRecord,
   TaskReviewFactsRecord,
   TaskRunFactsRecord,
+  TaskRequirementCountRecord,
 } from "@ai-office/application/ports/operational-read.port.ts";
 
 /**
@@ -61,10 +62,30 @@ import type {
  * `audit_event_occurred_at_idx`, `audit_event_project_occurred_at_idx`, and
  * `audit_event_aggregate_idx` for run-scoped activity.
  */
-export class SqliteOperationalReadRepository
-  implements OperationalReadRepository
-{
+export class SqliteOperationalReadRepository implements OperationalReadRepository {
   constructor(private readonly database: Database) {}
+  async listTaskRequirementCounts(
+    projectId: string,
+    taskIds: readonly string[],
+  ): Promise<TaskRequirementCountRecord[]> {
+    if (taskIds.length === 0) return [];
+    return this.database
+      .query<
+        { task_id: string; status: RequirementStatus; count: number },
+        string[]
+      >(
+        `SELECT l.task_id, r.status, COUNT(*) count FROM task_requirement l
+       JOIN task t ON t.id=l.task_id JOIN requirement r ON r.id=l.requirement_id
+       WHERE t.project_id=? AND r.project_id=? AND l.task_id IN (${placeholders(taskIds.length)})
+       GROUP BY l.task_id,r.status ORDER BY l.task_id,r.status`,
+      )
+      .all(projectId, projectId, ...taskIds)
+      .map((row) => ({
+        taskId: row.task_id,
+        status: row.status,
+        count: row.count,
+      }));
+  }
 
   /* ---------------------------------------------------------------------- */
   /* Projects                                                                */
@@ -1090,12 +1111,7 @@ export class SqliteOperationalReadRepository
               AND status IN (${placeholders(activeRunStatuses.length)})
             GROUP BY ${column}`,
         )
-        .all(
-          ...executingRunStatuses,
-          projectId,
-          ...ids,
-          ...activeRunStatuses,
-        )
+        .all(...executingRunStatuses, projectId, ...ids, ...activeRunStatuses)
         .map(
           (row) =>
             [row.key, { count: row.count, executing: row.executing }] as const,

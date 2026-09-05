@@ -7,6 +7,7 @@
  */
 
 import type { AgentRunStatus } from "@ai-office/domain/agent/agent-run.ts";
+import { requirementProgressFromCounts } from "../commands/task-requirement-progress.ts";
 import type {
   RequirementStatus,
   ReviewStatus,
@@ -27,6 +28,7 @@ import type {
   RequirementCountRecord,
   StatusCountRecord,
   TaskLeaseRecord,
+  TaskRequirementCountRecord,
 } from "../ports/operational-read.port.ts";
 import {
   available,
@@ -598,11 +600,6 @@ export function reviewAttentionReason(
 /* Task operational state                                                      */
 /* -------------------------------------------------------------------------- */
 
-const requirementLinkageExplanation =
-  "Requirements are owned by projects and milestones. The current domain " +
-  "persists no task/requirement association, so a per-task requirement " +
-  "summary cannot be computed authoritatively.";
-
 const milestoneLinkageExplanation =
   "The current task record carries no milestone reference, so a task's " +
   "milestone cannot be resolved authoritatively.";
@@ -701,6 +698,7 @@ export function taskLeaseAttention(input: {
  */
 export function projectTaskOperationalState(input: {
   task: TaskProps;
+  requirementCounts: readonly TaskRequirementCountRecord[];
   /** Bounded sample of the task's in-flight runs, newest-updated first. */
   activeRuns: readonly OperationalAgentRunRecord[];
   /** Exact number of in-flight runs. Authoritative; never a sample length. */
@@ -875,10 +873,13 @@ export function projectTaskOperationalState(input: {
     operationalStatus,
     divergesFromRecordedStatus: divergenceReasons.length > 0,
     divergenceReasons,
-    requirements: unavailable(
-      "task_requirement_link_not_modelled",
-      requirementLinkageExplanation,
-    ),
+    requirements: available({
+      ...requirementProgressFromCounts(input.requirementCounts),
+      rejected: input.requirementCounts.reduce(
+        (sum, value) => sum + (value.status === "rejected" ? value.count : 0),
+        0,
+      ),
+    }),
     milestone: unavailable(
       "task_milestone_link_not_modelled",
       milestoneLinkageExplanation,

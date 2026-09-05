@@ -231,6 +231,7 @@ function taskState(input: {
   );
   return projectTaskOperationalState({
     task: input.task,
+    requirementCounts: [],
     activeRuns: input.activeRunSample ?? active,
     activeRunCount: input.activeRunCount ?? active.length,
     executingRunCount: input.executingRunCount ?? executing.length,
@@ -652,7 +653,7 @@ describe("task operational state", () => {
     expect(state.divergesFromRecordedStatus).toBe(false);
   });
 
-  test("requirement and milestone linkage are reported unavailable, not guessed", () => {
+  test("an empty explicit requirement relation is available while milestone linkage is not inferred", () => {
     const state = taskState({
       task: task(),
       runs: [],
@@ -662,9 +663,8 @@ describe("task operational state", () => {
     });
 
     expect(state.requirements).toEqual({
-      availability: "unavailable",
-      reason: "task_requirement_link_not_modelled",
-      explanation: expect.stringContaining("no task/requirement association"),
+      availability: "available",
+      value: { total: 0, open: 0, terminal: 0, verified: 0, rejected: 0 },
     });
     expect(state.milestone.availability).toBe("unavailable");
   });
@@ -937,8 +937,7 @@ describe("agent state", () => {
 
   test("an agent with no runs is idle and a disabled agent is disabled", () => {
     expect(
-      agentState({ agent: agentRecord(), runs: [], pipelineRuns: [] })
-        .state,
+      agentState({ agent: agentRecord(), runs: [], pipelineRuns: [] }).state,
     ).toBe("idle");
     expect(
       agentState({

@@ -23,21 +23,37 @@ const terminalRequirementStatuses = new Set<RequirementStatus>([
   "rejected",
 ]);
 
-export function isTerminalRequirementStatus(status: RequirementStatus): boolean {
+export function isTerminalRequirementStatus(
+  status: RequirementStatus,
+): boolean {
   return terminalRequirementStatuses.has(status);
 }
 
 export function requirementProgress(
   requirements: readonly { status: RequirementStatus }[],
 ): RequirementProgress {
-  const terminal = requirements.filter((value) =>
-    terminalRequirementStatuses.has(value.status),
-  ).length;
+  return requirementProgressFromCounts(
+    requirements.map((value) => ({ status: value.status, count: 1 })),
+  );
+}
+
+/** Exact grouped facts keep read-side memory bounded by status count. */
+export function requirementProgressFromCounts(
+  counts: readonly { status: RequirementStatus; count: number }[],
+): RequirementProgress {
+  const total = counts.reduce((sum, value) => sum + value.count, 0);
+  const terminal = counts.reduce(
+    (sum, value) =>
+      sum + (isTerminalRequirementStatus(value.status) ? value.count : 0),
+    0,
+  );
   return {
-    total: requirements.length,
-    verified: requirements.filter((value) => value.status === "verified")
-      .length,
+    total,
+    verified: counts.reduce(
+      (sum, value) => sum + (value.status === "verified" ? value.count : 0),
+      0,
+    ),
     terminal,
-    open: requirements.length - terminal,
+    open: total - terminal,
   };
 }

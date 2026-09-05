@@ -64,6 +64,12 @@ export interface RequirementCountRecord extends StatusCountRecord<RequirementSta
   milestoneId: string | null;
 }
 
+export interface TaskRequirementCountRecord {
+  taskId: string;
+  status: RequirementStatus;
+  count: number;
+}
+
 export interface CountRecord {
   projectId: string;
   count: number;
@@ -393,6 +399,11 @@ export interface PipelineRunQuery {
  * entities they were asked about.
  */
 export interface OperationalReadRepository {
+  /** Exact per-status aggregates, bounded by the requested task IDs. */
+  listTaskRequirementCounts(
+    projectId: string,
+    taskIds: readonly string[],
+  ): Promise<TaskRequirementCountRecord[]>;
   /* --- projects ---------------------------------------------------------- */
 
   listProjects(): Promise<OperationalProjectRecord[]>;
