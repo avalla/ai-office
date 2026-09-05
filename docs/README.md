@@ -29,6 +29,8 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
+- [Run recovery](development/run-recovery.md): host-owned cancellation, interrupted execution, approved reconciliation, and ambiguous-effect limitations.
+- [Source runtime isolation and ownership](adr/ADR-0016-source-runtime-isolation-and-run-recovery.md): development defaults, source-bin opt-in, and persisted run ownership evidence.
 - [Pipeline enforcement](development/pipeline-enforcement.md): guidance/enforced modes, operation, authorization, approvals, overrides, and compatibility.
 - [Task board, lifecycle, and reconciliation](development/task-board.md): the
   task/requirement/pipeline ownership split, semantic lifecycle commands,
@@ -64,7 +66,7 @@ Architectural decisions with explicit status. Accepted ADRs describe current dec
 
 Milestone assessments, implementation reports, and research notes. These documents preserve detailed context and evidence but may describe a point-in-time baseline rather than the current code.
 
-- [Project consolidation and first real worker plan](implementation/project-consolidation-and-worker-plan.md): proposed implementation sequence from the project review; it does not change current roadmap status.
+- [Project consolidation and first real worker plan](implementation/project-consolidation-and-worker-plan.md): consolidation delivery record and proposed first real worker; the roadmap owns merge and milestone status.
 
 > Documents under `docs/implementation/` may describe historical designs,
 > rejected alternatives, security research or milestone-specific constraints.

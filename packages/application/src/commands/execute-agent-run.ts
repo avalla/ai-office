@@ -13,7 +13,7 @@ export interface AgentRunExecutionError {
 }
 export interface AgentRunExecutionResult {
   runId: string;
-  status: "completed" | "failed" | "cancelled";
+  status: "completed" | "failed" | "cancelled" | "interrupted";
   error?: AgentRunExecutionError;
   cleanupError?: AgentRunExecutionError;
   actions: AgentControlledActionResult[];
@@ -59,11 +59,14 @@ export class ExecuteAgentRun {
     let primaryError: AgentRunExecutionError | undefined;
     const cleanupErrors: AgentRunExecutionError[] = [];
     let actions: AgentControlledActionResult[] = [];
+    let terminalPersisted = false;
+    let persistenceInterrupted = false;
     try {
       if (signal?.aborted === true) {
         primaryError = { message: "Execution cancelled", code: "ABORTED" };
         run.transition("cancelled", this.clock.now(), { error: primaryError });
         await this.runtime.saveRun(run);
+        terminalPersisted = true;
       } else {
         if (run.snapshot().status === "queued") {
           run.transition("preparing", this.clock.now());
@@ -82,6 +85,7 @@ export class ExecuteAgentRun {
         await this.runtime.saveRun(run);
         run.transition("completed", this.clock.now(), { result });
         await this.runtime.saveRun(run);
+        terminalPersisted = true;
       }
     } catch (error) {
       if (
@@ -95,7 +99,14 @@ export class ExecuteAgentRun {
         run.transition(cancelled ? "cancelled" : "failed", this.clock.now(), {
           error: primaryError,
         });
-        await this.runtime.saveRun(run);
+        try {
+          await this.runtime.saveRun(run);
+          terminalPersisted = true;
+        } catch {
+          persistenceInterrupted = true;
+        }
+      } else if (!terminalPersisted) {
+        persistenceInterrupted = true;
       }
     } finally {
       if (worktree !== undefined) {
@@ -105,21 +116,21 @@ export class ExecuteAgentRun {
           cleanupErrors.push(executionError(error, "WORKTREE_RELEASE_FAILED"));
         }
       }
-      try {
-        const released = await this.runtime.releaseTaskLock(run.snapshot().id);
-        if (!released)
-          cleanupErrors.push({
-            message: "Task lock was not released by its owning run",
-            code: "TASK_LOCK_RELEASE_FAILED",
-          });
-      } catch (error) {
-        cleanupErrors.push(executionError(error, "TASK_LOCK_RELEASE_FAILED"));
-      }
+      if (terminalPersisted)
+        try {
+          const released = await this.runtime.releaseTaskLock(
+            run.snapshot().id,
+          );
+          if (!released)
+            cleanupErrors.push({
+              message: "Task lock was not released by its owning run",
+              code: "TASK_LOCK_RELEASE_FAILED",
+            });
+        } catch (error) {
+          cleanupErrors.push(executionError(error, "TASK_LOCK_RELEASE_FAILED"));
+        }
     }
     const snapshot = run.snapshot();
-    const status = snapshot.status;
-    if (status !== "completed" && status !== "failed" && status !== "cancelled")
-      throw new Error(`Run ${snapshot.id} did not reach a terminal state`);
     const cleanupError =
       cleanupErrors.length === 0
         ? undefined
@@ -127,6 +138,20 @@ export class ExecuteAgentRun {
             message: cleanupErrors.map((value) => value.message).join("; "),
             code: "CLEANUP_FAILED",
           };
+    if (persistenceInterrupted)
+      return {
+        runId: snapshot.id,
+        status: "interrupted",
+        actions,
+        error: {
+          code: "RUN_STATE_PERSISTENCE_FAILED",
+          message: "Run state could not be persisted; inspect run:reconcile",
+        },
+        ...(cleanupError === undefined ? {} : { cleanupError }),
+      };
+    const status = snapshot.status;
+    if (status !== "completed" && status !== "failed" && status !== "cancelled")
+      throw new Error(`Run ${snapshot.id} did not reach a terminal state`);
     return {
       runId: snapshot.id,
       status,

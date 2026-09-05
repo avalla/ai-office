@@ -32,8 +32,10 @@ before daemon startup. `AI_OFFICE_HOME` is an explicit runtime selection and is
 never inferred from the working repository.
 
 Development commands retain an explicit compatibility mode:
-`bun run daemon` and `bun run cli -- ...` use `<cwd>/.ai-office`. Development
-mode is not used by the linkable user entry point.
+`bun run daemon` and `bun run cli -- ...` originally used `<cwd>/.ai-office`.
+[ADR-0016](ADR-0016-source-runtime-isolation-and-run-recovery.md) refines these
+development defaults and adds deliberate source-bin user-runtime opt-in.
+The stable user-home selection above remains unchanged.
 
 An existing `<distribution-root>/.ai-office/project.sqlite` is detected and
 reported with an actionable `AI_OFFICE_HOME=<legacy-directory>` instruction.
