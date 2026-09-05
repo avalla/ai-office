@@ -16,24 +16,10 @@ describe("agent runtime domain", () => {
     );
     const loaded = new YamlAgentDefinitionLoader().load(root);
     expect(loaded.map((v) => v.definition.id)).toEqual([
-      "alien-user",
       "architect",
-      "chaos-gremlin",
-      "code-archaeologist",
-      "designer",
       "developer",
-      "devil-advocate",
-      "forensic-detective",
-      "future-keeper",
-      "hacker",
-      "mad-scientist",
-      "product",
       "qa",
-      "radical-minimalist",
-      "release",
-      "researcher",
       "reviewer",
-      "security",
     ]);
     expect(loaded[0]?.definition.limits.maxCostMicros).toBeTypeOf("bigint");
   });

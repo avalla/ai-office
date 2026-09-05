@@ -550,8 +550,12 @@ Archaeologist, Radical Minimalist, Alien User, Forensic Detective, and Keeper of
 the Future add perspectives on decisions, resilience, history, simplicity,
 usability, incidents, and maintenance. Each profile defines a working method,
 expected handoff, and limits.
-The companion Markdown instructions are not yet injected into Runtime executors;
-adding a specialist to a project's workflow requires an explicit office revision.
+Normal synchronization of `agents/` registers and enables only the four core
+agents. The fourteen specialists live in `agent-catalog/` and must be deliberately
+synchronized. Once synchronized, they can be directly scheduled outside an active
+pipeline; an office revision is required for pipeline routing, not run eligibility.
+See the catalog for full and subset synchronization examples. Companion Markdown
+instructions remain guidance and are not injected into Runtime executors.
 
 ## Machine interface
 
@@ -1026,7 +1030,8 @@ packages/
   connector-sdk/          connector contracts and registry
   filesystem-connector/   scoped filesystem adapter and sandbox
 migrations/               project, global, and index SQL migrations
-agents/                    bundled YAML agent definitions
+agents/                    four default agent definitions and profile guide
+agent-catalog/             fourteen opt-in specialist definitions
 .agents/skills/ai-office/  conversational product workflow
 patterns/                  reusable pattern source material
 docs/                      architecture, development, ADRs, and history
