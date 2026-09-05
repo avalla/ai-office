@@ -114,6 +114,12 @@ test("live cancellation waits for executor acknowledgment and records owner prov
     ) as { ownerId: string; classification: string; available: boolean };
     expect(report).toMatchObject({ classification: "live", available: false });
     expect(report.ownerId).toBeTypeOf("string");
+    const requested = await r.command(["run:cancel", ...args]);
+    expect(requested.exitCode).toBe(0);
+    expect(JSON.parse(requested.stdout[0]!)).toEqual({
+      schemaVersion: 1,
+      status: "cancellation_requested",
+    });
     expect(
       (
         await r.command([
@@ -135,6 +141,12 @@ test("live cancellation waits for executor acknowledgment and records owner prov
     expect(done.exitCode).toBe(1);
     expect(JSON.parse(done.stdout[0]!)).toMatchObject({
       results: [{ status: "cancelled" }],
+    });
+    const terminal = await r.command(["run:cancel", ...args]);
+    expect(terminal.exitCode).toBe(0);
+    expect(JSON.parse(terminal.stdout[0]!)).toEqual({
+      schemaVersion: 1,
+      status: "already_terminal",
     });
   } finally {
     finish();

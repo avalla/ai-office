@@ -23,8 +23,17 @@ run:reconcile --project <id> --run <id> --reason <text> --approve <planHash> [--
 
 Both commands publish schema-version 1 JSON. Cancellation of queued work records
 its terminal state and audit together and releases only that run's lock. A live
-run returns `cancellation_requested`; its status remains non-terminal until the
-executor acknowledges stopping. Repeating cancellation of a terminal run is a
+run returns `cancellation_requested` only when its cancellation handle accepts
+the abort signal; this is delivery, not acknowledgement. The historical audit
+event name `run.cancellation_requested` records operator intent before signalling
+and alone does not prove delivery. If the handle disappears during that audit
+write, cancellation re-reads evidence: a clean terminal run returns
+`already_terminal`, orphaned or terminal-cleanup work requires approved
+reconciliation, ambiguous effects stay blocked, and inconsistent evidence fails
+closed. This refines schema-version 1 behavior without adding or renaming result
+statuses or audit events. No recovery or lock release occurs on this fallback.
+Only execution reaching and persisting `cancelled` acknowledges stopping.
+Repeating cancellation of a terminal run is a
 read-only no-op. `task:cancel` additionally cancels queued runs and requests
 stopping live runs after committing the task transition. Task, run, pipeline and
 controlled-action states remain distinct; task cancellation does not claim that
