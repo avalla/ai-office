@@ -11,6 +11,7 @@ export class AdmitAgentRun {
     private readonly tasks: TaskRepository,
     private readonly pipelines: PipelineRunRepository,
     private readonly clock: Clock,
+    private readonly ownerId?: string,
   ) {}
 
   async execute(run: AgentRun): Promise<AgentRun | null> {
@@ -46,6 +47,7 @@ export class AdmitAgentRun {
       });
     return this.runs.admitQueuedRun({
       runId: r.id,
+      ...(this.ownerId === undefined ? {} : { ownerId: this.ownerId }),
       now: this.clock.now(),
       authority: {
         taskStatus: task.status,

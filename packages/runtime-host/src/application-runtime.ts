@@ -7,6 +7,9 @@ import type { AgentClientCatalog } from "@ai-office/application/ports/agent-clie
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import type { RuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
+import { randomUUID } from "node:crypto";
+import { RunExecutionControl } from "@ai-office/application/runtime/run-execution-control.ts";
+import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import {
   CliPromptRequiredError,
   executeRuntimeCommand,
@@ -21,6 +24,31 @@ import {
  * IDs, daemon health, sockets, or process lifecycle.
  */
 export class ApplicationRuntime implements AiOfficeRuntime {
+  private readonly executionControl = new RunExecutionControl(randomUUID());
+  private readonly pending = new Set<Promise<AiOfficeRuntimeResult>>();
+  private stopping = false;
+
+  async stop(): Promise<void> {
+    this.stopping = true;
+    this.executionControl.stop();
+    await Promise.allSettled([...this.pending]);
+  }
+
+  execute(command: AiOfficeRuntimeCommand): Promise<AiOfficeRuntimeResult> {
+    if (this.stopping)
+      return Promise.resolve({
+        exitCode: 1,
+        stdout: [],
+        stderr: ["Runtime is stopping"],
+      });
+    const work = this.executeCommand(command);
+    this.pending.add(work);
+    void work.then(
+      () => this.pending.delete(work),
+      () => this.pending.delete(work),
+    );
+    return work;
+  }
   constructor(
     private readonly runtimePaths: RuntimePaths,
     private readonly commandRoot: string,
@@ -29,9 +57,10 @@ export class ApplicationRuntime implements AiOfficeRuntime {
     private readonly agentClients?: AgentClientCatalog,
     private readonly projectBindings?: ProjectBindingAdapter,
     private readonly defaultOfficeManifest?: OfficeManifest,
+    private readonly agentExecutor?: AgentExecutor,
   ) {}
 
-  async execute(
+  private async executeCommand(
     command: AiOfficeRuntimeCommand,
   ): Promise<AiOfficeRuntimeResult> {
     const stdout: string[] = [];
@@ -51,6 +80,10 @@ export class ApplicationRuntime implements AiOfficeRuntime {
 
     try {
       const exitCode = await executeRuntimeCommand(command.args, {
+        executionControl: this.executionControl,
+        ...(this.agentExecutor === undefined
+          ? {}
+          : { agentExecutor: this.agentExecutor }),
         projectRoot: this.commandRoot,
         runtimePaths: this.runtimePaths,
         ...(this.migrationDirectory === undefined

@@ -76,6 +76,8 @@ export class ExecuteAgentRun {
         await this.runtime.saveRun(run);
         const result = await this.executor.execute(run, signal);
         actions = result.actions ?? [];
+        if (isCancelled(undefined, signal))
+          throw new DOMException("Execution cancelled", "AbortError");
         run.transition("reviewing", this.clock.now(), { result });
         await this.runtime.saveRun(run);
         run.transition("completed", this.clock.now(), { result });

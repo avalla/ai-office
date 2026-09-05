@@ -4,13 +4,18 @@ import { join, resolve } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
+import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 
-export async function runRuntime() {
+export async function runRuntime(agentExecutor?: AgentExecutor) {
   const root = mkdtempSync(join(tmpdir(), "ao-runs-"));
   const socketPath = join(root, "daemon.sock");
-  const daemon = await bootstrap({ projectRoot: root, socketPath });
-  const controller = new AbortController();
-  const running = daemon.start(controller.signal);
+  let daemon = await bootstrap({
+    projectRoot: root,
+    socketPath,
+    ...(agentExecutor === undefined ? {} : { agentExecutor }),
+  });
+  let controller = new AbortController();
+  let running = daemon.start(controller.signal);
   const client = new DaemonClient(socketPath);
   for (let attempt = 0; attempt < 100; attempt++) {
     try {
@@ -74,6 +79,26 @@ export async function runRuntime() {
     command,
     task,
     schedule,
+    restart: async () => {
+      controller.abort();
+      await running;
+      daemon = await bootstrap({
+        projectRoot: root,
+        socketPath,
+        ...(agentExecutor === undefined ? {} : { agentExecutor }),
+      });
+      controller = new AbortController();
+      running = daemon.start(controller.signal);
+      for (let attempt = 0; attempt < 100; attempt++) {
+        try {
+          await client.health();
+          return;
+        } catch {
+          await Bun.sleep(5);
+        }
+      }
+      throw new Error("Restart did not become healthy");
+    },
     close: async () => {
       controller.abort();
       await running;

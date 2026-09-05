@@ -12,6 +12,10 @@ export interface AgentRunEvent {
 export interface AgentRuntimeRepository {
   /** Atomic queued-state CAS and event; observed authority must still match. */
   admitQueuedRun(input: RunAdmission): Promise<AgentRun | null>;
+  executionOwner(runId: string): Promise<string | null>;
+  findTaskLock(
+    taskId: string,
+  ): Promise<{ runId: string; expiresAt: Date } | null>;
   saveRole(role: Role): Promise<void>;
   findRole(roleId: string, projectId: string): Promise<Role | null>;
   saveAgent(agent: Agent): Promise<void>;
@@ -35,6 +39,7 @@ export interface AgentRuntimeRepository {
 
 export interface RunAdmission {
   runId: string;
+  ownerId?: string;
   now: Date;
   authority: null | {
     taskStatus: string;

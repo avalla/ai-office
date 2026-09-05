@@ -1,5 +1,7 @@
 import type { CommandIo } from "@ai-office/command-support/arguments.ts";
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
+import type { RunExecutionControl } from "@ai-office/application/runtime/run-execution-control.ts";
+import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import type { TransactionRunner } from "@ai-office/application/ports/transaction-runner.port.ts";
 import type { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
@@ -26,6 +28,8 @@ import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project
 import type { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 
 export interface CommandContext {
+  executionControl: RunExecutionControl;
+  agentExecutor?: AgentExecutor;
   runtimeHome: string;
   io: CommandIo;
   principal: OperatorPrincipal;

@@ -150,6 +150,27 @@ function parseStoredRoleLimits(json: string): RoleLimits {
 
 export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
   constructor(private readonly database: Database) {}
+  async executionOwner(runId: string): Promise<string | null> {
+    return (
+      this.database
+        .query<{ owner: string | null }, [string]>(
+          "SELECT json_extract(payload_json, '$.ownerId') owner FROM agent_run_event WHERE run_id=? AND status='preparing'",
+        )
+        .get(runId)?.owner ?? null
+    );
+  }
+  async findTaskLock(
+    taskId: string,
+  ): Promise<{ runId: string; expiresAt: Date } | null> {
+    const row = this.database
+      .query<{ run_id: string; expires_at: string }, [string]>(
+        "SELECT run_id,expires_at FROM task_lock WHERE task_id=?",
+      )
+      .get(taskId);
+    return row === null
+      ? null
+      : { runId: row.run_id, expiresAt: new Date(row.expires_at) };
+  }
   async admitQueuedRun(input: RunAdmission): Promise<AgentRun | null> {
     return this.database.transaction(() => {
       const current = this.database
@@ -220,7 +241,11 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
           `${input.runId}:${snapshot.status}`,
           input.runId,
           snapshot.status,
-          JSON.stringify({ hasResult: false, hasError: !accepted }),
+          JSON.stringify({
+            hasResult: false,
+            hasError: !accepted,
+            ...(input.ownerId === undefined ? {} : { ownerId: input.ownerId }),
+          }),
           input.now.toISOString(),
         );
       if (!accepted)
