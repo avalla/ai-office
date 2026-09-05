@@ -329,7 +329,11 @@ describe("ExecuteAgentRun result and cleanup", () => {
   test("returns completed and releases resources", async () => {
     const worktrees = new FakeWorktrees();
     const value = await execute(new FakeExecutor(), worktrees);
-    expect(value.result).toEqual({ runId: "run-1", status: "completed" });
+    expect(value.result).toEqual({
+      runId: "run-1",
+      status: "completed",
+      actions: [],
+    });
     expect(value.locks).toBe(0);
     expect(worktrees.releaseCalls).toBe(1);
     expect(value.events).toEqual([
@@ -342,12 +346,12 @@ describe("ExecuteAgentRun result and cleanup", () => {
   });
   test("returns failed for executor errors", async () => {
     const value = await execute(
-      new FakeExecutor(new Error("executor failed")),
+      new FakeExecutor(new Error("secret-token=do-not-persist")),
       new FakeWorktrees(),
     );
     expect(value.result).toMatchObject({
       status: "failed",
-      error: { message: "executor failed" },
+      error: { message: "Agent execution failed" },
     });
     expect(value.locks).toBe(0);
     expect(value.events.at(-1)).toBe("failed");
@@ -374,7 +378,7 @@ describe("ExecuteAgentRun result and cleanup", () => {
     const value = await execute(new FakeExecutor(), worktrees);
     expect(value.result).toMatchObject({
       status: "failed",
-      error: { message: "prepare failed" },
+      error: { message: "Agent execution failed" },
     });
     expect(worktrees.releaseCalls).toBe(0);
     expect(value.locks).toBe(0);
@@ -386,7 +390,10 @@ describe("ExecuteAgentRun result and cleanup", () => {
     );
     expect(value.result).toMatchObject({
       status: "completed",
-      cleanupError: { message: "release failed", code: "CLEANUP_FAILED" },
+      cleanupError: {
+        message: "Worktree cleanup failed",
+        code: "CLEANUP_FAILED",
+      },
     });
     expect(value.result.error).toBeUndefined();
     expect(value.locks).toBe(0);
@@ -398,8 +405,8 @@ describe("ExecuteAgentRun result and cleanup", () => {
     );
     expect(value.result).toMatchObject({
       status: "failed",
-      error: { message: "primary" },
-      cleanupError: { message: "cleanup" },
+      error: { message: "Agent execution failed" },
+      cleanupError: { message: "Worktree cleanup failed" },
     });
     expect(value.locks).toBe(0);
   });
@@ -413,7 +420,7 @@ describe("ExecuteAgentRun result and cleanup", () => {
     expect(value.result).toMatchObject({
       status: "completed",
       cleanupError: {
-        message: "lock release failed",
+        message: "Task lock cleanup failed",
         code: "CLEANUP_FAILED",
       },
     });

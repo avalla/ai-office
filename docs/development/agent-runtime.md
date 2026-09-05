@@ -1,5 +1,12 @@
 # Agent runtime
 
+`run:tick --json` returns schema version 1 with a result for every processed run,
+including its status, sanitized execution/cleanup errors and action references.
+Capacity is bounded to 1–100. An empty batch or entirely successful execution
+returns exit code 0; failures, cancellations or cleanup failures return 1.
+Action `approval_pending` means the intent was processed, not that its mutation
+executed. Executor exception text is not exposed or persisted as a run error.
+
 M3 loads `agents/*/agent.yaml` with Bun's native YAML parser and validates every field before persistence. `agent:sync` upserts stable project-scoped role and agent identities.
 
 `run:schedule` validates project, task, and enabled agent, creates a queued run,
