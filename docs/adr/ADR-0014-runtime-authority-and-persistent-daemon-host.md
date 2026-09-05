@@ -65,7 +65,9 @@ commands fail with an actionable error. Exactly one selected Runtime owns
 authoritative writes.
 
 Offline behavior is narrow and explicit: help, `status --offline`, and the
-exact-plan `runtime:purge` operation while the Runtime is stopped. Ordinary
+exact-plan `runtime:purge` operation while the Runtime is stopped. Source-linked
+program `update` is the additional local maintenance boundary in ADR-0011, with
+health-only checks of selected-user and distribution-development hosts. Ordinary
 `status` retains its existing read-only degraded inspection when the host is
 unreachable for compatibility. Offline inspection may attest local repository
 identity and deterministic client artifacts; it cannot claim authoritative

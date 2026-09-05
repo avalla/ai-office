@@ -47,3 +47,22 @@ jobs:
           else
             git diff --check "${{ github.event.before }}...${{ github.sha }}"
           fi
+
+  bun-link-smoke:
+    name: Bun link smoke (${{ matrix.bun-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        bun-version: ["1.3.6", "latest"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ matrix.bun-version }}
+
+      - name: Verify isolated source linking
+        run: bun run smoke:bun-link

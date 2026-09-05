@@ -20,8 +20,9 @@ does not authenticate the local Unix user to itself.
 
 ## Lifecycle
 
-The normal installed entry point selects a stable user runtime home and can be
-started from any directory:
+The source-linked entry point selects a stable user Runtime home and can be
+started from any directory after explicit operational opt-in
+(`AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1`):
 
 ```bash
 ai-office runtime start
@@ -49,11 +50,34 @@ The persistent host:
 The linkable `ai-office` entry point resolves the same data and socket paths
 regardless of distribution checkout or current repository. Moving or relinking
 the program therefore does not select a new office. The legacy Bun development
-command derives `<cwd>/.ai-office` deliberately. Importing a different source repository does not move the
+commands and `dev:daemon` / `dev:cli` derive
+`<source-checkout>/.ai-office` from their executable location, including global
+memory, regardless of cwd or the user `AI_OFFICE_HOME`. Importing a different source repository does not move the
 database or socket into that repository. Coding
 client commands independently target their explicit `--root`; client
 integration files there do not belong to the daemon runtime root unless the two
 paths coincide.
+
+## Source-distribution maintenance
+
+`ai-office update [--approve <plan-hash>] [--json]` remains local to the source
+executable's distribution. It is an offline lifecycle operation relative to
+Runtime authority, though it uses Git network transport and a health preflight.
+It checks the selected user home and that distribution's development home;
+`AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE` is not required for these minimal
+`GET /health` presence checks. Any listener or uncertain probe blocks planning
+and apply. The check never opens SQLite or enables `/commands` or `/api` access.
+
+Stop both relevant hosts and keep them stopped during maintenance. Checks are
+point-in-time, not a startup lock. Custom homes selected in other terminals are
+not discoverable and must be handled explicitly. See
+[ADR-0011](../adr/ADR-0011-source-linked-program-update.md) for exact coverage,
+approval binding, failure semantics, and trust assumptions. Restart a host only
+after a complete update; its normal startup handles forward migrations.
+
+`ai-office --help`, `ai-office help`, and `ai-office -h`, including the development
+entry point, return shared command-support help before runtime path resolution,
+IPC, SQLite, Git, or updater planning.
 
 ## Local protocol
 

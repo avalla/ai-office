@@ -51,6 +51,7 @@ Commands:
   client:apply --client <codex|claude> --root <path> --contract <file> --approve <plan-hash>
   client:validate --client <codex|claude> --root <path>
   client:uninstall --client <codex|claude> --root <path> [--approve <plan-hash>]
+  update [--approve <plan-hash>] [--json]  # source maintenance; relevant Runtime hosts must be stopped
   runtime:purge [--approve <plan-hash>]  # local; daemon must be stopped
   task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
   task:list --project <id>

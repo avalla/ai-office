@@ -1,6 +1,6 @@
 ---
 name: ai-office
-description: Help users install, inspect, onboard, configure, operate, and safely remove AI Office projects through Codex CLI or Claude Code and the local audited runtime. Use for AI Office setup, status, virtual-office design, client integration, task operation, controlled actions, memory, troubleshooting, or lifecycle help. Do not use for ordinary repository work that does not involve AI Office.
+description: Help users install, update, inspect, onboard, configure, operate, and safely remove AI Office through Codex CLI or Claude Code and the local audited runtime. Use for AI Office setup, status, program updates, virtual-office design, client integration, task operation, controlled actions, memory, troubleshooting, or lifecycle help. Do not use for ordinary repository work that does not involve AI Office.
 ---
 
 # AI Office
@@ -11,14 +11,17 @@ AI Office remains authoritative for stored configuration, policy, controlled act
 
 ## Resolve the launcher and runtime
 
-Resolve the AI Office distribution root from this skill's location: it is three directories above `.agents/skills/ai-office`. Prefer the linkable `ai-office` executable. If it is not on `PATH`, run the same entry point from the distribution root as `bun run ai-office --`. Do not fall back to `bun run cli --`, because that command intentionally selects a development runtime from its current working directory.
+Resolve the AI Office distribution root from this skill's location: it is three directories above `.agents/skills/ai-office`. Prefer the linkable `ai-office` executable. If it is not on `PATH`, run the same entry point from the distribution root as `bun run ai-office --`. Do not fall back to `bun run cli --`, because that command intentionally selects a development runtime from its executable source checkout, including global memory.
 
-Before a stateful workflow other than offline `runtime:purge`:
+Before a stateful workflow other than offline `update` and `runtime:purge`:
 
 1. Check `ai-office runtime status`.
 2. If dependencies are absent, ask before installing them with `bun install --frozen-lockfile`.
 3. If the Runtime is unavailable, start `ai-office runtime start` in a persistent process and wait for health to succeed.
 
+Operational use of the source-linked command requires explicit
+`AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1`. Local help and program `update`
+need no such opt-in; update probes host presence only, never Runtime authority.
 The linkable command uses the stable user runtime selected by `AI_OFFICE_HOME` or `~/.ai-office`. Never infer runtime selection from the current repository. AI Office onboarding does not read or require provider credentials.
 
 ## Help
@@ -26,7 +29,7 @@ The linkable command uses the stable user runtime selected by `AI_OFFICE_HOME` o
 When the user asks what AI Office can do, how to use it, or for command help:
 
 1. Run `ai-office --help` so syntax reflects the installed version.
-2. Lead with the normal lifecycle: `install`, `status`, `next`, project handover and conversational onboarding through this skill, task operation, and `uninstall`.
+2. Lead with the normal lifecycle: `install`, `status`, `next`, project handover and conversational onboarding through this skill, task operation, program `update`, and project `uninstall`.
 3. Explain machine-oriented command families only when relevant: `office:*`, `client:*`, `task:*`, `run:*`, `memory:*`, governance, resources, capabilities, and controlled `action:*` commands.
 4. Distinguish project uninstall from `runtime:purge` and global-memory deletion.
 5. Do not make the user understand distribution, runtime, import, or integration roots unless they ask for architecture or troubleshooting.
@@ -38,6 +41,7 @@ When the user asks what AI Office can do, how to use it, or for command help:
 - For first-time setup or a request to onboard a repository, follow **Onboard**.
 - For installation without personalization, follow **Install or inspect**.
 - For help or command discovery, follow **Help**.
+- For updating the linked AI Office program, follow **Update AI Office**.
 - For changes to roles, goals, constraints, or pipelines, follow **Revise the office**.
 - For a new task or request to execute work, follow **Operate a task**.
 - For status questions, run `ai-office status <path> --json`, then read `office:context`, task, run, action, and cost state only as relevant; do not mutate anything.
@@ -103,6 +107,43 @@ required credentials and security authority locally. Backup requires execution-a
 it reports active runs, pipelines, or locks, finish or cancel that work and
 retry; task lifecycle status is portable semantic state and must not be
 rewritten merely to make a snapshot succeed.
+
+## Update AI Office
+
+Program update is separate from project reconciliation: `install` manages a
+repository, while `update` advances the source-linked AI Office distribution.
+It does not update Bun itself or select, purge, copy, or rewrite runtime state.
+
+1. Stop the selected user Runtime host (`AI_OFFICE_HOME` or `~/.ai-office`) and
+   the distribution development Runtime host (`<distribution>/.ai-office`).
+   Keep them stopped throughout the update. The command checks both using only
+   health probes, without operational opt-in, SQLite, or commands. Other custom
+   homes used in separate terminals are not discoverable; stop those hosts too
+   when known. A timeout or uncertain probe blocks maintenance.
+2. Run `ai-office update --json`. This contacts the configured Git upstream but
+   does not change the checkout. Report the canonical distribution root,
+   branch, upstream ref, current and target revisions, preserved state, steps,
+   and plan hash.
+3. If `updateAvailable` is false, report that the program is current and stop.
+4. If tracked files are dirty, the branch is detached, ahead, divergent, or
+   lacks an upstream, preserve the checkout and explain the reported manual
+   recovery. Never stash, reset, switch branches, or rewrite Git history.
+5. Obtain explicit confirmation before rerunning `ai-office update --approve
+   <planHash> --json`. Never reuse an approval after the plan or upstream target
+   changes.
+6. On `updated`, explicitly restart the desired Runtime host and verify
+   `ai-office runtime status` (or the corresponding development CLI). User
+   Runtime operation still requires the source opt-in; update never enables it.
+   Normal host startup applies forward SQLite migrations to preserved state.
+7. On `failed`, report that no program revision changed. On `partial`, report
+   the exact completed and failed steps and follow only the returned recovery;
+   do not claim rollback or restart a Runtime host with an incomplete installation.
+
+The current updater supports the repository's source-linked Bun distribution:
+an approved exact target is fetched and fast-forwarded, dependencies are
+installed with the frozen lockfile, and the bare `bun link` registration is
+refreshed. A future published-package installer requires its own update adapter;
+do not substitute `bun update -g` for the source-linked workflow.
 
 ## Onboard
 
