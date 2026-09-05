@@ -4,6 +4,7 @@ import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate
 import { InvokeControlledConnectorAction } from "@ai-office/application/capability/invoke-controlled-connector-action.ts";
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import { ExecuteAgentRun } from "@ai-office/application/commands/execute-agent-run.ts";
+import { AdmitAgentRun } from "@ai-office/application/commands/admit-agent-run.ts";
 import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent-run.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
@@ -135,9 +136,31 @@ export async function handleRunCommand(
       new InMemoryWorktreeManager(),
       clock,
     );
-    const results = await Promise.all(
-      queued.map((value) => execute.execute(value)),
+    const admission = new AdmitAgentRun(
+      runtime,
+      tasks,
+      context.pipelines,
+      clock,
     );
+    const results = (
+      await Promise.all(
+        queued.map(async (value) => {
+          const claimed = await admission.execute(value);
+          if (claimed === null) return null;
+          if (claimed.snapshot().status === "cancelled")
+            return {
+              runId: claimed.snapshot().id,
+              status: "cancelled" as const,
+              actions: [],
+              error: {
+                code: "RUN_NOT_ELIGIBLE",
+                message: "Run authority is no longer eligible",
+              },
+            };
+          return execute.execute(claimed);
+        }),
+      )
+    ).filter((value) => value !== null);
     const unsuccessful = results.filter(
       (result) =>
         result.status !== "completed" || result.cleanupError !== undefined,
