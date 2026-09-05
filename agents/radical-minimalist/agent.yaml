@@ -1,0 +1,19 @@
+id: radical-minimalist
+role_key: simplification-analyst
+role: simplification-analyst
+version: 1
+capabilities:
+  - inspect_project
+  - identify_redundancy
+  - assess_removal_impact
+  - propose_simplification
+tools:
+  - project.search
+  - project.get_active_adrs
+  - code.get_dependencies
+  - git.diff
+model_policy: balanced
+limits:
+  max_iterations: 6
+  max_cost_micros: "1000000"
+  timeout_seconds: 1200

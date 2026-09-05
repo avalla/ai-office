@@ -55,7 +55,7 @@ describe("M3-M5 CLI", () => {
     );
     expect(
       await run(["agent:sync", "--project", projectId, "--directory", agents]),
-    ).toEqual(["Agent definitions synchronized: 4"]);
+    ).toEqual(["Agent definitions synchronized: 18"]);
     const agentId = `agent:${projectId}:developer`;
     const incompleteIntent = io();
     expect(

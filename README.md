@@ -541,6 +541,18 @@ target project and a Claude discovery wrapper under `.claude/skills`. Its
 default manifest is a starting point, not an automatic grant or fixed
 organization.
 
+The [bundled agent profiles](agents/README.md) describe the core Architect,
+Developer, Reviewer, and QA responsibilities, plus optional Product Analyst,
+Product Designer, Security Reviewer, Technical Researcher, and Release Engineer
+specialists. Hacker (adversarial testing) and Mad Scientist (bounded experiments)
+profiles support focused exploration. Devil's Advocate, Chaos Gremlin, Code
+Archaeologist, Radical Minimalist, Alien User, Forensic Detective, and Keeper of
+the Future add perspectives on decisions, resilience, history, simplicity,
+usability, incidents, and maintenance. Each profile defines a working method,
+expected handoff, and limits.
+The companion Markdown instructions are not yet injected into Runtime executors;
+adding a specialist to a project's workflow requires an explicit office revision.
+
 ## Machine interface
 
 Import an existing repository, then inspect its structured profile:

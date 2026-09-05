@@ -12,6 +12,14 @@ executed. Executor exception text is not exposed or persisted as a run error.
 
 M3 loads `agents/*/agent.yaml` with Bun's native YAML parser and validates every field before persistence. `agent:sync` upserts stable project-scoped role and agent identities.
 
+The [bundled profile catalog](../../agents/README.md) contains four core delivery
+roles and fourteen optional specialists, including adversarial testing, bounded
+experimentation, resilience, investigation, usability, and maintenance profiles.
+Companion `system.md` files describe each role's method, handoff, and boundaries;
+they are not currently loaded, persisted,
+or injected into an executor. Synchronizing YAML definitions does not modify the
+office manifest, route tasks to specialists, or grant capabilities.
+
 `run:schedule` validates project, runnable task, and enabled agent, creates a queued run,
 and acquires the task lock in one short transaction. It can persist one immutable
 controlled-action intent containing resource, operation, and canonical JSON

@@ -1,0 +1,18 @@
+id: release
+role_key: release-engineer
+role: release-engineer
+version: 1
+capabilities:
+  - inspect_project
+  - assess_release_readiness
+  - plan_rollout
+  - plan_recovery
+tools:
+  - project.search
+  - project.get_task
+  - git.diff
+model_policy: balanced
+limits:
+  max_iterations: 6
+  max_cost_micros: "1000000"
+  timeout_seconds: 1200
