@@ -70,6 +70,8 @@ Commands:
   agent:list --project <id>
   run:schedule --project <id> --task <id> --agent <id> [--resource <id> --operation <name> [--arguments <json>]]
   run:tick --project <id> [--capacity <1-100>] [--json]
+  run:cancel --project <id> --run <id> --reason <text> [--json]
+  run:reconcile --project <id> --run <id> --reason <text> [--approve <planHash>] [--json]
   run:list --project <id>
   run:show --project <id> --run <id>
   pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>

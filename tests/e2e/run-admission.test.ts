@@ -19,11 +19,13 @@ test("terminal and blocked tasks cannot schedule and queued work is revalidated"
     const taskId = await r.task();
     expect((await r.schedule(taskId)).exitCode).toBe(0);
     await r.command([
-      "task:cancel",
+      "task:block",
       "--project",
       r.projectId,
       "--task",
       taskId,
+      "--reason",
+      "Blocked after scheduling",
     ]);
     const result = await r.command([
       "run:tick",

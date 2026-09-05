@@ -1,4 +1,6 @@
 import { dirname, join } from "node:path";
+import { RunExecutionControl } from "@ai-office/application/runtime/run-execution-control.ts";
+import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import { fileURLToPath } from "node:url";
 import { readFileSync } from "node:fs";
 import {
@@ -219,6 +221,8 @@ const commands = [
   "agent:list",
   "run:schedule",
   "run:tick",
+  "run:cancel",
+  "run:reconcile",
   "run:list",
   "run:show",
   "pricing:set",
@@ -264,6 +268,8 @@ const defaultIo: RuntimeCommandIo = {
 };
 
 export interface RuntimeCommandOptions {
+  executionControl?: RunExecutionControl;
+  agentExecutor?: AgentExecutor;
   projectRoot: string;
   runtimePaths?: RuntimePaths;
   migrationDirectory?: string;
@@ -472,6 +478,11 @@ export async function executeRuntimeCommand(
     const controlled = new SqliteControlledExecutionRepository(database);
     const costs = new SqliteCostRepository(database);
     const context: CommandContext = {
+      executionControl:
+        options.executionControl ?? new RunExecutionControl(ids.generate()),
+      ...(options.agentExecutor === undefined
+        ? {}
+        : { agentExecutor: options.agentExecutor }),
       runtimeHome: runtimePaths.runtimeHome,
       io,
       principal: localOperatorPrincipal,
