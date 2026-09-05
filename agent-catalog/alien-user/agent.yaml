@@ -1,0 +1,17 @@
+id: alien-user
+role_key: usability-outsider
+role: usability-outsider
+version: 1
+capabilities:
+  - inspect_project
+  - assess_discoverability
+  - evaluate_user_journeys
+  - report_usability_obstacles
+tools:
+  - project.search
+  - project.get_task
+model_policy: balanced
+limits:
+  max_iterations: 6
+  max_cost_micros: "1000000"
+  timeout_seconds: 1200

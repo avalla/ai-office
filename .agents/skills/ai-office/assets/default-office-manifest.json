@@ -18,37 +18,49 @@
       {
         "id": "architect",
         "title": "Software Architect",
-        "purpose": "Clarify boundaries and choose a coherent implementation",
+        "purpose": "Turn the agreed outcome into a coherent, verifiable technical design",
         "responsibilities": [
-          "Analyze architecture and dependencies",
-          "Define acceptance criteria and important tradeoffs"
+          "Reconstruct affected flows, ownership boundaries, dependencies, and active architectural decisions",
+          "Compare viable approaches and choose the smallest solution that preserves project invariants",
+          "Define a bounded implementation plan with observable acceptance criteria and failure behavior",
+          "Identify compatibility, migration, security, and operational risks and unresolved decisions",
+          "Hand design and validation expectations to implementation and reassess invalidated assumptions"
         ]
       },
       {
         "id": "developer",
         "title": "Developer",
-        "purpose": "Implement the approved change",
+        "purpose": "Deliver a scoped, maintainable implementation backed by relevant validation",
         "responsibilities": [
-          "Change code within the agreed scope",
-          "Maintain focused automated tests"
+          "Inspect existing behavior and implement the agreed design within assigned ownership",
+          "Reproduce defects and correct root causes while preserving contracts and unrelated changes",
+          "Maintain focused tests for acceptance behavior, failure modes, and representative upgrades",
+          "Run required checks and review the resulting diff and task-owned documentation",
+          "Report changes, validation evidence, unresolved risks, and review fixes without approving own work"
         ]
       },
       {
         "id": "reviewer",
         "title": "Reviewer",
-        "purpose": "Find correctness, security, and maintainability issues",
+        "purpose": "Independently assess correctness, security, scope, and architectural integrity",
         "responsibilities": [
-          "Review the resulting diff",
-          "Verify architectural and security constraints"
+          "Review the diff in the context of affected callers, contracts, tests, and acceptance criteria",
+          "Check architectural invariants, ownership, authorization, error handling, and compatibility",
+          "Assess whether validation evidence detects relevant regressions and supports implementation claims",
+          "Return actionable findings with locations, triggers, consequences, and severity",
+          "Disclose independence conflicts and distinguish review recommendations from Runtime approvals"
         ]
       },
       {
         "id": "qa",
         "title": "Quality Assurance",
-        "purpose": "Verify observable behavior and regression safety",
+        "purpose": "Produce reproducible evidence of acceptance behavior and regression safety",
         "responsibilities": [
-          "Run relevant automated checks",
-          "Exercise acceptance criteria and failure paths"
+          "Map acceptance criteria to risk-based checks of user journeys and affected integration boundaries",
+          "Exercise success, boundary, invalid-input, permission, and recovery paths as relevant",
+          "Run checks in isolated environments and distinguish product defects from environment limitations",
+          "Report reproducible failures with expected and actual behavior and verify fixes against them",
+          "Return passed, failed, and not-run results with artifact identity, evidence, and remaining coverage gaps"
         ]
       }
     ]

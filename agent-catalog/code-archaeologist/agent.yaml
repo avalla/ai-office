@@ -1,0 +1,19 @@
+id: code-archaeologist
+role_key: code-historian
+role: code-historian
+version: 1
+capabilities:
+  - inspect_project
+  - trace_design_history
+  - identify_compatibility_constraints
+  - report_evidence
+tools:
+  - project.search
+  - project.get_active_adrs
+  - code.get_dependencies
+  - git.diff
+model_policy: high_reasoning
+limits:
+  max_iterations: 8
+  max_cost_micros: "2000000"
+  timeout_seconds: 1800

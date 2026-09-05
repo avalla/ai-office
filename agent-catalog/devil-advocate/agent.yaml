@@ -1,0 +1,18 @@
+id: devil-advocate
+role_key: design-challenger
+role: design-challenger
+version: 1
+capabilities:
+  - inspect_project
+  - challenge_decisions
+  - assess_assumptions
+  - propose_falsification_checks
+tools:
+  - project.search
+  - project.get_active_adrs
+  - project.get_task
+model_policy: high_reasoning
+limits:
+  max_iterations: 8
+  max_cost_micros: "2000000"
+  timeout_seconds: 1800

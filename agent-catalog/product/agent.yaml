@@ -1,0 +1,17 @@
+id: product
+role_key: product-analyst
+role: product-analyst
+version: 1
+capabilities:
+  - inspect_project
+  - clarify_requirements
+  - define_acceptance_criteria
+  - assess_scope
+tools:
+  - project.search
+  - project.get_task
+model_policy: balanced
+limits:
+  max_iterations: 6
+  max_cost_micros: "1000000"
+  timeout_seconds: 1200

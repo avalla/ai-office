@@ -1,0 +1,17 @@
+id: designer
+role_key: product-designer
+role: product-designer
+version: 1
+capabilities:
+  - inspect_project
+  - design_user_flows
+  - specify_interaction_states
+  - assess_accessibility
+tools:
+  - project.search
+  - project.get_task
+model_policy: balanced
+limits:
+  max_iterations: 8
+  max_cost_micros: "1500000"
+  timeout_seconds: 1800

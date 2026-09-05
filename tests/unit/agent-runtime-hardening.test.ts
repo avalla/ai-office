@@ -156,4 +156,15 @@ describe("YAML agent definition loader", () => {
         .map((value) => value.definition.id),
     ).toEqual(["a", "z"]);
   });
+
+  test("does not require or read companion Markdown as Runtime definition input", () => {
+    const directory = root();
+    add(directory, "developer", yaml("developer", "software-developer"));
+    const loader = new YamlAgentDefinitionLoader();
+    const withoutGuidance = loader.load(directory);
+    // A directory at system.md makes an accidental read fail rather than silently
+    // allowing the loader to read and discard authored guidance.
+    mkdirSync(join(directory, "developer", "system.md"));
+    expect(loader.load(directory)).toEqual(withoutGuidance);
+  });
 });

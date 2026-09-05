@@ -12,6 +12,21 @@ executed. Executor exception text is not exposed or persisted as a run error.
 
 M3 loads `agents/*/agent.yaml` with Bun's native YAML parser and validates every field before persistence. `agent:sync` upserts stable project-scoped role and agent identities.
 
+The [bundled profile guide](../../agents/README.md) describes four core delivery
+profiles in `agents/` and fourteen opt-in specialists in `agent-catalog/`.
+Normal synchronization of `agents/` registers and enables the core set only;
+the separate catalog or a selected subset must be deliberately synchronized.
+Each synchronized agent is enabled and can be scheduled outside an active
+pipeline without an office revision. A revision is required for pipeline routing.
+Sync upserts definitions: it neither removes nor disables previously synchronized
+specialists when only the core set is synchronized again. It does not grant
+controlled-action authority or change the office manifest or default pipelines.
+Companion `system.md` files describe each role's method, handoff, and boundaries;
+they are not loaded, persisted, versioned, or injected by the Runtime. Repository
+contract tests validate their presence and sections without making them execution
+inputs. See the profile guide for synchronization commands and the pre-existing
+manifest role ID versus Runtime role key compatibility limitation.
+
 `run:schedule` validates project, runnable task, and enabled agent, creates a queued run,
 and acquires the task lock in one short transaction. It can persist one immutable
 controlled-action intent containing resource, operation, and canonical JSON

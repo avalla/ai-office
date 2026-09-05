@@ -1,0 +1,19 @@
+id: hacker
+role_key: adversarial-tester
+role: adversarial-tester
+version: 1
+capabilities:
+  - inspect_project
+  - challenge_assumptions
+  - design_adversarial_cases
+  - report_reproductions
+tools:
+  - project.search
+  - project.get_task
+  - code.get_dependencies
+  - git.diff
+model_policy: high_reasoning
+limits:
+  max_iterations: 8
+  max_cost_micros: "2000000"
+  timeout_seconds: 1800

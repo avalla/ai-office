@@ -1,0 +1,18 @@
+id: forensic-detective
+role_key: incident-investigator
+role: incident-investigator
+version: 1
+capabilities:
+  - inspect_project
+  - reconstruct_incidents
+  - correlate_evidence
+  - evaluate_causal_hypotheses
+tools:
+  - project.search
+  - project.get_task
+  - code.get_dependencies
+model_policy: high_reasoning
+limits:
+  max_iterations: 8
+  max_cost_micros: "2000000"
+  timeout_seconds: 1800
