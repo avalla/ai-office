@@ -30,6 +30,10 @@ AI Office keeps different kinds of documentation separate so current product tru
   accepted ownership, discovery, migration, and uninstall contract for
   `AI-OFFICE.md` and Codex/Claude project skills.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
+- [Professional-work verticals](development/professional-work-verticals.md):
+  future domain-neutral product boundary, software-as-first-vertical strategy,
+  and the legal reference vertical with provenance, human-approval, policy, and
+  audit constraints.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
 - [Run recovery](development/run-recovery.md): host-owned cancellation, interrupted execution, approved reconciliation, and ambiguous-effect limitations.

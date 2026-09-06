@@ -44,6 +44,17 @@ requirement -> architecture decision -> task -> agent run -> artifact -> review
 
 Governance and run records exist today, but every link in this chain is not yet modeled as an automatic end-to-end workflow.
 
+For future non-software verticals, the more general traceability problem is:
+
+```text
+source -> evidence / claim -> work item -> run -> artifact -> review -> approval
+```
+
+That generalized chain does not replace the current software chain. It defines
+the provenance requirement a future vertical layer must satisfy without
+inventing evidence or collapsing domain-specific decisions into one generic
+status.
+
 ## Virtual office manifests
 
 Schema-versioned office manifests describe project mission, goals, constraints,
@@ -247,3 +258,54 @@ requested
 ```
 
 The exact paths vary for denial, read-only operations, rejection, and simulation failures. Every filesystem v2 mutation uses a separate immutable simulation artifact and `ActionApproval`; a separate `ActionExecution` ledger allows at most one execution attempt.
+
+## Current model and future vertical generalization
+
+The implemented model is deliberately software-development-first. `Project`
+currently means the AI Office project aggregate and is coupled to repository
+import, portable repository identity, software governance records, and coding
+client integration in several current use cases. It is not silently redefined as
+a generic `Matter`, `Case`, or `Workspace`.
+
+The long-term product direction may generalize professional work above or beside
+that aggregate, but such a change must preserve current project identity,
+portable snapshots, task lifecycle semantics, capability boundaries, and audit
+history. A documentation analogy such as `Project -> legal matter` is therefore
+useful for product exploration but is not an implemented schema alias.
+
+The reusable core is expected to remain centered on semantics that are already
+domain-independent or can become so without losing authority:
+
+```text
+organization / roles
+        |
+work container
+        |
+tasks / obligations / requirements
+        |
+pipeline and stage runs
+        |
+sources -> evidence / claims -> artifacts
+        |
+reviews / approvals
+        |
+controlled actions
+        |
+audit / provenance
+```
+
+Verticals may define stronger vocabulary and structured records around these
+concepts. For example, software development may add repositories, ADRs, code
+review findings, branches and pull requests; a future legal vertical may add
+matters, parties, facts, source documents, legal issues, deadlines, citations
+and filing artifacts. These additions must not create parallel orchestration,
+authorization, approval, or audit engines.
+
+In particular, a future evidence/claim model must distinguish a model-generated
+assertion from verified source evidence. Confidence is metadata, never
+authority. Source location, revision, extraction provenance, producing run, and
+review/approval state must remain separately inspectable when a vertical relies
+on them.
+
+See [Professional-work verticals](../development/professional-work-verticals.md)
+and roadmap M15.

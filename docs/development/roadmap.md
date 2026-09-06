@@ -3,26 +3,39 @@
 ## Long-term product direction
 
 AI Office is intended to evolve from coordinating individual agent runs into a
-local, auditable **virtual engineering organization**. AI Office defines the
-organization and governs the process; a coding client or model runtime is a
-replaceable worker, not the source of role behavior or workflow authority.
+local-first, auditable **virtual professional organization**. Software
+engineering remains the first vertical being implemented and validated; the long-term
+core should govern professional work without making software-development,
+GitHub, or repository concepts universal domain assumptions.
+
+AI Office defines the organization, policy, evidence, workflow, approvals, and
+audit semantics. A coding client, model runtime, domain integration, or external
+system is a replaceable worker or connector, not the source of role behavior,
+workflow authority, or professional judgment.
 
 ```text
 AI Office
   |-- organization and roles
   |-- agent pipeline engine
   |-- policy and capabilities
+  |-- provenance, artifacts, evidence, and audit
   |-- connectors
-  |     `-- GitHub
+  |     |-- GitHub
+  |     `-- future domain systems
   `-- worker runtimes
         |-- Codex
         |-- Claude Code
         |-- Gemini CLI
         |-- OpenCode
         `-- local or future runtimes
+
+Vertical profiles
+  |-- software development (first vertical)
+  `-- future professional domains
+        `-- legal (reference vertical)
 ```
 
-Two boundaries govern this direction:
+Three boundaries govern this direction:
 
 1. A generic, client-agnostic Agent Pipeline Engine owns pipeline and stage
    orchestration, assignment, policy gates, transitions, retries, controlled
@@ -31,11 +44,18 @@ Two boundaries govern this direction:
    GitHub connector exposes repository resources and operations; it never
    decides which role works next, whether a review is independent, or whether
    policy permits merge.
+3. Domain verticals may add vocabulary, templates, integrations, evidence
+   models, and stronger policy, but they must not fork orchestration, capability,
+   approval, provenance, or audit semantics into a second implementation.
 
-The M6E office manifest is the configuration precursor for this direction. It
-currently stores roles and ordered pipeline descriptions, while the active host
-follows their stages. It is not yet a durable pipeline executor. The milestones
-below preserve that distinction and do not change the scope or status of M0-M10.
+The M6E office manifest is the configuration precursor for this direction. The
+M11 enforcement foundation now persists pinned sequential pipeline and stage
+runs for explicitly enforced definitions; guidance-only definitions still rely
+on the active host. Advanced orchestration and worker dispatch remain future
+work. M14 is intended to deliver the first complete software-development
+vertical. This direction preserves M0-M14 scope and implementation status and
+does not rename the current `Project` aggregate, change existing schemas, or
+claim support for another professional domain.
 
 ## M0 — Repository health
 
@@ -884,7 +904,111 @@ Exit direction:
 - merge is impossible until all effective policy gates are satisfied;
 - changing the selected worker runtime does not change workflow semantics.
 
-## M11-M14 dependency summary and open design questions
+## M15 — Domain-neutral professional work and vertical profiles
+
+Status: future.
+
+Goal: prove that the orchestration, policy, provenance, approval, artifact, and
+audit foundations can support professional work beyond software development
+without weakening the existing software vertical or prematurely renaming its
+implemented aggregates.
+
+The current `Project` model, repository binding, software governance vocabulary,
+and M14 delivery workflows remain valid. M15 must first define a compatibility
+boundary between that implemented model and any more general professional-work
+concepts. Candidate conceptual terms such as `Workspace`, `Matter`, or
+`WorkUnit` are design vocabulary only until a milestone assessment and, where
+necessary, an ADR select concrete domain and storage changes.
+
+Core capabilities to assess:
+
+- a domain-neutral work container that can host tasks, requirements or
+  obligations, artifacts, evidence, events, decisions, reviews, approvals, and
+  pipelines without assuming a Git repository;
+- first-class provenance from source material through extracted evidence or
+  claims, agent/stage execution, generated artifacts, review, and final human
+  approval;
+- source anchoring precise enough for domain adapters to identify document,
+  revision, page, paragraph, record, or other stable evidence location;
+- explicit states for assertions or evidence such as alleged, supported,
+  disputed, established, superseded, or domain-defined equivalents, without
+  allowing model confidence to substitute for verification;
+- vertical-defined human checkpoints and prohibited transitions, while keeping
+  approval authority deterministic and outside model judgment;
+- domain-scoped capability constraints and access control that compose with the
+  existing deny-by-default policy rather than bypassing it;
+- vertical profiles or plugins for domain vocabulary, pipeline templates,
+  structured artifact schemas, connectors, and policy presets;
+- retention, redaction, confidentiality, export, and audit requirements exposed
+  through explicit contracts rather than hidden in prompts.
+
+### Legal reference vertical
+
+Legal work is the reference second vertical for testing the domain-neutral
+boundary because it stresses provenance, evidence, separation of duties,
+confidentiality, irreversible external actions, and human accountability.
+Illustrative concepts include a legal matter, parties, source documents,
+facts/claims, evidence, deadlines/events, legal issues, drafts, reviews, and
+filing or communication artifacts.
+
+An illustrative pipeline may coordinate:
+
+```text
+document intake
+  -> classification and source registration
+  -> fact / chronology extraction
+  -> legal-issue identification
+  -> authorized research
+  -> draft
+  -> adversarial review
+  -> citation / source verification
+  -> human lawyer review and approval
+  -> controlled external action
+```
+
+The legal vertical must preserve at least these invariants:
+
+- generated legal assertions and citations are traceable to authorized sources;
+- free-text model output is never itself evidence of a source, decision, or
+  approval;
+- generated, reviewed, approved, communicated, and filed are distinct states;
+- no pipeline may advance directly from AI generation to an external filing or
+  client/court communication when policy requires human approval;
+- a vertical connector may expose case-law, document-management, calendaring,
+  filing, or communication operations, but it does not decide strategy or grant
+  itself authority;
+- adversarial agents may challenge a draft, but the engine must preserve their
+  provenance and any required independence rather than treating role labels as
+  proof;
+- confidential matter access is scoped explicitly and auditable;
+- domain plugins may implement conflict checks, citation verification, document
+  redaction, evidence timelines, legal holds, and court/deadline integrations
+  without moving those concerns into the generic pipeline engine.
+
+This roadmap item is an architecture and product direction, not a claim that the
+current product provides legal advice, satisfies professional obligations, or is
+ready for regulated legal deployment. Jurisdiction-specific professional,
+privacy, retention, security, and human-supervision requirements require their
+own assessment before production use.
+
+Depends on: M11 orchestration and structured artifacts, M9 plugin/product
+surfaces, M12 worker-runtime adapters, M10 security work where the deployment
+threat model requires it, and lessons from M14 as the first complete vertical.
+
+Exit direction:
+
+- software delivery remains a first-class vertical rather than a special case
+  embedded in generic orchestration;
+- a second vertical can define its own vocabulary, artifacts, connectors, and
+  policy without forking pipeline, capability, approval, or audit engines;
+- source-to-claim-to-artifact provenance is queryable and survives review;
+- vertical human gates are deterministic, enforceable, and auditable;
+- repository identity is no longer an accidental prerequisite for generic
+  professional-work orchestration.
+
+See [Professional-work verticals](professional-work-verticals.md).
+
+## M11-M15 dependency summary and open design questions
 
 ```text
 M6E office definitions + M6 policy/actions + M8.5 context
@@ -897,6 +1021,9 @@ M6E office definitions + M6 policy/actions + M8.5 context
                   \             /
                    v           v
               M14 Software development pipelines
+                         |
+                         v
+          M15 Domain-neutral vertical profiles
 ```
 
 These milestones intentionally defer:
@@ -918,8 +1045,15 @@ These milestones intentionally defer:
 - runner isolation, credential delegation, cancellation, crash recovery, and
   ambiguous external outcomes;
 - the policy thresholds for autonomous merge and the authentication required for
-  human workflow approvals.
+  human workflow approvals;
+- whether generic professional work needs a new aggregate or semantic facade,
+  and how existing `Project` identity and portable snapshots remain compatible;
+- the minimum generic provenance/evidence contract that supports multiple
+  verticals without embedding legal or software-specific semantics in the core;
+- how vertical plugins declare stronger retention, confidentiality, approval,
+  redaction, and external-action rules without becoming independent policy
+  engines.
 
 These questions require milestone-specific assessments and, where a durable
 architectural choice is ready, an ADR. This roadmap direction does not itself
-select an implementation or authorize work on M11-M14.
+select an implementation or authorize work on M11-M15.
