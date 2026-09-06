@@ -167,6 +167,33 @@ retries, pipeline continuation, asynchronous connector work, event processing,
 and lifecycle audit. Some are current foundations and some remain roadmap work,
 but none belongs to CLI process lifetime.
 
+## Source-linked distribution maintenance
+
+Program update is a local lifecycle boundary. The source executable supplies
+its distribution root to `runRuntimeCli`; neither caller cwd nor a project
+binding selects update targets. `ManageDistributionUpdate` depends only on an
+update adapter port and a Runtime presence guard port. CLI-local adapters own
+Git/filesystem/Bun mechanics and minimal health transport; they import no
+Runtime-host, daemon bootstrap, or SQLite composition. Shared help/parsing stay
+in `packages/command-support`, with existing legacy aliases unchanged.
+
+Planning and apply require the selected user Runtime and distribution development
+Runtime to be stopped. The guard resolves both homes read-only and sends only
+`GET /health`; listener presence or uncertain errors block update. This maintenance
+exception does not require `AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1` and does
+not grant operational Runtime access. Other arbitrary runtime homes are not
+enumerated. Checks do not lock out concurrent startup: operators keep all hosts
+using the distribution stopped until maintenance completes.
+
+Exact approval binds the distribution, configured/effective remote identity,
+branch/refs, HEAD, target, and ordered steps. Missing target objects are acquired
+through an isolated temporary ref without updating normal tracking refs or
+FETCH_HEAD. Cleanup failure blocks the plan. Apply replans, fast-forwards only,
+installs frozen dependencies and refreshes bare Bun linking. Failures after
+advancement are partial and never trigger rollback. Runtime databases, global
+memory, bindings, and project integration are outside the mutation scope.
+See [ADR-0011](../adr/ADR-0011-source-linked-program-update.md).
+
 ## Local daemon transport and concurrency
 
 The TypeScript daemon host exposes protocol version 1 as HTTP over

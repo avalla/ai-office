@@ -13,6 +13,8 @@ import {
 } from "./daemon-client.ts";
 import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
 import type { RuntimePurgeAdapter } from "@ai-office/application/ports/runtime-purge-adapter.port.ts";
+import { runDistributionUpdateCli } from "./distribution-update-cli.ts";
+import type { DistributionUpdateAdapter } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
 import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
 import { runDashboardCli } from "./dashboard-cli.ts";
 import {
@@ -38,6 +40,8 @@ import {
 
 export interface RuntimeCliOptions {
   projectRoot?: string;
+  distributionRoot?: string;
+  distributionUpdateAdapter?: DistributionUpdateAdapter;
   runtimePaths?: RuntimePaths;
   socketPath?: string;
   io?: CliIo;
@@ -224,6 +228,21 @@ export async function runRuntimeCli(
   if (isLocalHelpInvocation(args)) {
     io.stdout(cliHelp);
     return 0;
+  }
+  if (args[0] === "update") {
+    if (options.distributionRoot === undefined) {
+      io.stderr(
+        "AI Office program update is available only through the linkable ai-office entry point",
+      );
+      return 1;
+    }
+    return runDistributionUpdateCli(args.slice(1), {
+      distributionRoot: options.distributionRoot,
+      io,
+      ...(options.distributionUpdateAdapter === undefined
+        ? {}
+        : { adapter: options.distributionUpdateAdapter }),
+    });
   }
   let runtimePaths: RuntimePaths;
   try {

@@ -21,6 +21,12 @@ if (isLocalHelpInvocation(args)) {
   console.log(runtimeCommandHelp);
   process.exit(0);
 }
+// Maintenance probes host presence only. It never selects an operational
+// Runtime client or relaxes the source opt-in for commands below this branch.
+if (args[0] === "update") {
+  process.exitCode = await runRuntimeCli(args, { distributionRoot });
+  process.exit(process.exitCode);
+}
 const [command, ...arguments_] = args;
 let runtimePaths: RuntimePaths;
 

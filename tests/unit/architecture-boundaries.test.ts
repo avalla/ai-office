@@ -182,3 +182,29 @@ describe("application architecture boundaries", () => {
     expect(offenders).toEqual([]);
   });
 });
+
+test("distribution update orchestration stays behind ports without platform mechanics", () => {
+  const path = join(
+    repositoryRoot,
+    "packages/application/src/runtime/manage-distribution-update.ts",
+  );
+  const source = readFileSync(path, "utf8");
+  const forbidden = importedSpecifiers(source).filter((specifier) =>
+    /(?:apps\/|runtime-host|storage-sqlite|node:(?:fs|child_process|http|net)|bun:)/.test(
+      specifier,
+    ),
+  );
+  expect(forbidden).toEqual([]);
+  const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const mechanics: string[] = [];
+  function walk(node: ts.Node) {
+    if (
+      ts.isIdentifier(node) &&
+      ["Bun", "process", "fetch", "SQLite", "Database"].includes(node.text)
+    )
+      mechanics.push(node.text);
+    ts.forEachChild(node, walk);
+  }
+  walk(ast);
+  expect(mechanics).toEqual([]);
+});

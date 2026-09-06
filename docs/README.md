@@ -23,6 +23,9 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Host-only onboarding](adr/ADR-0010-host-only-onboarding.md): accepted
   removal of the daemon/provider onboarding path and compatibility policy for
   historical onboarding data.
+- [Source-linked program update](adr/ADR-0011-source-linked-program-update.md):
+  accepted offline exact-plan update boundary for the current Bun-linked
+  distribution.
 - [Shared project guide and repository skills](adr/ADR-0012-shared-project-guide-and-repository-skills.md):
   accepted ownership, discovery, migration, and uninstall contract for
   `AI-OFFICE.md` and Codex/Claude project skills.
