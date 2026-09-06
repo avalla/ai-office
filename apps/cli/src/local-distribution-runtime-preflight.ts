@@ -1,4 +1,4 @@
-import { request } from "node:http";
+import { createConnection } from "node:net";
 import type { DistributionUpdateRuntimeGuard } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import { RuntimeUnavailableError } from "./daemon-client.ts";
@@ -20,28 +20,42 @@ export class DistributionRuntimePreflightError extends Error {
  */
 export function probeDistributionRuntime(socketPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const probe = request({ socketPath, path: "/health", method: "GET" });
-    const deadline = setTimeout(
-      () => probe.destroy(new Error("timeout")),
-      1_000,
-    );
-    probe.once("response", (response) => {
+    // Use Unix transport errors directly: Bun 1.3.6's HTTP client collapses
+    // absence and other connection failures into generic FailedToOpenSocket.
+    const socket = createConnection({ path: socketPath });
+    let connected = false;
+    let settled = false;
+    const unverified = () =>
+      new DistributionRuntimePreflightError(
+        "runtime_not_verified",
+        "AI Office update could not verify that a relevant Runtime host is stopped",
+      );
+    const deadline = setTimeout(() => finish(unverified()), 1_000);
+    function finish(error?: Error): void {
+      if (settled) return;
+      settled = true;
       clearTimeout(deadline);
-      response.destroy();
-      resolve();
-    });
-    probe.once("error", (error: NodeJS.ErrnoException) => {
-      clearTimeout(deadline);
-      reject(
-        error.code === "ENOENT" || error.code === "ECONNREFUSED"
-          ? new RuntimeUnavailableError(socketPath)
-          : new DistributionRuntimePreflightError(
-              "runtime_not_verified",
-              "AI Office update could not verify that a relevant Runtime host is stopped",
-            ),
+      socket.destroy();
+      if (error === undefined) resolve();
+      else reject(error);
+    }
+    socket.once("connect", () => {
+      connected = true;
+      socket.write(
+        "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
       );
     });
-    probe.end();
+    // Any reply proves presence; parsing or trusting a protocol version is
+    // unnecessary for maintenance and would misclassify incompatible hosts.
+    socket.once("data", () => finish());
+    socket.once("end", () => finish(unverified()));
+    socket.once("error", (error: NodeJS.ErrnoException) =>
+      finish(
+        !connected && (error.code === "ENOENT" || error.code === "ECONNREFUSED")
+          ? new RuntimeUnavailableError(socketPath)
+          : unverified(),
+      ),
+    );
   });
 }
 
