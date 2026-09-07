@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add the MIT license with copyright held by Andrea Valla and matching package metadata.
 - Establish the initial `0.1.0` product version in the root package metadata.
 - Add local `--version` / `-V` reporting for source-linked and development CLIs.
 - Document release gates and separate product versions from protocol, database,

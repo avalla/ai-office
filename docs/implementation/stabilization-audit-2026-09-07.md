@@ -130,8 +130,9 @@ and removes this wording; leave its final reconciliation to that PR.
    or explicitly exclude it from the first release.
 2. Review the small stabilization branch: a single root product version,
    local version reporting, release policy, changelog, and corrected roadmap.
-3. Select the project license and copyright notice. No open-source license
-   is chosen implicitly by this audit.
+3. License decision completed by the owner: MIT, copyright (c) 2026 Andrea
+   Valla. The stabilization branch now includes LICENSE and matching package
+   metadata. Include the notice in the release distribution.
 4. Decide the fate of `4cdcf80`, then clean integrated branch/worktree history
    in a separate maintenance action. Restore main tracking when appropriate.
 5. Run the full checks and isolated linking smoke on the final clean release
@@ -152,4 +153,5 @@ autonomous execution. See [release policy](../development/releases.md).
 
 These checks validate the clean baseline plus this stabilization change. They
 do not include the active dashboard work in the original dirty worktree and
-do not certify a release. The license selection remains outstanding.
+do not certify a release. The subsequent owner-selected MIT license is included
+in this branch; no tag or release has been published.

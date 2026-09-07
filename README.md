@@ -2,6 +2,8 @@
 
 AI Office is a local AI software office that coordinates agents, keeps structured state in SQLite, manages tasks, runs, governance, budgets, and costs, and mediates agent access to resources through capabilities and controlled actions.
 
+Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Andrea Valla.
+
 ## What AI Office is
 
 AI Office is a Bun and strict TypeScript monorepo built around one authoritative

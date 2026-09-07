@@ -36,9 +36,9 @@ behavior; private TypeScript modules are not a published SDK.
    whitespace check, and `bun run smoke:bun-link` in isolated fixtures. Verify
    the product-version command remains local. All CI jobs must pass on the
    intended release commit.
-4. Confirm the repository LICENSE and ownership notice before distributing a
-   public release. Do not infer licensing from a public GitHub repository or
-   from the licenses of dependencies.
+4. Include the repository [MIT LICENSE](../../LICENSE) and its copyright
+   notice for Andrea Valla in the distribution. Preserve any required notices
+   for bundled third-party components; their licenses remain independent.
 5. Merge the reviewed change, then publish an immutable annotated `vX.Y.Z` tag
    and matching GitHub release at that exact commit with its changelog notes.
    Never move a published release tag; fixes receive a new version.

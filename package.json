@@ -1,6 +1,7 @@
 {
   "name": "ai-office",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "bin": {
     "ai-office": "./bin/ai-office.ts"
