@@ -1,6 +1,6 @@
 # Project consolidation and first real worker plan
 
-- Status: Delivery A implemented in the consolidation PR stack, pending merge;
+- Status: Delivery A integrated on `main` through #31 and #38–#42;
   Delivery B remains proposed.
 - Date: 2026-09-05
 - Origin: project, architecture, and roadmap review requested by the maintainer.

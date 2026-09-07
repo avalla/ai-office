@@ -2,6 +2,8 @@
 
 AI Office is a local AI software office that coordinates agents, keeps structured state in SQLite, manages tasks, runs, governance, budgets, and costs, and mediates agent access to resources through capabilities and controlled actions.
 
+Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Andrea Valla.
+
 ## What AI Office is
 
 AI Office is a Bun and strict TypeScript monorepo built around one authoritative
@@ -13,6 +15,11 @@ clients through application services and explicit infrastructure ports.
 The product is local-first and auditable: SQLite is authoritative, generated Markdown is a projection, LLM usage is metered through a gateway, and protected resource operations are authorized through capability policy and connector boundaries.
 
 ## Current status
+
+The product version is defined in the root `package.json`; inspect it locally
+with `ai-office --version` (or `bun run dev:cli -- --version`). This does not
+contact the Runtime or require source user-runtime opt-in. See the
+[release policy](docs/development/releases.md) and [changelog](CHANGELOG.md).
 
 The current implementation on `main` includes:
 
@@ -421,9 +428,9 @@ updates itself as the daemon completes commands. `--port`, `--host`, and
 The dashboard does not infer operational state from raw SQLite records. It
 consumes the same authoritative application read models any other client would,
 so the console, the CLI, and future integrations cannot disagree about what a
-task's status means. Where the current domain cannot express something — there
-is no persisted task/requirement or task/milestone association — the surface
-reports it as unavailable instead of guessing.
+task's status means. Requirement summaries come from explicit task/requirement
+links; no links means available with zero counts. Task/milestone association
+remains unavailable, and requirement progress does not infer task completion.
 
 It is read-only: no task editing, no pipeline control, no approvals, no
 assignment. See the [operational dashboard guide](docs/development/dashboard.md)

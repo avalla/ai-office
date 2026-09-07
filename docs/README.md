@@ -35,6 +35,8 @@ AI Office keeps different kinds of documentation separate so current product tru
   and the legal reference vertical with provenance, human-approval, policy, and
   audit constraints.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
+- [Product versions and releases](development/releases.md): product version ownership,
+  compatibility boundaries, changelog, and release gates.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
 - [Run recovery](development/run-recovery.md): host-owned cancellation, interrupted execution, approved reconciliation, and ambiguous-effect limitations.
 - [Source runtime isolation and ownership](adr/ADR-0016-source-runtime-isolation-and-run-recovery.md): development defaults, source-bin opt-in, and persisted run ownership evidence.

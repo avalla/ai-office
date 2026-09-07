@@ -5,6 +5,9 @@ export function isLocalHelpInvocation(args: readonly string[]): boolean {
 
 export const runtimeCommandHelp = `AI Office CLI
 
+Local options:
+  --version, -V  # product version; no Runtime access or source opt-in required
+
 Commands:
   install [path] [--rebind] [--json]
     reconciles repository identity, shared AI-OFFICE.md guidance, and detected host skills
