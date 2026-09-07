@@ -3,6 +3,10 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  isLocalVersionInvocation,
+  productVersion,
+} from "@ai-office/command-support/version.ts";
+import {
   isLocalHelpInvocation,
   runtimeCommandHelp,
 } from "@ai-office/command-support/help.ts";
@@ -17,6 +21,10 @@ import {
 
 const distributionRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = Bun.argv.slice(2);
+if (isLocalVersionInvocation(args)) {
+  console.log(productVersion);
+  process.exit(0);
+}
 if (isLocalHelpInvocation(args)) {
   console.log(runtimeCommandHelp);
   process.exit(0);

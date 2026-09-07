@@ -223,14 +223,15 @@ Exit criteria:
 
 ### M6C.5 — LLM-assisted adaptive project onboarding
 
-Status: implemented.
+Status: historical implementation; provider-backed onboarding was superseded
+by host-only onboarding in [ADR-0010](../adr/ADR-0010-host-only-onboarding.md).
 
 - deterministic, offline `project:import` scan and persisted detected facts;
-- progressive LLM-generated onboarding batches through the existing metered gateway;
-- strict structured-output validation, generation provenance, prompt version, round, and semantic input hash;
-- structured answers projected into the project profile without creating capability grants;
-- at most five questions per round and three generated rounds;
-- daemon-backed interactive and automation-friendly CLI flows.
+- conversational questions and synthesis now belong to the active coding host;
+- the Runtime validates and persists approved office state without provider calls;
+- historical generated questions and provenance remain readable, and
+  `project:answer` can close previously stored questions;
+- `project:onboard` and the Runtime question generator are no longer implemented.
 
 This milestone does not connect the agent runtime to controlled actions and does not add reusable memory, code indexing, RAG, or autonomous permission changes.
 
@@ -481,9 +482,10 @@ Delivered:
   `recordedStatus`, `operationalStatus`, and the reasons they differ, and the UI
   lists divergent tasks separately.
 
-The task/requirement and task/milestone relationships are not modelled in the
-current schema. They are published as explicitly unavailable rather than
-defaulted, so adding them later is a value change, not a contract change.
+Task/requirement summaries use explicit links introduced in M7.9 and exposed by
+the consolidation query changes. Empty linkage is available with zero counts.
+Task/milestone association remains unmodelled and explicitly unavailable;
+requirement progress does not infer task completion or milestone membership.
 
 No migration and no index were introduced: the queries reuse existing access
 paths. The dashboard is read-only by construction — it starts, stops, retries,
@@ -553,7 +555,7 @@ links into a version 1 envelope is refused rather than silently dropped.
 
 ## M7.10 — Safe development CLI/runtime isolation
 
-Status: implemented in the consolidation PR stack; pending merge.
+Status: implemented on `main` (consolidation integrated through #31 and #38–#42).
 
 - `dev:cli` and `dev:daemon` select the source checkout's `.ai-office` using
   their entry-point location, including linked worktrees and descendant cwd;
