@@ -71,6 +71,16 @@ function controlledActionExecutor(
       },
     },
     fallback,
+    async (run) => {
+      const snapshot = run.snapshot();
+      const agent = await context.runtime.findAgent(snapshot.agentId);
+      const role =
+        agent === null
+          ? null
+          : await context.runtime.findRole(agent.roleId, snapshot.projectId);
+      const seconds = role?.snapshot().limits.timeoutSeconds ?? 30;
+      return seconds * 1000;
+    },
   );
 }
 

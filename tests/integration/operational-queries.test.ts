@@ -176,6 +176,41 @@ async function seedProject(
     .run(`repo-${id}`, id, now.toISOString());
 }
 
+test("filtered task pages expose linear projection cost during live refresh", async () => {
+  const context = await fixture();
+  await seedProject(context, "large-project", "Large");
+  const insert = context.database.prepare(
+    `INSERT INTO task(id, project_id, title, description, status, priority, created_at, updated_at)
+     VALUES (?, ?, ?, NULL, 'pending', 0, ?, ?)`,
+  );
+  for (let index = 0; index < 10_000; index += 1) {
+    const timestamp = new Date(now.getTime() + index).toISOString();
+    insert.run(
+      `large-task-${index}`,
+      "large-project",
+      `Task ${index}`,
+      timestamp,
+      timestamp,
+    );
+  }
+  const originalListTasks = context.reads.listTasks.bind(context.reads);
+  let listTaskCalls = 0;
+  context.reads.listTasks = async (...args) => {
+    listTaskCalls += 1;
+    return originalListTasks(...args);
+  };
+  const expectedBatches = Math.ceil(10_000 / queryLimits.tasks.default);
+  const first = await context.queries.getProjectDetail("large-project", {
+    taskQuery: { search: "does-not-match" },
+  });
+  expect(first.tasks.total).toBe(0);
+  expect(listTaskCalls).toBe(expectedBatches);
+  await context.queries.getProjectDetail("large-project", {
+    taskQuery: { search: "does-not-match" },
+  });
+  expect(listTaskCalls).toBe(expectedBatches * 2);
+});
+
 async function seedAgent(
   context: Awaited<ReturnType<typeof fixture>>,
   projectId: string,

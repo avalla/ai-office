@@ -99,8 +99,15 @@ export class ExecuteAgentRun {
         actions = result.actions ?? [];
         if (isCancelled(undefined, signal))
           throw new DOMException("Execution cancelled", "AbortError");
-        run.transition("reviewing", this.clock.now(), { result });
-        await this.persist(run);
+        const reviewingAt = this.clock.now();
+        if (prepared?.accept !== undefined) {
+          await prepared.accept(run, result, reviewingAt);
+          // The acceptance fence persisted this exact transition atomically.
+          run.transition("reviewing", reviewingAt, { result });
+        } else {
+          run.transition("reviewing", reviewingAt, { result });
+          await this.persist(run);
+        }
         run.transition("completed", this.clock.now(), { result });
         await this.persist(run);
         terminalPersisted = true;

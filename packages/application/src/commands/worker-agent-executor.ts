@@ -8,6 +8,7 @@ import type {
   PreparedAgentExecution,
 } from "@ai-office/agent-runtime/executor.ts";
 import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
+import type { WorkerAuthorityFence } from "../ports/agent-runtime-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
@@ -117,12 +118,40 @@ export class WorkerAgentExecutor implements AgentExecutor {
       limits.timeoutMs > 2147483647
     )
       throw new WorkerRuntimeError("WORKER_CONTEXT_INVALID");
-    return {
-      provenance: {
+    const fence: Omit<WorkerAuthorityFence, "runId"> = {
+      projectId: snapshot.projectId,
+      taskId: snapshot.taskId,
+      taskStatus: taskState.status,
+      taskUpdatedAt: taskState.updatedAt,
+      agentId: snapshot.agentId,
+      agentRoleId: agent.roleId,
+      agentUpdatedAt: agent.updatedAt,
+      roleId: roleState.id,
+      roleKey: roleState.key,
+      roleVersion: roleState.version,
+      roleLimits: { ...roleState.limits },
+      roleUpdatedAt: roleState.updatedAt,
+      pipeline:
+        pipeline === null || stage === null || stage === undefined
+          ? null
+          : {
+              id: pipeline.snapshot().id,
+              version: pipeline.snapshot().version,
+              currentStageIndex: pipeline.snapshot().currentStageIndex,
+              stageId: stage.stageId,
+              stageRoleId: stage.roleId,
+              assignedAgentId: stage.assignedAgentId!,
+            },
+      execution: {
         kind: "worker",
         adapterId: this.worker.id,
         adapterVersion: descriptor.version,
         inputHash: createHash("sha256").update(serialized).digest("hex"),
+      },
+    };
+    return {
+      provenance: {
+        ...fence.execution,
       },
       usesWorktree: false,
       execute: async (signal) => {
@@ -199,7 +228,6 @@ export class WorkerAgentExecutor implements AgentExecutor {
             limits,
             control.signal,
           );
-          if (leaseLost) throw new WorkerRuntimeError("WORKER_LEASE_LOST");
           return {
             summary: output.summary,
             artifacts: [],
@@ -214,6 +242,15 @@ export class WorkerAgentExecutor implements AgentExecutor {
           signal?.removeEventListener("abort", abort);
           await renewing;
         }
+      },
+      accept: async (currentRun, result, acceptedAt) => {
+        const accepted = await this.runtime.acceptWorkerResult({
+          fence: { ...fence, runId: currentRun.snapshot().id },
+          run: currentRun,
+          result,
+          acceptedAt,
+        });
+        if (!accepted) throw new WorkerRuntimeError("WORKER_LEASE_LOST");
       },
     };
   }

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { existsSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   ClaudeWorkerRuntime,
@@ -53,10 +59,10 @@ const envelope = {
   api_key: "must not be published",
 };
 const help =
-  "--safe-mode --tools --strict-mcp-config --setting-sources --no-session-persistence --json-schema --disable-slash-commands";
+  "--safe-mode --tools --disallowedTools --strict-mcp-config --setting-sources --no-session-persistence --json-schema --disable-slash-commands";
 
 describe("bounded Claude worker", () => {
-  test("pins a supported CLI and executes only explicit input with all tools and customizations disabled", async () => {
+  test("pins a supported CLI and executes only explicit input with model-visible tools disabled", async () => {
     const calls: WorkerProcessRequest[] = [];
     const runtime = new ClaudeWorkerRuntime(
       "test-claude",
@@ -76,6 +82,7 @@ describe("bounded Claude worker", () => {
     const value = (flag: string) =>
       request.args[request.args.indexOf(flag) + 1];
     expect(value("--tools")).toBe("");
+    expect(value("--disallowedTools")).toBe("mcp__*");
     expect(value("--setting-sources")).toBe("");
     expect(value("--mcp-config")).toBe('{"mcpServers":{}}');
     expect(value("--permission-mode")).toBe("dontAsk");
@@ -95,6 +102,7 @@ describe("bounded Claude worker", () => {
     expect(
       projectWorkerOutput({ workerOutput: result, secret: "hidden" }),
     ).toEqual(result);
+    expect(existsSync(calls[2]!.cwd)).toBe(false);
   });
 
   test("refuses clients without customization isolation before task dispatch", async () => {
@@ -108,7 +116,7 @@ describe("bounded Claude worker", () => {
     await expect(runtime.execute(context, limits)).rejects.toMatchObject({
       code: "WORKER_UNAVAILABLE",
     });
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(1);
   });
 
   test.each([
@@ -202,4 +210,76 @@ describe("bounded Claude worker", () => {
     control.abort();
     await expect(execution).rejects.toMatchObject({ name: "AbortError" });
   });
+
+  test.skipIf(process.platform === "win32")(
+    "POSIX cancellation kills a persistent grandchild and cleans the test directory",
+    async () => {
+    const root = mkdtempSync(join(tmpdir(), "ao-worker-tree-"));
+    const pidFile = join(root, "grandchild.pid");
+    try {
+      const script = [
+        "const { spawn } = require('node:child_process');",
+        "const fs = require('node:fs');",
+        `const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+        "setInterval(() => {}, 1000);",
+      ].join(" ");
+      await expect(
+        runWorkerProcess({
+          executable: process.execPath,
+          args: ["-e", script],
+          cwd: root,
+          input: "",
+          timeoutMs: 100,
+        }),
+      ).rejects.toMatchObject({ code: "WORKER_TIMEOUT" });
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        try {
+          process.kill(pid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        } catch {
+          break;
+        }
+      }
+      expect(() => process.kill(pid, 0)).toThrow();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      expect(existsSync(root)).toBe(false);
+    }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "POSIX AbortSignal cancellation also kills the whole worker group",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "ao-worker-abort-tree-"));
+      const pidFile = join(root, "grandchild.pid");
+      try {
+        const script = [
+          "const { spawn } = require('node:child_process');",
+          "const fs = require('node:fs');",
+          `const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+          "setInterval(() => {}, 1000);",
+        ].join(" ");
+        const control = new AbortController();
+        const execution = runWorkerProcess({
+          executable: process.execPath,
+          args: ["-e", script],
+          cwd: root,
+          input: "",
+          timeoutMs: 5000,
+          signal: control.signal,
+        });
+        for (let attempt = 0; attempt < 50 && !existsSync(pidFile); attempt += 1)
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        const pid = Number(readFileSync(pidFile, "utf8"));
+        control.abort();
+        await expect(execution).rejects.toMatchObject({ name: "AbortError" });
+        expect(() => process.kill(pid, 0)).toThrow();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        expect(existsSync(root)).toBe(false);
+      }
+    },
+  );
 });

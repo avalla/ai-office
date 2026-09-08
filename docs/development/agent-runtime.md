@@ -82,10 +82,18 @@ ai-office run:show --project <project-id> --run <run-id>
 
 Use `--simulate` for a deterministic test instead. Selection applies to normal
 tasks in that tick's batch; controlled-action intents always use their gateway.
-The daemon needs a compatible `claude` executable on its PATH and a working
-client login. The adapter checks installed version/help support and never logs
-in, installs a client, copies credentials or falls back after an error. A host
-started before a PATH/login change may need to be restarted explicitly.
+The daemon needs Claude Code `2.1.236` or newer on its PATH and a working
+client login. The adapter checks the semantic version and required capabilities
+and never logs in, installs a client, copies credentials or falls back after an
+error. This is model-visible tool isolation, not process-level isolation:
+`--tools ""` removes built-in tools, the strict empty MCP config removes
+configured MCP servers, and an advertised `--disallowedTools` adds an explicit
+`mcp__*` deny. `--safe-mode` and empty ordinary setting sources do not override
+managed settings; managed policy hooks may still run in a managed environment.
+`--restricted` and `--permission-prompts none` are not assumed at this baseline.
+Operators requiring process-level isolation must add an OS/container policy
+outside this adapter's guarantee. A host started before a PATH/login change may
+need to be restarted explicitly.
 
 The first real worker produces **analysis and drafted content**. It receives
 task title/description, synchronized agent/role identity and version, and the
@@ -112,7 +120,15 @@ exclude cache-read/cache-creation counts. Missing estimates or tokens remain
 unknown. `--worker-model` overrides client model selection; the role's generic
 `modelPolicy` is not a provider model selector in this first adapter.
 
-Cancellation or deadline stops and reaps the child before the execution returns.
+Cancellation or deadline stops and reaps the whole worker process group on
+POSIX before the execution returns. Windows currently only supports
+direct-child termination, so descendant cleanup is not equivalent. Controlled
+action invocation receives the assigned role timeout and propagates its
+AbortSignal. A connector that ignores cancellation is not detached: the runtime
+waits for its call to return, leaving the operation observable until an explicit
+result or reconciliation. It must not be reported as a definite failure when
+an external side effect could be ambiguous; the separately executed mutation
+path retains the existing `execution_unknown` reconciliation model.
 If the host crashes, the new host cannot attest that the old external process
 stopped: recovery reports `externalWorkerUnobserved`. Inspect the installed
 client/process before explicitly reconciling that record; reconciliation does
@@ -122,3 +138,15 @@ and all protected mutation approvals remain explicit separate operations.
 
 See [ADR-0017](../adr/ADR-0017-bounded-external-worker.md) for the boundary and
 remaining autonomous-delivery work.
+
+## Dashboard filtered-page cost
+
+Filtered task pages intentionally evaluate the authoritative operational-status
+projection in application code rather than introducing a second SQL status
+engine. The regression benchmark in
+`tests/integration/operational-queries.test.ts` seeds 10,000 tasks and asserts
+100 status-projection batches at the current page batch size of 100; a second
+live-refresh query repeats the same bounded linear work. This is acceptable for
+the current local target, so no cache or materialized status table is added
+until measurements show that the single-source projection is no longer within
+the target latency.

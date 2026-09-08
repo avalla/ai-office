@@ -26,6 +26,27 @@ export type WorkerProcessRunner = (
 ) => Promise<string>;
 const terminationGraceMs = 2000;
 const inspectionTimeoutMs = 10000;
+const processTreePollMs = 10;
+const minimumClaudeVersion = [2, 1, 236] as const;
+
+function supportedVersion(version: string): boolean {
+  const parts = version.split(".").map(Number);
+  for (let index = 0; index < minimumClaudeVersion.length; index += 1) {
+    const current = parts[index] ?? 0;
+    const minimum = minimumClaudeVersion[index]!;
+    if (current !== minimum) return current > minimum;
+  }
+  return true;
+}
+
+function processGroupAlive(pid: number): boolean {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** No shell interpolation, inherited provider secrets, or raw failure output. */
 export const runWorkerProcess: WorkerProcessRunner = (request) =>
@@ -52,6 +73,7 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
         cwd: request.cwd,
         env,
         stdio: ["pipe", "pipe", "pipe"],
+        detached: process.platform !== "win32",
       });
     } catch {
       reject(new WorkerRuntimeError("WORKER_UNAVAILABLE"));
@@ -62,13 +84,42 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
     let bytes = 0;
     let failure: Error | undefined;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
+    let groupPollTimer: ReturnType<typeof setTimeout> | undefined;
     let closed = false;
+    const posixProcessGroup = process.platform !== "win32";
+    const signalTree = (signal: "SIGTERM" | "SIGKILL") => {
+      try {
+        if (posixProcessGroup && child.pid !== undefined)
+          process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch {
+        // The process may have exited between the liveness check and signal.
+      }
+    };
+    const finish = () => {
+      if (!closed) return;
+      if (
+        failure !== undefined &&
+        posixProcessGroup &&
+        child.pid !== undefined &&
+        processGroupAlive(child.pid)
+      ) {
+        groupPollTimer = setTimeout(finish, processTreePollMs);
+        return;
+      }
+      if (killTimer !== undefined) clearTimeout(killTimer);
+      if (groupPollTimer !== undefined) clearTimeout(groupPollTimer);
+      request.signal?.removeEventListener("abort", abort);
+      if (failure !== undefined) reject(failure);
+      else resolve(output + decoder.end());
+    };
     const stop = (error: Error) => {
       if (closed || failure !== undefined) return;
       failure = error;
-      child.kill("SIGTERM");
+      signalTree("SIGTERM");
       killTimer = setTimeout(() => {
-        if (!closed) child.kill("SIGKILL");
+        signalTree("SIGKILL");
+        finish();
       }, terminationGraceMs);
     };
     const abort = () =>
@@ -96,11 +147,10 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
     child.on("close", (code) => {
       closed = true;
       clearTimeout(deadline);
-      if (killTimer !== undefined) clearTimeout(killTimer);
-      request.signal?.removeEventListener("abort", abort);
-      if (failure !== undefined) reject(failure);
-      else if (code !== 0) reject(new WorkerRuntimeError("WORKER_FAILED"));
-      else resolve(output + decoder.end());
+      if (failure === undefined && code !== 0)
+        failure = new WorkerRuntimeError("WORKER_FAILED");
+      if (failure !== undefined && posixProcessGroup) signalTree("SIGKILL");
+      finish();
     });
     child.stdin?.end(request.input);
   });
@@ -186,6 +236,7 @@ export function parseClaudeWorkerOutput(text: string): WorkerOutput {
 export class ClaudeWorkerRuntime implements WorkerRuntime {
   readonly id = "claude-code";
   private inspection: Promise<{ version: string }> | undefined;
+  private disallowedToolsSupported = false;
   constructor(
     private readonly executable = "claude",
     private readonly runner: WorkerProcessRunner = runWorkerProcess,
@@ -205,7 +256,7 @@ export class ClaudeWorkerRuntime implements WorkerRuntime {
         /^(\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?) \(Claude Code\)\s*$/.exec(
           versionText,
         )?.[1];
-      if (version === undefined)
+      if (version === undefined || !supportedVersion(version))
         throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
       const help = await this.runner({
         executable: this.executable,
@@ -225,6 +276,9 @@ export class ClaudeWorkerRuntime implements WorkerRuntime {
       ])
         if (!help.includes(flag))
           throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
+      // Optional defense in depth. The supported baseline does not include
+      // --restricted or --permission-prompts, so neither is fabricated here.
+      this.disallowedToolsSupported = help.includes("--disallowedTools");
       return { version };
     });
     return this.inspection;
@@ -242,6 +296,9 @@ export class ClaudeWorkerRuntime implements WorkerRuntime {
         "--print",
         "--tools",
         "",
+        ...(this.disallowedToolsSupported
+          ? ["--disallowedTools", "mcp__*"]
+          : []),
         "--strict-mcp-config",
         "--mcp-config",
         '{"mcpServers":{}}',

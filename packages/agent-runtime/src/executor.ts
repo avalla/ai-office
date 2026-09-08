@@ -18,6 +18,10 @@ export interface AgentControlledActionGateway {
   }): Promise<AgentControlledActionResult>;
 }
 
+export type ControlledActionTimeout = (
+  run: AgentRun,
+) => number | Promise<number>;
+
 export interface AgentExecutionResult {
   summary: string;
   artifacts: string[];
@@ -33,6 +37,11 @@ export interface PreparedAgentExecution {
   provenance: AgentExecutionProvenance;
   usesWorktree: boolean;
   execute(signal?: AbortSignal): Promise<AgentExecutionResult>;
+  accept?(
+    run: AgentRun,
+    result: AgentExecutionResult,
+    acceptedAt: Date,
+  ): Promise<void>;
 }
 
 export class AgentExecutorNotConfiguredError extends Error {
@@ -82,6 +91,7 @@ export class ControlledActionAgentExecutor implements AgentExecutor {
   constructor(
     private readonly gateway: AgentControlledActionGateway,
     private readonly fallback: AgentExecutor = new UnconfiguredAgentExecutor(),
+    private readonly timeoutForRun: ControlledActionTimeout = () => 30_000,
   ) {}
 
   async prepare(run: AgentRun): Promise<PreparedAgentExecution> {
@@ -110,14 +120,27 @@ export class ControlledActionAgentExecutor implements AgentExecutor {
     if (intent === undefined) return this.fallback.execute(run, signal);
     if (signal?.aborted === true)
       throw new DOMException("Execution cancelled", "AbortError");
-    const action = await this.gateway.invoke({
-      agentRunId: snapshot.id,
-      ...(signal === undefined ? {} : { signal }),
-    });
-    return {
-      summary: `Controlled action ${action.requestId} reached ${action.status}`,
-      artifacts: [`action:${action.requestId}`],
-      actions: [action],
-    };
+    const timeoutMs = await this.timeoutForRun(run);
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
+      throw new Error("Controlled action timeout is invalid");
+    const control = new AbortController();
+    const abort = () => control.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    const timer = setTimeout(() => control.abort(), timeoutMs);
+    if (signal?.aborted) abort();
+    try {
+      const action = await this.gateway.invoke({
+        agentRunId: snapshot.id,
+        signal: control.signal,
+      });
+      return {
+        summary: `Controlled action ${action.requestId} reached ${action.status}`,
+        artifacts: [`action:${action.requestId}`],
+        actions: [action],
+      };
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    }
   }
 }

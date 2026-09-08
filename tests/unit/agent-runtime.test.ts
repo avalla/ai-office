@@ -102,10 +102,47 @@ describe("agent runtime domain", () => {
         },
       ],
     });
-    expect(calls).toEqual([
-      {
-        agentRunId: "run",
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ agentRunId: "run" });
+    expect((calls[0] as { signal: AbortSignal }).signal).toBeInstanceOf(
+      AbortSignal,
+    );
+  });
+
+  test("bounds controlled-action waiting with the role deadline without detaching a non-cooperative connector", async () => {
+    let observedSignal!: AbortSignal;
+    const run = AgentRun.create({
+      id: "run-timeout",
+      projectId: "project",
+      taskId: "task",
+      agentId: "agent",
+      actionIntent: {
+        resourceId: "workspace",
+        operation: "filesystem.read",
+        arguments: { path: "notes/hello.txt" },
       },
-    ]);
+      now: new Date("2026-08-05T00:00:00Z"),
+    });
+    const executor = new ControlledActionAgentExecutor(
+      {
+        invoke: async (input) => {
+          observedSignal = input.signal!;
+          // Deliberately ignore AbortSignal: the caller must wait for the
+          // connector to return instead of reporting a false failure.
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return {
+            requestId: "action-timeout",
+            outcome: "allowed" as const,
+            status: "completed" as const,
+          };
+        },
+      },
+      undefined,
+      () => 5,
+    );
+    await expect(executor.execute(run)).resolves.toMatchObject({
+      actions: [{ requestId: "action-timeout", status: "completed" }],
+    });
+    expect(observedSignal.aborted).toBe(true);
   });
 });

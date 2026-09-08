@@ -13,10 +13,21 @@ worker must provide useful generated work without creating that bypass.
 
 Introduce an application `WorkerRuntime` port and a Claude Code adapter that
 receives only bounded, explicit task/agent/stage data. It runs in a private
-temporary directory with built-in tools, MCP discovery, project settings,
-hooks, skills and session persistence disabled. The installed trusted client
-retains its own login; AI Office never copies credentials. This is a trusted
-local execution contract, not protection against a hostile same-UID process.
+temporary directory and provides **model-visible tool isolation**: `--tools
+""`, a strict empty MCP configuration, empty ordinary setting sources,
+disabled slash commands, and no repository path. The installed trusted client
+retains its own login; AI Office never copies credentials. This is deliberately
+not process-level resource isolation. `--safe-mode` disables ordinary
+customizations, but managed settings remain a trusted-host policy surface and
+may still configure hooks. AI Office therefore does not claim that the Claude
+process cannot execute managed customization or that it is isolated from a
+same-UID/administrator policy.
+
+The supported baseline is Claude Code `2.1.236` or newer. `--restricted` and
+`--permission-prompts none` are not used because their availability is not part
+of that baseline. When the installed client advertises `--disallowedTools`,
+the adapter additionally denies the `mcp__*` namespace as defense in depth.
+The authoritative reference is [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference).
 
 The operator selects `run:tick --worker claude` or `--simulate`. Unconfigured
 normal tasks remain queued. Action intents still use the controlled-action
@@ -40,8 +51,12 @@ chooses its model; generic `modelPolicy` values are not silently mapped to
 provider model names. Versioned `system.md` prompt integration remains future.
 
 The application renews the exclusive lease and checks task/agent/role/pipeline
-facts. Loss of authority aborts the process. The adapter bounds output, enforces
-a deadline, and waits for child termination before acknowledging cancellation.
+facts. Loss of authority aborts the process. A completion fence rechecks those
+facts, the run provenance and lease in the same short transaction that first
+persists `reviewing`; a stale result is rejected as `WORKER_LEASE_LOST`. The
+adapter bounds output, enforces a deadline, and waits for the whole POSIX
+process group before acknowledging cancellation. Windows currently only has
+direct-child termination and does not provide equivalent descendant cleanup.
 After host interruption, reconciliation reports unobserved external work;
 it resolves local records without claiming the old process stopped or replaying
 the operation. No SQLite transaction spans client inspection or execution.

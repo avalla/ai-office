@@ -17,6 +17,7 @@ import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts
 import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import { WorkerAgentExecutor } from "@ai-office/application/commands/worker-agent-executor.ts";
 import { ExecuteAgentRun } from "@ai-office/application/commands/execute-agent-run.ts";
+import { InMemoryWorktreeManager } from "@ai-office/agent-runtime/worktree.ts";
 import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent-run.ts";
 import { AdmitAgentRun } from "@ai-office/application/commands/admit-agent-run.ts";
 import type {
@@ -119,6 +120,59 @@ async function fixture(legacy = false) {
     ))!;
   };
   return { db, runs, tasks, pipelines, admitted };
+}
+
+async function addActivePipeline(f: Awaited<ReturnType<typeof fixture>>) {
+  const manifest: OfficeManifest = {
+    schemaVersion: 1,
+    provenance: { host: "codex", skill: "ai-office", skillVersion: "1" },
+    project: {
+      mission: "Analyze",
+      goals: [],
+      constraints: [],
+      preferences: [],
+      permissionPreferences: [],
+    },
+    office: {
+      name: "Test",
+      roles: [{ id: "architect", title: "Architect", purpose: "Design", responsibilities: [] }],
+    },
+    pipelines: [{
+      id: "analysis",
+      name: "Analysis",
+      description: "One stage",
+      defaultFor: [],
+      enforcement: "enforced",
+      stages: [{
+        id: "design",
+        name: "Design",
+        roleId: "architect",
+        objective: "Assess",
+        checks: [],
+        requiresApproval: false,
+      }],
+    }],
+  };
+  await new SqliteOfficeManifestRepository(f.db).save({
+    id: "manifest",
+    projectId: "p",
+    revision: 1,
+    manifest,
+    appliedAt: now,
+  });
+  const pipeline = PipelineRun.create({
+    id: "pipeline",
+    projectId: "p",
+    taskId: "t",
+    manifestRevisionId: "manifest",
+    manifestRevision: 1,
+    definition: manifest.pipelines[0]!,
+    startedBy: "operator",
+    stageRunIds: ["stage"],
+    now,
+  });
+  pipeline.assign("a", "architect", now);
+  await f.pipelines.insert(pipeline);
 }
 
 test("worker dispatch persists its context digest before calling the process and observes role limits", async () => {
@@ -272,6 +326,100 @@ test("authority changes after preparation prevent invocation", async () => {
     code: "WORKER_LEASE_LOST",
   });
   expect(execute).not.toHaveBeenCalled();
+});
+
+test.each(["task", "agent", "role", "lock"] as const)(
+  "completion fence rejects a %s change made while the worker is resolving",
+  async (kind) => {
+    const f = await fixture();
+    let started!: () => void;
+    let resolveOutput!: (value: WorkerOutput) => void;
+    const startedPromise = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const worker: WorkerRuntime = {
+      id: "test-worker",
+      inspect: async () => ({ version: "1" }),
+      execute: async () => {
+        started();
+        return new Promise<WorkerOutput>((resolve) => {
+          resolveOutput = resolve;
+        });
+      },
+    };
+    const execution = new ExecuteAgentRun(
+      f.runs,
+      new WorkerAgentExecutor(worker, f.runs, f.tasks, f.pipelines, clock),
+      new InMemoryWorktreeManager(),
+      clock,
+    ).execute(await f.admitted());
+    await startedPromise;
+    const changedAt = new Date(now.getTime() + 1000).toISOString();
+    if (kind === "task")
+      f.db.exec(`UPDATE task SET title='changed', updated_at='${changedAt}' WHERE id='t'`);
+    if (kind === "agent")
+      f.db.exec(`UPDATE agent SET enabled=0, updated_at='${changedAt}' WHERE id='a'`);
+    if (kind === "role")
+      f.db.exec(`UPDATE role SET version=2, updated_at='${changedAt}' WHERE id='role'`);
+    if (kind === "lock") {
+      f.db.exec(
+        `INSERT INTO agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at) VALUES ('other','p','t','a','running','${changedAt}','${changedAt}')`,
+      );
+      f.db.exec("UPDATE task_lock SET run_id='other' WHERE task_id='t'");
+    }
+    resolveOutput(output);
+    const result = await execution;
+    expect(result).toMatchObject({
+      status: "failed",
+      error: { code: "WORKER_LEASE_LOST" },
+    });
+    expect((await f.runs.findRun("r"))?.snapshot().status).toBe("failed");
+    expect((await f.runs.findRun("r"))?.snapshot().result).toBeUndefined();
+    expect(
+      (await f.runs.listRunEvents("r")).some((event) => event.status === "reviewing"),
+    ).toBe(false);
+  },
+);
+
+test("completion fence rejects a pipeline version/current-stage change before acceptance", async () => {
+  const f = await fixture();
+  await addActivePipeline(f);
+  let resolveOutput!: (value: WorkerOutput) => void;
+  let started!: () => void;
+  const startedPromise = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const execution = new ExecuteAgentRun(
+    f.runs,
+    new WorkerAgentExecutor(
+      {
+        id: "test-worker",
+        inspect: async () => ({ version: "1" }),
+        execute: async () => {
+          started();
+          return new Promise<WorkerOutput>((resolve) => {
+            resolveOutput = resolve;
+          });
+        },
+      },
+      f.runs,
+      f.tasks,
+      f.pipelines,
+      clock,
+    ),
+    new InMemoryWorktreeManager(),
+    clock,
+  ).execute(await f.admitted());
+  await startedPromise;
+  f.db.exec(
+    `UPDATE pipeline_run SET version=version+1, updated_at='${new Date(now.getTime() + 1000).toISOString()}' WHERE id='pipeline'`,
+  );
+  resolveOutput(output);
+  await expect(execution).resolves.toMatchObject({
+    status: "failed",
+    error: { code: "WORKER_LEASE_LOST" },
+  });
+  expect((await f.runs.findRun("r"))?.snapshot().result).toBeUndefined();
 });
 
 test("zero role budget refuses execution before inspecting a client", async () => {
