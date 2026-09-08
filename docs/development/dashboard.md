@@ -90,12 +90,13 @@ may be truncated:
 | Kind                           | Truncated?                  | Example                                                  |
 | ------------------------------ | --------------------------- | -------------------------------------------------------- |
 | Presentation sample            | yes, beside a total         | the active runs shown on the overview                    |
-| Pagination page                | yes, with a cursor          | `GET /api/activity`                                      |
+| Pagination page                | yes, with a cursor or offset | activity and filtered tasks                            |
 | Authoritative aggregate        | never                       | `activeAgentRuns`, `pendingReviews`, `attentionRequired` |
 | Authoritative projection input | never omits a relevant fact | a task's own in-flight and latest run                    |
 
-Samples are published as `{ total, items, truncated }`. `total` comes from a SQL
-aggregate over every matching row; `items` is what fits in the limit. A client
+Samples are published as `{ total, items, truncated }`. `total` covers every
+matching row, using SQL aggregates or an exhaustive application projection for
+filtered operational status; `items` is what fits in the limit. A client
 that reads `items.length` as a count is reading the wrong field, and the shape
 makes that visible.
 
@@ -131,6 +132,7 @@ audit event id; the SQLite `rowid` is deliberately not part of the contract.
 | `GET /api/projects`               | Project summaries                                |
 | `GET /api/projects/:id`           | Project detail: tasks, pipelines, agents, runs   |
 | `GET /api/projects/:id/tasks`     | Task operational state                           |
+| `GET /api/projects/:id/tasks/:taskId` | Task detail, active assignment, run history and scoped activity |
 | `GET /api/projects/:id/pipelines` | Pipeline runs (`?active=true`)                   |
 | `GET /api/projects/:id/agents`    | Agent activity                                   |
 | `GET /api/runs`                   | Agent runs (`?project=`, `?active=true`)         |
@@ -141,6 +143,78 @@ audit event id; the SQLite `rowid` is deliberately not part of the contract.
 | `GET /api/events`                 | Server-sent invalidation stream                  |
 
 The surface is read-only: any method other than `GET` returns `405`.
+
+### Task search, filters, and pages
+
+The project task table searches title, description, and task ID with literal,
+case-insensitive matching. Status means the application's operational status;
+priority is the persisted integer, including zero and negative values. Agent
+matches any active run or current assignment in an active pipeline, and
+"No current agent" matches neither. Historical run agents are excluded.
+Status, priority, and agent choices come from the project's actual tasks.
+
+The browser requests `GET /api/projects/:id?taskView=paged`, with optional
+`search`, `status`, `priority`, `agent`, `unassigned=true`, and `offset` parameters.
+Malformed filters return `400`; selecting both an agent and unassigned tasks is
+invalid. The response adds `taskPage` with applied filters, offset, page limit,
+and project-wide choices. Existing callers without `taskView=paged` retain the
+presentation-sample contract. The limit uses the existing `taskLimit` policy.
+
+Matching totals cover all tasks, including records beyond the initial sample.
+The application projects bounded batches through the existing operational-state
+function, then filters and retains the requested page. Exact task/agent pairs
+are read separately so an agent outside the displayed active-run sample still
+matches. This reuses the authoritative status rules without a second SQL status
+engine or a schema change. Query work grows with project task count; batching
+bounds intermediate data, not total work.
+
+Pages retain repository ordering: priority descending, creation time ascending,
+then task ID ascending. Filters and offset survive reloads and task-detail
+round trips in the hash URL. Applying filters resets the page; live refreshes
+preserve drafts and keyboard focus. Pagination reads current state rather than
+a frozen snapshot, so concurrent changes can move tasks between pages.
+Project summaries, attention, and charts always cover the whole project.
+
+### Task details and progress charts
+
+Task titles open a dedicated route, `#/projects/:id/tasks/:taskId`, from the
+project table, agent table, task attention entries, and run detail. The query
+service finds the task by both project and task identity before projecting it
+through the same operational-state function used by task lists. A task outside
+the project's presentation sample remains directly accessible; missing or
+cross-project task IDs return `404`.
+
+The detail shows description, recorded and operational status with divergence
+reasons, linked requirement counts, dates, the active pipeline and its current
+stage assignment, active run agents and their lease validity, and run history.
+There is no permanent task assignee in the domain. A stage's assigned agent and
+the agents executing runs are shown separately, including unassigned stages and
+concurrent runs. Historical agents never imply current assignment.
+
+Run history is filtered by project and task in SQL and is published beside its
+exact total. Task activity includes audit events for the task and all its
+persisted agent runs and pipeline runs, including historical runs. Relations and
+project ownership are resolved in SQL before the activity limit, independently
+of the displayed run sample. Raw execution events remain available through each
+run's detail. The empty state explains that task creation alone currently emits
+no audit event; missing historical events are never fabricated. Both histories
+disclose their presentation limits.
+
+Charts use existing exact aggregates: recorded task status from
+`ProjectSummary.tasks.byStatus`, completed/all tasks across projects, and active
+run versus assigned-stage counts from each `AgentState`. They never count the
+displayed task or run samples. The status chart is explicitly labelled as
+recorded status, not operational status; the workload chart is not a capacity
+or execution-authority claim. Counts remain visible as text, and SVG bars use
+numeric attributes compatible with the existing CSP. No chart dependency or
+build step is added.
+
+Zero-count status bars and agents with no current work are omitted from charts;
+the agent table still lists all agents. Empty operational sections and the
+duplicate divergent-task table are omitted. Task activity keeps an explicit
+empty state so absent audit history is distinguishable from a hidden section.
+Divergence remains visible in the
+task row and task detail.
 
 Run detail filters activity by the run's own aggregate ids **in SQL, before the
 limit**, so a run whose events are older than the latest project window still
@@ -400,16 +474,11 @@ silently.
 
 ### Relationships the domain does not model
 
-Two things a dashboard would like to show do not exist in the current schema:
-
-- requirements belong to projects and milestones; no task/requirement
-  association is persisted;
-- the task record carries no milestone reference.
-
-Both are published as `{ availability: "unavailable", reason, explanation }`
-rather than as an invented value. When the domain models them, the field becomes
-`{ availability: "available", value }` without a change to the surrounding
-contract.
+The task record carries no milestone reference; a milestone is not inferred
+from linked requirements. It is published as
+`{ availability: "unavailable", reason, explanation }` rather than an invented
+value. Task/requirement links are now explicit and their exact counts are
+available; the contract still accepts unavailable summaries from older hosts.
 
 ### Derived states are limited to persisted facts
 
@@ -572,14 +641,28 @@ Bun in memory at host start, split into:
   and ordering;
 - `ui/render.ts` — pure view model to HTML, with every interpolated value
   escaped;
+- `ui/charts.ts` — labelled SVG bars over exact aggregates;
+- `ui/task-filters.ts` — native filters and page links over the query contract;
+- `ui/html.ts` — shared HTML escaping boundary;
 - `ui/app.ts` — the browser shell: fetch, the invalidation stream, and the
   single DOM write.
 
-The first two are unit tested directly. There is no headless-browser test: the
-repository has no browser test tooling, and adding one was out of scope. The
-shell is kept small enough that its untested surface is a fetch, a stream
-subscription, and an assignment.
+Presentation mapping, escaping, chart totals, task details, and routing are
+unit tested directly. Task detail also has SQLite integration and Unix-socket
+coverage for ownership, missing records, limits, and read-only behavior. Browser
+checks can use a temporary synthetic Runtime fixture without opening personal
+project state or adding browser tooling to the production bundle.
 
 Pipeline stages are rendered from the persisted run definition — stage names and
 order come from the manifest revision the run pinned. No role vocabulary is
 hardcoded.
+
+### Execution evidence and generated output
+
+Run rows and detail identify the recorded executor: simulation, controlled action,
+or real worker. Missing historical provenance is explicitly unknown. Agent
+liveness is labelled “active run”; it is not proof of model execution. A worker
+run detail displays its bounded final output, adapter/version and input digest,
+reported model/session and optional usage estimate. Content is escaped as text;
+raw client envelopes and hidden reasoning are not projected. Generated output
+does not attest to file changes, successful tests, task completion or approval.

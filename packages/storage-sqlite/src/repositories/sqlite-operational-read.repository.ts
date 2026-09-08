@@ -163,18 +163,21 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
 
   async countAgentRuns(query: {
     projectIds?: readonly string[];
+    taskIds?: readonly string[];
     statuses?: readonly AgentRunStatus[];
   }): Promise<CountRecord[]> {
     const scope = scopeClauses(query.projectIds, "project_id");
     if (scope === null) return [];
+    const tasks = scopeClauses(query.taskIds, "task_id");
+    if (tasks === null) return [];
     const statuses = scopeClauses(query.statuses, "status");
     if (statuses === null) return [];
     return this.groupedCounts(
       `SELECT project_id, COUNT(*) AS count
          FROM agent_run
-         ${where(scope.clause, statuses.clause)}
+         ${where(scope.clause, tasks.clause, statuses.clause)}
          GROUP BY project_id`,
-      [...scope.parameters, ...statuses.parameters],
+      [...scope.parameters, ...tasks.parameters, ...statuses.parameters],
     );
   }
 
@@ -665,17 +668,21 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
   /* Bounded samples and pages                                               */
   /* ---------------------------------------------------------------------- */
 
-  async listTasks(projectId: string, limit: number): Promise<TaskProps[]> {
+  async listTasks(
+    projectId: string,
+    limit: number,
+    offset = 0,
+  ): Promise<TaskProps[]> {
     return this.database
-      .query<TaskRow, [string, number]>(
+      .query<TaskRow, [string, number, number]>(
         `SELECT id, project_id, title, description, status, priority,
                 created_at, updated_at
          FROM task
          WHERE project_id = ?
          ORDER BY priority DESC, created_at ASC, id ASC
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
       )
-      .all(projectId, limit)
+      .all(projectId, limit, offset)
       .map((row) => ({
         id: row.id,
         projectId: row.project_id,
@@ -686,6 +693,48 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
         createdAt: new Date(row.created_at),
         updatedAt: new Date(row.updated_at),
       }));
+  }
+
+  async findTask(projectId: string, taskId: string): Promise<TaskProps | null> {
+    const row = this.database
+      .query<TaskRow, [string, string]>(
+        `SELECT id, project_id, title, description, status, priority,
+                created_at, updated_at
+         FROM task WHERE project_id = ? AND id = ?`,
+      )
+      .get(projectId, taskId);
+    if (row === null) return null;
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      title: row.title,
+      ...(row.description === null ? {} : { description: row.description }),
+      status: row.status,
+      priority: row.priority,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at),
+    };
+  }
+
+  async listTaskAgentIds(
+    projectId: string,
+    taskIds: readonly string[],
+  ): Promise<{ taskId: string; agentId: string }[]> {
+    if (taskIds.length === 0) return [];
+    return this.database
+      .query<{ task_id: string; agent_id: string }, string[]>(
+        `SELECT task_id, agent_id FROM agent_run
+       WHERE project_id = ? AND task_id IN (${placeholders(taskIds.length)})
+         AND status IN (${placeholders(activeRunStatuses.length)})
+       UNION
+       SELECT r.task_id, s.assigned_agent_id AS agent_id
+       FROM pipeline_run r JOIN pipeline_stage_run s
+         ON s.pipeline_run_id = r.id AND s.stage_index = r.current_stage_index
+       WHERE r.project_id = ? AND r.task_id IN (${placeholders(taskIds.length)})
+         AND r.status = 'active' AND s.assigned_agent_id IS NOT NULL`,
+      )
+      .all(projectId, ...taskIds, ...activeRunStatuses, projectId, ...taskIds)
+      .map((row) => ({ taskId: row.task_id, agentId: row.agent_id }));
   }
 
   async listAttentionTasks(
@@ -1004,6 +1053,23 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
         `aggregate_id IN (${placeholders(query.aggregateIds.length)})`,
       );
       parameters.push(...query.aggregateIds);
+    }
+    if (query.taskId !== undefined) {
+      conditions.push(`EXISTS (
+        SELECT 1 FROM task t
+        WHERE t.id = ? AND t.project_id = audit_event.project_id AND (
+          (aggregate_type = 'task' AND aggregate_id = t.id)
+          OR (aggregate_type = 'agent_run' AND aggregate_id IN (
+            SELECT r.id FROM agent_run r
+            WHERE r.task_id = t.id AND r.project_id = t.project_id
+          ))
+          OR (aggregate_type = 'pipeline_run' AND aggregate_id IN (
+            SELECT p.id FROM pipeline_run p
+            WHERE p.task_id = t.id AND p.project_id = t.project_id
+          ))
+        )
+      )`);
+      parameters.push(query.taskId);
     }
     if (query.cursor !== undefined) {
       conditions.push("(occurred_at < ? OR (occurred_at = ? AND id < ?))");
@@ -1371,6 +1437,7 @@ interface ActivityRow {
 }
 
 interface AgentRunRow {
+  execution_json: string | null;
   id: string;
   project_id: string;
   task_id: string;
@@ -1397,7 +1464,7 @@ const agentRunColumns = `
     run.agent_id, ag.name AS agent_name, ag.role_id AS agent_role_id,
     r.role_key AS agent_role_key,
     run.pipeline_run_id, run.status, run.worktree_path,
-    run.result_json, run.error_json, run.action_intent_json,
+    run.result_json, run.error_json, run.action_intent_json, run.execution_json,
     run.created_at, run.started_at, run.completed_at, run.updated_at`;
 
 const agentRunFrom = `
@@ -1413,6 +1480,7 @@ function agentRunRecord(row: AgentRunRow): OperationalAgentRunRecord {
   const intentArguments =
     intent === null ? null : parseJsonObject(JSON.stringify(intent.arguments));
   return {
+    execution: parseJsonObject(row.execution_json),
     id: row.id,
     projectId: row.project_id,
     taskId: row.task_id,

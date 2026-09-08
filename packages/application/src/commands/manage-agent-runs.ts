@@ -74,6 +74,10 @@ export class ManageAgentRuns {
       ownerId,
       classification,
       cancellationRequested: this.control.cancellationRequested(runId),
+      // A new host cannot attest that an external process from an interrupted
+      // host stopped. Reconciliation changes records; it never replays work.
+      externalWorkerUnobserved:
+        r.execution?.kind === "worker" && !live && !terminal,
       actions,
       lock:
         lock === null

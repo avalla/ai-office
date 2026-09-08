@@ -13,12 +13,14 @@ import type {
   AgentRunDetail,
   DashboardOverview,
   ProjectDetail,
+  TaskDetail,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
   renderMessage,
   renderOverview,
   renderProject,
   renderRun,
+  renderTask,
 } from "./render.ts";
 import {
   connectionLabel,
@@ -31,10 +33,67 @@ import {
   parseRoute,
   projectViewModel,
   runViewModel,
+  taskViewModel,
+  routeHref,
   type DashboardRoute,
 } from "./view-model.ts";
+import { taskPageParameters } from "@ai-office/application/protocol/query-protocol.ts";
+import { taskFilterQuery } from "./task-filters.ts";
 
 const refreshDebounceMs = 250;
+let displayedRoute: string | null = null;
+
+/** Ignore responses for a route the user has already left. */
+function publishRoute(
+  route: DashboardRoute,
+  root: DashboardElement,
+  html: string,
+): boolean {
+  const key = routeHref(route);
+  if (key !== routeHref(parseRoute(window.location.hash))) return false;
+  const controls = ["search", "status", "priority", "agent"].map(
+    (name) => `task-filter-${name}`,
+  );
+  const draft =
+    displayedRoute === key
+      ? controls.map((id) => ({
+          id,
+          value: document.getElementById(id)?.value,
+        }))
+      : [];
+  const active = document.activeElement;
+  const focused =
+    active !== null && controls.includes(active.id)
+      ? {
+          id: active.id,
+          start: active.selectionStart,
+          end: active.selectionEnd,
+        }
+      : null;
+  const pageChanged = displayedRoute?.split("?")[0] !== key.split("?")[0];
+  root.innerHTML = html;
+  for (const field of draft) {
+    const element = document.getElementById(field.id);
+    if (element !== null && field.value !== undefined)
+      element.value = field.value;
+  }
+  if (pageChanged) {
+    root.setAttribute("tabindex", "-1");
+    root.focus({ preventScroll: true });
+    window.scrollTo(0, 0);
+  } else if (displayedRoute !== key) {
+    const target = document.getElementById("project-tasks");
+    target?.setAttribute("tabindex", "-1");
+    target?.focus({ preventScroll: true });
+  } else if (focused !== null) {
+    const element = document.getElementById(focused.id);
+    element?.focus({ preventScroll: true });
+    if (typeof focused.start === "number" && typeof focused.end === "number")
+      element?.setSelectionRange(focused.start, focused.end);
+  }
+  displayedRoute = key;
+  return true;
+}
 
 function mount(): DashboardElement {
   const element = document.getElementById("app");
@@ -69,28 +128,101 @@ async function renderRoute(
   root: DashboardElement,
 ): Promise<void> {
   try {
-    if (route.kind === "project") {
-      const body = await getJson<{ project: ProjectDetail }>(
-        `/api/projects/${encodeURIComponent(route.projectId)}`,
+    if (route.kind === "invalid") {
+      publishRoute(
+        route,
+        root,
+        renderMessage("Invalid task filters", route.message),
       );
-      root.innerHTML = renderProject(projectViewModel(body.project));
+      return;
+    }
+    if (route.kind === "task") {
+      const body = await getJson<{ task: TaskDetail }>(
+        `/api/projects/${encodeURIComponent(route.projectId)}/tasks/${encodeURIComponent(route.taskId)}`,
+      );
+      publishRoute(
+        route,
+        root,
+        renderTask(taskViewModel(body.task, route.taskQuery)),
+      );
+      return;
+    }
+    if (route.kind === "project") {
+      const parameters = taskPageParameters(route.taskQuery ?? {});
+      parameters.set("taskView", "paged");
+      const body = await getJson<{ project: ProjectDetail }>(
+        `/api/projects/${encodeURIComponent(route.projectId)}?${parameters}`,
+      );
+      if (
+        !publishRoute(
+          route,
+          root,
+          renderProject(projectViewModel(body.project)),
+        )
+      )
+        return;
+      document
+        .getElementById("task-filters")
+        ?.addEventListener("submit", (event) => {
+          event.preventDefault();
+          try {
+            const value = (name: string) =>
+              document.getElementById(`task-filter-${name}`)?.value ?? "";
+            const taskQuery = taskFilterQuery({
+              search: value("search"),
+              status: value("status"),
+              priority: value("priority"),
+              agent: value("agent"),
+            });
+            const destination = routeHref({
+              kind: "project",
+              projectId: route.projectId,
+              taskQuery,
+            });
+            if (window.location.hash !== destination)
+              window.location.hash = destination;
+          } catch (error) {
+            const message = document.getElementById("task-filter-error");
+            if (message !== null)
+              message.textContent =
+                error instanceof Error ? error.message : "Invalid filters";
+          }
+        });
+      for (const section of ["tasks", "agents", "pipelines"]) {
+        document
+          .getElementById(`jump-${section}`)
+          ?.addEventListener("click", () => {
+            const target = document.getElementById(`project-${section}`);
+            target?.setAttribute("tabindex", "-1");
+            target?.focus({ preventScroll: true });
+            target?.scrollIntoView({ block: "start" });
+          });
+      }
       return;
     }
     if (route.kind === "run") {
       const body = await getJson<{ run: AgentRunDetail }>(
         `/api/runs/${encodeURIComponent(route.runId)}`,
       );
-      root.innerHTML = renderRun(runViewModel(body.run));
+      publishRoute(route, root, renderRun(runViewModel(body.run)));
       return;
     }
     const body = await getJson<{ dashboard: DashboardOverview }>(
       "/api/dashboard",
     );
-    root.innerHTML = renderOverview(overviewViewModel(body.dashboard));
+    publishRoute(
+      route,
+      root,
+      renderOverview(overviewViewModel(body.dashboard)),
+    );
   } catch (error) {
-    root.innerHTML = renderMessage(
-      "Could not load operational state",
-      error instanceof Error ? error.message : "Unknown error",
+    publishRoute(
+      route,
+      root,
+      renderMessage(
+        "Could not load operational state",
+        error instanceof Error ? error.message : "Unknown error",
+      ),
     );
     throw error;
   }

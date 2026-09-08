@@ -113,9 +113,10 @@ limits:
           ])
         ).exitCode,
       ).toBe(0);
-      expect((await run(["run:tick", "--project", projectId])).stdout[0]).toBe(
-        "Agent runs executed: 1",
-      );
+      expect(
+        (await run(["run:tick", "--project", projectId, "--simulate"]))
+          .stdout[0],
+      ).toBe("Agent runs executed: 1");
       expect(
         (await run(["run:list", "--project", projectId])).stdout.join("\n"),
       ).toContain("completed");

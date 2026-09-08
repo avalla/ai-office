@@ -1,5 +1,6 @@
 import type { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { ActionStatus } from "@ai-office/domain/capability/action-request.ts";
+import type { AgentExecutionProvenance } from "@ai-office/domain/agent/agent-execution.ts";
 
 export type AgentControlledActionOutcome =
   "allowed" | "denied" | "simulation_required" | "approval_required";
@@ -21,12 +22,49 @@ export interface AgentExecutionResult {
   summary: string;
   artifacts: string[];
   actions?: AgentControlledActionResult[];
+  workerOutput?: unknown;
 }
 export interface AgentExecutor {
+  prepare?(run: AgentRun): Promise<PreparedAgentExecution>;
   execute(run: AgentRun, signal?: AbortSignal): Promise<AgentExecutionResult>;
 }
 
+export interface PreparedAgentExecution {
+  provenance: AgentExecutionProvenance;
+  usesWorktree: boolean;
+  execute(signal?: AbortSignal): Promise<AgentExecutionResult>;
+}
+
+export class AgentExecutorNotConfiguredError extends Error {
+  constructor() {
+    super(
+      "No real worker selected. Select a worker or explicitly request simulation.",
+    );
+    this.name = "AgentExecutorNotConfiguredError";
+  }
+}
+
+export class UnconfiguredAgentExecutor implements AgentExecutor {
+  async prepare(): Promise<PreparedAgentExecution> {
+    throw new AgentExecutorNotConfiguredError();
+  }
+  async execute(): Promise<AgentExecutionResult> {
+    throw new AgentExecutorNotConfiguredError();
+  }
+}
+
 export class SimulatedAgentExecutor implements AgentExecutor {
+  async prepare(run: AgentRun): Promise<PreparedAgentExecution> {
+    return {
+      provenance: {
+        kind: "simulation",
+        adapterId: "simulated",
+        adapterVersion: "1",
+      },
+      usesWorktree: false,
+      execute: (signal) => this.execute(run, signal),
+    };
+  }
   async execute(
     run: AgentRun,
     signal?: AbortSignal,
@@ -43,8 +81,25 @@ export class SimulatedAgentExecutor implements AgentExecutor {
 export class ControlledActionAgentExecutor implements AgentExecutor {
   constructor(
     private readonly gateway: AgentControlledActionGateway,
-    private readonly fallback: AgentExecutor = new SimulatedAgentExecutor(),
+    private readonly fallback: AgentExecutor = new UnconfiguredAgentExecutor(),
   ) {}
+
+  async prepare(run: AgentRun): Promise<PreparedAgentExecution> {
+    if (run.snapshot().actionIntent === undefined) {
+      if (this.fallback.prepare !== undefined)
+        return this.fallback.prepare(run);
+      throw new AgentExecutorNotConfiguredError();
+    }
+    return {
+      provenance: {
+        kind: "controlled_action",
+        adapterId: "controlled-action",
+        adapterVersion: "1",
+      },
+      usesWorktree: false,
+      execute: (signal) => this.execute(run, signal),
+    };
+  }
 
   async execute(
     run: AgentRun,

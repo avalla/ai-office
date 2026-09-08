@@ -36,6 +36,7 @@ AI Office keeps different kinds of documentation separate so current product tru
   audit constraints.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
+- [Bounded external worker](adr/ADR-0017-bounded-external-worker.md): explicit executor selection, input/output provenance, client limits and resource boundaries.
 - [Run recovery](development/run-recovery.md): host-owned cancellation, interrupted execution, approved reconciliation, and ambiguous-effect limitations.
 - [Source runtime isolation and ownership](adr/ADR-0016-source-runtime-isolation-and-run-recovery.md): development defaults, source-bin opt-in, and persisted run ownership evidence.
 - [Pipeline enforcement](development/pipeline-enforcement.md): guidance/enforced modes, operation, authorization, approvals, overrides, and compatibility.
@@ -73,6 +74,7 @@ Architectural decisions with explicit status. Accepted ADRs describe current dec
 
 Milestone assessments, implementation reports, and research notes. These documents preserve detailed context and evidence but may describe a point-in-time baseline rather than the current code.
 
+- [First real worker assessment](implementation/first-worker-assessment.md): alternatives, execution boundary and validation requirements for the bounded first adapter.
 - [Project consolidation and first real worker plan](implementation/project-consolidation-and-worker-plan.md): consolidation delivery record and proposed first real worker; the roadmap owns merge and milestone status.
 
 > Documents under `docs/implementation/` may describe historical designs,

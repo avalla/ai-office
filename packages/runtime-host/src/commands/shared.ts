@@ -28,6 +28,7 @@ import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project
 import type { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 
 export interface CommandContext {
+  onRunChanged?: () => void;
   executionControl: RunExecutionControl;
   agentExecutor?: AgentExecutor;
   runtimeHome: string;

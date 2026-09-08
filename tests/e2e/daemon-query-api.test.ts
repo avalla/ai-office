@@ -81,6 +81,119 @@ async function startDaemon(): Promise<Harness> {
 }
 
 describe("daemon query API", () => {
+  test("task detail reads persisted state through the socket and rejects foreign ownership", async () => {
+    const harness = await startDaemon();
+    try {
+      const command = (args: string[]) => harness.client.execute(args);
+      const projectId = (
+        await command(["project:create", "Task details"])
+      ).stdout[0]!.replace("Project created: ", "");
+      const foreignId = (
+        await command(["project:create", "Other"])
+      ).stdout[0]!.replace("Project created: ", "");
+      const taskId = (
+        await command([
+          "task:create",
+          "--project",
+          projectId,
+          "--title",
+          "Inspect this task",
+          "--description",
+          "First line\nSecond line",
+        ])
+      ).stdout[0]!.replace("Task created: ", "");
+      const path = `/api/projects/${projectId}/tasks/${taskId}`;
+      const result = await harness.get(path);
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
+        queryApiVersion,
+        task: {
+          projectName: "Task details",
+          task: {
+            taskId,
+            description: "First line\nSecond line",
+            operationalStatus: "not_started",
+            assignedAgent: null,
+          },
+          runs: { total: 0, items: [], truncated: false },
+          activity: { items: [], nextCursor: null },
+        },
+      });
+      expect(
+        (await harness.get(`/api/projects/${foreignId}/tasks/${taskId}`))
+          .status,
+      ).toBe(404);
+      expect(
+        (await harness.get(`/api/projects/${projectId}/tasks/missing`)).status,
+      ).toBe(404);
+      expect(
+        (await harness.get(`/api/projects/${projectId}/tasks/bad%20id`)).status,
+      ).toBe(400);
+      expect((await harness.raw(path, { method: "POST" })).status).toBe(405);
+      expect(
+        (
+          await command([
+            "task:start",
+            "--project",
+            projectId,
+            "--task",
+            taskId,
+          ])
+        ).exitCode,
+      ).toBe(0);
+      expect((await harness.get(path)).body).toMatchObject({
+        task: {
+          task: { recordedStatus: "running", operationalStatus: "in_progress" },
+          activity: {
+            items: [{ eventType: "task.status_changed", aggregateId: taskId }],
+          },
+        },
+      });
+      const projectPath = `/api/projects/${projectId}?taskView=paged`;
+      expect(
+        (
+          await harness.get(
+            `${projectPath}&search=second&status=in_progress&priority=0&unassigned=true`,
+          )
+        ).body,
+      ).toMatchObject({
+        project: {
+          summary: { tasks: { total: 1 } },
+          tasks: { total: 1, items: [{ taskId }] },
+          taskPage: {
+            options: {
+              priorities: [0],
+              statuses: ["in_progress"],
+              agents: [],
+              hasUnassigned: true,
+            },
+          },
+        },
+      });
+      expect(
+        (await harness.get(`${projectPath}&priority=-7`)).body,
+      ).toMatchObject({
+        project: {
+          summary: { tasks: { total: 1 } },
+          tasks: { total: 0, items: [] },
+        },
+      });
+      for (const invalid of [
+        "status=unknown",
+        "priority=1.5",
+        "offset=-1",
+        "agent=bad%20id",
+        "agent=agent-1&unassigned=true",
+      ]) {
+        expect((await harness.get(`${projectPath}&${invalid}`)).status).toBe(
+          400,
+        );
+      }
+    } finally {
+      await harness.stop();
+    }
+  });
+
   test("task requirement summaries reflect explicit links and governance changes", async () => {
     const harness = await startDaemon();
     try {

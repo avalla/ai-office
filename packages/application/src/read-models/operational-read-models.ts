@@ -16,6 +16,8 @@
  */
 
 import type { AgentRunStatus } from "@ai-office/domain/agent/agent-run.ts";
+import type { AgentExecutionProvenance } from "@ai-office/domain/agent/agent-execution.ts";
+import type { WorkerOutput } from "../ports/worker-runtime.port.ts";
 import type {
   MilestoneStatus,
   RequirementStatus,
@@ -179,6 +181,7 @@ export interface AgentReference {
 }
 
 export interface AgentRunReference {
+  execution?: AgentExecutionProvenance | null;
   runId: string;
   status: AgentRunStatus;
   agentId: string;
@@ -315,15 +318,42 @@ export interface ProjectSummary {
  * {@link TaskStatus}: the persisted status is one input among several, and a
  * distinct vocabulary makes the difference impossible to miss in a client.
  */
-export type TaskOperationalStatus =
-  | "not_started"
-  | "scheduled"
-  | "in_progress"
-  | "awaiting_review"
-  | "blocked"
-  | "failed"
-  | "completed"
-  | "cancelled";
+export const taskOperationalStatuses = [
+  "not_started",
+  "scheduled",
+  "in_progress",
+  "awaiting_review",
+  "blocked",
+  "failed",
+  "completed",
+  "cancelled",
+] as const;
+export type TaskOperationalStatus = (typeof taskOperationalStatuses)[number];
+
+export interface TaskFilters {
+  search?: string;
+  status?: TaskOperationalStatus;
+  priority?: number;
+  agentId?: string;
+  unassigned?: boolean;
+}
+
+export interface TaskPageQuery extends TaskFilters {
+  offset?: number;
+}
+
+export interface TaskPageInfo {
+  filters: TaskFilters;
+  offset: number;
+  limit: number;
+  /** Options from all project tasks, independent of the selected filters. */
+  options: {
+    statuses: readonly TaskOperationalStatus[];
+    priorities: readonly number[];
+    agents: readonly AgentReference[];
+    hasUnassigned: boolean;
+  };
+}
 
 /**
  * Why the derived status differs from the persisted `task.status`. Each value
@@ -407,6 +437,17 @@ export interface TaskRequirementSummary {
   terminal: number;
   verified: number;
   rejected: number;
+}
+
+/** Task-scoped detail, independent of the project's bounded task sample. */
+export interface TaskDetail {
+  generatedAt: IsoTimestamp;
+  projectName: string;
+  task: TaskOperationalState;
+  pipeline: PipelineRunState | null;
+  runs: BoundedList<AgentRunState>;
+  /** Audit for this task and its agent runs and pipelines, including history. */
+  activity: ActivityPage;
 }
 
 export interface TaskOperationalState {
@@ -645,6 +686,7 @@ export interface AgentRunActionOutcome {
 }
 
 export interface AgentRunState {
+  execution?: AgentExecutionProvenance | null;
   runId: string;
   projectId: string;
   task: TaskReference | null;
@@ -672,6 +714,7 @@ export interface AgentRunEventEntry {
 }
 
 export interface AgentRunDetail {
+  workerOutput?: WorkerOutput | null;
   run: AgentRunState;
   events: BoundedList<AgentRunEventEntry>;
   actions: readonly AgentRunActionOutcome[];
@@ -770,6 +813,8 @@ export interface ProjectDetail {
   /** Every agent of the project; each state is projected from its own facts. */
   agents: readonly AgentState[];
   tasks: BoundedList<TaskOperationalState>;
+  /** Present when the caller requests a searchable task page. */
+  taskPage?: TaskPageInfo;
   pipelines: BoundedList<PipelineRunState>;
   runs: BoundedList<AgentRunState>;
   reviews: BoundedList<ReviewState>;

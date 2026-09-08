@@ -30,6 +30,7 @@ import type {
   OperationalReadRepository,
   TaskRunFactsRecord,
 } from "../ports/operational-read.port.ts";
+import { projectWorkerOutput } from "../read-models/worker-output.ts";
 import {
   encodeActivityCursor,
   queryLimits,
@@ -68,6 +69,10 @@ import {
   type ProjectSummary,
   type ReviewState,
   type TaskOperationalState,
+  type TaskDetail,
+  type TaskPageInfo,
+  type TaskPageQuery,
+  type TaskOperationalStatus,
 } from "../read-models/operational-read-models.ts";
 
 export class OperationalResourceNotFoundError extends Error {
@@ -347,6 +352,7 @@ export class OperationalQueryService {
     projectId: string,
     options?: {
       taskLimit?: number;
+      taskQuery?: TaskPageQuery;
       runLimit?: number;
       activityLimit?: number;
       pipelineLimit?: number;
@@ -417,7 +423,9 @@ export class OperationalQueryService {
       this.reads.lastActivityAt(projectIds),
       this.reads.listMilestones(projectIds),
       this.reads.listAgents(projectIds),
-      this.reads.listTasks(projectId, taskLimit),
+      options?.taskQuery === undefined
+        ? this.reads.listTasks(projectId, taskLimit)
+        : Promise.resolve([]),
       this.reads.listAgentRuns({ projectIds, limit: runLimit }),
       this.reads.listReviews({
         projectIds,
@@ -441,7 +449,21 @@ export class OperationalQueryService {
     ]);
 
     const agents = agentIndex(agentRecords);
-    const tasks = await this.projectTasks(projectId, taskPage, agents, now);
+    const filteredPage =
+      options?.taskQuery === undefined
+        ? null
+        : await this.queryTaskPage(
+            projectId,
+            options.taskQuery,
+            taskLimit,
+            agents,
+            now,
+            taskCounts.reduce((total, row) => total + row.count, 0),
+          );
+    const tasks =
+      filteredPage === null
+        ? await this.projectTasks(projectId, taskPage, agents, now)
+        : filteredPage.tasks.items;
     const agentStates = await this.projectAgents(projectId, agentRecords);
 
     // Attention is computed from project-wide aggregates and samples, never
@@ -502,7 +524,8 @@ export class OperationalQueryService {
       summary,
       milestones,
       agents: agentStates,
-      tasks: boundedList(tasks, taskTotal),
+      tasks: filteredPage?.tasks ?? boundedList(tasks, taskTotal),
+      ...(filteredPage === null ? {} : { taskPage: filteredPage.page }),
       pipelines: boundedList(
         pipelineSample.map((record) =>
           projectPipelineRunState({
@@ -534,6 +557,57 @@ export class OperationalQueryService {
   /* ---------------------------------------------------------------------- */
   /* Tasks and pipelines                                                     */
   /* ---------------------------------------------------------------------- */
+
+  async getTaskDetail(projectId: string, taskId: string): Promise<TaskDetail> {
+    const project = await this.requireProject(projectId);
+    const record = await this.reads.findTask(projectId, taskId);
+    if (record === null)
+      throw new OperationalResourceNotFoundError("Task", taskId);
+
+    const scope = { projectIds: [projectId], taskIds: [taskId] };
+    const [agentRecords, runs, counts, activity] = await Promise.all([
+      this.reads.listAgents([projectId]),
+      this.reads.listAgentRuns({ ...scope, limit: queryLimits.runs.default }),
+      this.reads.countAgentRuns(scope),
+      this.reads.listActivity({
+        projectId,
+        taskId,
+        limit: queryLimits.activity.default,
+      }),
+    ]);
+    const agents = agentIndex(agentRecords);
+    const [task] = await this.projectTasks(
+      projectId,
+      [record],
+      agents,
+      this.clock.now(),
+    );
+    const pipeline =
+      task!.activePipelineRun === null
+        ? null
+        : await this.reads.findPipelineRun(
+            projectId,
+            task!.activePipelineRun.pipelineRunId,
+          );
+    return {
+      generatedAt: this.clock.now().toISOString(),
+      projectName: project.name,
+      task: task!,
+      pipeline:
+        pipeline === null
+          ? null
+          : projectPipelineRunState({
+              run: pipeline.run,
+              task: { taskId, title: record.title },
+              agentsById: agents,
+            }),
+      runs: boundedList(runs.map(projectAgentRunState), sum(counts)),
+      activity: {
+        items: activity.map(projectActivityEntry),
+        nextCursor: nextActivityCursor(activity, queryLimits.activity.default),
+      },
+    };
+  }
 
   async listTasks(
     projectId: string,
@@ -658,6 +732,10 @@ export class OperationalQueryService {
     const run = projectAgentRunState(record);
     return {
       run,
+      workerOutput:
+        run.execution?.kind === "worker"
+          ? projectWorkerOutput(record.result)
+          : null,
       events: boundedList(events.map(projectAgentRunEvent), eventTotal),
       actions: projectRunActions(record.result),
       pipeline:
@@ -772,6 +850,97 @@ export class OperationalQueryService {
     if (project === null)
       throw new OperationalResourceNotFoundError("Project", projectId);
     return project;
+  }
+
+  /**
+   * Evaluate every task with the existing projection, in bounded batches.
+   * Filtering derived status in SQL would introduce a second status engine;
+   * filtering a presentation sample would silently miss matching tasks.
+   */
+  private async queryTaskPage(
+    projectId: string,
+    query: TaskPageQuery,
+    limit: number,
+    agents: ReadonlyMap<string, AgentReference>,
+    now: Date,
+    projectTaskCount: number,
+  ): Promise<{ tasks: BoundedList<TaskOperationalState>; page: TaskPageInfo }> {
+    const { offset = 0, ...filters } = query;
+    const priorities = new Set<number>();
+    const statuses = new Set<TaskOperationalStatus>();
+    const agentIds = new Set<string>();
+    let hasUnassigned = false;
+    let total = 0;
+    const items: TaskOperationalState[] = [];
+    const search = filters.search?.toLowerCase();
+    const batchSize = queryLimits.tasks.default;
+    for (let cursor = 0; cursor < projectTaskCount; cursor += batchSize) {
+      const records = await this.reads.listTasks(projectId, batchSize, cursor);
+      if (records.length === 0) break;
+      const [tasks, assignments] = await Promise.all([
+        this.projectTasks(projectId, records, agents, now),
+        this.reads.listTaskAgentIds(
+          projectId,
+          records.map((task) => task.id),
+        ),
+      ]);
+      const assignmentsByTask = groupBy(assignments, (value) => value.taskId);
+      for (const task of tasks) {
+        const involved = assignmentsByTask.get(task.taskId) ?? [];
+        priorities.add(task.priority);
+        statuses.add(task.operationalStatus);
+        for (const assignment of involved) agentIds.add(assignment.agentId);
+        if (involved.length === 0) hasUnassigned = true;
+        if (
+          search &&
+          ![task.taskId, task.title, task.description ?? ""].some((value) =>
+            value.toLowerCase().includes(search),
+          )
+        )
+          continue;
+        if (
+          filters.status !== undefined &&
+          task.operationalStatus !== filters.status
+        )
+          continue;
+        if (
+          filters.priority !== undefined &&
+          task.priority !== filters.priority
+        )
+          continue;
+        if (
+          filters.agentId !== undefined &&
+          !involved.some((value) => value.agentId === filters.agentId)
+        )
+          continue;
+        if (filters.unassigned && involved.length > 0) continue;
+        if (total >= offset && items.length < limit) items.push(task);
+        total += 1;
+      }
+    }
+    return {
+      tasks: boundedList(items, total),
+      page: {
+        filters,
+        offset,
+        limit,
+        options: {
+          priorities: [...priorities].sort((a, b) => b - a),
+          statuses: [...statuses],
+          agents: [...agentIds]
+            .flatMap((id) => {
+              const agent = agents.get(id);
+              return agent === undefined ? [] : [agent];
+            })
+            .sort(
+              (a, b) =>
+                a.name.localeCompare(b.name) ||
+                a.agentId.localeCompare(b.agentId),
+            ),
+          hasUnassigned,
+        },
+      },
+    };
   }
 
   /**

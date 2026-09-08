@@ -53,16 +53,20 @@ export class IpcRuntimeClient implements RuntimeClient {
     promptAnswer?: string,
   ): Promise<DaemonCommandResponse> {
     const requestId = crypto.randomUUID();
-    const value = await this.request("/commands", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        protocolVersion: daemonProtocolVersion,
-        requestId,
-        args,
-        ...(promptAnswer === undefined ? {} : { promptAnswer }),
-      }),
-    });
+    const value = await this.request(
+      "/commands",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          protocolVersion: daemonProtocolVersion,
+          requestId,
+          args,
+          ...(promptAnswer === undefined ? {} : { promptAnswer }),
+        }),
+      },
+      args[0] === "run:tick",
+    );
 
     if (!isDaemonCommandResponse(value) || value.requestId !== requestId) {
       throw new InvalidDaemonResponseError(
@@ -72,13 +76,19 @@ export class IpcRuntimeClient implements RuntimeClient {
     return value;
   }
 
-  private async request(path: string, init: RequestInit): Promise<unknown> {
+  private async request(
+    path: string,
+    init: RequestInit,
+    longRunning = false,
+  ): Promise<unknown> {
     let response: Response;
     try {
       response = await fetch(`http://localhost${path}`, {
         ...init,
         unix: this.socketPath,
-        signal: AbortSignal.timeout(10_000),
+        // Worker deadlines belong to the role; a short transport deadline
+        // would abandon an acknowledged dispatch while it is still running.
+        ...(longRunning ? {} : { signal: AbortSignal.timeout(10_000) }),
       });
     } catch {
       throw new RuntimeUnavailableError(this.socketPath);

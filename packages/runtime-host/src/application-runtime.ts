@@ -58,6 +58,7 @@ export class ApplicationRuntime implements AiOfficeRuntime {
     private readonly projectBindings?: ProjectBindingAdapter,
     private readonly defaultOfficeManifest?: OfficeManifest,
     private readonly agentExecutor?: AgentExecutor,
+    private readonly onRunChanged?: () => void,
   ) {}
 
   private async executeCommand(
@@ -81,6 +82,9 @@ export class ApplicationRuntime implements AiOfficeRuntime {
     try {
       const exitCode = await executeRuntimeCommand(command.args, {
         executionControl: this.executionControl,
+        ...(this.onRunChanged === undefined
+          ? {}
+          : { onRunChanged: this.onRunChanged }),
         ...(this.agentExecutor === undefined
           ? {}
           : { agentExecutor: this.agentExecutor }),

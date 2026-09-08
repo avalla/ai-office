@@ -11,6 +11,11 @@
  * storage, no domain logic.
  */
 
+import {
+  taskOperationalStatuses,
+  type TaskPageQuery,
+} from "../read-models/operational-read-models.ts";
+
 export const queryApiVersion = 1 as const;
 
 /** Prefix of every read-only query route on the daemon socket. */
@@ -48,6 +53,7 @@ export const queryLimits = {
   concurrency: { default: 20, max: 20 },
   /** Upper bound on identifier length accepted from a route parameter. */
   maxIdentifierLength: 128,
+  taskSearchLength: 256,
 } as const;
 
 /**
@@ -130,6 +136,62 @@ export function parseLimit(
   const parsed = Number(value);
   if (parsed < 1) throw new QueryValidationError("limit must be at least 1");
   return Math.min(parsed, bounds.max);
+}
+
+/** Pure parsing shared by the browser's route and the query transport. */
+export function parseTaskPageQuery(parameters: URLSearchParams): TaskPageQuery {
+  const result: TaskPageQuery = {};
+  const search = parameters.get("search")?.trim();
+  if (search) {
+    if (search.length > queryLimits.taskSearchLength)
+      throw new QueryValidationError("Task search is too long");
+    result.search = search;
+  }
+  const status = parameters.get("status");
+  if (status) {
+    const value = taskOperationalStatuses.find(
+      (candidate) => candidate === status,
+    );
+    if (value === undefined)
+      throw new QueryValidationError("Unknown task status");
+    result.status = value;
+  }
+  const priority = parameters.get("priority");
+  if (priority) {
+    if (!/^-?\d+$/.test(priority) || !Number.isSafeInteger(Number(priority)))
+      throw new QueryValidationError("Task priority must be a safe integer");
+    result.priority = Number(priority);
+  }
+  const agentId = parameters.get("agent");
+  if (agentId) result.agentId = parseIdentifier(agentId, "agent");
+  if (parseBoolean(parameters.get("unassigned"), "unassigned")) {
+    if (result.agentId !== undefined)
+      throw new QueryValidationError(
+        "Choose an agent or unassigned tasks, not both",
+      );
+    result.unassigned = true;
+  }
+  const offset = parameters.get("offset");
+  if (offset) {
+    if (!/^\d+$/.test(offset) || !Number.isSafeInteger(Number(offset)))
+      throw new QueryValidationError(
+        "Task offset must be a non-negative safe integer",
+      );
+    if (Number(offset) > 0) result.offset = Number(offset);
+  }
+  return result;
+}
+
+export function taskPageParameters(query: TaskPageQuery): URLSearchParams {
+  const parameters = new URLSearchParams();
+  if (query.search) parameters.set("search", query.search);
+  if (query.status) parameters.set("status", query.status);
+  if (query.priority !== undefined)
+    parameters.set("priority", String(query.priority));
+  if (query.agentId) parameters.set("agent", query.agentId);
+  if (query.unassigned) parameters.set("unassigned", "true");
+  if (query.offset) parameters.set("offset", String(query.offset));
+  return parameters;
 }
 
 /**

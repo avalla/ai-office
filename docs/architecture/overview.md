@@ -96,8 +96,9 @@ distribution skill is validated against.
 The M6D-lite bridge routes a structured action intent from an agent run through
 an executor-facing gateway. The agent-runtime package depends on the gateway
 contract, not filesystem, connector, SQLite, or daemon implementations. Runs
-without an intent retain the deterministic simulator; autonomous LLM tool
-selection is future work.
+without an intent require an explicit worker or simulation. The bounded Claude
+worker receives task data through an application port, with resource tools
+disabled; autonomous LLM tool selection is future work.
 
 ## Application and domain boundaries
 
@@ -270,8 +271,10 @@ Agent definitions are validated from YAML and synchronized into project storage.
 Scheduling validates project, task, and agent, acquires a task lock, persists a
 queued run and optional immutable action intent, and records state transitions.
 The controlled-action executor invokes only its gateway contract and persists
-the returned action ID and status in the run result. The fallback executor and
-worktree manager remain deterministic simulations.
+the returned action ID and status in the run result. Normal tasks explicitly
+select a tool-free external worker or simulator. The application pins dispatch
+provenance before invocation and persists bounded output; the worktree manager
+remains a test implementation. See [ADR-0017](../adr/ADR-0017-bounded-external-worker.md).
 
 The host skill owns interactive onboarding synthesis and uses the host's existing
 authenticated model session. It submits a strict versioned manifest to the
@@ -439,7 +442,9 @@ The runtime now provides the first enforceable pipeline foundation: manifest
 definitions may remain guidance-only or opt into enforcement; a started run
 pins its definition and persists stage runs, task binding, assignment,
 transition, approval, override, and audit state. Advanced branching, retries,
-artifacts, and worker-runtime dispatch remain later M11/M12 work.
+machine-interpretable stage artifacts and automated worker dispatch remain
+later M11/M12 work. An explicit tick can now invoke a bounded text worker for
+a scheduled stage-bound run; it does not advance the stage.
 
 ```text
                          AI Office authority
@@ -456,12 +461,12 @@ artifacts, and worker-runtime dispatch remain later M11/M12 work.
 
 AI Office owns role definitions, responsibility boundaries, pipeline state,
 assignment, transition policy, separation of duties, approval chains, and audit.
-Codex, Claude Code, Gemini CLI, OpenCode, local executors, and future runtimes are
-replaceable workers behind an application port. A worker does not define what an
+Claude Code is the first bounded worker behind an application port; Codex,
+Gemini CLI, OpenCode and other runtimes remain candidate adapters. A worker does not define what an
 architect, developer, reviewer, QA, or security agent is allowed or required to
 do.
 
-The future worker-runtime port is distinct from both existing provider and
+The bounded worker-runtime port is distinct from both existing provider and
 client-integration boundaries:
 
 - the LLM gateway normalizes provider calls, usage, pricing, and budgets;

@@ -88,6 +88,7 @@ export async function bootstrap(
     options.projectBindings,
     options.defaultOfficeManifest,
     options.agentExecutor,
+    () => queryEvents.publish(["run.updated", "task.updated"]),
   );
 
   return new PersistentRuntimeHost({

@@ -69,7 +69,8 @@ export class PersistentRuntimeHost {
       // server bound. See QueryApi's heartbeat interval.
       server = Bun.serve({
         unix: this.options.socketPath,
-        fetch: (request) => this.route(request),
+        fetch: (request, host) =>
+          this.route(request, () => host.timeout(request, 0)),
       });
       chmodSync(this.options.socketPath, 0o600);
       await this.options.events.execute({
@@ -109,7 +110,10 @@ export class PersistentRuntimeHost {
     }
   }
 
-  private async route(request: Request): Promise<Response> {
+  private async route(
+    request: Request,
+    allowLongResponse: () => void,
+  ): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (path === "/health" && request.method === "GET") {
       const response: DaemonHealthResponse = {
@@ -187,9 +191,11 @@ export class PersistentRuntimeHost {
       });
 
       try {
-        const response = await this.withCommandTimeout(
-          this.options.handler.execute(value),
-        );
+        const work = this.options.handler.execute(value);
+        const response =
+          command === "run:tick"
+            ? await work
+            : await this.withCommandTimeout(work);
         await this.options.events.execute({
           eventType: "command.completed",
           actorType: "daemon",
@@ -231,9 +237,13 @@ export class PersistentRuntimeHost {
       }
     };
 
-    return value.args[0] === "run:tick"
-      ? execute()
-      : this.queue.enqueue(execute);
+    if (value.args[0] === "run:tick") {
+      // Only a validated long-running command bypasses the socket idle bound.
+      // Worker deadlines and run cancellation still govern the execution.
+      allowLongResponse();
+      return execute();
+    }
+    return this.queue.enqueue(execute);
   }
 
   private async withCommandTimeout<T>(work: Promise<T>): Promise<T> {

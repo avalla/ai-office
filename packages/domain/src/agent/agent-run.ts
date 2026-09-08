@@ -4,6 +4,10 @@ import {
   type CanonicalJsonValue,
 } from "../capability/canonical-json.ts";
 import { assertNoSensitiveFields } from "../capability/sensitive-fields.ts";
+import {
+  parseAgentExecution,
+  type AgentExecutionProvenance,
+} from "./agent-execution.ts";
 
 export type AgentRunStatus =
   | "queued"
@@ -21,6 +25,7 @@ export interface AgentRunProps {
   agentId: string;
   pipelineRunId?: string;
   actionIntent?: AgentActionIntent;
+  execution?: AgentExecutionProvenance;
   status: AgentRunStatus;
   worktreePath?: string;
   result?: unknown;
@@ -115,6 +120,9 @@ export class AgentRun {
   static restore(props: AgentRunProps): AgentRun {
     return new AgentRun({
       ...props,
+      ...(props.execution === undefined
+        ? {}
+        : { execution: parseAgentExecution(props.execution) }),
       ...(props.actionIntent === undefined
         ? {}
         : { actionIntent: normalizeActionIntent(props.actionIntent) }),
@@ -124,19 +132,34 @@ export class AgentRun {
   transition(
     status: AgentRunStatus,
     now: Date,
-    details: { worktreePath?: string; result?: unknown; error?: unknown } = {},
+    details: {
+      worktreePath?: string;
+      result?: unknown;
+      error?: unknown;
+      execution?: AgentExecutionProvenance;
+    } = {},
   ): void {
     if (!transitions[this.props.status].includes(status)) {
       throw new DomainValidationError(
         `Cannot transition agent run from ${this.props.status} to ${status}`,
       );
     }
+    const execution =
+      details.execution === undefined
+        ? this.props.execution
+        : parseAgentExecution(details.execution);
+    if (
+      this.props.execution !== undefined &&
+      JSON.stringify(execution) !== JSON.stringify(this.props.execution)
+    )
+      throw new DomainValidationError("Run execution provenance is immutable");
     this.props = {
       ...this.props,
       ...(this.props.actionIntent === undefined
         ? {}
         : { actionIntent: this.props.actionIntent }),
       ...details,
+      ...(execution === undefined ? {} : { execution }),
       status,
       ...(status === "running" && this.props.startedAt === undefined
         ? { startedAt: now }

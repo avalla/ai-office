@@ -268,6 +268,7 @@ const defaultIo: RuntimeCommandIo = {
 };
 
 export interface RuntimeCommandOptions {
+  onRunChanged?: () => void;
   executionControl?: RunExecutionControl;
   agentExecutor?: AgentExecutor;
   projectRoot: string;
@@ -478,6 +479,9 @@ export async function executeRuntimeCommand(
     const controlled = new SqliteControlledExecutionRepository(database);
     const costs = new SqliteCostRepository(database);
     const context: CommandContext = {
+      ...(options.onRunChanged === undefined
+        ? {}
+        : { onRunChanged: options.onRunChanged }),
       executionControl:
         options.executionControl ?? new RunExecutionControl(ids.generate()),
       ...(options.agentExecutor === undefined
