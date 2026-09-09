@@ -46,11 +46,19 @@ export interface PreparedAgentExecution {
 }
 
 export class AgentExecutorNotConfiguredError extends Error {
-  constructor() {
-    super(
+  constructor(
+    message =
       "No real worker selected. Select a worker or explicitly request simulation.",
-    );
+  ) {
+    super(message);
     this.name = "AgentExecutorNotConfiguredError";
+  }
+}
+
+export class AuthoritativeExecutorRequiresPrepareError extends AgentExecutorNotConfiguredError {
+  constructor() {
+    super("Authoritative execution requires prepare() before execute().");
+    this.name = "AuthoritativeExecutorRequiresPrepareError";
   }
 }
 
@@ -92,10 +100,10 @@ export class AuthoritativeWorkerAgentExecutor implements AgentExecutor {
   }
 
   async execute(
-    run: AgentRun,
-    signal?: AbortSignal,
+    _run: AgentRun,
+    _signal?: AbortSignal,
   ): Promise<AgentExecutionResult> {
-    return this.delegate.execute(run, signal);
+    throw new AuthoritativeExecutorRequiresPrepareError();
   }
 }
 

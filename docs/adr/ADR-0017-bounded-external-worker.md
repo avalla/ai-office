@@ -40,6 +40,15 @@ execution with validated provenance and an acceptance fence; execute-only
 adapters fail closed before `running`. No executor silently falls back to
 simulation.
 
+For the built-in bounded Claude worker, `WorkerAgentExecutor` and the Runtime
+storage boundary own the authority fence: stale task, agent, role, pipeline or
+lease facts reject the result before `reviewing`. Configured authoritative
+adapters are a trusted extension boundary. AI Office validates the provenance
+shape and requires `accept()`, but cannot prove that an injected implementation
+performs an equivalent SQLite authority/completion fence; such code must be
+trusted. A future plugin/provider boundary should move complete acceptance
+authority back into the Runtime rather than relying on adapter code.
+
 The application builds context from SQLite and pins its SHA-256 digest with
 executor kind and adapter/version before invoking the worker. Migration 0027
 adds immutable dispatch metadata and leaves historical runs unknown. A digest

@@ -6,6 +6,7 @@ import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { YamlAgentDefinitionLoader } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
 import {
   AgentExecutorNotConfiguredError,
+  AuthoritativeExecutorRequiresPrepareError,
   AuthoritativeWorkerAgentExecutor,
   ControlledActionAgentExecutor,
 } from "@ai-office/agent-runtime/executor.ts";
@@ -167,6 +168,27 @@ describe("agent runtime domain", () => {
     await expect(executor.prepare(run)).rejects.toBeInstanceOf(
       AgentExecutorNotConfiguredError,
     );
+  });
+
+  test("fails closed when authoritative execute is called directly", async () => {
+    let delegateCalls = 0;
+    const run = AgentRun.create({
+      id: "run-direct-execute",
+      projectId: "project",
+      taskId: "task",
+      agentId: "agent",
+      now: new Date("2026-08-05T00:00:00Z"),
+    });
+    const executor = new AuthoritativeWorkerAgentExecutor({
+      execute: async () => {
+        delegateCalls += 1;
+        return { summary: "must not run", artifacts: [] };
+      },
+    });
+    await expect(executor.execute(run)).rejects.toBeInstanceOf(
+      AuthoritativeExecutorRequiresPrepareError,
+    );
+    expect(delegateCalls).toBe(0);
   });
 
   test("requires worker provenance and an acceptance fence before dispatch", async () => {
