@@ -1,6 +1,7 @@
 import type { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { ActionStatus } from "@ai-office/domain/capability/action-request.ts";
 import type { AgentExecutionProvenance } from "@ai-office/domain/agent/agent-execution.ts";
+import { parseAgentExecution } from "@ai-office/domain/agent/agent-execution.ts";
 
 export type AgentControlledActionOutcome =
   "allowed" | "denied" | "simulation_required" | "approval_required";
@@ -62,6 +63,42 @@ export class UnconfiguredAgentExecutor implements AgentExecutor {
   }
 }
 
+/**
+ * The authoritative run path cannot accept a generic execute-only adapter.
+ * This wrapper validates the adapter contract before ExecuteAgentRun can
+ * persist `running` or invoke external work.
+ */
+export class AuthoritativeWorkerAgentExecutor implements AgentExecutor {
+  constructor(private readonly delegate: AgentExecutor) {}
+
+  async prepare(run: AgentRun): Promise<PreparedAgentExecution> {
+    if (this.delegate.prepare === undefined)
+      throw new AgentExecutorNotConfiguredError();
+    const prepared = await this.delegate.prepare(run);
+    if (
+      prepared === undefined ||
+      prepared.accept === undefined ||
+      (() => {
+        try {
+          const provenance = parseAgentExecution(prepared.provenance);
+          return provenance.kind !== "worker" || provenance.inputHash === undefined;
+        } catch {
+          return true;
+        }
+      })()
+    )
+      throw new AgentExecutorNotConfiguredError();
+    return prepared;
+  }
+
+  async execute(
+    run: AgentRun,
+    signal?: AbortSignal,
+  ): Promise<AgentExecutionResult> {
+    return this.delegate.execute(run, signal);
+  }
+}
+
 export class SimulatedAgentExecutor implements AgentExecutor {
   async prepare(
     run: AgentRun,
@@ -102,9 +139,7 @@ export class ControlledActionAgentExecutor implements AgentExecutor {
     if (run.snapshot().actionIntent === undefined) {
       if (this.fallback.prepare !== undefined)
         return this.fallback.prepare(run);
-      // A generic injected executor may intentionally expose only execute().
-      // Preserve that contract while keeping action intents on this wrapper.
-      return undefined;
+      throw new AgentExecutorNotConfiguredError();
     }
     return {
       provenance: {

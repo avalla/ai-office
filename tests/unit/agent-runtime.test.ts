@@ -4,7 +4,11 @@ import { fileURLToPath } from "node:url";
 import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { YamlAgentDefinitionLoader } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
-import { ControlledActionAgentExecutor } from "@ai-office/agent-runtime/executor.ts";
+import {
+  AgentExecutorNotConfiguredError,
+  AuthoritativeWorkerAgentExecutor,
+  ControlledActionAgentExecutor,
+} from "@ai-office/agent-runtime/executor.ts";
 
 describe("agent runtime domain", () => {
   test("loads deterministic validated YAML definitions", () => {
@@ -147,6 +151,52 @@ describe("agent runtime domain", () => {
     await executor.execute(run);
     expect(gatewayCalls).toBe(1);
     expect(fallbackCalls).toBe(0);
+  });
+
+  test("rejects an execute-only adapter from the authoritative worker contract", async () => {
+    const run = AgentRun.create({
+      id: "run-contract",
+      projectId: "project",
+      taskId: "task",
+      agentId: "agent",
+      now: new Date("2026-08-05T00:00:00Z"),
+    });
+    const executor = new AuthoritativeWorkerAgentExecutor({
+      execute: async () => ({ summary: "raw", artifacts: [] }),
+    });
+    await expect(executor.prepare(run)).rejects.toBeInstanceOf(
+      AgentExecutorNotConfiguredError,
+    );
+  });
+
+  test("requires worker provenance and an acceptance fence before dispatch", async () => {
+    const run = AgentRun.create({
+      id: "run-prepared-contract",
+      projectId: "project",
+      taskId: "task",
+      agentId: "agent",
+      now: new Date("2026-08-05T00:00:00Z"),
+    });
+    const prepared = new AuthoritativeWorkerAgentExecutor({
+      prepare: async () => ({
+        provenance: {
+          kind: "worker" as const,
+          adapterId: "configured-worker",
+          adapterVersion: "1",
+          inputHash: "a".repeat(64),
+        },
+        usesWorktree: false,
+        execute: async () => ({ summary: "prepared", artifacts: [] }),
+        accept: async () => undefined,
+      }),
+      execute: async () => ({ summary: "unused", artifacts: [] }),
+    });
+    await expect(prepared.prepare(run)).resolves.toMatchObject({
+      provenance: {
+        kind: "worker",
+        adapterId: "configured-worker",
+      },
+    });
   });
 
   test("bounds controlled-action waiting with the role deadline without detaching a non-cooperative connector", async () => {

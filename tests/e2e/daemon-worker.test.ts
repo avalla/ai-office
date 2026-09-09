@@ -75,6 +75,92 @@ test("an injected executor is only the normal-run default, never the explicit si
   }
 });
 
+test("an execute-only configured executor fails closed before authoritative dispatch", async () => {
+  let injectedCalls = 0;
+  const r = await runRuntime({
+    execute: async () => {
+      injectedCalls += 1;
+      return { summary: "raw", artifacts: [] };
+    },
+  });
+  try {
+    const taskId = await r.task();
+    const runId = (await r.schedule(taskId)).stdout[0]!.replace(
+      "Agent run scheduled: ",
+      "",
+    );
+    const result = await r.command([
+      "run:tick",
+      "--project",
+      r.projectId,
+      "--json",
+    ]);
+    expect(result.exitCode).toBe(1);
+    expect(injectedCalls).toBe(0);
+    const show = await r.command([
+      "run:show",
+      "--project",
+      r.projectId,
+      "--run",
+      runId,
+    ]);
+    expect(show.stdout).toContain("Status: failed");
+    expect(show.stdout).toContain("Executor: not recorded");
+  } finally {
+    await r.close();
+  }
+});
+
+test("a configured prepared worker records provenance and invokes its acceptance fence", async () => {
+  const events: string[] = [];
+  const r = await runRuntime({
+    prepare: async () => ({
+      provenance: {
+        kind: "worker" as const,
+        adapterId: "configured-worker",
+        adapterVersion: "1",
+        inputHash: "b".repeat(64),
+      },
+      usesWorktree: false,
+      execute: async () => {
+        events.push("execute");
+        return { summary: "prepared", artifacts: [] };
+      },
+      accept: async () => {
+        events.push("accept");
+      },
+    }),
+    execute: async () => ({ summary: "unexpected", artifacts: [] }),
+  });
+  try {
+    const taskId = await r.task();
+    const runId = (await r.schedule(taskId)).stdout[0]!.replace(
+      "Agent run scheduled: ",
+      "",
+    );
+    const result = await r.command([
+      "run:tick",
+      "--project",
+      r.projectId,
+      "--json",
+    ]);
+    expect(result.exitCode).toBe(0);
+    expect(events).toEqual(["execute", "accept"]);
+    const show = await r.command([
+      "run:show",
+      "--project",
+      r.projectId,
+      "--run",
+      runId,
+    ]);
+    expect(show.stdout).toContain(
+      "Executor: worker (configured-worker 1)",
+    );
+  } finally {
+    await r.close();
+  }
+});
+
 test("a subprocess worker produces a persisted, inspectable result through the daemon without completing the task", async () => {
   let injectedCalls = 0;
   const r = await runRuntime({

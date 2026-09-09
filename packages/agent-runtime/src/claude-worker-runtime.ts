@@ -36,16 +36,42 @@ const inspectionTimeoutMs = 10000;
 const processTreePollMs = 10;
 const minimumClaudeVersion = [2, 1, 259] as const;
 
+interface ParsedClaudeVersion {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string | undefined;
+}
+
+function parseClaudeVersion(version: string): ParsedClaudeVersion | null {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(
+    version,
+  );
+  if (match === null) return null;
+  const prerelease = match[4];
+  if (
+    prerelease !== undefined &&
+    prerelease.split(".").some((part) => /^0\d+$/.test(part))
+  )
+    return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease,
+  };
+}
+
 function supportedVersion(version: string): boolean {
-  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
-  if (match === null) return false;
-  const parts = match.slice(1).map(Number);
+  const parsed = parseClaudeVersion(version);
+  if (parsed === null) return false;
+  const core = [parsed.major, parsed.minor, parsed.patch];
   for (let index = 0; index < minimumClaudeVersion.length; index += 1) {
-    const current = parts[index] ?? 0;
+    const current = core[index]!;
     const minimum = minimumClaudeVersion[index]!;
     if (current !== minimum) return current > minimum;
   }
-  return true;
+  return parsed.prerelease === undefined;
 }
 
 function processGroupAlive(pid: number): boolean {

@@ -1,5 +1,6 @@
 import {
   ControlledActionAgentExecutor,
+  AuthoritativeWorkerAgentExecutor,
   SimulatedAgentExecutor,
   UnconfiguredAgentExecutor,
   type AgentExecutor,
@@ -215,7 +216,9 @@ export async function handleRunCommand(
           )
         : parsed.flags.has("simulate")
           ? new SimulatedAgentExecutor()
-          : (context.agentExecutor ?? new UnconfiguredAgentExecutor());
+          : context.agentExecutor === undefined
+            ? new UnconfiguredAgentExecutor()
+            : new AuthoritativeWorkerAgentExecutor(context.agentExecutor);
     const execute = new ExecuteAgentRun(
       runtime,
       controlledActionExecutor(context, selectedExecutor),

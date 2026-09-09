@@ -24,7 +24,14 @@ test("queued cancellation and approved orphan reconciliation survive restart", a
     const run = (await repository.findRun(runId))!;
     run.transition("preparing", new Date());
     await repository.saveRun(run);
-    run.transition("running", new Date());
+    run.transition("running", new Date(), {
+      execution: {
+        kind: "worker",
+        adapterId: "recovery-worker",
+        adapterVersion: "1",
+        inputHash: "d".repeat(64),
+      },
+    });
     await repository.saveRun(run);
     database.close();
     await r.restart();
@@ -34,7 +41,11 @@ test("queued cancellation and approved orphan reconciliation survive restart", a
       classification: string;
       available: boolean;
     };
-    expect(plan).toMatchObject({ classification: "orphaned", available: true });
+    expect(plan).toMatchObject({
+      classification: "orphaned",
+      available: true,
+      externalWorkerUnobserved: true,
+    });
     expect((await r.command(["run:cancel", ...args])).exitCode).toBe(1);
     expect(
       (await r.command(["run:reconcile", ...args, "--approve", "stale"]))
@@ -86,11 +97,22 @@ test("live cancellation waits for executor acknowledgment and records owner prov
     finish = resolve;
   });
   const r = await runRuntime({
-    execute: async () => {
-      started();
-      await gate;
-      return { summary: "stopped", artifacts: [] };
-    },
+    prepare: async () => ({
+      provenance: {
+        kind: "worker" as const,
+        adapterId: "recovery-test-worker",
+        adapterVersion: "1",
+        inputHash: "c".repeat(64),
+      },
+      usesWorktree: false,
+      execute: async () => {
+        started();
+        await gate;
+        return { summary: "stopped", artifacts: [] };
+      },
+      accept: async () => undefined,
+    }),
+    execute: async () => ({ summary: "unused", artifacts: [] }),
   });
   try {
     const taskId = await r.task();

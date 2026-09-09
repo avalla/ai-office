@@ -82,6 +82,11 @@ ai-office run:show --project <project-id> --run <run-id>
 
 Use `--simulate` for a deterministic test instead. Selection applies to normal
 tasks in that tick's batch; controlled-action intents always use their gateway.
+When the Runtime supplies a configured default executor, it is accepted only
+if its prepared execution provides validated worker provenance and an
+acceptance fence. An execute-only adapter fails closed before `running`; the
+legacy `execute()` method remains available for internal compatibility but is
+not an authoritative `run:tick` dispatch contract.
 The daemon needs Claude Code `2.1.259` or newer on its PATH and a working
 client login. The adapter checks only the semantic version before dispatch; it
 does not infer security capabilities from `claude --help`, whose output is not

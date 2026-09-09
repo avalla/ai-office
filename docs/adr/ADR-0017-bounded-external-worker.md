@@ -35,7 +35,10 @@ CLI reference](https://code.claude.com/docs/en/cli-reference).
 
 The operator selects `run:tick --worker claude` or `--simulate`. Unconfigured
 normal tasks remain queued. Action intents still use the controlled-action
-gateway. No executor silently falls back to simulation.
+gateway. A configured normal-run executor must provide a prepared worker
+execution with validated provenance and an acceptance fence; execute-only
+adapters fail closed before `running`. No executor silently falls back to
+simulation.
 
 The application builds context from SQLite and pins its SHA-256 digest with
 executor kind and adapter/version before invoking the worker. Migration 0027

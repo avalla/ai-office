@@ -124,6 +124,25 @@ describe("bounded Claude worker", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test.each<[string, boolean]>([
+    ["2.1.258", false],
+    ["2.1.259-beta.1", false],
+    ["2.1.259-rc.1", false],
+    ["2.1.259", true],
+    ["2.1.259+build", true],
+    ["2.1.260-beta.1", true],
+  ])("applies stable SemVer precedence to %s", async (version, supported) => {
+    const runtime = new ClaudeWorkerRuntime("test", async () => {
+      return `${version} (Claude Code)\n`;
+    });
+    if (supported)
+      await expect(runtime.inspect()).resolves.toEqual({ version });
+    else
+      await expect(runtime.inspect()).rejects.toMatchObject({
+        code: "WORKER_UNAVAILABLE",
+      });
+  });
+
   test("does not use incomplete or localized help as a capability oracle", async () => {
     const calls: WorkerProcessRequest[] = [];
     const runtime = new ClaudeWorkerRuntime("test", async (request) => {
