@@ -13,6 +13,13 @@ response timeout. An executor which does not acknowledge stopping cannot be
 reported as stopped; forcibly terminating the process leaves persisted recovery
 evidence for the next host.
 
+This is intentionally safety-first rather than a bounded shutdown guarantee:
+an in-process connector that ignores its `AbortSignal` can keep the drain open
+indefinitely. The current lifecycle does not detach that promise or close
+SQLite underneath it, because either choice would risk unknown external effects
+or use-after-close. Such work remains observable and must be reconciled; it is
+a residual lifecycle design blocker, not a timeout eligible for automatic retry.
+
 ## Operator commands
 
 ```text

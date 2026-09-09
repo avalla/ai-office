@@ -59,9 +59,6 @@ const envelope = {
   hidden_reasoning: "must not be published",
   api_key: "must not be published",
 };
-const help =
-  "--safe-mode --tools --disallowedTools --strict-mcp-config --setting-sources --no-session-persistence --json-schema --disable-slash-commands";
-
 describe("bounded Claude worker", () => {
   test("pins a supported CLI and executes only explicit input with model-visible tools disabled", async () => {
     const calls: WorkerProcessRequest[] = [];
@@ -70,18 +67,25 @@ describe("bounded Claude worker", () => {
       async (request) => {
         calls.push(request);
         expect(existsSync(request.cwd)).toBe(true);
-        if (request.args[0] === "--version") return "2.1.236 (Claude Code)\n";
-        if (request.args[0] === "--help") return help;
+        if (request.args[0] === "--version") return "2.1.259 (Claude Code)\n";
         return JSON.stringify(envelope);
       },
       "test-model",
     );
-    expect(await runtime.inspect()).toEqual({ version: "2.1.236" });
+    expect(await runtime.inspect()).toEqual({ version: "2.1.259" });
     const result = await runtime.execute(context, limits);
-    expect(calls).toHaveLength(3);
-    const request = calls[2]!;
+    expect(calls).toHaveLength(2);
+    const request = calls[1]!;
     const value = (flag: string) =>
       request.args[request.args.indexOf(flag) + 1];
+    expect(request.args).toContain("--safe-mode");
+    expect(request.args).toContain("--restricted");
+    expect(request.args).toContain("--print");
+    expect(request.args).toContain("--strict-mcp-config");
+    expect(request.args).toContain("--disable-slash-commands");
+    expect(request.args).toContain("--no-session-persistence");
+    expect(request.args).toContain("--permission-prompts");
+    expect(value("--permission-prompts")).toBe("none");
     expect(value("--tools")).toBe("");
     expect(value("--disallowedTools")).toBe("mcp__*");
     expect(value("--setting-sources")).toBe("");
@@ -103,21 +107,50 @@ describe("bounded Claude worker", () => {
     expect(
       projectWorkerOutput({ workerOutput: result, secret: "hidden" }),
     ).toEqual(result);
-    expect(existsSync(calls[2]!.cwd)).toBe(false);
+    expect(existsSync(calls[1]!.cwd)).toBe(false);
   });
 
-  test("refuses clients without customization isolation before task dispatch", async () => {
+  test("refuses clients below the supported version before task dispatch", async () => {
     const calls: WorkerProcessRequest[] = [];
     const runtime = new ClaudeWorkerRuntime("test", async (request) => {
       calls.push(request);
       return request.args[0] === "--version"
         ? "2.0.0 (Claude Code)"
-        : "--tools";
+        : "--help --tools";
     });
     await expect(runtime.execute(context, limits)).rejects.toMatchObject({
       code: "WORKER_UNAVAILABLE",
     });
     expect(calls).toHaveLength(1);
+  });
+
+  test("does not use incomplete or localized help as a capability oracle", async () => {
+    const calls: WorkerProcessRequest[] = [];
+    const runtime = new ClaudeWorkerRuntime("test", async (request) => {
+      calls.push(request);
+      if (request.args[0] === "--version") return "2.1.259 (Claude Code)\n";
+      return "Usage: claude\n--help\n";
+    });
+    await expect(runtime.inspect()).resolves.toEqual({ version: "2.1.259" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args).toEqual(["--version"]);
+  });
+
+  test("does not spawn the real worker on the unsupported Windows profile", async () => {
+    const calls: WorkerProcessRequest[] = [];
+    const runtime = new ClaudeWorkerRuntime(
+      "test",
+      async (request) => {
+        calls.push(request);
+        return "2.1.259 (Claude Code)\n";
+      },
+      undefined,
+      "win32",
+    );
+    await expect(runtime.execute(context, limits)).rejects.toMatchObject({
+      code: "WORKER_UNAVAILABLE",
+    });
+    expect(calls).toHaveLength(0);
   });
 
   test.each([

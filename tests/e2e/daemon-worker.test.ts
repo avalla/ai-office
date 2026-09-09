@@ -46,8 +46,43 @@ test("queued tasks require an explicit executor; simulation is durable and never
   }
 });
 
+test("an injected executor is only the normal-run default, never the explicit simulator", async () => {
+  let injectedCalls = 0;
+  const r = await runRuntime({
+    execute: async () => {
+      injectedCalls += 1;
+      return { summary: "injected", artifacts: [] };
+    },
+  });
+  try {
+    const taskId = await r.task();
+    const runId = (await r.schedule(taskId)).stdout[0]!.replace(
+      "Agent run scheduled: ",
+      "",
+    );
+    expect(
+      (
+        await r.command(["run:tick", "--project", r.projectId, "--simulate"])
+      ).exitCode,
+    ).toBe(0);
+    expect(injectedCalls).toBe(0);
+    expect(
+      (await r.command(["run:show", "--project", r.projectId, "--run", runId]))
+        .stdout,
+    ).toContain("Executor: simulation (simulated 1)");
+  } finally {
+    await r.close();
+  }
+});
+
 test("a subprocess worker produces a persisted, inspectable result through the daemon without completing the task", async () => {
-  const r = await runRuntime();
+  let injectedCalls = 0;
+  const r = await runRuntime({
+    execute: async () => {
+      injectedCalls += 1;
+      return { summary: "injected", artifacts: [] };
+    },
+  });
   const oldPath = process.env.PATH;
   try {
     const bin = join(r.root, "bin");
@@ -57,9 +92,8 @@ test("a subprocess worker produces a persisted, inspectable result through the d
       join(bin, "claude"),
       `#!${process.execPath}\n
 const args = process.argv.slice(2);
-if (args[0] === '--version') { console.log('2.1.236 (Claude Code)'); process.exit(0); }
-if (args[0] === '--help') { console.log('--safe-mode --tools --strict-mcp-config --setting-sources --no-session-persistence --json-schema --disable-slash-commands'); process.exit(0); }
-if (args[args.indexOf('--tools') + 1] !== '' || !args.includes('--safe-mode')) process.exit(1);
+if (args[0] === '--version') { console.log('2.1.259 (Claude Code)'); process.exit(0); }
+if (args[args.indexOf('--tools') + 1] !== '' || !args.includes('--safe-mode') || !args.includes('--restricted') || args[args.indexOf('--permission-prompts') + 1] !== 'none' || args[args.indexOf('--disallowedTools') + 1] !== 'mcp__*') process.exit(1);
 const input = JSON.parse(await Bun.stdin.text());
 console.log(JSON.stringify({type:'result', subtype:'success', is_error:false,
  structured_output:{summary:'Analysis for ' + input.task.title, content:'<script>untrusted</script>\\nExplicit context only: ' + input.agent.roleKey},
@@ -83,6 +117,7 @@ console.log(JSON.stringify({type:'result', subtype:'success', is_error:false,
       "--json",
     ]);
     expect(result, result.stderr.join("\n")).toMatchObject({ exitCode: 0 });
+    expect(injectedCalls).toBe(0);
     const get = async <T>(path: string): Promise<T> => {
       const response = await fetch(`http://localhost${path}`, {
         unix: join(r.root, "daemon.sock"),
@@ -98,7 +133,7 @@ console.log(JSON.stringify({type:'result', subtype:'success', is_error:false,
       execution: {
         kind: "worker",
         adapterId: "claude-code",
-        adapterVersion: "2.1.236",
+        adapterVersion: "2.1.259",
         inputHash: expect.stringMatching(/^[a-f0-9]{64}$/),
       },
       worktreePath: null,

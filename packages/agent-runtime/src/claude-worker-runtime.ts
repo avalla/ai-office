@@ -19,6 +19,13 @@ export interface WorkerProcessRequest {
   input: string;
   timeoutMs: number;
   signal?: AbortSignal;
+  platform?: WorkerPlatform;
+}
+
+export type WorkerPlatform = "posix" | "win32";
+
+export function currentWorkerPlatform(): WorkerPlatform {
+  return process.platform === "win32" ? "win32" : "posix";
 }
 
 export type WorkerProcessRunner = (
@@ -27,10 +34,12 @@ export type WorkerProcessRunner = (
 const terminationGraceMs = 2000;
 const inspectionTimeoutMs = 10000;
 const processTreePollMs = 10;
-const minimumClaudeVersion = [2, 1, 236] as const;
+const minimumClaudeVersion = [2, 1, 259] as const;
 
 function supportedVersion(version: string): boolean {
-  const parts = version.split(".").map(Number);
+  const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version);
+  if (match === null) return false;
+  const parts = match.slice(1).map(Number);
   for (let index = 0; index < minimumClaudeVersion.length; index += 1) {
     const current = parts[index] ?? 0;
     const minimum = minimumClaudeVersion[index]!;
@@ -51,6 +60,11 @@ function processGroupAlive(pid: number): boolean {
 /** No shell interpolation, inherited provider secrets, or raw failure output. */
 export const runWorkerProcess: WorkerProcessRunner = (request) =>
   new Promise((resolve, reject) => {
+    const platform = request.platform ?? currentWorkerPlatform();
+    if (platform === "win32") {
+      reject(new WorkerRuntimeError("WORKER_UNAVAILABLE"));
+      return;
+    }
     if (request.signal?.aborted) {
       reject(new DOMException("Execution cancelled", "AbortError"));
       return;
@@ -73,7 +87,7 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
         cwd: request.cwd,
         env,
         stdio: ["pipe", "pipe", "pipe"],
-        detached: process.platform !== "win32",
+        detached: true,
       });
     } catch {
       reject(new WorkerRuntimeError("WORKER_UNAVAILABLE"));
@@ -86,7 +100,7 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     let groupPollTimer: ReturnType<typeof setTimeout> | undefined;
     let closed = false;
-    const posixProcessGroup = process.platform !== "win32";
+    const posixProcessGroup = platform === "posix";
     const signalTree = (signal: "SIGTERM" | "SIGKILL") => {
       try {
         if (posixProcessGroup && child.pid !== undefined)
@@ -236,21 +250,24 @@ export function parseClaudeWorkerOutput(text: string): WorkerOutput {
 export class ClaudeWorkerRuntime implements WorkerRuntime {
   readonly id = "claude-code";
   private inspection: Promise<{ version: string }> | undefined;
-  private disallowedToolsSupported = false;
   constructor(
     private readonly executable = "claude",
     private readonly runner: WorkerProcessRunner = runWorkerProcess,
     private readonly model?: string,
+    private readonly platform: WorkerPlatform = currentWorkerPlatform(),
   ) {}
 
   inspect(): Promise<{ version: string }> {
     this.inspection ??= this.inDirectory(async (cwd) => {
+      if (this.platform === "win32")
+        throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
       const versionText = await this.runner({
         executable: this.executable,
         args: ["--version"],
         cwd,
         input: "",
         timeoutMs: inspectionTimeoutMs,
+        platform: this.platform,
       });
       const version =
         /^(\d+\.\d+\.\d+(?:[-+][a-zA-Z0-9.-]+)?) \(Claude Code\)\s*$/.exec(
@@ -258,27 +275,6 @@ export class ClaudeWorkerRuntime implements WorkerRuntime {
         )?.[1];
       if (version === undefined || !supportedVersion(version))
         throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
-      const help = await this.runner({
-        executable: this.executable,
-        args: ["--help"],
-        cwd,
-        input: "",
-        timeoutMs: inspectionTimeoutMs,
-      });
-      for (const flag of [
-        "--safe-mode",
-        "--tools",
-        "--strict-mcp-config",
-        "--setting-sources",
-        "--no-session-persistence",
-        "--json-schema",
-        "--disable-slash-commands",
-      ])
-        if (!help.includes(flag))
-          throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
-      // Optional defense in depth. The supported baseline does not include
-      // --restricted or --permission-prompts, so neither is fabricated here.
-      this.disallowedToolsSupported = help.includes("--disallowedTools");
       return { version };
     });
     return this.inspection;
@@ -293,12 +289,12 @@ export class ClaudeWorkerRuntime implements WorkerRuntime {
     return this.inDirectory(async (cwd) => {
       const args = [
         "--safe-mode",
+        "--restricted",
         "--print",
         "--tools",
         "",
-        ...(this.disallowedToolsSupported
-          ? ["--disallowedTools", "mcp__*"]
-          : []),
+        "--disallowedTools",
+        "mcp__*",
         "--strict-mcp-config",
         "--mcp-config",
         '{"mcpServers":{}}',
@@ -307,6 +303,8 @@ export class ClaudeWorkerRuntime implements WorkerRuntime {
         "--disable-slash-commands",
         "--permission-mode",
         "dontAsk",
+        "--permission-prompts",
+        "none",
         "--no-session-persistence",
         "--output-format",
         "json",
@@ -326,6 +324,7 @@ export class ClaudeWorkerRuntime implements WorkerRuntime {
         cwd,
         input: JSON.stringify(context),
         timeoutMs: limits.timeoutMs,
+        platform: this.platform,
         ...(signal === undefined ? {} : { signal }),
       });
       return parseClaudeWorkerOutput(output);

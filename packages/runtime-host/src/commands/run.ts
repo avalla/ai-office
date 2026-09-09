@@ -1,6 +1,7 @@
 import {
   ControlledActionAgentExecutor,
   SimulatedAgentExecutor,
+  UnconfiguredAgentExecutor,
   type AgentExecutor,
 } from "@ai-office/agent-runtime/executor.ts";
 import { ClaudeWorkerRuntime } from "@ai-office/agent-runtime/claude-worker-runtime.ts";
@@ -180,9 +181,9 @@ export async function handleRunCommand(
       throw new CliUsageError("Capacity must be an integer between 1 and 100");
     const queued = await runtime.listQueuedRuns(projectId, capacity);
     const worker = parsed.options.get("worker");
-    const model = parsed.options.get("worker-model");
     if (worker !== undefined && worker !== "claude")
       throw new CliUsageError("Unsupported worker. Available worker: claude");
+    const model = parsed.options.get("worker-model");
     if (parsed.flags.has("simulate") && worker !== undefined)
       throw new CliUsageError("Choose --worker or --simulate");
     if (
@@ -202,7 +203,7 @@ export async function handleRunCommand(
       throw new CliUsageError(
         "Queued tasks need a real worker: use --worker claude, or explicitly use --simulate for a test run. No runs were started.",
       );
-    const fallback =
+    const selectedExecutor: AgentExecutor =
       worker === "claude"
         ? new WorkerAgentExecutor(
             new ClaudeWorkerRuntime("claude", undefined, model),
@@ -214,10 +215,10 @@ export async function handleRunCommand(
           )
         : parsed.flags.has("simulate")
           ? new SimulatedAgentExecutor()
-          : undefined;
+          : (context.agentExecutor ?? new UnconfiguredAgentExecutor());
     const execute = new ExecuteAgentRun(
       runtime,
-      context.agentExecutor ?? controlledActionExecutor(context, fallback),
+      controlledActionExecutor(context, selectedExecutor),
       new InMemoryWorktreeManager(),
       clock,
       context.onRunChanged,

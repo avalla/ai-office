@@ -29,7 +29,7 @@ export interface AgentExecutionResult {
   workerOutput?: unknown;
 }
 export interface AgentExecutor {
-  prepare?(run: AgentRun): Promise<PreparedAgentExecution>;
+  prepare?(run: AgentRun): Promise<PreparedAgentExecution | undefined>;
   execute(run: AgentRun, signal?: AbortSignal): Promise<AgentExecutionResult>;
 }
 
@@ -63,7 +63,9 @@ export class UnconfiguredAgentExecutor implements AgentExecutor {
 }
 
 export class SimulatedAgentExecutor implements AgentExecutor {
-  async prepare(run: AgentRun): Promise<PreparedAgentExecution> {
+  async prepare(
+    run: AgentRun,
+  ): Promise<PreparedAgentExecution | undefined> {
     return {
       provenance: {
         kind: "simulation",
@@ -94,11 +96,15 @@ export class ControlledActionAgentExecutor implements AgentExecutor {
     private readonly timeoutForRun: ControlledActionTimeout = () => 30_000,
   ) {}
 
-  async prepare(run: AgentRun): Promise<PreparedAgentExecution> {
+  async prepare(
+    run: AgentRun,
+  ): Promise<PreparedAgentExecution | undefined> {
     if (run.snapshot().actionIntent === undefined) {
       if (this.fallback.prepare !== undefined)
         return this.fallback.prepare(run);
-      throw new AgentExecutorNotConfiguredError();
+      // A generic injected executor may intentionally expose only execute().
+      // Preserve that contract while keeping action intents on this wrapper.
+      return undefined;
     }
     return {
       provenance: {

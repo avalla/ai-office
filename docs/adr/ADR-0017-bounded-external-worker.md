@@ -23,11 +23,15 @@ may still configure hooks. AI Office therefore does not claim that the Claude
 process cannot execute managed customization or that it is isolated from a
 same-UID/administrator policy.
 
-The supported baseline is Claude Code `2.1.236` or newer. `--restricted` and
-`--permission-prompts none` are not used because their availability is not part
-of that baseline. When the installed client advertises `--disallowedTools`,
-the adapter additionally denies the `mcp__*` namespace as defense in depth.
-The authoritative reference is [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference).
+The supported baseline is Claude Code `2.1.259` or newer. The adapter does not
+use `--help` as a capability oracle: Claude documents that help output is not a
+complete flag list. The baseline therefore deterministically supplies
+`--safe-mode`, `--restricted`, `--print`, `--tools ""`,
+`--disallowedTools "mcp__*"`, `--strict-mcp-config`, an empty MCP config,
+empty ordinary setting sources, disabled slash commands, `dontAsk` permission
+mode, `--permission-prompts none`, no session persistence, JSON output/schema,
+and the role's turn/budget limits. The authoritative reference is [Claude Code
+CLI reference](https://code.claude.com/docs/en/cli-reference).
 
 The operator selects `run:tick --worker claude` or `--simulate`. Unconfigured
 normal tasks remain queued. Action intents still use the controlled-action
@@ -55,8 +59,12 @@ facts. Loss of authority aborts the process. A completion fence rechecks those
 facts, the run provenance and lease in the same short transaction that first
 persists `reviewing`; a stale result is rejected as `WORKER_LEASE_LOST`. The
 adapter bounds output, enforces a deadline, and waits for the whole POSIX
-process group before acknowledging cancellation. Windows currently only has
-direct-child termination and does not provide equivalent descendant cleanup.
+process group before acknowledging cancellation. The real Claude worker is
+unsupported on Windows in this slice: there is no tested Job Object or
+equivalent process-tree ownership boundary, so the adapter fails before spawn.
+Simulation and controlled actions remain available there. `--restricted` is
+still a Claude client policy, not process sandboxing against same-UID code,
+administrators, or managed-host policy.
 After host interruption, reconciliation reports unobserved external work;
 it resolves local records without claiming the old process stopped or replaying
 the operation. No SQLite transaction spans client inspection or execution.

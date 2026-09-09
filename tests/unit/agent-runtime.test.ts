@@ -109,8 +109,52 @@ describe("agent runtime domain", () => {
     );
   });
 
+  test("never sends an action intent to an injected generic fallback", async () => {
+    let fallbackCalls = 0;
+    let gatewayCalls = 0;
+    const fallback = {
+      execute: async () => {
+        fallbackCalls += 1;
+        return { summary: "bypassed", artifacts: [] };
+      },
+    };
+    const executor = new ControlledActionAgentExecutor(
+      {
+        invoke: async () => {
+          gatewayCalls += 1;
+          return {
+            requestId: "action-boundary",
+            outcome: "denied" as const,
+            status: "denied" as const,
+          };
+        },
+      },
+      fallback,
+    );
+    const run = AgentRun.create({
+      id: "run-boundary",
+      projectId: "project",
+      taskId: "task",
+      agentId: "agent",
+      actionIntent: {
+        resourceId: "workspace",
+        operation: "filesystem.read",
+        arguments: { path: "notes/hello.txt" },
+      },
+      now: new Date("2026-08-05T00:00:00Z"),
+    });
+
+    await executor.execute(run);
+    expect(gatewayCalls).toBe(1);
+    expect(fallbackCalls).toBe(0);
+  });
+
   test("bounds controlled-action waiting with the role deadline without detaching a non-cooperative connector", async () => {
     let observedSignal!: AbortSignal;
+    let release!: () => void;
+    const connectorReturned = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const run = AgentRun.create({
       id: "run-timeout",
       projectId: "project",
@@ -129,7 +173,7 @@ describe("agent runtime domain", () => {
           observedSignal = input.signal!;
           // Deliberately ignore AbortSignal: the caller must wait for the
           // connector to return instead of reporting a false failure.
-          await new Promise((resolve) => setTimeout(resolve, 20));
+          await connectorReturned;
           return {
             requestId: "action-timeout",
             outcome: "allowed" as const,
@@ -140,9 +184,17 @@ describe("agent runtime domain", () => {
       undefined,
       () => 5,
     );
-    await expect(executor.execute(run)).resolves.toMatchObject({
+    let settled = false;
+    const execution = executor.execute(run).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(observedSignal.aborted).toBe(true);
+    expect(settled).toBe(false);
+    release();
+    await expect(execution).resolves.toMatchObject({
       actions: [{ requestId: "action-timeout", status: "completed" }],
     });
-    expect(observedSignal.aborted).toBe(true);
+    expect(settled).toBe(true);
   });
 });
