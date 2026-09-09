@@ -70,6 +70,7 @@ export const queryEventTopics = [
   "pipeline.updated",
   "review.updated",
   "approval.updated",
+  "memory.updated",
   "activity.created",
 ] as const;
 
@@ -276,6 +277,7 @@ export function commandInvalidationTopics(
   )
     add("project.updated", "review.updated", "task.updated");
   else if (command.startsWith("agent:")) add("project.updated", "run.updated");
+  else if (command.startsWith("memory:")) add("memory.updated");
   else if (
     command.startsWith("project:") ||
     command.startsWith("office:") ||

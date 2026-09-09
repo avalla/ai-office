@@ -8,6 +8,8 @@ import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { SqliteOperationalReadRepository } from "@ai-office/storage-sqlite/repositories/sqlite-operational-read.repository.ts";
+import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
+import { migrateGlobal } from "@ai-office/storage-sqlite/database/migrate-global.ts";
 import { OperationalEventBus } from "@ai-office/application/events/operational-event-bus.ts";
 import { OperationalQueryService } from "@ai-office/application/queries/operational-query-service.ts";
 import { LocalCommandHandler } from "./local-command-handler.ts";
@@ -64,6 +66,12 @@ export async function bootstrap(
     join(sourceDirectory, "..", "..", "..", "migrations", "project");
   const database = openDatabase(runtimePaths.projectDatabasePath);
   migrate(database, migrationDirectory);
+  const globalDatabase = openDatabase(runtimePaths.globalDatabasePath);
+  migrateGlobal(
+    globalDatabase,
+    options.globalMigrationDirectory ??
+      join(sourceDirectory, "..", "..", "..", "migrations", "global"),
+  );
   const events = new RecordAuditEvent(
     new SqliteAuditEventRepository(database),
     new CryptoIdGenerator(),
@@ -77,6 +85,7 @@ export async function bootstrap(
   const queries = new OperationalQueryService({
     reads: new SqliteOperationalReadRepository(database),
     clock: new SystemClock(),
+    memory: new SqliteGlobalMemoryRepository(globalDatabase),
   });
 
   const runtime = new ApplicationRuntime(
@@ -97,7 +106,10 @@ export async function bootstrap(
     queryEvents,
     handler: new LocalCommandHandler(runtime),
     events,
-    onStopped: () => database.close(),
+    onStopped: () => {
+      globalDatabase.close();
+      database.close();
+    },
     onStopping: () => runtime.stop(),
   });
 }

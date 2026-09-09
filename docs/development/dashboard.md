@@ -129,6 +129,7 @@ audit event id; the SQLite `rowid` is deliberately not part of the contract.
 | Route                             | Returns                                          |
 | --------------------------------- | ------------------------------------------------ |
 | `GET /api/dashboard`              | Cross-project overview, attention, active runs   |
+| `GET /api/memory`                 | Global roles, patterns, and lessons              |
 | `GET /api/projects`               | Project summaries                                |
 | `GET /api/projects/:id`           | Project detail: tasks, pipelines, agents, runs   |
 | `GET /api/projects/:id/tasks`     | Task operational state                           |
@@ -143,6 +144,12 @@ audit event id; the SQLite `rowid` is deliberately not part of the contract.
 | `GET /api/events`                 | Server-sent invalidation stream                  |
 
 The surface is read-only: any method other than `GET` returns `405`.
+
+The dashboard's Memory page reads the same global-memory authority used by the
+Runtime's `memory:*` commands. Codex and Claude Code do not open `global.sqlite`
+or receive raw SQL access; their project integrations point to the derived
+`AI-OFFICE.md` guidance and repository-local skill, while Runtime-backed work
+can select reusable memory through the application boundary.
 
 ### Task search, filters, and pages
 

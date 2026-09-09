@@ -781,6 +781,71 @@ export interface ActivityEntry {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Global memory                                                              */
+/* -------------------------------------------------------------------------- */
+
+export interface GlobalMemoryRole {
+  type: "role";
+  id: string;
+  name: string;
+  version: number;
+  status: "active" | "deprecated";
+  key: string;
+  description: string;
+  responsibilities: readonly string[];
+  capabilities: readonly string[];
+  tools: readonly string[];
+  modelPolicy: string;
+  limits: {
+    maxIterations: number;
+    maxCostMicros: string;
+    timeoutSeconds: number;
+  };
+  createdAt: IsoTimestamp;
+  updatedAt: IsoTimestamp;
+}
+
+export interface GlobalMemoryPattern {
+  type: "pattern";
+  id: string;
+  name: string;
+  version: number;
+  status: "active" | "deprecated";
+  problem: string;
+  context: string;
+  solution: string;
+  applicability: readonly string[];
+  constraints: readonly string[];
+  risks: readonly string[];
+  sourceProjectId: string | null;
+  successCount: number;
+  failureCount: number;
+  createdAt: IsoTimestamp;
+  updatedAt: IsoTimestamp;
+}
+
+export interface GlobalMemoryLesson {
+  type: "lesson";
+  id: string;
+  title: string;
+  content: string;
+  confidence: number;
+  status: "active" | "deprecated";
+  sourceProjectId: string | null;
+  sourceTaskId: string | null;
+  createdAt: IsoTimestamp;
+  updatedAt: IsoTimestamp;
+}
+
+export interface GlobalMemoryOverview {
+  generatedAt: IsoTimestamp;
+  storage: "global-memory";
+  roles: readonly GlobalMemoryRole[];
+  patterns: readonly GlobalMemoryPattern[];
+  lessons: readonly GlobalMemoryLesson[];
+}
+
+/* -------------------------------------------------------------------------- */
 /* Aggregate views                                                             */
 /* -------------------------------------------------------------------------- */
 

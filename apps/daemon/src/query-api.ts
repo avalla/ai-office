@@ -159,6 +159,9 @@ export class QueryApi {
         }),
       });
 
+    if (first === "memory" && segments.length === 1)
+      return json({ memory: await this.queries.getGlobalMemory() });
+
     if (first === "projects") {
       if (segments.length === 1)
         return json({ projects: await this.queries.listProjects() });

@@ -11,6 +11,10 @@ import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.p
 import type { WorkerAuthorityFence } from "../ports/agent-runtime-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
+import type {
+  GlobalMemoryRepository,
+  MemorySearchResult,
+} from "../ports/global-memory-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import {
   taskRunLeaseDurationMs,
@@ -31,7 +35,67 @@ export class WorkerAgentExecutor implements AgentExecutor {
     private readonly tasks: TaskRepository,
     private readonly pipelines: PipelineRunRepository,
     private readonly clock: Clock,
+    private readonly memory?: GlobalMemoryRepository,
   ) {}
+
+  private async relevantMemory(input: {
+    title: string;
+    description: string | null;
+    roleKey: string;
+    objective: string | null;
+  }): Promise<readonly MemorySearchResult[]> {
+    if (this.memory === undefined) return [];
+    const stopWords = new Set([
+      "about",
+      "from",
+      "into",
+      "that",
+      "this",
+      "with",
+      "and",
+      "the",
+      "for",
+      "use",
+    ]);
+    const terms = [
+      input.title,
+      input.description ?? "",
+      input.roleKey,
+      input.objective ?? "",
+    ]
+      .flatMap(
+        (value) =>
+          value.toLocaleLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}_-]{2,}/gu) ??
+          [],
+      )
+      .filter((term) => !stopWords.has(term));
+    const uniqueTerms = [...new Set(terms)].slice(0, 12);
+    if (uniqueTerms.length === 0) return [];
+    const matches = await Promise.all(
+      uniqueTerms.map((term) => this.memory!.search(term, 5)),
+    );
+    const byKey = new Map<string, MemorySearchResult>();
+    for (const result of matches.flat()) {
+      const key = `${result.type}:${result.id}:${result.version ?? "latest"}`;
+      const current = byKey.get(key);
+      if (current === undefined || result.score > current.score)
+        byKey.set(key, result);
+    }
+    return [...byKey.values()]
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          left.type.localeCompare(right.type) ||
+          left.id.localeCompare(right.id),
+      )
+      .slice(0, 8)
+      .map((result) => ({
+        ...result,
+        id: result.id.slice(0, 128),
+        name: result.name.slice(0, 256),
+        summary: result.summary.slice(0, 2_000),
+      }));
+  }
 
   async prepare(run: AgentRun): Promise<PreparedAgentExecution> {
     const snapshot = run.snapshot();
@@ -69,6 +133,12 @@ export class WorkerAgentExecutor implements AgentExecutor {
         ? undefined
         : pipeline?.snapshot().definition.stages[stage.stageIndex];
     const taskState = task.snapshot();
+    const memory = await this.relevantMemory({
+      title: taskState.title,
+      description: taskState.description ?? null,
+      roleKey: roleState.key,
+      objective: definition?.objective ?? null,
+    });
     const context: WorkerContext = {
       schemaVersion: 1,
       runId: snapshot.id,
@@ -99,6 +169,7 @@ export class WorkerAgentExecutor implements AgentExecutor {
               objective: definition.objective,
               checks: [...definition.checks],
             },
+      memory: { results: memory },
     };
     const serialized = canonicalStringify(context);
     if (

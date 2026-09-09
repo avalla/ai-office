@@ -27,11 +27,14 @@ import type {
 import { taskRunLeaseRenewalMs } from "@ai-office/application/runtime/run-policy.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
+import { migrateGlobal } from "@ai-office/storage-sqlite/database/migrate-global.ts";
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
+import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
+import { GlobalPattern } from "@ai-office/domain/memory/global-pattern.ts";
 
 const cleanup: (() => void)[] = [];
 const now = new Date("2026-09-07T00:00:00.000Z");
@@ -53,8 +56,10 @@ afterEach(() => {
 async function fixture(legacy = false) {
   const root = mkdtempSync(join(tmpdir(), "ao-worker-test-"));
   const db = openDatabase(join(root, "project.sqlite"));
+  const globalDb = openDatabase(join(root, "global.sqlite"));
   cleanup.push(() => {
     db.close();
+    globalDb.close();
     rmSync(root, { recursive: true, force: true });
   });
   const migrations = resolve("migrations/project");
@@ -66,6 +71,7 @@ async function fixture(legacy = false) {
         copyFileSync(join(migrations, file), join(partial, file));
     migrate(db, partial);
   } else migrate(db, migrations);
+  migrateGlobal(globalDb, resolve("migrations/global"));
   const projects = new SqliteProjectRepository(db),
     tasks = new SqliteTaskRepository(db),
     runs = new SqliteAgentRuntimeRepository(db),
@@ -119,8 +125,58 @@ async function fixture(legacy = false) {
       (await runs.findRun("r"))!,
     ))!;
   };
-  return { db, runs, tasks, pipelines, admitted };
+  return {
+    db,
+    runs,
+    tasks,
+    pipelines,
+    memory: new SqliteGlobalMemoryRepository(globalDb),
+    admitted,
+  };
 }
+
+test("worker context includes bounded relevant global memory", async () => {
+  const f = await fixture();
+  await f.memory.savePattern(
+    GlobalPattern.create({
+      id: "tradeoff-pattern",
+      version: 1,
+      name: "Tradeoff analysis",
+      problem: "Explain tradeoffs clearly",
+      context: "Architecture decisions",
+      solution: "Compare explicit facts before choosing",
+      now,
+    }),
+  );
+  const worker: WorkerRuntime = {
+    id: "test-worker",
+    inspect: async () => ({ version: "1" }),
+    execute: async (context) => {
+      expect(context.memory.results).toEqual([
+        expect.objectContaining({
+          type: "pattern",
+          id: "tradeoff-pattern",
+          version: 1,
+        }),
+      ]);
+      return output;
+    },
+  };
+  const result = await new ExecuteAgentRun(
+    f.runs,
+    new WorkerAgentExecutor(
+      worker,
+      f.runs,
+      f.tasks,
+      f.pipelines,
+      clock,
+      f.memory,
+    ),
+    new InMemoryWorktreeManager(),
+    clock,
+  ).execute(await f.admitted());
+  expect(result.status).toBe("completed");
+});
 
 async function addActivePipeline(f: Awaited<ReturnType<typeof fixture>>) {
   const manifest: OfficeManifest = {

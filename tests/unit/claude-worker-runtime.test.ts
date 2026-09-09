@@ -37,6 +37,7 @@ const context: WorkerContext = {
     roleVersion: 1,
   },
   stage: null,
+  memory: { results: [] },
 };
 const limits = {
   timeoutMs: 1000,

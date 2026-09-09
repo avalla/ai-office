@@ -19,6 +19,7 @@
 import type { AgentRunStatus } from "@ai-office/domain/agent/agent-run.ts";
 import type { TaskProps } from "@ai-office/domain/task/task.ts";
 import type { Clock } from "../ports/clock.port.ts";
+import type { GlobalMemoryRepository } from "../ports/global-memory-repository.port.ts";
 import type {
   AgentActiveStagesRecord,
   AgentRunFactsRecord,
@@ -73,6 +74,7 @@ import {
   type TaskPageInfo,
   type TaskPageQuery,
   type TaskOperationalStatus,
+  type GlobalMemoryOverview,
 } from "../read-models/operational-read-models.ts";
 
 export class OperationalResourceNotFoundError extends Error {
@@ -85,6 +87,7 @@ export class OperationalResourceNotFoundError extends Error {
 export interface OperationalQueryServiceDependencies {
   reads: OperationalReadRepository;
   clock: Clock;
+  memory?: GlobalMemoryRepository;
 }
 
 const failedRunStatuses: readonly AgentRunStatus[] = ["failed"];
@@ -130,10 +133,79 @@ function nextActivityCursor(
 export class OperationalQueryService {
   private readonly reads: OperationalReadRepository;
   private readonly clock: Clock;
+  private readonly memory: GlobalMemoryRepository | undefined;
 
   constructor(dependencies: OperationalQueryServiceDependencies) {
     this.reads = dependencies.reads;
     this.clock = dependencies.clock;
+    this.memory = dependencies.memory;
+  }
+
+  async getGlobalMemory(): Promise<GlobalMemoryOverview> {
+    const [roles, patterns, lessons] = await Promise.all([
+      this.memory?.listRoles() ?? Promise.resolve([]),
+      this.memory?.listPatterns() ?? Promise.resolve([]),
+      this.memory?.listLessons() ?? Promise.resolve([]),
+    ]);
+    return {
+      generatedAt: this.clock.now().toISOString(),
+      storage: "global-memory",
+      roles: roles.map((role) => {
+        const value = role.snapshot();
+        return {
+          type: "role" as const,
+          id: value.id,
+          name: value.name,
+          version: value.version,
+          status: value.status,
+          key: value.definition.key,
+          description: value.definition.description,
+          responsibilities: value.definition.responsibilities,
+          capabilities: value.definition.capabilities,
+          tools: value.definition.tools,
+          modelPolicy: value.definition.modelPolicy,
+          limits: value.definition.limits,
+          createdAt: value.createdAt.toISOString(),
+          updatedAt: value.updatedAt.toISOString(),
+        };
+      }),
+      patterns: patterns.map((pattern) => {
+        const value = pattern.snapshot();
+        return {
+          type: "pattern" as const,
+          id: value.id,
+          name: value.name,
+          version: value.version,
+          status: value.status,
+          problem: value.problem,
+          context: value.context,
+          solution: value.solution,
+          applicability: value.applicability,
+          constraints: value.constraints,
+          risks: value.risks,
+          sourceProjectId: value.sourceProjectId ?? null,
+          successCount: value.successCount,
+          failureCount: value.failureCount,
+          createdAt: value.createdAt.toISOString(),
+          updatedAt: value.updatedAt.toISOString(),
+        };
+      }),
+      lessons: lessons.map((lesson) => {
+        const value = lesson.snapshot();
+        return {
+          type: "lesson" as const,
+          id: value.id,
+          title: value.title,
+          content: value.content,
+          confidence: value.confidence,
+          status: value.status,
+          sourceProjectId: value.sourceProjectId ?? null,
+          sourceTaskId: value.sourceTaskId ?? null,
+          createdAt: value.createdAt.toISOString(),
+          updatedAt: value.updatedAt.toISOString(),
+        };
+      }),
+    };
   }
 
   /* ---------------------------------------------------------------------- */

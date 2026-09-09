@@ -1,3 +1,5 @@
+import type { MemorySearchResult } from "./global-memory-repository.port.ts";
+
 /** A worker receives explicit data only. This port grants no resource tools. */
 export interface WorkerContext {
   schemaVersion: 1;
@@ -16,6 +18,12 @@ export interface WorkerContext {
     roleKey: string;
     roleVersion: number;
   };
+  model?: {
+    policy: string | null;
+    profile: string | null;
+    modelRef: string;
+    providerId: string;
+  };
   stage: {
     pipelineRunId: string;
     manifestRevision: number;
@@ -23,6 +31,10 @@ export interface WorkerContext {
     objective: string;
     checks: readonly string[];
   } | null;
+  /** Bounded, advisory matches from global reusable memory. */
+  memory: {
+    results: readonly MemorySearchResult[];
+  };
 }
 
 export interface WorkerLimits {

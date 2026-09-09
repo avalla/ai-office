@@ -465,7 +465,7 @@ export async function executeRuntimeCommand(
       options.migrationDirectory ??
         join(sourceDirectory, "..", "..", "..", "migrations", "project"),
     );
-    if (command.startsWith("memory:")) {
+    if (command.startsWith("memory:") || command === "run:tick") {
       globalDatabase = openDatabase(runtimePaths.globalDatabasePath);
       migrateGlobal(
         globalDatabase,

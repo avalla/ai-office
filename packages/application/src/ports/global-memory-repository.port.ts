@@ -16,12 +16,15 @@ export interface MemorySearchResult {
 export interface GlobalMemoryRepository {
   saveRole(role: GlobalRole): Promise<void>;
   updateRoleStatus(role: GlobalRole): Promise<void>;
+  listRoles(): Promise<readonly GlobalRole[]>;
   findRole(id: string, version: number): Promise<GlobalRole | null>;
   findLatestRole(id: string): Promise<GlobalRole | null>;
   findLatestRoleByKey(key: string): Promise<GlobalRole | null>;
   savePattern(pattern: GlobalPattern): Promise<void>;
+  listPatterns(): Promise<readonly GlobalPattern[]>;
   findPattern(id: string, version: number): Promise<GlobalPattern | null>;
   saveLesson(lesson: GlobalLesson): Promise<void>;
+  listLessons(): Promise<readonly GlobalLesson[]>;
   findLesson(id: string): Promise<GlobalLesson | null>;
   search(query: string, limit: number): Promise<readonly MemorySearchResult[]>;
 }

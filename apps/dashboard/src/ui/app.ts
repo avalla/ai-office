@@ -12,6 +12,7 @@
 import type {
   AgentRunDetail,
   DashboardOverview,
+  GlobalMemoryOverview,
   ProjectDetail,
   TaskDetail,
 } from "@ai-office/application/read-models/operational-read-models.ts";
@@ -21,6 +22,7 @@ import {
   renderProject,
   renderRun,
   renderTask,
+  renderMemory,
 } from "./render.ts";
 import {
   connectionLabel,
@@ -30,6 +32,7 @@ import {
 } from "./sync-controller.ts";
 import {
   overviewViewModel,
+  memoryViewModel,
   parseRoute,
   projectViewModel,
   runViewModel,
@@ -205,6 +208,13 @@ async function renderRoute(
         `/api/runs/${encodeURIComponent(route.runId)}`,
       );
       publishRoute(route, root, renderRun(runViewModel(body.run)));
+      return;
+    }
+    if (route.kind === "memory") {
+      const body = await getJson<{ memory: GlobalMemoryOverview }>(
+        "/api/memory",
+      );
+      publishRoute(route, root, renderMemory(memoryViewModel(body.memory)));
       return;
     }
     const body = await getJson<{ dashboard: DashboardOverview }>(

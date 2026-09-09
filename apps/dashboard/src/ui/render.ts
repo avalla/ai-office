@@ -16,6 +16,9 @@ import type {
   ReviewState,
   TaskOperationalState,
   TaskPageQuery,
+  GlobalMemoryLesson,
+  GlobalMemoryPattern,
+  GlobalMemoryRole,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
   agentStateLabel,
@@ -36,6 +39,7 @@ import {
   type ProjectView,
   type RunView,
   type TaskView,
+  type MemoryView,
   type ToneName,
 } from "./view-model.ts";
 
@@ -83,6 +87,34 @@ function section(title: string, body: string, note?: string | null): string {
       ? escapeHtml(title)
       : `${escapeHtml(title)} <span class="section-note">${escapeHtml(note)}</span>`;
   return `<section class="panel"><h2>${heading}</h2>${body}</section>`;
+}
+
+function memoryList(values: readonly string[]): string {
+  if (values.length === 0) return `<span class="meta">none recorded</span>`;
+  return `<ul class="memory-list">${values.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul>`;
+}
+
+function memoryRole(role: GlobalMemoryRole): string {
+  return `<article class="memory-entry"><header><div><h3>${escapeHtml(role.name)}</h3><p class="meta mono">${escapeHtml(role.key)} · ${escapeHtml(role.id)} · v${role.version}</p></div>${badge(role.status, role.status === "active" ? "good" : "muted")}</header><p>${escapeHtml(role.description || "No description recorded.")}</p><dl class="facts wide"><div><dt>model policy</dt><dd>${escapeHtml(role.modelPolicy)}</dd></div><div><dt>limits</dt><dd class="mono">${role.limits.maxIterations} iterations · ${role.limits.timeoutSeconds}s · ${escapeHtml(role.limits.maxCostMicros)} μcost</dd></div></dl><div class="memory-columns"><div><h4>Responsibilities</h4>${memoryList(role.responsibilities)}</div><div><h4>Capabilities</h4>${memoryList(role.capabilities)}</div><div><h4>Tools</h4>${memoryList(role.tools)}</div></div><p class="meta mono">updated ${escapeHtml(formatTimestamp(role.updatedAt))}</p></article>`;
+}
+
+function memoryPattern(pattern: GlobalMemoryPattern): string {
+  return `<article class="memory-entry"><header><div><h3>${escapeHtml(pattern.name)}</h3><p class="meta mono">${escapeHtml(pattern.id)} · v${pattern.version}</p></div>${badge(pattern.status, pattern.status === "active" ? "good" : "muted")}</header><dl class="memory-copy"><div><dt>Problem</dt><dd>${escapeHtml(pattern.problem)}</dd></div><div><dt>Context</dt><dd>${escapeHtml(pattern.context)}</dd></div><div><dt>Solution</dt><dd>${escapeHtml(pattern.solution)}</dd></div></dl><div class="memory-columns"><div><h4>Applicable when</h4>${memoryList(pattern.applicability)}</div><div><h4>Constraints</h4>${memoryList(pattern.constraints)}</div><div><h4>Risks</h4>${memoryList(pattern.risks)}</div></div><p class="meta">${pattern.successCount} successes · ${pattern.failureCount} failures · source project ${escapeHtml(pattern.sourceProjectId ?? "not recorded")}</p></article>`;
+}
+
+function memoryLesson(lesson: GlobalMemoryLesson): string {
+  return `<article class="memory-entry"><header><div><h3>${escapeHtml(lesson.title)}</h3><p class="meta mono">${escapeHtml(lesson.id)}</p></div>${badge(lesson.status, lesson.status === "active" ? "good" : "muted")}</header><p class="memory-content">${escapeHtml(lesson.content)}</p><p class="meta">confidence ${Math.round(lesson.confidence * 100)}% · source project ${escapeHtml(lesson.sourceProjectId ?? "not recorded")}${lesson.sourceTaskId === null ? "" : ` · task ${escapeHtml(lesson.sourceTaskId)}`}</p></article>`;
+}
+
+export function renderMemory(view: MemoryView): string {
+  const total = view.memory.roles.length + view.memory.patterns.length + view.memory.lessons.length;
+  return [
+    `<header class="project-header"><h2>Memory</h2><p class="meta">Global reusable memory, read from the authoritative Runtime store. ${total} saved records.</p></header>`,
+    section("How clients use it", `<p class="section-intro">Codex and Claude Code do not open this database directly. Their repository-local AI Office skill tells them to use the Runtime-backed <span class="mono">memory:search</span> command when reusable roles, patterns or lessons are relevant. This page shows the records available through that same authority.</p><p class="meta mono">storage: ${escapeHtml(view.memory.storage)} · snapshot: ${escapeHtml(view.generatedAt)}</p>`),
+    section("Roles", view.memory.roles.length === 0 ? empty("No roles saved", "Create one with memory:role:create.") : view.memory.roles.map(memoryRole).join(""), `${view.memory.roles.length}`),
+    section("Patterns", view.memory.patterns.length === 0 ? empty("No patterns saved", "Create one with memory:pattern:create.") : view.memory.patterns.map(memoryPattern).join(""), `${view.memory.patterns.length}`),
+    section("Lessons", view.memory.lessons.length === 0 ? empty("No lessons saved", "Create one with memory:lesson:create.") : view.memory.lessons.map(memoryLesson).join(""), `${view.memory.lessons.length}`),
+  ].join("");
 }
 
 /* -------------------------------------------------------------------------- */
@@ -286,6 +318,10 @@ export function renderOverview(view: OverviewView): string {
 
   return [
     renderStats(view),
+    section(
+      "Reusable memory",
+      `<p class="section-intro">Inspect the global roles, patterns and lessons available through the Runtime.</p><p><a class="button-link" href="${routeHref({ kind: "memory" })}">Open memory <span aria-hidden="true">→</span></a></p>`,
+    ),
     section(
       "Needs attention",
       attentionList(view.attention),

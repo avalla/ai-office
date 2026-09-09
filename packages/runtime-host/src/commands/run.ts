@@ -210,6 +210,7 @@ export async function handleRunCommand(
             tasks,
             context.pipelines,
             clock,
+            context.memory,
           )
         : parsed.flags.has("simulate")
           ? new SimulatedAgentExecutor()

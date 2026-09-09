@@ -93,6 +93,23 @@ describe("daemon global memory", () => {
       ]);
       expect(existsSync(join(root, ".ai-office", "global.sqlite"))).toBe(true);
 
+      const memoryResponse = await fetch("http://localhost/api/memory", {
+        unix: socketPath,
+      });
+      expect(memoryResponse.status).toBe(200);
+      expect(await memoryResponse.json()).toMatchObject({
+        memory: {
+          storage: "global-memory",
+          patterns: [
+            {
+              id: "short-transactions",
+              version: 1,
+              status: "active",
+            },
+          ],
+        },
+      });
+
       const search = output();
       expect(
         await runDaemonCli(

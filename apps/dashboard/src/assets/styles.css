@@ -71,6 +71,29 @@ body {
   margin-right: auto;
 }
 
+.top-link {
+  color: var(--active);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.top-nav {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--panel-edge);
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 13px;
+}
+
 .app {
   max-width: 1180px;
   margin: 0 auto;
@@ -222,6 +245,79 @@ a {
 .calm {
   color: var(--ink-dim);
   margin: 0;
+}
+
+.memory-entry {
+  padding: 14px 0;
+  border-bottom: 1px solid var(--panel-edge);
+}
+
+.memory-entry:first-child {
+  padding-top: 0;
+}
+
+.memory-entry:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.memory-entry header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.memory-entry h3,
+.memory-entry h4 {
+  margin: 0;
+}
+
+.memory-entry h4 {
+  color: var(--ink-dim);
+  font-size: 12px;
+  font-weight: 550;
+  margin-bottom: 4px;
+}
+
+.memory-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.memory-list {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ink-dim);
+  font-size: 13px;
+}
+
+.memory-copy {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.memory-copy div {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 12px;
+}
+
+.memory-copy dt {
+  color: var(--ink-dim);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.memory-copy dd {
+  margin: 0;
+}
+
+.memory-content {
+  white-space: pre-wrap;
 }
 
 .mono {
@@ -685,6 +781,10 @@ a:hover {
   }
 
   .task-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .memory-columns {
     grid-template-columns: 1fr;
   }
 }

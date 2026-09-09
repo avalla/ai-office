@@ -28,6 +28,7 @@ import type {
   TaskOperationalStatus,
   TaskPageQuery,
   TaskPageInfo,
+  GlobalMemoryOverview,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
   parseTaskPageQuery,
@@ -40,6 +41,7 @@ import {
 
 export type DashboardRoute =
   | { kind: "overview" }
+  | { kind: "memory" }
   | { kind: "project"; projectId: string; taskQuery?: TaskPageQuery }
   | {
       kind: "task";
@@ -95,6 +97,8 @@ export function parseRoute(hash: string): DashboardRoute {
     };
   if (segments.length === 2 && segments[0] === "runs")
     return { kind: "run", runId: decodeURIComponent(segments[1]!) };
+  if (segments.length === 1 && segments[0] === "memory")
+    return { kind: "memory" };
   return { kind: "overview" };
 }
 
@@ -111,6 +115,7 @@ export function routeHref(route: DashboardRoute): string {
   if (route.kind === "project")
     return `#/projects/${encodeURIComponent(route.projectId)}${suffix}`;
   if (route.kind === "run") return `#/runs/${encodeURIComponent(route.runId)}`;
+  if (route.kind === "memory") return "#/memory";
   return "#/";
 }
 
@@ -327,6 +332,15 @@ export interface OverviewView {
   activeRuns: SampleView<AgentRunState>;
   activity: readonly ActivityEntry[];
   empty: EmptyState | null;
+}
+
+export interface MemoryView {
+  generatedAt: string;
+  memory: GlobalMemoryOverview;
+}
+
+export function memoryViewModel(memory: GlobalMemoryOverview): MemoryView {
+  return { generatedAt: formatTimestamp(memory.generatedAt), memory };
 }
 
 export function overviewViewModel(dashboard: DashboardOverview): OverviewView {
