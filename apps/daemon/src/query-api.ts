@@ -17,6 +17,7 @@ import {
   parseBoolean,
   parseIdentifier,
   parseLimit,
+  parseTaskPageQuery,
   queryApiPrefix,
   queryApiVersion,
   queryLimits,
@@ -158,6 +159,9 @@ export class QueryApi {
         }),
       });
 
+    if (first === "memory" && segments.length === 1)
+      return json({ memory: await this.queries.getGlobalMemory() });
+
     if (first === "projects") {
       if (segments.length === 1)
         return json({ projects: await this.queries.listProjects() });
@@ -166,6 +170,9 @@ export class QueryApi {
       if (segments.length === 2)
         return json({
           project: await this.queries.getProjectDetail(projectId, {
+            ...(parameters.get("taskView") === "paged"
+              ? { taskQuery: parseTaskPageQuery(parameters) }
+              : {}),
             taskLimit: parseLimit(
               parameters.get("taskLimit"),
               queryLimits.tasks,
@@ -176,6 +183,14 @@ export class QueryApi {
               queryLimits.activity,
             ),
           }),
+        });
+
+      if (segments.length === 4 && third === "tasks")
+        return json({
+          task: await this.queries.getTaskDetail(
+            projectId,
+            parseIdentifier(segments[3], "taskId"),
+          ),
         });
 
       if (segments.length === 3 && third === "tasks")

@@ -9,18 +9,30 @@
  */
 
 interface DashboardElement {
+  id: string;
+  value: string;
+  selectionStart: number | null;
+  selectionEnd: number | null;
   innerHTML: string;
   textContent: string | null;
   setAttribute(name: string, value: string): void;
+  addEventListener(
+    type: string,
+    listener: (event: { preventDefault(): void }) => void,
+  ): void;
+  setSelectionRange(start: number, end: number): void;
+  scrollIntoView(options?: { block?: "start" }): void;
+  focus(options?: { preventScroll?: boolean }): void;
 }
 
 interface DashboardDocument {
+  activeElement: DashboardElement | null;
   getElementById(id: string): DashboardElement | null;
   addEventListener(type: string, listener: () => void): void;
 }
 
 interface DashboardLocation {
-  readonly hash: string;
+  hash: string;
   readonly origin: string;
 }
 
@@ -29,6 +41,7 @@ interface DashboardWindow {
   addEventListener(type: string, listener: () => void): void;
   setTimeout(handler: () => void, timeout?: number): number;
   clearTimeout(handle: number): void;
+  scrollTo(x: number, y: number): void;
 }
 
 /**

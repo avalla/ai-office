@@ -42,7 +42,10 @@ The current implementation on `main` includes:
   invalidation stream, and local `ai-office dashboard` operations console;
 - SQLite persistence, migrations, audit events, and daemon/CLI workflows.
 
-Runs without an action intent still use the deterministic simulated executor.
+Runs without an action intent require an explicitly selected worker or simulation.
+`run:tick --worker claude` invokes a real, tool-free Claude Code worker for
+bounded task analysis and drafted content; `--simulate` selects a test run.
+See [agent runtime](docs/development/agent-runtime.md) for setup and limits.
 Controlled runs can request or simulate an authorized connector action and return
 its action ID for inspection, approval, and execution. A real LLM tool loop and
 Git worktree manager are not implemented, so AI Office is not yet autonomous end
@@ -1069,7 +1072,7 @@ packages/
   application/            use cases and ports
   runtime-host/           Runtime command execution and local composition
   storage-sqlite/         SQLite adapters and migration runner
-  agent-runtime/          agent definitions and simulated execution
+  agent-runtime/          agent definitions and bounded worker execution
   agent-client-integrations/ Codex and Claude detection/config adapters
   llm-gateway/            providers, pricing, budgets, and usage
   orchestration/          scheduling abstractions

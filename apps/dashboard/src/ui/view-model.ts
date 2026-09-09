@@ -23,8 +23,17 @@ import type {
   ProjectSummary,
   ReviewState,
   TaskOperationalState,
+  TaskDetail,
+  TaskDivergenceReason,
   TaskOperationalStatus,
+  TaskPageQuery,
+  TaskPageInfo,
+  GlobalMemoryOverview,
 } from "@ai-office/application/read-models/operational-read-models.ts";
+import {
+  parseTaskPageQuery,
+  taskPageParameters,
+} from "@ai-office/application/protocol/query-protocol.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Routing                                                                     */
@@ -32,24 +41,81 @@ import type {
 
 export type DashboardRoute =
   | { kind: "overview" }
-  | { kind: "project"; projectId: string }
+  | { kind: "memory" }
+  | { kind: "project"; projectId: string; taskQuery?: TaskPageQuery }
+  | {
+      kind: "task";
+      projectId: string;
+      taskId: string;
+      taskQuery?: TaskPageQuery;
+    }
+  | { kind: "invalid"; message: string }
   | { kind: "run"; runId: string };
 
 /** Parses a location hash such as `#/projects/p-1`. Unknown routes fall back. */
 export function parseRoute(hash: string): DashboardRoute {
-  const path = hash.replace(/^#/, "").replace(/^\//, "");
+  const [path = "", queryString = ""] = hash
+    .replace(/^#/, "")
+    .replace(/^\//, "")
+    .split("?");
   const segments = path.split("/").filter((segment) => segment.length > 0);
+  // Invalid percent-encoding must not prevent the shell from starting.
+  try {
+    for (const segment of segments) decodeURIComponent(segment);
+  } catch {
+    return { kind: "overview" };
+  }
+  let taskQuery: TaskPageQuery = {};
+  if (segments[0] === "projects") {
+    try {
+      taskQuery = parseTaskPageQuery(new URLSearchParams(queryString));
+    } catch (error) {
+      return {
+        kind: "invalid",
+        message:
+          error instanceof Error ? error.message : "Invalid task filters",
+      };
+    }
+  }
+  const query = Object.keys(taskQuery).length === 0 ? {} : { taskQuery };
+  if (
+    segments.length === 4 &&
+    segments[0] === "projects" &&
+    segments[2] === "tasks"
+  )
+    return {
+      kind: "task",
+      projectId: decodeURIComponent(segments[1]!),
+      taskId: decodeURIComponent(segments[3]!),
+      ...query,
+    };
   if (segments.length === 2 && segments[0] === "projects")
-    return { kind: "project", projectId: decodeURIComponent(segments[1]!) };
+    return {
+      kind: "project",
+      projectId: decodeURIComponent(segments[1]!),
+      ...query,
+    };
   if (segments.length === 2 && segments[0] === "runs")
     return { kind: "run", runId: decodeURIComponent(segments[1]!) };
+  if (segments.length === 1 && segments[0] === "memory")
+    return { kind: "memory" };
   return { kind: "overview" };
 }
 
 export function routeHref(route: DashboardRoute): string {
+  const query =
+    route.kind === "project" || route.kind === "task"
+      ? taskPageParameters(route.taskQuery ?? {}).toString()
+      : "";
+  const suffix = query === "" ? "" : `?${query}`;
+  if (route.kind === "invalid")
+    return `#/invalid/${encodeURIComponent(route.message)}`;
+  if (route.kind === "task")
+    return `#/projects/${encodeURIComponent(route.projectId)}/tasks/${encodeURIComponent(route.taskId)}${suffix}`;
   if (route.kind === "project")
-    return `#/projects/${encodeURIComponent(route.projectId)}`;
+    return `#/projects/${encodeURIComponent(route.projectId)}${suffix}`;
   if (route.kind === "run") return `#/runs/${encodeURIComponent(route.runId)}`;
+  if (route.kind === "memory") return "#/memory";
   return "#/";
 }
 
@@ -72,6 +138,22 @@ export function taskStatusLabel(status: TaskOperationalStatus): string {
   return taskStatusLabels[status];
 }
 
+const divergenceLabels: Record<TaskDivergenceReason, string> = {
+  agent_run_scheduled_without_task_transition:
+    "A run is queued, but the task record has not advanced.",
+  agent_run_active_without_task_transition:
+    "A run is active, but the task record has not advanced.",
+  agent_run_failed_without_task_transition:
+    "The latest run failed, but the task record has not advanced.",
+  pipeline_stage_awaiting_approval:
+    "The pipeline stage is waiting for approval.",
+  review_pending: "A review is pending for this task.",
+};
+
+export function taskDivergenceLabel(reason: TaskDivergenceReason): string {
+  return divergenceLabels[reason];
+}
+
 /** Colour bucket, so the stylesheet never has to know status vocabularies. */
 export type ToneName = "neutral" | "active" | "attention" | "good" | "muted";
 
@@ -92,7 +174,7 @@ const agentStateLabels: Record<AgentState["state"], string> = {
   disabled: "disabled",
   idle: "idle",
   assigned: "assigned",
-  working: "working",
+  working: "active run",
   awaiting_approval: "waiting",
   last_run_failed: "last run failed",
 };
@@ -252,6 +334,15 @@ export interface OverviewView {
   empty: EmptyState | null;
 }
 
+export interface MemoryView {
+  generatedAt: string;
+  memory: GlobalMemoryOverview;
+}
+
+export function memoryViewModel(memory: GlobalMemoryOverview): MemoryView {
+  return { generatedAt: formatTimestamp(memory.generatedAt), memory };
+}
+
 export function overviewViewModel(dashboard: DashboardOverview): OverviewView {
   return {
     generatedAt: formatTimestamp(dashboard.generatedAt),
@@ -278,14 +369,11 @@ export interface ProjectView {
   summary: ProjectSummary;
   attention: SampleView<AttentionReason>;
   tasks: SampleView<TaskOperationalState>;
-  divergentTasks: readonly TaskOperationalState[];
+  taskPage?: TaskPageInfo;
   pipelines: SampleView<PipelineRunState>;
-  activePipelines: readonly PipelineRunState[];
   agents: readonly AgentState[];
   reviews: SampleView<ReviewState>;
-  pendingReviews: readonly ReviewState[];
   activity: readonly ActivityEntry[];
-  empty: EmptyState | null;
 }
 
 const taskOrder: readonly TaskOperationalStatus[] = [
@@ -303,6 +391,7 @@ export function projectViewModel(detail: ProjectDetail): ProjectView {
   // Sorting reorders the displayed page only; which tasks are on it, and every
   // count beside them, were decided by the query surface.
   const tasks = [...detail.tasks.items].sort((left, right) => {
+    if (detail.taskPage !== undefined) return 0; // Server order spans all pages.
     const byStatus =
       taskOrder.indexOf(left.operationalStatus) -
       taskOrder.indexOf(right.operationalStatus);
@@ -322,32 +411,17 @@ export function projectViewModel(detail: ProjectDetail): ProjectView {
         ? `showing ${tasks.length} of ${detail.tasks.total} tasks`
         : null,
     },
-    divergentTasks: tasks.filter((task) => task.divergesFromRecordedStatus),
+    ...(detail.taskPage === undefined ? {} : { taskPage: detail.taskPage }),
     pipelines: sampleView(detail.pipelines, "pipeline runs"),
-    activePipelines: detail.pipelines.items.filter(
-      (pipeline) => pipeline.status === "active",
-    ),
     agents: detail.agents,
     reviews: sampleView(detail.reviews, "reviews"),
-    pendingReviews: detail.reviews.items.filter(
-      (review) => review.status === "pending",
-    ),
     activity: detail.recentActivity.items,
-    empty:
-      detail.tasks.total === 0 &&
-      detail.pipelines.total === 0 &&
-      detail.runs.total === 0
-        ? {
-            headline: "No activity yet",
-            detail:
-              "This project has no tasks, pipeline runs, or agent runs on record.",
-          }
-        : null,
   };
 }
 
 export interface RunView {
   run: AgentRunState;
+  workerOutput?: AgentRunDetail["workerOutput"];
   duration: string;
   events: SampleView<AgentRunEventEntry>;
   actions: AgentRunDetail["actions"];
@@ -357,9 +431,31 @@ export interface RunView {
   attention: readonly AttentionReason[];
 }
 
+export interface TaskView {
+  detail: TaskDetail;
+  taskQuery?: TaskPageQuery;
+  runs: SampleView<AgentRunState>;
+  activeRuns: SampleView<
+    TaskOperationalState["activeAgentRuns"]["items"][number]
+  >;
+}
+
+export function taskViewModel(
+  detail: TaskDetail,
+  taskQuery?: TaskPageQuery,
+): TaskView {
+  return {
+    detail,
+    ...(taskQuery === undefined ? {} : { taskQuery }),
+    runs: sampleView(detail.runs, "runs"),
+    activeRuns: sampleView(detail.task.activeAgentRuns, "active runs"),
+  };
+}
+
 export function runViewModel(detail: AgentRunDetail): RunView {
   return {
     run: detail.run,
+    workerOutput: detail.workerOutput ?? null,
     duration: formatDuration(detail.run.durationMs),
     events: sampleView(detail.events, "run events"),
     actions: detail.actions,

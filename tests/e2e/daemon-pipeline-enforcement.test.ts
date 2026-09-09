@@ -401,6 +401,23 @@ describe("daemon enforced pipeline lifecycle", () => {
       expect(JSON.parse(status.stdout[0]!) as { status: string }).toMatchObject(
         { status: "completed" },
       );
+      const taskResponse = await fetch(
+        `http://localhost/api/projects/${projectId}/tasks/${taskId}`,
+        { unix: socketPath },
+      );
+      expect(taskResponse.status).toBe(200);
+      const detail = (await taskResponse.json()) as {
+        task: {
+          activity: { items: { eventType: string; aggregateId: string }[] };
+        };
+      };
+      expect(
+        detail.task.activity.items.some(
+          (event) =>
+            event.aggregateId === runId &&
+            event.eventType.startsWith("pipeline."),
+        ),
+      ).toBe(true);
       const auditDatabase = openDatabase(
         join(root, ".ai-office", "project.sqlite"),
       );

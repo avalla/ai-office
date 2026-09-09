@@ -8,7 +8,8 @@
  * view until the next event or reconnect, never a wrong view.
  *
  * All authoritative writes go through the daemon, so publishing on command
- * completion covers every mutation the runtime performs.
+ * completion covers mutations. Long-running execution also publishes after
+ * each persisted run transition so observers need not wait for the batch.
  */
 
 import type {

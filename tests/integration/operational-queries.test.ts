@@ -176,6 +176,41 @@ async function seedProject(
     .run(`repo-${id}`, id, now.toISOString());
 }
 
+test("filtered task pages expose linear projection cost during live refresh", async () => {
+  const context = await fixture();
+  await seedProject(context, "large-project", "Large");
+  const insert = context.database.prepare(
+    `INSERT INTO task(id, project_id, title, description, status, priority, created_at, updated_at)
+     VALUES (?, ?, ?, NULL, 'pending', 0, ?, ?)`,
+  );
+  for (let index = 0; index < 10_000; index += 1) {
+    const timestamp = new Date(now.getTime() + index).toISOString();
+    insert.run(
+      `large-task-${index}`,
+      "large-project",
+      `Task ${index}`,
+      timestamp,
+      timestamp,
+    );
+  }
+  const originalListTasks = context.reads.listTasks.bind(context.reads);
+  let listTaskCalls = 0;
+  context.reads.listTasks = async (...args) => {
+    listTaskCalls += 1;
+    return originalListTasks(...args);
+  };
+  const expectedBatches = Math.ceil(10_000 / queryLimits.tasks.default);
+  const first = await context.queries.getProjectDetail("large-project", {
+    taskQuery: { search: "does-not-match" },
+  });
+  expect(first.tasks.total).toBe(0);
+  expect(listTaskCalls).toBe(expectedBatches);
+  await context.queries.getProjectDetail("large-project", {
+    taskQuery: { search: "does-not-match" },
+  });
+  expect(listTaskCalls).toBe(expectedBatches * 2);
+});
+
 async function seedAgent(
   context: Awaited<ReturnType<typeof fixture>>,
   projectId: string,
@@ -507,7 +542,10 @@ describe("operational read repository", () => {
     });
     await context.pipelines.insert(run);
 
-    const stages = await context.reads.listActivePipelineStages(["project-1"], 10);
+    const stages = await context.reads.listActivePipelineStages(
+      ["project-1"],
+      10,
+    );
     expect(stages).toHaveLength(1);
     expect(stages[0]).toMatchObject({
       pipelineRunId: "pipeline-1",
@@ -898,9 +936,9 @@ describe("operational query service", () => {
           now,
         }),
       );
-    expect((await context.queries.listTasks("project-1", 2)).items).toHaveLength(
-      2,
-    );
+    expect(
+      (await context.queries.listTasks("project-1", 2)).items,
+    ).toHaveLength(2);
   });
 });
 
@@ -953,6 +991,257 @@ describe("bounded evidence never decides authoritative state", () => {
     const active = input.status === "queued" || input.status === "running";
     if (input.lease ?? active) seedLease(context, input.taskId, input.runId);
   }
+
+  test("task filters search beyond presentation limits and match every current agent", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    await seedAgent(context, "project-1", "agent-2", "researcher");
+    const count = queryLimits.tasks.default + 5;
+    for (let index = 0; index < count; index += 1)
+      await context.tasks.save(
+        Task.create({
+          id: `filter-task-${index}`,
+          projectId: "project-1",
+          title: index === 0 ? "Investigate 100%_ source" : `Other ${index}`,
+          description: index === 0 ? "TÉST evidence" : "",
+          priority: index === 0 ? -7 : 42,
+          now,
+        }),
+      );
+    for (let index = 0; index <= queryLimits.concurrency.default; index += 1)
+      await seedRun(context, {
+        projectId: "project-1",
+        taskId: "filter-task-0",
+        agentId: index === 0 ? "agent-2" : "agent-1",
+        runId: `filter-run-${index}`,
+        status: "running",
+        updatedAt: new Date(now.getTime() + index * 1000),
+      });
+    const hidden = await context.queries.getTaskDetail(
+      "project-1",
+      "filter-task-0",
+    );
+    expect(
+      hidden.task.activeAgentRuns.items.some(
+        (run) => run.agentId === "agent-2",
+      ),
+    ).toBe(false);
+    const result = await context.queries.getProjectDetail("project-1", {
+      taskLimit: 7,
+      taskQuery: {
+        search: "tést",
+        status: "in_progress",
+        priority: -7,
+        agentId: "agent-2",
+      },
+    });
+    expect(result.tasks.total).toBe(1);
+    expect(result.tasks.items.map((task) => task.taskId)).toEqual([
+      "filter-task-0",
+    ]);
+    expect(result.summary.tasks.total).toBe(count);
+    expect(result.taskPage?.options.priorities).toEqual([42, -7]);
+    expect(result.taskPage?.options.statuses).toEqual(
+      expect.arrayContaining(["not_started", "in_progress"]),
+    );
+    expect(
+      result.taskPage?.options.agents.map((agent) => agent.agentId).sort(),
+    ).toEqual(["agent-1", "agent-2"]);
+    const first = await context.queries.getProjectDetail("project-1", {
+      taskLimit: 7,
+      taskQuery: {},
+    });
+    const next = await context.queries.getProjectDetail("project-1", {
+      taskLimit: 7,
+      taskQuery: { offset: 7 },
+    });
+    expect(first.tasks.total).toBe(count);
+    expect(next.tasks.total).toBe(count);
+    expect(first.tasks.items).toHaveLength(7);
+    expect(next.taskPage?.offset).toBe(7);
+    expect(
+      first.tasks.items.some((task) =>
+        next.tasks.items.some((other) => other.taskId === task.taskId),
+      ),
+    ).toBe(false);
+    const unassigned = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { unassigned: true },
+    });
+    expect(unassigned.tasks.total).toBe(count - 1);
+    const literal = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { search: "%_" },
+    });
+    expect(literal.tasks.total).toBe(1);
+    const missing = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { search: "absent", offset: 1000 },
+    });
+    expect(missing.tasks).toEqual({ total: 0, items: [], truncated: false });
+    expect(missing.summary.tasks.total).toBe(count);
+  });
+
+  test("task detail is scoped before limits and preserves exact run totals", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    await seedProject(context, "project-2", "Other");
+    await seedAgent(context, "project-1", "agent-1", "developer");
+    await seedAgent(context, "project-1", "agent-2", "reviewer");
+    for (let index = 0; index <= queryLimits.tasks.default; index += 1)
+      await context.tasks.save(
+        Task.create({
+          id: `task-${index}`,
+          projectId: "project-1",
+          title: `Task ${index}`,
+          priority: index === 0 ? 0 : 5,
+          description: "Task description",
+          now,
+        }),
+      );
+    const runCount = queryLimits.runs.default + 3;
+    for (let index = 0; index < runCount; index += 1)
+      await seedRun(context, {
+        projectId: "project-1",
+        taskId: "task-0",
+        agentId: index === 0 ? "agent-2" : "agent-1",
+        runId: `detail-run-${index}`,
+        status: index < 2 ? "running" : "completed",
+        updatedAt: new Date(now.getTime() + index * 1000),
+        lease: index === 1,
+      });
+    await seedRun(context, {
+      projectId: "project-1",
+      taskId: "task-1",
+      agentId: "agent-1",
+      runId: "unrelated-run",
+      status: "running",
+      updatedAt: now,
+    });
+    const activityInsert = context.database.prepare(
+      `INSERT INTO audit_event(id, project_id, event_type, actor_type, aggregate_type, aggregate_id, payload_json, occurred_at) VALUES (?, 'project-1', 'task.updated', 'daemon', 'task', ?, ?, ?)`,
+    );
+    activityInsert.run(
+      "task-event",
+      "task-0",
+      JSON.stringify({ status: "pending", apiKey: "secret-not-for-dashboard" }),
+      now.toISOString(),
+    );
+    await context.manifests.save({
+      id: "history-manifest",
+      projectId: "project-1",
+      revision: 1,
+      manifest,
+      appliedAt: now,
+    });
+    const historicalPipeline = PipelineRun.create({
+      id: "historical-pipeline",
+      projectId: "project-1",
+      taskId: "task-0",
+      manifestRevisionId: "history-manifest",
+      manifestRevision: 1,
+      definition: manifest.pipelines[0]!,
+      startedBy: "operator",
+      stageRunIds: ["history-stage-1", "history-stage-2"],
+      now,
+    });
+    historicalPipeline.cancel("operator", now);
+    await context.pipelines.insert(historicalPipeline);
+    const relatedAudit = context.database.prepare(
+      `INSERT INTO audit_event(id, project_id, event_type, actor_type, aggregate_type, aggregate_id, payload_json, occurred_at) VALUES (?, ?, ?, 'daemon', ?, ?, '{}', ?)`,
+    );
+    relatedAudit.run(
+      "run-event",
+      "project-1",
+      "run.reconciled",
+      "agent_run",
+      "detail-run-0",
+      now.toISOString(),
+    );
+    relatedAudit.run(
+      "pipeline-event",
+      "project-1",
+      "pipeline.cancelled",
+      "pipeline_run",
+      "historical-pipeline",
+      now.toISOString(),
+    );
+    relatedAudit.run(
+      "other-run-event",
+      "project-1",
+      "run.reconciled",
+      "agent_run",
+      "unrelated-run",
+      now.toISOString(),
+    );
+    relatedAudit.run(
+      "wrong-project-event",
+      "project-2",
+      "pipeline.cancelled",
+      "pipeline_run",
+      "historical-pipeline",
+      now.toISOString(),
+    );
+    relatedAudit.run(
+      "wrong-type-event",
+      "project-1",
+      "requirement.updated",
+      "requirement",
+      "task-0",
+      now.toISOString(),
+    );
+    for (let index = 0; index <= queryLimits.activity.default; index += 1)
+      activityInsert.run(
+        `noise-event-${index}`,
+        "task-1",
+        "{}",
+        new Date(now.getTime() + 1000).toISOString(),
+      );
+    expect(
+      (await context.queries.listTasks("project-1")).items.some(
+        (task) => task.taskId === "task-0",
+      ),
+    ).toBe(false);
+    const detail = await context.queries.getTaskDetail("project-1", "task-0");
+    expect(detail.task).toMatchObject({
+      taskId: "task-0",
+      description: "Task description",
+      recordedStatus: "pending",
+      operationalStatus: "in_progress",
+      runsWithoutValidLeaseCount: 1,
+    });
+    expect(detail.task.activeAgentRuns.total).toBe(2);
+    expect(
+      detail.task.activeAgentRuns.items.map((run) => run.agent?.agentId).sort(),
+    ).toEqual(["agent-1", "agent-2"]);
+    expect(detail.runs.total).toBe(runCount);
+    expect(detail.runs.items).toHaveLength(queryLimits.runs.default);
+    expect(detail.runs.truncated).toBe(true);
+    expect(detail.runs.items.some((run) => run.runId === "detail-run-0")).toBe(
+      false,
+    );
+    expect(
+      detail.runs.items.every((run) => run.task?.taskId === "task-0"),
+    ).toBe(true);
+    expect(detail.pipeline).toBeNull();
+    expect(detail.activity.items.map((event) => event.eventId)).toEqual([
+      "task-event",
+      "run-event",
+      "pipeline-event",
+    ]);
+    expect(detail.activity.items[0]?.detail).toEqual({ status: "pending" });
+    expect(JSON.stringify(detail)).not.toContain("secret-not-for-dashboard");
+    await expect(
+      context.queries.getTaskDetail("project-2", "task-0"),
+    ).rejects.toBeInstanceOf(OperationalResourceNotFoundError);
+    await expect(
+      context.queries.getTaskDetail("project-1", "missing"),
+    ).rejects.toBeInstanceOf(OperationalResourceNotFoundError);
+    expect(
+      await context.reads.countAgentRuns({
+        projectIds: ["project-1"],
+        taskIds: [],
+      }),
+    ).toEqual([]);
+  });
 
   test("active-run totals stay exact when the sample is truncated", async () => {
     const context = await fixture();
@@ -1183,9 +1472,9 @@ describe("bounded evidence never decides authoritative state", () => {
     // The stranded run is actionable, and the exact project total accounts for
     // it rather than the task page happening to show it.
     expect(task?.runsWithoutValidLeaseCount).toBe(1);
-    expect(
-      task?.attentionReasons.map((reason) => reason.kind),
-    ).toContain("task_run_without_lease");
+    expect(task?.attentionReasons.map((reason) => reason.kind)).toContain(
+      "task_run_without_lease",
+    );
     expect(detail.summary.attention.total).toBe(1);
     expect(detail.summary.attention.items[0]).toMatchObject({
       kind: "task_run_without_lease",
@@ -1414,6 +1703,28 @@ describe("bounded evidence never decides authoritative state", () => {
     expect(agent?.activeRuns.total).toBe(0);
     expect(agent?.activeStages.total).toBe(1);
     expect(agent?.primaryStage?.stageId).toBe("design");
+    const taskDetail = await context.queries.getTaskDetail(
+      "project-1",
+      "task-1",
+    );
+    expect(taskDetail.pipeline?.currentStage?.assignedAgent?.agentId).toBe(
+      "agent-1",
+    );
+    expect(taskDetail.task.assignedAgent?.agentId).toBe("agent-1");
+    expect(taskDetail.runs.total).toBe(0);
+    const assignedTasks = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { agentId: "agent-1" },
+    });
+    expect(assignedTasks.tasks.items.map((task) => task.taskId)).toEqual([
+      "task-1",
+    ]);
+    expect(
+      (
+        await context.queries.getProjectDetail("project-1", {
+          taskQuery: { unassigned: true },
+        })
+      ).tasks.total,
+    ).toBe(0);
     expect(
       detail.agents.filter(
         (value) => value.enabled && value.state === "working",
@@ -1746,7 +2057,12 @@ describe("bounded evidence never decides authoritative state", () => {
                                  payload_json, occurred_at)
          VALUES (?, ?, 'run.started', 'daemon', NULL, 'agent_run', 'run-1', ?, ?)`,
       )
-      .run("event-run", "project-1", JSON.stringify({ step: 1 }), now.toISOString());
+      .run(
+        "event-run",
+        "project-1",
+        JSON.stringify({ step: 1 }),
+        now.toISOString(),
+      );
 
     const noise = queryLimits.activity.max + 20;
     for (let index = 0; index < noise; index += 1)

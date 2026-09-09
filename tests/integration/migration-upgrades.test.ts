@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0026_task_requirement_linkage.sql",
+        "0027_agent_execution_provenance.sql",
       );
       expect(
         database
@@ -113,6 +113,7 @@ describe("migration upgrades", () => {
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
       "0026_task_requirement_linkage.sql",
+      "0027_agent_execution_provenance.sql",
     ]);
     expect(
       database
@@ -175,6 +176,7 @@ describe("migration upgrades", () => {
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
       "0026_task_requirement_linkage.sql",
+      "0027_agent_execution_provenance.sql",
     ]);
     expect(
       database
@@ -228,7 +230,9 @@ describe("migration upgrades", () => {
   });
 
   test("fails migration rather than guessing contradictory shallow revision ownership", () => {
-    const root = mkdtempSync(join(tmpdir(), "ai-office-lineage-conflict-upgrade-"));
+    const root = mkdtempSync(
+      join(tmpdir(), "ai-office-lineage-conflict-upgrade-"),
+    );
     roots.push(root);
     const partial = join(root, "partial-migrations");
     mkdirSync(partial);
@@ -315,6 +319,7 @@ describe("migration upgrades", () => {
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
       "0026_task_requirement_linkage.sql",
+      "0027_agent_execution_provenance.sql",
     ]);
     expect(
       database
@@ -361,6 +366,7 @@ describe("migration upgrades", () => {
       "0024_project_revision_identity.sql",
       "0025_audit_event_aggregate_index.sql",
       "0026_task_requirement_linkage.sql",
+      "0027_agent_execution_provenance.sql",
     ]);
     database
       .prepare(
@@ -681,6 +687,7 @@ describe("migration upgrades", () => {
     expect(migrate(upgraded, migrations).applied).toEqual([
       "0025_audit_event_aggregate_index.sql",
       "0026_task_requirement_linkage.sql",
+      "0027_agent_execution_provenance.sql",
     ]);
     expect(
       upgraded

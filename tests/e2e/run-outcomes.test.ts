@@ -6,12 +6,19 @@ test("run:tick exposes failures and mixed batches through the daemon", async () 
   const { command, projectId, task, schedule } = runtime;
   try {
     expect(
-      await command(["run:tick", "--project", projectId, "--json"]),
+      await command([
+        "run:tick",
+        "--simulate",
+        "--project",
+        projectId,
+        "--json",
+      ]),
     ).toMatchObject({ exitCode: 0 });
     await schedule(await task());
     await schedule(await task(), true);
     const result = await command([
       "run:tick",
+      "--simulate",
       "--project",
       projectId,
       "--capacity",
@@ -31,12 +38,25 @@ test("run:tick exposes failures and mixed batches through the daemon", async () 
       "failed",
     ]);
     await schedule(await task(), true);
-    const human = await command(["run:tick", "--project", projectId]);
+    const human = await command([
+      "run:tick",
+      "--simulate",
+      "--project",
+      projectId,
+    ]);
     expect(human.exitCode).toBe(1);
     expect(human.stderr.join("\n")).toContain("EXECUTION_FAILED");
     expect(
-      (await command(["run:tick", "--project", projectId, "--capacity", "101"]))
-        .exitCode,
+      (
+        await command([
+          "run:tick",
+          "--simulate",
+          "--project",
+          projectId,
+          "--capacity",
+          "101",
+        ])
+      ).exitCode,
     ).toBe(1);
   } finally {
     await runtime.close();

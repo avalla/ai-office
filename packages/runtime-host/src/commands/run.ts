@@ -1,4 +1,12 @@
-import { ControlledActionAgentExecutor } from "@ai-office/agent-runtime/executor.ts";
+import {
+  ControlledActionAgentExecutor,
+  AuthoritativeWorkerAgentExecutor,
+  SimulatedAgentExecutor,
+  UnconfiguredAgentExecutor,
+  type AgentExecutor,
+} from "@ai-office/agent-runtime/executor.ts";
+import { ClaudeWorkerRuntime } from "@ai-office/agent-runtime/claude-worker-runtime.ts";
+import { WorkerAgentExecutor } from "@ai-office/application/commands/worker-agent-executor.ts";
 import { InMemoryWorktreeManager } from "@ai-office/agent-runtime/worktree.ts";
 import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate-action-policy.ts";
 import { InvokeControlledConnectorAction } from "@ai-office/application/capability/invoke-controlled-connector-action.ts";
@@ -19,6 +27,7 @@ import {
 
 function controlledActionExecutor(
   context: CommandContext,
+  fallback?: AgentExecutor,
 ): ControlledActionAgentExecutor {
   const evaluator = new EvaluateActionPolicy(
     context.runtime,
@@ -49,19 +58,32 @@ function controlledActionExecutor(
     {},
     context.runtime,
   );
-  return new ControlledActionAgentExecutor({
-    invoke: async (input) => {
-      const result = await invoke.execute({
-        agentRunId: input.agentRunId,
-        ...(input.signal === undefined ? {} : { signal: input.signal }),
-      });
-      return {
-        requestId: result.requestId,
-        outcome: result.outcome,
-        status: result.status,
-      };
+  return new ControlledActionAgentExecutor(
+    {
+      invoke: async (input) => {
+        const result = await invoke.execute({
+          agentRunId: input.agentRunId,
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+        });
+        return {
+          requestId: result.requestId,
+          outcome: result.outcome,
+          status: result.status,
+        };
+      },
     },
-  });
+    fallback,
+    async (run) => {
+      const snapshot = run.snapshot();
+      const agent = await context.runtime.findAgent(snapshot.agentId);
+      const role =
+        agent === null
+          ? null
+          : await context.runtime.findRole(agent.roleId, snapshot.projectId);
+      const seconds = role?.snapshot().limits.timeoutSeconds ?? 30;
+      return seconds * 1000;
+    },
+  );
 }
 
 export async function handleRunCommand(
@@ -151,19 +173,58 @@ export async function handleRunCommand(
   if (command === "run:tick") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "capacity"]),
-      new Set(["json"]),
+      new Set(["project", "capacity", "worker", "worker-model"]),
+      new Set(["json", "simulate"]),
     );
     const projectId = requiredOption(parsed, "project");
     const capacity = Number(parsed.options.get("capacity") ?? "1");
     if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 100)
       throw new CliUsageError("Capacity must be an integer between 1 and 100");
     const queued = await runtime.listQueuedRuns(projectId, capacity);
+    const worker = parsed.options.get("worker");
+    if (worker !== undefined && worker !== "claude")
+      throw new CliUsageError("Unsupported worker. Available worker: claude");
+    const model = parsed.options.get("worker-model");
+    if (parsed.flags.has("simulate") && worker !== undefined)
+      throw new CliUsageError("Choose --worker or --simulate");
+    if (
+      model !== undefined &&
+      (worker === undefined ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(model))
+    )
+      throw new CliUsageError(
+        "--worker-model requires a worker and a valid model name",
+      );
+    if (
+      context.agentExecutor === undefined &&
+      worker === undefined &&
+      !parsed.flags.has("simulate") &&
+      queued.some((run) => run.snapshot().actionIntent === undefined)
+    )
+      throw new CliUsageError(
+        "Queued tasks need a real worker: use --worker claude, or explicitly use --simulate for a test run. No runs were started.",
+      );
+    const selectedExecutor: AgentExecutor =
+      worker === "claude"
+        ? new WorkerAgentExecutor(
+            new ClaudeWorkerRuntime("claude", undefined, model),
+            runtime,
+            tasks,
+            context.pipelines,
+            clock,
+            context.memory,
+          )
+        : parsed.flags.has("simulate")
+          ? new SimulatedAgentExecutor()
+          : context.agentExecutor === undefined
+            ? new UnconfiguredAgentExecutor()
+            : new AuthoritativeWorkerAgentExecutor(context.agentExecutor);
     const execute = new ExecuteAgentRun(
       runtime,
-      context.agentExecutor ?? controlledActionExecutor(context),
+      controlledActionExecutor(context, selectedExecutor),
       new InMemoryWorktreeManager(),
       clock,
+      context.onRunChanged,
     );
     const admission = new AdmitAgentRun(
       runtime,
@@ -255,6 +316,9 @@ export async function handleRunCommand(
     io.stdout(`Status: ${snapshot.status}`);
     io.stdout(`Task: ${snapshot.taskId}`);
     io.stdout(`Agent: ${snapshot.agentId}`);
+    io.stdout(
+      `Executor: ${snapshot.execution === undefined ? "not recorded" : `${snapshot.execution.kind} (${snapshot.execution.adapterId} ${snapshot.execution.adapterVersion})`}`,
+    );
     if (snapshot.result !== undefined)
       io.stdout(`Result: ${canonicalStringify(snapshot.result)}`);
     if (snapshot.error !== undefined)

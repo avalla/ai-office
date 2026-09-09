@@ -14,6 +14,7 @@ import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
+import { taskRunLeaseDurationMs } from "../runtime/run-policy.ts";
 
 export class AgentNotFoundError extends Error {
   constructor(id: string) {
@@ -102,7 +103,7 @@ export class ScheduleAgentRun {
         input.taskId,
         run.snapshot().id,
         now,
-        new Date(now.getTime() + 30 * 60_000),
+        new Date(now.getTime() + taskRunLeaseDurationMs),
       );
       if (!locked) throw new TaskLockActiveError(input.taskId);
     });

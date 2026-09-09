@@ -11,6 +11,7 @@ import {
 } from "@ai-office/application/protocol/daemon-protocol.ts";
 import type { DaemonCommandHandler } from "../../apps/daemon/src/local-command-handler.ts";
 import { OfficeDaemon } from "../../apps/daemon/src/office-daemon.ts";
+import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 
 const roots: string[] = [];
 const events = {
@@ -51,6 +52,47 @@ const post = (socketPath: string, body: string) =>
   });
 
 describe("daemon hardening", () => {
+  test("long ticks survive transport idle and command deadlines while health stays responsive", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ao-long-tick-"));
+    roots.push(root);
+    const socketPath = join(root, "daemon.sock");
+    let started!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const daemon = new OfficeDaemon({
+      socketPath,
+      events,
+      commandTimeoutMs: 10,
+      handler: {
+        execute: async (value) => {
+          started();
+          await Bun.sleep(10_100);
+          return {
+            protocolVersion: daemonProtocolVersion,
+            requestId: value.requestId,
+            exitCode: 0,
+            stdout: ["finished"],
+            stderr: [],
+          };
+        },
+      },
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    try {
+      await waitForHealth(socketPath);
+      const client = new DaemonClient(socketPath);
+      const tick = client.execute(["run:tick"]);
+      await ready;
+      expect((await client.health()).status).toBe("ok");
+      expect(await tick).toMatchObject({ exitCode: 0, stdout: ["finished"] });
+    } finally {
+      controller.abort();
+      await running;
+    }
+  }, 20_000);
+
   test("does not hold the global queue during run:tick and returns typed errors", async () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-daemon-hardening-"));
     roots.push(root);

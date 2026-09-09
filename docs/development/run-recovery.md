@@ -13,6 +13,13 @@ response timeout. An executor which does not acknowledge stopping cannot be
 reported as stopped; forcibly terminating the process leaves persisted recovery
 evidence for the next host.
 
+This is intentionally safety-first rather than a bounded shutdown guarantee:
+an in-process connector that ignores its `AbortSignal` can keep the drain open
+indefinitely. The current lifecycle does not detach that promise or close
+SQLite underneath it, because either choice would risk unknown external effects
+or use-after-close. Such work remains observable and must be reconciled; it is
+a residual lifecycle design blocker, not a timeout eligible for automatic retry.
+
 ## Operator commands
 
 ```text
@@ -32,7 +39,11 @@ write, cancellation re-reads evidence: a clean terminal run returns
 reconciliation, ambiguous effects stay blocked, and inconsistent evidence fails
 closed. This refines schema-version 1 behavior without adding or renaming result
 statuses or audit events. No recovery or lock release occurs on this fallback.
-Only execution reaching and persisting `cancelled` acknowledges stopping.
+Only a live execution reaching and persisting `cancelled` acknowledges stopping.
+For an external worker orphaned by host interruption, inspection reports
+`externalWorkerUnobserved: true`. Reconciliation resolves the local record; it
+does not attest that the previous client process stopped. Inspect that process
+separately before starting replacement work.
 Repeating cancellation of a terminal run is a
 read-only no-op. `task:cancel` additionally cancels queued runs and requests
 stopping live runs after committing the task transition. Task, run, pipeline and

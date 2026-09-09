@@ -685,7 +685,8 @@ Implemented foundation:
 
 Still future within M11: branching, bounded cycles, retries/timeouts,
 machine-interpretable artifacts, generalized conditions, failure compensation,
-and worker-runtime dispatch.
+and automated worker-runtime dispatch. Explicitly scheduled runs can use the
+first bounded text worker; this does not automate pipeline advancement.
 
 A future pipeline definition must be able to describe:
 
@@ -738,6 +739,12 @@ Exit direction:
 ## M12 — Worker runtime adapters and organization profiles
 
 Status: future.
+
+A bounded precursor is implemented: explicit `run:tick --worker claude`, an
+application worker port, tool-free task/stage context, immutable dispatch
+provenance and inspectable generated output. It does not deliver the complete
+M12 organization profiles or M14 software vertical. See
+[agent runtime](agent-runtime.md) and [ADR-0017](../adr/ADR-0017-bounded-external-worker.md).
 
 Goal: make worker execution replaceable and extend onboarding from office
 description to an explicit, reviewable organization-to-runtime mapping.

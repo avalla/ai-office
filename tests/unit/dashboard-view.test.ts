@@ -6,6 +6,7 @@ import type {
   ProjectDetail,
   ProjectSummary,
   TaskOperationalState,
+  TaskDetail,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
   escapeHtml,
@@ -13,6 +14,7 @@ import {
   renderOverview,
   renderProject,
   renderRun,
+  renderTask,
 } from "../../apps/dashboard/src/ui/render.ts";
 import {
   formatDuration,
@@ -25,7 +27,17 @@ import {
   stageChips,
   taskStatusLabel,
   taskStatusTone,
+  taskViewModel,
 } from "../../apps/dashboard/src/ui/view-model.ts";
+import {
+  renderAgentWorkload,
+  renderTaskDistribution,
+} from "../../apps/dashboard/src/ui/charts.ts";
+import { taskFilterQuery } from "../../apps/dashboard/src/ui/task-filters.ts";
+import {
+  parseTaskPageQuery,
+  QueryValidationError,
+} from "@ai-office/application/protocol/query-protocol.ts";
 import {
   decideAccess,
   readSessionCookie,
@@ -376,6 +388,53 @@ function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
 }
 
 describe("routing", () => {
+  test("filter routes preserve search, zero priority, agent and page through task navigation", () => {
+    const taskQuery = {
+      search: "Café & 100%_",
+      priority: 0,
+      status: "in_progress" as const,
+      agentId: "agent:one",
+      offset: 100,
+    };
+    const route = {
+      kind: "task" as const,
+      projectId: "project-1",
+      taskId: "task-1",
+      taskQuery,
+    };
+    expect(parseRoute(routeHref(route))).toEqual(route);
+    expect(
+      taskFilterQuery({
+        search: "  evidence  ",
+        priority: "-7",
+        status: "",
+        agent: "none",
+      }),
+    ).toEqual({ search: "evidence", priority: -7, unassigned: true });
+    expect(parseRoute("#/projects/p?priority=invalid").kind).toBe("invalid");
+    for (const query of [
+      "status=unknown",
+      "priority=1.5",
+      "priority=9007199254740992",
+      "offset=-1",
+      "agent=bad%20id",
+      "agent=a&unassigned=true",
+    ])
+      expect(() => parseTaskPageQuery(new URLSearchParams(query))).toThrow(
+        QueryValidationError,
+      );
+  });
+  test("task routes round-trip both scoped identifiers and reject malformed encoding", () => {
+    const route = {
+      kind: "task" as const,
+      projectId: "project:one",
+      taskId: "task:one",
+    };
+    expect(parseRoute(routeHref(route))).toEqual(route);
+    expect(parseRoute("#/projects/p/tasks/%broken")).toEqual({
+      kind: "overview",
+    });
+  });
   test("parses the routes the dashboard links to", () => {
     expect(parseRoute("")).toEqual({ kind: "overview" });
     expect(parseRoute("#/")).toEqual({ kind: "overview" });
@@ -462,7 +521,7 @@ describe("view models", () => {
     expect(html).toContain("ai-office install");
   });
 
-  test("a project with no activity reports an empty state", () => {
+  test("a project with no pipeline work omits the section and its navigation", () => {
     const view = projectViewModel(
       projectDetail({
         tasks: { total: 0, items: [], truncated: false },
@@ -470,7 +529,9 @@ describe("view models", () => {
         runs: { total: 0, items: [], truncated: false },
       }),
     );
-    expect(view.empty?.headline).toBe("No activity yet");
+    const html = renderProject(view);
+    expect(html).not.toContain('id="jump-pipelines"');
+    expect(html).not.toContain('id="project-pipelines"');
   });
 
   test("tasks are ordered by urgency then priority", () => {
@@ -494,20 +555,18 @@ describe("view models", () => {
     ]);
   });
 
-  test("divergent tasks are separated so the mismatch is visible", () => {
+  test("divergent tasks show the mismatch once in their task row", () => {
     const view = projectViewModel(projectDetail());
-    expect(view.divergentTasks.map((value) => value.taskId)).toEqual([
-      "task-1",
-    ]);
     const html = renderProject(view);
-    expect(html).toContain("Stored status differs from operational status");
+    expect(html).not.toContain("Stored status differs from operational status");
+    expect(html.match(/class="task-title"/g)).toHaveLength(1);
     expect(html).toContain("stored: pending");
     expect(html).toContain("in progress");
     expect(html).toContain("<th>Requirements</th>");
     expect(html).toContain("1/2 verified");
   });
 
-  test("active pipelines are separated from historical ones", () => {
+  test("active and historical pipelines remain visible", () => {
     const view = projectViewModel(
       projectDetail({
         pipelines: {
@@ -520,12 +579,115 @@ describe("view models", () => {
         },
       }),
     );
-    expect(view.activePipelines).toHaveLength(1);
-    expect(view.pipelines.items).toHaveLength(2);
+    const html = renderProject(view);
+    expect(html.match(/class="pipeline-title"/g)).toHaveLength(2);
+    expect(html).toContain("completed");
   });
 });
 
 describe("rendering", () => {
+  test("filters use runtime facets and counts, with no invented priority scale", () => {
+    const detail = projectDetail({
+      taskPage: {
+        filters: { priority: -7, agentId: "agent-1" },
+        offset: 7,
+        limit: 7,
+        options: {
+          statuses: ["in_progress"],
+          priorities: [42, -7],
+          agents: [task.assignedAgent!],
+          hasUnassigned: true,
+        },
+      },
+      tasks: { total: 15, items: [task], truncated: true },
+    });
+    const html = renderProject(projectViewModel(detail));
+    expect(html).toContain('value="-7" selected');
+    expect(html).toContain('value="42"');
+    expect(html).not.toContain('value="high"');
+    expect(html).toContain("8–8 of 15 matching");
+    expect(html).toContain("offset=14");
+    expect(html).toContain("tasks/task-1?priority=-7&agent=agent-1&offset=7");
+    expect(html).toContain("No current agent");
+  });
+
+  test("task detail exposes assignments, bounded concurrency and escaped description", () => {
+    const detail: TaskDetail = {
+      generatedAt: now,
+      projectName: "AutoEpoque",
+      task: {
+        ...task,
+        description: 'First line\n<script>alert("x")</script>',
+        activeAgentRuns: {
+          ...task.activeAgentRuns,
+          total: 30,
+          truncated: true,
+        },
+      },
+      pipeline: { ...pipeline, currentStage: pipeline.stages[1]! },
+      runs: { total: 0, items: [], truncated: false },
+      activity: { items: [], nextCursor: null },
+    };
+    const html = renderTask(taskViewModel(detail));
+    expect(html).toContain("Assigned agent");
+    expect(html).toContain("Dev One");
+    expect(html).toContain("showing 1 of 30 active runs");
+    expect(html).toContain("1/2 verified");
+    expect(html).toContain(
+      "A run is active, but the task record has not advanced.",
+    );
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).not.toContain("<script>");
+    expect(html).toContain("#/runs/run-1");
+    const unassigned = renderTask(
+      taskViewModel({
+        ...detail,
+        pipeline: {
+          ...pipeline,
+          currentStage: { ...pipeline.stages[1]!, assignedAgent: null },
+        },
+      }),
+    );
+    expect(unassigned).toContain("Not assigned");
+    const noPipeline = renderTask(taskViewModel({ ...detail, pipeline: null }));
+    expect(noPipeline).toContain("No active pipeline stage");
+    expect(noPipeline).not.toContain("<dt>Assigned agent</dt>");
+    expect(noPipeline).toContain("Task activity");
+    expect(noPipeline).toContain(
+      "No audit events recorded for this task or its runs.",
+    );
+    expect(noPipeline).toContain(
+      "Task creation alone does not currently produce an audit event.",
+    );
+    expect(noPipeline).toContain(
+      "Execution events are available from each run in Run history.",
+    );
+  });
+
+  test("charts render exact aggregates, distinguish statuses and handle empty work", () => {
+    const html = renderProject(projectViewModel(projectDetail()));
+    expect(html).toContain("49 tasks · recorded status");
+    expect(html).toContain('class="chart-value">37</span>');
+    expect(html).toContain("Operational status in the table may differ");
+    expect(html).toContain("#/projects/project-1/tasks/task-1");
+    const agent = projectDetail().agents[0]!;
+    const chart = renderAgentWorkload([
+      {
+        ...agent,
+        name: "<agent>",
+        activeRuns: { ...agent.activeRuns, total: 40, truncated: true },
+        activeStages: { total: 12, items: [], truncated: true },
+      },
+    ]);
+    expect(chart).toContain('class="chart-value">40</span>');
+    expect(chart).toContain('class="chart-value">12</span>');
+    expect(chart).toContain("&lt;agent&gt;");
+    expect(chart).not.toContain('style="');
+    expect(renderTaskDistribution({ ...summary().tasks, total: 0 })).toContain(
+      "Create a task",
+    );
+    expect(renderAgentWorkload([])).toContain("Synchronize agents");
+  });
   test("renders the overview with attention and project facts", () => {
     const html = renderOverview(overviewViewModel(overview()));
     expect(html).toContain("AutoEpoque");
@@ -548,7 +710,7 @@ describe("rendering", () => {
   test("renders agent state from the projection", () => {
     const html = renderProject(projectViewModel(projectDetail()));
     expect(html).toContain("Dev One");
-    expect(html).toContain("working");
+    expect(html).toContain("active run");
   });
 
   test("shows a pending approval as attention on the project page", () => {

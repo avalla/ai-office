@@ -98,6 +98,7 @@ export interface OperationalAgentRecord {
 }
 
 export interface OperationalAgentRunRecord {
+  execution?: unknown;
   id: string;
   projectId: string;
   taskId: string;
@@ -378,6 +379,8 @@ export interface ReviewQuery {
 
 export interface ActivityQuery {
   projectId?: string;
+  /** Task audit plus its persisted agent-run and pipeline-run audit, before limits. */
+  taskId?: string;
   /**
    * Restrict to events naming one of these aggregates. Applied in SQL, before
    * the limit, so a run's own events are never lost behind a project window.
@@ -426,6 +429,7 @@ export interface OperationalReadRepository {
    */
   countAgentRuns(query: {
     projectIds?: readonly string[];
+    taskIds?: readonly string[];
     statuses?: readonly AgentRunStatus[];
   }): Promise<CountRecord[]>;
   /**
@@ -536,7 +540,17 @@ export interface OperationalReadRepository {
 
   /* --- bounded samples and pages ----------------------------------------- */
 
-  listTasks(projectId: string, limit: number): Promise<TaskProps[]>;
+  listTasks(
+    projectId: string,
+    limit: number,
+    offset?: number,
+  ): Promise<TaskProps[]>;
+  /** Exact current stage/run involvement for these tasks, never a run sample. */
+  listTaskAgentIds(
+    projectId: string,
+    taskIds: readonly string[],
+  ): Promise<{ taskId: string; agentId: string }[]>;
+  findTask(projectId: string, taskId: string): Promise<TaskProps | null>;
   listAgentRuns(query: AgentRunQuery): Promise<OperationalAgentRunRecord[]>;
   findAgentRun(runId: string): Promise<OperationalAgentRunRecord | null>;
   listAgentRunEvents(

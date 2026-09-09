@@ -7,6 +7,7 @@
  */
 
 import type { AgentRunStatus } from "@ai-office/domain/agent/agent-run.ts";
+import { parseAgentExecution } from "@ai-office/domain/agent/agent-execution.ts";
 import { requirementProgressFromCounts } from "../commands/task-requirement-progress.ts";
 import type {
   RequirementStatus,
@@ -274,11 +275,20 @@ export function agentReference(record: OperationalAgentRecord): AgentReference {
   };
 }
 
+function executionProvenance(record: OperationalAgentRunRecord) {
+  try {
+    return parseAgentExecution(record.execution);
+  } catch {
+    return null;
+  }
+}
+
 export function agentRunReference(
   record: OperationalAgentRunRecord,
 ): AgentRunReference {
   return {
     runId: record.id,
+    execution: executionProvenance(record),
     status: record.status,
     agentId: record.agentId,
     startedAt: isoOrNull(record.startedAt),
@@ -479,6 +489,7 @@ export function projectAgentRunState(
   const completedAt = record.completedAt;
   return {
     runId: record.id,
+    execution: executionProvenance(record),
     projectId: record.projectId,
     task:
       record.taskTitle === null

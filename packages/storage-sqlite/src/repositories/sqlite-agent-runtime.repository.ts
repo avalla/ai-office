@@ -3,7 +3,9 @@ import type {
   AgentRunEvent,
   AgentRuntimeRepository,
   RunAdmission,
+  WorkerAuthorityFence,
 } from "@ai-office/application/ports/agent-runtime-repository.port.ts";
+import type { AgentExecutionResult } from "@ai-office/agent-runtime/executor.ts";
 import type { Agent } from "@ai-office/domain/agent/agent.ts";
 import {
   AgentRun,
@@ -12,6 +14,7 @@ import {
 } from "@ai-office/domain/agent/agent-run.ts";
 import { Role, type RoleLimits } from "@ai-office/domain/agent/role.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
+import { parseAgentExecution } from "@ai-office/domain/agent/agent-execution.ts";
 
 interface AgentRow {
   id: string;
@@ -37,6 +40,7 @@ interface RoleRow {
   updated_at: string;
 }
 interface RunRow {
+  execution_json: string | null;
   id: string;
   project_id: string;
   task_id: string;
@@ -73,6 +77,13 @@ const run = (row: RunRow): AgentRun =>
     projectId: row.project_id,
     taskId: row.task_id,
     agentId: row.agent_id,
+    ...(row.execution_json === null
+      ? {}
+      : {
+          execution: parseAgentExecution(
+            JSON.parse(row.execution_json) as unknown,
+          ),
+        }),
     ...(row.action_intent_json === null
       ? {}
       : {
@@ -97,7 +108,7 @@ const run = (row: RunRow): AgentRun =>
     updatedAt: new Date(row.updated_at),
   });
 const runColumns =
-  "id, project_id, task_id, agent_id, action_intent_json, pipeline_run_id, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at";
+  "id, project_id, task_id, agent_id, action_intent_json, pipeline_run_id, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at, execution_json";
 
 function parseStoredStringArray(json: string, field: string): string[] {
   const value = JSON.parse(json) as unknown;
@@ -346,7 +357,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
         .get(v.id);
       this.database
         .prepare(
-          `INSERT INTO agent_run(${runColumns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at`,
+          `INSERT INTO agent_run(${runColumns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at, execution_json=excluded.execution_json`,
         )
         .run(
           v.id,
@@ -363,6 +374,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
           v.startedAt?.toISOString() ?? null,
           v.completedAt?.toISOString() ?? null,
           v.updatedAt.toISOString(),
+          v.execution === undefined ? null : JSON.stringify(v.execution),
         );
       if (previous?.status !== v.status)
         this.database
@@ -376,9 +388,116 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
             JSON.stringify({
               hasResult: v.result !== undefined,
               hasError: v.error !== undefined,
+              ...(v.execution === undefined ? {} : { execution: v.execution }),
             }),
             v.updatedAt.toISOString(),
           );
+    })();
+  }
+  async acceptWorkerResult(input: {
+    fence: WorkerAuthorityFence;
+    run: AgentRun;
+    result: AgentExecutionResult;
+    acceptedAt: Date;
+  }): Promise<boolean> {
+    const fence = input.fence;
+    const acceptedAt = input.acceptedAt.toISOString();
+    const expectedExecution = JSON.stringify(fence.execution);
+    const expectedLimits = JSON.stringify({
+      maxIterations: fence.roleLimits.maxIterations,
+      maxCostMicros: fence.roleLimits.maxCostMicros.toString(),
+      timeoutSeconds: fence.roleLimits.timeoutSeconds,
+    });
+    return this.database.transaction(() => {
+      const valid = this.database
+        .query(
+          `SELECT r.id
+             FROM agent_run r
+             JOIN task t ON t.id=r.task_id AND t.project_id=r.project_id
+             JOIN agent a ON a.id=r.agent_id AND a.project_id=r.project_id
+             JOIN role ro ON ro.id=a.role_id AND ro.project_id=a.project_id
+             JOIN task_lock l ON l.task_id=r.task_id AND l.run_id=r.id
+            WHERE r.id=? AND r.project_id=? AND r.task_id=? AND r.agent_id=?
+              AND r.status='running' AND r.updated_at=?
+              AND r.execution_json=?
+              AND t.status=? AND t.updated_at=?
+              AND a.enabled=1 AND a.role_id=? AND a.updated_at=?
+              AND ro.id=? AND ro.role_key=? AND ro.version=?
+              AND ro.limits_json=? AND ro.updated_at=?
+              AND l.expires_at>?
+              AND (
+                (? IS NULL AND NOT EXISTS (
+                  SELECT 1 FROM pipeline_run p
+                   WHERE p.task_id=r.task_id AND p.project_id=r.project_id
+                     AND p.status='active'
+                ))
+                OR EXISTS (
+                  SELECT 1
+                    FROM pipeline_run p
+                    JOIN pipeline_stage_run s
+                      ON s.pipeline_run_id=p.id
+                     AND s.stage_index=p.current_stage_index
+                   WHERE p.id=? AND p.project_id=r.project_id
+                     AND p.task_id=r.task_id AND p.status='active'
+                     AND p.version=? AND p.current_stage_index=?
+                     AND s.stage_id=? AND s.role_id=?
+                     AND s.status='active' AND s.assigned_agent_id=?
+                )
+              )`,
+        )
+        .get(
+          fence.runId,
+          fence.projectId,
+          fence.taskId,
+          fence.agentId,
+          input.run.snapshot().updatedAt.toISOString(),
+          expectedExecution,
+          fence.taskStatus,
+          fence.taskUpdatedAt.toISOString(),
+          fence.agentRoleId,
+          fence.agentUpdatedAt.toISOString(),
+          fence.roleId,
+          fence.roleKey,
+          fence.roleVersion,
+          expectedLimits,
+          fence.roleUpdatedAt.toISOString(),
+          acceptedAt,
+          fence.pipeline?.id ?? null,
+          fence.pipeline?.id ?? null,
+          fence.pipeline?.version ?? null,
+          fence.pipeline?.currentStageIndex ?? null,
+          fence.pipeline?.stageId ?? null,
+          fence.pipeline?.stageRoleId ?? null,
+          fence.pipeline?.assignedAgentId ?? null,
+        );
+      if (valid === null) return false;
+      const resultJson = JSON.stringify(input.result);
+      this.database
+        .query(
+          `UPDATE agent_run
+              SET status='reviewing', result_json=?, updated_at=?
+            WHERE id=? AND status='running' AND updated_at=?
+              AND execution_json=?`,
+        )
+        .run(
+          resultJson,
+          acceptedAt,
+          fence.runId,
+          input.run.snapshot().updatedAt.toISOString(),
+          expectedExecution,
+        );
+      this.database
+        .query(
+          "INSERT INTO agent_run_event(id,run_id,status,payload_json,occurred_at) VALUES (?,?,?,?,?)",
+        )
+        .run(
+          `${fence.runId}:reviewing`,
+          fence.runId,
+          "reviewing",
+          JSON.stringify({ hasResult: true, hasError: false }),
+          acceptedAt,
+        );
+      return true;
     })();
   }
   async findRun(id: string): Promise<AgentRun | null> {

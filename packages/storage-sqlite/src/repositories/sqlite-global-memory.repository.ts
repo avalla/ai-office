@@ -205,6 +205,15 @@ export class SqliteGlobalMemoryRepository implements GlobalMemoryRepository {
       );
   }
 
+  async listRoles(): Promise<readonly GlobalRole[]> {
+    return this.database
+      .query<RoleRow, []>(
+        "SELECT * FROM global_role ORDER BY name ASC, version DESC, id ASC",
+      )
+      .all()
+      .map(restoreRole);
+  }
+
   async findRole(id: string, version: number): Promise<GlobalRole | null> {
     const row = this.database
       .query<RoleRow, [string, number]>(
@@ -289,6 +298,15 @@ export class SqliteGlobalMemoryRepository implements GlobalMemoryRepository {
     return row === null ? null : restorePattern(row);
   }
 
+  async listPatterns(): Promise<readonly GlobalPattern[]> {
+    return this.database
+      .query<PatternRow, []>(
+        "SELECT * FROM pattern ORDER BY name ASC, version DESC, id ASC",
+      )
+      .all()
+      .map(restorePattern);
+  }
+
   async saveLesson(lesson: GlobalLesson): Promise<void> {
     const value = lesson.snapshot();
     this.database
@@ -324,6 +342,15 @@ export class SqliteGlobalMemoryRepository implements GlobalMemoryRepository {
       .query<LessonRow, [string]>("SELECT * FROM lesson WHERE id = ?")
       .get(id);
     return row === null ? null : restoreLesson(row);
+  }
+
+  async listLessons(): Promise<readonly GlobalLesson[]> {
+    return this.database
+      .query<LessonRow, []>(
+        "SELECT * FROM lesson ORDER BY updated_at DESC, id ASC",
+      )
+      .all()
+      .map(restoreLesson);
   }
 
   async search(

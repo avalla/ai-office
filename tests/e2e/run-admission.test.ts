@@ -29,6 +29,7 @@ test("terminal and blocked tasks cannot schedule and queued work is revalidated"
     ]);
     const result = await r.command([
       "run:tick",
+      "--simulate",
       "--project",
       r.projectId,
       "--json",
@@ -48,7 +49,13 @@ test("concurrent ticks claim one run only once", async () => {
     await r.schedule(await r.task());
     const ticks = await Promise.all(
       Array.from({ length: 4 }, () =>
-        r.command(["run:tick", "--project", r.projectId, "--json"]),
+        r.command([
+          "run:tick",
+          "--simulate",
+          "--project",
+          r.projectId,
+          "--json",
+        ]),
       ),
     );
     expect(ticks.every((value) => value.exitCode === 0)).toBe(true);

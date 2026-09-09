@@ -6,6 +6,8 @@ import type { WorktreeManager } from "@ai-office/agent-runtime/worktree.ts";
 import type { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
+import { AgentExecutorNotConfiguredError } from "@ai-office/agent-runtime/executor.ts";
+import { WorkerRuntimeError } from "../ports/worker-runtime.port.ts";
 
 export interface AgentRunExecutionError {
   message: string;
@@ -20,9 +22,13 @@ export interface AgentRunExecutionResult {
 }
 
 function executionError(
-  _error: unknown,
+  error: unknown,
   fallbackCode: string,
 ): AgentRunExecutionError {
+  if (error instanceof AgentExecutorNotConfiguredError)
+    return { code: "WORKER_NOT_CONFIGURED", message: error.message };
+  if (error instanceof WorkerRuntimeError)
+    return { code: error.code, message: error.message };
   return {
     message:
       fallbackCode === "ABORTED"
@@ -49,7 +55,13 @@ export class ExecuteAgentRun {
     private readonly executor: AgentExecutor,
     private readonly worktrees: WorktreeManager,
     private readonly clock: Clock,
+    private readonly onRunChanged?: () => void,
   ) {}
+
+  private async persist(run: AgentRun): Promise<void> {
+    await this.runtime.saveRun(run);
+    this.onRunChanged?.();
+  }
 
   async execute(
     run: AgentRun,
@@ -65,26 +77,39 @@ export class ExecuteAgentRun {
       if (signal?.aborted === true) {
         primaryError = { message: "Execution cancelled", code: "ABORTED" };
         run.transition("cancelled", this.clock.now(), { error: primaryError });
-        await this.runtime.saveRun(run);
+        await this.persist(run);
         terminalPersisted = true;
       } else {
         if (run.snapshot().status === "queued") {
           run.transition("preparing", this.clock.now());
-          await this.runtime.saveRun(run);
+          await this.persist(run);
         }
-        worktree = await this.worktrees.prepare(run.snapshot().id);
+        const prepared = await this.executor.prepare?.(run);
+        if (prepared?.usesWorktree !== false)
+          worktree = await this.worktrees.prepare(run.snapshot().id);
         run.transition("running", this.clock.now(), {
-          worktreePath: worktree.path,
+          ...(worktree === undefined ? {} : { worktreePath: worktree.path }),
+          ...(prepared === undefined ? {} : { execution: prepared.provenance }),
         });
-        await this.runtime.saveRun(run);
-        const result = await this.executor.execute(run, signal);
+        await this.persist(run);
+        const result =
+          prepared === undefined
+            ? await this.executor.execute(run, signal)
+            : await prepared.execute(signal);
         actions = result.actions ?? [];
         if (isCancelled(undefined, signal))
           throw new DOMException("Execution cancelled", "AbortError");
-        run.transition("reviewing", this.clock.now(), { result });
-        await this.runtime.saveRun(run);
+        const reviewingAt = this.clock.now();
+        if (prepared?.accept !== undefined) {
+          await prepared.accept(run, result, reviewingAt);
+          // The acceptance fence persisted this exact transition atomically.
+          run.transition("reviewing", reviewingAt, { result });
+        } else {
+          run.transition("reviewing", reviewingAt, { result });
+          await this.persist(run);
+        }
         run.transition("completed", this.clock.now(), { result });
-        await this.runtime.saveRun(run);
+        await this.persist(run);
         terminalPersisted = true;
       }
     } catch (error) {
@@ -100,7 +125,7 @@ export class ExecuteAgentRun {
           error: primaryError,
         });
         try {
-          await this.runtime.saveRun(run);
+          await this.persist(run);
           terminalPersisted = true;
         } catch {
           persistenceInterrupted = true;
