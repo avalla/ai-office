@@ -23,6 +23,7 @@
     "validate:launchd-plists": "bun scripts/validate-launchd-plists.ts",
     "validate:skills": "bun scripts/validate-skills.ts",
     "test": "bunx --bun vitest run",
+    "test:service-management": "bunx --bun vitest run tests/unit/launchd-user-service-manager.test.ts tests/unit/systemd-user-service-manager.test.ts tests/unit/office-service-management.test.ts tests/unit/service-command-runner.test.ts tests/e2e/service-cli.test.ts",
     "typecheck": "bunx tsc -p tsconfig.json --noEmit",
     "lint": "bunx eslint .",
     "format": "bunx prettier --write ."
