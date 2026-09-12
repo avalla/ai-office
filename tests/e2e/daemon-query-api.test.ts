@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { queryApiVersion } from "@ai-office/application/protocol/query-protocol.ts";
 import { OfficeDaemon } from "../../apps/daemon/src/office-daemon.ts";
@@ -49,7 +50,9 @@ async function startDaemon(): Promise<Harness> {
   const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-query-api-"));
   temporaryDirectories.push(projectRoot);
   writeFileSync(join(projectRoot, "README.md"), "# Query API fixture");
-  const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
+  const socket = createTestUnixSocket();
+  temporaryDirectories.push(socket.root);
+  const socketPath = socket.socketPath;
   const daemon = await bootstrap({ projectRoot, socketPath });
   const controller = new AbortController();
   const running = daemon.start(controller.signal);
@@ -711,7 +714,9 @@ describe("invalidation after a failed command", () => {
       join(tmpdir(), "ai-office-failed-command-"),
     );
     temporaryDirectories.push(projectRoot);
-    const socketPath = join(projectRoot, "daemon.sock");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const socketPath = socket.socketPath;
     const database = openDatabase(join(projectRoot, "project.sqlite"));
     migrate(database, join(process.cwd(), "migrations", "project"));
 

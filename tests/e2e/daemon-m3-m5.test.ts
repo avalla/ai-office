@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
@@ -67,7 +68,9 @@ limits:
   timeout_seconds: 60
 `,
     );
-    const socketPath = join(root, ".ai-office", "daemon.sock");
+    const socket = createTestUnixSocket();
+    roots.push(socket.root);
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({ projectRoot: root, socketPath });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);

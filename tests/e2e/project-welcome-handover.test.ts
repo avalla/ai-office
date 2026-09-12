@@ -15,6 +15,7 @@ import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import { compileProjectHandoverSection } from "@ai-office/application/agent-client/project-handover-workflow.ts";
 import type { ProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
@@ -121,8 +122,9 @@ async function startHarness(
     mode: "user",
     runtimeHome: runtimeRoot,
   });
-  const socketRoot = mkdtempSync("/tmp/ao-handover-sock-");
-  const socketPath = join(socketRoot, "daemon.sock");
+  const socket = createTestUnixSocket();
+  const socketRoot = socket.root;
+  const socketPath = socket.socketPath;
   const daemon = await bootstrap({
     runtimePaths,
     socketPath,

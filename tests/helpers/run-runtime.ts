@@ -5,10 +5,12 @@ import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
+import { createTestUnixSocket } from "./unix-socket.ts";
 
 export async function runRuntime(agentExecutor?: AgentExecutor) {
   const root = mkdtempSync(join(tmpdir(), "ao-runs-"));
-  const socketPath = join(root, "daemon.sock");
+  const socket = createTestUnixSocket();
+  const socketPath = socket.socketPath;
   let daemon = await bootstrap({
     projectRoot: root,
     socketPath,
@@ -74,6 +76,7 @@ export async function runRuntime(agentExecutor?: AgentExecutor) {
     ]);
   return {
     root,
+    socketPath,
     projectId,
     agentId,
     command,
@@ -102,6 +105,7 @@ export async function runRuntime(agentExecutor?: AgentExecutor) {
     close: async () => {
       controller.abort();
       await running;
+      socket.cleanup();
       rmSync(root, { recursive: true, force: true });
     },
   };

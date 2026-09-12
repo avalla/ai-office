@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import {
   DaemonClient,
   RuntimeUnavailableError,
@@ -60,7 +61,9 @@ async function startRuntime() {
   const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-dashboard-"));
   temporaryDirectories.push(projectRoot);
   writeFileSync(join(projectRoot, "README.md"), "# Dashboard fixture");
-  const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
+  const socket = createTestUnixSocket();
+  temporaryDirectories.push(socket.root);
+  const socketPath = socket.socketPath;
   const daemon = await bootstrap({ projectRoot, socketPath });
   const controller = new AbortController();
   const running = daemon.start(controller.signal);

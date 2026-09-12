@@ -12,6 +12,7 @@ import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 
 const roots: string[] = [];
@@ -74,7 +75,9 @@ describe("skill-first onboarding through the daemon", () => {
     manifest.project.goals = ["Approved office goal B"];
     writeFileSync(manifestPath, JSON.stringify(manifest));
 
-    const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
+    const socket = createTestUnixSocket();
+    roots.push(socket.root);
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({ projectRoot, socketPath });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);
@@ -336,7 +339,9 @@ describe("skill-first onboarding through the daemon", () => {
     const outsideRoot = mkdtempSync(join(tmpdir(), "ai-office-skill-outside-"));
     roots.push(projectRoot, outsideRoot);
     writeFileSync(join(outsideRoot, "manifest.json"), "{}");
-    const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
+    const socket = createTestUnixSocket();
+    roots.push(socket.root);
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({ projectRoot, socketPath });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);

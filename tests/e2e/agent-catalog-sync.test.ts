@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import {
   YamlAgentDefinitionLoader,
   type LoadedAgentDefinition,
@@ -25,7 +26,8 @@ const specialists = loader.load(join(repositoryRoot, "agent-catalog"));
 describe("bundled agent synchronization through the daemon", () => {
   test("enables only deliberately synchronized agents without grants or office changes", async () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-catalog-sync-"));
-    const socketPath = join(root, ".ai-office", "daemon.sock");
+    const socket = createTestUnixSocket();
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({ projectRoot: root, socketPath });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);
@@ -229,6 +231,7 @@ describe("bundled agent synchronization through the daemon", () => {
     } finally {
       controller.abort();
       await running;
+      socket.cleanup();
       rmSync(root, { recursive: true, force: true });
     }
   });

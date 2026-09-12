@@ -14,6 +14,7 @@ import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 
 const roots: string[] = [];
 
@@ -96,13 +97,12 @@ describe("portable project CLI", () => {
     writeFileSync(join(projectB, "package.json"), '{"name":"portable"}\n');
     const archivePath = join(workspace, "portable.aioffice");
 
-    const socketRootA = mkdtempSync("/tmp/ao-port-a-");
-    roots.push(socketRootA);
-    const socketA = join(socketRootA, "daemon.sock");
-    const a = await start(runtimeA, socketA);
+    const socketA = createTestUnixSocket();
+    roots.push(socketA.root);
+    const a = await start(runtimeA, socketA.socketPath);
     const installed = await command({
       runtimePaths: a.runtimePaths,
-      socketPath: socketA,
+      socketPath: socketA.socketPath,
       workingDirectory: projectA,
       args: ["install", ".", "--json"],
     });
@@ -114,7 +114,7 @@ describe("portable project CLI", () => {
       (
         await command({
           runtimePaths: a.runtimePaths,
-          socketPath: socketA,
+          socketPath: socketA.socketPath,
           workingDirectory: projectA,
           args: ["task:create", "--title", "Keep this task", "--priority", "9"],
         })
@@ -122,7 +122,7 @@ describe("portable project CLI", () => {
     ).toBe(0);
     const backedUp = await command({
       runtimePaths: a.runtimePaths,
-      socketPath: socketA,
+      socketPath: socketA.socketPath,
       workingDirectory: projectA,
       args: ["project:backup", "--output", archivePath, "--json"],
     });
@@ -139,13 +139,12 @@ describe("portable project CLI", () => {
     a.controller.abort();
     await a.running;
 
-    const socketRootB = mkdtempSync("/tmp/ao-port-b-");
-    roots.push(socketRootB);
-    const socketB = join(socketRootB, "daemon.sock");
-    const b = await start(runtimeB, socketB);
+    const socketB = createTestUnixSocket();
+    roots.push(socketB.root);
+    const b = await start(runtimeB, socketB.socketPath);
     const restored = await command({
       runtimePaths: b.runtimePaths,
-      socketPath: socketB,
+      socketPath: socketB.socketPath,
       workingDirectory: projectB,
       args: ["project:restore", archivePath, "--json"],
     });
@@ -163,7 +162,7 @@ describe("portable project CLI", () => {
 
     const status = await command({
       runtimePaths: b.runtimePaths,
-      socketPath: socketB,
+      socketPath: socketB.socketPath,
       workingDirectory: projectB,
       args: ["status", "--json"],
     });
@@ -185,7 +184,7 @@ describe("portable project CLI", () => {
     });
     const tasks = await command({
       runtimePaths: b.runtimePaths,
-      socketPath: socketB,
+      socketPath: socketB.socketPath,
       workingDirectory: projectB,
       args: ["task:list"],
     });
