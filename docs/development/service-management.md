@@ -590,8 +590,8 @@ launchd behaviour is exercised through a fake `launchctl` that models the five
 distinct answers separately — absent, registered, inspection failed, launchctl
 unavailable, and disabled — so no test can pass by collapsing them. Because
 macOS support is a first-class feature, a `macos-latest` CI job additionally
-typechecks, lints, runs the service-management suite on a real macOS host, and
-validates the generated plists with Apple's own parser:
+runs the whole `bun run check` on a real macOS host and validates the generated
+plists with Apple's own parser:
 
 ```bash
 bun run validate:launchd-plists
@@ -607,9 +607,8 @@ The job deliberately does **not** bootstrap LaunchAgents. A GitHub-hosted runner
 has no interactive Aqua login session, so loading an agent there would prove
 nothing and fail unpredictably; nothing persistent is installed on the CI host.
 
-It runs the service-management suite rather than the whole `bun run check`
-because the daemon end-to-end tests bind Unix sockets under `$TMPDIR`, and a
-macOS runner's `/var/folders/...` temporary path is long enough to exceed the
-104-byte `sun_path` limit. That is a pre-existing test-harness portability limit
-in those tests, not a service-management defect, and is left to be fixed where it
-belongs.
+Daemon end-to-end tests take their Unix socket from `tests/helpers/unix-socket.ts`
+rather than nesting it under `$TMPDIR`, because a macOS runner's
+`/var/folders/...` temporary path is long enough to push a nested
+`.ai-office/daemon.sock` past the 104-byte `sun_path` limit. That is a test
+harness concern only; production socket placement is unchanged.

@@ -30,16 +30,39 @@ AI Office tests behavior at the narrowest useful boundary and adds integration c
 
 Tests use deterministic clocks, IDs, providers, executors, and mocks where appropriate. Files, directories, sockets, and SQLite databases are created in temporary isolated locations and cleaned up after each test.
 
+A test Unix socket is not stored beside the project state it belongs to. Project
+directories, SQLite databases, and generated views have no path-length
+constraint; a Unix socket does, because `sockaddr_un.sun_path` holds 104 bytes
+on macOS. A macOS `$TMPDIR` is a per-user `/var/folders/.../T` path about 48
+bytes long, which a nested `.ai-office/daemon.sock` exhausts. Harnesses
+therefore keep using `mkdtempSync(join(tmpdir(), ...))` for their own state and
+take the socket from `createTestUnixSocket()` in `tests/helpers/unix-socket.ts`,
+which allocates a short, unique root of its own. The socket root is removed only
+after the Runtime host bound to it has stopped. This is a test-harness rule:
+production `RuntimePaths`, `AI_OFFICE_HOME`, and the real
+`~/.ai-office/daemon.sock` location are unaffected.
+
+Tests that deliberately exercise socket-path derivation — `runtime-paths`,
+`service-cli`, `source-runtime-guard`, and `distribution-runtime-preflight` —
+keep deriving the path from a runtime home, because the derivation is what they
+assert. Their fixture roots use short prefixes so the derived paths stay inside
+the macOS limit.
+
 Standard CI makes no paid provider calls and requires no real API credentials. Provider behavior is exercised with deterministic mocks or injected fake transport.
 
 ## CI
 
-Pull requests and pushes to `main` run:
+Pull requests and pushes to `main` run, on both `ubuntu-latest` and
+`macos-latest`:
 
 ```bash
 bun install --frozen-lockfile
 bun run check
 ```
+
+The macOS job additionally runs `bun run validate:launchd-plists`, which checks
+the generated LaunchAgent plists with Apple's own parser — something the
+TypeScript suite cannot do.
 
 `bun run check` validates the repository-scoped AI Office skill, then runs
 typecheck, lint, and the full test suite. It validates both the distribution

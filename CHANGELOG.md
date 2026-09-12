@@ -40,6 +40,12 @@
   the human-readable name is an XML comment instead.
 - Validate the generated LaunchAgent plists on a `macos-latest` CI runner with
   `plutil`, without installing or bootstrapping anything on the host.
+- Allocate daemon end-to-end test sockets from a short, dedicated temporary root
+  instead of nesting them under the project directory, so the full suite binds
+  within the 104-byte macOS `sun_path` limit. Test harnesses only; production
+  `RuntimePaths`, `AI_OFFICE_HOME`, and socket placement are unchanged.
+- Run the complete `bun run check` on `macos-latest`, alongside the native plist
+  validation, instead of a service-management subset.
 
 No version tag or public release has been published by these changes.
 

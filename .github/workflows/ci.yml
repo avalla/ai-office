@@ -48,23 +48,16 @@ jobs:
             git diff --check "${{ github.event.before }}...${{ github.sha }}"
           fi
 
-  macos-service-management:
-    name: macOS service management
-    # launchd support is a first-class feature, and every launchctl call in the
-    # test suite is answered by a fake. This job runs the service-management
-    # checks on a real macOS host and validates the generated LaunchAgent plists
-    # with Apple's own parser.
+  macos-validate:
+    name: macOS validate
+    # macOS is a first-class target, so the whole repository validation runs on
+    # a real macOS host. Every launchctl call in the test suite is answered by a
+    # fake; the plist step additionally checks the generated LaunchAgents with
+    # Apple's own parser, which the TypeScript suite cannot do.
     #
     # It deliberately does not bootstrap anything: a GitHub-hosted runner has no
     # interactive Aqua session, so loading a LaunchAgent there would prove
     # nothing and fail unpredictably. Nothing persistent is installed.
-    #
-    # The scope is the service-management suite rather than the whole `check`,
-    # because the daemon end-to-end tests bind Unix sockets under `$TMPDIR` and
-    # macOS runners expose a `/var/folders/...` path long enough to exceed the
-    # 104-byte `sun_path` limit. That is a pre-existing test-harness portability
-    # limit unrelated to this job, and is tracked separately rather than worked
-    # around here.
     runs-on: macos-latest
     steps:
       - name: Check out repository
@@ -86,14 +79,8 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Run service-management tests
-        run: bun run test:service-management
+      - name: Run project checks
+        run: bun run check
 
       - name: Validate generated LaunchAgent plists with plutil
         run: bun run validate:launchd-plists
