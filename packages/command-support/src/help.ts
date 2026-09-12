@@ -26,9 +26,14 @@ Commands:
   runtime status
   daemon          # compatibility alias for runtime start
   daemon:health   # compatibility alias for runtime status
-  dashboard [--port <port>] [--host <loopback-address>] [--no-open]
+  dashboard [--port <port>] [--host <loopback-address>] [--no-open] [--await-runtime <seconds>]
     serves the read-only operations console on loopback until interrupted;
-    requires a running daemon and prints the URL carrying the session token
+    requires a running daemon and prints the URL carrying the session token;
+    --await-runtime waits that long for the Runtime socket instead of exiting
+  service install|status|uninstall [--json]
+    manages the per-user Runtime and dashboard OS services
+    Linux systemd --user, macOS launchd LaunchAgents; no sudo, never system-wide
+    see ai-office service --help
   project:create <name> [--description <description>] [--json]
   project:import [path] [--name <name>] [--json]
   project:answer --project <id> --question <id> --answer <value>  # legacy stored questions only

@@ -183,6 +183,68 @@ describe("application architecture boundaries", () => {
   });
 });
 
+function assertNoPlatformMechanics(relativePath: string): void {
+  const path = join(repositoryRoot, relativePath);
+  const source = readFileSync(path, "utf8");
+  const forbidden = importedSpecifiers(source).filter((specifier) =>
+    /(?:apps\/|runtime-host|storage-sqlite|node:(?:fs|child_process|http|net|os|path)|bun:)/.test(
+      specifier,
+    ),
+  );
+  expect(forbidden).toEqual([]);
+  const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const mechanics: string[] = [];
+  function walk(node: ts.Node) {
+    if (
+      ts.isIdentifier(node) &&
+      ["Bun", "process", "fetch", "SQLite", "Database"].includes(node.text)
+    )
+      mechanics.push(node.text);
+    ts.forEachChild(node, walk);
+  }
+  walk(ast);
+  expect(mechanics).toEqual([]);
+}
+
+test("service lifecycle orchestration stays behind ports without platform mechanics", () => {
+  // systemd, launchd, unit text, plists and process execution belong to the
+  // adapters. The application layer only decides what a report means.
+  assertNoPlatformMechanics(
+    "packages/application/src/service-management/manage-office-services.ts",
+  );
+  assertNoPlatformMechanics(
+    "packages/application/src/service-management/managed-definition.ts",
+  );
+  assertNoPlatformMechanics(
+    "packages/application/src/ports/office-service-manager.port.ts",
+  );
+  // Naming the two platforms in prose is what the port is for; emitting their
+  // command names or file syntax is not.
+  for (const relativePath of [
+    "packages/application/src/service-management/manage-office-services.ts",
+    "packages/application/src/service-management/managed-definition.ts",
+    "packages/application/src/ports/office-service-manager.port.ts",
+  ]) {
+    const source = readFileSync(join(repositoryRoot, relativePath), "utf8");
+    expect(source).not.toMatch(
+      /["'`](?:systemctl|launchctl)["'`]|ExecStart|<plist/u,
+    );
+  }
+});
+
+test("the CLI presentation layer carries no platform branch", () => {
+  const source = readFileSync(
+    join(repositoryRoot, "apps/cli/src/service-cli.ts"),
+    "utf8",
+  );
+  // Help text may name the platforms; rendering or invoking them must not
+  // happen here, and the presentation layer never branches on the platform.
+  expect(source).not.toMatch(
+    /["'`](?:systemctl|launchctl)["'`]|ExecStart|<plist/u,
+  );
+  expect(source).not.toMatch(/process\.platform/u);
+});
+
 test("distribution update orchestration stays behind ports without platform mechanics", () => {
   const path = join(
     repositoryRoot,

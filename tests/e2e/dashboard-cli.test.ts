@@ -10,7 +10,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
-import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
+import {
+  DaemonClient,
+  RuntimeUnavailableError,
+} from "../../apps/cli/src/daemon-client.ts";
+import { daemonProtocolVersion } from "@ai-office/application/protocol/daemon-protocol.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import {
@@ -167,6 +171,107 @@ describe("ai-office dashboard", () => {
     expect(code).toBe(1);
     expect(output.stdout).toEqual([]);
     expect(output.stderr[0]).toContain("Runtime is not available");
+  });
+
+  test("--await-runtime waits for a Runtime that appears shortly afterwards", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-dashboard-wait-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const socketPath = join(projectRoot, "daemon.sock");
+    const controller = new AbortController();
+    const output = captureIo();
+    // The supervised dashboard must tolerate a Runtime socket that is not yet
+    // accepting connections: no startup ordering primitive proves readiness.
+    let attempts = 0;
+    const runtimeClient = {
+      health: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new RuntimeUnavailableError(socketPath);
+        return {
+          protocolVersion: daemonProtocolVersion,
+          status: "ok" as const,
+          startedAt: new Date(0).toISOString(),
+        };
+      },
+      execute: () => {
+        throw new Error("the dashboard command never dispatches a command");
+      },
+    };
+
+    try {
+      const command = runDaemonCli(
+        ["dashboard", "--port", "0", "--no-open", "--await-runtime", "10"],
+        {
+          projectRoot,
+          socketPath,
+          io: output.io,
+          dashboardSignal: controller.signal,
+          runtimeClient,
+        },
+      );
+
+      for (
+        let attempt = 0;
+        attempt < 600 && output.stdout.length < 3;
+        attempt += 1
+      )
+        await Bun.sleep(10);
+
+      expect(attempts).toBeGreaterThan(1);
+      expect(output.stdout[0]).toBe("AI Office dashboard");
+      expect(output.stdout[1]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//);
+      controller.abort();
+      expect(await command).toBe(0);
+    } finally {
+      controller.abort();
+    }
+  }, 20_000);
+
+  test("without --await-runtime a stopped Runtime is still an immediate error", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-dashboard-now-"));
+    temporaryDirectories.push(projectRoot);
+    const socketPath = join(projectRoot, "daemon.sock");
+    const output = captureIo();
+    let attempts = 0;
+
+    const code = await runDaemonCli(["dashboard"], {
+      projectRoot,
+      socketPath,
+      io: output.io,
+      dashboardSignal: AbortSignal.abort(),
+      runtimeClient: {
+        health: async () => {
+          attempts += 1;
+          throw new RuntimeUnavailableError(socketPath);
+        },
+        execute: () => {
+          throw new Error("the dashboard command never dispatches a command");
+        },
+      },
+    });
+
+    expect(code).toBe(1);
+    expect(attempts).toBe(1);
+    expect(output.stderr[0]).toContain("Runtime is not available");
+  });
+
+  test("rejects a malformed --await-runtime value", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-dashboard-wait-bad-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const output = captureIo();
+
+    const code = await runDaemonCli(["dashboard", "--await-runtime", "soon"], {
+      projectRoot,
+      socketPath: join(projectRoot, "daemon.sock"),
+      io: output.io,
+      dashboardSignal: AbortSignal.abort(),
+    });
+
+    expect(code).toBe(1);
+    expect(output.stderr[0]).toContain("--await-runtime");
   });
 
   test("rejects an invalid port before touching the daemon", async () => {
@@ -431,7 +536,9 @@ describe("dashboard loopback host", () => {
   });
 
   test("the session token is per process and dies with the host", async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-dashboard-token-"));
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-dashboard-token-"),
+    );
     temporaryDirectories.push(projectRoot);
     const socketPath = join(projectRoot, "missing.sock");
 

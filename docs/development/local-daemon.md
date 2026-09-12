@@ -29,7 +29,15 @@ ai-office runtime start
 ```
 
 `ai-office daemon` remains a compatibility alias. Both commands run the host in
-the foreground; there is no service supervisor-backed stop/restart command yet.
+the foreground.
+
+`ai-office service install` registers the host, and the dashboard, as per-user
+operating-system services (`systemd --user` on Linux, `launchd` LaunchAgents on
+macOS) so the platform supervises and restarts them. That is explicit operator
+action, never part of ordinary installation, and it grants no privilege: a user
+service manager supervises processes and does not separate same-UID principals.
+There is still no AI Office `start`/`stop`/`restart` command; the platform tools
+own that. See [Native service management](service-management.md).
 
 It uses `AI_OFFICE_HOME` when explicitly set and otherwise `~/.ai-office`.
 Development commands retain an explicit checkout-local compatibility mode:
@@ -124,10 +132,10 @@ separate facts.
 The two offline paths differ in what they know, and status schema version `4`
 lets them say so:
 
-| | host contacted | `runtime.daemon` | `runtime.authoritativeState` | `health` | issue |
-| --- | --- | --- | --- | --- | --- |
-| clean `status --offline` | no | `not_checked` | `not_checked` | `unverified` | `runtime_not_checked` (warning) |
-| `status` with the host down | yes, and it failed | `unreachable` | `unavailable` | `needs_attention` | `daemon_unavailable` (error) |
+|                             | host contacted     | `runtime.daemon` | `runtime.authoritativeState` | `health`          | issue                           |
+| --------------------------- | ------------------ | ---------------- | ---------------------------- | ----------------- | ------------------------------- |
+| clean `status --offline`    | no                 | `not_checked`    | `not_checked`                | `unverified`      | `runtime_not_checked` (warning) |
+| `status` with the host down | yes, and it failed | `unreachable`    | `unavailable`                | `needs_attention` | `daemon_unavailable` (error)    |
 
 A host that was never contacted is not a host proved unreachable, so explicit
 offline inspection never emits `daemon_unavailable` and never tells the operator
