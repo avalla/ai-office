@@ -1,4 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { runRuntimeCli } from "../../apps/cli/src/daemon-cli.ts";
@@ -11,9 +17,7 @@ import {
 } from "@ai-office/service-management/systemd-user-service-manager.ts";
 import {
   cleanTemporaryDirectories,
-  FakeServiceCommandRunner,
-  healthySystemdRunner,
-  systemctlShowOutput,
+  FakeSystemd,
   temporaryDefinitionDirectory,
 } from "../helpers/service-management.ts";
 
@@ -74,19 +78,21 @@ interface Harness {
   run: (args: string[]) => Promise<number>;
   plans: OfficeServicePlan[];
   unitDirectory: string;
-  runner: FakeServiceCommandRunner;
+  runner: FakeSystemd;
   io: ReturnType<typeof captureIo>;
   runtimePaths: RuntimePaths;
   stateFiles: string[];
 }
 
 function harness(
-  runner: FakeServiceCommandRunner = healthySystemdRunner(),
+  arrange: (runner: FakeSystemd, unitDirectory: string) => void = () => {},
 ): Harness {
   const unitDirectory = temporaryDefinitionDirectory(
     directories,
     "ai-office-service-cli-",
   );
+  const runner = new FakeSystemd(unitDirectory);
+  arrange(runner, unitDirectory);
   const { runtimePaths, files } = runtimeHomeWithState();
   const io = captureIo();
   const plans: OfficeServicePlan[] = [];
@@ -196,27 +202,16 @@ describe("ai-office service install", () => {
   });
 
   test("reports partial installation on stderr and exits non-zero", async () => {
-    const context = harness(
-      healthySystemdRunner()
-        .on(["enable", systemdUnitNames.dashboard], {
-          exitCode: 1,
-          stderr: "Job for ai-office-dashboard.service failed\n",
-        })
-        .on(["show", systemdUnitNames.dashboard], {
-          stdout: systemctlShowOutput({
-            LoadState: "loaded",
-            ActiveState: "failed",
-            SubState: "failed",
-            UnitFileState: "enabled",
-          }),
-        }),
-    );
+    const context = harness((runner) => {
+      runner.startFailures.add(systemdUnitNames.dashboard);
+    });
     expect(await context.run(["service", "install"])).toBe(1);
     const errors = context.io.stderr.join("\n");
     expect(errors).toContain("AI Office service installation incomplete");
     expect(errors).toContain("Runtime:   running");
     expect(errors).toContain("Dashboard: failed");
     expect(errors).toContain("Job for ai-office-dashboard.service failed");
+    expect(errors).toContain("restart ai-office-dashboard.service failed");
     expect(context.io.stdout.join("\n")).not.toContain(
       "AI Office services installed",
     );
@@ -285,17 +280,11 @@ describe("ai-office service status", () => {
   });
 
   test("partial health never exits zero", async () => {
-    const context = harness(
-      healthySystemdRunner().on(["show", systemdUnitNames.dashboard], {
-        stdout: systemctlShowOutput({
-          LoadState: "loaded",
-          ActiveState: "inactive",
-          SubState: "dead",
-          UnitFileState: "enabled",
-        }),
-      }),
-    );
+    const context = harness();
     await context.run(["service", "install"]);
+    const dashboard = context.runner.units.get(systemdUnitNames.dashboard)!;
+    dashboard.activeState = "inactive";
+    dashboard.subState = "dead";
     context.io.stdout.length = 0;
     expect(await context.run(["service", "status"])).toBe(1);
     expect(context.io.stdout.join("\n")).toContain("state: installed_inactive");
@@ -374,6 +363,90 @@ describe("ai-office service uninstall", () => {
     );
     expect(context.io.stderr.join("\n")).toContain("not managed by AI Office");
     expect(readFileSync(path, "utf8")).toBe(foreign);
+  });
+});
+
+describe("ai-office service status orphan reporting", () => {
+  test("a unit left registered after its definition was deleted is exposed", async () => {
+    const context = harness();
+    await context.run(["service", "install"]);
+    rmSync(join(context.unitDirectory, systemdUnitNames.runtime));
+    context.io.stdout.length = 0;
+
+    expect(await context.run(["service", "status"])).toBe(1);
+    const output = context.io.stdout.join("\n");
+    expect(output).toContain("  installed: no");
+    expect(output).toContain("  registered: yes");
+    expect(output).toContain("  state: running");
+    expect(output).toContain("cannot prove ownership");
+    // Cleanup is the operator's call: ownership can no longer be proven.
+    expect(output).toContain(
+      `systemctl --user disable --now ${systemdUnitNames.runtime}`,
+    );
+  });
+
+  test("an orphan is never reported as a healthy installation", async () => {
+    const context = harness();
+    await context.run(["service", "install"]);
+    rmSync(join(context.unitDirectory, systemdUnitNames.dashboard));
+    context.io.stdout.length = 0;
+
+    await context.run(["service", "status", "--json"]);
+    const status = JSON.parse(context.io.stdout[0]!) as {
+      services: { service: string; installed: boolean; registered: boolean }[];
+      issues: string[];
+    };
+    expect(
+      status.services.find((entry) => entry.service === "dashboard"),
+    ).toMatchObject({ installed: false, registered: true });
+    expect(status.issues.length).toBeGreaterThan(0);
+  });
+
+  test("a running but disabled service exits non-zero", async () => {
+    const context = harness();
+    await context.run(["service", "install"]);
+    context.runner.units.get(systemdUnitNames.runtime)!.unitFileState =
+      "disabled";
+    context.io.stdout.length = 0;
+
+    expect(await context.run(["service", "status"])).toBe(1);
+    expect(context.io.stdout.join("\n")).toContain("  enabled: no");
+  });
+});
+
+describe("ai-office service uninstall fails closed", () => {
+  test("a service that will not stop keeps its definition and reports partial", async () => {
+    const context = harness((runner) => {
+      runner.refuseStop.add(systemdUnitNames.runtime);
+    });
+    await context.run(["service", "install"]);
+    context.io.stdout.length = 0;
+
+    expect(await context.run(["service", "uninstall"])).toBe(1);
+    const errors = context.io.stderr.join("\n");
+    expect(errors).toContain("AI Office service uninstall incomplete");
+    expect(errors).toContain("Preserved");
+    // The ownership evidence survives, so a later uninstall can still clean up.
+    expect(
+      existsSync(join(context.unitDirectory, systemdUnitNames.runtime)),
+    ).toBe(true);
+    for (const file of context.stateFiles) expect(existsSync(file)).toBe(true);
+  });
+
+  test("an unreachable service manager removes nothing", async () => {
+    const context = harness();
+    await context.run(["service", "install"]);
+    context.runner.systemctlMissing = true;
+    context.io.stdout.length = 0;
+
+    expect(await context.run(["service", "uninstall"])).toBe(1);
+    expect(context.io.stderr.join("\n")).toContain(
+      "No service definition was removed",
+    );
+    for (const service of ["runtime", "dashboard"] as const)
+      expect(
+        existsSync(join(context.unitDirectory, systemdUnitNames[service])),
+      ).toBe(true);
   });
 });
 

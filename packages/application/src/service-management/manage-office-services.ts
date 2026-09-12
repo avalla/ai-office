@@ -43,16 +43,39 @@ function serviceOf(
 }
 
 /**
- * True only when every managed service is installed and observed running.
+ * True only for a service AI Office owns, that the platform will start on its
+ * own, and that is running the definition currently on disk.
  *
- * `unknown` never counts as healthy: a state the adapter could not read is a
+ * "Running" alone is far too weak for a supervised service. A process can be
+ * running from a definition that has since been rewritten, from a unit that is
+ * no longer enabled and so will not come back after a reboot, or without the
+ * manager acknowledging it at all. Each of those is a real, separately
+ * observable defect, so each is required explicitly:
+ *
+ * - `managed_current` — the running configuration is the intended one;
+ * - `installed` — AI Office can prove it owns the definition;
+ * - `registered` — the service manager knows about it;
+ * - `enabled` — it starts again without an operator;
+ * - `running` — it is up right now.
+ *
+ * `unknown` and `null` never count: a fact the adapter could not read is a
  * reason to report less, not a reason to claim more.
  */
+export function officeServiceHealthy(entry: OfficeServiceStatus): boolean {
+  return (
+    entry.definition === "managed_current" &&
+    entry.installed &&
+    entry.registered === true &&
+    entry.enabled === true &&
+    entry.state === "running"
+  );
+}
+
 export function officeServicesHealthy(status: OfficeServicesStatus): boolean {
   if (!status.serviceManagerAvailable) return false;
   return officeServiceNames.every((name) => {
     const entry = serviceOf(status, name);
-    return entry !== undefined && entry.installed && entry.state === "running";
+    return entry !== undefined && officeServiceHealthy(entry);
   });
 }
 

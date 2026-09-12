@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type {
   OfficeServiceDefinitionOutcome,
+  OfficeServiceDefinitionState,
   OfficeServiceInstallReport,
   OfficeServiceManager,
   OfficeServiceName,
@@ -28,6 +29,7 @@ import {
 import {
   assertRenderableValue,
   classifyManagedDefinition,
+  officeServiceDefinitionIdentity,
   officeServiceOwnershipMarker,
 } from "@ai-office/application/service-management/managed-definition.ts";
 import {
@@ -42,6 +44,7 @@ import {
 } from "./service-plan.ts";
 import {
   BunServiceCommandRunner,
+  describeCommandFailure,
   type ServiceCommandResult,
   type ServiceCommandRunner,
 } from "./service-command-runner.ts";
@@ -80,16 +83,36 @@ export function defaultSystemdUnitDirectory(
 /**
  * Quotes one argv element for a systemd `ExecStart=` or `Environment=` value.
  *
- * systemd applies its own word splitting and C-style unescaping inside double
- * quotes, so a path containing a space or a quote must be quoted and escaped
- * rather than pasted in. Control characters are refused before this point.
+ * Two independent systemd rules apply, and both must be honoured or the unit
+ * means something other than the plan:
+ *
+ * - word splitting and C-style unescaping inside double quotes, so a path with
+ *   a space, a quote, or a backslash must be quoted and escaped;
+ * - specifier expansion, where `%` introduces a substitution. A literal `%` in
+ *   a path — `/home/operator/100%/ai-office` is a perfectly ordinary directory
+ *   — must be written `%%` or systemd silently resolves or drops it.
+ *
+ * Neither of these is shell escaping; a shell is never involved.
  */
-function systemdQuote(value: string): string {
-  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+function systemdValue(value: string): string {
+  return value
+    .replaceAll("\\", "\\\\")
+    .replaceAll('"', '\\"')
+    .replaceAll("%", "%%");
 }
 
-function renderUnit(lines: readonly string[]): string {
-  return `${lines.join("\n")}\n`;
+function systemdQuote(value: string): string {
+  return `"${systemdValue(value)}"`;
+}
+
+/** The exact header lines that prove AI Office owns a unit at a given path. */
+export function systemdOwnershipLines(
+  service: OfficeServiceName,
+): readonly string[] {
+  return [
+    `# ${officeServiceOwnershipMarker}`,
+    `# ${officeServiceDefinitionIdentity(service)}`,
+  ];
 }
 
 export function renderSystemdUnit(
@@ -108,8 +131,7 @@ export function renderSystemdUnit(
     .map(systemdQuote)
     .join(" ");
   const header = [
-    `# ${officeServiceOwnershipMarker}`,
-    `# Definition: ai-office/service/v1 ${service}`,
+    ...systemdOwnershipLines(service),
     "# Generated file. Edit the AI Office plan and reinstall instead.",
     "",
   ];
@@ -129,7 +151,7 @@ export function renderSystemdUnit(
           `Requires=${systemdUnitNames.runtime}`,
           `After=${systemdUnitNames.runtime}`,
         ];
-  return renderUnit([
+  return `${[
     ...header,
     ...unitSection,
     "",
@@ -142,7 +164,7 @@ export function renderSystemdUnit(
     "",
     "[Install]",
     "WantedBy=default.target",
-  ]);
+  ].join("\n")}\n`;
 }
 
 /** `systemctl show` emits `Key=Value` lines; unknown keys are simply absent. */
@@ -154,6 +176,14 @@ function parseShowProperties(stdout: string): Map<string, string> {
     properties.set(line.slice(0, separator), line.slice(separator + 1).trim());
   }
   return properties;
+}
+
+/** What `systemctl show` said about one unit, or `null` when it said nothing. */
+interface SystemdUnitEvidence {
+  readonly loadState: string | undefined;
+  readonly activeState: string | undefined;
+  readonly subState: string | undefined;
+  readonly unitFileState: string | undefined;
 }
 
 function stateFromActiveState(
@@ -171,6 +201,22 @@ function stateFromActiveState(
       // real but not resolved, and never reported as healthy.
       return "unknown";
   }
+}
+
+/** Positive proof that nothing is running for this unit. */
+function provablyNotRunning(evidence: SystemdUnitEvidence): boolean {
+  if (evidence.loadState === "not-found") return true;
+  return (
+    evidence.activeState === "inactive" || evidence.activeState === "failed"
+  );
+}
+
+function isEnabled(unitFileState: string | undefined): boolean {
+  return unitFileState === "enabled" || unitFileState === "enabled-runtime";
+}
+
+function isRegistered(evidence: SystemdUnitEvidence): boolean {
+  return evidence.loadState === "loaded";
 }
 
 export class SystemdUserServiceManager implements OfficeServiceManager {
@@ -229,6 +275,49 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
     return { available: true };
   }
 
+  /**
+   * Reads the manager's own view of a unit.
+   *
+   * `show` answers for any unit name, including one with no unit file, so this
+   * is also how an orphaned registration is discovered: the filesystem cannot
+   * prove a service is not loaded.
+   */
+  private async inspect(
+    service: OfficeServiceName,
+  ): Promise<SystemdUnitEvidence | null> {
+    const shown = await this.systemctl(
+      "show",
+      systemdUnitNames[service],
+      "--property=LoadState",
+      "--property=ActiveState",
+      "--property=SubState",
+      "--property=UnitFileState",
+    );
+    if (shown.unavailable || shown.exitCode !== 0) return null;
+    const properties = parseShowProperties(shown.stdout);
+    return {
+      loadState: properties.get("LoadState"),
+      activeState: properties.get("ActiveState"),
+      subState: properties.get("SubState"),
+      unitFileState: properties.get("UnitFileState"),
+    };
+  }
+
+  private async classify(
+    service: OfficeServiceName,
+  ): Promise<{ state: OfficeServiceDefinitionState; desired: string }> {
+    const desired = renderSystemdUnit(this.plan, service);
+    const existing = await this.store.read(this.unitPath(service));
+    return {
+      desired,
+      state: classifyManagedDefinition(
+        existing,
+        desired,
+        systemdOwnershipLines(service),
+      ),
+    };
+  }
+
   async install(): Promise<OfficeServiceInstallReport> {
     const probe = await this.probeManager();
     if (!probe.available)
@@ -236,36 +325,30 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
         `AI Office service installation requires systemd --user: ${probe.reason}`,
       );
 
-    const desired = new Map<OfficeServiceName, string>();
-    for (const service of officeServiceNames)
-      desired.set(service, renderSystemdUnit(this.plan, service));
-
     // Classify every target before writing any of them: a collision on the
     // second unit must not leave the first one installed.
     const classified = new Map<
       OfficeServiceName,
-      ReturnType<typeof classifyManagedDefinition>
+      { state: OfficeServiceDefinitionState; desired: string }
     >();
     for (const service of officeServiceNames) {
-      const path = this.unitPath(service);
-      const existing = await this.store.read(path);
-      const state = classifyManagedDefinition(existing, desired.get(service)!);
-      if (state === "unmanaged_collision")
+      const classification = await this.classify(service);
+      if (classification.state === "unmanaged_collision")
         throw new OfficeServicePreconditionError(
-          `${path} exists and is not managed by AI Office. Remove or rename it yourself, then run ai-office service install again.`,
+          `${this.unitPath(service)} exists and is not managed by AI Office. Remove or rename it yourself, then run ai-office service install again.`,
         );
-      classified.set(service, state);
+      classified.set(service, classification);
     }
 
     const definitions: OfficeServiceDefinitionOutcome[] = [];
     for (const service of officeServiceNames) {
       const path = this.unitPath(service);
-      const state = classified.get(service)!;
+      const { state, desired } = classified.get(service)!;
       if (state === "managed_current") {
         definitions.push({ service, path, action: "unchanged" });
         continue;
       }
-      await this.store.write(path, desired.get(service)!);
+      await this.store.write(path, desired);
       definitions.push({
         service,
         path,
@@ -274,27 +357,51 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
     }
 
     const issues: string[] = [];
+    // Services whose running process could not be brought to the unit on disk.
+    // systemd publishes no link from a running process back to the bytes of
+    // the unit it was started from, so a failed restart is the only moment at
+    // which the mismatch is knowable, and the install's own status carries it.
+    const unconverged = new Set<OfficeServiceName>();
     const reload = await this.systemctl("daemon-reload");
-    if (reload.exitCode !== 0 || reload.unavailable)
+    if (reload.exitCode !== 0 || reload.unavailable) {
       issues.push(
-        `systemctl --user daemon-reload failed; the generated units were written but not loaded${describeFailure(reload)}`,
+        `systemctl --user daemon-reload failed; the generated units were written but not loaded${describeCommandFailure(reload)}`,
       );
-    else
-      // Runtime first, so the dashboard's `Requires=`/`After=` ordering has
-      // something to order against on this very first start.
+      for (const service of officeServiceNames) unconverged.add(service);
+    } else {
       for (const service of officeServiceNames) {
         const enable = await this.systemctl(
           "enable",
-          "--now",
           systemdUnitNames[service],
         );
         if (enable.exitCode !== 0 || enable.unavailable)
           issues.push(
-            `systemctl --user enable --now ${systemdUnitNames[service]} failed${describeFailure(enable)}`,
+            `systemctl --user enable ${systemdUnitNames[service]} failed${describeCommandFailure(enable)}`,
           );
       }
+      // `restart` rather than `enable --now`, and runtime before dashboard.
+      //
+      // `enable --now` starts a stopped unit and does nothing at all to a
+      // running one, so an install that rewrote a unit would leave the old
+      // process running against the old launcher and environment while
+      // reporting the new definition as installed. An explicit install is a
+      // converge operation: it brings the *running process* to the definition
+      // on disk, which means restarting services that are already up.
+      for (const service of officeServiceNames) {
+        const restart = await this.systemctl(
+          "restart",
+          systemdUnitNames[service],
+        );
+        if (restart.exitCode !== 0 || restart.unavailable) {
+          issues.push(
+            `systemctl --user restart ${systemdUnitNames[service]} failed${describeCommandFailure(restart)}`,
+          );
+          unconverged.add(service);
+        }
+      }
+    }
 
-    const status = await this.status();
+    const status = await this.buildStatus(unconverged);
     return {
       definitions,
       issues: [...issues, ...status.issues],
@@ -306,6 +413,7 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
   private hints(): readonly string[] {
     const user = this.userName;
     return [
+      "Installing converges the running processes to the definitions on disk, so an explicit install restarts services that were already running.",
       "User services start with your login session. On a headless server, enable lingering so they also start before login and survive logout:",
       `  sudo loginctl enable-linger ${user ?? "<user>"}`,
       "AI Office never runs that command for you and never escalates privileges.",
@@ -313,104 +421,93 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
     ];
   }
 
-  async status(): Promise<OfficeServicesStatus> {
+  status(): Promise<OfficeServicesStatus> {
+    return this.buildStatus(new Set());
+  }
+
+  /**
+   * `unconverged` names services the caller has just proved are still running
+   * a previously loaded configuration. A standalone status cannot discover
+   * that — systemd exposes no link from a running process back to the unit
+   * bytes — so it is never guessed, only carried from an install that observed
+   * it.
+   */
+  private async buildStatus(
+    unconverged: ReadonlySet<OfficeServiceName>,
+  ): Promise<OfficeServicesStatus> {
     const probe = await this.probeManager();
     const issues: string[] = [];
     const services: OfficeServiceStatus[] = [];
 
     for (const service of officeServiceNames) {
       const path = this.unitPath(service);
-      const existing = await this.store.read(path);
-      const definition = classifyManagedDefinition(
-        existing,
-        renderSystemdUnit(this.plan, service),
-      );
+      const { state: definition } = await this.classify(service);
+      const installed =
+        definition === "managed_current" || definition === "managed_outdated";
 
-      if (definition === "unmanaged_collision") {
+      if (definition === "unmanaged_collision")
         issues.push(
           `${path} exists and is not managed by AI Office; it is reported, never modified.`,
         );
+
+      // The manager is always consulted, including when no definition exists.
+      // A missing file proves AI Office owns nothing at that path; it proves
+      // nothing whatsoever about whether a unit of that name is loaded.
+      const evidence = probe.available ? await this.inspect(service) : null;
+      if (evidence === null) {
         services.push({
           service,
           definitionPath: path,
           definition,
-          installed: false,
+          installed,
           registered: null,
           enabled: null,
           state: "unknown",
-          detail: "an unmanaged unit occupies this path",
+          detail: probe.available
+            ? "systemctl did not report this unit's properties"
+            : "the systemd user manager could not be contacted",
         });
         continue;
       }
 
-      if (definition === "missing") {
-        services.push({
-          service,
-          definitionPath: path,
-          definition,
-          installed: false,
-          registered: false,
-          enabled: false,
-          state: "not_installed",
-        });
-        continue;
+      const registered = isRegistered(evidence);
+      const enabled = isEnabled(evidence.unitFileState);
+      const normalized: OfficeServiceState =
+        evidence.loadState === "not-found"
+          ? definition === "missing"
+            ? "not_installed"
+            : "installed_inactive"
+          : stateFromActiveState(evidence.activeState);
+
+      const orphaned = !installed && registered;
+      if (orphaned) {
+        issues.push(
+          `${systemdUnitNames[service]} is still registered with systemd but AI Office cannot prove it owns ${path}. Inspect it, then remove it yourself with: systemctl --user disable --now ${systemdUnitNames[service]}`,
+        );
       }
 
-      if (!probe.available) {
-        services.push({
-          service,
-          definitionPath: path,
-          definition,
-          installed: true,
-          registered: null,
-          enabled: null,
-          state: "unknown",
-          detail: "the systemd user manager could not be contacted",
-        });
-        continue;
-      }
-
-      const shown = await this.systemctl(
-        "show",
-        systemdUnitNames[service],
-        "--property=LoadState",
-        "--property=ActiveState",
-        "--property=SubState",
-        "--property=UnitFileState",
-      );
-      if (shown.unavailable || shown.exitCode !== 0) {
-        services.push({
-          service,
-          definitionPath: path,
-          definition,
-          installed: true,
-          registered: null,
-          enabled: null,
-          state: "unknown",
-          detail: "systemctl did not report this unit's properties",
-        });
-        continue;
-      }
-      const properties = parseShowProperties(shown.stdout);
-      const loadState = properties.get("LoadState");
-      const unitFileState = properties.get("UnitFileState");
-      const activeState = properties.get("ActiveState");
-      const subState = properties.get("SubState");
+      // The downgrade bites only where it matters. A service the manager
+      // reports as stopped is already described truthfully and unhealthily; it
+      // is a service that still looks `running` after a failed convergence
+      // that would otherwise read as healthy while executing the old
+      // configuration.
+      const stale = unconverged.has(service) && normalized === "running";
       services.push({
         service,
         definitionPath: path,
         definition,
-        installed: true,
-        registered: loadState === "loaded",
-        enabled:
-          unitFileState === "enabled" || unitFileState === "enabled-runtime",
-        state:
-          loadState === "not-found"
-            ? "installed_inactive"
-            : stateFromActiveState(activeState),
-        ...(subState === undefined || subState.length === 0
-          ? {}
-          : { detail: `${activeState ?? "unknown"} (${subState})` }),
+        installed,
+        registered,
+        enabled,
+        // A unit that could not be restarted may still be up, but not on the
+        // definition now on disk. That is never reported as healthy.
+        state: stale ? "unknown" : normalized,
+        ...(stale
+          ? {
+              detail:
+                "the unit on disk was not applied to the running process; systemd may still be running the previous configuration",
+            }
+          : this.detailFor(definition, evidence, orphaned)),
       });
     }
 
@@ -428,20 +525,60 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
     };
   }
 
+  private detailFor(
+    definition: OfficeServiceDefinitionState,
+    evidence: SystemdUnitEvidence,
+    orphaned: boolean,
+  ): { detail?: string } {
+    if (orphaned)
+      return {
+        detail:
+          definition === "unmanaged_collision"
+            ? "an unmanaged unit occupies this path and a unit of this name is registered"
+            : "the unit remains registered but AI Office cannot prove ownership",
+      };
+    if (definition === "unmanaged_collision")
+      return { detail: "an unmanaged unit occupies this path" };
+    if (definition === "managed_outdated")
+      return { detail: "the unit on disk differs from the current plan" };
+    if (evidence.subState === undefined || evidence.subState.length === 0)
+      return {};
+    return {
+      detail: `${evidence.activeState ?? "unknown"} (${evidence.subState})`,
+    };
+  }
+
   async uninstall(): Promise<OfficeServiceUninstallReport> {
     const removed: OfficeServiceDefinitionOutcome[] = [];
     const preserved: OfficeServicePreservedDefinition[] = [];
     const issues: string[] = [];
 
+    const probe = await this.probeManager();
+    if (!probe.available) {
+      // Without a manager there is no way to establish that anything stopped,
+      // and deleting a definition would destroy the only proof that AI Office
+      // owns whatever is still registered.
+      issues.push(
+        `AI Office cannot verify that its services are stopped: ${probe.reason}. No service definition was removed.`,
+      );
+      for (const service of ["dashboard", "runtime"] as const) {
+        const { state } = await this.classify(service);
+        if (state === "missing") continue;
+        preserved.push({
+          service,
+          path: this.unitPath(service),
+          reason: "the systemd user manager could not be contacted",
+        });
+      }
+      return this.uninstallReport(removed, preserved, issues);
+    }
+
     // Dashboard first: the dependent service stops before the thing it
     // depends on, so the Runtime never disappears from under a live proxy.
     for (const service of ["dashboard", "runtime"] as const) {
       const path = this.unitPath(service);
-      const existing = await this.store.read(path);
-      const definition = classifyManagedDefinition(
-        existing,
-        renderSystemdUnit(this.plan, service),
-      );
+      const { state: definition } = await this.classify(service);
+
       if (definition === "unmanaged_collision") {
         preserved.push({
           service,
@@ -453,10 +590,21 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
         );
         continue;
       }
-      // Nothing AI Office owns is at this path, so there is nothing it may
-      // disable: a unit of the same name elsewhere in the search path belongs
-      // to somebody else.
-      if (definition === "missing") continue;
+
+      if (definition === "missing") {
+        // Nothing AI Office owns is at this path, so there is nothing it may
+        // disable — but a unit of this name may still be loaded, and that is
+        // worth reporting rather than reading as a clean uninstall.
+        const orphan = await this.inspect(service);
+        if (
+          orphan !== null &&
+          (isRegistered(orphan) || isEnabled(orphan.unitFileState))
+        )
+          issues.push(
+            `${systemdUnitNames[service]} is still known to systemd but AI Office owns no definition for it. Remove it yourself with: systemctl --user disable --now ${systemdUnitNames[service]}`,
+          );
+        continue;
+      }
 
       const disable = await this.systemctl(
         "disable",
@@ -465,8 +613,39 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
       );
       if (disable.exitCode !== 0 || disable.unavailable)
         issues.push(
-          `systemctl --user disable --now ${systemdUnitNames[service]} failed${describeFailure(disable)}`,
+          `systemctl --user disable --now ${systemdUnitNames[service]} failed${describeCommandFailure(disable)}`,
         );
+
+      // The command's exit code is evidence, not the decision. Removal is
+      // gated on the manager's own post-operation answer, because deleting the
+      // unit file destroys the ownership evidence that would let a later
+      // uninstall clean up whatever is still running.
+      const after = await this.inspect(service);
+      if (after === null) {
+        preserved.push({
+          service,
+          path,
+          reason: "systemd did not confirm the unit had stopped",
+        });
+        issues.push(
+          `${systemdUnitNames[service]} could not be verified as stopped, so its unit file was preserved.`,
+        );
+        continue;
+      }
+      if (!provablyNotRunning(after) || isEnabled(after.unitFileState)) {
+        preserved.push({
+          service,
+          path,
+          reason: provablyNotRunning(after)
+            ? "the unit is still enabled"
+            : "the unit is still running",
+        });
+        issues.push(
+          `${systemdUnitNames[service]} is still ${provablyNotRunning(after) ? "enabled" : `${after.activeState ?? "active"}`} after disable --now, so its unit file was preserved.`,
+        );
+        continue;
+      }
+
       await this.store.remove(path);
       removed.push({ service, path, action: "removed" });
     }
@@ -475,10 +654,18 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
       const reload = await this.systemctl("daemon-reload");
       if (reload.exitCode !== 0 || reload.unavailable)
         issues.push(
-          `systemctl --user daemon-reload failed after removing the units${describeFailure(reload)}`,
+          `systemctl --user daemon-reload failed after removing the units${describeCommandFailure(reload)}`,
         );
     }
 
+    return this.uninstallReport(removed, preserved, issues);
+  }
+
+  private uninstallReport(
+    removed: readonly OfficeServiceDefinitionOutcome[],
+    preserved: readonly OfficeServicePreservedDefinition[],
+    issues: readonly string[],
+  ): OfficeServiceUninstallReport {
     return {
       platform: this.platform,
       removed,
@@ -487,13 +674,4 @@ export class SystemdUserServiceManager implements OfficeServiceManager {
       preservedData: [this.plan.program.runtimeHome],
     };
   }
-}
-
-/** One short, non-localized cause; never the full command output. */
-function describeFailure(result: ServiceCommandResult): string {
-  if (result.unavailable) return " (the command could not be executed)";
-  const line = result.stderr.split("\n").find((entry) => entry.trim() !== "");
-  return line === undefined
-    ? ` (exit ${result.exitCode})`
-    : ` (exit ${result.exitCode}: ${line.trim()})`;
 }

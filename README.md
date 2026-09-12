@@ -497,16 +497,33 @@ Dashboard
 
 The banner comes from the authoritative post-install state, never from the fact
 that the start commands were issued. Partial installation is reported as
-incomplete, with a reason, and exits `1`. `status` normalizes both platforms
-into `not_installed`, `installed_inactive`, `running`, `failed`, or `unknown`,
-and never calls partial health healthy.
+incomplete, with a reason, and exits `1`.
+
+**An explicit `install` restarts services that are already running.** Neither
+platform links a running process back to the definition it started from, so
+converging the file alone would leave the old process serving the old
+configuration. Install therefore brings both to the plan — `restart` on
+systemd, a deliberate re-bootstrap on launchd. Idempotence means repeated runs
+converge to the same desired state, not that a PID survives.
+
+`status` normalizes both platforms into `not_installed`, `installed_inactive`,
+`running`, `failed`, or `unknown`. Healthy requires all of managed-and-current,
+installed, registered, enabled, and running — a service that is up but disabled,
+or up on an outdated definition, is reported and exits `1`. The service manager
+is queried even when no definition exists, so a unit deleted by hand surfaces as
+a still-registered orphan with the command to clean it up, rather than as a
+clean uninstall.
 
 Install is idempotent. Every generated file carries a `Managed by AI Office`
-ownership marker; a file without it is never overwritten and never deleted, and
-a collision fails closed with the path named. `uninstall` stops the dashboard
-first, then the Runtime, and removes **only** the generated definitions:
-`~/.ai-office`, the SQLite databases, project state, and project files are left
-untouched.
+marker plus its service identity, both required verbatim in the file header; a
+file that does not carry exactly that is never overwritten and never deleted,
+and a collision fails closed with the path named. `uninstall` stops the
+dashboard first, then the Runtime, and removes **only** the generated
+definitions — and only once the service manager has confirmed the service is
+actually stopped. A stop that fails, or a manager that cannot be reached,
+preserves the definition and reports a partial uninstall, because that file is
+the only proof of ownership. `~/.ai-office`, the SQLite databases, project
+state, and project files are always left untouched.
 
 On a headless Linux server, user services may need lingering to start before
 login and survive logout. AI Office prints this as guidance and never runs it:

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -82,19 +82,199 @@ export function systemctlShowOutput(properties: {
     .join("\n")}\n`;
 }
 
-/** A `systemctl --user` arrangement in which everything succeeds and runs. */
-export function healthySystemdRunner(): FakeServiceCommandRunner {
-  return new FakeServiceCommandRunner()
-    .on(["--version"], { stdout: "systemd 255\n" })
-    .on(["is-system-running"], { stdout: "running\n" })
-    .on(["show"], {
-      stdout: systemctlShowOutput({
-        LoadState: "loaded",
-        ActiveState: "active",
-        SubState: "running",
-        UnitFileState: "enabled",
-      }),
+interface FakeSystemdUnit {
+  loadState: string;
+  activeState: string;
+  subState: string;
+  unitFileState: string;
+}
+
+/**
+ * A `systemd --user` manager that behaves like the real one for the operations
+ * this adapter uses.
+ *
+ * It holds actual unit state driven by `daemon-reload`, `enable`, `restart`
+ * and `disable --now`, so lifecycle tests can assert that a service converged
+ * or refused to be removed, rather than merely that a command was issued.
+ * `daemon-reload` reads the real temporary unit directory, which is what makes
+ * "the unit file was deleted but the unit is still loaded" expressible.
+ */
+export class FakeSystemd implements ServiceCommandRunner {
+  readonly calls: string[][] = [];
+  readonly units = new Map<string, FakeSystemdUnit>();
+  /** Units whose stop silently does not take effect, exit code notwithstanding. */
+  readonly refuseStop = new Set<string>();
+  /** Units whose start silently does not take effect. */
+  readonly refuseStart = new Set<string>();
+  /** Units whose start reports failure and leaves the unit in `failed`. */
+  readonly startFailures = new Set<string>();
+
+  systemctlMissing = false;
+  userManagerAvailable = true;
+
+  private readonly overrides: Array<{
+    fragment: readonly string[];
+    result: Partial<ServiceCommandResult>;
+  }> = [];
+
+  constructor(private readonly unitDirectory: string) {}
+
+  /** Later registrations win. An override answers without changing state. */
+  on(fragment: readonly string[], result: Partial<ServiceCommandResult>): this {
+    this.overrides.unshift({ fragment, result });
+    return this;
+  }
+
+  async run(command: readonly string[]): Promise<ServiceCommandResult> {
+    this.calls.push([...command]);
+    if (this.systemctlMissing)
+      return { exitCode: 127, stdout: "", stderr: "", unavailable: true };
+
+    const verb = command[2];
+    const unit = command.find((argument) => argument.endsWith(".service"));
+    const override = this.overrides.find((entry) =>
+      entry.fragment.every((part) => command.includes(part)),
+    );
+    if (override !== undefined) return this.result(override.result);
+
+    if (verb === "--version") return this.result({ stdout: "systemd 255\n" });
+    if (verb === "is-system-running")
+      return this.userManagerAvailable
+        ? this.result({ stdout: "running\n" })
+        : this.result({
+            exitCode: 1,
+            stderr: "Failed to connect to bus: No such file or directory\n",
+          });
+
+    if (verb === "daemon-reload") {
+      for (const name of [
+        "ai-office-runtime.service",
+        "ai-office-dashboard.service",
+      ]) {
+        const present = existsSync(join(this.unitDirectory, name));
+        const current = this.units.get(name);
+        if (present) {
+          this.units.set(
+            name,
+            current ?? {
+              loadState: "loaded",
+              activeState: "inactive",
+              subState: "dead",
+              unitFileState: "disabled",
+            },
+          );
+          this.units.get(name)!.loadState = "loaded";
+          continue;
+        }
+        if (current === undefined) continue;
+        // A running unit survives the loss of its file; systemd only stops
+        // recognising it once nothing references it any more.
+        if (current.activeState === "active") current.loadState = "not-found";
+        else this.units.delete(name);
+      }
+      return this.result({});
+    }
+
+    if (unit === undefined) return this.result({});
+
+    if (verb === "show") {
+      const entry = this.units.get(unit);
+      return this.result({
+        stdout: systemctlShowOutput(
+          entry === undefined
+            ? {
+                LoadState: "not-found",
+                ActiveState: "inactive",
+                SubState: "dead",
+                UnitFileState: "",
+              }
+            : {
+                LoadState: entry.loadState,
+                ActiveState: entry.activeState,
+                SubState: entry.subState,
+                UnitFileState: entry.unitFileState,
+              },
+        ),
+      });
+    }
+
+    const entry = this.units.get(unit);
+    if (verb === "enable") {
+      if (entry === undefined)
+        return this.result({
+          exitCode: 1,
+          stderr: `Unit ${unit} does not exist\n`,
+        });
+      entry.unitFileState = "enabled";
+      return this.result({});
+    }
+
+    if (verb === "restart") {
+      if (entry === undefined)
+        return this.result({
+          exitCode: 1,
+          stderr: `Unit ${unit} not found\n`,
+        });
+      if (this.startFailures.has(unit)) {
+        entry.activeState = "failed";
+        entry.subState = "failed";
+        return this.result({
+          exitCode: 1,
+          stderr: `Job for ${unit} failed because the control process exited with error code.\n`,
+        });
+      }
+      if (!this.refuseStart.has(unit)) {
+        entry.activeState = "active";
+        entry.subState = "running";
+      }
+      return this.result({});
+    }
+
+    if (verb === "disable") {
+      if (entry === undefined) return this.result({});
+      entry.unitFileState = "disabled";
+      if (command.includes("--now") && !this.refuseStop.has(unit)) {
+        entry.activeState = "inactive";
+        entry.subState = "dead";
+      }
+      return this.result({});
+    }
+
+    return this.result({});
+  }
+
+  private result(
+    overrides: Partial<ServiceCommandResult>,
+  ): ServiceCommandResult {
+    return {
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      unavailable: false,
+      ...overrides,
+    };
+  }
+
+  get log(): string[] {
+    return this.calls.map((command) => command.join(" "));
+  }
+
+  indexOf(fragment: readonly string[]): number {
+    return this.calls.findIndex((command) =>
+      fragment.every((part) => command.includes(part)),
+    );
+  }
+
+  /** A unit that systemd knows about, for arranging pre-existing state. */
+  register(unit: string, state: Partial<FakeSystemdUnit> = {}): void {
+    this.units.set(unit, {
+      loadState: "loaded",
+      activeState: "active",
+      subState: "running",
+      unitFileState: "enabled",
+      ...state,
     });
+  }
 }
 
 export function launchdPrintOutput(fields: {

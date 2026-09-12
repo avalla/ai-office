@@ -5,6 +5,7 @@ import {
 } from "@ai-office/application/service-management/manage-office-services.ts";
 import {
   classifyManagedDefinition,
+  officeServiceDefinitionIdentity,
   officeServiceOwnershipMarker,
   assertRenderableValue,
 } from "@ai-office/application/service-management/managed-definition.ts";
@@ -13,6 +14,7 @@ import type {
   OfficeServiceManager,
   OfficeServiceName,
   OfficeServiceState,
+  OfficeServiceStatus,
   OfficeServiceUninstallReport,
   OfficeServicesStatus,
 } from "@ai-office/application/ports/office-service-manager.port.ts";
@@ -21,7 +23,10 @@ import {
   UnsupportedServicePlatformError,
 } from "@ai-office/application/ports/office-service-manager.port.ts";
 import { selectOfficeServiceManager } from "@ai-office/service-management/select-service-manager.ts";
-import { SystemdUserServiceManager } from "@ai-office/service-management/systemd-user-service-manager.ts";
+import {
+  SystemdUserServiceManager,
+  systemdOwnershipLines,
+} from "@ai-office/service-management/systemd-user-service-manager.ts";
 import { LaunchdUserServiceManager } from "@ai-office/service-management/launchd-user-service-manager.ts";
 import { validateOfficeServicePlan } from "@ai-office/service-management/service-plan.ts";
 import { servicePlan } from "../helpers/service-management.ts";
@@ -48,6 +53,20 @@ function statusWith(
     })),
     issues: [],
     ...overrides,
+  };
+}
+
+/** A fully healthy status with exactly one field of one service degraded. */
+function healthyStatusExcept(
+  service: OfficeServiceName,
+  overrides: Partial<OfficeServiceStatus>,
+): OfficeServicesStatus {
+  const base = statusWith({ runtime: "running", dashboard: "running" });
+  return {
+    ...base,
+    services: base.services.map((entry) =>
+      entry.service === service ? { ...entry, ...overrides } : entry,
+    ),
   };
 }
 
@@ -80,26 +99,73 @@ class StubServiceManager implements OfficeServiceManager {
 }
 
 describe("managed definition ownership", () => {
-  const desired = `# ${officeServiceOwnershipMarker}\n[Service]\n`;
+  const runtimeLines = systemdOwnershipLines("runtime");
+  const desired = `${runtimeLines.join("\n")}\n\n[Service]\n`;
 
   test("a missing path is missing", () => {
-    expect(classifyManagedDefinition(null, desired)).toBe("missing");
+    expect(classifyManagedDefinition(null, desired, runtimeLines)).toBe(
+      "missing",
+    );
   });
 
   test("an identical managed file is current", () => {
-    expect(classifyManagedDefinition(desired, desired)).toBe("managed_current");
+    expect(classifyManagedDefinition(desired, desired, runtimeLines)).toBe(
+      "managed_current",
+    );
   });
 
   test("a marked file that differs is outdated", () => {
     expect(
-      classifyManagedDefinition(`${desired}Restart=always\n`, desired),
+      classifyManagedDefinition(
+        `${desired}Restart=always\n`,
+        desired,
+        runtimeLines,
+      ),
     ).toBe("managed_outdated");
   });
 
   test("a file without the marker is an unmanaged collision", () => {
-    expect(classifyManagedDefinition("[Service]\n", desired)).toBe(
+    expect(
+      classifyManagedDefinition("[Service]\n", desired, runtimeLines),
+    ).toBe("unmanaged_collision");
+  });
+
+  test("a negated marker is an unmanaged collision, not ownership", () => {
+    // A substring test would read this file as owned by AI Office and
+    // overwrite it, which is the exact opposite of what it says.
+    const negated = `# Not ${officeServiceOwnershipMarker}\n# Not ${officeServiceDefinitionIdentity("runtime")}\n\n[Service]\n`;
+    expect(classifyManagedDefinition(negated, desired, runtimeLines)).toBe(
       "unmanaged_collision",
     );
+  });
+
+  test("a marker quoted inside somebody else's directive is not ownership", () => {
+    const quoted = `[Unit]\nDescription=# ${officeServiceOwnershipMarker} # ${officeServiceDefinitionIdentity("runtime")}\n`;
+    expect(classifyManagedDefinition(quoted, desired, runtimeLines)).toBe(
+      "unmanaged_collision",
+    );
+  });
+
+  test("ownership evidence for the wrong service fails closed", () => {
+    // A dashboard definition sitting at the runtime path is not a file AI
+    // Office may silently replace; it is evidence that something is wrong.
+    const dashboardFile = `${systemdOwnershipLines("dashboard").join("\n")}\n\n[Service]\n`;
+    expect(
+      classifyManagedDefinition(dashboardFile, desired, runtimeLines),
+    ).toBe("unmanaged_collision");
+  });
+
+  test("ownership must appear in the header, not far down the file", () => {
+    const buried = `${"# filler\n".repeat(12)}${runtimeLines.join("\n")}\n`;
+    expect(classifyManagedDefinition(buried, desired, runtimeLines)).toBe(
+      "unmanaged_collision",
+    );
+  });
+
+  test("a renderer that drops its own ownership header fails loudly", () => {
+    expect(() =>
+      classifyManagedDefinition(null, "[Service]\n", runtimeLines),
+    ).toThrow(/does not carry its own ownership header/u);
   });
 
   test("a value carrying a control character is refused before rendering", () => {
@@ -140,6 +206,57 @@ describe("normalized service health", () => {
           { runtime: "running", dashboard: "running" },
           { serviceManagerAvailable: false },
         ),
+      ),
+    ).toBe(false);
+  });
+
+  test("running but disabled is not healthy", () => {
+    // The process is up now and will not come back after a reboot. That is a
+    // defect in a supervised service, not a healthy installation.
+    expect(
+      officeServicesHealthy(
+        healthyStatusExcept("dashboard", { enabled: false }),
+      ),
+    ).toBe(false);
+  });
+
+  test("running an outdated definition is not healthy", () => {
+    // The unit on disk is already the new plan; the process is not.
+    expect(
+      officeServicesHealthy(
+        healthyStatusExcept("runtime", { definition: "managed_outdated" }),
+      ),
+    ).toBe(false);
+  });
+
+  test("running-like evidence without registration is not healthy", () => {
+    expect(
+      officeServicesHealthy(
+        healthyStatusExcept("runtime", { registered: false }),
+      ),
+    ).toBe(false);
+  });
+
+  test("unknown registration or enablement is not healthy", () => {
+    expect(
+      officeServicesHealthy(
+        healthyStatusExcept("dashboard", { registered: null }),
+      ),
+    ).toBe(false);
+    expect(
+      officeServicesHealthy(
+        healthyStatusExcept("dashboard", { enabled: null }),
+      ),
+    ).toBe(false);
+  });
+
+  test("a running orphan whose definition AI Office cannot prove is not healthy", () => {
+    expect(
+      officeServicesHealthy(
+        healthyStatusExcept("runtime", {
+          definition: "missing",
+          installed: false,
+        }),
       ),
     ).toBe(false);
   });
