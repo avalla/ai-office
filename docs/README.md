@@ -45,6 +45,9 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Task board, lifecycle, and reconciliation](development/task-board.md): the
   task/requirement/pipeline ownership split, semantic lifecycle commands,
   explicit requirement linkage, board output, and read-only reconciliation.
+- [Native service management](development/service-management.md): per-user
+  `systemd --user` and `launchd` service installation, normalized status,
+  ownership protection, and uninstall data-preservation contract.
 - [Operational dashboard](development/dashboard.md): read-model layer, daemon query API, invalidation stream, `ai-office dashboard`, and the dashboard threat model.
 - [Operational read models and loopback dashboard](adr/ADR-0015-operational-read-models-and-loopback-dashboard.md):
   accepted separation of the query/read side from commands, and the decision to

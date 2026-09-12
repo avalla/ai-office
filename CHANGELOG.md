@@ -9,6 +9,13 @@
   snapshot, and agent-profile versions.
 - Align roadmap descriptions with merged consolidation, explicit requirement
   summaries, and host-only onboarding.
+- Add `ai-office service install|status|uninstall` for per-user native service
+  management on Linux (`systemd --user`) and macOS (`launchd` LaunchAgents),
+  with ownership-marked definitions, normalized cross-platform status, and an
+  uninstall that removes service definitions only.
+- Add `ai-office dashboard --await-runtime <seconds>`, a bounded wait for the
+  Runtime socket so a supervised dashboard tolerates a Runtime that becomes
+  available shortly after it starts.
 
 No version tag or public release has been published by these changes.
 

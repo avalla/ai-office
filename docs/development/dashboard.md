@@ -30,14 +30,28 @@ Read-only. Local same-user surface; the link carries this session's token.
 The command holds the terminal and stops on Ctrl-C, releasing the port with it.
 Options:
 
-| Option             | Meaning                                         |
-| ------------------ | ----------------------------------------------- |
-| `--port <port>`    | Loopback port; `0` asks the OS for a free one   |
-| `--host <address>` | Loopback address only; anything else is refused |
-| `--no-open`        | Do not open a browser                           |
+| Option                      | Meaning                                              |
+| --------------------------- | ---------------------------------------------------- |
+| `--port <port>`             | Loopback port; `0` asks the OS for a free one        |
+| `--host <address>`          | Loopback address only; anything else is refused      |
+| `--no-open`                 | Do not open a browser                                |
+| `--await-runtime <seconds>` | Wait that long for the Runtime socket before failing |
 
 If the daemon is stopped, the command reports the same actionable error as any
 other daemon-backed command and exits `1`.
+
+`--await-runtime` defaults to `0`, which is that immediate failure. A supervised
+dashboard uses a non-zero bound instead, because no startup-ordering primitive
+proves the Runtime socket is already accepting connections: systemd `After=`
+orders starts, and launchd has no dependency contract at all. The host itself
+already tolerates a Runtime that disappears later — `/api/*` answers `503`
+`DAEMON_UNAVAILABLE` and recovers on the next request — so the bounded wait is
+only about the first connection. It is a retry, not a sleep; when the bound
+expires the command exits and the service manager restarts it.
+
+`ai-office service install` installs this command as a per-user service with
+`--host 127.0.0.1 --port 4278 --no-open --await-runtime 60`. See
+[Native service management](service-management.md).
 
 ## Architecture
 
@@ -87,12 +101,12 @@ This is the rule the whole read side is built around:
 Every query on this surface is exactly one of four things, and only the first two
 may be truncated:
 
-| Kind                           | Truncated?                  | Example                                                  |
-| ------------------------------ | --------------------------- | -------------------------------------------------------- |
-| Presentation sample            | yes, beside a total         | the active runs shown on the overview                    |
-| Pagination page                | yes, with a cursor or offset | activity and filtered tasks                            |
-| Authoritative aggregate        | never                       | `activeAgentRuns`, `pendingReviews`, `attentionRequired` |
-| Authoritative projection input | never omits a relevant fact | a task's own in-flight and latest run                    |
+| Kind                           | Truncated?                   | Example                                                  |
+| ------------------------------ | ---------------------------- | -------------------------------------------------------- |
+| Presentation sample            | yes, beside a total          | the active runs shown on the overview                    |
+| Pagination page                | yes, with a cursor or offset | activity and filtered tasks                              |
+| Authoritative aggregate        | never                        | `activeAgentRuns`, `pendingReviews`, `attentionRequired` |
+| Authoritative projection input | never omits a relevant fact  | a task's own in-flight and latest run                    |
 
 Samples are published as `{ total, items, truncated }`. `total` covers every
 matching row, using SQL aggregates or an exhaustive application projection for
@@ -126,22 +140,22 @@ with the row that ended a page — audit rows written in the same millisecond ar
 ordinary, so that is a real loss, not a theoretical one. The tie breaker is the
 audit event id; the SQLite `rowid` is deliberately not part of the contract.
 
-| Route                             | Returns                                          |
-| --------------------------------- | ------------------------------------------------ |
-| `GET /api/dashboard`              | Cross-project overview, attention, active runs   |
-| `GET /api/memory`                 | Global roles, patterns, and lessons              |
-| `GET /api/projects`               | Project summaries                                |
-| `GET /api/projects/:id`           | Project detail: tasks, pipelines, agents, runs   |
-| `GET /api/projects/:id/tasks`     | Task operational state                           |
+| Route                                 | Returns                                                         |
+| ------------------------------------- | --------------------------------------------------------------- |
+| `GET /api/dashboard`                  | Cross-project overview, attention, active runs                  |
+| `GET /api/memory`                     | Global roles, patterns, and lessons                             |
+| `GET /api/projects`                   | Project summaries                                               |
+| `GET /api/projects/:id`               | Project detail: tasks, pipelines, agents, runs                  |
+| `GET /api/projects/:id/tasks`         | Task operational state                                          |
 | `GET /api/projects/:id/tasks/:taskId` | Task detail, active assignment, run history and scoped activity |
-| `GET /api/projects/:id/pipelines` | Pipeline runs (`?active=true`)                   |
-| `GET /api/projects/:id/agents`    | Agent activity                                   |
-| `GET /api/runs`                   | Agent runs (`?project=`, `?active=true`)         |
-| `GET /api/runs/:id`               | Run detail: events, actions, pipeline, reviews   |
-| `GET /api/reviews`                | Reviews (`?pending=true`)                        |
-| `GET /api/approvals`              | Decided reviews                                  |
-| `GET /api/activity`               | Sanitized audit activity (`?cursor=`, `?limit=`) |
-| `GET /api/events`                 | Server-sent invalidation stream                  |
+| `GET /api/projects/:id/pipelines`     | Pipeline runs (`?active=true`)                                  |
+| `GET /api/projects/:id/agents`        | Agent activity                                                  |
+| `GET /api/runs`                       | Agent runs (`?project=`, `?active=true`)                        |
+| `GET /api/runs/:id`                   | Run detail: events, actions, pipeline, reviews                  |
+| `GET /api/reviews`                    | Reviews (`?pending=true`)                                       |
+| `GET /api/approvals`                  | Decided reviews                                                 |
+| `GET /api/activity`                   | Sanitized audit activity (`?cursor=`, `?limit=`)                |
+| `GET /api/events`                     | Server-sent invalidation stream                                 |
 
 The surface is read-only: any method other than `GET` returns `405`.
 
@@ -248,8 +262,8 @@ without affecting the others, and disconnecting releases both the listener and
 its heartbeat timer.
 
 **Every new connection re-establishes the query baseline.** Because the stream
-carries hints and has no replay, restoring the *connection* does not restore the
-*view*:
+carries hints and has no replay, restoring the _connection_ does not restore the
+_view_:
 
 ```text
 state A displayed -> stream drops -> a command changes A to B ->
@@ -263,15 +277,15 @@ client conflates:
 | Badge          | Meaning                                                     |
 | -------------- | ----------------------------------------------------------- |
 | `connecting`   | no stream has been established yet                          |
-| `syncing`      | a stream is up; the displayed route has not been re-queried  |
-| `live`         | connected, and this route was queried under this connection  |
-| `reconnecting` | the stream dropped; `EventSource` is retrying                |
+| `syncing`      | a stream is up; the displayed route has not been re-queried |
+| `live`         | connected, and this route was queried under this connection |
+| `reconnecting` | the stream dropped; `EventSource` is retrying               |
 
 The invariant is: **once the dashboard says `live`, the current route has been
 re-queried after the most recent stream connection was established.** It is
 expressed as a sync token pairing the connection epoch with the route key — a
 new connection bumps the epoch, a navigation changes the route key, and a
-refresh adopts the token it started under only when it *succeeds*. A failed
+refresh adopts the token it started under only when it _succeeds_. A failed
 query therefore never reads as `live`.
 
 The reconnect refresh reuses the same single-flight-plus-debounce path as
@@ -325,12 +339,12 @@ run-A is still running
 Two active runs, one task, and nothing wrong with the write model. The read
 model therefore carries a list:
 
-| Field | Guarantee |
-| --- | --- |
-| `activeAgentRuns` | `{ total, items, truncated }`; `total` is the exact active run count |
-| `primaryAgentRun` | `activeAgentRuns.items[0]` — a *representative*, not a uniqueness claim |
-| `lease` | the persisted `task_lock` row, or `null` when none exists |
-| `runsWithoutValidLeaseCount` | exact number of active runs without valid execution authority |
+| Field                        | Guarantee                                                               |
+| ---------------------------- | ----------------------------------------------------------------------- |
+| `activeAgentRuns`            | `{ total, items, truncated }`; `total` is the exact active run count    |
+| `primaryAgentRun`            | `activeAgentRuns.items[0]` — a _representative_, not a uniqueness claim |
+| `lease`                      | the persisted `task_lock` row, or `null` when none exists               |
+| `runsWithoutValidLeaseCount` | exact number of active runs without valid execution authority           |
 
 Items are ordered by `updated_at` descending, ties broken by run id descending.
 Each `TaskActiveRunReference` carries its own agent and pipeline linkage,
@@ -388,21 +402,21 @@ its existing precedence over everything.
 ### Which lease conditions are actionable
 
 Concurrency itself is **not** an error, because lease takeover is intentionally
-supported. Missing *valid* execution authority is, and it produces one attention
+supported. Missing _valid_ execution authority is, and it produces one attention
 item per affected task:
 
-| Condition | `hasValidLease` | Attention |
-| --- | --- | --- |
-| Lease valid, owned by this active run | `true` | none — this run has authority |
-| Lease valid, owned by another run | `false` | `task_run_without_lease` |
-| Lease expired, nobody took it over | `false` | `task_lease_expired` |
-| Lease outlived a terminal or missing owner | `false` | `task_run_without_lease` |
-| No lease row at all | `false` | `task_run_without_lease` |
+| Condition                                  | `hasValidLease` | Attention                     |
+| ------------------------------------------ | --------------- | ----------------------------- |
+| Lease valid, owned by this active run      | `true`          | none — this run has authority |
+| Lease valid, owned by another run          | `false`         | `task_run_without_lease`      |
+| Lease expired, nobody took it over         | `false`         | `task_lease_expired`          |
+| Lease outlived a terminal or missing owner | `false`         | `task_run_without_lease`      |
+| No lease row at all                        | `false`         | `task_run_without_lease`      |
 
 `task_lease_expired` is a deliberate policy choice, not an oversight.
 `ExecuteAgentRun` never renews the lease, so a long run reaches expiry
-routinely — but common is not the same as valid: the task is takeable *right
-now* while the old run may still be executing. Surfacing it exposes the
+routinely — but common is not the same as valid: the task is takeable _right
+now_ while the old run may still be executing. Surfacing it exposes the
 underlying scheduling weakness without changing write-side behaviour. Renewing
 the lease, or cancelling a run that loses it, is runtime work and deliberately
 **not** done in this change.
@@ -412,7 +426,7 @@ it no longer owns raises `TASK_LOCK_RELEASE_FAILED` during cleanup.
 
 **An active run with no lease row is an integrity/recovery anomaly**, not an
 ordinary lifecycle state. `ExecuteAgentRun` persists the run's terminal status
-*before* its `finally` releases the lock, and a crash before finalization skips
+_before_ its `finally` releases the lock, and a crash before finalization skips
 the `finally` entirely — leaving the lock row behind rather than removing it. So
 this shape comes from corrupted, manually altered, or partially restored state.
 The defensive handling stays: an observability surface must describe
@@ -433,11 +447,11 @@ the same persisted condition reads identically from
 `TaskOperationalState.attentionReasons`, `ProjectSummary.attention`, and the
 overview.
 
-| Case | `since` |
-| --- | --- |
-| Lease expired | `lease.expiresAt` — when exclusivity lapsed |
-| Lease valid, owned by another run | `lease.acquiredAt` — when ownership moved |
-| No lease row | `task.updatedAt` — the documented fallback |
+| Case                              | `since`                                     |
+| --------------------------------- | ------------------------------------------- |
+| Lease expired                     | `lease.expiresAt` — when exclusivity lapsed |
+| Lease valid, owned by another run | `lease.acquiredAt` — when ownership moved   |
+| No lease row                      | `task.updatedAt` — the documented fallback  |
 
 It is never a run's `updated_at`: a run that keeps working after losing the
 lease must not push the anomaly's start time forward.
@@ -463,15 +477,15 @@ persisted `running` status and lost execution ownership; it does not resolve it.
 
 ### What each run count counts
 
-| Count | Counts |
-| --- | --- |
-| `ProjectSummary.activeAgentRuns` | persisted runs whose status is non-terminal, project-wide |
-| `DashboardOverview.totals.activeAgentRuns` | the sum of the above across projects |
-| `TaskOperationalState.activeAgentRuns.total` | the same predicate scoped to one task |
-| `AgentState.activeRuns.total` | the same predicate scoped to one agent |
-| `ProjectSummary.agentsWorking` | distinct **enabled agents** holding at least one such run — never a run count |
+| Count                                        | Counts                                                                        |
+| -------------------------------------------- | ----------------------------------------------------------------------------- |
+| `ProjectSummary.activeAgentRuns`             | persisted runs whose status is non-terminal, project-wide                     |
+| `DashboardOverview.totals.activeAgentRuns`   | the sum of the above across projects                                          |
+| `TaskOperationalState.activeAgentRuns.total` | the same predicate scoped to one task                                         |
+| `AgentState.activeRuns.total`                | the same predicate scoped to one agent                                        |
+| `ProjectSummary.agentsWorking`               | distinct **enabled agents** holding at least one such run — never a run count |
 
-Every run count uses definition **A**: *persisted liveness*. None of them means
+Every run count uses definition **A**: _persisted liveness_. None of them means
 "runs that still hold valid execution authority" — a run whose lease was taken
 over, or whose lease merely expired, keeps its non-terminal status and stays
 counted. Execution authority is a separate, explicitly named concept:
@@ -495,14 +509,14 @@ the run — and the read model says so.
 
 Agent activity has exactly one value, chosen by this precedence:
 
-| State              | Exact definition                                                                  |
-| ------------------ | --------------------------------------------------------------------------------- |
-| `disabled`         | `agent.enabled` is false. Nothing else can override it.                            |
-| `working`          | at least one active `AgentRun` (`queued`, `preparing`, `running`, `reviewing`).     |
-| `awaiting_approval`| no active run, and at least one assigned active stage is `awaiting_approval`.       |
-| `assigned`         | no active run, and at least one active pipeline stage is assigned to this agent.    |
-| `last_run_failed`  | no active run and no active stage, and the most recently updated run failed.        |
-| `idle`             | none of the above.                                                                  |
+| State               | Exact definition                                                                 |
+| ------------------- | -------------------------------------------------------------------------------- |
+| `disabled`          | `agent.enabled` is false. Nothing else can override it.                          |
+| `working`           | at least one active `AgentRun` (`queued`, `preparing`, `running`, `reviewing`).  |
+| `awaiting_approval` | no active run, and at least one assigned active stage is `awaiting_approval`.    |
+| `assigned`          | no active run, and at least one active pipeline stage is assigned to this agent. |
+| `last_run_failed`   | no active run and no active stage, and the most recently updated run failed.     |
+| `idle`              | none of the above.                                                               |
 
 `assigned` exists because a pipeline stage can legitimately be assigned before
 any `AgentRun` is scheduled. Calling that state `working` is what used to make
@@ -526,7 +540,7 @@ on an agent that is also running something is not lost: it stays in that agent's
 ### Concurrency is reported, not assumed away
 
 Nothing in the persisted model enforces one active run per agent — the task lock
-is per *task* — and pipeline assignment does not reject an agent merely because
+is per _task_ — and pipeline assignment does not reject an agent merely because
 another active stage already names it. Both are valid persisted facts, and
 inventing a write-side one-job-per-agent rule to simplify a read model would be
 a scheduling decision, not a dashboard decision.
@@ -534,17 +548,17 @@ a scheduling decision, not a dashboard decision.
 So `AgentState` carries lists rather than a single `currentRun`/`currentStage`
 that would silently drop real work:
 
-| Field                 | Guarantee                                                        |
-| --------------------- | ---------------------------------------------------------------- |
-| `activeRuns`          | `{ total, items, truncated }`; `total` is the exact active count  |
-| `activeStages`        | `{ total, items, truncated }`; `total` is the exact active count  |
-| `primaryRun`          | `activeRuns.items[0]` — a *representative*, not a uniqueness claim |
-| `primaryStage`        | `activeStages.items[0]` — likewise                                |
+| Field          | Guarantee                                                          |
+| -------------- | ------------------------------------------------------------------ |
+| `activeRuns`   | `{ total, items, truncated }`; `total` is the exact active count   |
+| `activeStages` | `{ total, items, truncated }`; `total` is the exact active count   |
+| `primaryRun`   | `activeRuns.items[0]` — a _representative_, not a uniqueness claim |
+| `primaryStage` | `activeStages.items[0]` — likewise                                 |
 
 Selection is deterministic: active runs are ordered by `updated_at` descending
 with ties broken by run id descending; active stages by their pipeline run's
 `updated_at` descending with ties broken by pipeline run id ascending. The
-derived state itself reads only the *exact counts* — including a separate exact
+derived state itself reads only the _exact counts_ — including a separate exact
 count of assignments awaiting approval — so a truncated sample can never change
 it. The agent table renders the representative plus `+N more`, computed from
 `total`.

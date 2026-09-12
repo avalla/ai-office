@@ -4,6 +4,10 @@
  * Lifecycle semantics match the rest of the CLI: the daemon is never started
  * implicitly. The command checks daemon health first and reports the same
  * actionable error as any other daemon-backed command when it is stopped.
+ * `--await-runtime <seconds>` turns that one-shot check into a bounded wait,
+ * which is what a supervised dashboard needs: no startup ordering primitive
+ * proves the Runtime socket is already accepting connections, so the dashboard
+ * tolerates one that appears shortly afterwards instead of exiting for good.
  * It then runs a foreground loopback host — like `ai-office daemon`, it holds
  * the terminal and stops on Ctrl-C — so the TCP port never outlives the
  * command that opened it.
@@ -14,6 +18,7 @@ import {
   DashboardHostError,
 } from "../../dashboard/src/dashboard-host.ts";
 import { IpcRuntimeClient, RuntimeUnavailableError } from "./daemon-client.ts";
+import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
 import {
   CliUsageError,
   parseArguments,
@@ -29,6 +34,41 @@ export interface DashboardCliOptions {
   /** Aborting returns the command; used by tests and by SIGINT. */
   signal?: AbortSignal;
   openBrowser?: (url: string) => Promise<void>;
+  /** Supplied by tests in place of the IPC client. */
+  runtimeClient?: Pick<RuntimeClient, "health">;
+}
+
+/** Interval between Runtime health attempts while `--await-runtime` waits. */
+const runtimeWaitIntervalMilliseconds = 1_000;
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+/**
+ * Waits for the Runtime host, up to `seconds`.
+ *
+ * With the default of `0` this is exactly the previous single health check, so
+ * an interactive `ai-office dashboard` against a stopped Runtime still fails
+ * immediately with the same actionable error.
+ */
+async function awaitRuntime(
+  client: Pick<RuntimeClient, "health">,
+  seconds: number,
+): Promise<void> {
+  const deadline = Date.now() + seconds * 1_000;
+  for (;;) {
+    try {
+      await client.health();
+      return;
+    } catch (error) {
+      if (!(error instanceof RuntimeUnavailableError)) throw error;
+      if (Date.now() >= deadline) throw error;
+      await delay(
+        Math.min(runtimeWaitIntervalMilliseconds, deadline - Date.now() + 1),
+      );
+    }
+  }
 }
 
 /**
@@ -55,7 +95,7 @@ export async function runDashboardCli(
 ): Promise<number> {
   const parsed = parseArguments(
     args,
-    new Set(["port", "host"]),
+    new Set(["port", "host", "await-runtime"]),
     new Set(["no-open"]),
   );
   if (parsed.positionals.length > 0)
@@ -67,8 +107,18 @@ export async function runDashboardCli(
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535)
     throw new CliUsageError("Port must be an integer between 0 and 65535");
 
+  const waitValue = parsed.options.get("await-runtime");
+  const awaitRuntimeSeconds = waitValue === undefined ? 0 : Number(waitValue);
+  if (!Number.isSafeInteger(awaitRuntimeSeconds) || awaitRuntimeSeconds < 0)
+    throw new CliUsageError(
+      "Option --await-runtime must be a non-negative integer number of seconds",
+    );
+
   try {
-    await new IpcRuntimeClient(options.socketPath).health();
+    await awaitRuntime(
+      options.runtimeClient ?? new IpcRuntimeClient(options.socketPath),
+      awaitRuntimeSeconds,
+    );
   } catch (error) {
     if (error instanceof RuntimeUnavailableError) {
       options.io.stderr(error.message);
