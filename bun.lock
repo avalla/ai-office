@@ -67,6 +67,9 @@
     "packages/runtime-paths": {
       "name": "@ai-office/runtime-paths",
     },
+    "packages/service-management": {
+      "name": "@ai-office/service-management",
+    },
     "packages/storage-sqlite": {
       "name": "@ai-office/storage-sqlite",
     },
@@ -101,6 +104,8 @@
     "@ai-office/runtime-host": ["@ai-office/runtime-host@workspace:packages/runtime-host"],
 
     "@ai-office/runtime-paths": ["@ai-office/runtime-paths@workspace:packages/runtime-paths"],
+
+    "@ai-office/service-management": ["@ai-office/service-management@workspace:packages/service-management"],
 
     "@ai-office/storage-sqlite": ["@ai-office/storage-sqlite@workspace:packages/storage-sqlite"],
 

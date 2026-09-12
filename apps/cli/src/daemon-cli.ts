@@ -21,6 +21,9 @@ import { runDistributionUpdateCli } from "./distribution-update-cli.ts";
 import type { DistributionUpdateAdapter } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
 import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
 import { runDashboardCli } from "./dashboard-cli.ts";
+import { runServiceCli } from "./service-cli.ts";
+import type { OfficeServiceManager } from "@ai-office/application/ports/office-service-manager.port.ts";
+import type { OfficeServicePlan } from "@ai-office/service-management/service-plan.ts";
 import {
   CliUsageError,
   parseArguments,
@@ -57,6 +60,18 @@ export interface RuntimeCliOptions {
   dashboardSignal?: AbortSignal;
   openBrowser?: (url: string) => Promise<void>;
   runtimeClient?: RuntimeClient;
+  /**
+   * How the generated OS service definitions invoke AI Office. Only an entry
+   * point that knows its own absolute launcher can supply this, so `service`
+   * is unavailable without it rather than guessing a path.
+   */
+  serviceProgram?: {
+    launcher: readonly string[];
+    requiresSourceRuntimeOptIn: boolean;
+  };
+  /** Test seam: observes the plan and supplies an isolated adapter. */
+  selectServiceManager?: (plan: OfficeServicePlan) => OfficeServiceManager;
+  servicePlatform?: string;
 }
 
 /** @deprecated Use RuntimeCliOptions. */
@@ -307,7 +322,43 @@ export async function runRuntimeCli(
         ...(options.openBrowser === undefined
           ? {}
           : { openBrowser: options.openBrowser }),
+        ...(options.runtimeClient === undefined
+          ? {}
+          : { runtimeClient: options.runtimeClient }),
       });
+
+    // Service management is a local operator command like `dashboard` and
+    // `runtime:purge`: it manages the host that serves Runtime commands and so
+    // cannot be dispatched through it.
+    if (args[0] === "service") {
+      if (
+        options.serviceProgram === undefined &&
+        options.selectServiceManager === undefined
+      ) {
+        io.stderr(
+          "AI Office service management is available only through the linkable ai-office entry point",
+        );
+        return 1;
+      }
+      return await runServiceCli(args.slice(1), {
+        program: {
+          launcher: options.serviceProgram?.launcher ?? [],
+          runtimeHome: runtimePaths.runtimeHome,
+          requiresSourceRuntimeOptIn:
+            options.serviceProgram?.requiresSourceRuntimeOptIn ?? false,
+        },
+        io,
+        ...(options.selectServiceManager === undefined
+          ? {}
+          : { selectManager: options.selectServiceManager }),
+        ...(options.servicePlatform === undefined
+          ? {}
+          : { platform: options.servicePlatform }),
+        ...(process.env.USER === undefined
+          ? {}
+          : { userName: process.env.USER }),
+      });
+    }
 
     if (args[0] === "runtime:purge")
       return runRuntimePurgeCli(args.slice(1), {

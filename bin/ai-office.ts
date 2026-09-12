@@ -99,6 +99,18 @@ if (runtimeHostStart !== null) {
     {
       runtimePaths,
       workingDirectory: process.cwd(),
+      // Generated OS services must not resolve `ai-office` through an
+      // interactive shell `PATH`, and this entry point's shebang needs `bun`
+      // on a `PATH` a user service does not have. So the launcher is the
+      // absolute interpreter plus this absolute module. `requiresSourceRuntimeOptIn`
+      // is true because this bin *is* the source distribution: the generated
+      // units carry the same opt-in this file demands above, and nothing else
+      // relaxes the guard. A packaged executable supplies its own entry point
+      // and would declare its own launcher and `false` here.
+      serviceProgram: {
+        launcher: [process.execPath, fileURLToPath(import.meta.url)],
+        requiresSourceRuntimeOptIn: true,
+      },
     },
   );
 }

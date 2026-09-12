@@ -425,8 +425,14 @@ Read-only. Local same-user surface; the link carries this session's token.
 It answers the questions you ask between commands: which projects exist, what is
 being worked on, which pipeline stage each run is in, which agent is doing what,
 what is waiting for a human, what failed, and what happened recently. The page
-updates itself as the daemon completes commands. `--port`, `--host`, and
-`--no-open` are available; Ctrl-C stops the host and releases the port.
+updates itself as the daemon completes commands. `--port`, `--host`,
+`--no-open`, and `--await-runtime <seconds>` are available; Ctrl-C stops the host
+and releases the port. `--await-runtime` turns the one-shot Runtime health check
+into a bounded wait, which is what a supervised dashboard needs; without it a
+stopped Runtime is still reported immediately.
+
+To keep the Runtime and the dashboard running without holding two terminals, see
+[Run as background services](#run-as-background-services).
 
 The dashboard does not infer operational state from raw SQLite records. It
 consumes the same authoritative application read models any other client would,
@@ -438,6 +444,116 @@ remains unavailable, and requirement progress does not infer task completion.
 It is read-only: no task editing, no pipeline control, no approvals, no
 assignment. See the [operational dashboard guide](docs/development/dashboard.md)
 for the query API, the invalidation stream, and the threat model.
+
+## Run as background services
+
+`ai-office service` installs the Runtime host and the dashboard as **per-user**
+operating-system services, so the platform supervises and restarts them instead
+of two terminals holding them open.
+
+```bash
+ai-office service install
+ai-office service status
+ai-office service uninstall
+```
+
+| Platform | Mechanism              | Location                  |
+| -------- | ---------------------- | ------------------------- |
+| Linux    | `systemd --user`       | `~/.config/systemd/user/` |
+| macOS    | `launchd` LaunchAgents | `~/Library/LaunchAgents/` |
+
+```text
+~/.config/systemd/user/ai-office-runtime.service
+~/.config/systemd/user/ai-office-dashboard.service
+
+~/Library/LaunchAgents/com.ai-office.runtime.plist
+~/Library/LaunchAgents/com.ai-office.dashboard.plist
+```
+
+No `sudo`, no system-wide services, and no privilege escalation. The Runtime and
+the dashboard stay separate processes talking over the existing local socket, so
+a dashboard failure never takes the Runtime down. The dashboard remains bound to
+`127.0.0.1` and the Runtime still opens no TCP port. A user service manager
+supervises processes; it does not separate same-UID principals, so the trust
+model is unchanged.
+
+Installation is always explicit — it is never part of `ai-office install`,
+onboarding, or `update`. The definitions carry the already-resolved
+`AI_OFFICE_HOME` (`~/.ai-office` by default) and the absolute executable path,
+because a user service does not inherit an interactive shell `PATH`. Where the
+resolved executable is this source distribution, the generated definitions set
+`AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE=1` deliberately for those two
+services; the guard itself is unchanged.
+
+```text
+AI Office services installed
+
+Runtime:   running
+Dashboard: running
+
+Dashboard
+  http://127.0.0.1:4278
+```
+
+The banner comes from the authoritative post-install state, never from the fact
+that the start commands were issued. Partial installation is reported as
+incomplete, with a reason, and exits `1`.
+
+**An explicit `install` restarts services that are already running.** Neither
+platform links a running process back to the definition it started from, so
+converging the file alone would leave the old process serving the old
+configuration. Install therefore brings both to the plan — `restart` on
+systemd, a deliberate re-bootstrap on launchd. Idempotence means repeated runs
+converge to the same desired state, not that a PID survives.
+
+`status` normalizes both platforms into `not_installed`, `installed_inactive`,
+`running`, `failed`, or `unknown`. Healthy requires all of managed-and-current,
+installed, registered, enabled, and running — a service that is up but disabled,
+or up on an outdated definition, is reported and exits `1`. The service manager
+is queried even when no definition exists, so a unit deleted by hand surfaces as
+a still-registered orphan with the command to clean it up, rather than as a
+clean uninstall.
+
+Install is idempotent. Every generated file carries a `Managed by AI Office`
+marker plus its service identity, both required verbatim in the file header; a
+file that does not carry exactly that is never overwritten and never deleted,
+and a collision fails closed with the path named. `uninstall` stops the
+dashboard first, then the Runtime, and removes **only** the generated
+definitions — and only once the service manager has confirmed the service is
+actually stopped. A stop that fails, or a manager that cannot be reached,
+preserves the definition and reports a partial uninstall, because that file is
+the only proof of ownership. `~/.ai-office`, the SQLite databases, project
+state, and project files are always left untouched.
+
+On a headless Linux server, user services may need lingering to start before
+login and survive logout. AI Office prints this as guidance and never runs it:
+
+```bash
+sudo loginctl enable-linger <user>
+```
+
+Reach the dashboard from another machine over SSH forwarding rather than by
+exposing the port:
+
+```bash
+ssh -L 4278:127.0.0.1:4278 user@server
+```
+
+The dashboard's session token is a local capability, not authentication, and is
+not suitable for Internet exposure.
+
+Troubleshooting uses the platform tools:
+
+```bash
+systemctl --user status ai-office-runtime
+journalctl --user -u ai-office-dashboard
+
+launchctl print gui/$UID/com.ai-office.runtime
+```
+
+Windows services are not supported; `ai-office service` there fails with that
+explanation. See the [service management guide](docs/development/service-management.md)
+for the full contract.
 
 ## Project lifecycle
 
@@ -1209,7 +1325,10 @@ access, path escape, sensitive-path access, stale simulations and capabilities,
 replay, and unapproved filesystem mutation.
 
 The Runtime is authoritative inside AI Office, but neither it nor its daemon
-host authenticates one arbitrary same-UID process against another. IPC routing,
+host authenticates one arbitrary same-UID process against another. Installing
+the per-user `systemd --user` or `launchd` services does not change that:
+a service manager supervises processes, and process separation under the same
+UID is not a security boundary. IPC routing,
 owner-only socket mode, executable identity, TTY ownership, and protocol
 privilege markers are not proof of human presence. A same-UID shell-capable
 worker can reach local administration unless future worker isolation or an
