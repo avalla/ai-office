@@ -111,8 +111,30 @@ receive the character rather than a substitution:
 Environment="AI_OFFICE_HOME=/home/operator/100%%/.ai-office"
 ```
 
-launchd has no specifier expansion, so plists carry the literal `%` and only
-XML-escape `&`, `<` and `>`.
+`ExecStart=` carries a third rule the rest of a unit does not: systemd expands
+environment variables in command lines. `${NAME}` is substituted anywhere in a
+word, a bare `$NAME` is substituted when it is a whole word, and both are
+_erased_ when the variable is unset — so an unescaped `/opt/ai${office}/bin`
+would be launched as `/opt/ai/bin`. A literal dollar sign is therefore written
+`$$` in `ExecStart=` only. `Environment=` performs no variable expansion, so a
+dollar there stays single; doubling it would deliver a literal `$$` to the
+service:
+
+```ini
+Environment="AI_OFFICE_HOME=/home/operator/$archive/.ai-office"
+ExecStart="/opt/ai$$office/bin/bun" "/srv/$${build}/ai-office.ts" "runtime" "start"
+```
+
+The two concerns are rendered by separate functions —
+`systemdExecArgument` and `systemdEnvironmentAssignment` — sharing the quoting
+and specifier helpers, so command-line expansion rules cannot leak into an
+environment value.
+
+launchd has neither specifier nor variable expansion, so plists carry the
+literal `%` and `$` and only XML-escape `&`, `<` and `>`. Generated plists carry
+only keys `launchd.plist(5)` documents; the human-readable service name is an
+XML comment (`<!-- AI Office Runtime -->`) rather than an undocumented
+`ServiceDescription` key.
 
 ## Source-checkout runtimes
 
@@ -304,9 +326,28 @@ Dashboard:
 
 `installed` is true only for a definition AI Office provably owns. `registered`
 means the service manager knows the service (`LoadState=loaded`, or a
-bootstrapped launchd label); `enabled` means it starts without an operator. On
-launchd the two coincide, because a bootstrapped agent with `RunAtLoad` is what
-enablement means there.
+bootstrapped launchd label); `enabled` means the platform will start it without
+an operator. The two are independent facts on both platforms and neither is
+derived from the other:
+
+| Platform | `registered`                                              | `enabled`                                                              |
+| -------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| systemd  | `LoadState=loaded`                                        | `UnitFileState` is `enabled` or `enabled-runtime`                      |
+| launchd  | `launchctl print gui/$UID/<label>` describes a loaded job | no persistent disabled override in `launchctl print-disabled gui/$UID` |
+
+On launchd, `launchctl enable`/`disable <service-target>` writes an override
+that survives reboots and that a disabled label cannot be bootstrapped past. A
+job can therefore be running right now while it is disabled and will not come
+back, which is why `enabled` reads that database rather than reusing
+registration. Labels with no entry have no override, so they take launchd's
+default — enabled — and AI Office plists never set `Disabled` themselves. When
+the override database cannot be read, `enabled` is `null` rather than assumed.
+
+`ai-office service install` deliberately runs
+`launchctl enable gui/$UID/com.ai-office.runtime` and the dashboard equivalent
+before bootstrapping, so an explicit install lifts an override left by an
+earlier `launchctl disable`. If that enable fails, the affected service is
+never reported healthy.
 
 ### What "healthy" requires
 
@@ -415,6 +456,27 @@ a state the manager would not report at all. `launchctl bootout` in particular
 may return while removal is still in progress, so its exit code settles
 nothing; registration is re-checked, with bounded retries, until it answers.
 
+On launchd, a `launchctl print` failure is not an answer. The adapter models
+three outcomes — the label is registered, the label is positively absent, or the
+inspection failed — and only the second permits deleting a plist:
+
+```text
+registered  launchctl described a loaded job
+absent      launchctl said it does not know this label
+unknown     launchctl could not be run, exceeded its bound, or failed for any
+            other reason, including a response this adapter does not recognize
+```
+
+Absence is recognized narrowly, from the message rather than the exit status:
+`LC_ALL=C` is forced for every call, so the wording is stable, and launchctl's
+numeric codes have moved between macOS releases while phrases such as
+`Could not find service` have not. An exit 5 with `Input/output error`, a
+timeout, a missing binary, and any unrecognized response are all `unknown`.
+During uninstall `unknown != absent`: the plist is preserved and a partial
+uninstall is reported, because deleting the only ownership evidence on the
+strength of an answer that never came is the one failure nothing can recover
+from.
+
 **If the service manager cannot be contacted at all, nothing is removed.**
 Without it there is no way to establish that anything stopped, and a definition
 deleted on that basis would destroy the ownership evidence for whatever is
@@ -462,7 +524,13 @@ macOS:
 ```bash
 launchctl print gui/$UID/com.ai-office.runtime
 launchctl print gui/$UID/com.ai-office.dashboard
+
+# The persistent enable/disable overrides behind `enabled` in status output.
+launchctl print-disabled gui/$UID
 ```
+
+A service reported as `enabled: no` carries a disabled override; re-run
+`ai-office service install`, which enables both labels before bootstrapping.
 
 Every `systemctl` and `launchctl` call runs under an absolute wall-clock bound
 with `SIGTERM` → grace → `SIGKILL` escalation, so a wedged service manager
@@ -510,3 +578,31 @@ Process execution is argument-array only, with a bounded timeout. There is no
 shell interpolation anywhere on this path, and no service identifier is
 caller-supplied: the unit names and launchd labels are constants of the
 adapters.
+
+## Validation
+
+Linux behaviour gets real execution in CI: `systemd --user` exists on the
+`ubuntu-latest` runner, and the systemd rendering rules above were verified
+against systemd 255 by loading a generated unit and reading back the argv and
+environment the service actually received.
+
+launchd behaviour is exercised through a fake `launchctl` that models the five
+distinct answers separately — absent, registered, inspection failed, launchctl
+unavailable, and disabled — so no test can pass by collapsing them. Because
+macOS support is a first-class feature, a `macos-latest` CI job additionally
+runs `bun run check` on a real macOS host and validates the generated plists
+with Apple's own parser:
+
+```bash
+bun run validate:launchd-plists
+```
+
+That script renders both plists into a temporary directory with adversarial
+paths (XML metacharacters, `%`, `$`, spaces), checks them with `plutil -lint`,
+and reads them back through `plutil -convert json` to confirm the label,
+program arguments, and `AI_OFFICE_HOME` survive round-tripping. It exits
+successfully as a no-op on non-macOS hosts.
+
+The job deliberately does **not** bootstrap LaunchAgents. A GitHub-hosted runner
+has no interactive Aqua login session, so loading an agent there would prove
+nothing and fail unpredictably; nothing persistent is installed on the CI host.

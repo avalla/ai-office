@@ -81,10 +81,10 @@ export function defaultSystemdUnitDirectory(
 }
 
 /**
- * Quotes one argv element for a systemd `ExecStart=` or `Environment=` value.
+ * The escaping every systemd directive value needs, and no more.
  *
- * Two independent systemd rules apply, and both must be honoured or the unit
- * means something other than the plan:
+ * Two rules apply wherever a value is written, and both must be honoured or the
+ * unit means something other than the plan:
  *
  * - word splitting and C-style unescaping inside double quotes, so a path with
  *   a space, a quote, or a backslash must be quoted and escaped;
@@ -94,15 +94,56 @@ export function defaultSystemdUnitDirectory(
  *
  * Neither of these is shell escaping; a shell is never involved.
  */
-function systemdValue(value: string): string {
+function systemdEscapedValue(value: string): string {
   return value
     .replaceAll("\\", "\\\\")
     .replaceAll('"', '\\"')
     .replaceAll("%", "%%");
 }
 
-function systemdQuote(value: string): string {
-  return `"${systemdValue(value)}"`;
+/**
+ * Wraps an already-escaped value in the double quotes systemd word-splits on.
+ *
+ * It escapes nothing itself, so it is only ever reached through one of the two
+ * directive renderers below.
+ */
+function doubleQuoted(escaped: string): string {
+  return `"${escaped}"`;
+}
+
+/**
+ * Renders one argv element for `ExecStart=`.
+ *
+ * Command lines carry a third rule the rest of a unit does not: systemd expands
+ * environment variables in them. `${NAME}` is substituted anywhere in a word
+ * and a bare `$NAME` is substituted when it is a whole word, in both cases
+ * being *erased* when the variable is unset — so an executable at
+ * `/opt/ai${office}/bin` would be launched as `/opt/ai/bin`, and an argument
+ * that is exactly `$archive` would disappear from argv entirely. A literal
+ * dollar sign is written `$$`.
+ *
+ * This is deliberately not applied to every directive. `Environment=` performs
+ * no such expansion, so doubling a dollar there would deliver a literal `$$` to
+ * the process instead of the `$` that was planned.
+ */
+export function systemdExecArgument(value: string): string {
+  // A replacer function, because a string replacement would read `$$` as the
+  // JavaScript escape for one dollar sign and leave the value unchanged.
+  return doubleQuoted(systemdEscapedValue(value).replaceAll("$", () => "$$"));
+}
+
+/**
+ * Renders one `Environment=` assignment.
+ *
+ * Quoting and specifier escaping apply exactly as they do on a command line;
+ * variable expansion does not, so `$` is passed through untouched and reaches
+ * the service as the single character it is.
+ */
+export function systemdEnvironmentAssignment(
+  name: string,
+  value: string,
+): string {
+  return `Environment=${doubleQuoted(systemdEscapedValue(`${name}=${value}`))}`;
 }
 
 /** The exact header lines that prove AI Office owns a unit at a given path. */
@@ -121,14 +162,16 @@ export function renderSystemdUnit(
 ): string {
   const environment = officeServiceEnvironment(plan.program).map(
     ([name, value]) =>
-      `Environment=${systemdQuote(`${name}=${assertRenderableValue(value, name)}`)}`,
+      systemdEnvironmentAssignment(name, assertRenderableValue(value, name)),
   );
   const execStart = (
     service === "runtime"
       ? runtimeServiceArguments(plan.program)
       : dashboardServiceArguments(plan)
   )
-    .map(systemdQuote)
+    .map((argument) =>
+      systemdExecArgument(assertRenderableValue(argument, argument)),
+    )
     .join(" ");
   const header = [
     ...systemdOwnershipLines(service),

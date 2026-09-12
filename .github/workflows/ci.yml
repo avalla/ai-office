@@ -48,6 +48,41 @@ jobs:
             git diff --check "${{ github.event.before }}...${{ github.sha }}"
           fi
 
+  macos-service-management:
+    name: macOS service management
+    # launchd support is a first-class feature, and every launchctl call in the
+    # test suite is answered by a fake. This job runs the same checks on a real
+    # macOS host and validates the generated LaunchAgent plists with Apple's own
+    # parser. It deliberately does not bootstrap anything: a GitHub-hosted
+    # runner has no interactive Aqua session, so loading a LaunchAgent there
+    # would prove nothing and fail unpredictably.
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.6"
+
+      - name: Cache Bun package downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.6-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.6-
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run project checks
+        run: bun run check
+
+      - name: Validate generated LaunchAgent plists with plutil
+        run: bun run validate:launchd-plists
+
   bun-link-smoke:
     name: Bun link smoke (${{ matrix.bun-version }})
     runs-on: ubuntu-latest

@@ -26,6 +26,20 @@
   definition was removed, instead of inferring absence from a missing file.
 - Require managed, current, registered, enabled and running before reporting a
   service installation as healthy.
+- Treat a failed `launchctl print` as an unknown state rather than an absent
+  service, so an ambiguous inspection can no longer delete the plist that proves
+  AI Office owns a LaunchAgent.
+- Read launchd's persistent enable/disable overrides through
+  `launchctl print-disabled`, so a disabled service is reported as such instead
+  of being inferred from registration, and `ai-office service install` re-enables
+  both labels before bootstrapping.
+- Escape a literal `$` in systemd `ExecStart=` as `$$` without corrupting
+  `Environment=` values, so paths and arguments containing a dollar sign reach
+  the service intact.
+- Stop writing the undocumented `ServiceDescription` key into generated plists;
+  the human-readable name is an XML comment instead.
+- Validate the generated LaunchAgent plists on a `macos-latest` CI runner with
+  `plutil`, without installing or bootstrapping anything on the host.
 
 No version tag or public release has been published by these changes.
 

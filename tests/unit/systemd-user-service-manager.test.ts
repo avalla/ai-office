@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   renderSystemdUnit,
+  systemdEnvironmentAssignment,
+  systemdExecArgument,
   systemdOwnershipLines,
   systemdUnitNames,
   SystemdUserServiceManager,
@@ -57,6 +59,79 @@ function manager(
 
 function unitPath(unitDirectory: string, service: OfficeServiceName): string {
   return join(unitDirectory, systemdUnitNames[service]);
+}
+
+function directive(unit: string, prefix: string): string {
+  const line = unit
+    .split("\n")
+    .find((candidate) => candidate.startsWith(prefix));
+  if (line === undefined) throw new Error(`No ${prefix} directive in the unit`);
+  return line.slice(prefix.length);
+}
+
+/**
+ * Splits a quoted systemd directive value into words and undoes the C-style
+ * unescaping systemd performs inside double quotes.
+ *
+ * The `%%`/`$$` collapses are left to the callers, because the two directives
+ * this file renders differ in exactly that: a command line resolves both, an
+ * `Environment=` assignment resolves only the specifier.
+ */
+function systemdWords(value: string): string[] {
+  const words: string[] = [];
+  let current = "";
+  let quoted = false;
+  let started = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]!;
+    if (quoted && character === "\\") {
+      current += value[index + 1] ?? "";
+      index += 1;
+      continue;
+    }
+    if (character === '"') {
+      quoted = !quoted;
+      started = true;
+      continue;
+    }
+    if (character === " " && !quoted) {
+      if (started) words.push(current);
+      current = "";
+      started = false;
+      continue;
+    }
+    current += character;
+    started = true;
+  }
+  if (started) words.push(current);
+  return words;
+}
+
+/**
+ * The argv systemd would hand the service, as verified against a real
+ * `systemd --user` unit: `%%` becomes `%` and `$$` becomes `$`.
+ */
+function systemdExecArgv(unit: string): string[] {
+  return systemdWords(directive(unit, "ExecStart=")).map((word) =>
+    word.replaceAll("%%", "%").replaceAll("$$", "$"),
+  );
+}
+
+/**
+ * The value of one `Environment=` assignment as the service would see it.
+ *
+ * `%%` collapses; `$$` deliberately does not, which is why a dollar must not be
+ * doubled here in the first place.
+ */
+function systemdEnvironmentValue(unit: string, name: string): string {
+  for (const line of unit.split("\n")) {
+    if (!line.startsWith("Environment=")) continue;
+    const assignment = systemdWords(line.slice("Environment=".length))[0]!;
+    const separator = assignment.indexOf("=");
+    if (assignment.slice(0, separator) === name)
+      return assignment.slice(separator + 1).replaceAll("%%", "%");
+  }
+  throw new Error(`No Environment assignment for ${name}`);
 }
 
 function writeForeignUnit(unitDirectory: string, service: OfficeServiceName) {
@@ -204,6 +279,129 @@ describe("systemd unit rendering", () => {
         "runtime",
       );
       expect(unit).toContain('ExecStart="/opt/we\\"ird\\\\100%%/bun"');
+    });
+  });
+
+  describe("systemd variable-expansion escaping", () => {
+    // `ExecStart=` performs environment-variable expansion on top of quoting
+    // and specifier expansion: `${NAME}` anywhere in a word and a bare `$NAME`
+    // as a whole word are substituted, and *erased* when unset. A literal
+    // dollar is written `$$`. `Environment=` performs no such expansion, so a
+    // dollar there must stay single or the service receives `$$`.
+    const dollarPlan = servicePlan({
+      program: {
+        launcher: [
+          "/Users/operator/$archive/bin/bun",
+          "/opt/ai$office/bin/ai-office.ts",
+        ],
+        runtimeHome: "/home/operator/$literal/.ai-office",
+        requiresSourceRuntimeOptIn: true,
+      },
+    });
+    const mixedPlan = servicePlan({
+      program: {
+        launcher: ["/opt/100%/ai$office/bun", "/srv/$build/100%/ai-office.ts"],
+        runtimeHome: "/home/operator/100%/$home/.ai-office",
+        requiresSourceRuntimeOptIn: false,
+      },
+    });
+
+    test("a dollar in the launcher executable is doubled", () => {
+      expect(renderSystemdUnit(dollarPlan, "runtime")).toContain(
+        'ExecStart="/Users/operator/$$archive/bin/bun"',
+      );
+    });
+
+    test("a dollar in the entry module is doubled", () => {
+      expect(renderSystemdUnit(dollarPlan, "dashboard")).toContain(
+        '"/opt/ai$$office/bin/ai-office.ts"',
+      );
+    });
+
+    test("a dollar in an ordinary argument is doubled", () => {
+      const unit = renderSystemdUnit(
+        servicePlan({
+          program: { ...dollarPlan.program, launcher: ["/opt/bun", "$entry"] },
+        }),
+        "runtime",
+      );
+      expect(unit).toContain('ExecStart="/opt/bun" "$$entry"');
+    });
+
+    test("a dollar in AI_OFFICE_HOME stays single", () => {
+      // Doubling it here would deliver a literal `$$` to the service.
+      expect(renderSystemdUnit(dollarPlan, "runtime")).toContain(
+        'Environment="AI_OFFICE_HOME=/home/operator/$literal/.ai-office"',
+      );
+      expect(renderSystemdUnit(dollarPlan, "runtime")).not.toContain(
+        "$$literal",
+      );
+    });
+
+    test("every ExecStart dollar is part of a pair and every Environment dollar is not", () => {
+      for (const plan of [dollarPlan, mixedPlan])
+        for (const service of ["runtime", "dashboard"] as const)
+          for (const line of renderSystemdUnit(plan, service).split("\n")) {
+            if (line.startsWith("ExecStart="))
+              expect(line.replaceAll("$$", "")).not.toContain("$");
+            if (line.startsWith("Environment="))
+              expect(line).not.toContain("$$");
+          }
+    });
+
+    test("the values systemd delivers are the planned literals", () => {
+      for (const service of ["runtime", "dashboard"] as const) {
+        const unit = renderSystemdUnit(mixedPlan, service);
+        const argv = systemdExecArgv(unit);
+        expect(argv.slice(0, 2)).toEqual([
+          "/opt/100%/ai$office/bun",
+          "/srv/$build/100%/ai-office.ts",
+        ]);
+        expect(systemdEnvironmentValue(unit, "AI_OFFICE_HOME")).toBe(
+          "/home/operator/100%/$home/.ai-office",
+        );
+      }
+    });
+
+    test("the two directive renderers differ only in dollar handling", () => {
+      // The same characters, rendered for the two directives. Everything but
+      // the dollar sign must come out identically; only the command line
+      // performs variable expansion.
+      expect(systemdExecArgument('/opt/a$b%c d\\e"f')).toBe(
+        '"/opt/a$$b%%c d\\\\e\\"f"',
+      );
+      expect(systemdEnvironmentAssignment("NAME", '/opt/a$b%c d\\e"f')).toBe(
+        'Environment="NAME=/opt/a$b%%c d\\\\e\\"f"',
+      );
+      // A value with no dollar sign renders the same value either way.
+      expect(systemdExecArgument("/opt/100%/x")).toBe(
+        systemdEnvironmentAssignment("N", "/opt/100%/x").replace(
+          'Environment="N=',
+          '"',
+        ),
+      );
+    });
+
+    test("both escapes compose with quote and backslash escaping", () => {
+      const unit = renderSystemdUnit(
+        servicePlan({
+          program: {
+            launcher: ['/opt/we"ird\\100%/$bun'],
+            runtimeHome: '/home/o/we"ird\\100%/$home',
+            requiresSourceRuntimeOptIn: false,
+          },
+        }),
+        "runtime",
+      );
+      expect(unit).toContain('ExecStart="/opt/we\\"ird\\\\100%%/$$bun"');
+      expect(systemdExecArgv(unit)).toEqual([
+        '/opt/we"ird\\100%/$bun',
+        "runtime",
+        "start",
+      ]);
+      expect(systemdEnvironmentValue(unit, "AI_OFFICE_HOME")).toBe(
+        '/home/o/we"ird\\100%/$home',
+      );
     });
   });
 

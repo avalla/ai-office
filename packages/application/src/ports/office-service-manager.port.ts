@@ -53,7 +53,16 @@ export interface OfficeServiceStatus {
   readonly installed: boolean;
   /** Registered with the service manager; `null` when it could not be read. */
   readonly registered: boolean | null;
-  /** Starts without an operator; `null` when it could not be read. */
+  /**
+   * The platform's persistent permission to start this service without an
+   * operator; `null` when it could not be read.
+   *
+   * Independent of `registered` by design. Every supported platform keeps the
+   * two facts separately — a systemd unit-file state, a launchd disabled
+   * override — and a service can be running while it is not permitted to come
+   * back after a reboot, or permitted while nothing is loaded. Deriving one
+   * from the other would hide exactly that defect.
+   */
   readonly enabled: boolean | null;
   readonly state: OfficeServiceState;
   /** Short, non-localized platform evidence; never raw command output. */

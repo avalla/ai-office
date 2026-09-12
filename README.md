@@ -514,6 +514,17 @@ is queried even when no definition exists, so a unit deleted by hand surfaces as
 a still-registered orphan with the command to clean it up, rather than as a
 clean uninstall.
 
+`registered` and `enabled` are independent facts on both platforms and neither
+is derived from the other: `enabled` reads systemd's unit-file state and
+launchd's persistent disabled overrides (`launchctl print-disabled`), so a job
+that is running right now but will not come back after a reboot is reported
+rather than hidden. `install` enables both labels before bootstrapping, which
+lifts an override left by an earlier `launchctl disable`. A state the platform
+would not report is `unknown`, never an assumed one — in particular, a
+`launchctl print` that fails for any reason other than positively naming the
+label as unknown is an inspection failure, so an ambiguous answer preserves the
+plist instead of deleting AI Office's own ownership evidence.
+
 Install is idempotent. Every generated file carries a `Managed by AI Office`
 marker plus its service identity, both required verbatim in the file header; a
 file that does not carry exactly that is never overwritten and never deleted,

@@ -20,6 +20,7 @@
     "db:migrate": "bun scripts/migrate.ts",
     "check": "bun run validate:skills && bun run typecheck && bun run lint && bun run test",
     "smoke:bun-link": "bun scripts/smoke-bun-link.ts",
+    "validate:launchd-plists": "bun scripts/validate-launchd-plists.ts",
     "validate:skills": "bun scripts/validate-skills.ts",
     "test": "bunx --bun vitest run",
     "typecheck": "bunx tsc -p tsconfig.json --noEmit",

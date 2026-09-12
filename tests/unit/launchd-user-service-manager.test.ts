@@ -12,6 +12,9 @@ import {
   launchdOwnershipLines,
   LaunchdUserServiceManager,
   defaultLaunchAgentDirectory,
+  launchdEnablement,
+  launchdPrintIndicatesAbsence,
+  parseLaunchdDisabledServices,
   parseLaunchdPrint,
   renderLaunchdPlist,
 } from "@ai-office/service-management/launchd-user-service-manager.ts";
@@ -24,6 +27,7 @@ import type {
 } from "@ai-office/service-management/service-command-runner.ts";
 import {
   cleanTemporaryDirectories,
+  launchdPrintDisabledOutput,
   launchdPrintOutput,
   parseMinimalPlist,
   servicePlan,
@@ -48,16 +52,43 @@ interface LaunchdJob {
  */
 class FakeLaunchd implements ServiceCommandRunner {
   readonly calls: string[][] = [];
+  /** Bootstrapped jobs. Presence here is the only "registered" state. */
   readonly jobs = new Map<string, LaunchdJob>();
+  /**
+   * The persistent enable/disable override database.
+   *
+   * Separate from `jobs` on purpose, because launchd keeps it separately: an
+   * override survives boots and a label may be disabled while loaded, loaded
+   * while enabled, or absent from both.
+   */
+  readonly disabled = new Map<string, boolean>();
 
   domainAvailable = true;
   launchctlMissing = false;
+  /** `print-disabled` fails, so the persistent state cannot be established. */
+  printDisabledAvailable = true;
+  /** `print-disabled` exits zero with something that is not the listing. */
+  printDisabledUnrecognized = false;
   /** Labels whose next bootstrap must fail. */
   readonly bootstrapFailures = new Set<string>();
   /** Labels whose bootout reports failure and does not unload the job. */
   readonly bootoutFailures = new Set<string>();
   /** Labels whose bootout reports success but leaves the job loaded. */
   readonly bootoutNoOps = new Set<string>();
+  /** Labels whose `launchctl enable` refuses. */
+  readonly enableFailures = new Set<string>();
+  /**
+   * Labels whose `launchctl print` fails *without* saying the job is gone.
+   *
+   * This is the fifth distinct answer, and the one the adapter must never read
+   * as absence: launchctl ran and returned non-zero for some other reason.
+   */
+  readonly inspectionFailures = new Map<
+    string,
+    Partial<ServiceCommandResult>
+  >();
+  /** Runs after each bootout, so a test can change what inspection does next. */
+  bootoutHook?: (label: string) => void;
   /** State a label takes on once bootstrapped. */
   readonly startedState = new Map<string, LaunchdJob>();
   /** Records the plist path each bootstrap was given. */
@@ -72,11 +103,28 @@ class FakeLaunchd implements ServiceCommandRunner {
       return this.domainAvailable
         ? this.ok(`${domain} = {\n}\n`)
         : this.fail(3, "Could not find domain");
+    if (operation === "print-disabled") {
+      if (!this.printDisabledAvailable)
+        return this.fail(5, "Input/output error");
+      if (this.printDisabledUnrecognized) return this.ok("nothing useful\n");
+      return this.ok(
+        launchdPrintDisabledOutput(Object.fromEntries(this.disabled)),
+      );
+    }
     if (operation === "print") {
       const label = target!.slice(domain.length + 1);
+      const failure = this.inspectionFailures.get(label);
+      if (failure !== undefined)
+        return {
+          exitCode: 5,
+          stdout: "",
+          stderr: "Input/output error\n",
+          unavailable: false,
+          ...failure,
+        };
       const job = this.jobs.get(label);
       return job === undefined
-        ? this.fail(113, "Could not find service")
+        ? this.fail(113, `Could not find service "${label}" in domain`)
         : this.ok(
             launchdPrintOutput({
               state: job.state,
@@ -87,11 +135,21 @@ class FakeLaunchd implements ServiceCommandRunner {
             }),
           );
     }
+    if (operation === "enable" || operation === "disable") {
+      const label = target!.slice(domain.length + 1);
+      if (operation === "enable" && this.enableFailures.has(label))
+        return this.fail(150, "Operation not permitted while System Integrity");
+      this.disabled.set(label, operation === "disable");
+      return this.ok("");
+    }
     if (operation === "bootstrap") {
       const label = basename(argument!, ".plist");
       this.bootstrapped.push(argument!);
       if (this.bootstrapFailures.has(label))
         return this.fail(5, "Input/output error");
+      // A disabled label cannot be loaded, exactly as on a real domain.
+      if (this.disabled.get(label) === true)
+        return this.fail(133, "Service is disabled");
       this.jobs.set(
         label,
         this.startedState.get(label) ?? { state: "running", pid: 4242 },
@@ -100,12 +158,15 @@ class FakeLaunchd implements ServiceCommandRunner {
     }
     if (operation === "bootout") {
       const label = target!.slice(domain.length + 1);
-      if (this.bootoutFailures.has(label))
-        return this.fail(36, "Operation now in progress");
-      if (this.bootoutNoOps.has(label)) return this.ok("");
-      if (!this.jobs.delete(label))
-        return this.fail(3, "No such process while removing service");
-      return this.ok("");
+      const answer = this.bootoutFailures.has(label)
+        ? this.fail(36, "Operation now in progress")
+        : this.bootoutNoOps.has(label)
+          ? this.ok("")
+          : this.jobs.delete(label)
+            ? this.ok("")
+            : this.fail(3, "No such process while removing service");
+      this.bootoutHook?.(label);
+      return answer;
     }
     return this.ok("");
   }
@@ -182,8 +243,25 @@ describe("launchd plist rendering", () => {
       "KeepAlive",
       "ProcessType",
       "ThrottleInterval",
-      "ServiceDescription",
     ]);
+  });
+
+  test("carries only keys launchd.plist documents", () => {
+    // `ServiceDescription` is not part of the launchd.plist schema. The
+    // human-readable name belongs in a comment, not in an invented key.
+    for (const service of ["runtime", "dashboard"] as const) {
+      const plist = renderLaunchdPlist(plan, service);
+      expect(plist).not.toContain("ServiceDescription");
+      expect(plist).toContain(
+        service === "runtime"
+          ? "<!-- AI Office Runtime -->"
+          : "<!-- AI Office Dashboard -->",
+      );
+      // A comment is not a key, so the parsed document must not gain one.
+      expect(Object.keys(parseMinimalPlist(plist))).not.toContain(
+        "ServiceDescription",
+      );
+    }
   });
 
   test("carries the ownership header in valid plist syntax", () => {
@@ -848,5 +926,367 @@ describe("launchd uninstall", () => {
             command.includes(`${domain}/${launchdLabels.runtime}`),
         ),
     ).toBe(false);
+  });
+});
+
+describe("launchctl absence detection", () => {
+  test("only a launchctl answer naming the label is read as absence", () => {
+    const base = { stdout: "", unavailable: false } as const;
+    expect(
+      launchdPrintIndicatesAbsence({
+        ...base,
+        exitCode: 113,
+        stderr: 'Could not find service "com.ai-office.runtime" in domain\n',
+      }),
+    ).toBe(true);
+    expect(
+      launchdPrintIndicatesAbsence({
+        ...base,
+        exitCode: 3,
+        stderr: "No such process\n",
+      }),
+    ).toBe(true);
+    // Everything launchctl can do instead of answering.
+    for (const result of [
+      { ...base, exitCode: 5, stderr: "Input/output error\n" },
+      { ...base, exitCode: 1, stderr: "Could not find domain for gui/501\n" },
+      { ...base, exitCode: 150, stderr: "Operation not permitted\n" },
+      { ...base, exitCode: 113, stderr: "", unavailable: true },
+      { ...base, exitCode: 124, stderr: "", unavailable: true, timedOut: true },
+      { ...base, exitCode: 37, stderr: "unrecognized launchctl response\n" },
+      { ...base, exitCode: 0, stderr: "" },
+    ] satisfies ServiceCommandResult[])
+      expect(launchdPrintIndicatesAbsence(result)).toBe(false);
+  });
+
+  test("a generic inspection failure during status is unknown, not absent", async () => {
+    const context = manager();
+    await context.manager.install();
+    context.runner.inspectionFailures.set(launchdLabels.runtime, {});
+
+    const status = await context.manager.status();
+    const runtime = status.services.find(
+      (entry) => entry.service === "runtime",
+    )!;
+    expect(runtime).toMatchObject({
+      registered: null,
+      state: "unknown",
+      installed: true,
+    });
+    expect(status.issues.join("\n")).toContain("did not report whether");
+    expect(officeServicesHealthy(status)).toBe(false);
+    // The dashboard answered, so it is still described from its own evidence.
+    expect(
+      status.services.find((entry) => entry.service === "dashboard"),
+    ).toMatchObject({ registered: true, state: "running" });
+  });
+
+  test("a timed-out inspection is unknown rather than a missing service", async () => {
+    const context = manager();
+    await context.manager.install();
+    context.runner.inspectionFailures.set(launchdLabels.dashboard, {
+      exitCode: 124,
+      unavailable: true,
+      timedOut: true,
+    });
+
+    const status = await context.manager.status();
+    expect(
+      status.services.find((entry) => entry.service === "dashboard"),
+    ).toMatchObject({ registered: null, state: "unknown" });
+  });
+
+  test("an ambiguous inspection after bootout preserves the plist", async () => {
+    const context = manager();
+    await context.manager.install();
+    const path = plistPath(context.agentDirectory, "runtime");
+    // The job is registered, bootout is attempted, and every following
+    // inspection fails generically. Absence was never established.
+    context.runner.bootoutHook = (label) => {
+      if (label === launchdLabels.runtime)
+        context.runner.inspectionFailures.set(label, {});
+    };
+
+    const report = await context.manager.uninstall();
+    expect(report.removed.map((entry) => entry.service)).toEqual(["dashboard"]);
+    expect(report.preserved).toEqual([
+      {
+        service: "runtime",
+        path,
+        reason: "launchd did not report whether the job was unloaded",
+      },
+    ]);
+    expect(report.issues.join("\n")).toContain("its plist was preserved");
+    // The ownership evidence — the only thing that lets a later uninstall
+    // attribute and clean up this job — must survive.
+    expect(existsSync(path)).toBe(true);
+    expect(readFileSync(path, "utf8")).toBe(
+      renderLaunchdPlist(servicePlan(), "runtime"),
+    );
+  });
+
+  test("an ambiguous inspection before bootout preserves the plist untouched", async () => {
+    const context = manager();
+    await context.manager.install();
+    context.runner.inspectionFailures.set(launchdLabels.runtime, {});
+    const before = context.runner.calls.length;
+
+    const report = await context.manager.uninstall();
+    expect(report.preserved).toEqual([
+      {
+        service: "runtime",
+        path: plistPath(context.agentDirectory, "runtime"),
+        reason: "launchd did not report whether the job was loaded",
+      },
+    ]);
+    expect(existsSync(plistPath(context.agentDirectory, "runtime"))).toBe(true);
+    // Nothing was booted out on the strength of an answer that never came.
+    expect(
+      context.runner.calls
+        .slice(before)
+        .some(
+          (command) =>
+            command.includes("bootout") &&
+            command.includes(`${domain}/${launchdLabels.runtime}`),
+        ),
+    ).toBe(false);
+  });
+
+  test("an ambiguous inspection with no plist reports an unconfirmed orphan", async () => {
+    const context = manager();
+    context.runner.inspectionFailures.set(launchdLabels.runtime, {});
+    const report = await context.manager.uninstall();
+    expect(report.issues.join("\n")).toContain("cannot confirm");
+    expect(report.removed).toEqual([]);
+  });
+
+  test("an ambiguous inspection during install is not treated as unloaded", async () => {
+    const context = manager();
+    context.runner.inspectionFailures.set(launchdLabels.runtime, {});
+    const report = await context.manager.install();
+    expect(report.issues.join("\n")).toContain("not re-bootstrapped");
+    expect(context.runner.bootstrapped).not.toContain(
+      plistPath(context.agentDirectory, "runtime"),
+    );
+    expect(officeServicesHealthy(report.status)).toBe(false);
+  });
+});
+
+describe("launchd persistent enablement", () => {
+  test("a registered job with a disabled override is enabled: false", async () => {
+    const context = manager();
+    await context.manager.install();
+    // Disabled out from under AI Office, exactly as `launchctl disable` does:
+    // the job stays loaded now and will not be permitted to load again.
+    context.runner.disabled.set(launchdLabels.runtime, true);
+
+    const status = await context.manager.status();
+    expect(
+      status.services.find((entry) => entry.service === "runtime"),
+    ).toMatchObject({ registered: true, enabled: false, state: "running" });
+    expect(status.issues.join("\n")).toContain("disabled override");
+    expect(officeServicesHealthy(status)).toBe(false);
+  });
+
+  test("an unregistered label carries its own disabled override", async () => {
+    const context = manager();
+    await context.manager.install();
+    context.runner.disabled.set(launchdLabels.dashboard, true);
+    context.runner.jobs.delete(launchdLabels.dashboard);
+
+    expect(
+      (await context.manager.status()).services.find(
+        (entry) => entry.service === "dashboard",
+      ),
+    ).toMatchObject({ registered: false, enabled: false });
+  });
+
+  test("registration is never taken as enablement", async () => {
+    const context = manager();
+    await context.manager.install();
+    context.runner.disabled.set(launchdLabels.runtime, true);
+    context.runner.disabled.set(launchdLabels.dashboard, false);
+    context.runner.jobs.delete(launchdLabels.dashboard);
+
+    expect(
+      (await context.manager.status()).services.map((entry) => [
+        entry.registered,
+        entry.enabled,
+      ]),
+    ).toEqual([
+      [true, false],
+      [false, true],
+    ]);
+  });
+
+  test("install re-enables a previously disabled service", async () => {
+    const context = manager();
+    context.runner.disabled.set(launchdLabels.runtime, true);
+
+    const report = await context.manager.install();
+    expect(
+      context.runner.indexOf(["enable", `${domain}/${launchdLabels.runtime}`]),
+    ).toBeGreaterThanOrEqual(0);
+    // Enabling must happen before the bootstrap it unblocks.
+    expect(
+      context.runner.indexOf(["enable", `${domain}/${launchdLabels.runtime}`]),
+    ).toBeLessThan(context.runner.indexOf(["bootstrap"]));
+    expect(context.runner.disabled.get(launchdLabels.runtime)).toBe(false);
+    expect(
+      report.status.services.map((entry) => [entry.enabled, entry.state]),
+    ).toEqual([
+      [true, "running"],
+      [true, "running"],
+    ]);
+    expect(officeServicesHealthy(report.status)).toBe(true);
+    expect(report.issues).toEqual([]);
+  });
+
+  test("a successful install leaves both labels enabled", async () => {
+    const context = manager();
+    await context.manager.install();
+    for (const label of [launchdLabels.runtime, launchdLabels.dashboard])
+      expect(
+        context.runner.indexOf(["enable", `${domain}/${label}`]),
+      ).toBeGreaterThanOrEqual(0);
+    expect(
+      (await context.manager.status()).services.map((entry) => entry.enabled),
+    ).toEqual([true, true]);
+  });
+
+  test("an enable failure is a partial install and never reports healthy", async () => {
+    const context = manager();
+    context.runner.enableFailures.add(launchdLabels.dashboard);
+
+    const report = await context.manager.install();
+    expect(report.issues.join("\n")).toContain("launchctl enable");
+    const dashboard = report.status.services.find(
+      (entry) => entry.service === "dashboard",
+    )!;
+    // The override database would read as enabled; the failed enable means the
+    // state was not established, so `true` is withheld.
+    expect(dashboard.enabled).toBeNull();
+    expect(officeServicesHealthy(report.status)).toBe(false);
+    expect(
+      report.status.services.find((entry) => entry.service === "runtime"),
+    ).toMatchObject({ enabled: true, state: "running" });
+  });
+
+  test("an enable failure over a standing disabled override still reports false", async () => {
+    const context = manager();
+    context.runner.enableFailures.add(launchdLabels.runtime);
+    context.runner.disabled.set(launchdLabels.runtime, true);
+
+    const report = await context.manager.install();
+    expect(
+      report.status.services.find((entry) => entry.service === "runtime"),
+    ).toMatchObject({ enabled: false });
+    expect(officeServicesHealthy(report.status)).toBe(false);
+  });
+
+  test("an unreadable override database leaves enablement unknown", async () => {
+    const context = manager();
+    await context.manager.install();
+    context.runner.printDisabledAvailable = false;
+
+    const status = await context.manager.status();
+    expect(status.services.map((entry) => entry.enabled)).toEqual([null, null]);
+    expect(status.issues.join("\n")).toContain("persistent enable state");
+    expect(officeServicesHealthy(status)).toBe(false);
+  });
+
+  test("an unrecognized print-disabled response is not read as enabled", async () => {
+    const context = manager();
+    await context.manager.install();
+    context.runner.printDisabledUnrecognized = true;
+
+    const status = await context.manager.status();
+    expect(status.services.map((entry) => entry.enabled)).toEqual([null, null]);
+    expect(officeServicesHealthy(status)).toBe(false);
+  });
+});
+
+describe("launchctl print-disabled parsing", () => {
+  test("reads both value spellings and ignores unrelated lines", () => {
+    const parsed = parseLaunchdDisabledServices(
+      [
+        "disabled services = {",
+        '\t"com.ai-office.runtime" => true',
+        '\t"com.ai-office.dashboard" => false',
+        "\tcom.example.unquoted => disabled",
+        "\tcom.example.other => enabled",
+        "\tsomething that is not an entry",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    expect(parsed).not.toBeNull();
+    expect(Object.fromEntries(parsed!)).toEqual({
+      "com.ai-office.runtime": true,
+      "com.ai-office.dashboard": false,
+      "com.example.unquoted": true,
+      "com.example.other": false,
+    });
+  });
+
+  test("an empty listing is an answer, an unrecognized response is not", () => {
+    expect(
+      Object.fromEntries(
+        parseLaunchdDisabledServices("disabled services = {\n}\n")!,
+      ),
+    ).toEqual({});
+    expect(parseLaunchdDisabledServices("")).toBeNull();
+    expect(parseLaunchdDisabledServices("Could not find domain\n")).toBeNull();
+  });
+
+  test("enablement never guesses when the database could not be read", () => {
+    expect(launchdEnablement(null, launchdLabels.runtime)).toBeNull();
+    expect(
+      launchdEnablement(
+        new Map([[launchdLabels.runtime, true]]),
+        launchdLabels.runtime,
+      ),
+    ).toBe(false);
+    expect(
+      launchdEnablement(
+        new Map([[launchdLabels.runtime, false]]),
+        launchdLabels.runtime,
+      ),
+    ).toBe(true);
+    // No override at all is launchd's default, which is enabled.
+    expect(launchdEnablement(new Map(), launchdLabels.runtime)).toBe(true);
+  });
+});
+
+describe("launchd combined failures", () => {
+  test("a disabled override is reported even when inspection fails", async () => {
+    const context = manager();
+    await context.manager.install();
+    context.runner.disabled.set(launchdLabels.runtime, true);
+    context.runner.inspectionFailures.set(launchdLabels.runtime, {});
+
+    const status = await context.manager.status();
+    expect(
+      status.services.find((entry) => entry.service === "runtime"),
+    ).toMatchObject({ registered: null, enabled: false, state: "unknown" });
+    expect(status.issues.join("\n")).toContain("disabled override");
+    expect(officeServicesHealthy(status)).toBe(false);
+  });
+
+  test("an unreachable domain reports neither registration nor enablement", async () => {
+    const context = manager();
+    await context.manager.install();
+    context.runner.domainAvailable = false;
+
+    const status = await context.manager.status();
+    expect(status.serviceManagerAvailable).toBe(false);
+    expect(
+      status.services.map((entry) => [entry.registered, entry.enabled]),
+    ).toEqual([
+      [null, null],
+      [null, null],
+    ]);
+    // No enablement claim is made from a domain that was never reached.
+    expect(status.issues.join("\n")).not.toContain("print-disabled");
   });
 });

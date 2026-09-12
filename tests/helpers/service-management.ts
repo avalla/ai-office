@@ -291,6 +291,24 @@ export function launchdPrintOutput(fields: {
   return `${lines.join("\n")}\n`;
 }
 
+/**
+ * `launchctl print-disabled <domain>` output.
+ *
+ * The real listing names only labels that carry a persistent override; a label
+ * that has never been enabled or disabled simply does not appear.
+ */
+export function launchdPrintDisabledOutput(
+  overrides: Readonly<Record<string, boolean>>,
+): string {
+  return `${[
+    "disabled services = {",
+    ...Object.entries(overrides).map(
+      ([label, disabled]) => `\t"${label}" => ${disabled ? "true" : "false"}`,
+    ),
+    "}",
+  ].join("\n")}\n`;
+}
+
 export function servicePlan(
   overrides: Partial<OfficeServicePlan> = {},
 ): OfficeServicePlan {
