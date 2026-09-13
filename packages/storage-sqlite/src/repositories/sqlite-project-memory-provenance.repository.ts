@@ -14,7 +14,8 @@ interface RetrievalRow {
   scope: string;
   outcome: string;
   error_code: string | null;
-  query_sha256: string | null;
+  context_query_sha256: string | null;
+  provider_query_sha256: string | null;
   result_count: number;
   injected_count: number;
   injected_characters: number;
@@ -41,9 +42,10 @@ export class SqliteProjectMemoryProvenanceRepository implements ProjectMemoryPro
         .prepare(
           `INSERT INTO agent_run_memory_retrieval(
              run_id, project_id, provider, provider_version, memory_project_id,
-             scope, outcome, error_code, query_sha256, result_count,
-             injected_count, injected_characters, created_at
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             scope, outcome, error_code, context_query_sha256,
+             provider_query_sha256, result_count, injected_count,
+             injected_characters, created_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           record.runId,
@@ -54,7 +56,8 @@ export class SqliteProjectMemoryProvenanceRepository implements ProjectMemoryPro
           record.scope,
           record.outcome,
           record.errorCode,
-          record.querySha256,
+          record.contextQuerySha256,
+          record.providerQuerySha256,
           record.resultCount,
           record.injectedCount,
           record.injectedCharacters,
@@ -131,7 +134,8 @@ export class SqliteProjectMemoryProvenanceRepository implements ProjectMemoryPro
       scope: "project",
       outcome: row.outcome as ProjectMemoryRetrievalRecord["outcome"],
       errorCode: row.error_code as ProjectMemoryRetrievalRecord["errorCode"],
-      querySha256: row.query_sha256,
+      contextQuerySha256: row.context_query_sha256,
+      providerQuerySha256: row.provider_query_sha256,
       resultCount: row.result_count,
       injectedCount: row.injected_count,
       injectedCharacters: row.injected_characters,

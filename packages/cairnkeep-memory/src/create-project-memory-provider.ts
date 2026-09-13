@@ -31,6 +31,7 @@ export function createProjectMemoryProvider(
   return new CairnKeepMemoryProvider({
     command: configuration.command,
     timeoutMs: configuration.timeoutMs,
+    baseDirectory: configuration.baseDirectory,
     environment,
   });
 }

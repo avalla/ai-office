@@ -337,6 +337,10 @@ export async function handleRunCommand(
       io.stdout(
         `Project memory: ${retrieval.outcome}${retrieval.errorCode === null ? "" : ` (${retrieval.errorCode})`} via ${retrieval.provider}; ${retrieval.injectedCount}/${retrieval.resultCount} injected; advisory context, not authority`,
       );
+      if (retrieval.contextQuerySha256 !== null)
+        io.stdout(
+          `  Query SHA-256: context ${retrieval.contextQuerySha256}; provider ${retrieval.providerQuerySha256 ?? "not reported"}`,
+        );
       for (const reference of retrieval.references)
         io.stdout(
           `  ${reference.rank}. ${reference.injected ? "injected" : "not injected"}${reference.truncated ? " (truncated)" : ""} ${reference.scope}:${reference.referenceId}${reference.contentDigest === null ? "" : ` ${reference.contentDigest}`}`,

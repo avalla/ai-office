@@ -17,8 +17,19 @@ export interface ProjectMemoryRetrievalRecord {
   readonly scope: "project";
   readonly outcome: "retrieved" | "empty" | "failed" | "skipped";
   readonly errorCode: ProjectMemoryErrorCode | ProjectMemorySkipCode | null;
-  /** SHA-256 of the exact bounded query sent; the text itself is not kept. */
-  readonly querySha256: string | null;
+  /**
+   * Lowercase SHA-256 hex of the bounded query AI Office derived from the task
+   * and handed to the provider port. Null when no query was derived.
+   */
+  readonly contextQuerySha256: string | null;
+  /**
+   * Lowercase SHA-256 hex of the exact query string the adapter sent across
+   * the provider boundary after provider-specific transformation, as reported
+   * by the adapter. Null when retrieval was skipped or failed before a
+   * validated report existed, and for rows recorded before it was captured.
+   * Neither query text is ever kept.
+   */
+  readonly providerQuerySha256: string | null;
   readonly resultCount: number;
   readonly injectedCount: number;
   readonly injectedCharacters: number;

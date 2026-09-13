@@ -6,6 +6,7 @@ import {
   readdirSync,
   rmSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -73,7 +74,8 @@ function retrieval(
     scope: "project",
     outcome: "retrieved",
     errorCode: null,
-    querySha256: "a".repeat(64),
+    contextQuerySha256: "a".repeat(64),
+    providerQuerySha256: "c".repeat(64),
     resultCount: 2,
     injectedCount: 1,
     injectedCharacters: 42,
@@ -169,6 +171,7 @@ test("provenance cannot claim another project's run or a successful failure", as
       outcome: "failed",
       errorCode: "PROJECT_MEMORY_TIMEOUT",
       providerVersion: null,
+      providerQuerySha256: null,
       resultCount: 0,
       injectedCount: 0,
       injectedCharacters: 0,
@@ -186,6 +189,7 @@ test("upgrading an existing database adds provenance without touching historical
   seed(db, "p", "historical");
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([
     "0028_agent_run_memory_provenance.sql",
+    "0029_agent_run_memory_query_digests.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   expect(
@@ -202,6 +206,118 @@ test("upgrading an existing database adds provenance without touching historical
       )
       .get()?.count,
   ).toBe(0);
+  expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
+  expect(
+    db.query<{ integrity_check: string }, []>("PRAGMA integrity_check").get()
+      ?.integrity_check,
+  ).toBe("ok");
+});
+
+const sha256 = (text: string) =>
+  createHash("sha256").update(text, "utf8").digest("hex");
+
+test("query provenance stores two exact digests, never query text, and they must be consistent", async () => {
+  const db = database();
+  seed(db, "p", "run-a");
+  const repository = new SqliteProjectMemoryProvenanceRepository(db);
+  await repository.recordRetrieval(
+    retrieval({
+      contextQuerySha256: sha256("Refactor the authentication middleware"),
+      providerQuerySha256: sha256("authentication"),
+    }),
+  );
+  expect(await repository.findRetrieval("run-a")).toMatchObject({
+    contextQuerySha256: sha256("Refactor the authentication middleware"),
+    providerQuerySha256: sha256("authentication"),
+  });
+  const columns = db
+    .query<{ name: string }, []>(
+      "SELECT name FROM pragma_table_info('agent_run_memory_retrieval')",
+    )
+    .all()
+    .map((row) => row.name);
+  expect(columns).toContain("context_query_sha256");
+  expect(columns).toContain("provider_query_sha256");
+  expect(columns).not.toContain("query_sha256");
+  // Neither plaintext query is anywhere in the stored rows.
+  const dump = JSON.stringify([
+    db.query("SELECT * FROM agent_run_memory_retrieval").all(),
+    db.query("SELECT * FROM agent_run_memory_reference").all(),
+  ]);
+  expect(dump).not.toContain("Refactor");
+  expect(dump).not.toContain("authentication");
+
+  const nothing = {
+    resultCount: 0,
+    injectedCount: 0,
+    injectedCharacters: 0,
+    references: [],
+  };
+  const rejected: [string, Partial<ProjectMemoryRetrievalRecord>][] = [
+    ["run-upper", { providerQuerySha256: "C".repeat(64) }],
+    ["run-short", { contextQuerySha256: "a".repeat(63) }],
+    // A completed search must name the exact query it sent.
+    ["run-missing", { providerQuerySha256: null }],
+    ["run-empty", { ...nothing, outcome: "empty", providerQuerySha256: null }],
+    // A skip sent nothing.
+    [
+      "run-skipped",
+      {
+        ...nothing,
+        outcome: "skipped",
+        errorCode: "QUERY_UNAVAILABLE",
+        contextQuerySha256: null,
+      },
+    ],
+    // No outbound digest without the context query it was derived from.
+    [
+      "run-orphan",
+      {
+        ...nothing,
+        outcome: "failed",
+        errorCode: "PROJECT_MEMORY_FAILED",
+        contextQuerySha256: null,
+      },
+    ],
+  ];
+  for (const [run, overrides] of rejected) {
+    seed(db, "p", run);
+    await expect(
+      repository.recordRetrieval(retrieval({ runId: run, ...overrides })),
+    ).rejects.toThrow();
+    expect(await repository.findRetrieval(run)).toBeNull();
+  }
+});
+
+test("upgrading 0028 provenance keeps its context digest and leaves the unreported outbound digest null", async () => {
+  const db = database("0029");
+  seed(db, "p", "legacy");
+  db.exec(
+    `INSERT INTO agent_run_memory_retrieval(run_id,project_id,provider,provider_version,memory_project_id,scope,outcome,error_code,query_sha256,result_count,injected_count,injected_characters,created_at)
+     VALUES ('legacy','p','cairnkeep',NULL,'aio-00000000000000000000000000000001','project','empty',NULL,'${"d".repeat(64)}',0,0,0,'${at}')`,
+  );
+  expect(migrate(db, resolve("migrations/project")).applied).toEqual([
+    "0029_agent_run_memory_query_digests.sql",
+  ]);
+  expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
+  const repository = new SqliteProjectMemoryProvenanceRepository(db);
+  expect(await repository.findRetrieval("legacy")).toMatchObject({
+    outcome: "empty",
+    contextQuerySha256: "d".repeat(64),
+    providerQuerySha256: null,
+  });
+  // Still append-only after the column rename.
+  expect(() =>
+    db.exec("UPDATE agent_run_memory_retrieval SET provider_query_sha256=NULL"),
+  ).toThrow("append-only");
+  expect(() => db.exec("DELETE FROM agent_run_memory_retrieval")).toThrow(
+    "append-only",
+  );
+  seed(db, "p", "after");
+  await repository.recordRetrieval(retrieval({ runId: "after" }));
+  expect(await repository.findRetrieval("after")).toEqual(
+    retrieval({ runId: "after" }),
+  );
   expect(db.query("PRAGMA foreign_key_check").all()).toEqual([]);
   expect(
     db.query<{ integrity_check: string }, []>("PRAGMA integrity_check").get()

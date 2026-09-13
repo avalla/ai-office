@@ -24,6 +24,11 @@ export type FakeCairnKeepMode =
 
 export interface FakeCairnKeepOptions {
   mode?: FakeCairnKeepMode;
+  /**
+   * `protocolVersion` answered to `initialize`; defaults to the revision the
+   * adapter requests. `null` omits the field entirely.
+   */
+  protocolVersion?: unknown;
   results?: readonly {
     key: string;
     value: string;
@@ -54,6 +59,10 @@ export function createFakeCairnKeep(options: FakeCairnKeepOptions = {}) {
   const command = join(root, "cairn");
   const configuration = JSON.stringify({
     mode: options.mode ?? "normal",
+    protocolVersion:
+      options.protocolVersion === undefined
+        ? "2025-06-18"
+        : options.protocolVersion,
     results: options.results ?? [],
     logPath,
   });
@@ -88,7 +97,7 @@ lines.on("line", (line) => {
   if (config.mode === "stdout-noise") { process.stdout.write("starting server...\\n"); return; }
   if (message.method === "initialize") {
     send({ jsonrpc: "2.0", id: message.id, result: {
-      protocolVersion: "2025-06-18",
+      ...(config.protocolVersion === null ? {} : { protocolVersion: config.protocolVersion }),
       capabilities: { tools: {} },
       serverInfo: { name: config.mode === "wrong-server" ? "other-memory" : "cairn-memory", version: "0.1.0" },
     }});

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, expect, test } from "vitest";
 import {
   copyFileSync,
@@ -255,6 +256,12 @@ test("worktrees of one repository share project memory; a worker gets bounded re
         `1\\. injected ${identity}:decisions/retry-policy sha256:[0-9a-f]{64}`,
       ),
     );
+    // Both query stages are attributed exactly; neither text is shown or stored.
+    const digest = (text: string) =>
+      createHash("sha256").update(text, "utf8").digest("hex");
+    expect(show.stdout).toContain(
+      `  Query SHA-256: context ${digest("Tune the retry policy")}; provider ${digest("policy")}`,
+    );
     // Remembered instructions changed no authoritative state.
     const tasks = await o.command(["task:list", "--project", projectId], main);
     expect(tasks.stdout.join("\n")).toContain("pending");
@@ -361,6 +368,9 @@ test("an unavailable provider never fails the run or project health", async () =
     );
     expect(show.stdout).toContain(
       "Project memory: failed (PROJECT_MEMORY_UNAVAILABLE) via cairnkeep; 0/0 injected; advisory context, not authority",
+    );
+    expect(show.stdout.join("\n")).toMatch(
+      /Query SHA-256: context [0-9a-f]{64}; provider not reported/u,
     );
     expect(
       JSON.parse(

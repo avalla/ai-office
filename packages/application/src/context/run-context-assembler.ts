@@ -6,6 +6,7 @@ import type {
 import type { Clock } from "../ports/clock.port.ts";
 import type { RepositoryIdentityRepository } from "../ports/repository-identity-repository.port.ts";
 import {
+  isQuerySha256,
   ProjectMemoryError,
   projectMemoryLimits,
   type ProjectMemoryHit,
@@ -18,9 +19,10 @@ import type {
   ProjectMemoryRetrievalRecord,
 } from "../ports/project-memory-provenance-repository.port.ts";
 import { deriveProjectMemoryIdentity } from "../project-memory/project-memory-identity.ts";
-import type {
-  WorkerProjectMemoryContext,
-  WorkerProjectMemoryResult,
+import {
+  WorkerRuntimeError,
+  type WorkerProjectMemoryContext,
+  type WorkerProjectMemoryResult,
 } from "../ports/worker-runtime.port.ts";
 
 /** Advisory label sent with every injected project memory result. */
@@ -289,6 +291,14 @@ export class RunContextAssembler {
     const configured = this.dependencies.projectMemory;
     if (configured === undefined) return undefined;
     const { provider, identities, provenance } = configured;
+    // A run's project memory context is assembled at most once. Provenance is
+    // append-only and keyed by run, so a second preparation could only
+    // dispatch a context the recorded retrieval does not describe. Admission
+    // already prepares only runs claimed from `queued` and recovery never
+    // replays an interrupted run; this refuses the state outright instead of
+    // relying on those callers.
+    if ((await provenance.findRetrieval(input.runId)) !== null)
+      throw new WorkerRuntimeError("WORKER_CONTEXT_INVALID");
     const description = provider.describe();
     // A disabled provider is never invoked and leaves no trace: runs are unchanged.
     if (description.state === "disabled") return undefined;
@@ -299,7 +309,9 @@ export class RunContextAssembler {
       scope: "project" as const,
     };
     // Provenance precedes injection. If it cannot be written, the run
-    // continues without project memory rather than with unattributed context.
+    // continues without project memory rather than with unattributed context,
+    // unless another preparation recorded this run first: then this context
+    // is not the one its provenance describes and preparation is refused.
     const record = async (
       value: Omit<
         ProjectMemoryRetrievalRecord,
@@ -314,6 +326,8 @@ export class RunContextAssembler {
         });
         return true;
       } catch {
+        if ((await provenance.findRetrieval(input.runId)) !== null)
+          throw new WorkerRuntimeError("WORKER_CONTEXT_INVALID");
         return false;
       }
     };
@@ -335,7 +349,8 @@ export class RunContextAssembler {
         memoryProjectId: null,
         outcome: "skipped",
         errorCode: "REPOSITORY_IDENTITY_UNAVAILABLE",
-        querySha256: null,
+        contextQuerySha256: null,
+        providerQuerySha256: null,
       });
       return undefined;
     }
@@ -348,7 +363,8 @@ export class RunContextAssembler {
         memoryProjectId: identity.memoryProjectId,
         outcome: "skipped",
         errorCode: "QUERY_UNAVAILABLE",
-        querySha256: null,
+        contextQuerySha256: null,
+        providerQuerySha256: null,
       });
       return undefined;
     }
@@ -359,11 +375,14 @@ export class RunContextAssembler {
         memoryProjectId: identity.memoryProjectId,
         outcome: "skipped",
         errorCode: "CONTEXT_BUDGET_EXHAUSTED",
-        querySha256: null,
+        contextQuerySha256: null,
+        providerQuerySha256: null,
       });
       return undefined;
     }
-    const querySha256 = createHash("sha256")
+    // The query AI Office derived. The adapter may transform it before it
+    // crosses the provider boundary and reports that exact query's digest.
+    const contextQuerySha256 = createHash("sha256")
       .update(query, "utf8")
       .digest("hex");
 
@@ -376,6 +395,7 @@ export class RunContextAssembler {
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });
       if (
+        !isQuerySha256(search.providerQuerySha256) ||
         search.hits.length > projectMemoryLimits.maxResults ||
         !search.hits.every(validHit) ||
         (search.provider.version !== null &&
@@ -398,7 +418,9 @@ export class RunContextAssembler {
         memoryProjectId: identity.memoryProjectId,
         outcome: "failed",
         errorCode: code,
-        querySha256,
+        contextQuerySha256,
+        // Unknown: a failed search has no validated outbound-query report.
+        providerQuerySha256: null,
       });
       if (input.signal?.aborted === true)
         throw new DOMException("Execution cancelled", "AbortError");
@@ -411,7 +433,8 @@ export class RunContextAssembler {
       memoryProjectId: identity.memoryProjectId,
       outcome: budget.injected.length === 0 ? "empty" : "retrieved",
       errorCode: null,
-      querySha256,
+      contextQuerySha256,
+      providerQuerySha256: search.providerQuerySha256,
       resultCount: budget.references.length,
       injectedCount: budget.injected.length,
       injectedCharacters: budget.injectedCharacters,

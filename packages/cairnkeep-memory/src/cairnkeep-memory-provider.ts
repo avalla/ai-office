@@ -17,7 +17,10 @@ import { McpStdioSession } from "./mcp-stdio-session.ts";
  * retrieval, restricted server-side to the single read-only tool it needs.
  *
  * Contract used (CairnKeep 2.17.x, documented MCP tool surface):
- * - `initialize` must report `serverInfo.name === "cairn-memory"` and tools;
+ * - `initialize` must answer with a protocol version in
+ *   {@link supportedMcpProtocolVersions}, `serverInfo.name === "cairn-memory"`
+ *   and tools. This client implements exactly those protocol revisions, so
+ *   any other answer is incompatible and nothing further is sent;
  * - `CAIRN_MCP_TOOL_PROFILE=custom` + `CAIRN_MCP_ALLOWED_TOOLS=memory_search`
  *   must leave exactly `memory_search` registered, otherwise the server is
  *   treated as incompatible and nothing is called;
@@ -32,7 +35,12 @@ import { McpStdioSession } from "./mcp-stdio-session.ts";
 export const cairnKeepProviderId = "cairnkeep";
 export const cairnKeepServerName = "cairn-memory";
 export const cairnKeepSearchTool = "memory_search";
-const protocolVersion = "2025-06-18";
+/**
+ * MCP protocol revisions this hand-written client implements, preferred first.
+ * The first is requested; a server answering with anything outside this list
+ * would expect behavior the client does not implement.
+ */
+export const supportedMcpProtocolVersions = ["2025-06-18"] as const;
 const maxProviderResults = 50;
 const maxConcurrentSessions = 2;
 
@@ -45,7 +53,6 @@ const inheritedEnvironment = [
   "LOGNAME",
   "LANG",
   "LC_ALL",
-  "CAIRN_AGENTFS_BASE_DIR",
 ] as const;
 
 /**
@@ -142,14 +149,21 @@ export function cairnKeepSearchTerm(query: string): string {
   return best === "" ? query : best;
 }
 
+/**
+ * `baseDirectory` is the already normalized absolute store root from
+ * configuration; the host's raw `CAIRN_AGENTFS_BASE_DIR` is never forwarded,
+ * because the child's private temporary cwd would anchor a relative value.
+ */
 export function cairnKeepChildEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
+  baseDirectory: string | null = null,
 ): Record<string, string> {
   const child: Record<string, string> = {};
   for (const name of inheritedEnvironment) {
     const value = environment[name];
     if (value !== undefined) child[name] = value;
   }
+  if (baseDirectory !== null) child.CAIRN_AGENTFS_BASE_DIR = baseDirectory;
   // Enforced by the server: tools outside the profile are never registered.
   child.CAIRN_MCP_TOOL_PROFILE = "custom";
   child.CAIRN_MCP_ALLOWED_TOOLS = cairnKeepSearchTool;
@@ -259,7 +273,9 @@ function parseInitialize(result: unknown): string {
   const capabilities = record(value?.capabilities);
   if (
     value === null ||
-    typeof value.protocolVersion !== "string" ||
+    !(supportedMcpProtocolVersions as readonly unknown[]).includes(
+      value.protocolVersion,
+    ) ||
     serverInfo?.name !== cairnKeepServerName ||
     typeof serverInfo.version !== "string" ||
     !/^[0-9A-Za-z.+-]{1,64}$/u.test(serverInfo.version) ||
@@ -319,6 +335,8 @@ class Semaphore {
 export interface CairnKeepMemoryProviderOptions {
   command: string;
   timeoutMs: number;
+  /** Normalized absolute `CAIRN_AGENTFS_BASE_DIR`, or null/omitted for CairnKeep's default. */
+  baseDirectory?: string | null;
   environment: Readonly<Record<string, string | undefined>>;
 }
 
@@ -374,18 +392,23 @@ export class CairnKeepMemoryProvider implements ProjectMemoryProvider {
       projectMemoryLimits.maxResults,
     );
     const scope = query.identity.memoryProjectId;
+    // The exact string sent is what provenance digests, not `query.text`.
+    const providerQuery = cairnKeepSearchTerm(query.text);
     return this.withSession(query.signal, async (session) => {
       const version = await this.handshake(session);
       const result = await session.request("tools/call", {
         name: cairnKeepSearchTool,
         arguments: {
           scope,
-          query: cairnKeepSearchTerm(query.text),
+          query: providerQuery,
           top_k: limit,
         },
       });
       return {
         provider: { id: this.id, version },
+        providerQuerySha256: createHash("sha256")
+          .update(providerQuery, "utf8")
+          .digest("hex"),
         hits: normalizeCairnKeepResults(
           parseCairnKeepSearchResult(result, scope),
           limit,
@@ -397,7 +420,7 @@ export class CairnKeepMemoryProvider implements ProjectMemoryProvider {
   private async handshake(session: McpStdioSession): Promise<string> {
     const version = parseInitialize(
       await session.request("initialize", {
-        protocolVersion,
+        protocolVersion: supportedMcpProtocolVersions[0],
         capabilities: {},
         clientInfo: { name: "ai-office", version: productVersion },
       }),
@@ -429,7 +452,10 @@ export class CairnKeepMemoryProvider implements ProjectMemoryProvider {
       session = await McpStdioSession.start({
         command: this.options.command,
         args: ["memory-server"],
-        environment: cairnKeepChildEnvironment(this.options.environment),
+        environment: cairnKeepChildEnvironment(
+          this.options.environment,
+          this.options.baseDirectory ?? null,
+        ),
         deadlineMs: this.options.timeoutMs,
         maxMessageBytes: projectMemoryLimits.responseBytes,
         maxTotalBytes: projectMemoryLimits.responseBytes * 2,

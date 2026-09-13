@@ -8,7 +8,10 @@ import {
   projectMemoryIdentityPattern,
 } from "@ai-office/application/project-memory/project-memory-identity.ts";
 import { LocalProjectBindingReader } from "@ai-office/project-binding/local-project-binding-reader.ts";
-import { resolveProjectMemoryConfiguration } from "@ai-office/cairnkeep-memory/cairnkeep-configuration.ts";
+import {
+  resolveCairnKeepBaseDirectory,
+  resolveProjectMemoryConfiguration,
+} from "@ai-office/cairnkeep-memory/cairnkeep-configuration.ts";
 import {
   cairnKeepChildEnvironment,
   cairnKeepSearchTerm,
@@ -110,7 +113,12 @@ describe("CairnKeep configuration and boundary parsing", () => {
         { AI_OFFICE_PROJECT_MEMORY_PROVIDER: "cairnkeep" },
         "darwin",
       ),
-    ).toEqual({ kind: "cairnkeep", command: "cairn", timeoutMs: 5_000 });
+    ).toEqual({
+      kind: "cairnkeep",
+      command: "cairn",
+      timeoutMs: 5_000,
+      baseDirectory: null,
+    });
     for (const environment of [
       { AI_OFFICE_PROJECT_MEMORY_PROVIDER: "cairnkep" },
       {
@@ -136,24 +144,96 @@ describe("CairnKeep configuration and boundary parsing", () => {
   });
 
   test("the child environment is an allowlist that forces the single-tool profile", () => {
-    expect(
-      cairnKeepChildEnvironment({
-        PATH: "/bin",
-        HOME: "/home/u",
-        CAIRN_AGENTFS_BASE_DIR: "/data/cairn",
-        CAIRN_LLM_API_KEY: "secret",
-        ANTHROPIC_API_KEY: "secret",
-        MCP_HTTP_PORT: "1",
-        CAIRN_MCP_TOOL_PROFILE: "full",
-        CAIRN_TYPED_MEMORY_NODES: "1",
-      }),
-    ).toEqual({
+    const host = {
+      PATH: "/bin",
+      HOME: "/home/u",
+      CAIRN_AGENTFS_BASE_DIR: "relative/raw",
+      CAIRN_LLM_API_KEY: "secret",
+      ANTHROPIC_API_KEY: "secret",
+      MCP_HTTP_PORT: "1",
+      CAIRN_MCP_TOOL_PROFILE: "full",
+      CAIRN_TYPED_MEMORY_NODES: "1",
+    };
+    // The raw host value is never forwarded; only the normalized one is.
+    expect(cairnKeepChildEnvironment(host)).toEqual({
+      PATH: "/bin",
+      HOME: "/home/u",
+      CAIRN_MCP_TOOL_PROFILE: "custom",
+      CAIRN_MCP_ALLOWED_TOOLS: "memory_search",
+    });
+    expect(cairnKeepChildEnvironment(host, "/data/cairn")).toEqual({
       PATH: "/bin",
       HOME: "/home/u",
       CAIRN_AGENTFS_BASE_DIR: "/data/cairn",
       CAIRN_MCP_TOOL_PROFILE: "custom",
       CAIRN_MCP_ALLOWED_TOOLS: "memory_search",
     });
+  });
+
+  test("CAIRN_AGENTFS_BASE_DIR is normalized to an absolute path or refused", () => {
+    const home = "/home/u";
+    expect(resolveCairnKeepBaseDirectory(undefined, home)).toBeNull();
+    expect(resolveCairnKeepBaseDirectory("/data/cairn", home)).toBe(
+      "/data/cairn",
+    );
+    expect(resolveCairnKeepBaseDirectory("/data//x/../cairn/./", home)).toBe(
+      "/data/cairn",
+    );
+    expect(resolveCairnKeepBaseDirectory("~/.cairnkeep", home)).toBe(
+      "/home/u/.cairnkeep",
+    );
+    expect(resolveCairnKeepBaseDirectory("~/.cairnkeep", "/home/u/")).toBe(
+      "/home/u/.cairnkeep",
+    );
+    // Independent of the process cwd: never resolved against it.
+    const cwd = process.cwd();
+    for (const value of [
+      "",
+      ".",
+      "..",
+      "../something",
+      "relative/path",
+      ".cairnkeep",
+      "~",
+      "~user/store",
+      "~/",
+      "/data/\ncairn",
+      "/data/\u0000cairn",
+      `/${"a".repeat(4096)}`,
+    ])
+      expect(resolveCairnKeepBaseDirectory(value, home), value).toBe(
+        value === "~/" ? "/home/u" : "invalid",
+      );
+    expect(process.cwd()).toBe(cwd);
+    // `~/` requires an absolute, control-free Runtime host HOME.
+    expect(resolveCairnKeepBaseDirectory("~/store", undefined)).toBe("invalid");
+    expect(resolveCairnKeepBaseDirectory("~/store", "home/u")).toBe("invalid");
+    expect(resolveCairnKeepBaseDirectory("~/store", "/home/\tu")).toBe(
+      "invalid",
+    );
+
+    const enabled = {
+      AI_OFFICE_PROJECT_MEMORY_PROVIDER: "cairnkeep",
+      HOME: home,
+    };
+    expect(
+      resolveProjectMemoryConfiguration(
+        { ...enabled, CAIRN_AGENTFS_BASE_DIR: "~/stores/cairn" },
+        "linux",
+      ),
+    ).toMatchObject({
+      kind: "cairnkeep",
+      baseDirectory: "/home/u/stores/cairn",
+    });
+    for (const value of [".cairnkeep", "relative/store", "../x", "/a\nb"]) {
+      const configuration = resolveProjectMemoryConfiguration(
+        { ...enabled, CAIRN_AGENTFS_BASE_DIR: value },
+        "linux",
+      );
+      expect(configuration).toMatchObject({ kind: "misconfigured" });
+      // Diagnostics name the variable, never the machine-local value.
+      expect(JSON.stringify(configuration)).not.toContain(value);
+    }
   });
 
   test("the substring search term is the most distinctive word", () => {

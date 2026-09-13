@@ -1,6 +1,10 @@
 import { afterEach, expect, test } from "vitest";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { CairnKeepMemoryProvider } from "@ai-office/cairnkeep-memory/cairnkeep-memory-provider.ts";
+import {
+  CairnKeepMemoryProvider,
+  supportedMcpProtocolVersions,
+} from "@ai-office/cairnkeep-memory/cairnkeep-memory-provider.ts";
 import { createProjectMemoryProvider } from "@ai-office/cairnkeep-memory/create-project-memory-provider.ts";
 import { deriveProjectMemoryIdentity } from "@ai-office/application/project-memory/project-memory-identity.ts";
 import { projectMemoryLimits } from "@ai-office/application/ports/project-memory-provider.port.ts";
@@ -56,6 +60,10 @@ test("one bounded project-scoped search over the real stdio transport returns no
   });
   const result = await search(cairn);
   expect(result.provider).toEqual({ id: "cairnkeep", version: "0.1.0" });
+  // The digest names the exact outbound query, not the application query.
+  expect(result.providerQuerySha256).toBe(
+    createHash("sha256").update("authentication", "utf8").digest("hex"),
+  );
   expect(result.hits.map((hit) => hit.referenceId)).toEqual([
     "notes/top",
     "notes/a",
@@ -100,6 +108,9 @@ test("one bounded project-scoped search over the real stdio transport returns no
     "tools/list",
     "tools/call",
   ]);
+  expect(requests[0]!.params).toMatchObject({
+    protocolVersion: "2025-06-18",
+  });
   expect(requests[3]!.params).toEqual({
     name: "memory_search",
     arguments: {
@@ -108,6 +119,93 @@ test("one bounded project-scoped search over the real stdio transport returns no
       top_k: 5,
     },
   });
+});
+
+test("the client supports exactly the MCP protocol revision it implements", () => {
+  expect(supportedMcpProtocolVersions).toEqual(["2025-06-18"]);
+});
+
+test.each([
+  ["an older", "2024-11-05"],
+  ["a newer", "2099-01-01"],
+  ["a malformed", 20250618],
+  ["a missing", null],
+])(
+  "%s initialize protocol version is incompatible and nothing follows it",
+  async (_label, protocolVersion) => {
+    const { fake, provider: cairn } = provider({
+      protocolVersion,
+      results: [{ key: "k", value: "v", score: 1 }],
+    });
+    await expect(search(cairn)).rejects.toMatchObject({
+      name: "ProjectMemoryError",
+      code: "PROJECT_MEMORY_INCOMPATIBLE",
+    });
+    expect(
+      fake
+        .log()
+        .filter((entry) => entry.kind === "request")
+        .map((entry) => entry.method),
+    ).toEqual(["initialize"]);
+    expect(await cairn.probe()).toMatchObject({
+      state: "unavailable",
+      code: "PROJECT_MEMORY_INCOMPATIBLE",
+    });
+    expect(
+      fake
+        .log()
+        .filter((entry) => entry.kind === "request")
+        .map((entry) => entry.method),
+    ).toEqual(["initialize", "initialize"]);
+  },
+);
+
+test("the child receives only the normalized absolute CairnKeep base directory", async () => {
+  const fake = createFakeCairnKeep({ results: [] });
+  cleanup.push(fake.cleanup);
+  const hostEnvironment = {
+    PATH: process.env.PATH,
+    HOME: "/home/fixture",
+    AI_OFFICE_PROJECT_MEMORY_PROVIDER: "cairnkeep",
+    AI_OFFICE_CAIRNKEEP_COMMAND: fake.command,
+    CAIRN_AGENTFS_BASE_DIR: "~/stores//cairn/../cairnkeep/",
+  };
+  await createProjectMemoryProvider(hostEnvironment, "linux").search({
+    identity,
+    text: "Refactor the authentication middleware",
+    limit: 1,
+  });
+  const configured = createProjectMemoryProvider(
+    { ...hostEnvironment, CAIRN_AGENTFS_BASE_DIR: "/srv/cairn/./store" },
+    "linux",
+  );
+  await configured.search({ identity, text: "authentication", limit: 1 });
+  const unset = { ...hostEnvironment } as Record<string, string | undefined>;
+  delete unset.CAIRN_AGENTFS_BASE_DIR;
+  await createProjectMemoryProvider(unset, "linux").search({
+    identity,
+    text: "authentication",
+    limit: 1,
+  });
+  const starts = fake.log().filter((entry) => entry.kind === "start");
+  expect(
+    starts.map((entry) => entry.environment?.CAIRN_AGENTFS_BASE_DIR),
+  ).toEqual(["/home/fixture/stores/cairnkeep", "/srv/cairn/store", undefined]);
+
+  // A relative value is refused before any process starts.
+  const relative = createProjectMemoryProvider(
+    { ...hostEnvironment, CAIRN_AGENTFS_BASE_DIR: ".cairnkeep" },
+    "linux",
+  );
+  expect(relative.describe()).toMatchObject({
+    state: "misconfigured",
+    code: "PROJECT_MEMORY_MISCONFIGURED",
+  });
+  expect(relative.describe().message).not.toContain(".cairnkeep");
+  await expect(
+    relative.search({ identity, text: "authentication", limit: 1 }),
+  ).rejects.toMatchObject({ code: "PROJECT_MEMORY_MISCONFIGURED" });
+  expect(fake.log().filter((entry) => entry.kind === "start")).toHaveLength(3);
 });
 
 test("an empty result is a successful search with no hits", async () => {

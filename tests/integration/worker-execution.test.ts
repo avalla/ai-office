@@ -557,6 +557,7 @@ test("upgrading legacy runs preserves unknown provenance and protects new dispat
   expect(migrate(f.db, resolve("migrations/project")).applied).toEqual([
     "0027_agent_execution_provenance.sql",
     "0028_agent_run_memory_provenance.sql",
+    "0029_agent_run_memory_query_digests.sql",
   ]);
   expect(
     (await f.runs.findRun("legacy"))?.snapshot().execution,
@@ -687,6 +688,7 @@ test("retrieved project memory is bounded advisory context pinned in the digest 
   await addActivePipeline(f);
   const provider = memoryProvider(async (query) => ({
     provider: { id: "fake-memory", version: "7" },
+    providerQuerySha256: "e".repeat(64),
     hits: [
       {
         referenceId: "decisions/tradeoffs",
@@ -816,6 +818,7 @@ test("project memory never pushes a large worker context over its limit", async 
     .run("d".repeat(127 * 1024));
   const provider = memoryProvider(async (query) => ({
     provider: { id: "fake-memory", version: null },
+    providerQuerySha256: "e".repeat(64),
     hits: [
       {
         referenceId: "notes/large",
@@ -840,4 +843,131 @@ test("project memory never pushes a large worker context over its limit", async 
   expect(
     await new SqliteProjectMemoryProvenanceRepository(f.db).findRetrieval("r"),
   ).toMatchObject({ outcome: "skipped", errorCode: "CONTEXT_BUDGET_EXHAUSTED" });
+});
+
+test("direct worker execution forwards cancellation through project memory preparation", async () => {
+  const f = await fixture();
+  await withRepositoryIdentity(f);
+  const controller = new AbortController();
+  let observedSignal = false;
+  const provider = memoryProvider(
+    (query) =>
+      new Promise((_resolve, reject) => {
+        // Without a forwarded signal retrieval could not observe cancellation.
+        if (query.signal === undefined) {
+          reject(new Error("preparation did not receive the signal"));
+          return;
+        }
+        query.signal.addEventListener(
+          "abort",
+          () => {
+            observedSignal = true;
+            reject(new ProjectMemoryError("PROJECT_MEMORY_CANCELLED"));
+          },
+          { once: true },
+        );
+        controller.abort();
+      }),
+  );
+  let workerStarted = false;
+  const executor = new WorkerAgentExecutor(
+    {
+      id: "test-worker",
+      inspect: async () => ({ version: "1" }),
+      execute: async () => {
+        workerStarted = true;
+        return output;
+      },
+    },
+    f.runs,
+    f.tasks,
+    f.pipelines,
+    clock,
+    assemblerFor(f, provider),
+  );
+  const error = await executor
+    .execute(await f.admitted(), controller.signal)
+    .catch((value: unknown) => value);
+  expect(error).toMatchObject({ name: "AbortError" });
+  expect(observedSignal).toBe(true);
+  expect(provider.calls).toBe(1);
+  expect(workerStarted).toBe(false);
+  expect(
+    await new SqliteProjectMemoryProvenanceRepository(f.db).findRetrieval("r"),
+  ).toMatchObject({ outcome: "failed", errorCode: "PROJECT_MEMORY_CANCELLED" });
+});
+
+test("an interrupted prepared run is never prepared again with a context its provenance does not describe", async () => {
+  const f = await fixture();
+  await withRepositoryIdentity(f);
+  const provider = memoryProvider(async (query) => ({
+    provider: { id: "fake-memory", version: null },
+    providerQuerySha256: "e".repeat(64),
+    hits: [
+      {
+        referenceId: `notes/${query.text}`,
+        contentDigest: null,
+        scope: query.identity.memoryProjectId,
+        title: null,
+        excerpt: `memory for ${query.text}`,
+        truncated: false,
+      },
+    ],
+  }));
+  let workerStarted = false;
+  const executor = new WorkerAgentExecutor(
+    {
+      id: "test-worker",
+      inspect: async () => ({ version: "1" }),
+      execute: async () => {
+        workerStarted = true;
+        return output;
+      },
+    },
+    f.runs,
+    f.tasks,
+    f.pipelines,
+    clock,
+    assemblerFor(f, provider),
+  );
+  const provenance = new SqliteProjectMemoryProvenanceRepository(f.db);
+  // First preparation pins provenance A, then the host is interrupted before
+  // dispatch: the run stays `preparing` and nothing is executed.
+  const run = await f.admitted();
+  expect(run.snapshot().status).toBe("preparing");
+  await executor.prepare(run);
+  const pinned = await provenance.findRetrieval("r");
+  expect(pinned).toMatchObject({
+    outcome: "retrieved",
+    references: [{ referenceId: "notes/Explain tradeoffs", injected: true }],
+  });
+  // The inputs that would derive context B change afterwards.
+  f.db.prepare("UPDATE task SET title=? WHERE id='t'").run("Another subject");
+
+  // Admission claims only queued runs, so the interrupted run is not re-admitted.
+  const current = (await f.runs.findRun("r"))!;
+  expect(current.snapshot().status).toBe("preparing");
+  expect(
+    await new AdmitAgentRun(f.runs, f.tasks, f.pipelines, clock).execute(current),
+  ).toBeNull();
+
+  // Even if a caller prepared it again, preparation is refused and nothing is
+  // dispatched; the pinned provenance stays the only record.
+  await expect(executor.prepare(current)).rejects.toMatchObject({
+    code: "WORKER_CONTEXT_INVALID",
+  });
+  const result = await new ExecuteAgentRun(
+    f.runs,
+    executor,
+    new InMemoryWorktreeManager(),
+    clock,
+  ).execute(current);
+  expect(result).toMatchObject({
+    status: "failed",
+    error: { code: "WORKER_CONTEXT_INVALID" },
+  });
+  expect(workerStarted).toBe(false);
+  expect(provider.calls).toBe(1);
+  expect(await provenance.findRetrieval("r")).toEqual(pinned);
+  expect((await f.runs.findRun("r"))?.snapshot().execution).toBeUndefined();
 });

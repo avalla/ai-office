@@ -66,6 +66,7 @@ describe("project database migrations", () => {
       "0026_task_requirement_linkage.sql",
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
+      "0029_agent_run_memory_query_digests.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -104,6 +105,7 @@ describe("project database migrations", () => {
       { version: "0026_task_requirement_linkage.sql" },
       { version: "0027_agent_execution_provenance.sql" },
       { version: "0028_agent_run_memory_provenance.sql" },
+      { version: "0029_agent_run_memory_query_digests.sql" },
     ]);
     database.close();
   });

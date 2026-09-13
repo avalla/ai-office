@@ -289,6 +289,7 @@ export class WorkerAgentExecutor implements AgentExecutor {
     run: AgentRun,
     signal?: AbortSignal,
   ): Promise<AgentExecutionResult> {
-    return (await this.prepare(run)).execute(signal);
+    // Cancellation covers preparation too, including optional memory retrieval.
+    return (await this.prepare(run, signal)).execute(signal);
   }
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import {
   RunContextAssembler,
@@ -21,6 +22,9 @@ import type { RepositoryIdentityRepository } from "@ai-office/application/ports/
 import { deriveProjectMemoryIdentity } from "@ai-office/application/project-memory/project-memory-identity.ts";
 
 const now = new Date("2026-09-13T00:00:00.000Z");
+const sha256 = (text: string) =>
+  createHash("sha256").update(text, "utf8").digest("hex");
+const providerQuerySha256 = sha256("provider query");
 
 function hit(index: number, excerpt = `excerpt ${index}`): ProjectMemoryHit {
   return {
@@ -95,7 +99,7 @@ describe("run context assembly with optional project memory", () => {
         },
         provenance: {
           recordRetrieval,
-          findRetrieval: vi.fn(),
+          findRetrieval: vi.fn(async () => null),
           findLatestRetrieval: vi.fn(),
         },
       },
@@ -110,7 +114,11 @@ describe("run context assembly with optional project memory", () => {
     let received: ProjectMemoryQuery | undefined;
     const { assembler, provider, records } = harness(async (query) => {
       received = query;
-      return { provider: { id: "fake", version: "9" }, hits: [hit(1), hit(2)] };
+      return {
+        provider: { id: "fake", version: "9" },
+        providerQuerySha256,
+        hits: [hit(1), hit(2)],
+      };
     });
     const context = await assembler.assemble(input);
     expect(provider.search).toHaveBeenCalledTimes(1);
@@ -134,7 +142,8 @@ describe("run context assembly with optional project memory", () => {
         outcome: "retrieved",
         memoryProjectId: deriveProjectMemoryIdentity("repo_1").memoryProjectId,
         providerVersion: "9",
-        querySha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+        contextQuerySha256: sha256("Harden the login flow"),
+        providerQuerySha256,
         resultCount: 2,
         injectedCount: 2,
         errorCode: null,
@@ -147,6 +156,7 @@ describe("run context assembly with optional project memory", () => {
   test("an empty result continues without project memory context", async () => {
     const { assembler, records } = harness(async () => ({
       provider: { id: "fake", version: null },
+      providerQuerySha256,
       hits: [],
     }));
     const context = await assembler.assemble(input);
@@ -184,6 +194,7 @@ describe("run context assembly with optional project memory", () => {
   test("a provider returning out-of-contract hits is rejected rather than injected", async () => {
     const { assembler, records } = harness(async () => ({
       provider: { id: "fake", version: null },
+      providerQuerySha256,
       hits: Array.from({ length: projectMemoryLimits.maxResults + 1 }, (_, i) =>
         hit(i),
       ),
@@ -197,7 +208,11 @@ describe("run context assembly with optional project memory", () => {
 
   test("a project without a portable repository identity is skipped, never keyed by a local ID", async () => {
     const { assembler, provider, records } = harness(
-      async () => ({ provider: { id: "fake", version: null }, hits: [] }),
+      async () => ({
+        provider: { id: "fake", version: null },
+        providerQuerySha256,
+        hits: [],
+      }),
       null,
     );
     await assembler.assemble(input);
@@ -229,6 +244,7 @@ describe("run context assembly bounds and failure isolation", () => {
   test("a provenance write failure withholds memory but never fails the run", async () => {
     const { assembler, provider } = harness(async () => ({
       provider: { id: "fake", version: null },
+      providerQuerySha256,
       hits: [hit(1)],
     }));
     const failing = new RunContextAssembler({
@@ -256,6 +272,7 @@ describe("run context assembly bounds and failure isolation", () => {
   test("without enough context bytes no search happens and the skip is recorded", async () => {
     const { assembler, provider, records } = harness(async () => ({
       provider: { id: "fake", version: null },
+      providerQuerySha256,
       hits: [hit(1)],
     }));
     const context = await assembler.assemble({
@@ -275,6 +292,7 @@ describe("run context assembly bounds and failure isolation", () => {
     const escaped = "\u0001".repeat(1_200);
     const { assembler, records } = harness(async () => ({
       provider: { id: "fake", version: null },
+      providerQuerySha256,
       hits: [hit(1, escaped), hit(2, escaped), hit(3, escaped)],
     }));
     const available = 12_000;
@@ -292,6 +310,170 @@ describe("run context assembly bounds and failure isolation", () => {
       false,
       false,
     ]);
+  });
+});
+
+describe("exact query provenance and single preparation", () => {
+  const refactor = {
+    ...input,
+    taskTitle: "Refactor the authentication middleware",
+  };
+
+  test("the context query and the provider's outbound query are digested separately and never stored", async () => {
+    const { assembler, provider, records } = harness(async (query) => {
+      // A provider-specific transformation, as CairnKeep performs.
+      expect(query.text).toBe("Refactor the authentication middleware");
+      return {
+        provider: { id: "fake", version: null },
+        providerQuerySha256: sha256("authentication"),
+        hits: [hit(1)],
+      };
+    });
+    await assembler.assemble(refactor);
+    expect(provider.search).toHaveBeenCalledTimes(1);
+    expect(records).toEqual([
+      expect.objectContaining({
+        outcome: "retrieved",
+        contextQuerySha256: sha256("Refactor the authentication middleware"),
+        providerQuerySha256: sha256("authentication"),
+      }),
+    ]);
+    expect(records[0]!.contextQuerySha256).not.toBe(
+      records[0]!.providerQuerySha256,
+    );
+    const serialized = JSON.stringify(records);
+    expect(serialized).not.toContain("Refactor");
+    expect(serialized).not.toContain("authentication");
+  });
+
+  test.each([
+    ["missing", undefined],
+    ["uppercase", sha256("authentication").toUpperCase()],
+    ["short", "a".repeat(63)],
+    ["prefixed", `sha256:${sha256("authentication")}`],
+    ["non-string", 42],
+  ])(
+    "a %s provider query digest fails closed and injects nothing",
+    async (_label, digest) => {
+      const { assembler, records } = harness(
+        async () =>
+          ({
+            provider: { id: "fake", version: null },
+            providerQuerySha256: digest,
+            hits: [hit(1)],
+          }) as unknown as Awaited<ReturnType<ProjectMemoryProvider["search"]>>,
+      );
+      expect(
+        (await assembler.assemble(refactor)).projectMemory,
+      ).toBeUndefined();
+      expect(records).toEqual([
+        expect.objectContaining({
+          outcome: "failed",
+          errorCode: "PROJECT_MEMORY_INVALID_RESPONSE",
+          contextQuerySha256: sha256("Refactor the authentication middleware"),
+          providerQuerySha256: null,
+          references: [],
+        }),
+      ]);
+    },
+  );
+
+  test("a failed search keeps the context digest and reports no outbound digest", async () => {
+    const { assembler, records } = harness(async () => {
+      throw new ProjectMemoryError("PROJECT_MEMORY_TIMEOUT");
+    });
+    await assembler.assemble(refactor);
+    expect(records[0]).toMatchObject({
+      outcome: "failed",
+      contextQuerySha256: sha256("Refactor the authentication middleware"),
+      providerQuerySha256: null,
+    });
+  });
+
+  test("a run that already has provenance is never prepared again", async () => {
+    const { assembler, provider, records } = harness(async () => ({
+      provider: { id: "fake", version: null },
+      providerQuerySha256,
+      hits: [hit(1)],
+    }));
+    const first = await assembler.assemble(input);
+    expect(first.projectMemory).toBeDefined();
+    const stored = records[0]!;
+    const pinned = new RunContextAssembler({
+      clock: { now: () => now },
+      projectMemory: {
+        provider,
+        identities: {
+          findProjectId: async () => null,
+          findRepositoryId: async () => "repo_1",
+          associate: async () => "created",
+        },
+        provenance: {
+          recordRetrieval: async (record) => {
+            records.push(record);
+          },
+          findRetrieval: async (runId) =>
+            runId === stored.runId ? stored : null,
+          findLatestRetrieval: async () => stored,
+        },
+      },
+    });
+    // Different context inputs would otherwise derive a different retrieval.
+    await expect(
+      pinned.assemble({ ...input, taskTitle: "Something else entirely" }),
+    ).rejects.toMatchObject({
+      name: "WorkerRuntimeError",
+      code: "WORKER_CONTEXT_INVALID",
+    });
+    expect(provider.search).toHaveBeenCalledTimes(1);
+    expect(records).toHaveLength(1);
+    // Other runs are unaffected.
+    expect(
+      (await pinned.assemble({ ...input, runId: "run-2" })).projectMemory,
+    ).toBeDefined();
+  });
+
+  test("losing a provenance race to another preparation refuses instead of dispatching unattributed context", async () => {
+    let stored: ProjectMemoryRetrievalRecord | null = null;
+    const provider: ProjectMemoryProvider = {
+      id: "fake",
+      search: vi.fn(async () => ({
+        provider: { id: "fake", version: null },
+        providerQuerySha256,
+        hits: [hit(1)],
+      })),
+      describe: () => ({
+        provider: "fake",
+        state: "configured",
+        version: null,
+        code: null,
+        message: "",
+      }),
+      probe: async () => provider.describe(),
+    };
+    const assembler = new RunContextAssembler({
+      clock: { now: () => now },
+      projectMemory: {
+        provider,
+        identities: {
+          findProjectId: async () => null,
+          findRepositoryId: async () => "repo_1",
+          associate: async () => "created",
+        },
+        provenance: {
+          // Another preparation commits first while this search is in flight.
+          recordRetrieval: async (record) => {
+            stored = { ...record, contextQuerySha256: sha256("other") };
+            throw new Error("UNIQUE constraint failed");
+          },
+          findRetrieval: async () => stored,
+          findLatestRetrieval: async () => stored,
+        },
+      },
+    });
+    await expect(assembler.assemble(input)).rejects.toMatchObject({
+      code: "WORKER_CONTEXT_INVALID",
+    });
   });
 });
 

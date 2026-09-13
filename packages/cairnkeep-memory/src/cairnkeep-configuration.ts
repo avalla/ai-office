@@ -1,4 +1,4 @@
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { projectMemoryLimits } from "@ai-office/application/ports/project-memory-provider.port.ts";
 
 /**
@@ -10,6 +10,8 @@ export const projectMemoryEnvironment = {
   provider: "AI_OFFICE_PROJECT_MEMORY_PROVIDER",
   cairnKeepCommand: "AI_OFFICE_CAIRNKEEP_COMMAND",
   timeoutMs: "AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS",
+  /** CairnKeep's own store root; normalized here, never forwarded raw. */
+  cairnKeepBaseDirectory: "CAIRN_AGENTFS_BASE_DIR",
 } as const;
 
 export const defaultCairnKeepCommand = "cairn";
@@ -17,7 +19,13 @@ const minimumTimeoutMs = 100;
 
 export type ProjectMemoryConfiguration =
   | { kind: "disabled" }
-  | { kind: "cairnkeep"; command: string; timeoutMs: number }
+  | {
+      kind: "cairnkeep";
+      command: string;
+      timeoutMs: number;
+      /** Absolute, normalized `CAIRN_AGENTFS_BASE_DIR`; null leaves it unset. */
+      baseDirectory: string | null;
+    }
   | { kind: "misconfigured"; provider: string; reason: string };
 
 /**
@@ -32,6 +40,8 @@ export type ProjectMemoryConfiguration =
  *
  * `AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS`: whole-retrieval deadline including
  * process start, integer 100..30000, default 5000.
+ *
+ * `CAIRN_AGENTFS_BASE_DIR`: see {@link resolveCairnKeepBaseDirectory}.
  */
 export function resolveProjectMemoryConfiguration(
   environment: Readonly<Record<string, string | undefined>>,
@@ -88,5 +98,52 @@ export function resolveProjectMemoryConfiguration(
         reason: `${projectMemoryEnvironment.timeoutMs} must be an integer from ${minimumTimeoutMs} to ${projectMemoryLimits.maxTimeoutMs}.`,
       };
   }
-  return { kind: "cairnkeep", command, timeoutMs };
+  const baseDirectory = resolveCairnKeepBaseDirectory(
+    environment[projectMemoryEnvironment.cairnKeepBaseDirectory],
+    environment.HOME,
+  );
+  if (baseDirectory === "invalid")
+    return {
+      kind: "misconfigured",
+      provider,
+      // The configured value is never echoed: it is a machine-local path.
+      reason: `${projectMemoryEnvironment.cairnKeepBaseDirectory} must be an absolute path or ~/path; relative paths are rejected.`,
+    };
+  return { kind: "cairnkeep", command, timeoutMs, baseDirectory };
+}
+
+/**
+ * Normalizes CairnKeep's store root before any child is spawned.
+ *
+ * CairnKeep resolves a relative `CAIRN_AGENTFS_BASE_DIR` against its own cwd,
+ * and every retrieval runs it in a fresh private temporary cwd, so a relative
+ * value would name a different, empty store each time. Therefore:
+ *
+ * - unset: null, CairnKeep keeps its own default;
+ * - absolute: lexically normalized (`.`/`..` segments, repeated and trailing
+ *   separators) without consulting any cwd;
+ * - `~/rest`: expanded against the Runtime host's absolute `HOME`, then
+ *   normalized;
+ * - anything else (empty, relative, `.`, `..`, bare `~`, `~user`, control
+ *   characters, over 4096 characters, or `~/` without an absolute HOME):
+ *   `invalid`.
+ */
+export function resolveCairnKeepBaseDirectory(
+  value: string | undefined,
+  home: string | undefined,
+): string | null | "invalid" {
+  if (value === undefined) return null;
+  const valid = (path: string) =>
+    path.length > 0 && path.length <= 4096 && !/\p{Cc}/u.test(path);
+  if (!valid(value)) return "invalid";
+  let absolute: string;
+  if (value.startsWith("~/")) {
+    if (home === undefined || !valid(home) || !isAbsolute(home))
+      return "invalid";
+    absolute = `${home}/${value.slice(2)}`;
+  } else if (isAbsolute(value)) absolute = value;
+  else return "invalid";
+  // `resolve` of an absolute path is purely lexical and never reads the cwd.
+  const normalized = resolve(absolute);
+  return valid(normalized) ? normalized : "invalid";
 }

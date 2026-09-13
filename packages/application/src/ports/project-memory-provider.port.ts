@@ -44,6 +44,14 @@ export interface ProjectMemoryHit {
 
 export interface ProjectMemorySearch {
   readonly provider: ProjectMemoryProviderDescriptor;
+  /**
+   * Lowercase SHA-256 hex of the exact query string the adapter sent across
+   * the provider boundary, after any provider-specific transformation of
+   * {@link ProjectMemoryQuery.text}. Required: the caller persists it as
+   * provenance and rejects the search when it is missing or malformed. The
+   * query text itself is never returned.
+   */
+  readonly providerQuerySha256: string;
   /** Deterministic provider/adapter order, rank 1 first. */
   readonly hits: readonly ProjectMemoryHit[];
 }
@@ -114,6 +122,11 @@ export const projectMemoryLimits = {
   defaultTimeoutMs: 5_000,
   maxTimeoutMs: 30_000,
 } as const;
+
+/** A lowercase SHA-256 hex digest, the only query provenance format accepted. */
+export function isQuerySha256(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
+}
 
 const errorMessages = {
   PROJECT_MEMORY_UNAVAILABLE:
