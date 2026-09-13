@@ -29,18 +29,34 @@ Install CairnKeep yourself (Node.js 22 or newer), for example
 AI_OFFICE_PROJECT_MEMORY_PROVIDER=cairnkeep ai-office runtime start
 ```
 
-| Variable                              | Values                                                  | Default |
-| ------------------------------------- | ------------------------------------------------------- | ------- |
-| `AI_OFFICE_PROJECT_MEMORY_PROVIDER`   | `none`, `cairnkeep`                                     | `none`  |
-| `AI_OFFICE_CAIRNKEEP_COMMAND`         | executable name on the host `PATH`, or an absolute path | `cairn` |
-| `AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS` | integer 100–30000                                       | `5000`  |
+| Variable                              | Values                                                   | Default                   |
+| ------------------------------------- | -------------------------------------------------------- | ------------------------- |
+| `AI_OFFICE_PROJECT_MEMORY_PROVIDER`   | `none`, `cairnkeep`                                      | `none`                    |
+| `AI_OFFICE_CAIRNKEEP_COMMAND`         | executable name on the host `PATH`, or an absolute path  | `cairn`                   |
+| `AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS` | integer 100–30000                                        | `5000`                    |
+| `CAIRN_AGENTFS_BASE_DIR`              | absolute path, or `~/path` expanded with the host `HOME` | unset (CairnKeep default) |
 
 The variables are read once by the Runtime host process, not by the CLI client.
 Restart the host after changing them. A relative command path, arguments in the
-command, an unknown provider, an invalid timeout, or Windows makes the provider
-`misconfigured`: runs continue without project memory and `status` reports a
+command, an unknown provider, an invalid timeout, an invalid
+`CAIRN_AGENTFS_BASE_DIR`, or Windows makes the provider `misconfigured`: runs
+continue without project memory and `status` reports a
 `project_memory_misconfigured` warning. Nothing is written to
 `.ai-office/project.json`, snapshots, manifests, generated Markdown or SQLite.
+
+`CAIRN_AGENTFS_BASE_DIR` is normalized before CairnKeep starts, because every
+retrieval runs CairnKeep in a fresh private temporary cwd where a relative value
+would name a different, empty store each time:
+
+| Value                                                                                         | Result                                                        |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| unset                                                                                         | not forwarded; CairnKeep uses `~/.cairnkeep`                  |
+| `/absolute/path`                                                                              | forwarded after lexical normalization (`.`, `..`, separators) |
+| `~/some/path`                                                                                 | expanded with the Runtime host's absolute `HOME`, normalized  |
+| `relative/path`, `.`, `../x`, empty, `~`, `~user/x`, control characters, over 4096 characters | `misconfigured`                                               |
+
+The raw host value is never forwarded, never resolved against any cwd, and the
+diagnostic names the variable without echoing the path.
 
 `ai-office service install` does not forward these variables into generated
 service definitions yet. To use project memory with a service-managed host, run
@@ -88,12 +104,16 @@ retrieval:
 
 1. private empty cwd, own process group, allowlisted environment, profile
    `CAIRN_MCP_TOOL_PROFILE=custom` with `CAIRN_MCP_ALLOWED_TOOLS=memory_search`;
-2. `initialize` must report `cairn-memory` with tools;
+2. `initialize` requests MCP `2025-06-18` and must answer with exactly that
+   protocol version, `cairn-memory` and tools. Any other, missing or malformed
+   version is `PROJECT_MEMORY_INCOMPATIBLE` and nothing else is sent: the client
+   does not negotiate revisions it does not implement;
 3. `tools/list` must contain exactly `memory_search`, otherwise the provider is
    `PROJECT_MEMORY_INCOMPATIBLE` and nothing is called;
 4. one `memory_search {scope: <identity>, query: <term>, top_k: 5}`. CairnKeep's
    default search matches one literal substring, so `<term>` is the longest word
-   that is not a function word or generic task verb;
+   that is not a function word or generic task verb. The adapter reports the
+   SHA-256 of exactly this `<term>` with its result;
 5. strict validation, deterministic ordering (score descending, key ascending),
    bounds, then process-group termination and reaping.
 
@@ -145,25 +165,37 @@ Each worker run with an enabled provider gets one append-only
 `agent_run_memory_retrieval` row, plus one `agent_run_memory_reference` row per
 accepted result:
 
-| Field                                                                                | Meaning                                                                                       |
-| ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `run_id`, `project_id`                                                               | the run; ownership is enforced by trigger                                                     |
-| `provider`, `provider_version`                                                       | `cairnkeep`, MCP `serverInfo.version`                                                         |
-| `memory_project_id`, `scope`                                                         | derived identity; scope `project`                                                             |
-| `outcome`, `error_code`                                                              | `retrieved`/`empty`/`failed`/`skipped` and typed code                                         |
-| `query_sha256`                                                                       | digest of the query; the text is not stored                                                   |
-| `result_count`, `injected_count`, `injected_characters`                              | bounds actually applied                                                                       |
-| reference `rank`, `reference_id`, `content_digest`, `scope`, `injected`, `truncated` | which record, which version (`sha256:` of the full value), and whether it entered the context |
+| Field                                                                                | Meaning                                                                                                                                  |
+| ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `run_id`, `project_id`                                                               | the run; ownership is enforced by trigger                                                                                                |
+| `provider`, `provider_version`                                                       | `cairnkeep`, MCP `serverInfo.version`                                                                                                    |
+| `memory_project_id`, `scope`                                                         | derived identity; scope `project`                                                                                                        |
+| `outcome`, `error_code`                                                              | `retrieved`/`empty`/`failed`/`skipped` and typed code                                                                                    |
+| `context_query_sha256`                                                               | SHA-256 of the bounded task-derived query AI Office passed to the provider port                                                          |
+| `provider_query_sha256`                                                              | SHA-256 of the exact query the adapter sent (CairnKeep: the single term); null when skipped, failed, or recorded before migration `0029` |
+| `result_count`, `injected_count`, `injected_characters`                              | bounds actually applied                                                                                                                  |
+| reference `rank`, `reference_id`, `content_digest`, `scope`, `injected`, `truncated` | which record, which version (`sha256:` of the full value), and whether it entered the context                                            |
+
+Both digests are lowercase hex; neither query text is stored. For the task
+"Refactor the authentication middleware", `context_query_sha256` digests that
+title and `provider_query_sha256` digests `authentication`. A provider result
+without a well-formed outbound digest is an invalid response and injects
+nothing.
 
 Provenance is written before injection. If it cannot be written, the run
-continues without project memory. `injected` means included in the context
-assembled for that run. The run's `execution` provenance says whether that
+continues without project memory. A run is prepared at most once: admission
+claims only `queued` runs, recovery never replays an interrupted `preparing`
+run, and preparing a run that already has retrieval provenance fails with
+`WORKER_CONTEXT_INVALID` before the provider is called, so recorded provenance
+always describes the only context that run can dispatch. `injected` means
+included in the context assembled for that run. The run's `execution` provenance says whether that
 context was dispatched. The rows are runtime-local and are not part of
 `.aioffice` snapshots.
 
 ```bash
 ai-office run:show --project <id> --run <run-id>
 # Project memory: retrieved via cairnkeep; 1/1 injected; advisory context, not authority
+#   Query SHA-256: context <64 hex>; provider <64 hex>
 #   1. injected aio-…:decisions/retry-policy sha256:…
 ```
 

@@ -79,7 +79,9 @@ client artifacts, and detaches only the current checkout in SQLite; unrelated
 - immutable portable project revisions plus local head/base metadata.
 - append-only, runtime-local retrieval provenance for optional project memory
   (`agent_run_memory_retrieval`, `agent_run_memory_reference`): references,
-  digests and outcomes, never memory bodies; excluded from portable snapshots.
+  content digests, separate SHA-256 digests of the task-derived and the exact
+  provider-sent query, and outcomes; never memory bodies or query text;
+  excluded from portable snapshots.
 
 The daemon creates, opens, and migrates this database before it opens its Unix
 socket. Project migrations are versioned under `migrations/project/` and tracked

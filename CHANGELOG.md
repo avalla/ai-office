@@ -7,7 +7,10 @@
   `memory_search`. Memory identity derives from the portable `repositoryId`;
   each worker run performs at most one bounded search, gets advisory excerpts
   pinned in its input digest, and records append-only retrieval provenance
-  (migration `0028`). Disabled by default via `AI_OFFICE_PROJECT_MEMORY_PROVIDER`;
+  (migrations `0028` and `0029`: separate digests of the task-derived query and
+  the exact provider-sent query). The adapter accepts only MCP `2025-06-18` and
+  normalizes `CAIRN_AGENTFS_BASE_DIR` to an absolute path before spawn.
+  Disabled by default via `AI_OFFICE_PROJECT_MEMORY_PROVIDER`;
   diagnostics in `status`, `project-memory:status [--probe]` and `run:show`
   (ADR-0018).
 

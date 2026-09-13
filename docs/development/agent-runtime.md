@@ -113,9 +113,13 @@ active pinned stage's objective/checks when present. That data is sent to the
 selected external client; operators must choose task content accordingly.
 When an optional project memory provider is configured, one
 `RunContextAssembler` adds at most one bounded, advisory `projectMemory` block
-from a single task-derived search and records retrieval provenance for the run.
-The block is omitted when nothing was injected, and provider failures never fail
-the run; see [project memory](project-memory.md).
+from a single task-derived search and records retrieval provenance for the run,
+including separate digests of the task-derived query and of the exact query the
+provider adapter sent. The block is omitted when nothing was injected, and
+provider failures never fail the run. Preparation honors the run's AbortSignal,
+including direct `WorkerAgentExecutor.execute`, so cancellation during retrieval
+cancels the run before any worker starts. A run that already has retrieval
+provenance is never prepared again; see [project memory](project-memory.md).
 It receives no repository path, resource tools, role source files, skills or
 `system.md` prompt. Tool declarations in a role do not grant tools to this
 adapter. Filesystem reads/writes, shell tests, commits and connectors are not

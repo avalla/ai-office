@@ -43,7 +43,12 @@ so worktrees and clones of one repository would each get unrelated memory.
    runtime home, host and the runtime-local project ID. The adapter uses it as a
    CairnKeep **named scope**, which CairnKeep stores at
    `${CAIRN_AGENTFS_BASE_DIR:-~/.cairnkeep}/<identity>.db`, instead of the
-   cwd-bound `project` scope.
+   cwd-bound `project` scope. Because each retrieval runs CairnKeep in a fresh
+   private cwd, the Runtime host normalizes `CAIRN_AGENTFS_BASE_DIR` before
+   spawn: unset stays unset, an absolute path is lexically normalized, `~/…`
+   expands against the host's absolute `HOME`, and any relative or malformed
+   value makes the provider `misconfigured`. The raw value is never forwarded
+   and the path is never persisted.
 5. **Integration is through a provider port.** The application layer defines a
    read-only `ProjectMemoryProvider` port and a single `RunContextAssembler`
    that performs at most one bounded search per worker run. MCP, CairnKeep,
@@ -79,9 +84,12 @@ so worktrees and clones of one repository would each get unrelated memory.
 The query is the whitespace-normalized task title (or pinned stage objective),
 bounded to 200 characters at a word boundary. Because CairnKeep's default search
 matches the whole query as one literal substring, the adapter sends the longest
-non-stop-word term. At most 5 results are accepted; each excerpt is at most
-1,200 characters and all excerpts at most 4,000 characters, applied in rank
-order after the adapter sorts by score and key. The serialized block is at most
+non-stop-word term. The application therefore owns the _context query_ and the
+adapter owns the _provider query_, the exact string sent; the adapter reports
+that string's SHA-256 in its search result, and a missing or malformed digest
+makes the search an invalid response. At most 5 results are accepted; each
+excerpt is at most 1,200 characters and all excerpts at most 4,000 characters,
+applied in rank order after the adapter sorts by score and key. The serialized block is at most
 16 KiB and never more than the worker context has left; with less than 1 KiB
 available no search runs. Control and format characters in excerpts are
 replaced. A provider message is at most 512 KiB. The whole retrieval, including
@@ -90,26 +98,47 @@ model call participates.
 
 The child runs in a private empty directory in its own process group with an
 allowlisted environment (`PATH`, `HOME`, `TMPDIR`, `USER`, `LOGNAME`, `LANG`,
-`LC_ALL`, `CAIRN_AGENTFS_BASE_DIR`). Embedding keys, `MCP_HTTP_PORT` and other
-secrets are not forwarded, which also keeps retrieval in CairnKeep's
-deterministic substring mode. stdout must be pure bounded JSON-RPC; stderr is
+`LC_ALL`, plus the normalized absolute `CAIRN_AGENTFS_BASE_DIR` when set).
+Embedding keys, `MCP_HTTP_PORT` and other secrets are not forwarded, which also
+keeps retrieval in CairnKeep's deterministic substring mode. stdout must be pure bounded JSON-RPC; stderr is
 counted and discarded. Timeout, cancellation and completion terminate the whole
 process group with bounded waits before the retrieval returns. At most two
 provider sessions run concurrently.
+
+MCP protocol compatibility is explicit and fail-closed. The bounded client
+implements exactly MCP `2025-06-18`, requests it, and accepts an `initialize`
+answer only with that version. A missing, older, newer or malformed version is
+`PROJECT_MEMORY_INCOMPATIBLE`, and no `notifications/initialized`, `tools/list`
+or `tools/call` follows. Supporting another revision is a deliberate adapter
+change, never implicit negotiation.
 
 ### Provenance
 
 Migration `0028` adds append-only `agent_run_memory_retrieval` (one row per run)
 and `agent_run_memory_reference` (rank, reference key, content digest, scope,
 injected, truncated). They record provider, server version, memory identity,
-outcome (`retrieved`, `empty`, `failed`, `skipped`), typed error code, the
-SHA-256 of the query, counts and time. They never store memory bodies, the
-query, prompts, paths, environment or credentials. CairnKeep search results
-carry no digest, so the adapter records `sha256:` of the complete remembered
-value. Provenance is written before injection; if it cannot be written the run
+outcome (`retrieved`, `empty`, `failed`, `skipped`), typed error code, query
+digests, counts and time. Migration `0029` makes query provenance exact with two
+lowercase SHA-256 digests: `context_query_sha256` of the bounded task-derived
+query AI Office handed to the port (the column `0028` recorded, renamed), and
+`provider_query_sha256` of the exact query the adapter sent, as the adapter
+reported it. A completed search must carry both, a skip carries no provider
+digest, and a failure has none because no validated report exists; rows written
+before `0029` keep it null. They never store memory bodies, either query text,
+prompts, paths, environment or credentials. CairnKeep search results carry no
+digest, so the adapter records `sha256:` of the complete remembered value.
+Provenance is written before injection; if it cannot be written the run
 continues without project memory. The rows are runtime-local evidence like
 `execution_json`, excluded from portable snapshots, and describe influence
 rather than authority.
+
+A run's project memory context is prepared at most once. Admission moves only
+`queued` runs to `preparing`, and recovery reconciles an interrupted
+`preparing` run to a terminal state without replaying it. The assembler also
+refuses, as `WORKER_CONTEXT_INVALID` and before any provider call, to prepare a
+run that already has retrieval provenance, including when another preparation
+records it first. Recorded provenance therefore always describes the only
+context that run can dispatch.
 
 ## Alternatives
 
