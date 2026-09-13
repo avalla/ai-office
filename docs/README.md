@@ -39,6 +39,8 @@ AI Office keeps different kinds of documentation separate so current product tru
   compatibility boundaries, changelog, and release gates.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
 - [Bounded external worker](adr/ADR-0017-bounded-external-worker.md): explicit executor selection, input/output provenance, client limits and resource boundaries.
+- [Project memory](development/project-memory.md): optional read-only CairnKeep provider, repositoryId-bound identity, retrieval limits, provenance and diagnostics.
+- [Optional project memory provider](adr/ADR-0018-optional-non-authoritative-project-memory-provider.md): authority boundary, read-only port, identity derivation and non-adopted CairnKeep systems.
 - [Run recovery](development/run-recovery.md): host-owned cancellation, interrupted execution, approved reconciliation, and ambiguous-effect limitations.
 - [Source runtime isolation and ownership](adr/ADR-0016-source-runtime-isolation-and-run-recovery.md): development defaults, source-bin opt-in, and persisted run ownership evidence.
 - [Pipeline enforcement](development/pipeline-enforcement.md): guidance/enforced modes, operation, authorization, approvals, overrides, and compatibility.

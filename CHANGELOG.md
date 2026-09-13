@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add optional, read-only, non-authoritative project memory through a
+  provider-neutral port and a CairnKeep stdio MCP adapter restricted to
+  `memory_search`. Memory identity derives from the portable `repositoryId`;
+  each worker run performs at most one bounded search, gets advisory excerpts
+  pinned in its input digest, and records append-only retrieval provenance
+  (migration `0028`). Disabled by default via `AI_OFFICE_PROJECT_MEMORY_PROVIDER`;
+  diagnostics in `status`, `project-memory:status [--probe]` and `run:show`
+  (ADR-0018).
+
 - Add the MIT license with copyright held by Andrea Valla and matching package metadata.
 - Establish the initial `0.1.0` product version in the root package metadata.
 - Add local `--version` / `-V` reporting for source-linked and development CLIs.

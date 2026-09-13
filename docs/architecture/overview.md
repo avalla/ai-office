@@ -297,6 +297,34 @@ application/domain code or own orchestration.
 
 Governance stores milestones, requirements, ADRs, reviews, and approval decisions as structured project state. This M5 governance approval model is separate from M6C-lite `ActionApproval`, which binds a controlled filesystem mutation to its authorization and simulation artifact.
 
+## Optional project memory
+
+An optional external provider may supply durable, non-authoritative project
+memory. It is not a fourth database and not authority: CairnKeep remembers; AI
+Office decides.
+
+```text
+WorkerAgentExecutor.prepare
+          |
+   RunContextAssembler ---- global reusable memory (global.sqlite)
+          |
+          +-- ProjectMemoryProvider (application port, read-only)
+          |        |- DisabledProjectMemoryProvider (default)
+          |        `- CairnKeepMemoryProvider (packages/cairnkeep-memory)
+          |                 `- short `cairn memory-server` stdio session,
+          |                    single `memory_search` tool
+          +-- retrieval provenance (project.sqlite, append-only)
+          |
+    bounded advisory WorkerContext.projectMemory -> pinned input digest
+```
+
+The application owns query derivation, the single-search rule, total budgets and
+provenance. The adapter owns MCP, process lifecycle, CairnKeep configuration and
+response validation. Identity derives only from the portable `repositoryId`.
+Workers receive excerpts, never a provider, tool, command, path or credential.
+Absence or failure degrades to no memory. See
+[ADR-0018](../adr/ADR-0018-optional-non-authoritative-project-memory-provider.md).
+
 ## Operational read models
 
 Operational state is computed once, in the application layer, and published as
@@ -365,6 +393,10 @@ The architecture distinguishes three databases by authority and rebuildability:
 | `<runtime-home>/index.sqlite`   | Regenerable code index: files, symbols, edges, chunks, FTS, and later embeddings                                                                                                              | Initial schema only; indexing and daemon integration are future work         |
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
+
+An optional external project memory provider (CairnKeep) is a separate,
+non-authoritative category outside these databases. AI Office stores only its
+per-run retrieval provenance in `project.sqlite`.
 
 `project.sqlite` also stores immutable portable snapshot revisions and one
 local head/base record per backed-up or restored project. A revision identifies
