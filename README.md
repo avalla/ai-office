@@ -566,6 +566,24 @@ Windows services are not supported; `ai-office service` there fails with that
 explanation. See the [service management guide](docs/development/service-management.md)
 for the full contract.
 
+## Optional project memory
+
+AI Office can give workers bounded, advisory excerpts from
+[CairnKeep](https://github.com/cairnkeep/cairnkeep). It is disabled by default,
+read-only, and never authoritative: CairnKeep remembers; AI Office decides.
+Install CairnKeep yourself, then start the Runtime host with the provider
+enabled:
+
+```bash
+AI_OFFICE_PROJECT_MEMORY_PROVIDER=cairnkeep ai-office runtime start
+ai-office project-memory:status --probe
+```
+
+Memory is keyed by the portable `repositoryId`, so every checkout and worktree
+shares it. Each worker run performs at most one bounded search, and `run:show`
+lists which references entered its context. An unavailable provider never
+blocks a run. See [project memory](docs/development/project-memory.md).
+
 ## Project lifecycle
 
 The repository-local binding is deliberately small and safe to commit:
@@ -1024,6 +1042,7 @@ moving or reinstalling the AI Office program does not relocate or replace it.
 | `<runtime-home>/global.sqlite`           | User-level roles, patterns, and lessons                    | Active; migrated lazily by memory commands | **Durable global knowledge.** Preserved by `runtime:purge`; deleting it explicitly removes reusable definitions. |
 | `<runtime-home>/index.sqlite`            | Future derived code intelligence                           | Initial migration only; M8 is future       | Intended to be regenerable; there is no populated index to preserve today.                                       |
 | `<project-root>/.ai-office/project.json` | Portable repository identity                               | Active; created by `install`               | **Not authoritative.** Safe to commit and preserved by local uninstall.                                          |
+| External CairnKeep store (optional)      | Contextual project memory keyed by `repositoryId`          | Disabled by default; read-only             | **Not authoritative.** Owned by CairnKeep; never opened, purged or uninstalled by AI Office.                     |
 | `<chosen-path>/*.aioffice`               | User-owned portable project snapshot                       | Created only by `project:backup`           | **Backup artifact.** Never removed by uninstall or runtime purge; keep it outside the runtime being purged.      |
 
 Project migrations are versioned under `migrations/project/`, applied

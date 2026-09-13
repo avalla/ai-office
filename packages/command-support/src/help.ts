@@ -103,6 +103,9 @@ Commands:
   memory:pattern:adopt --project <id> --pattern <id> --version <n> [--query <text>]
   memory:references --project <id> [--json]
   memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]  # version required for roles and patterns
+  project-memory:status [--project <id>] [--probe] [--json]
+    optional non-authoritative project memory provider; read-only diagnostics
+    without --probe no provider process is started
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>
   resource:disable --project <id> --resource <id>
@@ -118,4 +121,9 @@ Commands:
   action:show --project <id> --action <id>
 
 Environment (linkable ai-office entry point):
-  AI_OFFICE_HOME  runtime data home; defaults to ~/.ai-office`;
+  AI_OFFICE_HOME  runtime data home; defaults to ~/.ai-office
+
+Environment (Runtime host; optional project memory, disabled by default):
+  AI_OFFICE_PROJECT_MEMORY_PROVIDER    none (default) | cairnkeep
+  AI_OFFICE_CAIRNKEEP_COMMAND          executable name or absolute path; defaults to cairn
+  AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS  100..30000; defaults to 5000`;

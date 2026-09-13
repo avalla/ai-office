@@ -7,6 +7,7 @@ import {
 } from "@ai-office/agent-runtime/executor.ts";
 import { ClaudeWorkerRuntime } from "@ai-office/agent-runtime/claude-worker-runtime.ts";
 import { WorkerAgentExecutor } from "@ai-office/application/commands/worker-agent-executor.ts";
+import { RunContextAssembler } from "@ai-office/application/context/run-context-assembler.ts";
 import { InMemoryWorktreeManager } from "@ai-office/agent-runtime/worktree.ts";
 import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate-action-policy.ts";
 import { InvokeControlledConnectorAction } from "@ai-office/application/capability/invoke-controlled-connector-action.ts";
@@ -212,7 +213,17 @@ export async function handleRunCommand(
             tasks,
             context.pipelines,
             clock,
-            context.memory,
+            new RunContextAssembler({
+              clock,
+              ...(context.memory === undefined
+                ? {}
+                : { globalMemory: context.memory }),
+              projectMemory: {
+                provider: context.projectMemory,
+                identities: context.repositoryIdentities,
+                provenance: context.projectMemoryProvenance,
+              },
+            }),
           )
         : parsed.flags.has("simulate")
           ? new SimulatedAgentExecutor()
@@ -319,6 +330,22 @@ export async function handleRunCommand(
     io.stdout(
       `Executor: ${snapshot.execution === undefined ? "not recorded" : `${snapshot.execution.kind} (${snapshot.execution.adapterId} ${snapshot.execution.adapterVersion})`}`,
     );
+    const retrieval = await context.projectMemoryProvenance.findRetrieval(
+      snapshot.id,
+    );
+    if (retrieval !== null) {
+      io.stdout(
+        `Project memory: ${retrieval.outcome}${retrieval.errorCode === null ? "" : ` (${retrieval.errorCode})`} via ${retrieval.provider}; ${retrieval.injectedCount}/${retrieval.resultCount} injected; advisory context, not authority`,
+      );
+      if (retrieval.contextQuerySha256 !== null)
+        io.stdout(
+          `  Query SHA-256: context ${retrieval.contextQuerySha256}; provider ${retrieval.providerQuerySha256 ?? "not reported"}`,
+        );
+      for (const reference of retrieval.references)
+        io.stdout(
+          `  ${reference.rank}. ${reference.injected ? "injected" : "not injected"}${reference.truncated ? " (truncated)" : ""} ${reference.scope}:${reference.referenceId}${reference.contentDigest === null ? "" : ` ${reference.contentDigest}`}`,
+        );
+    }
     if (snapshot.result !== undefined)
       io.stdout(`Result: ${canonicalStringify(snapshot.result)}`);
     if (snapshot.error !== undefined)

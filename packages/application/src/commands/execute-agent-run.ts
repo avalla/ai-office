@@ -84,7 +84,7 @@ export class ExecuteAgentRun {
           run.transition("preparing", this.clock.now());
           await this.persist(run);
         }
-        const prepared = await this.executor.prepare?.(run);
+        const prepared = await this.executor.prepare?.(run, signal);
         if (prepared?.usesWorktree !== false)
           worktree = await this.worktrees.prepare(run.snapshot().id);
         run.transition("running", this.clock.now(), {

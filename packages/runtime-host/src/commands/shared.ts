@@ -26,6 +26,8 @@ import type { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repo
 import type { OperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project-archive-adapter.port.ts";
 import type { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
+import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
+import type { ProjectMemoryProvenanceRepository } from "@ai-office/application/ports/project-memory-provenance-repository.port.ts";
 
 export interface CommandContext {
   onRunChanged?: () => void;
@@ -58,6 +60,9 @@ export interface CommandContext {
   defaultOfficeManifest: OfficeManifest;
   memory?: GlobalMemoryRepository;
   memoryReferences: MemoryReferenceRepository;
+  /** Optional, non-authoritative project memory; disabled unless configured. */
+  projectMemory: ProjectMemoryProvider;
+  projectMemoryProvenance: ProjectMemoryProvenanceRepository;
 }
 
 export * from "@ai-office/command-support/arguments.ts";

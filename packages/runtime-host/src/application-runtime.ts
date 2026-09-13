@@ -10,6 +10,7 @@ import type { RuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import { randomUUID } from "node:crypto";
 import { RunExecutionControl } from "@ai-office/application/runtime/run-execution-control.ts";
 import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
+import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
 import {
   CliPromptRequiredError,
   executeRuntimeCommand,
@@ -59,6 +60,7 @@ export class ApplicationRuntime implements AiOfficeRuntime {
     private readonly defaultOfficeManifest?: OfficeManifest,
     private readonly agentExecutor?: AgentExecutor,
     private readonly onRunChanged?: () => void,
+    private readonly projectMemory?: ProjectMemoryProvider,
   ) {}
 
   private async executeCommand(
@@ -105,6 +107,9 @@ export class ApplicationRuntime implements AiOfficeRuntime {
         ...(this.defaultOfficeManifest === undefined
           ? {}
           : { defaultOfficeManifest: this.defaultOfficeManifest }),
+        ...(this.projectMemory === undefined
+          ? {}
+          : { projectMemory: this.projectMemory }),
         io,
         propagatePromptRequired: true,
       });

@@ -33,7 +33,8 @@
       "@ai-office/command-support/*": ["packages/command-support/src/*"],
       "@ai-office/project-binding/*": ["packages/project-binding/src/*"],
       "@ai-office/runtime-host/*": ["packages/runtime-host/src/*"],
-      "@ai-office/service-management/*": ["packages/service-management/src/*"]
+      "@ai-office/service-management/*": ["packages/service-management/src/*"],
+      "@ai-office/cairnkeep-memory/*": ["packages/cairnkeep-memory/src/*"]
     }
   },
   "include": [

@@ -84,6 +84,23 @@ export function printProjectLifecycleStatus(
         `  current stages: ${result.pipeline.currentStages.join(", ")}`,
       );
   }
+  if (
+    result.projectMemory !== undefined &&
+    result.projectMemory.state !== "disabled"
+  ) {
+    context.io.stdout("");
+    context.io.stdout("Project memory (advisory, non-authoritative)");
+    context.io.stdout(
+      `  provider: ${result.projectMemory.provider} (${result.projectMemory.state})`,
+    );
+    if (result.projectMemory.memoryProjectId !== null)
+      context.io.stdout(`  identity: ${result.projectMemory.memoryProjectId}`);
+    const last = result.projectMemory.lastRetrieval;
+    if (last !== null)
+      context.io.stdout(
+        `  last retrieval: ${last.outcome}${last.errorCode === null ? "" : ` (${last.errorCode})`} at ${last.createdAt}`,
+      );
+  }
   if (result.issues.length > 0) {
     context.io.stdout("");
     context.io.stdout("Issues");

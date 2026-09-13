@@ -77,6 +77,11 @@ client artifacts, and detaches only the current checkout in SQLite; unrelated
 - resources, capability grants, action requests, simulations, approvals, and execution records;
 - append-only audit events.
 - immutable portable project revisions plus local head/base metadata.
+- append-only, runtime-local retrieval provenance for optional project memory
+  (`agent_run_memory_retrieval`, `agent_run_memory_reference`): references,
+  content digests, separate SHA-256 digests of the task-derived and the exact
+  provider-sent query, and outcomes; never memory bodies or query text;
+  excluded from portable snapshots.
 
 The daemon creates, opens, and migrates this database before it opens its Unix
 socket. Project migrations are versioned under `migrations/project/` and tracked
@@ -116,6 +121,16 @@ memory-write authorization policy, poisoning protection, and quotas are future
 hardening work rather than guarantees of the current storage boundary.
 
 Provider pricing currently remains in `project.sqlite`. Moving any catalog data to global storage requires an explicit future design and compatibility plan.
+
+## External project memory — optional, not authoritative
+
+An optional provider such as CairnKeep keeps durable contextual memory outside
+AI Office. AI Office does not open, migrate, back up, purge or uninstall that
+store, and it is never read back as project state. The memory identity derives
+from the portable `repositoryId`, not a path, and is used as a CairnKeep named
+scope. `global.sqlite` keeps its M7 meaning. `runtime:purge` and repository
+uninstall do not touch provider stores; purge removes the retrieval provenance
+with `project.sqlite`. See [project memory](../development/project-memory.md).
 
 ## `index.sqlite` — initial schema, not connected
 

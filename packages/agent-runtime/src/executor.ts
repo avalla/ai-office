@@ -30,7 +30,11 @@ export interface AgentExecutionResult {
   workerOutput?: unknown;
 }
 export interface AgentExecutor {
-  prepare?(run: AgentRun): Promise<PreparedAgentExecution | undefined>;
+  /** `signal` cancels preparation work such as optional context retrieval. */
+  prepare?(
+    run: AgentRun,
+    signal?: AbortSignal,
+  ): Promise<PreparedAgentExecution | undefined>;
   execute(run: AgentRun, signal?: AbortSignal): Promise<AgentExecutionResult>;
 }
 
@@ -79,10 +83,13 @@ export class UnconfiguredAgentExecutor implements AgentExecutor {
 export class AuthoritativeWorkerAgentExecutor implements AgentExecutor {
   constructor(private readonly delegate: AgentExecutor) {}
 
-  async prepare(run: AgentRun): Promise<PreparedAgentExecution> {
+  async prepare(
+    run: AgentRun,
+    signal?: AbortSignal,
+  ): Promise<PreparedAgentExecution> {
     if (this.delegate.prepare === undefined)
       throw new AgentExecutorNotConfiguredError();
-    const prepared = await this.delegate.prepare(run);
+    const prepared = await this.delegate.prepare(run, signal);
     if (
       prepared === undefined ||
       prepared.accept === undefined ||
@@ -143,10 +150,11 @@ export class ControlledActionAgentExecutor implements AgentExecutor {
 
   async prepare(
     run: AgentRun,
+    signal?: AbortSignal,
   ): Promise<PreparedAgentExecution | undefined> {
     if (run.snapshot().actionIntent === undefined) {
       if (this.fallback.prepare !== undefined)
-        return this.fallback.prepare(run);
+        return this.fallback.prepare(run, signal);
       throw new AgentExecutorNotConfiguredError();
     }
     return {

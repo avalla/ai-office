@@ -577,6 +577,67 @@ An execution whose terminal result cannot be persisted reports `interrupted`
 and retains its lock for inspection. See [run recovery](run-recovery.md) and the
 [implementation plan](../implementation/project-consolidation-and-worker-plan.md).
 
+## M7.11 — Durable project memory provider
+
+Status: implemented (initial read-only slice).
+
+Focus: give workers durable, repository-scoped context from an optional
+external memory provider without creating a second authority. CairnKeep
+remembers; AI Office decides.
+
+Delivered:
+
+- a provider-neutral, read-only `ProjectMemoryProvider` application port and a
+  disabled default that is never invoked;
+- an optional CairnKeep adapter over its stdio MCP server, isolated in
+  `packages/cairnkeep-memory`, restricted server-side to `memory_search` and
+  refused unless exactly that tool is exposed;
+- a memory identity derived only from the portable `repositoryId`
+  (`aio-<digest>`, used as a CairnKeep named scope), shared by every checkout
+  and worktree;
+- one `RunContextAssembler` owning additional worker context: the existing
+  global-memory lookup plus at most one bounded, task-derived project memory
+  search per worker run;
+- explicit query, result, excerpt, total, message, deadline and concurrency
+  limits, deterministic ordering, and fail-closed response validation;
+- advisory-labelled context that is omitted unless something was injected and
+  pinned in the existing worker input digest;
+- append-only retrieval provenance per AgentRun (migration `0028`) with
+  references and digests but no memory bodies, queries or paths;
+- graceful fallback for disabled, unavailable, timed-out, incompatible,
+  malformed, oversized and empty providers;
+- environment-only host configuration, an additive `projectMemory` status block,
+  `project-memory:status [--probe]`, and provenance in `run:show`.
+
+Not included: memory writes, semantic retrieval, checkout-local CairnKeep
+`project` scopes, dashboard rendering, service-definition configuration, remote
+CairnKeep HTTP, and any CairnKeep capability, playbook, artifact, work-evidence,
+evaluation, trajectory or skill system. `global.sqlite` is unchanged. See
+[project memory](project-memory.md) and
+[ADR-0018](../adr/ADR-0018-optional-non-authoritative-project-memory-provider.md).
+
+### Follow-up — Reviewed project memory promotion
+
+Status: future.
+
+Durable memory promotion must be explicit and review-gated:
+
+```text
+AgentRun outcome
+       ↓
+memory candidate (AI Office state, provenance-linked to the run)
+       ↓
+AI Office review / approval
+       ↓
+CairnKeep reviewed-memory proposal/apply
+```
+
+This needs its own write port, candidate model, approval semantics distinct from
+governance reviews, pipeline approvals and controlled-action approvals, and
+poisoning, retention and conflict policy. The read-only retrieval port is not
+widened for it. Later M8.5 context assembly may add semantic retrieval,
+dependency-aware selection and dashboard provenance on the same assembler seam.
+
 ### Separate follow-up — Project retention and removal
 
 Status: assessment pending; no removal operation implemented.
@@ -603,8 +664,8 @@ Status: future.
 
 Status: future.
 
-- task-aware context builder;
-- memory and code retrieval;
+- task-aware context builder, extending the M7.11 `RunContextAssembler` seam;
+- memory and code retrieval, including semantic project memory retrieval;
 - dependency-aware context;
 - token-budgeted context packing;
 - provenance for assembled context.
