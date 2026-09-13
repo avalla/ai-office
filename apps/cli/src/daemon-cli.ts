@@ -153,6 +153,7 @@ const projectScopedCommands = new Set([
   "governance:export",
   "memory:pattern:adopt",
   "memory:references",
+  "project-memory:status",
   "resource:create",
   "resource:list",
   "resource:disable",

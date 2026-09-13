@@ -100,6 +100,12 @@ import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/reposi
 import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
 import { SqliteMemoryReferenceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-memory-reference.repository.ts";
+import { SqliteProjectMemoryProvenanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-memory-provenance.repository.ts";
+import {
+  DisabledProjectMemoryProvider,
+  type ProjectMemoryProvider,
+} from "@ai-office/application/ports/project-memory-provider.port.ts";
+import { handleProjectMemoryCommand } from "./commands/project-memory.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import { LlmProviderError } from "@ai-office/llm-gateway/provider.ts";
 import {
@@ -245,6 +251,7 @@ const commands = [
   "memory:pattern:adopt",
   "memory:references",
   "memory:deprecate",
+  "project-memory:status",
   "resource:create",
   "resource:list",
   "resource:disable",
@@ -282,6 +289,8 @@ export interface RuntimeCommandOptions {
   projectBindings?: ProjectBindingAdapter;
   defaultOfficeManifest?: OfficeManifest;
   projectArchives?: ProjectArchiveAdapter;
+  /** Composition-supplied provider; absent means disabled. */
+  projectMemory?: ProjectMemoryProvider;
 }
 
 function defaultOfficeManifest(): OfficeManifest {
@@ -319,6 +328,7 @@ const handlers = [
   handleCostCommand,
   handleGovernanceCommand,
   handleMemoryCommand,
+  handleProjectMemoryCommand,
   handleCapabilityCommand,
 ] as const;
 
@@ -520,6 +530,11 @@ export async function executeRuntimeCommand(
       defaultOfficeManifest:
         options.defaultOfficeManifest ?? defaultOfficeManifest(),
       memoryReferences: new SqliteMemoryReferenceRepository(database),
+      projectMemory:
+        options.projectMemory ?? new DisabledProjectMemoryProvider(),
+      projectMemoryProvenance: new SqliteProjectMemoryProvenanceRepository(
+        database,
+      ),
       ...(globalDatabase === null
         ? {}
         : { memory: new SqliteGlobalMemoryRepository(globalDatabase) }),

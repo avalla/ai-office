@@ -15,6 +15,7 @@ export default defineConfig({
       ),
       "@ai-office/agent-runtime": sourceDirectory("agent-runtime"),
       "@ai-office/application": sourceDirectory("application"),
+      "@ai-office/cairnkeep-memory": sourceDirectory("cairnkeep-memory"),
       "@ai-office/connector-sdk": sourceDirectory("connector-sdk"),
       "@ai-office/domain": sourceDirectory("domain"),
       "@ai-office/filesystem-connector": sourceDirectory(
@@ -32,5 +33,7 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts"],
+    // Tests never inherit a developer's optional project memory provider.
+    env: { AI_OFFICE_PROJECT_MEMORY_PROVIDER: "none" },
   },
 });

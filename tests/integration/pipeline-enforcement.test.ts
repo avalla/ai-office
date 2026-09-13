@@ -403,6 +403,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0025_audit_event_aggregate_index.sql",
       "0026_task_requirement_linkage.sql",
       "0027_agent_execution_provenance.sql",
+      "0028_agent_run_memory_provenance.sql",
     ]);
     expect(
       database

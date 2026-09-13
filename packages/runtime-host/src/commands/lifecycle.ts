@@ -1,4 +1,5 @@
 import { ApplyOfficeManifest } from "@ai-office/application/commands/apply-office-manifest.ts";
+import { DescribeProjectMemory } from "@ai-office/application/project-memory/describe-project-memory.ts";
 import {
   ImportProject,
   ProjectSourceAssociationError,
@@ -72,6 +73,11 @@ function service(context: CommandContext): ManageProjectLifecycle {
     clock: context.clock,
     runtimeHome: context.runtimeHome,
     defaultManifest: context.defaultOfficeManifest,
+    projectMemory: new DescribeProjectMemory(
+      context.projectMemory,
+      context.repositoryIdentities,
+      context.projectMemoryProvenance,
+    ),
   });
 }
 

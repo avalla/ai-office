@@ -1,5 +1,20 @@
 import type { MemorySearchResult } from "./global-memory-repository.port.ts";
 
+export interface WorkerProjectMemoryResult {
+  rank: number;
+  referenceId: string;
+  scope: string;
+  title: string | null;
+  excerpt: string;
+  truncated: boolean;
+}
+
+export interface WorkerProjectMemoryContext {
+  provider: string;
+  notice: string;
+  results: readonly WorkerProjectMemoryResult[];
+}
+
 /** A worker receives explicit data only. This port grants no resource tools. */
 export interface WorkerContext {
   schemaVersion: 1;
@@ -35,6 +50,12 @@ export interface WorkerContext {
   memory: {
     results: readonly MemorySearchResult[];
   };
+  /**
+   * Bounded, advisory excerpts from an optional external project memory
+   * provider. Present only when results were injected. Locators and context,
+   * never authority.
+   */
+  projectMemory?: WorkerProjectMemoryContext;
 }
 
 export interface WorkerLimits {

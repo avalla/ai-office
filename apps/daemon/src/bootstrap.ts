@@ -19,6 +19,8 @@ import { QueryApi } from "./query-api.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
+import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
+import { createProjectMemoryProvider } from "@ai-office/cairnkeep-memory/create-project-memory-provider.ts";
 import {
   ensureRuntimeHome,
   resolveRuntimePaths,
@@ -39,6 +41,11 @@ export interface BootstrapOptions {
   agentClients?: AgentClientCatalog;
   projectBindings?: ProjectBindingAdapter;
   defaultOfficeManifest?: OfficeManifest;
+  /**
+   * Optional project memory provider. When omitted, the host reads its own
+   * environment once (`AI_OFFICE_PROJECT_MEMORY_PROVIDER`, disabled by default).
+   */
+  projectMemory?: ProjectMemoryProvider;
 }
 
 export async function bootstrap(
@@ -98,6 +105,7 @@ export async function bootstrap(
     options.defaultOfficeManifest,
     options.agentExecutor,
     () => queryEvents.publish(["run.updated", "task.updated"]),
+    options.projectMemory ?? createProjectMemoryProvider(process.env),
   );
 
   return new PersistentRuntimeHost({

@@ -65,6 +65,7 @@ describe("project database migrations", () => {
       "0025_audit_event_aggregate_index.sql",
       "0026_task_requirement_linkage.sql",
       "0027_agent_execution_provenance.sql",
+      "0028_agent_run_memory_provenance.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -102,6 +103,7 @@ describe("project database migrations", () => {
       { version: "0025_audit_event_aggregate_index.sql" },
       { version: "0026_task_requirement_linkage.sql" },
       { version: "0027_agent_execution_provenance.sql" },
+      { version: "0028_agent_run_memory_provenance.sql" },
     ]);
     database.close();
   });
