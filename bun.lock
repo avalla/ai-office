@@ -35,6 +35,9 @@
     "packages/application": {
       "name": "@ai-office/application",
     },
+    "packages/cairnkeep-memory": {
+      "name": "@ai-office/cairnkeep-memory",
+    },
     "packages/command-support": {
       "name": "@ai-office/command-support",
     },
@@ -80,6 +83,8 @@
     "@ai-office/agent-runtime": ["@ai-office/agent-runtime@workspace:packages/agent-runtime"],
 
     "@ai-office/application": ["@ai-office/application@workspace:packages/application"],
+
+    "@ai-office/cairnkeep-memory": ["@ai-office/cairnkeep-memory@workspace:packages/cairnkeep-memory"],
 
     "@ai-office/cli": ["@ai-office/cli@workspace:apps/cli"],
 
