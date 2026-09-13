@@ -8,6 +8,7 @@ import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 
 const roots: string[] = [];
 
@@ -64,8 +65,9 @@ describe("stable user runtime home", () => {
     writeFileSync(join(repository, "package.json"), '{"name":"stable"}\n');
     const clients = new DefaultAgentClientCatalog({ pathValue: binRoot });
     const paths = resolveRuntimePaths({ mode: "user", runtimeHome });
-    const socketRoot = temporaryRoot("ao-stable-socket-");
-    const socketPath = join(socketRoot, "daemon.sock");
+    const socket = createTestUnixSocket();
+    roots.push(socket.root);
+    const socketPath = socket.socketPath;
 
     const firstDaemon = await bootstrap({
       runtimePaths: paths,

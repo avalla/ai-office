@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { rmSync } from "node:fs";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import {
   daemonProtocolLimits,
@@ -12,6 +10,7 @@ import {
 import type { DaemonCommandHandler } from "../../apps/daemon/src/local-command-handler.ts";
 import { OfficeDaemon } from "../../apps/daemon/src/office-daemon.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 
 const roots: string[] = [];
 const events = {
@@ -53,9 +52,9 @@ const post = (socketPath: string, body: string) =>
 
 describe("daemon hardening", () => {
   test("long ticks survive transport idle and command deadlines while health stays responsive", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ao-long-tick-"));
-    roots.push(root);
-    const socketPath = join(root, "daemon.sock");
+    const socket = createTestUnixSocket();
+    roots.push(socket.root);
+    const socketPath = socket.socketPath;
     let started!: () => void;
     const ready = new Promise<void>((resolve) => {
       started = resolve;
@@ -94,9 +93,9 @@ describe("daemon hardening", () => {
   }, 20_000);
 
   test("does not hold the global queue during run:tick and returns typed errors", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ai-office-daemon-hardening-"));
-    roots.push(root);
-    const socketPath = join(root, "daemon.sock");
+    const socket = createTestUnixSocket();
+    roots.push(socket.root);
+    const socketPath = socket.socketPath;
     let releaseTick!: () => void;
     const tickGate = new Promise<void>((resolve) => {
       releaseTick = resolve;
@@ -176,9 +175,9 @@ describe("daemon hardening", () => {
   });
 
   test("returns a typed command timeout", async () => {
-    const root = mkdtempSync(join(tmpdir(), "ai-office-daemon-timeout-"));
-    roots.push(root);
-    const socketPath = join(root, "daemon.sock");
+    const socket = createTestUnixSocket();
+    roots.push(socket.root);
+    const socketPath = socket.socketPath;
     const handler: DaemonCommandHandler = {
       execute: async () => new Promise<never>(() => undefined),
     };

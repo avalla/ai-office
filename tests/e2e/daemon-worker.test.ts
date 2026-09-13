@@ -206,7 +206,7 @@ console.log(JSON.stringify({type:'result', subtype:'success', is_error:false,
     expect(injectedCalls).toBe(0);
     const get = async <T>(path: string): Promise<T> => {
       const response = await fetch(`http://localhost${path}`, {
-        unix: join(r.root, "daemon.sock"),
+        unix: r.socketPath,
       });
       expect(response.status).toBe(200);
       return (await response.json()) as T;

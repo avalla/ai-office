@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runDaemonCli, runRuntimeCli } from "../../apps/cli/src/daemon-cli.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import {
   DaemonClient,
@@ -168,7 +169,9 @@ describe("CLI to daemon end-to-end", () => {
         devDependencies: { vitest: "latest" },
       }),
     );
-    const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({
       projectRoot,
       socketPath,
@@ -229,7 +232,9 @@ describe("CLI to daemon end-to-end", () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-daemon-task-"));
     temporaryDirectories.push(projectRoot);
     writeFileSync(join(projectRoot, "README.md"), "# Board");
-    const socketPath = join(projectRoot, ".ai-office", "daemon.sock");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({ projectRoot, socketPath });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
@@ -130,7 +131,9 @@ describe("daemon enforced pipeline lifecycle", () => {
   test("blocks skipped gates and self-review before authorizing merge", async () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-daemon-pipeline-"));
     roots.push(root);
-    const socketPath = join(root, ".ai-office", "daemon.sock");
+    const socket = createTestUnixSocket();
+    roots.push(socket.root);
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({ projectRoot: root, socketPath });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);

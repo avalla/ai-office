@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runRuntimeCli } from "../../apps/cli/src/daemon-cli.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
@@ -75,7 +76,9 @@ describe("caller-local filesystem paths across the Runtime boundary", () => {
     // would scan A.
     const hostRoot = repository("ai-office-host-a-", "hostrepo");
     const callerRoot = repository("ai-office-caller-b-", "callerrepo");
-    const socketPath = join(hostRoot, "daemon.sock");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const socketPath = socket.socketPath;
     const previousWorkingDirectory = process.cwd();
     const daemon = await bootstrap({ projectRoot: hostRoot, socketPath });
     const controller = new AbortController();
@@ -145,7 +148,9 @@ describe("caller-local filesystem paths across the Runtime boundary", () => {
         "  timeout_seconds: 900",
       ].join("\n"),
     );
-    const socketPath = join(hostRoot, "daemon.sock");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const socketPath = socket.socketPath;
     const previousWorkingDirectory = process.cwd();
     const daemon = await bootstrap({ projectRoot: hostRoot, socketPath });
     const controller = new AbortController();
@@ -257,7 +262,9 @@ describe("caller-local filesystem paths across the Runtime boundary", () => {
     symlinkSync(join(hostRoot, "outside.json"), join(root, "escape.json"));
     symlinkSync(join(root, "office.json"), join(root, "inside-link.json"));
     writeFileSync(join(root, "oversize.json"), " ".repeat(256 * 1024 + 1));
-    const socketPath = join(hostRoot, "daemon.sock");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({ projectRoot: hostRoot, socketPath });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);
@@ -395,7 +402,9 @@ describe("caller-local filesystem paths across the Runtime boundary", () => {
 
   test("the Runtime refuses a caller-local path it would have to guess", async () => {
     const hostRoot = repository("ai-office-host-a-", "hostrepo");
-    const socketPath = join(hostRoot, "daemon.sock");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({ projectRoot: hostRoot, socketPath });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);

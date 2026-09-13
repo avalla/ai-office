@@ -7,6 +7,7 @@ import {
   IpcRuntimeClient,
 } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import { DaemonAlreadyRunningError } from "../../apps/daemon/src/office-daemon.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 
@@ -34,7 +35,9 @@ describe("local daemon", () => {
   test("serves health and commands, audits safe metadata, and removes its socket", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-daemon-"));
     temporaryDirectories.push(projectRoot);
-    const socketPath = join(projectRoot, "daemon.sock");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const socketPath = socket.socketPath;
     const daemon = await bootstrap({ projectRoot, socketPath });
     const controller = new AbortController();
     const running = daemon.start(controller.signal);
@@ -114,7 +117,9 @@ describe("local daemon", () => {
   test("replaces a stale socket but refuses a second active daemon", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-daemon-stale-"));
     temporaryDirectories.push(projectRoot);
-    const socketPath = join(projectRoot, "daemon.sock");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const socketPath = socket.socketPath;
     writeFileSync(socketPath, "stale");
 
     const first = await bootstrap({ projectRoot, socketPath });
