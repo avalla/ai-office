@@ -509,12 +509,21 @@ agents:
       supported: true,
       gatewayExecution: false,
       missingCredentials: [],
+      credentials: [],
     },
     {
       providerId: "openai",
       supported: true,
       gatewayExecution: true,
       missingCredentials: [],
+      credentials: [
+        {
+          name: "OPENAI_API_KEY",
+          state: "present",
+          origin: "environment",
+          issue: null,
+        },
+      ],
     },
   ]);
 

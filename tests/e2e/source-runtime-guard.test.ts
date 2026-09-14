@@ -117,6 +117,7 @@ test("all source help forms stay local before runtime paths, SQLite, or IPC", as
       resolveRuntimePaths: forbidden,
       legacyCheckoutDatabasePath: forbidden,
       withRuntimePathOverrides: forbidden,
+      ensureRuntimeHome: forbidden,
     }));
     mock.module("bun:sqlite", () => ({ Database: class Database { constructor() { forbidden(); } } }));
     globalThis.fetch = forbidden;

@@ -24,13 +24,17 @@ import { createProjectMemoryProvider } from "@ai-office/cairnkeep-memory/create-
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import {
-  EnvironmentModelProviderCatalog,
+  CredentialModelProviderCatalog,
   loadModelRoutingState,
 } from "@ai-office/llm-gateway/model-routing-configuration.ts";
 import {
-  EnvironmentGatewayModelProviders,
+  CredentialGatewayModelProviders,
   type GatewayModelProviders,
 } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
+import {
+  loadProviderCredentials,
+  type ProviderCredentials,
+} from "@ai-office/llm-gateway/provider-credentials.ts";
 import {
   ensureRuntimeHome,
   resolveRuntimePaths,
@@ -64,9 +68,13 @@ export interface BootstrapOptions {
   modelRouting?: ModelRoutingState;
   modelProviders?: ModelProviderCatalog;
   /**
-   * Optional gateway provider access. When omitted, gateway-executed runs read
-   * provider credentials from this host's environment; nothing persists them.
+   * Optional provider credentials. When omitted, the host loads them once:
+   * a managed service (`AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home`)
+   * only from `<AI_OFFICE_HOME>/credentials/`, a foreground host from its own
+   * environment and then that directory. Nothing persists them.
    */
+  providerCredentials?: ProviderCredentials;
+  /** Optional gateway provider access; defaults to the loaded credentials. */
   gatewayProviders?: GatewayModelProviders;
 }
 
@@ -90,6 +98,12 @@ export async function bootstrap(
     },
   );
   ensureRuntimeHome(runtimePaths);
+  // Read once; a credential change takes effect on Runtime restart.
+  const credentials =
+    options.providerCredentials ??
+    loadProviderCredentials(process.env, {
+      runtimeHome: runtimePaths.runtimeHome,
+    });
   const migrationDirectory =
     options.migrationDirectory ??
     join(sourceDirectory, "..", "..", "..", "migrations", "project");
@@ -136,10 +150,12 @@ export async function bootstrap(
         }),
       providers:
         options.modelProviders ??
-        new EnvironmentModelProviderCatalog(process.env),
+        new CredentialModelProviderCatalog(credentials),
       gateway:
         options.gatewayProviders ??
-        new EnvironmentGatewayModelProviders(process.env),
+        new CredentialGatewayModelProviders(credentials, {
+          debug: process.env.AI_OFFICE_DEBUG_LLM === "1",
+        }),
     },
   );
 

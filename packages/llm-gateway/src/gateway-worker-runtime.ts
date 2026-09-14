@@ -22,11 +22,19 @@ import { MeteredLlmGateway } from "./metered-gateway.ts";
 import {
   defaultModelProviderDescriptors,
   ModelProviderConfigurationError,
-  nonEmpty,
+  parseCanonicalModelRef,
   type ModelProviderDescriptor,
   type ModelProviderEnvironment,
 } from "./model-ref.ts";
-import type { ResolvedModelProvider } from "./model-provider-registry.ts";
+import type {
+  ModelProviderRegistry,
+  ResolvedModelProvider,
+} from "./model-provider-registry.ts";
+import {
+  environmentProviderCredentials,
+  unusableProviderCredentials,
+  type ProviderCredentials,
+} from "./provider-credentials.ts";
 import {
   ExactModelProvider,
   LlmProviderError,
@@ -63,34 +71,68 @@ export interface GatewayModelProviders {
   resolve(modelRef: string): Promise<ResolvedModelProvider>;
 }
 
+export interface CredentialGatewayModelProvidersOptions {
+  readonly descriptors?: readonly ModelProviderDescriptor[];
+  /** `AI_OFFICE_DEBUG_LLM=1` of the host; never enables credential output. */
+  readonly debug?: boolean;
+  /** Replaces the default SDK registry, for example to fake vendor transport. */
+  readonly createRegistry?: () => ModelProviderRegistry;
+}
+
 /**
- * Resolves providers from the Runtime host environment captured by the
- * composition root. The provider SDK registry is loaded only when a gateway
- * run actually executes.
+ * Resolves providers with credentials from the Runtime's loaded credential
+ * source. The registry receives only the resolved provider's own credentials,
+ * never the host environment. The provider SDK registry is loaded only when a
+ * gateway run actually executes.
  */
-export class EnvironmentGatewayModelProviders implements GatewayModelProviders {
+export class CredentialGatewayModelProviders implements GatewayModelProviders {
+  readonly descriptors: readonly ModelProviderDescriptor[];
+
   constructor(
-    private readonly environment: ModelProviderEnvironment,
-    readonly descriptors: readonly ModelProviderDescriptor[] = defaultModelProviderDescriptors,
-  ) {}
+    private readonly credentials: ProviderCredentials,
+    private readonly options: CredentialGatewayModelProvidersOptions = {},
+  ) {
+    this.descriptors = options.descriptors ?? defaultModelProviderDescriptors;
+  }
 
   missingCredentials(providerId: string): readonly string[] | null {
     const descriptor = this.descriptors.find(
       (value) => value.providerId === providerId,
     );
-    if (descriptor === undefined) return null;
-    return descriptor.requiredEnvironmentVariables.filter(
-      (name) => nonEmpty(this.environment[name]) === undefined,
-    );
+    return descriptor === undefined
+      ? null
+      : unusableProviderCredentials(this.credentials, descriptor);
   }
 
   async resolve(modelRef: string): Promise<ResolvedModelProvider> {
-    const { createDefaultModelProviderRegistry } =
-      await import("./model-provider-registry.ts");
-    return createDefaultModelProviderRegistry().resolveModelRef(
-      modelRef,
-      this.environment,
-    );
+    const registry =
+      this.options.createRegistry?.() ??
+      (
+        await import("./model-provider-registry.ts")
+      ).createDefaultModelProviderRegistry();
+    const { providerId } = parseCanonicalModelRef(modelRef);
+    const environment: Record<string, string> = {};
+    for (const name of this.descriptors.find(
+      (value) => value.providerId === providerId,
+    )?.requiredEnvironmentVariables ?? []) {
+      const value = this.credentials.secret(name);
+      if (value !== undefined) environment[name] = value;
+    }
+    if (this.options.debug === true) environment.AI_OFFICE_DEBUG_LLM = "1";
+    return registry.resolveModelRef(modelRef, environment);
+  }
+}
+
+/** Gateway providers over explicit foreground environment credentials only. */
+export class EnvironmentGatewayModelProviders extends CredentialGatewayModelProviders {
+  constructor(
+    environment: ModelProviderEnvironment,
+    descriptors: readonly ModelProviderDescriptor[] = defaultModelProviderDescriptors,
+  ) {
+    super(environmentProviderCredentials(environment, descriptors), {
+      descriptors,
+      debug: environment.AI_OFFICE_DEBUG_LLM === "1",
+    });
   }
 }
 

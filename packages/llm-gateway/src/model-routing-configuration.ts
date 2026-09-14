@@ -17,6 +17,14 @@ import {
   type ModelRoutingState,
 } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
+import type {
+  ProviderCredentialSource,
+  ProviderCredentialStatus,
+} from "@ai-office/application/ports/provider-credential-source.port.ts";
+import {
+  environmentProviderCredentials,
+  unusableProviderCredentials,
+} from "./provider-credentials.ts";
 import {
   modelRoutingSourceEnvironmentVariable,
   runtimeHomeModelRoutingFileName,
@@ -89,7 +97,7 @@ function checkKeys(
       "CONFIGURATION_INVALID",
       subject === "" ? key : `${subject}.${key}`,
       isSensitiveFieldKey(key)
-        ? "Credentials are not accepted in model routing configuration; providers read them from the Runtime host environment."
+        ? "Credentials are not accepted in model routing configuration; providers read them from the Runtime host credential source."
         : `Unknown model routing key "${key}".`,
     );
   }
@@ -640,10 +648,10 @@ export function loadModelRoutingState(
   });
 }
 
-/** Reports credential presence by variable name; values are never returned. */
-export class EnvironmentModelProviderCatalog implements ModelProviderCatalog {
+/** Reports credential presence by logical name; values are never returned. */
+export class CredentialModelProviderCatalog implements ModelProviderCatalog {
   constructor(
-    private readonly environment: ModelProviderEnvironment,
+    private readonly credentials: ProviderCredentialSource,
     private readonly descriptors: readonly ModelProviderDescriptor[] = defaultModelProviderDescriptors,
   ) {}
 
@@ -651,20 +659,48 @@ export class EnvironmentModelProviderCatalog implements ModelProviderCatalog {
     return this.descriptors.map((value) => value.providerId).sort();
   }
 
+  private descriptor(providerId: string): ModelProviderDescriptor | undefined {
+    return this.descriptors.find((value) => value.providerId === providerId);
+  }
+
   missingCredentials(providerId: string): readonly string[] | null {
-    const descriptor = this.descriptors.find(
-      (value) => value.providerId === providerId,
+    const descriptor = this.descriptor(providerId);
+    return descriptor === undefined
+      ? null
+      : unusableProviderCredentials(this.credentials, descriptor);
+  }
+
+  credentialStatuses(
+    providerId: string,
+  ): readonly ProviderCredentialStatus[] | null {
+    return (
+      this.descriptor(providerId)?.requiredEnvironmentVariables.map((name) =>
+        this.credentials.status(name),
+      ) ?? null
     );
-    if (descriptor === undefined) return null;
-    return descriptor.requiredEnvironmentVariables.filter(
-      (name) => nonEmpty(this.environment[name]) === undefined,
-    );
+  }
+
+  credentialsManaged(): boolean {
+    return this.credentials.managed;
   }
 
   supportsGatewayExecution(providerId: string): boolean {
     return this.descriptors.some(
       (value) =>
         value.providerId === providerId && value.gatewayExecution !== undefined,
+    );
+  }
+}
+
+/** A catalog over explicit foreground environment credentials only. */
+export class EnvironmentModelProviderCatalog extends CredentialModelProviderCatalog {
+  constructor(
+    environment: ModelProviderEnvironment,
+    descriptors: readonly ModelProviderDescriptor[] = defaultModelProviderDescriptors,
+  ) {
+    super(
+      environmentProviderCredentials(environment, descriptors),
+      descriptors,
     );
   }
 }

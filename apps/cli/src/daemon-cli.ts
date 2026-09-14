@@ -22,6 +22,7 @@ import type { DistributionUpdateAdapter } from "@ai-office/application/ports/dis
 import { runRuntimePurgeCli } from "./runtime-purge-cli.ts";
 import { runDashboardCli } from "./dashboard-cli.ts";
 import { runServiceCli } from "./service-cli.ts";
+import { runCredentialCli, type CredentialInput } from "./credential-cli.ts";
 import type { OfficeServiceManager } from "@ai-office/application/ports/office-service-manager.port.ts";
 import type { OfficeServicePlan } from "@ai-office/service-management/service-plan.ts";
 import {
@@ -40,6 +41,7 @@ import { renderHandoverReport } from "@ai-office/command-support/handover-view.t
 import { degradedProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
 import { ProjectBindingError } from "@ai-office/application/project-lifecycle/project-binding.ts";
 import {
+  ensureRuntimeHome,
   resolveRuntimePaths,
   RuntimePathError,
   type RuntimePaths,
@@ -72,6 +74,8 @@ export interface RuntimeCliOptions {
   /** Test seam: observes the plan and supplies an isolated adapter. */
   selectServiceManager?: (plan: OfficeServicePlan) => OfficeServiceManager;
   servicePlatform?: string;
+  /** Test seam: stdin for `credential set`. */
+  credentialInput?: CredentialInput;
 }
 
 /** @deprecated Use RuntimeCliOptions. */
@@ -362,6 +366,18 @@ export async function runRuntimeCli(
           : { userName: process.env.USER }),
       });
     }
+
+    // Provider credentials are local Runtime host configuration written to
+    // owner-only files; no value crosses the Runtime protocol.
+    if (args[0] === "credential")
+      return await runCredentialCli(args.slice(1), {
+        runtimeHome: runtimePaths.runtimeHome,
+        io,
+        ensureRuntimeHome: () => ensureRuntimeHome(runtimePaths),
+        ...(options.credentialInput === undefined
+          ? {}
+          : { input: options.credentialInput }),
+      });
 
     if (args[0] === "runtime:purge")
       return runRuntimePurgeCli(args.slice(1), {

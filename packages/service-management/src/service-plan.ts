@@ -7,6 +7,10 @@ import {
   modelRoutingSourceEnvironmentVariable,
   runtimeHomeModelRoutingSource,
 } from "@ai-office/runtime-paths/model-routing-location.ts";
+import {
+  providerCredentialSourceEnvironmentVariable,
+  runtimeHomeProviderCredentialSource,
+} from "@ai-office/runtime-paths/provider-credential-location.ts";
 import { assertRenderableValue } from "@ai-office/application/service-management/managed-definition.ts";
 
 /**
@@ -98,10 +102,11 @@ export function validateOfficeServicePlan(
  * Environment of a generated service, in a fixed order so rendering stays
  * byte-for-byte deterministic.
  *
- * The Runtime also receives a non-secret routing source marker: a managed
- * Runtime reads model routing only from `<AI_OFFICE_HOME>/model-routing.yaml`,
- * so it behaves the same after reboot or login whatever the service manager's
- * own environment contains. Provider credentials are never rendered here.
+ * The Runtime also receives two non-secret source markers: a managed Runtime
+ * reads model routing only from `<AI_OFFICE_HOME>/model-routing.yaml` and
+ * provider credentials only from `<AI_OFFICE_HOME>/credentials/`, so it behaves
+ * the same after reboot or login whatever the service manager's own
+ * environment contains. Credential values are never rendered here.
  */
 export function officeServiceEnvironment(
   program: OfficeServiceProgram,
@@ -113,10 +118,13 @@ export function officeServiceEnvironment(
   if (program.requiresSourceRuntimeOptIn)
     entries.push(["AI_OFFICE_ALLOW_USER_RUNTIME_FROM_SOURCE", "1"]);
   if (service === "runtime")
-    entries.push([
-      modelRoutingSourceEnvironmentVariable,
-      runtimeHomeModelRoutingSource,
-    ]);
+    entries.push(
+      [modelRoutingSourceEnvironmentVariable, runtimeHomeModelRoutingSource],
+      [
+        providerCredentialSourceEnvironmentVariable,
+        runtimeHomeProviderCredentialSource,
+      ],
+    );
   return entries;
 }
 

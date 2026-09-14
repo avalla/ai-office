@@ -310,6 +310,7 @@ describe("launchd plist rendering", () => {
     ).toEqual({
       AI_OFFICE_HOME: "/home/operator/.ai-office",
       AI_OFFICE_MODEL_ROUTING_SOURCE: "runtime_home",
+      AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: "runtime_home",
     });
     const sourcePlan = servicePlan({
       program: {
@@ -346,6 +347,7 @@ describe("launchd plist rendering", () => {
     ).toEqual({
       AI_OFFICE_HOME: "/home/operator/100%/.ai-office",
       AI_OFFICE_MODEL_ROUTING_SOURCE: "runtime_home",
+      AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: "runtime_home",
     });
   });
 
