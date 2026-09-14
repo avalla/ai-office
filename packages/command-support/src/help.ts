@@ -77,12 +77,14 @@ Commands:
   task:reconcile --project <id> [--json]  # read-only; add --fix --approve <planHash> to repair
   agent:sync --project <id> [--directory <path>]
   agent:list --project <id>
+  agent:models --project <id> [--json]  # read-only; policy, profile and model each agent would be scheduled with
+  model:check [--project <id>] [--json]  # read-only model routing validation; sends no model request
   run:schedule --project <id> --task <id> --agent <id> [--resource <id> --operation <name> [--arguments <json>]]
   run:tick --project <id> [--worker claude [--worker-model <model>] | --simulate] [--capacity <1-100>] [--json]
   run:cancel --project <id> --run <id> --reason <text> [--json]
   run:reconcile --project <id> --run <id> --reason <text> [--approve <planHash>] [--json]
   run:list --project <id>
-  run:show --project <id> --run <id>
+  run:show --project <id> --run <id> [--json]
   pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
   budget:set --project <id> --limit <micros> [--currency <USD|EUR>]
   cost:list --project <id> [--group-by <project|task|agent|agent_run>]
@@ -126,4 +128,8 @@ Environment (linkable ai-office entry point):
 Environment (Runtime host; optional project memory, disabled by default):
   AI_OFFICE_PROJECT_MEMORY_PROVIDER    none (default) | cairnkeep
   AI_OFFICE_CAIRNKEEP_COMMAND          executable name or absolute path; defaults to cairn
-  AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS  100..30000; defaults to 5000`;
+  AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS  100..30000; defaults to 5000
+
+Environment (Runtime host; optional model routing, read once at host start):
+  AI_OFFICE_MODEL_ROUTING_FILE  absolute or ~/ path to a YAML/JSON profile file; no credentials
+  AI_OFFICE_LLM_MODEL           legacy <provider>:<model> default (lowest precedence)`;

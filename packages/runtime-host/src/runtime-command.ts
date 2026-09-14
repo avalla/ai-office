@@ -106,6 +106,14 @@ import {
   type ProjectMemoryProvider,
 } from "@ai-office/application/ports/project-memory-provider.port.ts";
 import { handleProjectMemoryCommand } from "./commands/project-memory.ts";
+import { handleModelCommand } from "./commands/model.ts";
+import {
+  ModelRoutingError,
+  unconfiguredModelRouting,
+  type ModelRoutingState,
+} from "@ai-office/application/model-routing/model-routing.ts";
+import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
+import { EnvironmentModelProviderCatalog } from "@ai-office/llm-gateway/model-routing-configuration.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import { LlmProviderError } from "@ai-office/llm-gateway/provider.ts";
 import {
@@ -225,6 +233,8 @@ const commands = [
   "task:reconcile",
   "agent:sync",
   "agent:list",
+  "agent:models",
+  "model:check",
   "run:schedule",
   "run:tick",
   "run:cancel",
@@ -291,6 +301,9 @@ export interface RuntimeCommandOptions {
   projectArchives?: ProjectArchiveAdapter;
   /** Composition-supplied provider; absent means disabled. */
   projectMemory?: ProjectMemoryProvider;
+  /** Composition-supplied host model routing; absent means unconfigured. */
+  modelRouting?: ModelRoutingState;
+  modelProviders?: ModelProviderCatalog;
 }
 
 function defaultOfficeManifest(): OfficeManifest {
@@ -329,6 +342,7 @@ const handlers = [
   handleGovernanceCommand,
   handleMemoryCommand,
   handleProjectMemoryCommand,
+  handleModelCommand,
   handleCapabilityCommand,
 ] as const;
 
@@ -356,6 +370,7 @@ function formatKnownError(error: unknown): string | null {
     error instanceof TaskCompletionApprovalError ||
     error instanceof TaskLockActiveError ||
     error instanceof TaskLockExpiredError ||
+    error instanceof ModelRoutingError ||
     error instanceof InvalidAgentDefinitionError ||
     error instanceof AgentDefinitionDirectoryError ||
     error instanceof PricingNotFoundError ||
@@ -535,6 +550,9 @@ export async function executeRuntimeCommand(
       projectMemoryProvenance: new SqliteProjectMemoryProvenanceRepository(
         database,
       ),
+      modelRouting: options.modelRouting ?? unconfiguredModelRouting,
+      modelProviders:
+        options.modelProviders ?? new EnvironmentModelProviderCatalog({}),
       ...(globalDatabase === null
         ? {}
         : { memory: new SqliteGlobalMemoryRepository(globalDatabase) }),

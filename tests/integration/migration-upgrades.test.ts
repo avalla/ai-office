@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0029_agent_run_memory_query_digests.sql",
+        "0030_agent_run_model_routing.sql",
       );
       expect(
         database
@@ -116,6 +116,7 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
     ]);
     expect(
       database
@@ -181,6 +182,7 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
     ]);
     expect(
       database
@@ -326,6 +328,7 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
     ]);
     expect(
       database
@@ -375,6 +378,7 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
     ]);
     database
       .prepare(
@@ -698,6 +702,7 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
     ]);
     expect(
       upgraded

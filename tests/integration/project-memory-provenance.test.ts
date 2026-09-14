@@ -190,6 +190,7 @@ test("upgrading an existing database adds provenance without touching historical
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([
     "0028_agent_run_memory_provenance.sql",
     "0029_agent_run_memory_query_digests.sql",
+    "0030_agent_run_model_routing.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   expect(
@@ -298,6 +299,7 @@ test("upgrading 0028 provenance keeps its context digest and leaves the unreport
   );
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([
     "0029_agent_run_memory_query_digests.sql",
+    "0030_agent_run_model_routing.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   const repository = new SqliteProjectMemoryProvenanceRepository(db);

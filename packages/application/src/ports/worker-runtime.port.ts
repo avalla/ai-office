@@ -1,3 +1,4 @@
+import type { AgentRunModelSelection } from "@ai-office/domain/agent/agent-run-model.ts";
 import type { MemorySearchResult } from "./global-memory-repository.port.ts";
 
 export interface WorkerProjectMemoryResult {
@@ -33,12 +34,11 @@ export interface WorkerContext {
     roleKey: string;
     roleVersion: number;
   };
-  model?: {
-    policy: string | null;
-    profile: string | null;
-    modelRef: string;
-    providerId: string;
-  };
+  /**
+   * The run's persisted model selection. Omitted for unrouted and historical
+   * runs, so their context and input digest stay byte-identical.
+   */
+  model?: AgentRunModelSelection;
   stage: {
     pipelineRunId: string;
     manifestRevision: number;
@@ -95,6 +95,10 @@ const errorMessages = {
     "Worker execution authority was lost; the worker was stopped.",
   WORKER_BUDGET_EXHAUSTED:
     "The role has no budget available for worker execution.",
+  WORKER_MODEL_UNSUPPORTED:
+    "The selected worker cannot execute the run's assigned model or its execution parameters.",
+  WORKER_MODEL_CONFLICT:
+    "The run's assigned model cannot be replaced by a worker model option.",
 } as const;
 
 export class WorkerRuntimeError extends Error {
@@ -107,6 +111,19 @@ export class WorkerRuntimeError extends Error {
 export interface WorkerRuntime {
   readonly id: string;
   inspect(): Promise<{ version: string }>;
+  /**
+   * Whether this adapter can honor a persisted model selection exactly,
+   * including its execution parameters. An adapter without this method cannot
+   * execute routed runs; it is never allowed to substitute its own model.
+   */
+  supportsModel?(
+    selection: AgentRunModelSelection,
+  ):
+    | { supported: true }
+    | {
+        supported: false;
+        code: "WORKER_MODEL_UNSUPPORTED" | "WORKER_MODEL_CONFLICT";
+      };
   execute(
     context: WorkerContext,
     limits: WorkerLimits,

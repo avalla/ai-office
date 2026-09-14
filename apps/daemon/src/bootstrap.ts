@@ -21,6 +21,12 @@ import type { ProjectBindingAdapter } from "@ai-office/application/ports/project
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
 import { createProjectMemoryProvider } from "@ai-office/cairnkeep-memory/create-project-memory-provider.ts";
+import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
+import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
+import {
+  EnvironmentModelProviderCatalog,
+  loadModelRoutingState,
+} from "@ai-office/llm-gateway/model-routing-configuration.ts";
 import {
   ensureRuntimeHome,
   resolveRuntimePaths,
@@ -46,6 +52,12 @@ export interface BootstrapOptions {
    * environment once (`AI_OFFICE_PROJECT_MEMORY_PROVIDER`, disabled by default).
    */
   projectMemory?: ProjectMemoryProvider;
+  /**
+   * Optional host model routing. When omitted, the host reads its own
+   * environment once (`AI_OFFICE_MODEL_ROUTING_FILE`, `AI_OFFICE_LLM_MODEL`).
+   */
+  modelRouting?: ModelRoutingState;
+  modelProviders?: ModelProviderCatalog;
 }
 
 export async function bootstrap(
@@ -106,6 +118,12 @@ export async function bootstrap(
     options.agentExecutor,
     () => queryEvents.publish(["run.updated", "task.updated"]),
     options.projectMemory ?? createProjectMemoryProvider(process.env),
+    {
+      state: options.modelRouting ?? loadModelRoutingState(process.env),
+      providers:
+        options.modelProviders ??
+        new EnvironmentModelProviderCatalog(process.env),
+    },
   );
 
   return new PersistentRuntimeHost({

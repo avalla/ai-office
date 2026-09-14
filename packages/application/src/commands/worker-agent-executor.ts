@@ -72,6 +72,20 @@ export class WorkerAgentExecutor implements AgentExecutor {
           stage.roleId !== roleState.key))
     )
       throw new WorkerRuntimeError("WORKER_CONTEXT_INVALID");
+    // The model was frozen at scheduling. Execution never re-resolves it from
+    // current role or host configuration, and an adapter that cannot honor it
+    // exactly fails before dispatch instead of substituting its own default.
+    const selection =
+      snapshot.modelRouting?.status === "resolved"
+        ? snapshot.modelRouting.selection
+        : undefined;
+    if (selection !== undefined) {
+      const support = this.worker.supportsModel?.(selection) ?? {
+        supported: false,
+        code: "WORKER_MODEL_UNSUPPORTED" as const,
+      };
+      if (!support.supported) throw new WorkerRuntimeError(support.code);
+    }
     const definition =
       stage == null
         ? undefined
@@ -97,6 +111,7 @@ export class WorkerAgentExecutor implements AgentExecutor {
         roleKey: roleState.key,
         roleVersion: roleState.version,
       },
+      ...(selection === undefined ? {} : { model: { ...selection } }),
       stage:
         pipeline === null ||
         stage === null ||
@@ -262,6 +277,12 @@ export class WorkerAgentExecutor implements AgentExecutor {
             summary: output.summary,
             artifacts: [],
             workerOutput: output,
+            // The role budget applied to this dispatch; model selection never widens it.
+            roleLimits: {
+              maxIterations: roleState.limits.maxIterations,
+              maxCostMicros: roleState.limits.maxCostMicros.toString(),
+              timeoutSeconds: roleState.limits.timeoutSeconds,
+            },
           };
         } catch (error) {
           if (leaseLost) throw new WorkerRuntimeError("WORKER_LEASE_LOST");

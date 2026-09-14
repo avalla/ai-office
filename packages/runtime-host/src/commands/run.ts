@@ -17,6 +17,7 @@ import { AdmitAgentRun } from "@ai-office/application/commands/admit-agent-run.t
 import { manageAgentRuns } from "./run-services.ts";
 import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent-run.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
+import { projectWorkerOutput } from "@ai-office/application/read-models/worker-output.ts";
 import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
 import {
   CliUsageError,
@@ -25,6 +26,30 @@ import {
   parseArguments,
   requiredOption,
 } from "./shared.ts";
+
+/** Role limits recorded on a worker result; malformed evidence is not shown. */
+function appliedRoleLimits(result: unknown): {
+  maxIterations: number;
+  maxCostMicros: string;
+  timeoutSeconds: number;
+} | null {
+  const limits =
+    typeof result === "object" && result !== null && "roleLimits" in result
+      ? (result as { roleLimits: unknown }).roleLimits
+      : null;
+  if (typeof limits !== "object" || limits === null) return null;
+  const value = limits as Record<string, unknown>;
+  return Number.isSafeInteger(value.maxIterations) &&
+    Number.isSafeInteger(value.timeoutSeconds) &&
+    typeof value.maxCostMicros === "string" &&
+    /^\d{1,20}$/.test(value.maxCostMicros)
+    ? {
+        maxIterations: value.maxIterations as number,
+        maxCostMicros: value.maxCostMicros,
+        timeoutSeconds: value.timeoutSeconds as number,
+      }
+    : null;
+}
 
 function controlledActionExecutor(
   context: CommandContext,
@@ -151,6 +176,7 @@ export async function handleRunCommand(
       clock,
       transactions,
       context.pipelines,
+      context.modelRouting,
     ).execute({
       projectId: requiredOption(parsed, "project"),
       taskId: requiredOption(parsed, "task"),
@@ -205,10 +231,32 @@ export async function handleRunCommand(
       throw new CliUsageError(
         "Queued tasks need a real worker: use --worker claude, or explicitly use --simulate for a test run. No runs were started.",
       );
-    const selectedExecutor: AgentExecutor =
+    const claude =
       worker === "claude"
+        ? new ClaudeWorkerRuntime("claude", undefined, model)
+        : undefined;
+    // Assigned models are checked before any run is admitted, so a batch the
+    // worker cannot honor leaves the queue unchanged.
+    for (const run of queued) {
+      const snapshot = run.snapshot();
+      if (
+        claude === undefined ||
+        snapshot.actionIntent !== undefined ||
+        snapshot.modelRouting?.status !== "resolved"
+      )
+        continue;
+      const support = claude.supportsModel(snapshot.modelRouting.selection);
+      if (!support.supported)
+        throw new CliUsageError(
+          support.code === "WORKER_MODEL_CONFLICT"
+            ? `Run ${snapshot.id} is assigned ${snapshot.modelRouting.selection.modelRef}; --worker-model cannot replace an assigned model. No runs were started.`
+            : `Run ${snapshot.id} is assigned ${snapshot.modelRouting.selection.modelRef}, which the claude worker cannot execute with its assigned parameters. Cancel it with run:cancel or correct model routing before scheduling. No runs were started.`,
+        );
+    }
+    const selectedExecutor: AgentExecutor =
+      claude !== undefined
         ? new WorkerAgentExecutor(
-            new ClaudeWorkerRuntime("claude", undefined, model),
+            claude,
             runtime,
             tasks,
             context.pipelines,
@@ -317,12 +365,54 @@ export async function handleRunCommand(
     return 0;
   }
   if (command === "run:show") {
-    const parsed = parseArguments(args, new Set(["project", "run"]));
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "run"]),
+      new Set(["json"]),
+    );
     const projectId = requiredOption(parsed, "project");
     const run = await runtime.findRun(requiredOption(parsed, "run"));
     const snapshot = run?.snapshot();
     if (snapshot === undefined || snapshot.projectId !== projectId)
       throw new CliUsageError("Agent run not found in project");
+    const routing = snapshot.modelRouting;
+    const workerOutput = projectWorkerOutput(snapshot.result);
+    const roleLimits = appliedRoleLimits(snapshot.result);
+    if (parsed.flags.has("json")) {
+      io.stdout(
+        JSON.stringify({
+          schemaVersion: 1,
+          run: {
+            id: snapshot.id,
+            projectId: snapshot.projectId,
+            taskId: snapshot.taskId,
+            agentId: snapshot.agentId,
+            pipelineRunId: snapshot.pipelineRunId ?? null,
+            status: snapshot.status,
+            createdAt: snapshot.createdAt.toISOString(),
+            startedAt: snapshot.startedAt?.toISOString() ?? null,
+            completedAt: snapshot.completedAt?.toISOString() ?? null,
+          },
+          execution: snapshot.execution ?? null,
+          model: {
+            status: routing?.status ?? "not_recorded",
+            selection:
+              routing?.status === "resolved" ? routing.selection : null,
+          },
+          usage:
+            workerOutput === null
+              ? null
+              : {
+                  reportedModel: workerOutput.model,
+                  tokens: workerOutput.usage,
+                  estimatedCostUsd: workerOutput.estimatedCostUsd,
+                },
+          roleLimits,
+          error: snapshot.error ?? null,
+        }),
+      );
+      return 0;
+    }
     io.stdout(`Run: ${snapshot.id}`);
     io.stdout(`Status: ${snapshot.status}`);
     io.stdout(`Task: ${snapshot.taskId}`);
@@ -330,6 +420,33 @@ export async function handleRunCommand(
     io.stdout(
       `Executor: ${snapshot.execution === undefined ? "not recorded" : `${snapshot.execution.kind} (${snapshot.execution.adapterId} ${snapshot.execution.adapterVersion})`}`,
     );
+    if (routing === undefined)
+      io.stdout("Model: not recorded (scheduled before model routing)");
+    else if (routing.status === "unrouted")
+      io.stdout(
+        "Model: unrouted (no model routing was configured at scheduling; the executor used its own default)",
+      );
+    else {
+      const selection = routing.selection;
+      io.stdout(
+        `Model: ${selection.modelRef} (policy ${selection.policy}; profile ${selection.profile ?? "-"}; source ${selection.source}; provider ${selection.providerId})`,
+      );
+      if (
+        selection.reasoningEffort !== null ||
+        selection.maxOutputTokens !== null
+      )
+        io.stdout(
+          `  Execution parameters: reasoning effort ${selection.reasoningEffort ?? "-"}; max output tokens ${selection.maxOutputTokens ?? "-"}`,
+        );
+    }
+    if (workerOutput !== null)
+      io.stdout(
+        `Usage: reported model ${workerOutput.model ?? "not reported"}; tokens ${workerOutput.usage === null ? "unknown" : `${workerOutput.usage.inputTokens} input / ${workerOutput.usage.outputTokens} output`}; estimated cost ${workerOutput.estimatedCostUsd === null ? "unknown" : `USD ${workerOutput.estimatedCostUsd}`}`,
+      );
+    if (roleLimits !== null)
+      io.stdout(
+        `Budget: role max cost ${roleLimits.maxCostMicros} micros; ${roleLimits.maxIterations} iterations; ${roleLimits.timeoutSeconds}s timeout`,
+      );
     const retrieval = await context.projectMemoryProvenance.findRetrieval(
       snapshot.id,
     );

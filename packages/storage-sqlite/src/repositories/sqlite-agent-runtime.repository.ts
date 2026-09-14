@@ -15,6 +15,7 @@ import {
 import { Role, type RoleLimits } from "@ai-office/domain/agent/role.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import { parseAgentExecution } from "@ai-office/domain/agent/agent-execution.ts";
+import { parseAgentRunModelRouting } from "@ai-office/domain/agent/agent-run-model.ts";
 
 interface AgentRow {
   id: string;
@@ -41,6 +42,7 @@ interface RoleRow {
 }
 interface RunRow {
   execution_json: string | null;
+  model_routing_json: string | null;
   id: string;
   project_id: string;
   task_id: string;
@@ -84,6 +86,13 @@ const run = (row: RunRow): AgentRun =>
             JSON.parse(row.execution_json) as unknown,
           ),
         }),
+    ...(row.model_routing_json === null
+      ? {}
+      : {
+          modelRouting: parseAgentRunModelRouting(
+            JSON.parse(row.model_routing_json) as unknown,
+          ),
+        }),
     ...(row.action_intent_json === null
       ? {}
       : {
@@ -108,7 +117,7 @@ const run = (row: RunRow): AgentRun =>
     updatedAt: new Date(row.updated_at),
   });
 const runColumns =
-  "id, project_id, task_id, agent_id, action_intent_json, pipeline_run_id, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at, execution_json";
+  "id, project_id, task_id, agent_id, action_intent_json, pipeline_run_id, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at, execution_json, model_routing_json";
 
 function parseStoredStringArray(json: string, field: string): string[] {
   const value = JSON.parse(json) as unknown;
@@ -357,7 +366,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
         .get(v.id);
       this.database
         .prepare(
-          `INSERT INTO agent_run(${runColumns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at, execution_json=excluded.execution_json`,
+          `INSERT INTO agent_run(${runColumns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at, execution_json=excluded.execution_json`,
         )
         .run(
           v.id,
@@ -375,6 +384,8 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
           v.completedAt?.toISOString() ?? null,
           v.updatedAt.toISOString(),
           v.execution === undefined ? null : JSON.stringify(v.execution),
+          // Inserted once; the conflict update never rewrites the routing record.
+          v.modelRouting === undefined ? null : JSON.stringify(v.modelRouting),
         );
       if (previous?.status !== v.status)
         this.database
@@ -389,6 +400,9 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
               hasResult: v.result !== undefined,
               hasError: v.error !== undefined,
               ...(v.execution === undefined ? {} : { execution: v.execution }),
+              ...(previous === null && v.modelRouting !== undefined
+                ? { modelRouting: v.modelRouting }
+                : {}),
             }),
             v.updatedAt.toISOString(),
           );

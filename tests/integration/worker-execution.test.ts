@@ -558,6 +558,7 @@ test("upgrading legacy runs preserves unknown provenance and protects new dispat
     "0027_agent_execution_provenance.sql",
     "0028_agent_run_memory_provenance.sql",
     "0029_agent_run_memory_query_digests.sql",
+    "0030_agent_run_model_routing.sql",
   ]);
   expect(
     (await f.runs.findRun("legacy"))?.snapshot().execution,

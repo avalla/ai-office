@@ -8,6 +8,11 @@ import {
   parseAgentExecution,
   type AgentExecutionProvenance,
 } from "./agent-execution.ts";
+import {
+  assertNoModelSelectionFields,
+  parseAgentRunModelRouting,
+  type AgentRunModelRouting,
+} from "./agent-run-model.ts";
 
 export type AgentRunStatus =
   | "queued"
@@ -26,6 +31,8 @@ export interface AgentRunProps {
   pipelineRunId?: string;
   actionIntent?: AgentActionIntent;
   execution?: AgentExecutionProvenance;
+  /** Frozen at scheduling; absent only for runs that predate model routing. */
+  modelRouting?: AgentRunModelRouting;
   status: AgentRunStatus;
   worktreePath?: string;
   result?: unknown;
@@ -92,6 +99,7 @@ export class AgentRun {
     agentId: string;
     pipelineRunId?: string;
     actionIntent?: AgentActionIntentInput;
+    modelRouting?: AgentRunModelRouting;
     now: Date;
   }): AgentRun {
     for (const value of [
@@ -105,12 +113,20 @@ export class AgentRun {
           "Agent run identifiers cannot be empty",
         );
     }
-    const { now, actionIntent, ...identifiers } = input;
+    const { now, actionIntent, modelRouting, ...identifiers } = input;
+    if (actionIntent !== undefined)
+      assertNoModelSelectionFields(
+        actionIntent.arguments,
+        "Agent action arguments",
+      );
     return new AgentRun({
       ...identifiers,
       ...(actionIntent === undefined
         ? {}
         : { actionIntent: normalizeActionIntent(actionIntent) }),
+      ...(modelRouting === undefined
+        ? {}
+        : { modelRouting: parseAgentRunModelRouting(modelRouting) }),
       status: "queued",
       createdAt: now,
       updatedAt: now,
@@ -126,6 +142,9 @@ export class AgentRun {
       ...(props.actionIntent === undefined
         ? {}
         : { actionIntent: normalizeActionIntent(props.actionIntent) }),
+      ...(props.modelRouting === undefined
+        ? {}
+        : { modelRouting: parseAgentRunModelRouting(props.modelRouting) }),
     });
   }
 
