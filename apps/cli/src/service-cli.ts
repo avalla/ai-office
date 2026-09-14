@@ -60,6 +60,33 @@ export interface ServiceCliOptions {
   selectManager?: (plan: OfficeServicePlan) => OfficeServiceManager;
   platform?: string;
   userName?: string;
+  /** The invoking shell environment; read only to warn about values a service does not inherit. */
+  environment?: Readonly<Record<string, string | undefined>>;
+}
+
+/**
+ * Settings that work in a foreground Runtime but are deliberately not carried
+ * into generated service definitions. Names only; values are never printed.
+ */
+function managedEnvironmentNotes(
+  environment: Readonly<Record<string, string | undefined>>,
+): string[] {
+  const set = (name: string) => (environment[name]?.trim() ?? "") !== "";
+  const notes: string[] = [];
+  const routing = [
+    "AI_OFFICE_MODEL_ROUTING_FILE",
+    "AI_OFFICE_LLM_MODEL",
+  ].filter(set);
+  if (routing.length > 0)
+    notes.push(
+      `Model routing: ${routing.join(" and ")} from this shell are not used by the managed Runtime, which reads only model-routing.yaml in AI_OFFICE_HOME. Place the routing there and restart the Runtime service.`,
+    );
+  const credentials = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"].filter(set);
+  if (credentials.length > 0)
+    notes.push(
+      `Provider credentials: ${credentials.join(" and ")} are never written to service definitions. Gateway runs under the managed Runtime fail before any request unless the service manager's own environment provides them.`,
+    );
+  return notes;
 }
 
 export const serviceCommandHelp = `AI Office service management
@@ -141,7 +168,11 @@ function printIssues(issues: readonly string[], io: CommandIo): void {
   for (const issue of issues) io.stdout(`  ${issue}`);
 }
 
-function printInstall(result: OfficeServiceInstallResult, io: CommandIo): void {
+function printInstall(
+  result: OfficeServiceInstallResult,
+  io: CommandIo,
+  environmentNotes: readonly string[],
+): void {
   const complete = result.outcome === "installed";
   const output = complete ? io.stdout : io.stderr;
   output(
@@ -160,10 +191,11 @@ function printInstall(result: OfficeServiceInstallResult, io: CommandIo): void {
     io.stdout("");
     io.stdout("Dashboard");
     io.stdout(`  ${result.status.dashboardEndpoint}`);
-    if (result.hints.length > 0) {
+    const notes = [...result.hints, ...environmentNotes];
+    if (notes.length > 0) {
       io.stdout("");
       io.stdout("Notes");
-      for (const hint of result.hints) io.stdout(`  ${hint}`);
+      for (const note of notes) io.stdout(`  ${note}`);
     }
     return;
   }
@@ -287,7 +319,12 @@ export async function runServiceCli(
     if (subcommand === "install") {
       const result = await services.install();
       if (json) options.io.stdout(JSON.stringify(result));
-      else printInstall(result, options.io);
+      else
+        printInstall(
+          result,
+          options.io,
+          managedEnvironmentNotes(options.environment ?? process.env),
+        );
       return result.outcome === "installed" ? 0 : 1;
     }
 

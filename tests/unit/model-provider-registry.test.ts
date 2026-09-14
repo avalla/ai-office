@@ -7,6 +7,7 @@ import {
   parseModelRef,
 } from "@ai-office/llm-gateway/model-provider-registry.ts";
 import { MockLlmProvider } from "@ai-office/llm-gateway/mock-provider.ts";
+import { OpenAiResponsesProvider } from "@ai-office/llm-gateway/openai-provider.ts";
 import {
   InvalidProviderResponseError,
   ProviderCancelledError,
@@ -15,7 +16,7 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("model provider registry", () => {
-  test("resolves an OpenAI model ref through the LangChain adapter", () => {
+  test("resolves an OpenAI model ref through the native Responses adapter", () => {
     const resolved = createDefaultModelProviderRegistry().resolve({
       AI_OFFICE_LLM_MODEL: "openai:gpt-5.4",
       OPENAI_API_KEY: "test-openai-key",
@@ -27,7 +28,7 @@ describe("model provider registry", () => {
       model: "gpt-5.4",
       compatibilityConfiguration: false,
     });
-    expect(resolved.provider).toBeInstanceOf(LangChainModelProvider);
+    expect(resolved.provider).toBeInstanceOf(OpenAiResponsesProvider);
     expect(resolved.provider.id).toBe("openai");
   });
 

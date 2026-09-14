@@ -201,6 +201,83 @@ describe("ai-office service install", () => {
     expect(context.io.stdout.join("\n")).toContain("(unchanged)");
   });
 
+  test("the managed Runtime reads model routing from AI_OFFICE_HOME and never receives shell routing or credentials", async () => {
+    const credential = "sk-service-install-credential";
+    const names = [
+      "AI_OFFICE_MODEL_ROUTING_FILE",
+      "AI_OFFICE_LLM_MODEL",
+      "OPENAI_API_KEY",
+    ] as const;
+    const saved = names.map((name) => [name, process.env[name]] as const);
+    process.env.AI_OFFICE_MODEL_ROUTING_FILE = "/shell-only/routing.yaml";
+    process.env.AI_OFFICE_LLM_MODEL = "openai:shell-model";
+    process.env.OPENAI_API_KEY = credential;
+    try {
+      const context = harness();
+      expect(await context.run(["service", "install"])).toBe(0);
+      const runtime = readFileSync(
+        join(context.unitDirectory, systemdUnitNames.runtime),
+        "utf8",
+      );
+      const dashboard = readFileSync(
+        join(context.unitDirectory, systemdUnitNames.dashboard),
+        "utf8",
+      );
+      expect(runtime).toContain(
+        'Environment="AI_OFFICE_MODEL_ROUTING_SOURCE=runtime_home"',
+      );
+      expect(dashboard).not.toContain("AI_OFFICE_MODEL_ROUTING_SOURCE");
+      for (const definition of [runtime, dashboard])
+        for (const value of [
+          credential,
+          "OPENAI_API_KEY",
+          "/shell-only/routing.yaml",
+          "shell-model",
+        ])
+          expect(definition).not.toContain(value);
+      const output = context.io.stdout.join("\n");
+      expect(output).toContain(
+        "Model routing: AI_OFFICE_MODEL_ROUTING_FILE and AI_OFFICE_LLM_MODEL from this shell are not used by the managed Runtime",
+      );
+      expect(output).toContain(
+        "Provider credentials: OPENAI_API_KEY are never written to service definitions",
+      );
+      expect(output).not.toContain(credential);
+      expect(output).not.toContain("/shell-only/routing.yaml");
+
+      context.io.stdout.length = 0;
+      expect(await context.run(["service", "install"])).toBe(0);
+      expect(context.io.stdout.join("\n")).toContain("(unchanged)");
+    } finally {
+      for (const [name, value] of saved)
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+    }
+  });
+
+  test("a Runtime unit rendered before the routing marker is outdated and replaced", async () => {
+    const context = harness();
+    expect(await context.run(["service", "install"])).toBe(0);
+    const path = join(context.unitDirectory, systemdUnitNames.runtime);
+    writeFileSync(
+      path,
+      readFileSync(path, "utf8").replace(
+        'Environment="AI_OFFICE_MODEL_ROUTING_SOURCE=runtime_home"\n',
+        "",
+      ),
+      "utf8",
+    );
+    context.io.stdout.length = 0;
+    await context.run(["service", "status"]);
+    expect(context.io.stdout.join("\n")).toContain("managed_outdated");
+    context.io.stdout.length = 0;
+    expect(await context.run(["service", "install"])).toBe(0);
+    expect(readFileSync(path, "utf8")).toContain(
+      "AI_OFFICE_MODEL_ROUTING_SOURCE=runtime_home",
+    );
+    expect(context.io.stdout.join("\n")).not.toContain(`${path} (unchanged)`);
+  });
+
   test("reports partial installation on stderr and exits non-zero", async () => {
     const context = harness((runner) => {
       runner.startFailures.add(systemdUnitNames.dashboard);

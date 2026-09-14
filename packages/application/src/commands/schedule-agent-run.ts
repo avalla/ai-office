@@ -116,6 +116,7 @@ export class ScheduleAgentRun {
           ? {}
           : { pipelineRunId: pipeline.snapshot().id }),
         modelRouting: resolveAgentRunModel(this.modelRouting, {
+          projectId: input.projectId,
           agentName: current.name,
           modelPolicy: role.snapshot().modelPolicy,
         }),

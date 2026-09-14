@@ -13,12 +13,40 @@ export type ModelProviderEnvironment = Readonly<
   Record<string, string | undefined>
 >;
 
+/**
+ * What the registered adapter can apply exactly when it executes a routed run
+ * through the metered gateway. A provider without this declaration cannot be
+ * executed by the gateway worker; routing may still assign it to a client
+ * worker that honors it.
+ */
+export interface GatewayExecutionSupport {
+  /** Reasoning effort tokens the adapter forwards verbatim to the vendor. */
+  readonly reasoningEfforts: readonly string[];
+  readonly maxOutputTokens: boolean;
+}
+
 export interface ModelProviderDescriptor {
   readonly providerId: string;
   /** Credential environment variable names; values are never read here. */
   readonly requiredEnvironmentVariables: readonly string[];
   readonly apiKeyEnvironmentVariable?: string;
+  readonly gatewayExecution?: GatewayExecutionSupport;
 }
+
+/**
+ * The OpenAI Responses API vocabulary for `reasoning.effort`. Whether a given
+ * model accepts a level is enforced by the vendor, which rejects the request
+ * before generating output.
+ */
+export const openAiReasoningEfforts: readonly string[] = Object.freeze([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 
 export const defaultModelProviderDescriptors: readonly ModelProviderDescriptor[] =
   [
@@ -26,6 +54,10 @@ export const defaultModelProviderDescriptors: readonly ModelProviderDescriptor[]
       providerId: "openai",
       requiredEnvironmentVariables: ["OPENAI_API_KEY"],
       apiKeyEnvironmentVariable: "OPENAI_API_KEY",
+      gatewayExecution: Object.freeze({
+        reasoningEfforts: openAiReasoningEfforts,
+        maxOutputTokens: true,
+      }),
     },
     {
       providerId: "anthropic",

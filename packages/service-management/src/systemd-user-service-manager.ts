@@ -160,7 +160,7 @@ export function renderSystemdUnit(
   plan: OfficeServicePlan,
   service: OfficeServiceName,
 ): string {
-  const environment = officeServiceEnvironment(plan.program).map(
+  const environment = officeServiceEnvironment(plan.program, service).map(
     ([name, value]) =>
       systemdEnvironmentAssignment(name, assertRenderableValue(value, name)),
   );

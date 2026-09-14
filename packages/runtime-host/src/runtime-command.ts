@@ -114,6 +114,10 @@ import {
 } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import { EnvironmentModelProviderCatalog } from "@ai-office/llm-gateway/model-routing-configuration.ts";
+import {
+  EnvironmentGatewayModelProviders,
+  type GatewayModelProviders,
+} from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import { LlmProviderError } from "@ai-office/llm-gateway/provider.ts";
 import {
@@ -304,6 +308,8 @@ export interface RuntimeCommandOptions {
   /** Composition-supplied host model routing; absent means unconfigured. */
   modelRouting?: ModelRoutingState;
   modelProviders?: ModelProviderCatalog;
+  /** Composition-supplied gateway provider access; absent means no credentials. */
+  gatewayProviders?: GatewayModelProviders;
 }
 
 function defaultOfficeManifest(): OfficeManifest {
@@ -553,6 +559,8 @@ export async function executeRuntimeCommand(
       modelRouting: options.modelRouting ?? unconfiguredModelRouting,
       modelProviders:
         options.modelProviders ?? new EnvironmentModelProviderCatalog({}),
+      gatewayProviders:
+        options.gatewayProviders ?? new EnvironmentGatewayModelProviders({}),
       ...(globalDatabase === null
         ? {}
         : { memory: new SqliteGlobalMemoryRepository(globalDatabase) }),

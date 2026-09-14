@@ -496,16 +496,24 @@ agents:
       "PRICING_MISSING",
       "PRICING_MISSING",
       "PRICING_MISSING",
-      "PROVIDER_CREDENTIALS_MISSING",
     ].sort(),
   );
-  expect(
-    report.providers.find((provider) => provider.providerId === "anthropic"),
-  ).toEqual({
-    providerId: "anthropic",
-    supported: true,
-    missingCredentials: ["ANTHROPIC_API_KEY"],
-  });
+  // Anthropic models run through a client-login worker, which needs no host
+  // credential; OpenAI models are gateway-executable with the host key.
+  expect(report.providers).toEqual([
+    {
+      providerId: "anthropic",
+      supported: true,
+      gatewayExecution: false,
+      missingCredentials: [],
+    },
+    {
+      providerId: "openai",
+      supported: true,
+      gatewayExecution: true,
+      missingCredentials: [],
+    },
+  ]);
 
   await f.schedule(state, await f.task(), "developer");
   expect(JSON.stringify(report)).not.toContain(secret);

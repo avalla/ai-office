@@ -73,7 +73,11 @@ function selection(
   agentName: string,
   modelPolicy: string,
 ): AgentRunModelSelection {
-  const routing = resolveAgentRunModel(state, { agentName, modelPolicy });
+  const routing = resolveAgentRunModel(state, {
+    projectId: "p",
+    agentName,
+    modelPolicy,
+  });
   if (routing.status !== "resolved") throw new Error("expected a selection");
   return routing.selection;
 }
@@ -183,6 +187,7 @@ default_profile: cheap
     expect(load(null)).toMatchObject({ status: "unconfigured" });
     expect(
       resolveAgentRunModel(unconfiguredModelRouting, {
+        projectId: "p",
         agentName: "architect",
         modelPolicy: "high_reasoning",
       }),
@@ -195,7 +200,11 @@ profiles:
   balanced: { model: "openai:gpt-sol" }
 `);
     expect(() =>
-      resolveAgentRunModel(state, { agentName: "qa", modelPolicy: "mock" }),
+      resolveAgentRunModel(state, {
+        projectId: "p",
+        agentName: "qa",
+        modelPolicy: "mock",
+      }),
     ).toThrow(
       expect.objectContaining({
         name: "ModelRoutingError",
@@ -218,6 +227,7 @@ agents:
     let caught: unknown;
     try {
       resolveAgentRunModel(state, {
+        projectId: "p",
         agentName: "architect",
         modelPolicy: "balanced",
       });
@@ -439,27 +449,30 @@ describe("run model snapshot", () => {
     expect(Object.isFrozen(run.snapshot().modelRouting)).toBe(true);
   });
 
-  test("an agent's controlled-action arguments cannot choose a model", () => {
+  test("controlled-action payload fields named like model settings are ordinary data", () => {
     const now = new Date("2026-09-14T00:00:00.000Z");
     for (const argumentsValue of [
-      { path: "README.md", model: "openai:gpt-astra" },
+      { manufacturer: "Tesla", model: "Model 3" },
       { path: "README.md", options: { model_ref: "openai:gpt-astra" } },
-      { items: [{ reasoningEffort: "max" }] },
-    ])
-      expect(() =>
-        AgentRun.create({
-          id: "r",
-          projectId: "p",
-          taskId: "t",
-          agentId: "a",
-          actionIntent: {
-            resourceId: "resource",
-            operation: "filesystem.read",
-            arguments: argumentsValue,
-          },
-          now,
-        }),
-      ).toThrow("cannot select a model");
+      { items: [{ reasoningEffort: "max", modelPolicy: "high_reasoning" }] },
+    ]) {
+      const run = AgentRun.create({
+        id: "r",
+        projectId: "p",
+        taskId: "t",
+        agentId: "a",
+        actionIntent: {
+          resourceId: "resource",
+          operation: "vehicle.lookup",
+          arguments: argumentsValue,
+        },
+        modelRouting: resolved,
+        now,
+      });
+      // The payload is kept verbatim and never becomes model authority.
+      expect(run.snapshot().actionIntent?.arguments).toEqual(argumentsValue);
+      expect(run.snapshot().modelRouting).toEqual(resolved);
+    }
   });
 });
 
@@ -548,6 +561,7 @@ describe("claude worker model honoring", () => {
       timeoutMs: 1000,
       maxTurns: 2,
       maxEstimatedCostUsd: "0.100000",
+      maxCostMicros: 100000n,
     };
     await new ClaudeWorkerRuntime("claude", runner, undefined, "posix").execute(
       context,

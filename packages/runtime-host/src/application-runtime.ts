@@ -13,6 +13,7 @@ import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
+import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import {
   CliPromptRequiredError,
   executeRuntimeCommand,
@@ -66,6 +67,7 @@ export class ApplicationRuntime implements AiOfficeRuntime {
     private readonly modelRouting?: {
       state: ModelRoutingState;
       providers: ModelProviderCatalog;
+      gateway: GatewayModelProviders;
     },
   ) {}
 
@@ -121,6 +123,7 @@ export class ApplicationRuntime implements AiOfficeRuntime {
           : {
               modelRouting: this.modelRouting.state,
               modelProviders: this.modelRouting.providers,
+              gatewayProviders: this.modelRouting.gateway,
             }),
         io,
         propagatePromptRequired: true,

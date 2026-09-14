@@ -9,7 +9,6 @@ import {
   type AgentExecutionProvenance,
 } from "./agent-execution.ts";
 import {
-  assertNoModelSelectionFields,
   parseAgentRunModelRouting,
   type AgentRunModelRouting,
 } from "./agent-run-model.ts";
@@ -113,12 +112,10 @@ export class AgentRun {
           "Agent run identifiers cannot be empty",
         );
     }
+    // Action arguments are domain payload (a connector may legitimately carry
+    // a `model` field). Model selection comes only from `modelRouting`, which
+    // the scheduler derives from host routing and the agent's role.
     const { now, actionIntent, modelRouting, ...identifiers } = input;
-    if (actionIntent !== undefined)
-      assertNoModelSelectionFields(
-        actionIntent.arguments,
-        "Agent action arguments",
-      );
     return new AgentRun({
       ...identifiers,
       ...(actionIntent === undefined

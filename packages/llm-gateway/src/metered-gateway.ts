@@ -6,6 +6,7 @@ import type {
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import type {
   BudgetScopeType,
+  Currency,
   PricingVersion,
 } from "@ai-office/domain/cost/cost.ts";
 import {
@@ -36,6 +37,18 @@ export interface MeteredRequestContext extends UsageContext {
   useProjectBudgetIfConfigured?: boolean;
 }
 
+/** The accounting the gateway itself recorded for one completed request. */
+export interface GatewayMetering {
+  currency: Currency;
+  pricingVersionId: string;
+  reservedMicros: bigint | null;
+  estimatedMicros: bigint;
+  actualMicros: bigint;
+  budgetScopeType: BudgetScopeType | null;
+  budgetScopeId: string | null;
+  recording: "recorded" | "duplicate";
+}
+
 export class MeteredLlmGateway {
   constructor(
     private readonly provider: LlmProvider,
@@ -48,6 +61,15 @@ export class MeteredLlmGateway {
     context: MeteredRequestContext,
     signal?: AbortSignal,
   ): Promise<ModelResponse> {
+    return (await this.completeMetered(request, context, signal)).response;
+  }
+
+  /** `complete`, also returning the cost evidence recorded for the response. */
+  async completeMetered(
+    request: ModelRequest,
+    context: MeteredRequestContext,
+    signal?: AbortSignal,
+  ): Promise<{ response: ModelResponse; metering: GatewayMetering }> {
     const now = this.clock.now();
     const candidates = this.provider
       .pricingCandidates(request)
@@ -164,7 +186,19 @@ export class MeteredLlmGateway {
       });
       if (recording === "duplicate" && reservationId !== undefined)
         await this.costs.releaseReservation(reservationId, this.clock.now());
-      return response;
+      return {
+        response,
+        metering: {
+          currency: actual.currency,
+          pricingVersionId: pricing.id,
+          reservedMicros: reservationId === undefined ? null : reservedMicros,
+          estimatedMicros: estimated.micros,
+          actualMicros: actual.micros,
+          budgetScopeType: budgetScopeType ?? null,
+          budgetScopeId: budgetScopeId ?? null,
+          recording,
+        },
+      };
     } catch (error) {
       if (reservationId !== undefined)
         await this.costs.releaseReservation(reservationId, this.clock.now());

@@ -93,7 +93,7 @@ export async function handleModelCommand(
     }
     context.io.stdout(`Model routing: ${report.status}`);
     context.io.stdout(
-      `Sources: routing file ${report.sources.file ? "configured" : "not configured"}; AI_OFFICE_LLM_MODEL ${report.sources.legacyEnvironment ? "set" : "not set"}`,
+      `Sources: routing file ${report.sources.fileOrigin === "environment" ? "AI_OFFICE_MODEL_ROUTING_FILE override" : report.sources.fileOrigin === "runtime_home" ? "model-routing.yaml in AI_OFFICE_HOME" : "not configured"}; AI_OFFICE_LLM_MODEL ${report.sources.managed ? "ignored (managed service)" : report.sources.legacyEnvironment ? "set" : "not set"}`,
     );
     if (report.status === "unconfigured")
       context.io.stdout(
@@ -110,7 +110,11 @@ export async function handleModelCommand(
       context.io.stdout(`Policy ${policy.policy} -> ${policy.profile}`);
     for (const override of report.agentOverrides)
       context.io.stdout(
-        `Agent override ${override.agent} -> ${override.profile === null ? override.modelRef : `profile ${override.profile}`}`,
+        `Agent override (${override.scope === "host" ? "host-global, every project" : `project ${override.projectId}`}) ${override.agent} -> ${override.profile === null ? override.modelRef : `profile ${override.profile}`}`,
+      );
+    for (const provider of report.providers)
+      context.io.stdout(
+        `Provider ${provider.providerId}: ${provider.gatewayExecution ? `gateway-executable (run:tick --worker gateway)${provider.missingCredentials.length === 0 ? "" : `; missing ${provider.missingCredentials.join(", ")}`}` : "not gateway-executable; needs a client worker that supports it"}`,
       );
     for (const agent of report.project?.agents ?? [])
       context.io.stdout(

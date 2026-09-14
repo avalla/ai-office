@@ -151,11 +151,9 @@ test("operators inspect routing, and a scheduled run keeps its model across host
       findings: { severity: string; code: string }[];
     };
     expect(report.valid).toBe(true);
-    expect(report.findings).toContainEqual(
-      expect.objectContaining({
-        severity: "warning",
-        code: "PROVIDER_CREDENTIALS_MISSING",
-      }),
+    // Anthropic assignments run through the Claude login, not host credentials.
+    expect(report.findings).not.toContainEqual(
+      expect.objectContaining({ code: "PROVIDER_CREDENTIALS_MISSING" }),
     );
     expect(report.findings).toContainEqual(
       expect.objectContaining({ severity: "warning", code: "PRICING_MISSING" }),

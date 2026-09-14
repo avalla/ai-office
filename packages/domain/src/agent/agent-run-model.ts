@@ -2,9 +2,14 @@ import { DomainValidationError } from "../errors.ts";
 
 /** Which precedence rule produced a run's concrete model. */
 export type ModelSelectionSource =
-  "agent_override" | "role_policy" | "default" | "legacy_default";
+  | "project_agent_override"
+  | "agent_override"
+  | "role_policy"
+  | "default"
+  | "legacy_default";
 
 export const modelSelectionSources: readonly ModelSelectionSource[] = [
+  "project_agent_override",
   "agent_override",
   "role_policy",
   "default",
@@ -119,6 +124,7 @@ function parseSelection(value: unknown): AgentRunModelSelection {
     !modelSelectionSources.includes(source as ModelSelectionSource) ||
     // A concrete agent override names a model directly, never a profile.
     (profile === null &&
+      source !== "project_agent_override" &&
       source !== "agent_override" &&
       source !== "legacy_default") ||
     (profile !== null && source === "legacy_default")
@@ -150,44 +156,4 @@ export function parseAgentRunModelRouting(
     status: "resolved",
     selection: parseSelection(routing.selection),
   });
-}
-
-const modelSelectionFieldNames = new Set([
-  "llmmodel",
-  "model",
-  "modelpolicy",
-  "modelprofile",
-  "modelref",
-  "modelrouting",
-  "modelselection",
-  "providermodel",
-  "reasoningeffort",
-]);
-
-/**
- * Model selection is Runtime configuration, not an agent capability: a
- * run's controlled-action arguments may not carry a model choice.
- */
-export function assertNoModelSelectionFields(
-  value: unknown,
-  path: string,
-): void {
-  if (Array.isArray(value)) {
-    value.forEach((item, index) =>
-      assertNoModelSelectionFields(item, `${path}[${index}]`),
-    );
-    return;
-  }
-  if (typeof value !== "object" || value === null) return;
-  for (const [key, item] of Object.entries(value)) {
-    if (
-      modelSelectionFieldNames.has(
-        key.toLowerCase().replaceAll(/[^a-z0-9]/g, ""),
-      )
-    )
-      throw new DomainValidationError(
-        `${path} cannot select a model (field ${key})`,
-      );
-    assertNoModelSelectionFields(item, `${path}.${key}`);
-  }
 }

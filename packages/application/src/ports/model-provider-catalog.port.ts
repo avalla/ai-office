@@ -7,9 +7,12 @@ export interface ModelProviderCatalog {
   supportedProviders(): readonly string[];
   /** Missing credential variable names, or null for an unsupported provider. */
   missingCredentials(providerId: string): readonly string[] | null;
+  /** Whether the metered gateway worker can execute the provider's models. */
+  supportsGatewayExecution(providerId: string): boolean;
 }
 
 export const emptyModelProviderCatalog: ModelProviderCatalog = {
   supportedProviders: () => [],
   missingCredentials: () => null,
+  supportsGatewayExecution: () => false,
 };

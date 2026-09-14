@@ -38,6 +38,7 @@ export default defineConfig({
     env: {
       AI_OFFICE_PROJECT_MEMORY_PROVIDER: "none",
       AI_OFFICE_MODEL_ROUTING_FILE: "",
+      AI_OFFICE_MODEL_ROUTING_SOURCE: "",
       AI_OFFICE_LLM_MODEL: "",
       AI_OFFICE_LLM_PROVIDER: "",
     },

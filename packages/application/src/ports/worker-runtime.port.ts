@@ -63,6 +63,37 @@ export interface WorkerLimits {
   maxTurns: number;
   /** CLI-reported USD estimate, not a claim about the user's final bill. */
   maxEstimatedCostUsd: string;
+  /** The role's `maxCostMicros` (USD micros); a model choice never widens it. */
+  maxCostMicros: bigint;
+}
+
+/**
+ * Cost evidence recorded by the metered LLM gateway for a gateway-executed
+ * run. Client-login workers never carry it: their cost is a client estimate
+ * or unknown. Monetary values are integer micros as decimal strings.
+ */
+export interface WorkerGatewayMetering {
+  kind: "gateway";
+  providerId: string;
+  model: string;
+  providerRequestId: string | null;
+  usage: {
+    inputTokens: number;
+    cachedInputTokens: number;
+    outputTokens: number;
+    reasoningTokens: number;
+  };
+  appliedParameters: {
+    reasoningEffort: string | null;
+    maxOutputTokens: number;
+  };
+  currency: "USD" | "EUR";
+  pricingVersionId: string;
+  budgetScope: "agent_run";
+  budgetLimitMicros: string;
+  reservedMicros: string;
+  estimatedMicros: string;
+  actualMicros: string;
 }
 
 export interface WorkerOutput {
@@ -73,6 +104,7 @@ export interface WorkerOutput {
   model: string | null;
   usage: { inputTokens: number; outputTokens: number } | null;
   estimatedCostUsd: number | null;
+  metering?: WorkerGatewayMetering;
 }
 
 export const workerLimits = {
@@ -99,6 +131,14 @@ const errorMessages = {
     "The selected worker cannot execute the run's assigned model or its execution parameters.",
   WORKER_MODEL_CONFLICT:
     "The run's assigned model cannot be replaced by a worker model option.",
+  WORKER_MODEL_REQUIRED:
+    "The selected worker executes only runs with an assigned model; this run has none.",
+  WORKER_MODEL_MISMATCH:
+    "The provider reported a different model than the run's assigned model; the result was rejected.",
+  WORKER_PRICING_UNAVAILABLE:
+    "No active pricing exists for the run's assigned model; metered execution fails closed.",
+  WORKER_CREDENTIALS_MISSING:
+    "The Runtime host has no provider credentials for the run's assigned model.",
 } as const;
 
 export class WorkerRuntimeError extends Error {
@@ -110,6 +150,11 @@ export class WorkerRuntimeError extends Error {
 
 export interface WorkerRuntime {
   readonly id: string;
+  /**
+   * True for an adapter with no default model of its own: unrouted and
+   * historical runs fail with `WORKER_MODEL_REQUIRED` before dispatch.
+   */
+  readonly requiresModelSelection?: boolean;
   inspect(): Promise<{ version: string }>;
   /**
    * Whether this adapter can honor a persisted model selection exactly,

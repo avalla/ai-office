@@ -85,7 +85,8 @@ export class WorkerAgentExecutor implements AgentExecutor {
         code: "WORKER_MODEL_UNSUPPORTED" as const,
       };
       if (!support.supported) throw new WorkerRuntimeError(support.code);
-    }
+    } else if (this.worker.requiresModelSelection === true)
+      throw new WorkerRuntimeError("WORKER_MODEL_REQUIRED");
     const definition =
       stage == null
         ? undefined
@@ -157,6 +158,7 @@ export class WorkerAgentExecutor implements AgentExecutor {
       timeoutMs: roleState.limits.timeoutSeconds * 1000,
       maxTurns: roleState.limits.maxIterations,
       maxEstimatedCostUsd: `${budget / 1000000n}.${String(budget % 1000000n).padStart(6, "0")}`,
+      maxCostMicros: budget,
     };
     if (
       !Number.isSafeInteger(limits.timeoutMs) ||

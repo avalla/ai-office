@@ -266,6 +266,7 @@ test("worker dispatch persists its context digest before calling the process and
         maxTurns: 3,
         timeoutMs: 20000,
         maxEstimatedCostUsd: "0.125000",
+        maxCostMicros: 125000n,
       });
       expect(await f.runs.findTaskLock("t")).not.toBeNull();
       return output;

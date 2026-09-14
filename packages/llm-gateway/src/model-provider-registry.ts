@@ -1,7 +1,7 @@
 import { ChatAnthropic } from "@langchain/anthropic";
-import { ChatOpenAI } from "@langchain/openai";
 import { createHash } from "node:crypto";
 import { LangChainModelProvider } from "./langchain-model-provider.ts";
+import { OpenAiResponsesProvider } from "./openai-provider.ts";
 import type { LlmProvider } from "./provider.ts";
 import {
   configurationError,
@@ -140,21 +140,11 @@ export function createDefaultModelProviderRegistry(): ModelProviderRegistry {
   return new ModelProviderRegistry([
     {
       ...descriptor("openai"),
-      create: (model, environment) => {
-        const apiKey = required(environment, "OPENAI_API_KEY");
-        const debug = llmDebugEnabled(environment);
-        return new LangChainModelProvider(
-          "openai",
-          model,
-          new ChatOpenAI({
-            model,
-            apiKey,
-            maxRetries: 0,
-          }),
-          undefined,
-          debug,
-        );
-      },
+      // The native Responses adapter applies reasoning effort and output caps
+      // exactly, requires the vendor-reported effective model and request ID,
+      // and never retries on its own (ADR-0019 amends ADR-0005 here).
+      create: (_model, environment) =>
+        new OpenAiResponsesProvider(required(environment, "OPENAI_API_KEY")),
     },
     {
       ...descriptor("anthropic"),

@@ -6,6 +6,7 @@ import {
   type AgentExecutor,
 } from "@ai-office/agent-runtime/executor.ts";
 import { ClaudeWorkerRuntime } from "@ai-office/agent-runtime/claude-worker-runtime.ts";
+import { GatewayWorkerRuntime } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import { WorkerAgentExecutor } from "@ai-office/application/commands/worker-agent-executor.ts";
 import { RunContextAssembler } from "@ai-office/application/context/run-context-assembler.ts";
 import { InMemoryWorktreeManager } from "@ai-office/agent-runtime/worktree.ts";
@@ -209,8 +210,10 @@ export async function handleRunCommand(
       throw new CliUsageError("Capacity must be an integer between 1 and 100");
     const queued = await runtime.listQueuedRuns(projectId, capacity);
     const worker = parsed.options.get("worker");
-    if (worker !== undefined && worker !== "claude")
-      throw new CliUsageError("Unsupported worker. Available worker: claude");
+    if (worker !== undefined && worker !== "claude" && worker !== "gateway")
+      throw new CliUsageError(
+        "Unsupported worker. Available workers: claude, gateway",
+      );
     const model = parsed.options.get("worker-model");
     if (parsed.flags.has("simulate") && worker !== undefined)
       throw new CliUsageError("Choose --worker or --simulate");
@@ -222,6 +225,11 @@ export async function handleRunCommand(
       throw new CliUsageError(
         "--worker-model requires a worker and a valid model name",
       );
+    // The gateway worker has no default model: it executes assigned models only.
+    if (model !== undefined && worker === "gateway")
+      throw new CliUsageError(
+        "--worker-model applies only to --worker claude; the gateway worker executes each run's assigned model and accepts no model option. No runs were started.",
+      );
     if (
       context.agentExecutor === undefined &&
       worker === undefined &&
@@ -229,34 +237,58 @@ export async function handleRunCommand(
       queued.some((run) => run.snapshot().actionIntent === undefined)
     )
       throw new CliUsageError(
-        "Queued tasks need a real worker: use --worker claude, or explicitly use --simulate for a test run. No runs were started.",
+        "Queued tasks need a real worker: use --worker claude or --worker gateway, or explicitly use --simulate for a test run. No runs were started.",
       );
     const claude =
       worker === "claude"
         ? new ClaudeWorkerRuntime("claude", undefined, model)
         : undefined;
+    const gateway =
+      worker === "gateway"
+        ? new GatewayWorkerRuntime(
+            context.gatewayProviders,
+            context.costs,
+            ids,
+            clock,
+          )
+        : undefined;
     // Assigned models are checked before any run is admitted, so a batch the
     // worker cannot honor leaves the queue unchanged.
     for (const run of queued) {
       const snapshot = run.snapshot();
-      if (
-        claude === undefined ||
-        snapshot.actionIntent !== undefined ||
-        snapshot.modelRouting?.status !== "resolved"
-      )
+      if (snapshot.actionIntent !== undefined) continue;
+      const routing = snapshot.modelRouting;
+      if (gateway !== undefined) {
+        if (routing?.status !== "resolved")
+          throw new CliUsageError(
+            `Run ${snapshot.id} has no assigned model (${routing === undefined ? "scheduled before model routing" : "unrouted"}); the gateway worker executes only routed runs and never uses an ambient default. No runs were started.`,
+          );
+        const selection = routing.selection;
+        if (!gateway.supportsModel(selection).supported)
+          throw new CliUsageError(
+            `Run ${snapshot.id} is assigned ${selection.modelRef}, which the gateway worker cannot execute with its assigned parameters. Cancel it with run:cancel or correct model routing before scheduling. No runs were started.`,
+          );
+        const missing = gateway.missingCredentials(selection);
+        if (missing.length > 0)
+          throw new CliUsageError(
+            `Run ${snapshot.id} is assigned ${selection.modelRef}, but the Runtime host environment has no ${missing.join(", ")}. The gateway worker reads provider credentials only from the Runtime host environment; managed services are not given credentials. No runs were started.`,
+          );
         continue;
-      const support = claude.supportsModel(snapshot.modelRouting.selection);
+      }
+      if (claude === undefined || routing?.status !== "resolved") continue;
+      const support = claude.supportsModel(routing.selection);
       if (!support.supported)
         throw new CliUsageError(
           support.code === "WORKER_MODEL_CONFLICT"
-            ? `Run ${snapshot.id} is assigned ${snapshot.modelRouting.selection.modelRef}; --worker-model cannot replace an assigned model. No runs were started.`
-            : `Run ${snapshot.id} is assigned ${snapshot.modelRouting.selection.modelRef}, which the claude worker cannot execute with its assigned parameters. Cancel it with run:cancel or correct model routing before scheduling. No runs were started.`,
+            ? `Run ${snapshot.id} is assigned ${routing.selection.modelRef}; --worker-model cannot replace an assigned model. No runs were started.`
+            : `Run ${snapshot.id} is assigned ${routing.selection.modelRef}, which the claude worker cannot execute with its assigned parameters. Cancel it with run:cancel or correct model routing before scheduling. No runs were started.`,
         );
     }
+    const realWorker = claude ?? gateway;
     const selectedExecutor: AgentExecutor =
-      claude !== undefined
+      realWorker !== undefined
         ? new WorkerAgentExecutor(
-            claude,
+            realWorker,
             runtime,
             tasks,
             context.pipelines,
@@ -405,7 +437,10 @@ export async function handleRunCommand(
               : {
                   reportedModel: workerOutput.model,
                   tokens: workerOutput.usage,
+                  // Client-reported estimate; never derived for gateway runs.
                   estimatedCostUsd: workerOutput.estimatedCostUsd,
+                  // Gateway-recorded cost evidence; absent for client-login workers.
+                  metering: workerOutput.metering ?? null,
                 },
           roleLimits,
           error: snapshot.error ?? null,
@@ -439,10 +474,19 @@ export async function handleRunCommand(
           `  Execution parameters: reasoning effort ${selection.reasoningEffort ?? "-"}; max output tokens ${selection.maxOutputTokens ?? "-"}`,
         );
     }
-    if (workerOutput !== null)
+    const metering = workerOutput?.metering;
+    if (workerOutput !== null && metering === undefined)
       io.stdout(
         `Usage: reported model ${workerOutput.model ?? "not reported"}; tokens ${workerOutput.usage === null ? "unknown" : `${workerOutput.usage.inputTokens} input / ${workerOutput.usage.outputTokens} output`}; estimated cost ${workerOutput.estimatedCostUsd === null ? "unknown" : `USD ${workerOutput.estimatedCostUsd}`}`,
       );
+    if (metering !== undefined) {
+      io.stdout(
+        `Usage: actual ${metering.providerId}:${metering.model}; tokens ${metering.usage.inputTokens} input (${metering.usage.cachedInputTokens} cached) / ${metering.usage.outputTokens} output (${metering.usage.reasoningTokens} reasoning); max output tokens ${metering.appliedParameters.maxOutputTokens}`,
+      );
+      io.stdout(
+        `Metered cost: actual ${metering.actualMicros} ${metering.currency} micros; estimate ${metering.estimatedMicros}; reserved ${metering.reservedMicros}; run budget ${metering.budgetLimitMicros} (gateway pricing ${metering.pricingVersionId})`,
+      );
+    }
     if (roleLimits !== null)
       io.stdout(
         `Budget: role max cost ${roleLimits.maxCostMicros} micros; ${roleLimits.maxIterations} iterations; ${roleLimits.timeoutSeconds}s timeout`,

@@ -28,6 +28,10 @@ import {
   loadModelRoutingState,
 } from "@ai-office/llm-gateway/model-routing-configuration.ts";
 import {
+  EnvironmentGatewayModelProviders,
+  type GatewayModelProviders,
+} from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
+import {
   ensureRuntimeHome,
   resolveRuntimePaths,
   withRuntimePathOverrides,
@@ -53,11 +57,17 @@ export interface BootstrapOptions {
    */
   projectMemory?: ProjectMemoryProvider;
   /**
-   * Optional host model routing. When omitted, the host reads its own
-   * environment once (`AI_OFFICE_MODEL_ROUTING_FILE`, `AI_OFFICE_LLM_MODEL`).
+   * Optional host model routing. When omitted, the host reads it once from
+   * `<AI_OFFICE_HOME>/model-routing.yaml` or, in the foreground only, from
+   * `AI_OFFICE_MODEL_ROUTING_FILE` and `AI_OFFICE_LLM_MODEL`.
    */
   modelRouting?: ModelRoutingState;
   modelProviders?: ModelProviderCatalog;
+  /**
+   * Optional gateway provider access. When omitted, gateway-executed runs read
+   * provider credentials from this host's environment; nothing persists them.
+   */
+  gatewayProviders?: GatewayModelProviders;
 }
 
 export async function bootstrap(
@@ -119,10 +129,17 @@ export async function bootstrap(
     () => queryEvents.publish(["run.updated", "task.updated"]),
     options.projectMemory ?? createProjectMemoryProvider(process.env),
     {
-      state: options.modelRouting ?? loadModelRoutingState(process.env),
+      state:
+        options.modelRouting ??
+        loadModelRoutingState(process.env, {
+          runtimeHome: runtimePaths.runtimeHome,
+        }),
       providers:
         options.modelProviders ??
         new EnvironmentModelProviderCatalog(process.env),
+      gateway:
+        options.gatewayProviders ??
+        new EnvironmentGatewayModelProviders(process.env),
     },
   );
 

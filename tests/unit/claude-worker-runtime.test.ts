@@ -43,6 +43,7 @@ const limits = {
   timeoutMs: 1000,
   maxTurns: 2,
   maxEstimatedCostUsd: "0.100000",
+  maxCostMicros: 100000n,
 };
 const envelope = {
   type: "result",

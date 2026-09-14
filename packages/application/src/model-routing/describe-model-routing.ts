@@ -8,6 +8,7 @@ import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import {
   ModelRoutingError,
   resolveAgentRunModel,
+  type AgentModelOverride,
   type ConcreteModel,
   type ModelRoutingIssue,
   type ModelRoutingSources,
@@ -54,6 +55,9 @@ export interface ModelRoutingReport {
   }[];
   policies: { policy: string; profile: string }[];
   agentOverrides: {
+    /** `host`: every project's agent with this name; `project`: one project only. */
+    scope: "host" | "project";
+    projectId: string | null;
     agent: string;
     profile: string | null;
     modelRef: string | null;
@@ -61,6 +65,8 @@ export interface ModelRoutingReport {
   providers: {
     providerId: string;
     supported: boolean;
+    /** Whether the metered gateway worker can execute this provider's models. */
+    gatewayExecution: boolean;
     missingCredentials: string[];
   }[];
   project: { projectId: string; agents: AgentModelRoute[] } | null;
@@ -69,6 +75,21 @@ export interface ModelRoutingReport {
 
 const byText = (left: string, right: string) =>
   left < right ? -1 : left > right ? 1 : 0;
+
+function overrideReport(
+  scope: "host" | "project",
+  projectId: string | null,
+  agent: string,
+  override: AgentModelOverride,
+): ModelRoutingReport["agentOverrides"][number] {
+  return {
+    scope,
+    projectId,
+    agent,
+    profile: override.kind === "profile" ? override.profile : null,
+    modelRef: override.kind === "model" ? override.modelRef : null,
+  };
+}
 
 /**
  * Validates host model routing without constructing a provider client, sending
@@ -106,6 +127,9 @@ export class DescribeModelRouting {
       remember(profile);
     for (const override of configuration?.agentOverrides.values() ?? [])
       if (override.kind === "model") remember(override);
+    for (const overrides of configuration?.projectAgentOverrides.values() ?? [])
+      for (const override of overrides.values())
+        if (override.kind === "model") remember(override);
     if (configuration?.legacyDefault != null)
       remember(configuration.legacyDefault);
 
@@ -114,7 +138,11 @@ export class DescribeModelRouting {
     ].sort(byText);
     const providers = providerIds.map((providerId) => {
       const missing = this.providers.missingCredentials(providerId);
-      if (missing !== null && missing.length > 0)
+      const gatewayExecution =
+        this.providers.supportsGatewayExecution(providerId);
+      // Only a gateway-executable provider reads host credentials; client-login
+      // workers use their own login.
+      if (gatewayExecution && missing !== null && missing.length > 0)
         findings.push({
           severity: "warning",
           code: "PROVIDER_CREDENTIALS_MISSING",
@@ -124,7 +152,8 @@ export class DescribeModelRouting {
       return {
         providerId,
         supported: missing !== null,
-        missingCredentials: [...(missing ?? [])],
+        gatewayExecution,
+        missingCredentials: gatewayExecution ? [...(missing ?? [])] : [],
       };
     });
 
@@ -178,6 +207,7 @@ export class DescribeModelRouting {
         }
         try {
           const resolved = resolveAgentRunModel(routing, {
+            projectId: input.projectId,
             agentName: agent.name,
             modelPolicy: role.modelPolicy,
           });
@@ -229,10 +259,31 @@ export class DescribeModelRouting {
             severity: "warning",
             code: "AGENT_OVERRIDE_UNKNOWN_AGENT",
             subject: name,
-            message: `Agent override ${name} matches no agent in project ${input.projectId}.`,
+            message: `Host-global agent override ${name} matches no agent in project ${input.projectId}.`,
+          });
+      for (const name of [
+        ...(configuration?.projectAgentOverrides.get(input.projectId)?.keys() ??
+          []),
+      ].sort(byText))
+        if (!names.has(name))
+          findings.push({
+            severity: "warning",
+            code: "AGENT_OVERRIDE_UNKNOWN_AGENT",
+            subject: `projects.${input.projectId}.agents.${name}`,
+            message: `Project agent override ${name} matches no agent in project ${input.projectId}.`,
           });
       project = { projectId: input.projectId, agents };
     }
+    for (const projectId of [
+      ...(configuration?.projectAgentOverrides.keys() ?? []),
+    ].sort(byText))
+      if ((await this.projects.findById(projectId)) === null)
+        findings.push({
+          severity: "warning",
+          code: "PROJECT_OVERRIDE_UNKNOWN_PROJECT",
+          subject: `projects.${projectId}`,
+          message: `Project overrides name ${projectId}, which is not a project of this Runtime.`,
+        });
 
     return {
       schemaVersion: 1,
@@ -253,13 +304,22 @@ export class DescribeModelRouting {
       policies: [...(configuration?.policies.entries() ?? [])]
         .map(([policy, profile]) => ({ policy, profile }))
         .sort((left, right) => byText(left.policy, right.policy)),
-      agentOverrides: [...(configuration?.agentOverrides.entries() ?? [])]
-        .map(([agent, override]) => ({
-          agent,
-          profile: override.kind === "profile" ? override.profile : null,
-          modelRef: override.kind === "model" ? override.modelRef : null,
-        }))
-        .sort((left, right) => byText(left.agent, right.agent)),
+      agentOverrides: [
+        ...[...(configuration?.agentOverrides.entries() ?? [])]
+          .map(([agent, override]) =>
+            overrideReport("host", null, agent, override),
+          )
+          .sort((left, right) => byText(left.agent, right.agent)),
+        ...[...(configuration?.projectAgentOverrides.entries() ?? [])]
+          .sort(([left], [right]) => byText(left, right))
+          .flatMap(([projectId, overrides]) =>
+            [...overrides.entries()]
+              .map(([agent, override]) =>
+                overrideReport("project", projectId, agent, override),
+              )
+              .sort((left, right) => byText(left.agent, right.agent)),
+          ),
+      ],
       providers,
       project,
       findings,

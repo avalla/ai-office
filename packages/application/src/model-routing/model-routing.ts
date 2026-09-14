@@ -17,17 +17,70 @@ export interface ModelProfile extends ConcreteModel {
   readonly maxOutputTokens: number | null;
 }
 
-/** A host-local override keyed by synchronized agent name. */
+/**
+ * A host-local override keyed by synchronized agent name. The name alone does
+ * not identify an Agent entity: in the host-global `agents` section it applies
+ * to every project's agent with that name; under `projects.<project-id>` it
+ * applies only within that project.
+ */
 export type AgentModelOverride =
   | { readonly kind: "profile"; readonly profile: string }
   | ({ readonly kind: "model" } & ConcreteModel);
+
+/**
+ * A read-only map whose entries cannot be changed at runtime. `ReadonlyMap`
+ * is only a type: a plain `Map` behind it can still be mutated by any code that
+ * holds it, and `Object.freeze` does not freeze a Map's entries. The backing
+ * map is private and never handed out, including through `forEach`.
+ */
+export class FrozenMap<K, V> implements ReadonlyMap<K, V> {
+  readonly #entries: Map<K, V>;
+  constructor(entries: Iterable<readonly [K, V]> = []) {
+    this.#entries = new Map(entries);
+    Object.freeze(this);
+  }
+  get size(): number {
+    return this.#entries.size;
+  }
+  get(key: K): V | undefined {
+    return this.#entries.get(key);
+  }
+  has(key: K): boolean {
+    return this.#entries.has(key);
+  }
+  forEach(
+    callback: (value: V, key: K, map: ReadonlyMap<K, V>) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [key, value] of this.#entries)
+      callback.call(thisArg, value, key, this);
+  }
+  entries(): MapIterator<[K, V]> {
+    return this.#entries.entries();
+  }
+  keys(): MapIterator<K> {
+    return this.#entries.keys();
+  }
+  values(): MapIterator<V> {
+    return this.#entries.values();
+  }
+  [Symbol.iterator](): MapIterator<[K, V]> {
+    return this.#entries.entries();
+  }
+}
 
 export interface ModelRoutingConfiguration {
   readonly profiles: ReadonlyMap<string, ModelProfile>;
   /** Explicit policy -> profile mappings; a policy may also name a profile directly. */
   readonly policies: ReadonlyMap<string, string>;
   readonly defaultProfile: string | null;
+  /** Host-global overrides: every project's agent with this name. */
   readonly agentOverrides: ReadonlyMap<string, AgentModelOverride>;
+  /** Project id -> agent name -> override, applied only inside that project. */
+  readonly projectAgentOverrides: ReadonlyMap<
+    string,
+    ReadonlyMap<string, AgentModelOverride>
+  >;
   /** `AI_OFFICE_LLM_MODEL`, the lowest-precedence compatibility default. */
   readonly legacyDefault: ConcreteModel | null;
 }
@@ -46,6 +99,8 @@ export type ModelRoutingIssueCode =
   | "PROVIDER_CREDENTIALS_MISSING"
   | "PRICING_MISSING"
   | "AGENT_OVERRIDE_UNKNOWN_AGENT"
+  | "PROJECT_OVERRIDE_UNKNOWN_PROJECT"
+  | "MANAGED_ENVIRONMENT_IGNORED"
   | "LEGACY_PROVIDER_FORM_DEPRECATED";
 
 /** Diagnostic text names configuration keys and model refs, never secret values or host paths. */
@@ -56,10 +111,20 @@ export interface ModelRoutingIssue {
 }
 
 export interface ModelRoutingSources {
-  /** A routing file was configured through `AI_OFFICE_MODEL_ROUTING_FILE`. */
+  /** A routing file was read. */
   readonly file: boolean;
-  /** `AI_OFFICE_LLM_MODEL` was set. */
+  /**
+   * `environment`: the explicit `AI_OFFICE_MODEL_ROUTING_FILE` override;
+   * `runtime_home`: `<AI_OFFICE_HOME>/model-routing.yaml`.
+   */
+  readonly fileOrigin: "environment" | "runtime_home" | null;
+  /** `AI_OFFICE_LLM_MODEL` was used as the legacy default. */
   readonly legacyEnvironment: boolean;
+  /**
+   * The Runtime runs as a managed service and reads routing only from its
+   * Runtime home, ignoring ambient routing variables.
+   */
+  readonly managed: boolean;
 }
 
 /**
@@ -87,7 +152,12 @@ export type ModelRoutingState =
 
 export const unconfiguredModelRouting: ModelRoutingState = Object.freeze({
   status: "unconfigured",
-  sources: Object.freeze({ file: false, legacyEnvironment: false }),
+  sources: Object.freeze({
+    file: false,
+    fileOrigin: null,
+    legacyEnvironment: false,
+    managed: false,
+  }),
   warnings: Object.freeze([]),
 });
 
@@ -107,6 +177,8 @@ export class ModelRoutingError extends Error {
 }
 
 export interface AgentModelSubject {
+  /** The Runtime project that owns the agent; scopes project overrides. */
+  readonly projectId: string;
   readonly agentName: string;
   readonly modelPolicy: string;
 }
@@ -152,13 +224,29 @@ function concrete(
   };
 }
 
+function fromOverride(
+  configuration: ModelRoutingConfiguration,
+  override: AgentModelOverride,
+  subject: AgentModelSubject,
+  source: "project_agent_override" | "agent_override",
+): AgentRunModelRouting {
+  return {
+    status: "resolved",
+    selection:
+      override.kind === "profile"
+        ? fromProfile(configuration, override.profile, subject, source)
+        : concrete(override, subject, source),
+  };
+}
+
 /**
  * Deterministic precedence, evaluated once at scheduling:
  *
- * 1. host agent override (profile or concrete model);
- * 2. the role's `modelPolicy` mapped to a profile;
- * 3. the configured default profile;
- * 4. legacy `AI_OFFICE_LLM_MODEL`.
+ * 1. project agent override (`projects.<project-id>.agents.<name>`);
+ * 2. host-global agent override (`agents.<name>`, every project);
+ * 3. the role's `modelPolicy` mapped to a profile;
+ * 4. the configured default profile;
+ * 5. legacy `AI_OFFICE_LLM_MODEL`.
  *
  * Invalid explicit configuration never falls through to a lower rule.
  */
@@ -173,20 +261,19 @@ export function resolveAgentRunModel(
       "Model routing configuration is invalid; run model:check. No run was scheduled.",
     );
   const configuration = state.configuration;
+  const projectOverride = configuration.projectAgentOverrides
+    .get(subject.projectId)
+    ?.get(subject.agentName);
+  if (projectOverride !== undefined)
+    return fromOverride(
+      configuration,
+      projectOverride,
+      subject,
+      "project_agent_override",
+    );
   const override = configuration.agentOverrides.get(subject.agentName);
   if (override !== undefined)
-    return {
-      status: "resolved",
-      selection:
-        override.kind === "profile"
-          ? fromProfile(
-              configuration,
-              override.profile,
-              subject,
-              "agent_override",
-            )
-          : concrete(override, subject, "agent_override"),
-    };
+    return fromOverride(configuration, override, subject, "agent_override");
   const mapped =
     configuration.policies.get(subject.modelPolicy) ??
     (configuration.profiles.has(subject.modelPolicy)
