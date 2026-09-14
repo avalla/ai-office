@@ -77,13 +77,15 @@ Commands:
   task:reconcile --project <id> [--json]  # read-only; add --fix --approve <planHash> to repair
   agent:sync --project <id> [--directory <path>]
   agent:list --project <id>
+  agent:models --project <id> [--json]  # read-only; policy, profile and model each agent would be scheduled with
+  model:check [--project <id>] [--json]  # read-only model routing validation; sends no model request
   run:schedule --project <id> --task <id> --agent <id> [--resource <id> --operation <name> [--arguments <json>]]
-  run:tick --project <id> [--worker claude [--worker-model <model>] | --simulate] [--capacity <1-100>] [--json]
+  run:tick --project <id> [--worker claude [--worker-model <model>] | --worker gateway | --simulate] [--capacity <1-100>] [--json]
   run:cancel --project <id> --run <id> --reason <text> [--json]
   run:reconcile --project <id> --run <id> --reason <text> [--approve <planHash>] [--json]
   run:list --project <id>
-  run:show --project <id> --run <id>
-  pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
+  run:show --project <id> --run <id> [--json]
+  pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>  # per million tokens; cached input and reasoning replace, not add to, input and output rates
   budget:set --project <id> --limit <micros> [--currency <USD|EUR>]
   cost:list --project <id> [--group-by <project|task|agent|agent_run>]
   milestone:create --project <id> --title <title> [--description <description>]
@@ -126,4 +128,10 @@ Environment (linkable ai-office entry point):
 Environment (Runtime host; optional project memory, disabled by default):
   AI_OFFICE_PROJECT_MEMORY_PROVIDER    none (default) | cairnkeep
   AI_OFFICE_CAIRNKEEP_COMMAND          executable name or absolute path; defaults to cairn
-  AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS  100..30000; defaults to 5000`;
+  AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS  100..30000; defaults to 5000
+
+Model routing (Runtime host; read once at host start; restart after changes):
+  <AI_OFFICE_HOME>/model-routing.yaml  canonical profile file; the only source of a managed service
+  AI_OFFICE_MODEL_ROUTING_FILE  foreground override: absolute or ~/ path to a YAML/JSON profile file
+  AI_OFFICE_LLM_MODEL           foreground legacy <provider>:<model> default (lowest precedence)
+  OPENAI_API_KEY                gateway worker credential; host environment only, never in routing files`;

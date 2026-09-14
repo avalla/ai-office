@@ -381,7 +381,7 @@ export class SqliteCostRepository implements CostRepository {
           );
         this.database
           .prepare(
-            `INSERT INTO cost_event(id,project_id,usage_id,pricing_version_id,reservation_id,estimated_micros,reserved_micros,actual_micros,overage_micros,currency,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+            `INSERT INTO cost_event(id,project_id,usage_id,pricing_version_id,reservation_id,estimated_micros,reserved_micros,actual_micros,overage_micros,currency,charge_basis,occurred_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
           )
           .run(
             v.costEventId,
@@ -394,6 +394,7 @@ export class SqliteCostRepository implements CostRepository {
             safe(v.actual.micros),
             safe(overage),
             v.actual.currency,
+            v.chargeBasis ?? "reported_usage",
             v.occurredAt.toISOString(),
           );
         if (v.reservationId !== undefined) {

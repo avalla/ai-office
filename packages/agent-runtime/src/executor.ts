@@ -28,6 +28,12 @@ export interface AgentExecutionResult {
   artifacts: string[];
   actions?: AgentControlledActionResult[];
   workerOutput?: unknown;
+  /** Role limits applied to a worker dispatch, recorded as non-secret evidence. */
+  roleLimits?: {
+    maxIterations: number;
+    maxCostMicros: string;
+    timeoutSeconds: number;
+  };
 }
 export interface AgentExecutor {
   /** `signal` cancels preparation work such as optional context retrieval. */

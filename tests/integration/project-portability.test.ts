@@ -762,6 +762,76 @@ describe("project portability", () => {
     destination.database.close();
   });
 
+  test("keeps a run's host-resolved model out of the portable snapshot without a schema change", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-portable-model-a-");
+    const targetRuntime = temporaryRoot("ai-office-portable-model-b-");
+    const source = temporaryRoot("ai-office-portable-model-source-");
+    const target = temporaryRoot("ai-office-portable-model-target-");
+    writeFileSync(join(source, "package.json"), '{"name":"model-routing"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"model-routing"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const taskId = await createTask(origin, imported.projectId, "Routed run");
+    const { agentId } = await createAgent(origin, imported.projectId, "routed");
+    const run = AgentRun.create({
+      id: "run-routed",
+      projectId: imported.projectId,
+      taskId,
+      agentId,
+      modelRouting: {
+        status: "resolved",
+        selection: {
+          policy: "default",
+          profile: "host-private-profile",
+          modelRef: "openai:host-private-model",
+          providerId: "openai",
+          model: "host-private-model",
+          reasoningEffort: "high",
+          maxOutputTokens: null,
+          source: "role_policy",
+        },
+      },
+      now: origin.clock.now(),
+    });
+    run.transition("cancelled", origin.clock.now(), {
+      error: { code: "cancelled-locally" },
+    });
+    await origin.agentRuntime.saveRun(run);
+
+    const backup = await origin.service.backup(imported.projectId);
+    const serialized = serializePortableProjectArchive(backup.archive);
+    expect(backup.archive.state.agents.terminalRuns).toEqual([
+      expect.objectContaining({ id: "run-routed", status: "cancelled" }),
+    ]);
+    // The semantic role policy stays portable; the concrete host choice does not.
+    expect(backup.archive.state.agents.roles).toEqual([
+      expect.objectContaining({ modelPolicy: "default" }),
+    ]);
+    for (const hostValue of [
+      "host-private-model",
+      "host-private-profile",
+      "modelRouting",
+      "role_policy",
+    ])
+      expect(serialized).not.toContain(hostValue);
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: parsePortableProjectArchive(serialized),
+      rootPath: target,
+    });
+    expect(
+      await destination.states.loadPortableState(restored.projectId),
+    ).toEqual(backup.archive.state);
+    // A restored historical run is explicitly unrecorded, never re-resolved.
+    expect(
+      (await destination.agentRuntime.findRun("run-routed"))?.snapshot()
+        .modelRouting,
+    ).toBeUndefined();
+    destination.database.close();
+  });
+
   test("excludes active-run governance until its subject becomes portable", async () => {
     const sourceRuntime = temporaryRoot("ai-office-portable-active-review-a-");
     const targetRuntime = temporaryRoot("ai-office-portable-active-review-b-");

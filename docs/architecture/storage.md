@@ -69,7 +69,10 @@ client artifacts, and detaches only the current checkout in SQLite; unrelated
 `<runtime-home>/project.sqlite` currently stores:
 
 - projects, imported-source metadata, historical onboarding questions, profile facts, and immutable office-manifest revisions;
-- tasks, roles, agents, agent runs, task locks, and run events;
+- tasks, roles, agents, agent runs, task locks, and run events; each run created
+  after migration `0030` carries an immutable, non-secret model routing record
+  (`unrouted` or the resolved policy/profile/model), runtime-local and excluded
+  from portable snapshots;
 - pinned pipeline runs, ordered stage state, assignments, workflow decisions,
   reasoned overrides, and agent/action pipeline bindings;
 - pricing, budgets, reservations, normalized usage, and costs;

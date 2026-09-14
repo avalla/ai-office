@@ -33,7 +33,14 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts"],
-    // Tests never inherit a developer's optional project memory provider.
-    env: { AI_OFFICE_PROJECT_MEMORY_PROVIDER: "none" },
+    // Tests never inherit a developer's optional project memory provider or
+    // host model routing; an empty value is treated as unset.
+    env: {
+      AI_OFFICE_PROJECT_MEMORY_PROVIDER: "none",
+      AI_OFFICE_MODEL_ROUTING_FILE: "",
+      AI_OFFICE_MODEL_ROUTING_SOURCE: "",
+      AI_OFFICE_LLM_MODEL: "",
+      AI_OFFICE_LLM_PROVIDER: "",
+    },
   },
 });

@@ -1,5 +1,11 @@
 import {
+  providerIdPattern,
+  providerModelPattern,
+  reasoningEffortPattern,
+} from "@ai-office/domain/agent/agent-run-model.ts";
+import {
   workerLimits,
+  type WorkerGatewayMetering,
   type WorkerOutput,
 } from "../ports/worker-runtime.port.ts";
 
@@ -29,6 +35,7 @@ export function projectWorkerOutput(result: unknown): WorkerOutput | null {
     typeof value === "string" && /^[a-zA-Z0-9._-]{1,128}$/.test(value)
       ? value
       : null;
+  const metering = projectGatewayMetering(output.metering);
   return {
     schemaVersion: 1,
     summary: output.summary,
@@ -45,5 +52,72 @@ export function projectWorkerOutput(result: unknown): WorkerOutput | null {
       output.estimatedCostUsd >= 0
         ? output.estimatedCostUsd
         : null,
+    ...(metering === null ? {} : { metering }),
+  };
+}
+
+const microsPattern = /^\d{1,20}$/u;
+
+/** Gateway cost evidence is shown only when every field is well formed. */
+function projectGatewayMetering(value: unknown): WorkerGatewayMetering | null {
+  const metering = object(value);
+  const usage = object(metering?.usage);
+  const parameters = object(metering?.appliedParameters);
+  const count = (item: unknown): item is number =>
+    typeof item === "number" && Number.isSafeInteger(item) && item >= 0;
+  const micros = (item: unknown): item is string =>
+    typeof item === "string" && microsPattern.test(item);
+  if (
+    metering === null ||
+    usage === null ||
+    parameters === null ||
+    metering.kind !== "gateway" ||
+    typeof metering.providerId !== "string" ||
+    !providerIdPattern.test(metering.providerId) ||
+    typeof metering.model !== "string" ||
+    !providerModelPattern.test(metering.model) ||
+    (metering.providerRequestId !== null &&
+      (typeof metering.providerRequestId !== "string" ||
+        !/^[A-Za-z0-9._:-]{1,200}$/u.test(metering.providerRequestId))) ||
+    !count(usage.inputTokens) ||
+    !count(usage.cachedInputTokens) ||
+    !count(usage.outputTokens) ||
+    !count(usage.reasoningTokens) ||
+    (parameters.reasoningEffort !== null &&
+      (typeof parameters.reasoningEffort !== "string" ||
+        !reasoningEffortPattern.test(parameters.reasoningEffort))) ||
+    !count(parameters.maxOutputTokens) ||
+    (metering.currency !== "USD" && metering.currency !== "EUR") ||
+    typeof metering.pricingVersionId !== "string" ||
+    !/^[A-Za-z0-9._:-]{1,200}$/u.test(metering.pricingVersionId) ||
+    metering.budgetScope !== "agent_run" ||
+    !micros(metering.budgetLimitMicros) ||
+    !micros(metering.reservedMicros) ||
+    !micros(metering.estimatedMicros) ||
+    !micros(metering.actualMicros)
+  )
+    return null;
+  return {
+    kind: "gateway",
+    providerId: metering.providerId,
+    model: metering.model,
+    providerRequestId: metering.providerRequestId,
+    usage: {
+      inputTokens: usage.inputTokens,
+      cachedInputTokens: usage.cachedInputTokens,
+      outputTokens: usage.outputTokens,
+      reasoningTokens: usage.reasoningTokens,
+    },
+    appliedParameters: {
+      reasoningEffort: parameters.reasoningEffort,
+      maxOutputTokens: parameters.maxOutputTokens,
+    },
+    currency: metering.currency,
+    pricingVersionId: metering.pricingVersionId,
+    budgetScope: "agent_run",
+    budgetLimitMicros: metering.budgetLimitMicros,
+    reservedMicros: metering.reservedMicros,
+    estimatedMicros: metering.estimatedMicros,
+    actualMicros: metering.actualMicros,
   };
 }

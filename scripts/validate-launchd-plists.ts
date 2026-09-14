@@ -105,6 +105,13 @@ try {
       mismatches.push(
         `AI_OFFICE_HOME is ${String(parsed.EnvironmentVariables?.AI_OFFICE_HOME)}`,
       );
+    // Only the Runtime reads model routing, and only from its Runtime home.
+    const routingSource =
+      parsed.EnvironmentVariables?.AI_OFFICE_MODEL_ROUTING_SOURCE;
+    if (routingSource !== (service === "runtime" ? "runtime_home" : undefined))
+      mismatches.push(
+        `AI_OFFICE_MODEL_ROUTING_SOURCE is ${String(routingSource)}`,
+      );
     if (mismatches.length > 0) {
       failures += 1;
       console.error(

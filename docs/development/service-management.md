@@ -86,6 +86,40 @@ Environment="AI_OFFICE_HOME=/home/operator/.ai-office"
 Because the value is written into the definition, a service starts against the
 same authoritative home whatever environment the supervisor happens to give it.
 
+## Model routing and credentials
+
+The Runtime definition (not the dashboard's) also carries a non-secret routing
+source marker:
+
+```ini
+Environment="AI_OFFICE_MODEL_ROUTING_SOURCE=runtime_home"
+```
+
+With it, the managed Runtime reads [model routing](llm-cost-control.md#agent-model-routing)
+only from `<AI_OFFICE_HOME>/model-routing.yaml`, on systemd and launchd alike,
+and ignores `AI_OFFICE_MODEL_ROUTING_FILE` and `AI_OFFICE_LLM_MODEL` even when
+the service manager's environment contains them. Without that file the managed
+Runtime schedules runs `unrouted`; an unreadable file fails scheduling closed.
+Routing is read once at start, so after editing the file restart only the
+Runtime:
+
+```bash
+systemctl --user restart ai-office-runtime.service          # Linux
+launchctl kickstart -k gui/$(id -u)/com.ai-office.runtime   # macOS
+```
+
+A Runtime definition generated before the marker existed reports
+`managed_outdated`; `ai-office service install` replaces it. The routing file's
+content is not part of the definition, so editing it never makes a definition
+outdated.
+
+Provider credentials are never rendered into a unit or plist, and
+`service install` only names (never prints) routing variables and credentials
+set in the invoking shell that the service will not receive. Gateway-executed
+runs under a managed Runtime fail before any provider request with a credential
+error unless the service manager's own environment provides the key; AI Office
+does not write that environment.
+
 ## Absolute executable path
 
 A per-user service inherits a minimal environment, so nothing in a generated

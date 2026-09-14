@@ -5,9 +5,21 @@ import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { DaemonClient } from "../../apps/cli/src/daemon-client.ts";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
+import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
+import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
+import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import { createTestUnixSocket } from "./unix-socket.ts";
 
-export async function runRuntime(agentExecutor?: AgentExecutor) {
+export interface RunRuntimeHostOptions {
+  modelRouting?: ModelRoutingState;
+  modelProviders?: ModelProviderCatalog;
+  gatewayProviders?: GatewayModelProviders;
+}
+
+export async function runRuntime(
+  agentExecutor?: AgentExecutor,
+  host: RunRuntimeHostOptions = {},
+) {
   const root = mkdtempSync(join(tmpdir(), "ao-runs-"));
   const socket = createTestUnixSocket();
   const socketPath = socket.socketPath;
@@ -15,6 +27,7 @@ export async function runRuntime(agentExecutor?: AgentExecutor) {
     projectRoot: root,
     socketPath,
     ...(agentExecutor === undefined ? {} : { agentExecutor }),
+    ...host,
   });
   let controller = new AbortController();
   let running = daemon.start(controller.signal);
@@ -82,13 +95,15 @@ export async function runRuntime(agentExecutor?: AgentExecutor) {
     command,
     task,
     schedule,
-    restart: async () => {
+    /** Restarts the host; `nextHost` replaces its host-local configuration. */
+    restart: async (nextHost: RunRuntimeHostOptions = host) => {
       controller.abort();
       await running;
       daemon = await bootstrap({
         projectRoot: root,
         socketPath,
         ...(agentExecutor === undefined ? {} : { agentExecutor }),
+        ...nextHost,
       });
       controller = new AbortController();
       running = daemon.start(controller.signal);

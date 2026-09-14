@@ -405,6 +405,8 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
+      "0031_cost_event_charge_basis.sql",
     ]);
     expect(
       database

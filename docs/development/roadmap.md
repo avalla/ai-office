@@ -649,6 +649,80 @@ uninstall still preserves authority. The existing `governance_event` cascade
 and append-only delete guard must be reconciled with the chosen retention policy
 before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
+## M7.12 — Agent model routing
+
+Status: implemented.
+
+Focus: make each run's model an explicit, auditable, provider-neutral part of
+execution so inexpensive models serve high-volume roles and stronger models are
+reserved for roles that need them, without weakening role budgets.
+
+Delivered:
+
+- the distinction between semantic role `modelPolicy`, host model profiles,
+  an immutable per-run resolved model, and host-only provider credentials;
+- host-local routing read once at Runtime start from the canonical
+  `<AI_OFFICE_HOME>/model-routing.yaml`; in the foreground
+  `AI_OFFICE_MODEL_ROUTING_FILE` overrides it and `AI_OFFICE_LLM_MODEL` remains
+  the lowest precedence compatibility default;
+- managed systemd and launchd Runtimes that read only the canonical file through
+  a generated, non-secret `AI_OFFICE_MODEL_ROUTING_SOURCE=runtime_home` marker,
+  with no credentials in service definitions;
+- deterministic precedence (project agent override, host-global agent override,
+  role policy, default profile, legacy default) that fails closed on explicit
+  invalid configuration; project overrides are keyed by Runtime project id;
+- structurally immutable loaded routing state;
+- resolution inside the scheduling transaction and an immutable
+  `agent_run.model_routing_json` (migration `0030`); pre-existing runs remain
+  explicitly unrecorded;
+- execution from the persisted selection only, with worker `supportsModel` and
+  `requiresModelSelection` checks, Claude `--model`/`--effort` mapping, and a
+  first-party gateway worker (`run:tick --worker gateway`) that executes routed
+  `openai:` runs through `MeteredLlmGateway` with exact model enforcement,
+  provider-neutral execution parameters and the role budget as the run budget;
+- an explicit inclusive `ModelUsage` contract priced by mutually exclusive
+  buckets, a worst-case reservation that prices each token once, and answered
+  but rejected provider responses (model mismatch, malformed usage) charged at
+  the reserved envelope instead of released (migration `0031`);
+- controlled-action payloads treated as ordinary connector data, never as model
+  authority;
+- a client-free model-reference parser and `resolveModelRef` in the gateway
+  registry;
+- read-only `agent:models`, `model:check` and `run:show --json` inspection that
+  separates assigned model, actual model, usage and gateway-metered versus
+  client-reported cost;
+- unchanged role budgets and portable snapshot schema.
+
+Not included, tracked in M7.13: a credential boundary for managed services,
+gateway execution for Anthropic models, co-reservation of wider budget scopes,
+an audited override mutation command, dashboard rendering of the selection, and
+routing hot reload. See [ADR-0019](../adr/ADR-0019-agent-model-routing.md).
+
+## M7.13 — Model routing follow-ups
+
+Status: future.
+
+- **Managed-service provider credentials.** Acceptance: a managed Runtime can
+  execute gateway runs without credentials in service definitions, routing
+  files, SQLite, logs, diagnostics or dashboard state; the secret source is
+  explicit, owner-only, documented for systemd and launchd equally, and
+  `model:check` reports presence by name only.
+- **Gateway execution for Anthropic models.** Acceptance: a native adapter that
+  applies or rejects `reasoning_effort` and `max_output_tokens` exactly, reports
+  the effective model and request ID, and passes the same gateway worker
+  metering, mismatch and budget tests as OpenAI.
+- **Budget co-reservation.** Acceptance: a gateway run atomically reserves its
+  `agent_run` budget together with any configured project, task and agent
+  budgets, and releases all of them on failure.
+- **Audited override management.** Acceptance: an operator command changes
+  host-global or project overrides with an audit record, never from an agent,
+  and never alters an already scheduled run.
+- **Dashboard rendering.** Acceptance: run detail shows assigned model, actual
+  model, usage and gateway-metered versus client-reported cost from the existing
+  read model without exposing host paths or credentials.
+- **Routing reload.** Acceptance: an explicit, audited reload replaces the frozen
+  routing state atomically between schedules without restarting the Runtime.
+
 ## M8 — Code intelligence
 
 Status: future.

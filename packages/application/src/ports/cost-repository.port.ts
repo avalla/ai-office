@@ -3,6 +3,7 @@ import type {
   BudgetScopeType,
   BudgetSnapshot,
   CostAmount,
+  CostChargeBasis,
   Currency,
   ModelUsage,
   PricingVersion,
@@ -38,6 +39,8 @@ export interface RecordUsageAndCostInput {
   reservationId?: string;
   estimated: CostAmount;
   actual: CostAmount;
+  /** Defaults to `reported_usage`. */
+  chargeBasis?: CostChargeBasis;
   occurredAt: Date;
 }
 

@@ -1,17 +1,28 @@
 import { ChatAnthropic } from "@langchain/anthropic";
-import { ChatOpenAI } from "@langchain/openai";
 import { createHash } from "node:crypto";
 import { LangChainModelProvider } from "./langchain-model-provider.ts";
+import { OpenAiResponsesProvider } from "./openai-provider.ts";
 import type { LlmProvider } from "./provider.ts";
+import {
+  configurationError,
+  defaultModelProviderDescriptors,
+  ModelProviderConfigurationError,
+  nonEmpty,
+  parseCanonicalModelRef,
+  parseModelRef,
+  type ModelProviderDescriptor,
+  type ModelProviderEnvironment,
+  type ParsedModelRef,
+} from "./model-ref.ts";
 
-export type ModelProviderEnvironment = Readonly<
-  Record<string, string | undefined>
->;
+export {
+  ModelProviderConfigurationError,
+  parseCanonicalModelRef,
+  parseModelRef,
+  type ModelProviderEnvironment,
+} from "./model-ref.ts";
 
-export interface ModelProviderRegistration {
-  readonly providerId: string;
-  readonly requiredEnvironmentVariables: readonly string[];
-  readonly apiKeyEnvironmentVariable?: string;
+export interface ModelProviderRegistration extends ModelProviderDescriptor {
   create(model: string, environment: ModelProviderEnvironment): LlmProvider;
 }
 
@@ -21,79 +32,6 @@ export interface ResolvedModelProvider {
   readonly model: string;
   readonly provider: LlmProvider;
   readonly compatibilityConfiguration: boolean;
-}
-
-export class ModelProviderConfigurationError extends Error {
-  constructor(
-    message: string,
-    readonly configuredModel?: string,
-    readonly missing: readonly string[] = [],
-  ) {
-    super(message);
-    this.name = "ModelProviderConfigurationError";
-  }
-}
-
-function configurationError(
-  configuredModel: string | undefined,
-  missing: readonly string[],
-): ModelProviderConfigurationError {
-  return new ModelProviderConfigurationError(
-    [
-      "No usable LLM provider configuration found.",
-      "",
-      "Configured model:",
-      `  ${configuredModel ?? "(not set)"}`,
-      "",
-      "Missing:",
-      ...missing.map((value) => `  ${value}`),
-    ].join("\n"),
-    configuredModel,
-    missing,
-  );
-}
-
-function nonEmpty(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized === undefined || normalized === "" ? undefined : normalized;
-}
-
-export function parseModelRef(
-  configuredModel: string,
-  compatibilityProvider?: string,
-): {
-  modelRef: string;
-  providerId: string;
-  model: string;
-  compatibilityConfiguration: boolean;
-} {
-  const value = configuredModel.trim();
-  const separator = value.indexOf(":");
-  if (separator < 0) {
-    const providerId = nonEmpty(compatibilityProvider)?.toLowerCase();
-    if (providerId === undefined)
-      throw configurationError(value, ["AI_OFFICE_LLM_PROVIDER"]);
-    return {
-      modelRef: `${providerId}:${value}`,
-      providerId,
-      model: value,
-      compatibilityConfiguration: true,
-    };
-  }
-
-  const providerId = value.slice(0, separator).trim().toLowerCase();
-  const model = value.slice(separator + 1).trim();
-  if (providerId === "" || model === "")
-    throw new ModelProviderConfigurationError(
-      `Invalid AI_OFFICE_LLM_MODEL "${value}". Expected <provider>:<model>.`,
-      value,
-    );
-  return {
-    modelRef: `${providerId}:${model}`,
-    providerId,
-    model,
-    compatibilityConfiguration: false,
-  };
 }
 
 export class ModelProviderRegistry {
@@ -109,14 +47,32 @@ export class ModelProviderRegistry {
     }
   }
 
+  /** Legacy single-model resolution through `AI_OFFICE_LLM_MODEL`. */
   resolve(environment: ModelProviderEnvironment): ResolvedModelProvider {
     const configuredModel = nonEmpty(environment.AI_OFFICE_LLM_MODEL);
     if (configuredModel === undefined)
       throw configurationError(undefined, ["AI_OFFICE_LLM_MODEL"]);
-    const parsed = parseModelRef(
-      configuredModel,
-      environment.AI_OFFICE_LLM_PROVIDER,
+    return this.construct(
+      parseModelRef(configuredModel, environment.AI_OFFICE_LLM_PROVIDER),
+      environment,
     );
+  }
+
+  /**
+   * Resolves an explicitly supplied canonical `<provider>:<model>`, such as a
+   * run's persisted model selection. Ambient `AI_OFFICE_LLM_MODEL` is ignored.
+   */
+  resolveModelRef(
+    modelRef: string,
+    environment: ModelProviderEnvironment,
+  ): ResolvedModelProvider {
+    return this.construct(parseCanonicalModelRef(modelRef), environment);
+  }
+
+  private construct(
+    parsed: ParsedModelRef,
+    environment: ModelProviderEnvironment,
+  ): ResolvedModelProvider {
     const registration = this.registrations.get(parsed.providerId);
     if (registration === undefined) {
       const supported = [...this.registrations.keys()].sort().join(", ");
@@ -171,32 +127,27 @@ function logProviderConfiguration(
   );
 }
 
+function descriptor(providerId: string): ModelProviderDescriptor {
+  const value = defaultModelProviderDescriptors.find(
+    (candidate) => candidate.providerId === providerId,
+  );
+  if (value === undefined)
+    throw new Error(`Provider ${providerId} has no descriptor`);
+  return value;
+}
+
 export function createDefaultModelProviderRegistry(): ModelProviderRegistry {
   return new ModelProviderRegistry([
     {
-      providerId: "openai",
-      requiredEnvironmentVariables: ["OPENAI_API_KEY"],
-      apiKeyEnvironmentVariable: "OPENAI_API_KEY",
-      create: (model, environment) => {
-        const apiKey = required(environment, "OPENAI_API_KEY");
-        const debug = llmDebugEnabled(environment);
-        return new LangChainModelProvider(
-          "openai",
-          model,
-          new ChatOpenAI({
-            model,
-            apiKey,
-            maxRetries: 0,
-          }),
-          undefined,
-          debug,
-        );
-      },
+      ...descriptor("openai"),
+      // The native Responses adapter applies reasoning effort and output caps
+      // exactly, requires the vendor-reported effective model and request ID,
+      // and never retries on its own (ADR-0019 amends ADR-0005 here).
+      create: (_model, environment) =>
+        new OpenAiResponsesProvider(required(environment, "OPENAI_API_KEY")),
     },
     {
-      providerId: "anthropic",
-      requiredEnvironmentVariables: ["ANTHROPIC_API_KEY"],
-      apiKeyEnvironmentVariable: "ANTHROPIC_API_KEY",
+      ...descriptor("anthropic"),
       create: (model, environment) => {
         const apiKey = required(environment, "ANTHROPIC_API_KEY");
         const debug = llmDebugEnabled(environment);

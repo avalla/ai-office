@@ -15,6 +15,11 @@ import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
 import { taskRunLeaseDurationMs } from "../runtime/run-policy.ts";
+import {
+  resolveAgentRunModel,
+  unconfiguredModelRouting,
+  type ModelRoutingState,
+} from "../model-routing/model-routing.ts";
 
 export class AgentNotFoundError extends Error {
   constructor(id: string) {
@@ -50,6 +55,8 @@ export class ScheduleAgentRun {
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
     private readonly pipelines?: PipelineRunRepository,
+    /** Immutable host routing; unconfigured records runs as `unrouted`. */
+    private readonly modelRouting: ModelRoutingState = unconfiguredModelRouting,
   ) {}
   async execute(input: {
     projectId: string;
@@ -89,15 +96,32 @@ export class ScheduleAgentRun {
         );
     }
     const now = this.clock.now();
-    const run = AgentRun.create({
-      id: this.ids.generate(),
-      ...input,
-      ...(pipeline === undefined || pipeline === null
-        ? {}
-        : { pipelineRunId: pipeline.snapshot().id }),
-      now,
-    });
+    const id = this.ids.generate();
     await this.transactions.run(async () => {
+      // Resolve from the agent and role read inside the write transaction, so
+      // the persisted model matches the authority the run was admitted with.
+      const current = await this.runtime.findAgent(input.agentId);
+      if (
+        current === null ||
+        current.projectId !== input.projectId ||
+        !current.enabled
+      )
+        throw new AgentNotFoundError(input.agentId);
+      const role = await this.runtime.findRole(current.roleId, input.projectId);
+      if (role === null) throw new AgentNotFoundError(input.agentId);
+      const run = AgentRun.create({
+        id,
+        ...input,
+        ...(pipeline === undefined || pipeline === null
+          ? {}
+          : { pipelineRunId: pipeline.snapshot().id }),
+        modelRouting: resolveAgentRunModel(this.modelRouting, {
+          projectId: input.projectId,
+          agentName: current.name,
+          modelPolicy: role.snapshot().modelPolicy,
+        }),
+        now,
+      });
       await this.runtime.saveRun(run);
       const locked = await this.runtime.acquireTaskLock(
         input.taskId,
@@ -107,6 +131,6 @@ export class ScheduleAgentRun {
       );
       if (!locked) throw new TaskLockActiveError(input.taskId);
     });
-    return run.snapshot().id;
+    return id;
   }
 }

@@ -116,18 +116,21 @@ describe("metered LLM gateway", () => {
       {
         projectId: "p",
         purpose: "test",
-        estimatedUsage: {
+        usageBound: {
           inputTokens: 10,
-          cachedInputTokens: 0,
           outputTokens: 10,
-          reasoningTokens: 0,
         },
         budgetScopeType: "project",
         budgetScopeId: "p",
       },
     );
     expect(response.text).toBe("ok");
-    expect(costs.recorded?.actual.micros).toBe(24n);
+    // Inclusive usage, priced by bucket: 8 uncached * 1 + 2 cached * 0.5 +
+    // 4 non-reasoning output * 2 + 1 reasoning * 3 micros.
+    expect(costs.recorded?.actual.micros).toBe(20n);
+    // Worst case of 10 input and 10 output tokens: 10 * max(1, 0.5) + 10 * max(2, 3).
+    expect(costs.budget.reservedMicros).toBe(40n);
+    expect(costs.recorded?.chargeBasis).toBe("reported_usage");
     expect(costs.recorded?.pricingVersionId).toBe("price");
   });
   test("rejects before provider execution when reservations exceed budget", async () => {
@@ -146,11 +149,9 @@ describe("metered LLM gateway", () => {
         {
           projectId: "p",
           purpose: "test",
-          estimatedUsage: {
+          usageBound: {
             inputTokens: 10,
-            cachedInputTokens: 0,
             outputTokens: 10,
-            reasoningTokens: 0,
           },
           budgetScopeType: "project",
           budgetScopeId: "p",
@@ -187,11 +188,9 @@ describe("metered LLM gateway", () => {
       {
         projectId: "p",
         purpose: "test",
-        estimatedUsage: {
+        usageBound: {
           inputTokens: 10,
-          cachedInputTokens: 0,
           outputTokens: 10,
-          reasoningTokens: 0,
         },
       },
     );

@@ -9,6 +9,7 @@ import {
   InvalidProviderResponseError,
   LlmProviderError,
   ProviderCancelledError,
+  UnsupportedModelParameterError,
   type LlmProvider,
   type ModelRequest,
   type ModelResponse,
@@ -232,6 +233,13 @@ export class LangChainModelProvider implements LlmProvider {
     signal?: AbortSignal,
   ): Promise<ModelResponse> {
     if (signal?.aborted === true) throw new ProviderCancelledError(this.id);
+    // The compatibility adapter binds its chat model at construction, and
+    // LangChain may drop reasoning options for some models, so it cannot
+    // guarantee an execution parameter is applied: it refuses them instead.
+    if (request.parameters?.reasoningEffort !== undefined)
+      throw new UnsupportedModelParameterError(this.id, "reasoningEffort");
+    if (request.parameters?.maxOutputTokens !== undefined)
+      throw new UnsupportedModelParameterError(this.id, "maxOutputTokens");
     const startedAt = this.now();
     let response: AIMessage;
     try {

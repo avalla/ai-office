@@ -93,11 +93,9 @@ describe("LLM cost SQLite integration", () => {
       {
         projectId: "project",
         purpose: "integration",
-        estimatedUsage: {
+        usageBound: {
           inputTokens: 10,
-          cachedInputTokens: 0,
           outputTokens: 5,
-          reasoningTokens: 0,
         },
         budgetScopeType: "project",
         budgetScopeId: "project",

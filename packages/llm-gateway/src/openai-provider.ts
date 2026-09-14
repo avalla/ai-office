@@ -1,7 +1,9 @@
+import { openAiReasoningEfforts } from "./model-ref.ts";
 import {
   InvalidProviderResponseError,
   LlmProviderError,
   ProviderCancelledError,
+  UnsupportedModelParameterError,
   type LlmProvider,
   type ModelRequest,
   type ModelResponse,
@@ -10,6 +12,8 @@ import {
 interface OpenAiResponse {
   id?: unknown;
   model?: unknown;
+  status?: unknown;
+  incomplete_details?: { reason?: unknown } | null;
   output_text?: unknown;
   output?: unknown;
   usage?: {
@@ -74,6 +78,16 @@ export class OpenAiResponsesProvider implements LlmProvider {
     const isAborted = () => signal?.aborted ?? false;
     let response: Response;
     if (isAborted()) throw new ProviderCancelledError(this.id);
+    // Parameters are applied exactly or rejected before any request is sent.
+    const effort = request.parameters?.reasoningEffort;
+    const maxOutputTokens = request.parameters?.maxOutputTokens;
+    if (effort !== undefined && !openAiReasoningEfforts.includes(effort))
+      throw new UnsupportedModelParameterError(this.id, "reasoningEffort");
+    if (
+      maxOutputTokens !== undefined &&
+      (!Number.isSafeInteger(maxOutputTokens) || maxOutputTokens < 1)
+    )
+      throw new UnsupportedModelParameterError(this.id, "maxOutputTokens");
     try {
       response = await this.fetcher(this.endpoint, {
         method: "POST",
@@ -81,7 +95,16 @@ export class OpenAiResponsesProvider implements LlmProvider {
           authorization: `Bearer ${this.apiKey}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ model: request.model, input: request.messages }),
+        body: JSON.stringify({
+          model: request.model,
+          input: request.messages,
+          // AI Office keeps no provider-side conversation state.
+          store: false,
+          ...(effort === undefined ? {} : { reasoning: { effort } }),
+          ...(maxOutputTokens === undefined
+            ? {}
+            : { max_output_tokens: maxOutputTokens }),
+        }),
         ...(signal === undefined ? {} : { signal }),
       });
     } catch (error) {
@@ -145,10 +168,23 @@ export class OpenAiResponsesProvider implements LlmProvider {
         this.id,
         "Provider response did not contain text output",
       );
+    const status = typeof value.status === "string" ? value.status : undefined;
+    const incompleteReason =
+      typeof value.incomplete_details?.reason === "string"
+        ? value.incomplete_details.reason
+        : undefined;
     return {
       providerId: this.id,
       model: value.model,
       text,
+      ...(status === undefined
+        ? {}
+        : {
+            providerMetadata: {
+              status,
+              ...(incompleteReason === undefined ? {} : { incompleteReason }),
+            },
+          }),
       usage: {
         inputTokens: count(
           value.usage.input_tokens,

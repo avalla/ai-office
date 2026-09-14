@@ -28,6 +28,9 @@ import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project
 import type { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
 import type { ProjectMemoryProvenanceRepository } from "@ai-office/application/ports/project-memory-provenance-repository.port.ts";
+import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
+import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
+import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 
 export interface CommandContext {
   onRunChanged?: () => void;
@@ -63,6 +66,11 @@ export interface CommandContext {
   /** Optional, non-authoritative project memory; disabled unless configured. */
   projectMemory: ProjectMemoryProvider;
   projectMemoryProvenance: ProjectMemoryProvenanceRepository;
+  /** Host model routing, read once by the composition root; never persisted as configuration. */
+  modelRouting: ModelRoutingState;
+  modelProviders: ModelProviderCatalog;
+  /** Host provider access for gateway-executed routed runs; credentials never leave it. */
+  gatewayProviders: GatewayModelProviders;
 }
 
 export * from "@ai-office/command-support/arguments.ts";

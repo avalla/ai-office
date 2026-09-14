@@ -94,11 +94,9 @@ describe("M3-M5 SQLite storage", () => {
       {
         projectId: "project",
         purpose: "integration",
-        estimatedUsage: {
+        usageBound: {
           inputTokens: 10,
-          cachedInputTokens: 0,
           outputTokens: 5,
-          reasoningTokens: 0,
         },
         budgetScopeType: "project",
         budgetScopeId: "project",

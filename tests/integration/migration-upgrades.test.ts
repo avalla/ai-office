@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0029_agent_run_memory_query_digests.sql",
+        "0031_cost_event_charge_basis.sql",
       );
       expect(
         database
@@ -116,6 +116,8 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
+      "0031_cost_event_charge_basis.sql",
     ]);
     expect(
       database
@@ -181,6 +183,8 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
+      "0031_cost_event_charge_basis.sql",
     ]);
     expect(
       database
@@ -326,6 +330,8 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
+      "0031_cost_event_charge_basis.sql",
     ]);
     expect(
       database
@@ -375,6 +381,8 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
+      "0031_cost_event_charge_basis.sql",
     ]);
     database
       .prepare(
@@ -698,6 +706,8 @@ describe("migration upgrades", () => {
       "0027_agent_execution_provenance.sql",
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
+      "0030_agent_run_model_routing.sql",
+      "0031_cost_event_charge_basis.sql",
     ]);
     expect(
       upgraded
@@ -707,5 +717,69 @@ describe("migration upgrades", () => {
         .get()?.id,
     ).toBe("event");
     upgraded.close();
+  });
+
+  test("labels existing cost events as priced from reported usage", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-migration-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort())
+      if (file <= "0030_agent_run_model_routing.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    const at = "2026-09-14T00:00:00.000Z";
+    database
+      .prepare(
+        `INSERT INTO project(id,name,description,created_at,updated_at)
+         VALUES ('p','Costs',NULL,?,?)`,
+      )
+      .run(at, at);
+    database
+      .prepare(
+        `INSERT INTO pricing_version(id,provider,model,currency,
+           input_per_million_micros,cached_input_per_million_micros,
+           output_per_million_micros,reasoning_per_million_micros,
+           effective_from,effective_to,created_at)
+         VALUES ('price','openai','model','USD',1,1,1,1,?,NULL,?)`,
+      )
+      .run(at, at);
+    const insertUsage = database.prepare(
+      `INSERT INTO model_usage(id,project_id,provider,model,purpose,
+         input_tokens,cached_input_tokens,output_tokens,reasoning_tokens,occurred_at)
+       VALUES (?,'p','openai','model','test',1,0,1,0,?)`,
+    );
+    insertUsage.run("usage-old", at);
+    database
+      .prepare(
+        `INSERT INTO cost_event(id,project_id,usage_id,pricing_version_id,
+           estimated_micros,actual_micros,currency,occurred_at)
+         VALUES ('cost-old','p','usage-old','price',5,4,'USD',?)`,
+      )
+      .run(at);
+
+    expect(migrate(database, migrations).applied).toEqual([
+      "0031_cost_event_charge_basis.sql",
+    ]);
+    expect(
+      database
+        .query<{ charge_basis: string; actual_micros: number }, []>(
+          "SELECT charge_basis, actual_micros FROM cost_event WHERE id='cost-old'",
+        )
+        .get(),
+    ).toEqual({ charge_basis: "reported_usage", actual_micros: 4 });
+    insertUsage.run("usage-new", at);
+    expect(() =>
+      database
+        .prepare(
+          `INSERT INTO cost_event(id,project_id,usage_id,pricing_version_id,
+             estimated_micros,actual_micros,currency,charge_basis,occurred_at)
+           VALUES ('cost-new','p','usage-new','price',5,5,'USD','guessed',?)`,
+        )
+        .run(at),
+    ).toThrow(/CHECK constraint/);
+    expect(migrate(database, migrations).applied).toEqual([]);
+    database.close();
   });
 });

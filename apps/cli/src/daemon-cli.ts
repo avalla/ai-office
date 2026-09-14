@@ -135,6 +135,8 @@ const projectScopedCommands = new Set([
   "task:reconcile",
   "agent:sync",
   "agent:list",
+  "agent:models",
+  "model:check",
   "run:schedule",
   "run:tick",
   "run:list",

@@ -1,6 +1,8 @@
 # ADR-0017: Explicit, bounded external worker execution
 
-Status: accepted, 2026-09-07.
+Status: accepted, 2026-09-07. Model selection amended by
+[ADR-0019](ADR-0019-agent-model-routing.md): routed runs execute their persisted
+model, and `--worker-model` applies only to unrouted and historical runs.
 
 ## Context
 

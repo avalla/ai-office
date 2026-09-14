@@ -584,6 +584,32 @@ shares it. Each worker run performs at most one bounded search, and `run:show`
 lists which references entered its context. An unavailable provider never
 blocks a run. See [project memory](docs/development/project-memory.md).
 
+## Agent model routing
+
+Roles declare a semantic `model_policy` (`economical`, `balanced`,
+`high_reasoning`). The Runtime host can map those policies, and optionally
+agents (host-wide by name, or within one project), to concrete
+`<provider>:<model>` profiles in `<AI_OFFICE_HOME>/model-routing.yaml`, a
+host-local file that never contains credentials. The managed Runtime service
+reads only that file; a foreground Runtime may point
+`AI_OFFICE_MODEL_ROUTING_FILE` elsewhere. Restart the Runtime after editing it.
+
+```bash
+ai-office model:check --project <id>     # read-only validation, no model request
+ai-office agent:models --project <id>    # agent, policy, profile, model, budget
+ai-office run:tick --project <id> --worker gateway   # executes routed openai: runs, metered
+ai-office run:tick --project <id> --worker claude    # executes routed anthropic: runs via Claude login
+```
+
+Each run's model is frozen when it is scheduled and shown by `run:show`; later
+configuration changes never alter it, and role budgets stay authoritative. The
+gateway worker meters cost against the role budget and needs active pricing and
+`OPENAI_API_KEY` in the Runtime host environment (managed services are never
+given credentials); the Claude worker reports only its client estimate. Without
+routing, runs stay `unrouted` and the Claude worker keeps its default. See
+[agent model routing](docs/development/llm-cost-control.md#agent-model-routing)
+and [ADR-0019](docs/adr/ADR-0019-agent-model-routing.md).
+
 ## Project lifecycle
 
 The repository-local binding is deliberately small and safe to commit:

@@ -123,12 +123,13 @@ export function renderLaunchdPlist(
     (argument) =>
       `    <string>${escapeXml(assertRenderableValue(argument, argument))}</string>`,
   );
-  const environmentLines = officeServiceEnvironment(plan.program).flatMap(
-    ([name, value]) => [
-      `    <key>${escapeXml(name)}</key>`,
-      `    <string>${escapeXml(assertRenderableValue(value, name))}</string>`,
-    ],
-  );
+  const environmentLines = officeServiceEnvironment(
+    plan.program,
+    service,
+  ).flatMap(([name, value]) => [
+    `    <key>${escapeXml(name)}</key>`,
+    `    <string>${escapeXml(assertRenderableValue(value, name))}</string>`,
+  ]);
   return `${[
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',

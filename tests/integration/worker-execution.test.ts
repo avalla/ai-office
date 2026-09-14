@@ -266,6 +266,7 @@ test("worker dispatch persists its context digest before calling the process and
         maxTurns: 3,
         timeoutMs: 20000,
         maxEstimatedCostUsd: "0.125000",
+        maxCostMicros: 125000n,
       });
       expect(await f.runs.findTaskLock("t")).not.toBeNull();
       return output;
@@ -558,6 +559,8 @@ test("upgrading legacy runs preserves unknown provenance and protects new dispat
     "0027_agent_execution_provenance.sql",
     "0028_agent_run_memory_provenance.sql",
     "0029_agent_run_memory_query_digests.sql",
+    "0030_agent_run_model_routing.sql",
+    "0031_cost_event_charge_basis.sql",
   ]);
   expect(
     (await f.runs.findRun("legacy"))?.snapshot().execution,

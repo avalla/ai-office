@@ -307,7 +307,10 @@ describe("launchd plist rendering", () => {
     expect(
       parseMinimalPlist(renderLaunchdPlist(plan, "runtime"))
         .EnvironmentVariables,
-    ).toEqual({ AI_OFFICE_HOME: "/home/operator/.ai-office" });
+    ).toEqual({
+      AI_OFFICE_HOME: "/home/operator/.ai-office",
+      AI_OFFICE_MODEL_ROUTING_SOURCE: "runtime_home",
+    });
     const sourcePlan = servicePlan({
       program: {
         launcher: ["/opt/bun/bin/bun", "/src/ai-office/bin/ai-office.ts"],
@@ -340,7 +343,10 @@ describe("launchd plist rendering", () => {
           "runtime",
         ),
       ).EnvironmentVariables,
-    ).toEqual({ AI_OFFICE_HOME: "/home/operator/100%/.ai-office" });
+    ).toEqual({
+      AI_OFFICE_HOME: "/home/operator/100%/.ai-office",
+      AI_OFFICE_MODEL_ROUTING_SOURCE: "runtime_home",
+    });
   });
 
   test("the dashboard agent binds loopback and never opens a browser", () => {
