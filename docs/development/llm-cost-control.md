@@ -1,6 +1,6 @@
 # LLM providers, gateway, and cost control
 
-The LLM gateway provides a normalized provider port, provider registry, deterministic mock, infrastructure-only LangChain compatibility adapter, native OpenAI Responses HTTP adapter, retry-aware fallback chain, and metered gateway. The default registry supports OpenAI and Anthropic. Callers must supply an estimated token envelope and accounting context.
+The LLM gateway provides a normalized provider port, provider registry, deterministic mock, infrastructure-only LangChain compatibility adapter, native OpenAI Responses HTTP adapter, retry-aware fallback chain, and metered gateway. The default registry supports OpenAI and Anthropic. Callers must supply input and output token bounds (`usageBound`) and accounting context.
 
 Onboarding never constructs a provider client from this registry. Codex or
 Claude owns conversational onboarding through the `ai-office` skill, so normal
@@ -131,9 +131,13 @@ The gateway worker:
   small role budgets;
 - fails closed with `WORKER_MODEL_MISMATCH` when the vendor reports another model
   (configure the exact model name the vendor returns; aliases that resolve to
-  another name are not accepted);
+  another name are not accepted); the answered request is still charged at its
+  reserved worst case (`charge_basis = 'reserved_envelope'`), and the usage row
+  records the model that answered;
 - requires the answer to be exactly `{"summary", "content"}` within the worker
-  output limits; a truncated or malformed answer is metered but never accepted;
+  output limits; a truncated or malformed answer is metered but never accepted,
+  and a provider response with missing or impossible usage is rejected and
+  charged at the reserved worst case;
 - reads `OPENAI_API_KEY` from the Runtime host environment only. Managed services
   are never given credentials: under a managed Runtime, gateway runs fail with a
   credential error before any request unless the service manager's own
@@ -151,7 +155,12 @@ lowered to the role limit. The gateway requires active USD pricing for the exact
 provider/model (`WORKER_PRICING_UNAVAILABLE` otherwise, never treated as zero),
 reserves the worst-case cost of the bounded request against the run budget
 before sending it (`WORKER_BUDGET_EXHAUSTED` if it does not fit), then records
-usage and cost idempotently and releases the reservation. Only the `agent_run`
+usage and cost idempotently and consumes the reservation. The worst case prices
+the byte-bounded input at the dearer of the input and cached-input rates and the
+output cap at the dearer of the output and reasoning rates, each token once. See
+[cost accounting](../architecture/cost-accounting.md#usage-and-pricing-contract)
+for the usage contract, the exact cost formula and how to encode vendor pricing
+with `pricing:set`. Only the `agent_run`
 budget is reserved: project, task and agent budgets are not co-reserved by this
 request.
 
@@ -211,15 +220,15 @@ LangChain is a compatibility adapter only. It does not own agents, tools orchest
 
 Pricing values and budgets use integer micros, bounded by JavaScript's safe-integer range when stored in SQLite (`0..9,007,199,254,740,991`). Floating-point monetary values are never accepted.
 
-For a fallback chain, the gateway resolves active pricing for every candidate provider/model and rejects the whole request if any candidate is unpriced or uses a different currency. It reserves the maximum candidate estimate with one atomic `authorizeAndReserve` transaction, executes outside the transaction, then prices and persists the provider/model that actually answered. The unused part of a reservation is not counted as spend. Actual cost above the reservation is allowed and recorded as an explicit `overage_micros`; it remains visible for audit. `completeMetered` returns the recorded cost evidence alongside the response.
+For a fallback chain, the gateway resolves active pricing for every candidate provider/model and rejects the whole request if any candidate is unpriced or uses a different currency. It reserves the maximum candidate worst case within the usage bounds with one atomic `authorizeAndReserve` transaction, executes outside the transaction, then prices and persists the provider/model that actually answered. The unused part of a reservation is not counted as spend. Actual cost above the reservation is allowed and recorded as an explicit `overage_micros`; it remains visible for audit. `completeMetered` returns the recorded cost evidence alongside the response.
 
-Supported budget scopes are `project`, `task`, `agent`, and `agent_run`, each with project ownership checks. `milestone` is intentionally unsupported until a reliable milestone-to-task/run accounting relation exists. Reservations have an expiry. Expired rows stop reducing availability immediately, but their status changes only through the explicit, deterministic cleanup method. Failed and cancelled calls release their reservation.
+Supported budget scopes are `project`, `task`, `agent`, and `agent_run`, each with project ownership checks. `milestone` is intentionally unsupported until a reliable milestone-to-task/run accounting relation exists. Reservations have an expiry. Expired rows stop reducing availability immediately, but their status changes only through the explicit, deterministic cleanup method. Calls that fail or are cancelled before any provider answer release their reservation; an answer rejected after it was received is charged at the reserved worst case instead.
 
 Provider usage is idempotent by `provider + provider_request_id` when the provider supplies an ID. Pricing intervals use half-open boundaries (`effective_from <= at < effective_to`) and overlapping intervals for the same provider/model/currency are rejected.
 
 The registry's provider builders read native environment variables and pass keys directly to the corresponding adapter; no key is persisted. Automated tests use fake chat models or transports and never call live provider APIs.
 
-The LangChain adapter maps text, effective model, provider request ID, standard usage metadata, provider response metadata, and measured latency into the normalized response. The cost contract requires numeric cached-input and reasoning token counts, so unavailable optional detail maps to zero, matching the native OpenAI adapter. The adapter does not infer or fabricate non-zero provider-specific usage fields. If total input or output usage is absent, the response is rejected instead of being guessed.
+The LangChain adapter maps text, effective model, provider request ID, standard usage metadata, provider response metadata, and measured latency into the normalized response. The cost contract requires numeric cached-input and reasoning token counts as subsets of the input and output totals (LangChain's `input_tokens` and `output_tokens` are inclusive), so unavailable optional detail maps to zero, matching the native OpenAI adapter. The adapter does not infer or fabricate non-zero provider-specific usage fields. If total input or output usage is absent, the response is rejected instead of being guessed.
 
 The CLI exposes pricing, budget, cost-report and read-only model routing
 commands. Standard gateway tests use deterministic providers and injected

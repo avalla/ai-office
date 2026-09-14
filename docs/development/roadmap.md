@@ -680,6 +680,10 @@ Delivered:
   first-party gateway worker (`run:tick --worker gateway`) that executes routed
   `openai:` runs through `MeteredLlmGateway` with exact model enforcement,
   provider-neutral execution parameters and the role budget as the run budget;
+- an explicit inclusive `ModelUsage` contract priced by mutually exclusive
+  buckets, a worst-case reservation that prices each token once, and answered
+  but rejected provider responses (model mismatch, malformed usage) charged at
+  the reserved envelope instead of released (migration `0031`);
 - controlled-action payloads treated as ordinary connector data, never as model
   authority;
 - a client-free model-reference parser and `resolveModelRef` in the gateway

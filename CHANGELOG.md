@@ -17,6 +17,14 @@
   `reasoning_effort` and `max_output_tokens`, and the role budget as the run
   budget. The default registry now builds OpenAI providers with the native
   Responses adapter.
+- Fix gateway metering: usage is inclusive totals with subset details, so cached
+  input and reasoning tokens are priced once at their own rate instead of on top
+  of the input and output rates, and impossible subsets are rejected. The
+  reservation prices each bounded token once at its dearer rate. A provider
+  answer rejected after it was received (another model, malformed usage) is
+  charged at the reserved worst case with `charge_basis = 'reserved_envelope'`
+  (migration `0031`) instead of releasing the reservation. `pricing:set` rates
+  are per bucket: for OpenAI set `--reasoning` equal to `--output`.
 
 - Add optional, read-only, non-authoritative project memory through a
   provider-neutral port and a CairnKeep stdio MCP adapter restricted to
