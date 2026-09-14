@@ -70,8 +70,8 @@ export interface BootstrapOptions {
   /**
    * Optional provider credentials. When omitted, the host loads them once:
    * a managed service (`AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home`)
-   * only from `<AI_OFFICE_HOME>/credentials/`, a foreground host from its own
-   * environment and then that directory. Nothing persists them.
+   * only from `<AI_OFFICE_HOME>/credentials/`, a foreground host only from its
+   * own environment, never from that directory. Nothing persists them.
    */
   providerCredentials?: ProviderCredentials;
   /** Optional gateway provider access; defaults to the loaded credentials. */

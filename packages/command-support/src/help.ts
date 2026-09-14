@@ -141,4 +141,4 @@ Model routing (Runtime host; read once at host start; restart after changes):
 
 Provider credentials (Runtime host; read once at host start; restart after changes):
   <AI_OFFICE_HOME>/credentials/<NAME>  owner-only files written by credential set; the only source of a managed service
-  OPENAI_API_KEY                foreground gateway worker credential; takes precedence over the file; never in routing files`;
+  OPENAI_API_KEY                foreground gateway worker credential; the only foreground source (the credentials directory is never read); never in routing files`;

@@ -13,14 +13,17 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   maximumProviderCredentialBytes,
+  inspectRuntimeHomeCredential,
+  loadRuntimeHomeCredentialValue,
   ProviderCredentialStoreError,
-  readRuntimeHomeCredential,
   removeRuntimeHomeCredential,
   writeRuntimeHomeCredential,
+  type RuntimeHomeCredentialInspection,
 } from "@ai-office/llm-gateway/runtime-home-credential-store.ts";
 
 const name = "OPENAI_API_KEY";
@@ -58,29 +61,33 @@ function errorFrom(action: () => unknown): ProviderCredentialStoreError {
   throw new Error("expected a credential store error");
 }
 
-describe("reading a Runtime home credential", () => {
+describe("loading a Runtime home credential value", () => {
   test("accepts an owner-only regular file and tolerates one trailing newline", () => {
-    expect(readRuntimeHomeCredential(planted(secret), name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(planted(secret), name)).toEqual({
       state: "present",
       value: secret,
     });
-    expect(readRuntimeHomeCredential(planted(`${secret}\n`), name)).toEqual({
+    expect(
+      loadRuntimeHomeCredentialValue(planted(`${secret}\n`), name),
+    ).toEqual({
       state: "present",
       value: secret,
     });
-    expect(readRuntimeHomeCredential(planted(`${secret}\r\n`), name)).toEqual({
+    expect(
+      loadRuntimeHomeCredentialValue(planted(`${secret}\r\n`), name),
+    ).toEqual({
       state: "present",
       value: secret,
     });
   });
 
   test("reports a missing directory or file as missing", () => {
-    expect(readRuntimeHomeCredential(home(), name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(home(), name)).toEqual({
       state: "missing",
     });
     const empty = home();
     mkdirSync(join(empty, "credentials"), { mode: 0o700 });
-    expect(readRuntimeHomeCredential(empty, name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(empty, name)).toEqual({
       state: "missing",
     });
   });
@@ -88,7 +95,9 @@ describe("reading a Runtime home credential", () => {
   test.each([0o640, 0o604, 0o660, 0o644, 0o606])(
     "refuses a file with group or other access (mode %s)",
     (mode) => {
-      expect(readRuntimeHomeCredential(planted(secret, mode), name)).toEqual({
+      expect(
+        loadRuntimeHomeCredentialValue(planted(secret, mode), name),
+      ).toEqual({
         state: "invalid",
         issue: "CREDENTIAL_INSECURE_PERMISSIONS",
       });
@@ -100,7 +109,7 @@ describe("reading a Runtime home credential", () => {
     (mode) => {
       const value = planted(secret);
       chmodSync(join(value, "credentials"), mode);
-      expect(readRuntimeHomeCredential(value, name)).toEqual({
+      expect(loadRuntimeHomeCredentialValue(value, name)).toEqual({
         state: "invalid",
         issue: "CREDENTIAL_DIRECTORY_INSECURE",
       });
@@ -113,7 +122,7 @@ describe("reading a Runtime home credential", () => {
       .spyOn(process, "getuid")
       .mockReturnValue(process.getuid!() + 1);
     try {
-      expect(readRuntimeHomeCredential(value, name)).toEqual({
+      expect(loadRuntimeHomeCredentialValue(value, name)).toEqual({
         state: "invalid",
         issue: "CREDENTIAL_DIRECTORY_INSECURE",
       });
@@ -133,7 +142,7 @@ describe("reading a Runtime home credential", () => {
     const target = join(value, "elsewhere");
     writeFileSync(target, secret, { mode: 0o600 });
     symlinkSync(target, join(value, "credentials", name));
-    expect(readRuntimeHomeCredential(value, name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(value, name)).toEqual({
       state: "invalid",
       issue: "CREDENTIAL_SYMLINK",
     });
@@ -145,7 +154,7 @@ describe("reading a Runtime home credential", () => {
     mkdirSync(real, { mode: 0o700 });
     writeFileSync(join(real, name), secret, { mode: 0o600 });
     symlinkSync(real, join(value, "credentials"));
-    expect(readRuntimeHomeCredential(value, name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(value, name)).toEqual({
       state: "invalid",
       issue: "CREDENTIAL_DIRECTORY_INSECURE",
     });
@@ -158,7 +167,7 @@ describe("reading a Runtime home credential", () => {
       mode: 0o700,
     });
     chmodSync(join(directory, "credentials"), 0o700);
-    expect(readRuntimeHomeCredential(directory, name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(directory, name)).toEqual({
       state: "invalid",
       issue: "CREDENTIAL_NOT_REGULAR_FILE",
     });
@@ -171,7 +180,7 @@ describe("reading a Runtime home credential", () => {
       join(fifo, "credentials", name),
     ]);
     if (made.status !== 0) return;
-    expect(readRuntimeHomeCredential(fifo, name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(fifo, name)).toEqual({
       state: "invalid",
       issue: "CREDENTIAL_NOT_REGULAR_FILE",
     });
@@ -179,13 +188,13 @@ describe("reading a Runtime home credential", () => {
 
   test("refuses an oversized credential", () => {
     expect(
-      readRuntimeHomeCredential(
+      loadRuntimeHomeCredentialValue(
         planted("a".repeat(maximumProviderCredentialBytes + 3)),
         name,
       ),
     ).toEqual({ state: "invalid", issue: "CREDENTIAL_TOO_LARGE" });
     expect(
-      readRuntimeHomeCredential(
+      loadRuntimeHomeCredentialValue(
         planted("a".repeat(maximumProviderCredentialBytes)),
         name,
       ).state,
@@ -204,7 +213,7 @@ describe("reading a Runtime home credential", () => {
     ["non-ASCII", `${secret}é`],
     ["escape character", `${secret}\x1b[2J`],
   ])("fails closed on a malformed credential (%s)", (_label, content) => {
-    expect(readRuntimeHomeCredential(planted(content), name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(planted(content), name)).toEqual({
       state: "invalid",
       issue: "CREDENTIAL_MALFORMED",
     });
@@ -212,14 +221,14 @@ describe("reading a Runtime home credential", () => {
 
   test("rejects names that are not environment-style credential names", () => {
     for (const bad of ["../OPENAI_API_KEY", "openai_api_key", "A/B", ""])
-      expect(errorFrom(() => readRuntimeHomeCredential(home(), bad)).code).toBe(
-        "CREDENTIAL_NAME_INVALID",
-      );
+      expect(
+        errorFrom(() => loadRuntimeHomeCredentialValue(home(), bad)).code,
+      ).toBe("CREDENTIAL_NAME_INVALID");
   });
 
   test("results for refused credentials never carry the value or a path", () => {
     const value = planted(`${secret} `, 0o644);
-    const result = readRuntimeHomeCredential(value, name);
+    const result = loadRuntimeHomeCredentialValue(value, name);
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(JSON.stringify(result)).not.toContain(value);
   });
@@ -233,7 +242,7 @@ describe("writing a Runtime home credential", () => {
     expect(statSync(join(value, "credentials", name)).mode & 0o777).toBe(0o600);
     expect(readFileSync(join(value, "credentials", name), "utf8")).toBe(secret);
     expect(readdirSync(join(value, "credentials"))).toEqual([name]);
-    expect(readRuntimeHomeCredential(value, name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(value, name)).toEqual({
       state: "present",
       value: secret,
     });
@@ -298,7 +307,7 @@ describe("writing a Runtime home credential", () => {
     writeRuntimeHomeCredential(value, name, Buffer.from(secret));
     expect(removeRuntimeHomeCredential(value, name)).toBe(true);
     expect(removeRuntimeHomeCredential(value, name)).toBe(false);
-    expect(readRuntimeHomeCredential(value, name)).toEqual({
+    expect(loadRuntimeHomeCredentialValue(value, name)).toEqual({
       state: "missing",
     });
 
@@ -308,5 +317,100 @@ describe("writing a Runtime home credential", () => {
     expect(removeRuntimeHomeCredential(value, name)).toBe(true);
     expect(readFileSync(target, "utf8")).toBe("kept");
     expect(removeRuntimeHomeCredential(home(), name)).toBe(false);
+  });
+});
+
+describe("inspecting a Runtime home credential (metadata only)", () => {
+  /** Every store state the loader distinguishes, each in a fresh home. */
+  const fixtures: [string, () => string][] = [
+    ["valid", () => planted(secret)],
+    ["valid with newline", () => planted(`${secret}\r\n`)],
+    ["missing directory", () => home()],
+    [
+      "missing file",
+      () => {
+        const value = home();
+        mkdirSync(join(value, "credentials"), { mode: 0o700 });
+        return value;
+      },
+    ],
+    ["malformed", () => planted(`${secret} tail`)],
+    ["NUL", () => planted(`${secret}\0`)],
+    ["empty", () => planted("")],
+    ["insecure file", () => planted(secret, 0o644)],
+    [
+      "insecure directory",
+      () => {
+        const value = planted(secret);
+        chmodSync(join(value, "credentials"), 0o755);
+        return value;
+      },
+    ],
+    [
+      "symbolic link",
+      () => {
+        const value = home();
+        mkdirSync(join(value, "credentials"), { mode: 0o700 });
+        writeFileSync(join(value, "elsewhere"), secret, { mode: 0o600 });
+        symlinkSync(join(value, "elsewhere"), join(value, "credentials", name));
+        return value;
+      },
+    ],
+    [
+      "too large",
+      () => planted("a".repeat(maximumProviderCredentialBytes + 3)),
+    ],
+  ];
+
+  test.each(fixtures)(
+    "reports the same state and issue as loading, without a value (%s)",
+    (_label, fixture) => {
+      const value = fixture();
+      const inspection = inspectRuntimeHomeCredential(value, name);
+      const loaded = loadRuntimeHomeCredentialValue(value, name);
+      expect(inspection).toEqual(
+        loaded.state === "present" ? { state: "present" } : loaded,
+      );
+      expect(
+        Object.keys(inspection).every((key) =>
+          ["state", "issue"].includes(key),
+        ),
+      ).toBe(true);
+      const rendered = JSON.stringify(inspection);
+      for (const derived of [
+        secret,
+        value,
+        join(value, "credentials"),
+        String(secret.length),
+        createHash("sha256").update(secret).digest("hex").slice(0, 12),
+      ])
+        expect(rendered).not.toContain(derived);
+    },
+  );
+
+  test("never decodes the credential bytes into a string", () => {
+    const value = planted(`${secret}\n`);
+    const toString = vi.spyOn(Buffer.prototype, "toString");
+    try {
+      expect(inspectRuntimeHomeCredential(value, name)).toEqual({
+        state: "present",
+      });
+      expect(toString).not.toHaveBeenCalled();
+      // The loader, by contrast, is the one place that decodes.
+      loadRuntimeHomeCredentialValue(value, name);
+      expect(toString).toHaveBeenCalled();
+    } finally {
+      toString.mockRestore();
+    }
+  });
+
+  test("the inspection type has no value to read", () => {
+    const inspection: RuntimeHomeCredentialInspection =
+      inspectRuntimeHomeCredential(planted(secret), name);
+    if (inspection.state === "present") {
+      // @ts-expect-error a metadata-only inspection never carries a value
+      expect(inspection.value).toBeUndefined();
+    }
+    expect(inspection.state).toBe("present");
   });
 });

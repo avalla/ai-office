@@ -32,6 +32,7 @@ import type {
 } from "./model-provider-registry.ts";
 import {
   environmentProviderCredentials,
+  resolvedProviderCredentialEnvironment,
   unusableProviderCredentials,
   type ProviderCredentials,
 } from "./provider-credentials.ts";
@@ -73,7 +74,10 @@ export interface GatewayModelProviders {
 
 export interface CredentialGatewayModelProvidersOptions {
   readonly descriptors?: readonly ModelProviderDescriptor[];
-  /** `AI_OFFICE_DEBUG_LLM=1` of the host; never enables credential output. */
+  /**
+   * `AI_OFFICE_DEBUG_LLM=1` of the host. Debug output reports provider, model
+   * and credential availability only, never anything derived from a value.
+   */
   readonly debug?: boolean;
   /** Replaces the default SDK registry, for example to fake vendor transport. */
   readonly createRegistry?: () => ModelProviderRegistry;
@@ -111,13 +115,15 @@ export class CredentialGatewayModelProviders implements GatewayModelProviders {
         await import("./model-provider-registry.ts")
       ).createDefaultModelProviderRegistry();
     const { providerId } = parseCanonicalModelRef(modelRef);
-    const environment: Record<string, string> = {};
-    for (const name of this.descriptors.find(
+    const descriptor = this.descriptors.find(
       (value) => value.providerId === providerId,
-    )?.requiredEnvironmentVariables ?? []) {
-      const value = this.credentials.secret(name);
-      if (value !== undefined) environment[name] = value;
-    }
+    );
+    // Only the resolved provider's own declared credentials cross into the
+    // registry; an unknown provider receives none.
+    const environment: Record<string, string> =
+      descriptor === undefined
+        ? {}
+        : resolvedProviderCredentialEnvironment(this.credentials, descriptor);
     if (this.options.debug === true) environment.AI_OFFICE_DEBUG_LLM = "1";
     return registry.resolveModelRef(modelRef, environment);
   }

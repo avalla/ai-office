@@ -17,16 +17,19 @@ import {
 } from "@ai-office/command-support/arguments.ts";
 import { providerCredentialNames } from "@ai-office/llm-gateway/provider-credentials.ts";
 import {
+  inspectRuntimeHomeCredential,
   maximumProviderCredentialBytes,
   ProviderCredentialStoreError,
-  readRuntimeHomeCredential,
   removeRuntimeHomeCredential,
   writeRuntimeHomeCredential,
 } from "@ai-office/llm-gateway/runtime-home-credential-store.ts";
 
 export interface CredentialInput {
   readonly isTTY: boolean;
-  /** Reads stdin to its end, or stops once more than `limit` bytes arrived. */
+  /**
+   * Reads stdin to its end, or stops once more than `limit` bytes arrived.
+   * It returns and retains at most `limit + 1` bytes.
+   */
   read(limit: number): Promise<Buffer>;
 }
 
@@ -46,8 +49,8 @@ model-routing.yaml, SQLite, audit events or portable project state.
 
 Commands:
   ai-office credential set <NAME>
-    reads the value from stdin (never from arguments) and writes it atomically
-    with mode 0600 in a 0700 directory
+    reads the value from stdin (never from arguments) and atomically replaces
+    the file, mode 0600 in a 0700 directory (directory sync is best effort)
   ai-office credential status [--json]
     reports present, missing or invalid by name; never a value, length or path
   ai-office credential remove <NAME>
@@ -57,29 +60,45 @@ Names: ${providerCredentialNames().join(", ")}
 Example (the value is not echoed and does not appear in the process list):
   read -rs KEY && printf '%s' "$KEY" | ai-office credential set OPENAI_API_KEY; unset KEY
 
-Sources:
+Sources (never mixed):
   managed service  reads only this directory; ambient variables are ignored
-  foreground       reads its own environment variable first, then this directory
+  foreground       reads only its own environment variables, never this directory
 
 Credentials are loaded when the Runtime starts; restart it after a change:
   systemctl --user restart ai-office-runtime.service          # Linux
   launchctl kickstart -k gui/$(id -u)/com.ai-office.runtime   # macOS`;
 
-const processInput: CredentialInput = {
-  isTTY: process.stdin.isTTY === true,
-  async read(limit) {
-    const chunks: Buffer[] = [];
-    let length = 0;
-    for await (const chunk of process.stdin) {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      chunks.push(bytes);
-      length += bytes.length;
+/**
+ * Reads a byte stream into one preallocated buffer of `limit + 1` bytes and
+ * stops at the first byte past `limit`, so an arbitrarily large chunk is never
+ * retained or concatenated. Copied chunks are zeroed where they are mutable.
+ * The caller owns the returned bytes and should zero them.
+ */
+export async function readBoundedInput(
+  stream: AsyncIterable<Uint8Array | string>,
+  limit: number,
+): Promise<Buffer> {
+  const buffer = Buffer.alloc(limit + 1);
+  let length = 0;
+  try {
+    for await (const chunk of stream) {
+      const bytes = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+      const count = Math.min(bytes.length, buffer.length - length);
+      buffer.set(bytes.subarray(0, count), length);
+      length += count;
+      bytes.fill(0);
       if (length > limit) break;
     }
-    const content = Buffer.concat(chunks);
-    for (const chunk of chunks) chunk.fill(0);
-    return content;
-  },
+  } catch (error) {
+    buffer.fill(0);
+    throw error;
+  }
+  return buffer.subarray(0, length);
+}
+
+const processInput: CredentialInput = {
+  isTTY: process.stdin.isTTY === true,
+  read: (limit) => readBoundedInput(process.stdin, limit),
 };
 
 const restartHint =
@@ -156,12 +175,13 @@ export async function runCredentialCli(
       }
       if (parsed === null || parsed.positionals.length > 0)
         throw new CliUsageError("credential status accepts only --json");
+      // Metadata only: status never loads a credential value.
       const credentials = providerCredentialNames().map((name) => {
-        const read = readRuntimeHomeCredential(runtimeHome, name);
+        const inspection = inspectRuntimeHomeCredential(runtimeHome, name);
         return {
           name,
-          state: read.state,
-          issue: read.state === "invalid" ? read.issue : null,
+          state: inspection.state,
+          issue: inspection.state === "invalid" ? inspection.issue : null,
         };
       });
       if (parsed.flags.has("json")) {
@@ -180,7 +200,7 @@ export async function runCredentialCli(
           `  ${credential.name}: ${credential.state}${credential.issue === null ? "" : ` ${credential.issue}`}`,
         );
       io.stdout(
-        "A managed Runtime reads only these; a foreground Runtime prefers its own environment variable. model:check reports what the running Runtime loaded.",
+        "A managed Runtime reads only these; a foreground Runtime reads only its own environment and never these. model:check reports what the running Runtime loaded.",
       );
       return credentials.some((value) => value.state === "invalid") ? 1 : 0;
     }

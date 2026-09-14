@@ -13,8 +13,8 @@ import {
   type ModelProviderEnvironment,
 } from "./model-ref.ts";
 import {
-  readRuntimeHomeCredential,
-  type RuntimeHomeCredentialRead,
+  loadRuntimeHomeCredentialValue,
+  type RuntimeHomeCredentialValue,
 } from "./runtime-home-credential-store.ts";
 
 /** Every credential name a registered provider declares; the only names read. */
@@ -30,28 +30,31 @@ export function providerCredentialNames(
   );
 }
 
-/**
- * Loaded credentials as infrastructure sees them. Application code receives
- * only the status view; the value accessor exists for gateway provider
- * adapters that authenticate a request.
- */
-export interface ProviderCredentials extends ProviderCredentialSource {
-  secret(name: string): string | undefined;
-}
-
 export interface LoadProviderCredentialsOptions {
-  /** The Runtime home whose `credentials/` directory is the canonical source. */
+  /**
+   * The Runtime home whose `credentials/` directory a managed Runtime reads.
+   * A foreground Runtime never inspects it.
+   */
   readonly runtimeHome?: string;
   readonly descriptors?: readonly ModelProviderDescriptor[];
 }
 
 /**
- * An immutable in-memory credential snapshot. Values live in a private field:
- * they are not enumerable, `JSON.stringify` and `util.inspect` see statuses
- * only, and no method lists them.
+ * Values of loaded snapshots, reachable only through
+ * {@link resolvedProviderCredentialEnvironment}. No method or property of a
+ * snapshot returns a value.
  */
-class LoadedProviderCredentials implements ProviderCredentials {
-  readonly #values: ReadonlyMap<string, string>;
+const loadedValues = new WeakMap<
+  LoadedProviderCredentials,
+  ReadonlyMap<string, string>
+>();
+
+/**
+ * An immutable in-memory credential snapshot, as infrastructure holds it. It
+ * exposes statuses only: values are not enumerable, `JSON.stringify` and
+ * `util.inspect` see statuses, and there is no secret-by-name accessor.
+ */
+class LoadedProviderCredentials implements ProviderCredentialSource {
   readonly #statuses: ReadonlyMap<string, ProviderCredentialStatus>;
 
   constructor(
@@ -59,10 +62,10 @@ class LoadedProviderCredentials implements ProviderCredentials {
     statuses: readonly ProviderCredentialStatus[],
     values: ReadonlyMap<string, string>,
   ) {
-    this.#values = values;
     this.#statuses = new Map(
       statuses.map((status) => [status.name, Object.freeze(status)]),
     );
+    loadedValues.set(this, values);
     Object.freeze(this);
   }
 
@@ -79,10 +82,6 @@ class LoadedProviderCredentials implements ProviderCredentials {
     );
   }
 
-  secret(name: string): string | undefined {
-    return this.#values.get(name);
-  }
-
   toJSON(): unknown {
     return {
       managed: this.managed,
@@ -96,18 +95,45 @@ class LoadedProviderCredentials implements ProviderCredentials {
 }
 
 /**
- * Loads provider credentials once at Runtime composition. Sources, per
- * credential name declared by a provider descriptor:
+ * A snapshot returned by {@link loadProviderCredentials}. The class is not
+ * exported, so only this module creates one or reaches its values.
+ */
+export type ProviderCredentials = LoadedProviderCredentials;
+
+/**
+ * The credential values one resolved provider declares, keyed by name, for the
+ * gateway's provider construction boundary (`CredentialGatewayModelProviders`)
+ * and nothing else. Credentials another provider declares are never included,
+ * and an architecture test keeps every other production caller out.
+ */
+export function resolvedProviderCredentialEnvironment(
+  credentials: ProviderCredentials,
+  descriptor: ModelProviderDescriptor,
+): Record<string, string> {
+  const values = loadedValues.get(credentials);
+  const environment: Record<string, string> = {};
+  if (values === undefined) return environment;
+  for (const name of descriptor.requiredEnvironmentVariables) {
+    const value = values.get(name);
+    if (value !== undefined) environment[name] = value;
+  }
+  return environment;
+}
+
+/**
+ * Loads provider credentials once at Runtime composition. The source is chosen
+ * by `AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE` alone, and sources never mix:
  *
- * - managed (`AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home`, written by
- *   `service install`): only `<AI_OFFICE_HOME>/credentials/<NAME>`; the same
- *   name in the service manager environment is ignored and reported by name;
- * - foreground: the Runtime's own environment variable when set, otherwise the
- *   Runtime home file when present. An invalid file is reported invalid and
- *   never falls through to "missing".
+ * - `runtime_home` (written by `service install`): only
+ *   `<AI_OFFICE_HOME>/credentials/<NAME>`; the same name in the service manager
+ *   environment is ignored and reported by name;
+ * - unset (foreground, or a managed definition from before the marker): only
+ *   the Runtime's own environment variables. The Runtime home credential
+ *   directory is never inspected, so a credential configured for the managed
+ *   Runtime cannot be picked up by a foreground invocation;
+ * - any other value: every credential is invalid (fail closed).
  *
- * Any other marker value makes every credential invalid (fail closed). Changes
- * take effect on Runtime restart; nothing here reloads.
+ * Changes take effect on Runtime restart; nothing here reloads.
  */
 export function loadProviderCredentials(
   environment: ModelProviderEnvironment,
@@ -132,22 +158,20 @@ export function loadProviderCredentials(
       });
       continue;
     }
-    if (!managed && ambient !== undefined) {
-      values.set(name, ambient);
+    if (!managed) {
+      if (ambient !== undefined) values.set(name, ambient);
       statuses.push({
         ...base,
-        state: "present",
-        origin: "environment",
+        state: ambient === undefined ? "missing" : "present",
+        origin: ambient === undefined ? null : "environment",
         issue: null,
       });
       continue;
     }
-    const file: RuntimeHomeCredentialRead =
+    const file: RuntimeHomeCredentialValue =
       options.runtimeHome === undefined
-        ? managed
-          ? { state: "invalid", issue: "CREDENTIAL_UNREADABLE" }
-          : { state: "missing" }
-        : readRuntimeHomeCredential(options.runtimeHome, name);
+        ? { state: "invalid", issue: "CREDENTIAL_UNREADABLE" }
+        : loadRuntimeHomeCredentialValue(options.runtimeHome, name);
     if (file.state === "present") values.set(name, file.value);
     statuses.push({
       ...base,

@@ -43,8 +43,9 @@ export interface ProviderCredentialStatus {
 
 /**
  * What application code may know about host credentials: presence by name.
- * Values stay in infrastructure (`packages/llm-gateway`), which extends this
- * view with the accessor its provider adapters need.
+ * Values stay in infrastructure (`packages/llm-gateway`), where only the
+ * gateway's provider construction boundary obtains the credentials of the one
+ * provider it resolves.
  */
 export interface ProviderCredentialSource {
   /** True when the Runtime reads credentials only from its Runtime home. */

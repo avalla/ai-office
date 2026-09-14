@@ -38,13 +38,22 @@ export const maximumProviderCredentialBytes = 4096;
 const maximumFileBytes = maximumProviderCredentialBytes + 2;
 
 const credentialNamePattern = /^[A-Z][A-Z0-9_]{0,63}$/u;
-/** Visible ASCII only: no whitespace, NUL or control characters. */
-const credentialValuePattern = /^[\x21-\x7E]+$/u;
 
-export type RuntimeHomeCredentialRead =
-  | { readonly state: "present"; readonly value: string }
+type RuntimeHomeCredentialUnusable =
   | { readonly state: "missing" }
   | { readonly state: "invalid"; readonly issue: ProviderCredentialIssueCode };
+
+/**
+ * Metadata-only result of {@link inspectRuntimeHomeCredential}. It has no
+ * value, length, fingerprint or path by construction.
+ */
+export type RuntimeHomeCredentialInspection =
+  { readonly state: "present" } | RuntimeHomeCredentialUnusable;
+
+/** Result of {@link loadRuntimeHomeCredentialValue}, for Runtime composition. */
+export type RuntimeHomeCredentialValue =
+  | { readonly state: "present"; readonly value: string }
+  | RuntimeHomeCredentialUnusable;
 
 export class ProviderCredentialStoreError extends Error {
   constructor(
@@ -78,16 +87,28 @@ function assertName(name: string): void {
     );
 }
 
-/** Validates file content and returns the credential value, or null. */
-export function parseProviderCredential(content: Buffer): string | null {
+/**
+ * Validates credential file content byte by byte and returns the length of the
+ * value it holds, or null. The value is 1 to {@link maximumProviderCredentialBytes}
+ * visible ASCII bytes (no whitespace, NUL or control characters), optionally
+ * followed by one `\n` or `\r\n`. Nothing is decoded into a string.
+ */
+function credentialValueLength(content: Uint8Array): number | null {
   if (content.length > maximumFileBytes) return null;
-  let text = content.toString("latin1");
-  if (text.endsWith("\r\n")) text = text.slice(0, -2);
-  else if (text.endsWith("\n")) text = text.slice(0, -1);
-  return text.length <= maximumProviderCredentialBytes &&
-    credentialValuePattern.test(text)
-    ? text
-    : null;
+  let length = content.length;
+  if (
+    length >= 2 &&
+    content[length - 2] === 0x0d &&
+    content[length - 1] === 0x0a
+  )
+    length -= 2;
+  else if (length >= 1 && content[length - 1] === 0x0a) length -= 1;
+  if (length === 0 || length > maximumProviderCredentialBytes) return null;
+  for (let index = 0; index < length; index += 1) {
+    const byte = content[index]!;
+    if (byte < 0x21 || byte > 0x7e) return null;
+  }
+  return length;
 }
 
 type DirectoryState =
@@ -111,11 +132,18 @@ function inspectDirectory(directory: string, uid: number): DirectoryState {
     : { state: "invalid" };
 }
 
-/** Reads one credential from a Runtime home without following symbolic links. */
-export function readRuntimeHomeCredential(
+/**
+ * Securely opens and bounded-reads one credential file, validates its bytes and
+ * hands the validated value bytes to `use`. The read buffer is zeroed before
+ * this returns, whatever `use` does, so `use` must copy anything it keeps.
+ */
+function withRuntimeHomeCredentialBytes<T>(
   runtimeHome: string,
   name: string,
-): RuntimeHomeCredentialRead {
+  use: (value: Buffer) => T,
+):
+  | { readonly state: "present"; readonly result: T }
+  | RuntimeHomeCredentialUnusable {
   assertName(name);
   const uid = currentUid();
   if (uid === null) return { state: "invalid", issue: "CREDENTIAL_UNREADABLE" };
@@ -143,6 +171,8 @@ export function readRuntimeHomeCredential(
           : "CREDENTIAL_UNREADABLE",
     };
   }
+  // Read one byte past the bound so growth after fstat is still refused.
+  const buffer = Buffer.alloc(maximumFileBytes + 1);
   try {
     const status = fstatSync(descriptor);
     if (!status.isFile())
@@ -153,8 +183,6 @@ export function readRuntimeHomeCredential(
       return { state: "invalid", issue: "CREDENTIAL_INSECURE_PERMISSIONS" };
     if (status.size > maximumFileBytes)
       return { state: "invalid", issue: "CREDENTIAL_TOO_LARGE" };
-    // Read one byte past the bound so growth after fstat is still refused.
-    const buffer = Buffer.alloc(maximumFileBytes + 1);
     let length = 0;
     while (length < buffer.length) {
       const count = readSync(
@@ -169,17 +197,46 @@ export function readRuntimeHomeCredential(
     }
     if (length > maximumFileBytes)
       return { state: "invalid", issue: "CREDENTIAL_TOO_LARGE" };
-    const content = buffer.subarray(0, length);
-    const value = parseProviderCredential(content);
-    buffer.fill(0);
-    return value === null
-      ? { state: "invalid", issue: "CREDENTIAL_MALFORMED" }
-      : { state: "present", value };
+    const valueLength = credentialValueLength(buffer.subarray(0, length));
+    if (valueLength === null)
+      return { state: "invalid", issue: "CREDENTIAL_MALFORMED" };
+    return { state: "present", result: use(buffer.subarray(0, valueLength)) };
   } catch {
     return { state: "invalid", issue: "CREDENTIAL_UNREADABLE" };
   } finally {
+    buffer.fill(0);
     closeSync(descriptor);
   }
+}
+
+/**
+ * Reports whether a Runtime home credential is usable without materializing
+ * it: the validated bytes are never decoded into a string, and the result can
+ * only be `present`, `missing` or `invalid` with a sanitized issue code.
+ */
+export function inspectRuntimeHomeCredential(
+  runtimeHome: string,
+  name: string,
+): RuntimeHomeCredentialInspection {
+  const read = withRuntimeHomeCredentialBytes(runtimeHome, name, () => null);
+  return read.state === "present" ? { state: "present" } : read;
+}
+
+/**
+ * Loads one credential value for Runtime composition. This is the only place
+ * a Runtime home credential becomes a string; status reporting uses
+ * {@link inspectRuntimeHomeCredential} instead.
+ */
+export function loadRuntimeHomeCredentialValue(
+  runtimeHome: string,
+  name: string,
+): RuntimeHomeCredentialValue {
+  const read = withRuntimeHomeCredentialBytes(runtimeHome, name, (value) =>
+    value.toString("latin1"),
+  );
+  return read.state === "present"
+    ? { state: "present", value: read.result }
+    : read;
 }
 
 /** Creates the credential directory owner-only, or verifies an existing one. */
@@ -229,8 +286,16 @@ function assertReplaceable(path: string): void {
 }
 
 /**
- * Atomically writes a credential: an exclusive owner-only temporary file in the
- * same directory, synced and renamed over the name.
+ * Replaces a credential atomically: an exclusive owner-only temporary file in
+ * the same directory is written, `fsync`ed and renamed over the name, so a
+ * reader sees either the previous or the new complete file, never a partial
+ * one. Crash durability of the replacement is not guaranteed: the directory
+ * `fsync` that would persist the rename is best effort and unavailable or
+ * weaker on some platforms and filesystems, so after a crash the previous file
+ * may still be in place.
+ *
+ * The value bytes are validated and written as given; they are never decoded
+ * into a string. The caller owns `content` and should zero it afterwards.
  */
 export function writeRuntimeHomeCredential(
   runtimeHome: string,
@@ -238,8 +303,8 @@ export function writeRuntimeHomeCredential(
   content: Buffer,
 ): void {
   assertName(name);
-  const value = parseProviderCredential(content);
-  if (value === null)
+  const valueLength = credentialValueLength(content);
+  if (valueLength === null)
     throw new ProviderCredentialStoreError(
       "CREDENTIAL_MALFORMED",
       `A credential must be 1 to ${maximumProviderCredentialBytes} visible ASCII characters with no whitespace or control characters. Nothing was written.`,
@@ -267,11 +332,9 @@ export function writeRuntimeHomeCredential(
         constants.O_NOFOLLOW,
       0o600,
     );
-    const bytes = Buffer.from(value, "latin1");
     let written = 0;
-    while (written < bytes.length)
-      written += writeSync(descriptor, bytes, written, bytes.length - written);
-    bytes.fill(0);
+    while (written < valueLength)
+      written += writeSync(descriptor, content, written, valueLength - written);
     fsyncSync(descriptor);
     closeSync(descriptor);
     descriptor = undefined;
@@ -301,7 +364,8 @@ function syncDirectory(directory: string): void {
       closeSync(descriptor);
     }
   } catch {
-    // Directory fsync is best effort; the rename itself is atomic.
+    // Best effort only: some platforms refuse or weaken a directory fsync. The
+    // rename is still atomic for readers; its crash durability is not promised.
   }
 }
 

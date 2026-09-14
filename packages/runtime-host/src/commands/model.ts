@@ -114,7 +114,7 @@ export async function handleModelCommand(
       );
     if (report.providers.some((provider) => provider.gatewayExecution))
       context.io.stdout(
-        `Provider credentials: ${report.credentialSource === "managed" ? "credentials directory in AI_OFFICE_HOME only (managed service)" : "Runtime environment, then credentials directory in AI_OFFICE_HOME"}`,
+        `Provider credentials: ${report.credentialSource === "managed" ? "credentials directory in AI_OFFICE_HOME only (managed service)" : "Runtime environment only (foreground; the credentials directory in AI_OFFICE_HOME is not read)"}`,
       );
     for (const provider of report.providers) {
       context.io.stdout(

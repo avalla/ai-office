@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { inspect } from "node:util";
 import { join } from "node:path";
@@ -8,6 +16,8 @@ import type { OfficeServiceName } from "@ai-office/application/ports/office-serv
 import {
   environmentProviderCredentials,
   loadProviderCredentials,
+  resolvedProviderCredentialEnvironment,
+  type ProviderCredentials,
 } from "@ai-office/llm-gateway/provider-credentials.ts";
 import { writeRuntimeHomeCredential } from "@ai-office/llm-gateway/runtime-home-credential-store.ts";
 import { CredentialModelProviderCatalog } from "@ai-office/llm-gateway/model-routing-configuration.ts";
@@ -15,8 +25,15 @@ import { CredentialGatewayModelProviders } from "@ai-office/llm-gateway/gateway-
 import { ModelProviderRegistry } from "@ai-office/llm-gateway/model-provider-registry.ts";
 import { defaultModelProviderDescriptors } from "@ai-office/llm-gateway/model-ref.ts";
 import { MockLlmProvider } from "@ai-office/llm-gateway/mock-provider.ts";
-import { renderSystemdUnit } from "@ai-office/service-management/systemd-user-service-manager.ts";
-import { renderLaunchdPlist } from "@ai-office/service-management/launchd-user-service-manager.ts";
+import { classifyManagedDefinition } from "@ai-office/application/service-management/managed-definition.ts";
+import {
+  renderSystemdUnit,
+  systemdOwnershipLines,
+} from "@ai-office/service-management/systemd-user-service-manager.ts";
+import {
+  launchdOwnershipLines,
+  renderLaunchdPlist,
+} from "@ai-office/service-management/launchd-user-service-manager.ts";
 import {
   parseMinimalPlist,
   servicePlan,
@@ -47,6 +64,22 @@ function plan(home: string) {
   });
 }
 
+function systemdEnvironment(definition: string): Record<string, string> {
+  const environment: Record<string, string> = {};
+  for (const line of definition.split("\n")) {
+    const match = /^Environment="([A-Z_]+)=(.*)"$/u.exec(line);
+    if (match !== null) environment[match[1]!] = match[2]!;
+  }
+  return environment;
+}
+
+function launchdEnvironment(definition: string): Record<string, string> {
+  return parseMinimalPlist(definition).EnvironmentVariables as Record<
+    string,
+    string
+  >;
+}
+
 /** Environment assignments exactly as each service manager would pass them. */
 const platforms: Record<
   "systemd" | "launchd",
@@ -57,24 +90,69 @@ const platforms: Record<
 > = {
   systemd: (home, service) => {
     const definition = renderSystemdUnit(plan(home), service);
-    const environment: Record<string, string> = {};
-    for (const line of definition.split("\n")) {
-      const match = /^Environment="([A-Z_]+)=(.*)"$/u.exec(line);
-      if (match !== null) environment[match[1]!] = match[2]!;
-    }
-    return { definition, environment };
+    return { definition, environment: systemdEnvironment(definition) };
   },
   launchd: (home, service) => {
     const definition = renderLaunchdPlist(plan(home), service);
+    return { definition, environment: launchdEnvironment(definition) };
+  },
+};
+
+/**
+ * A Runtime definition rendered before the credential source marker existed,
+ * with how its manager classifies it and the environment it passes.
+ */
+const legacyDefinitions: Record<
+  "systemd" | "launchd",
+  (home: string) => {
+    classification: string;
+    environment: Record<string, string>;
+  }
+> = {
+  systemd: (home) => {
+    const current = renderSystemdUnit(plan(home), "runtime");
+    const legacy = current.replace(
+      'Environment="AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home"\n',
+      "",
+    );
+    expect(legacy).not.toBe(current);
     return {
-      definition,
-      environment: parseMinimalPlist(definition).EnvironmentVariables as Record<
-        string,
-        string
-      >,
+      classification: classifyManagedDefinition(
+        legacy,
+        current,
+        systemdOwnershipLines("runtime"),
+      ),
+      environment: systemdEnvironment(legacy),
+    };
+  },
+  launchd: (home) => {
+    const current = renderLaunchdPlist(plan(home), "runtime");
+    const legacy = current.replace(
+      /\s*<key>AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE<\/key>\s*<string>runtime_home<\/string>/u,
+      "",
+    );
+    expect(legacy).not.toBe(current);
+    return {
+      classification: classifyManagedDefinition(
+        legacy,
+        current,
+        launchdOwnershipLines("runtime"),
+      ),
+      environment: launchdEnvironment(legacy),
     };
   },
 };
+
+/** What the gateway would hand the provider that declares `name`. */
+function providerValue(
+  credentials: ProviderCredentials,
+  name: string,
+): string | undefined {
+  const descriptor = defaultModelProviderDescriptors.find((value) =>
+    value.requiredEnvironmentVariables.includes(name),
+  )!;
+  return resolvedProviderCredentialEnvironment(credentials, descriptor)[name];
+}
 
 /** A managed start whose service manager environment also carries ambient keys. */
 function managedStart(environment: Record<string, string>) {
@@ -127,10 +205,11 @@ describe.each(["systemd", "launchd"] as const)(
         issue: null,
         ambientIgnored: true,
       });
-      expect(credentials.secret("OPENAI_API_KEY")).toBe(managedSecret);
+      expect(providerValue(credentials, "OPENAI_API_KEY")).toBe(managedSecret);
       // Restart after reboot or login: the same definition gives the same source.
       expect(
-        managedStart(platforms[platform](home, "runtime").environment).secret(
+        providerValue(
+          managedStart(platforms[platform](home, "runtime").environment),
           "OPENAI_API_KEY",
         ),
       ).toBe(managedSecret);
@@ -146,7 +225,7 @@ describe.each(["systemd", "launchd"] as const)(
         origin: null,
         ambientIgnored: true,
       });
-      expect(credentials.secret("OPENAI_API_KEY")).toBeUndefined();
+      expect(providerValue(credentials, "OPENAI_API_KEY")).toBeUndefined();
       expect(
         new CredentialModelProviderCatalog(credentials).missingCredentials(
           "openai",
@@ -170,7 +249,7 @@ describe.each(["systemd", "launchd"] as const)(
         origin: "runtime_home",
         issue: "CREDENTIAL_INSECURE_PERMISSIONS",
       });
-      expect(credentials.secret("OPENAI_API_KEY")).toBeUndefined();
+      expect(providerValue(credentials, "OPENAI_API_KEY")).toBeUndefined();
     });
   },
 );
@@ -187,12 +266,12 @@ test("systemd and launchd managed Runtimes load identical credential statuses", 
   expect(JSON.stringify(systemd)).toBe(JSON.stringify(launchd));
   for (const name of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
     expect(systemd.status(name)).toEqual(launchd.status(name));
-    expect(systemd.secret(name)).toBe(launchd.secret(name));
+    expect(providerValue(systemd, name)).toBe(providerValue(launchd, name));
   }
 });
 
-describe("foreground provider credentials", () => {
-  test("the Runtime environment takes precedence over the Runtime home file", () => {
+describe("foreground provider credentials (marker unset)", () => {
+  test("the Runtime environment is used", () => {
     const home = runtimeHome();
     writeRuntimeHomeCredential(
       home,
@@ -204,36 +283,118 @@ describe("foreground provider credentials", () => {
       { runtimeHome: home },
     );
     expect(credentials.managed).toBe(false);
-    expect(credentials.status("OPENAI_API_KEY")).toMatchObject({
+    expect(credentials.status("OPENAI_API_KEY")).toEqual({
+      name: "OPENAI_API_KEY",
       state: "present",
       origin: "environment",
+      issue: null,
       ambientIgnored: false,
     });
-    expect(credentials.secret("OPENAI_API_KEY")).toBe(ambientSecret);
+    expect(providerValue(credentials, "OPENAI_API_KEY")).toBe(ambientSecret);
   });
 
-  test("without the variable the Runtime home file is used, and a malformed one is invalid", () => {
+  // Mutation guard: restoring any environment -> Runtime home fallback makes
+  // each of these fail, because each planted store would then be consulted.
+  const planted: [string, (home: string) => void][] = [
+    [
+      "a valid Runtime home credential",
+      (home) =>
+        writeRuntimeHomeCredential(
+          home,
+          "OPENAI_API_KEY",
+          Buffer.from(managedSecret),
+        ),
+    ],
+    [
+      "a malformed Runtime home credential",
+      (home) => {
+        writeRuntimeHomeCredential(
+          home,
+          "OPENAI_API_KEY",
+          Buffer.from(managedSecret),
+        );
+        writeFileSync(
+          join(home, "credentials", "OPENAI_API_KEY"),
+          `${managedSecret} x`,
+        );
+      },
+    ],
+    [
+      "an insecure Runtime home credential file",
+      (home) => {
+        writeRuntimeHomeCredential(
+          home,
+          "OPENAI_API_KEY",
+          Buffer.from(managedSecret),
+        );
+        chmodSync(join(home, "credentials", "OPENAI_API_KEY"), 0o644);
+      },
+    ],
+    [
+      "an insecure credential directory",
+      (home) => {
+        writeRuntimeHomeCredential(
+          home,
+          "OPENAI_API_KEY",
+          Buffer.from(managedSecret),
+        );
+        chmodSync(join(home, "credentials"), 0o777);
+      },
+    ],
+    [
+      "a symbolic link at the credential name",
+      (home) => {
+        mkdirSync(join(home, "credentials"), { mode: 0o700 });
+        writeFileSync(join(home, "target"), managedSecret, { mode: 0o600 });
+        symlinkSync(
+          join(home, "target"),
+          join(home, "credentials", "OPENAI_API_KEY"),
+        );
+      },
+    ],
+  ];
+
+  test.each(planted)(
+    "without the variable, %s is never inspected and the credential is missing",
+    (_label, plant) => {
+      const home = runtimeHome();
+      plant(home);
+      const credentials = loadProviderCredentials(
+        { HOME: "/home/x" },
+        { runtimeHome: home },
+      );
+      for (const name of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
+        expect(credentials.status(name)).toEqual({
+          name,
+          state: "missing",
+          origin: null,
+          issue: null,
+          ambientIgnored: false,
+        });
+        expect(providerValue(credentials, name)).toBeUndefined();
+      }
+      expect(
+        new CredentialModelProviderCatalog(credentials).missingCredentials(
+          "openai",
+        ),
+      ).toEqual(["OPENAI_API_KEY"]);
+    },
+  );
+
+  test("a FIFO at the credential name is never opened", () => {
     const home = runtimeHome();
-    writeRuntimeHomeCredential(
-      home,
-      "OPENAI_API_KEY",
-      Buffer.from(managedSecret),
-    );
+    mkdirSync(join(home, "credentials"), { mode: 0o700 });
+    const made = spawnSync("mkfifo", [
+      "-m",
+      "600",
+      join(home, "credentials", "OPENAI_API_KEY"),
+    ]);
+    if (made.status !== 0) return;
     expect(
-      loadProviderCredentials({}, { runtimeHome: home }).secret(
+      loadProviderCredentials({}, { runtimeHome: home }).status(
         "OPENAI_API_KEY",
       ),
-    ).toBe(managedSecret);
-    writeFileSync(
-      join(home, "credentials", "OPENAI_API_KEY"),
-      `${managedSecret} x`,
-    );
-    const invalid = loadProviderCredentials({}, { runtimeHome: home });
-    expect(invalid.status("OPENAI_API_KEY")).toMatchObject({
-      state: "invalid",
-      issue: "CREDENTIAL_MALFORMED",
-    });
-    expect(invalid.secret("OPENAI_API_KEY")).toBeUndefined();
+    ).toMatchObject({ state: "missing", origin: null, issue: null });
   });
 
   test("an explicit foreground environment record keeps legacy variable behavior", () => {
@@ -241,71 +402,142 @@ describe("foreground provider credentials", () => {
       OPENAI_API_KEY: ambientSecret,
       AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: "runtime_home",
     });
-    expect(credentials.secret("OPENAI_API_KEY")).toBe(ambientSecret);
+    expect(providerValue(credentials, "OPENAI_API_KEY")).toBe(ambientSecret);
     expect(credentials.status("ANTHROPIC_API_KEY").state).toBe("missing");
   });
 });
 
-test("an unknown credential source marker fails every credential closed", () => {
-  const home = runtimeHome();
-  writeRuntimeHomeCredential(
-    home,
-    "OPENAI_API_KEY",
-    Buffer.from(managedSecret),
-  );
-  const credentials = loadProviderCredentials(
-    {
-      AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: "environment",
-      OPENAI_API_KEY: ambientSecret,
-    },
-    { runtimeHome: home },
-  );
-  for (const name of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
-    expect(credentials.status(name)).toMatchObject({
-      state: "invalid",
-      issue: "CREDENTIAL_SOURCE_INVALID",
-    });
-    expect(credentials.secret(name)).toBeUndefined();
-  }
-});
+describe.each(["systemd", "launchd"] as const)(
+  "a %s Runtime definition from before the credential source marker",
+  (platform) => {
+    test("is managed_outdated and stays environment-only until service install upgrades it", () => {
+      const home = runtimeHome();
+      writeRuntimeHomeCredential(
+        home,
+        "OPENAI_API_KEY",
+        Buffer.from(managedSecret),
+      );
+      const legacy = legacyDefinitions[platform](home);
+      expect(legacy.classification).toBe("managed_outdated");
+      expect(legacy.environment).not.toHaveProperty(
+        "AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE",
+      );
 
-test("the gateway registry receives only the resolved provider's own credential", async () => {
-  const home = runtimeHome();
-  writeRuntimeHomeCredential(
-    home,
-    "OPENAI_API_KEY",
-    Buffer.from(managedSecret),
-  );
-  writeRuntimeHomeCredential(
-    home,
-    "ANTHROPIC_API_KEY",
-    Buffer.from(ambientSecret),
-  );
-  const seen: Record<string, string | undefined>[] = [];
-  const openai = defaultModelProviderDescriptors.find(
-    (value) => value.providerId === "openai",
-  )!;
-  const providers = new CredentialGatewayModelProviders(
-    loadProviderCredentials(
-      { AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: "runtime_home", HOME: "/home/x" },
+      const withAmbient = loadProviderCredentials(
+        { ...legacy.environment, OPENAI_API_KEY: ambientSecret },
+        { runtimeHome: home },
+      );
+      expect(withAmbient.managed).toBe(false);
+      expect(withAmbient.status("OPENAI_API_KEY")).toMatchObject({
+        state: "present",
+        origin: "environment",
+      });
+      expect(providerValue(withAmbient, "OPENAI_API_KEY")).toBe(ambientSecret);
+
+      const withoutAmbient = loadProviderCredentials(legacy.environment, {
+        runtimeHome: home,
+      });
+      expect(withoutAmbient.status("OPENAI_API_KEY")).toMatchObject({
+        state: "missing",
+        origin: null,
+      });
+      expect(providerValue(withoutAmbient, "OPENAI_API_KEY")).toBeUndefined();
+    });
+  },
+);
+
+test.each(["environment", "RUNTIME_HOME", "runtime-home", "file", "1"])(
+  "an unsupported credential source marker (%s) fails every credential closed",
+  (marker) => {
+    const home = runtimeHome();
+    writeRuntimeHomeCredential(
+      home,
+      "OPENAI_API_KEY",
+      Buffer.from(managedSecret),
+    );
+    const credentials = loadProviderCredentials(
+      {
+        AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: marker,
+        OPENAI_API_KEY: ambientSecret,
+      },
       { runtimeHome: home },
-    ),
-    {
-      createRegistry: () =>
-        new ModelProviderRegistry([
-          {
-            ...openai,
-            create: (_model, environment) => {
-              seen.push({ ...environment });
-              return new MockLlmProvider();
-            },
-          },
-        ]),
-    },
-  );
-  expect(providers.missingCredentials("openai")).toEqual([]);
-  await providers.resolve("openai:economy-model");
-  expect(seen).toEqual([{ OPENAI_API_KEY: managedSecret }]);
+    );
+    for (const name of ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]) {
+      expect(credentials.status(name)).toMatchObject({
+        state: "invalid",
+        origin: null,
+        issue: "CREDENTIAL_SOURCE_INVALID",
+      });
+      expect(providerValue(credentials, name)).toBeUndefined();
+    }
+  },
+);
+
+describe.each([
+  ["managed", { AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: "runtime_home" }],
+  ["foreground", {}],
+] as const)("%s gateway provider construction", (_label, marker) => {
+  test("each registry receives only the resolved provider's own credential", async () => {
+    const home = runtimeHome();
+    const openaiSecret = `aio-test-openai-${randomBytes(12).toString("hex")}`;
+    const anthropicSecret = `aio-test-anthropic-${randomBytes(12).toString("hex")}`;
+    writeRuntimeHomeCredential(
+      home,
+      "OPENAI_API_KEY",
+      Buffer.from(openaiSecret),
+    );
+    writeRuntimeHomeCredential(
+      home,
+      "ANTHROPIC_API_KEY",
+      Buffer.from(anthropicSecret),
+    );
+    const seen: { providerId: string; environment: Record<string, string> }[] =
+      [];
+    const providers = new CredentialGatewayModelProviders(
+      loadProviderCredentials(
+        {
+          ...marker,
+          HOME: "/home/x",
+          ...("AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE" in marker
+            ? {}
+            : {
+                OPENAI_API_KEY: openaiSecret,
+                ANTHROPIC_API_KEY: anthropicSecret,
+              }),
+        },
+        { runtimeHome: home },
+      ),
+      {
+        createRegistry: () =>
+          new ModelProviderRegistry(
+            defaultModelProviderDescriptors.map((descriptor) => ({
+              ...descriptor,
+              create: (_model, environment) => {
+                seen.push({
+                  providerId: descriptor.providerId,
+                  environment: { ...environment } as Record<string, string>,
+                });
+                return new MockLlmProvider();
+              },
+            })),
+          ),
+      },
+    );
+    expect(providers.missingCredentials("openai")).toEqual([]);
+    expect(providers.missingCredentials("anthropic")).toEqual([]);
+    await providers.resolve("openai:economy-model");
+    await providers.resolve("anthropic:claude-model");
+    expect(seen).toEqual([
+      { providerId: "openai", environment: { OPENAI_API_KEY: openaiSecret } },
+      {
+        providerId: "anthropic",
+        environment: { ANTHROPIC_API_KEY: anthropicSecret },
+      },
+    ]);
+    await expect(providers.resolve("ollama:qwen3")).rejects.toThrow(
+      "Unsupported LLM provider",
+    );
+  });
 });
 
 test("a loaded credential source never serializes or inspects a value", () => {
@@ -319,7 +551,7 @@ test("a loaded credential source never serializes or inspects a value", () => {
     { AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: "runtime_home" },
     { runtimeHome: home },
   );
-  expect(credentials.secret("OPENAI_API_KEY")).toBe(managedSecret);
+  expect(providerValue(credentials, "OPENAI_API_KEY")).toBe(managedSecret);
   for (const rendered of [
     JSON.stringify(credentials),
     inspect(credentials, { showHidden: true, depth: 10 }),
