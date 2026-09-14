@@ -2,7 +2,9 @@
 
 Status: accepted, 2026-09-14. Amends [ADR-0005](ADR-0005-provider-registry-langchain-adapter.md)
 for the OpenAI registration and [ADR-0017](ADR-0017-bounded-external-worker.md)
-for worker model selection.
+for worker model selection. Provider credential location amended by
+[ADR-0020](ADR-0020-managed-provider-credential-boundary.md): a managed Runtime
+reads credentials only from owner-only files in `<AI_OFFICE_HOME>/credentials/`.
 
 ## Context
 
@@ -29,9 +31,10 @@ dispatch, and inexpensive models could not be reserved for high-volume roles.
 3. **Resolved model** — an immutable, non-secret `AgentRunModelSelection`
    (`policy`, `profile`, `modelRef`, `providerId`, `model`, parameters,
    `source`) attached to one `AgentRun` when it is scheduled.
-4. **Provider credentials** — Runtime host environment only (`OPENAI_API_KEY`)
-   or a client's own login. Never in routing files, run snapshots, events,
-   service definitions, diagnostics, dashboard state or portable state.
+4. **Provider credentials** — Runtime host configuration (`OPENAI_API_KEY`, see
+   [ADR-0020](ADR-0020-managed-provider-credential-boundary.md)) or a client's
+   own login. Never in routing files, run snapshots, events, service
+   definitions, diagnostics, dashboard state or portable state.
 
 ### Configuration sources
 
@@ -222,17 +225,17 @@ echo values that may be credentials, invalid project keys or host paths.
 - A foreground host that sets `AI_OFFICE_LLM_MODEL` assigns that model to every
   otherwise unresolved run; if the selected worker cannot execute it, those runs
   are refused before dispatch instead of silently using another model.
-- Managed services never receive provider credentials. Gateway runs under a
-  managed Runtime fail before any request with a credential error unless the
-  service manager's own environment supplies them; AI Office does not write or
-  manage that environment.
+- Service definitions never carry provider credentials. (Superseded in part by
+  [ADR-0020](ADR-0020-managed-provider-credential-boundary.md): a managed
+  Runtime now reads them only from `<AI_OFFICE_HOME>/credentials/` and ignores
+  the service manager's environment.)
 - A drifted provider response cannot be priced (pricing is keyed by the exact
   model), so its reservation is released without a usage record; the run fails
   closed with `WORKER_MODEL_MISMATCH`.
 - Gateway execution reserves only the `agent_run` budget; project, task and
   agent budgets are not reserved in the same request.
 
-Deferred, with roadmap items: a credential boundary for managed services,
-gateway execution for Anthropic models, co-reservation of wider budget scopes,
-an audited override mutation command, dashboard rendering of the selection, and
-hot reload of routing files.
+Deferred, with roadmap items: a credential boundary for managed services
+(since delivered by ADR-0020), gateway execution for Anthropic models,
+co-reservation of wider budget scopes, an audited override mutation command,
+dashboard rendering of the selection, and hot reload of routing files.

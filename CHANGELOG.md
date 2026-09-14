@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add a managed Runtime provider credential boundary.
+  `ai-office credential set`, `status` and `remove` store provider credentials
+  such as `OPENAI_API_KEY` as owner-only files in
+  `<AI_OFFICE_HOME>/credentials/`, reading values only from non-terminal stdin. Managed systemd and launchd Runtimes read credentials only
+  from there through a non-secret `AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE`
+  marker (reinstall once to add it) and ignore the service manager's
+  environment; a foreground Runtime still prefers its environment. Symlinked,
+  non-regular, foreign-owned, group/world-accessible, oversized or malformed
+  credential files fail closed. `model:check` reports each credential by name as
+  present, missing or invalid, never its value or path (ADR-0020).
 - Add agent model routing. Roles keep a semantic `model_policy`; the host-local
   `<AI_OFFICE_HOME>/model-routing.yaml` (or, in the foreground,
   `AI_OFFICE_MODEL_ROUTING_FILE`) maps policies, project-scoped and host-global
