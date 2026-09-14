@@ -81,8 +81,21 @@ After scheduling a task, choose the executor explicitly:
 ```bash
 ai-office run:tick --project <project-id> --worker claude
 ai-office run:tick --project <project-id> --worker claude --worker-model <model>
+ai-office run:tick --project <project-id> --worker gateway
 ai-office run:show --project <project-id> --run <run-id>
 ```
+
+`--worker gateway` executes routed runs whose assigned provider the metered LLM
+gateway supports (currently `openai:`). It is a `WorkerRuntime` behind the same
+`WorkerAgentExecutor` as the Claude worker, so context pinning, authority
+fencing, lease renewal, provenance (`llm-gateway`), cancellation, deadline and
+fenced acceptance are unchanged; it sends one request with the persisted model
+and parameters, meters it through `MeteredLlmGateway` against the role budget,
+and accepts only a bounded `{"summary", "content"}` answer from exactly the
+assigned model. It refuses unrouted and historical runs, `--worker-model`,
+unsupported parameters, missing credentials, missing pricing and an insufficient
+budget before any provider request. See
+[agent model routing](llm-cost-control.md#execution).
 
 Use `--simulate` for a deterministic test instead. Selection applies to normal
 tasks in that tick's batch; controlled-action intents always use their gateway.
@@ -150,8 +163,11 @@ dispatch. `run:tick` checks the batch first and starts nothing when a queued
 routed run cannot be honored. `--worker-model` overrides client model selection
 only for unrouted runs and runs scheduled before migration `0030`; it cannot
 replace an assigned model (`WORKER_MODEL_CONFLICT`). Model assignment never
-changes role limits. `run:show [--json]` reports the assignment, reported model
-and usage, and the role limits applied at dispatch. See
+changes role limits. For the gateway worker the same `maxCostMicros` is the
+run's metered `agent_run` budget in USD micros, reserved before the request;
+its cost is gateway-recorded, never a client estimate. `run:show [--json]`
+reports the assignment, actual model and usage, gateway metering or client
+estimate, and the role limits applied at dispatch. See
 [agent model routing](llm-cost-control.md#agent-model-routing).
 
 Cancellation or deadline stops and reaps the whole worker process group on

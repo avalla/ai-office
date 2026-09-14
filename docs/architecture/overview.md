@@ -283,6 +283,10 @@ as configuration) maps policies and agent overrides to canonical
 precedence inside the scheduling transaction, and the immutable, non-secret
 selection is stored on the run. Execution uses only that selection; workers that
 cannot honor it fail before dispatch. Model assignment never alters role budgets.
+Routed `openai:` runs execute through the gateway worker, a `WorkerRuntime` that
+reuses the authoritative worker path and meters its single request through
+`MeteredLlmGateway` against the role budget; `anthropic:` runs execute through
+the Claude worker. Managed services read routing only from the Runtime home.
 See [ADR-0019](../adr/ADR-0019-agent-model-routing.md).
 
 The host skill owns interactive onboarding synthesis and uses the host's existing
@@ -298,10 +302,11 @@ does not synchronize overlapping goals, constraints, preferences, or permission
 knowledge back into the profile.
 
 The LLM gateway remains a provider-neutral, metered infrastructure boundary for
-explicit future execution consumers. Its registry and OpenAI/Anthropic adapters
-are not composed into project onboarding or normal daemon commands; the Runtime
-host uses only its client-free model-reference parser and provider descriptors
-to validate model routing. Codex or
+explicit execution consumers. Its registry and OpenAI/Anthropic adapters are not
+composed into project onboarding; the Runtime host uses its client-free
+model-reference parser and provider descriptors to validate model routing, and
+constructs a provider client only for an explicit `run:tick --worker gateway`.
+Codex or
 Claude generates onboarding questions in the host session; only the accepted
 manifest crosses into the daemon. LangChain does not cross into
 application/domain code or own orchestration.

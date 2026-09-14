@@ -2,14 +2,21 @@
 
 ## Unreleased
 
-- Add agent model routing. Roles keep a semantic `model_policy`; a host-local
-  `AI_OFFICE_MODEL_ROUTING_FILE` maps policies and agent overrides to
-  `<provider>:<model>` profiles, with `AI_OFFICE_LLM_MODEL` as the lowest
-  precedence default. Scheduling freezes an immutable, non-secret model
-  selection on each run (migration `0030`); execution uses only that selection,
-  explicit invalid routing fails closed, and role budgets are unchanged.
-  Read-only `agent:models`, `model:check` and `run:show --json` expose routing
-  (ADR-0019).
+- Add agent model routing. Roles keep a semantic `model_policy`; the host-local
+  `<AI_OFFICE_HOME>/model-routing.yaml` (or, in the foreground,
+  `AI_OFFICE_MODEL_ROUTING_FILE`) maps policies, project-scoped and host-global
+  agent overrides to `<provider>:<model>` profiles, with `AI_OFFICE_LLM_MODEL`
+  as the lowest precedence foreground default. Managed systemd and launchd
+  Runtimes read only the Runtime-home file (reinstall once to add the routing
+  marker). Scheduling freezes an immutable, non-secret model selection on each
+  run (migration `0030`); execution uses only that selection, explicit invalid
+  routing fails closed, and role budgets are unchanged. Read-only
+  `agent:models`, `model:check` and `run:show --json` expose routing (ADR-0019).
+- Add `run:tick --worker gateway`, which executes routed `openai:` runs through
+  the metered LLM gateway with exact model enforcement, applied
+  `reasoning_effort` and `max_output_tokens`, and the role budget as the run
+  budget. The default registry now builds OpenAI providers with the native
+  Responses adapter.
 
 - Add optional, read-only, non-authoritative project memory through a
   provider-neutral port and a CairnKeep stdio MCP adapter restricted to

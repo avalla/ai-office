@@ -1,6 +1,6 @@
 # ADR-0005: Keep model providers behind an infrastructure registry
 
-- Status: Accepted for generic provider infrastructure; onboarding composition superseded by ADR-0010
+- Status: Accepted for generic provider infrastructure; onboarding composition superseded by ADR-0010; the OpenAI registration uses the native Responses adapter per ADR-0019
 - Date: 2026-08-11
 
 ## Context
