@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add agent model routing. Roles keep a semantic `model_policy`; a host-local
+  `AI_OFFICE_MODEL_ROUTING_FILE` maps policies and agent overrides to
+  `<provider>:<model>` profiles, with `AI_OFFICE_LLM_MODEL` as the lowest
+  precedence default. Scheduling freezes an immutable, non-secret model
+  selection on each run (migration `0030`); execution uses only that selection,
+  explicit invalid routing fails closed, and role budgets are unchanged.
+  Read-only `agent:models`, `model:check` and `run:show --json` expose routing
+  (ADR-0019).
+
 - Add optional, read-only, non-authoritative project memory through a
   provider-neutral port and a CairnKeep stdio MCP adapter restricted to
   `memory_search`. Memory identity derives from the portable `repositoryId`;

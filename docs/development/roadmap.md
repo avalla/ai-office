@@ -649,6 +649,38 @@ uninstall still preserves authority. The existing `governance_event` cascade
 and append-only delete guard must be reconciled with the chosen retention policy
 before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
+## M7.12 — Agent model routing
+
+Status: implemented (initial read-only slice).
+
+Focus: make each run's model an explicit, auditable, provider-neutral part of
+execution so inexpensive models serve high-volume roles and stronger models are
+reserved for roles that need them, without weakening role budgets.
+
+Delivered:
+
+- the distinction between semantic role `modelPolicy`, host model profiles,
+  an immutable per-run resolved model, and host-only provider credentials;
+- host-local routing read once at Runtime start from
+  `AI_OFFICE_MODEL_ROUTING_FILE`, with `AI_OFFICE_LLM_MODEL` as the lowest
+  precedence compatibility default;
+- deterministic precedence (agent override, role policy, default profile,
+  legacy default) that fails closed on explicit invalid configuration;
+- resolution inside the scheduling transaction and an immutable
+  `agent_run.model_routing_json` (migration `0030`); pre-existing runs remain
+  explicitly unrecorded;
+- execution from the persisted selection only, with worker `supportsModel`
+  checks and Claude `--model`/`--effort` mapping;
+- a client-free model-reference parser and `resolveModelRef` in the gateway
+  registry;
+- read-only `agent:models`, `model:check` and `run:show --json` inspection;
+- unchanged role budgets and portable snapshot schema.
+
+Not included: an audited agent override mutation command, per-project override
+scoping, dashboard rendering, a gateway-backed executor applying profile
+parameters, and routing hot reload. See
+[ADR-0019](../adr/ADR-0019-agent-model-routing.md).
+
 ## M8 — Code intelligence
 
 Status: future.

@@ -28,7 +28,11 @@ inputs. See the profile guide for synchronization commands and the pre-existing
 manifest role ID versus Runtime role key compatibility limitation.
 
 `run:schedule` validates project, runnable task, and enabled agent, creates a queued run,
-and acquires the task lock in one short transaction. It can persist one immutable
+and acquires the task lock in one short transaction. In that transaction it
+reads the agent's role and freezes the run's model assignment from host model
+routing ([ADR-0019](../adr/ADR-0019-agent-model-routing.md)): a resolved
+`<provider>:<model>` with its policy, profile and source, or `unrouted` when the
+host has no routing. Resolution failure leaves no run or lock. It can persist one immutable
 controlled-action intent containing resource, operation, and canonical JSON
 arguments. Lock acquisition is a conditional SQLite upsert: a live lock is never
 removed, while a lock with `expires_at <= now` is replaced atomically. A second
@@ -139,8 +143,16 @@ limit. For Claude, `maxCostMicros` denotes millionths of a USD client cost
 estimate per run. This client-side estimate limit is separate from gateway
 budgets and actual billing; subscription cost is unknown. Reported input tokens
 exclude cache-read/cache-creation counts. Missing estimates or tokens remain
-unknown. `--worker-model` overrides client model selection; the role's generic
-`modelPolicy` is not a provider model selector in this first adapter.
+unknown. Routed runs execute exactly their persisted model: the Claude worker passes it
+as `--model` and its `reasoning_effort` as `--effort`, and refuses other
+providers and `max_output_tokens` with `WORKER_MODEL_UNSUPPORTED` before
+dispatch. `run:tick` checks the batch first and starts nothing when a queued
+routed run cannot be honored. `--worker-model` overrides client model selection
+only for unrouted runs and runs scheduled before migration `0030`; it cannot
+replace an assigned model (`WORKER_MODEL_CONFLICT`). Model assignment never
+changes role limits. `run:show [--json]` reports the assignment, reported model
+and usage, and the role limits applied at dispatch. See
+[agent model routing](llm-cost-control.md#agent-model-routing).
 
 Cancellation or deadline stops and reaps the whole worker process group on
 POSIX before the execution returns. The real Claude worker is unsupported on

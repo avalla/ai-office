@@ -276,6 +276,15 @@ select a tool-free external worker or simulator. The application pins dispatch
 provenance before invocation and persists bounded output; the worktree manager
 remains a test implementation. See [ADR-0017](../adr/ADR-0017-bounded-external-worker.md).
 
+Scheduling also freezes the run's model. Roles keep a semantic `modelPolicy`;
+host-local routing (read once by the Runtime composition root, never persisted
+as configuration) maps policies and agent overrides to canonical
+`<provider>:<model>` profiles. `resolveAgentRunModel` applies deterministic
+precedence inside the scheduling transaction, and the immutable, non-secret
+selection is stored on the run. Execution uses only that selection; workers that
+cannot honor it fail before dispatch. Model assignment never alters role budgets.
+See [ADR-0019](../adr/ADR-0019-agent-model-routing.md).
+
 The host skill owns interactive onboarding synthesis and uses the host's existing
 authenticated model session. It submits a strict versioned manifest to the
 daemon, which validates role references and default task routing before storing
@@ -290,7 +299,9 @@ knowledge back into the profile.
 
 The LLM gateway remains a provider-neutral, metered infrastructure boundary for
 explicit future execution consumers. Its registry and OpenAI/Anthropic adapters
-are not composed into project onboarding or normal daemon commands. Codex or
+are not composed into project onboarding or normal daemon commands; the Runtime
+host uses only its client-free model-reference parser and provider descriptors
+to validate model routing. Codex or
 Claude generates onboarding questions in the host session; only the accepted
 manifest crosses into the daemon. LangChain does not cross into
 application/domain code or own orchestration.
