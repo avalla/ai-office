@@ -68,6 +68,7 @@ describe("project database migrations", () => {
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
       "0030_agent_run_model_routing.sql",
+      "0031_cost_event_charge_basis.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -108,6 +109,7 @@ describe("project database migrations", () => {
       { version: "0028_agent_run_memory_provenance.sql" },
       { version: "0029_agent_run_memory_query_digests.sql" },
       { version: "0030_agent_run_model_routing.sql" },
+      { version: "0031_cost_event_charge_basis.sql" },
     ]);
     database.close();
   });

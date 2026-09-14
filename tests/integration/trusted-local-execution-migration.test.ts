@@ -191,7 +191,7 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "fresh.sqlite"));
     expect(migrate(database, migrationSource).applied.at(-1)).toBe(
-      "0030_agent_run_model_routing.sql",
+      "0031_cost_event_charge_basis.sql",
     );
     expect(
       database
@@ -252,6 +252,7 @@ describe("M6C-lite migration", () => {
       "0028_agent_run_memory_provenance.sql",
       "0029_agent_run_memory_query_digests.sql",
       "0030_agent_run_model_routing.sql",
+      "0031_cost_event_charge_basis.sql",
     ]);
     expect(
       database

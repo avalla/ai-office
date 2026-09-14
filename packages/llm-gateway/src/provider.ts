@@ -54,6 +54,10 @@ export class LlmProviderError extends Error {
   }
 }
 
+/**
+ * The vendor answered, but the answer cannot be used. Provider work may already
+ * have been billed, so the gateway keeps it accounted rather than free.
+ */
 export class InvalidProviderResponseError extends LlmProviderError {
   constructor(providerId: string, message: string) {
     super(providerId, message, false, "INVALID_RESPONSE");
@@ -83,9 +87,15 @@ export class UnsupportedModelParameterError extends LlmProviderError {
   }
 }
 
-/** The vendor answered with a model other than the one that was required. */
+/**
+ * The required model could not be used. `response` is set when the vendor had
+ * already answered with another model: that request may have been billed.
+ */
 export class ModelMismatchError extends LlmProviderError {
-  constructor(providerId: string) {
+  constructor(
+    providerId: string,
+    readonly response?: ModelResponse,
+  ) {
     super(
       providerId,
       `Provider ${providerId} reported a model other than the requested model`,
@@ -126,7 +136,7 @@ export class ExactModelProvider implements LlmProvider {
       response.providerId !== this.required.providerId ||
       response.model !== this.required.model
     )
-      throw new ModelMismatchError(this.provider.id);
+      throw new ModelMismatchError(this.provider.id, response);
     return response;
   }
 }
@@ -194,4 +204,31 @@ export function validateModelResponse(
         `usage.${field} must be a non-negative safe integer`,
       );
   }
+  // Details are subsets of their totals (see ModelUsage).
+  if (response.usage.cachedInputTokens > response.usage.inputTokens)
+    throw new InvalidProviderResponseError(
+      providerId,
+      "usage.cachedInputTokens must not exceed usage.inputTokens",
+    );
+  if (response.usage.reasoningTokens > response.usage.outputTokens)
+    throw new InvalidProviderResponseError(
+      providerId,
+      "usage.reasoningTokens must not exceed usage.outputTokens",
+    );
+}
+
+/**
+ * Whether `error` means the vendor had already answered. Returns the rejected
+ * response when one is available (`null` response: answered, usage unknown),
+ * or `undefined` when no answer was received and nothing is known to be billed.
+ */
+export function rejectedProviderResponse(
+  error: unknown,
+): { response: ModelResponse | null } | undefined {
+  if (error instanceof ModelMismatchError)
+    return error.response === undefined
+      ? undefined
+      : { response: error.response };
+  if (error instanceof InvalidProviderResponseError) return { response: null };
+  return undefined;
 }

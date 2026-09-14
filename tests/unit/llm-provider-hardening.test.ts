@@ -16,8 +16,10 @@ import { MeteredLlmGateway } from "@ai-office/llm-gateway/metered-gateway.ts";
 import { MockLlmProvider } from "@ai-office/llm-gateway/mock-provider.ts";
 import { OpenAiResponsesProvider } from "@ai-office/llm-gateway/openai-provider.ts";
 import {
+  ExactModelProvider,
   InvalidProviderResponseError,
   LlmProviderError,
+  ModelMismatchError,
   ProviderCancelledError,
   type LlmProvider,
   type ModelRequest,
@@ -83,7 +85,9 @@ class MemoryCosts implements CostRepository {
   async releaseExpiredReservations() {
     return 0;
   }
+  failRecording = false;
   async recordUsageAndCost(input: RecordUsageAndCostInput) {
+    if (this.failRecording) throw new Error("storage unavailable");
     this.recorded = input;
     return "recorded" as const;
   }
@@ -141,7 +145,7 @@ describe("fallback metering", () => {
     );
     await gateway.complete(
       { model: "model", messages: [] },
-      { projectId: "project", purpose: "test", estimatedUsage: usage },
+      { projectId: "project", purpose: "test", usageBound: usage },
     );
     expect(costs.recorded?.provider).toBe("primary");
     expect(costs.recorded?.pricingVersionId).toBe("price-primary");
@@ -171,7 +175,7 @@ describe("fallback metering", () => {
       {
         projectId: "project",
         purpose: "test",
-        estimatedUsage: usage,
+        usageBound: usage,
         budgetScopeType: "project",
         budgetScopeId: "project",
       },
@@ -224,7 +228,7 @@ describe("fallback metering", () => {
         {
           projectId: "project",
           purpose: "test",
-          estimatedUsage: usage,
+          usageBound: usage,
           budgetScopeType: "project",
           budgetScopeId: "project",
         },
@@ -251,7 +255,7 @@ describe("fallback metering", () => {
         {
           projectId: "project",
           purpose: "test",
-          estimatedUsage: usage,
+          usageBound: usage,
           budgetScopeType: "project",
           budgetScopeId: "project",
         },
@@ -259,6 +263,106 @@ describe("fallback metering", () => {
     ).rejects.toBeInstanceOf(LlmProviderError);
     expect(costs.released).toBe(1);
     expect(costs.recorded).toBeUndefined();
+  });
+});
+
+describe("post-response rejection accounting", () => {
+  const scoped = {
+    projectId: "project",
+    purpose: "test",
+    usageBound: { inputTokens: 10, outputTokens: 5 },
+    budgetScopeType: "project" as const,
+    budgetScopeId: "project",
+  };
+  const answering = (model: string): LlmProvider => ({
+    id: "primary",
+    pricingCandidates: (request) => [
+      { providerId: "primary", model: request.model },
+    ],
+    complete: async () => ({
+      providerId: "primary",
+      model,
+      providerRequestId: "request-1",
+      text: "ok",
+      usage,
+    }),
+  });
+
+  test("a mismatch detected before the request reserves nothing and charges nothing", async () => {
+    const costs = new MemoryCosts();
+    costs.pricing.set("primary\0model", pricing("primary", 1_000_000n));
+    const gateway = new MeteredLlmGateway(
+      new ExactModelProvider(answering("model"), {
+        providerId: "primary",
+        model: "other",
+      }),
+      costs,
+      new Ids(),
+      new FixedClock(),
+    );
+    await expect(
+      gateway.complete({ model: "model", messages: [] }, scoped),
+    ).rejects.toBeInstanceOf(ModelMismatchError);
+    expect(costs.released).toBe(1);
+    expect(costs.recorded).toBeUndefined();
+  });
+
+  test("an answered mismatch is charged at the envelope without a budget scope", async () => {
+    const costs = new MemoryCosts();
+    costs.pricing.set("primary\0model", pricing("primary", 1_000_000n));
+    const gateway = new MeteredLlmGateway(
+      new ExactModelProvider(answering("model-snapshot"), {
+        providerId: "primary",
+        model: "model",
+      }),
+      costs,
+      new Ids(),
+      new FixedClock(),
+    );
+    await expect(
+      gateway.complete(
+        { model: "model", messages: [] },
+        {
+          projectId: "project",
+          purpose: "test",
+          usageBound: { inputTokens: 10, outputTokens: 5 },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ModelMismatchError);
+    expect(costs.released).toBe(0);
+    expect(costs.recorded).toMatchObject({
+      provider: "primary",
+      model: "model-snapshot",
+      providerRequestId: "request-1",
+      usage,
+      pricingVersionId: "price-primary",
+      chargeBasis: "reserved_envelope",
+      estimated: { micros: 15n },
+      actual: { micros: 15n },
+    });
+    expect(costs.recorded?.reservationId).toBeUndefined();
+  });
+
+  test("an answered request is never released even when its charge cannot be recorded", async () => {
+    const costs = new MemoryCosts();
+    costs.pricing.set("primary\0model", pricing("primary", 1_000_000n));
+    costs.failRecording = true;
+    const gateway = new MeteredLlmGateway(
+      new ExactModelProvider(answering("model-snapshot"), {
+        providerId: "primary",
+        model: "model",
+      }),
+      costs,
+      new Ids(),
+      new FixedClock(),
+    );
+    // The caller still sees the mismatch; the reservation stays active until
+    // expiry instead of restoring budget capacity now.
+    await expect(
+      gateway.complete({ model: "model", messages: [] }, scoped),
+    ).rejects.toBeInstanceOf(ModelMismatchError);
+    expect(costs.reserved?.amountMicros).toBe(15n);
+    expect(costs.released).toBe(0);
   });
 });
 

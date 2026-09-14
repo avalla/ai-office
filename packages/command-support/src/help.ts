@@ -85,7 +85,7 @@ Commands:
   run:reconcile --project <id> --run <id> --reason <text> [--approve <planHash>] [--json]
   run:list --project <id>
   run:show --project <id> --run <id> [--json]
-  pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>
+  pricing:set --provider <id> --model <id> --currency <USD|EUR> --input <micros> --cached-input <micros> --output <micros> --reasoning <micros>  # per million tokens; cached input and reasoning replace, not add to, input and output rates
   budget:set --project <id> --limit <micros> [--currency <USD|EUR>]
   cost:list --project <id> [--group-by <project|task|agent|agent_run>]
   milestone:create --project <id> --title <title> [--description <description>]

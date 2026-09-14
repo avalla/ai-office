@@ -64,6 +64,27 @@ interface CapturedRequest {
   body: Record<string, unknown>;
 }
 
+/** The gateway worker's input token bound for a captured Responses request. */
+function inputBound(request: CapturedRequest): number {
+  const input = request.body.input as { content: string }[];
+  return (
+    input.reduce(
+      (total, message) =>
+        total + new TextEncoder().encode(message.content).byteLength + 16,
+      0,
+    ) + 64
+  );
+}
+
+/** Expected reservation under the fixture's pricing: max input and output rates. */
+function reservationFor(request: CapturedRequest, maxOutputTokens: number) {
+  return (
+    (BigInt(inputBound(request)) * 1_250_000n +
+      BigInt(maxOutputTokens) * 10_000_000n) /
+    1_000_000n
+  );
+}
+
 /**
  * Real registry resolution and the real OpenAI Responses adapter; only the
  * HTTP transport is replaced, so no paid provider is ever called.
@@ -177,10 +198,12 @@ async function fixture() {
         provider: "openai",
         model,
         currency: "USD",
-        inputPerMillionMicros: 1_000_000n,
-        cachedInputPerMillionMicros: 500_000n,
-        outputPerMillionMicros: 4_000_000n,
-        reasoningPerMillionMicros: 4_000_000n,
+        // OpenAI-like: $1.25 uncached input, $0.125 cached input, $10 output,
+        // reasoning billed as ordinary output.
+        inputPerMillionMicros: 1_250_000n,
+        cachedInputPerMillionMicros: 125_000n,
+        outputPerMillionMicros: 10_000_000n,
+        reasoningPerMillionMicros: 10_000_000n,
         effectiveFrom: new Date(0),
       },
       now,
@@ -229,7 +252,48 @@ async function fixture() {
         "SELECT provider, model, agent_run_id FROM model_usage ORDER BY rowid",
       )
       .all();
-  return { db, runs, costs, schedule, execute, saveRole, usageRows };
+  const costRows = (runId: string) =>
+    db
+      .query<
+        {
+          model: string;
+          provider_request_id: string | null;
+          input_tokens: number;
+          output_tokens: number;
+          charge_basis: string;
+          reserved_micros: number;
+          actual_micros: number;
+          overage_micros: number;
+          reservation_status: string | null;
+        },
+        [string]
+      >(
+        `SELECT u.model, u.provider_request_id, u.input_tokens, u.output_tokens,
+                c.charge_basis, c.reserved_micros, c.actual_micros, c.overage_micros,
+                r.status reservation_status
+         FROM cost_event c
+         JOIN model_usage u ON u.id = c.usage_id
+         LEFT JOIN budget_reservation r ON r.id = c.reservation_id
+         WHERE u.agent_run_id = ? ORDER BY c.rowid`,
+      )
+      .all(runId);
+  const reservations = (runId: string) =>
+    db
+      .query<{ status: string; amount_micros: number }, [string]>(
+        "SELECT status, amount_micros FROM budget_reservation WHERE agent_run_id = ? ORDER BY rowid",
+      )
+      .all(runId);
+  return {
+    db,
+    runs,
+    costs,
+    schedule,
+    execute,
+    saveRole,
+    usageRows,
+    costRows,
+    reservations,
+  };
 }
 
 describe("gateway worker execution of routed runs", () => {
@@ -293,10 +357,23 @@ describe("gateway worker execution of routed runs", () => {
         pricingVersionId: "price-economy-model",
         budgetScope: "agent_run",
         budgetLimitMicros: "125000",
-        // 900*1 + 100*0.5 + 300*4 + 120*4 micros.
-        actualMicros: "2630",
+        // Inclusive usage priced by exclusive buckets, each token once:
+        // 800 uncached * 1.25 + 100 cached * 0.125 + 180 output * 10
+        // + 120 reasoning * 10 = 4012.5 micros.
+        actualMicros: "4012",
       },
     });
+    // The reservation is the bounded request's worst case: every input token
+    // at the dearer input rate and every capped output token at the dearer
+    // output rate, never both rates for the same token.
+    const metering = output!.metering!;
+    expect(metering.reservedMicros).toBe(
+      String(reservationFor(http.requests[0]!, 2000)),
+    );
+    expect(metering.estimatedMicros).toBe(metering.reservedMicros);
+    expect(BigInt(metering.actualMicros)).toBeLessThanOrEqual(
+      BigInt(metering.reservedMicros),
+    );
     expect(run.result).toMatchObject({
       roleLimits: { maxCostMicros: "125000" },
     });
@@ -311,7 +388,10 @@ describe("gateway worker execution of routed runs", () => {
       "USD",
       now,
     );
-    expect(budget).toMatchObject({ limitMicros: 125_000n, spentMicros: 2630n });
+    expect(budget).toMatchObject({ limitMicros: 125_000n, spentMicros: 4012n });
+    expect(f.costRows(runId)).toMatchObject([
+      { charge_basis: "reported_usage", reservation_status: "consumed" },
+    ]);
     expect(budget?.reservedMicros).toBe(0n);
     expect(Buffer.from(f.db.serialize()).includes(apiKey)).toBe(false);
   });
@@ -350,7 +430,7 @@ profiles:
     }
   });
 
-  test("a different effective model fails closed and is not accepted", async () => {
+  test("a different effective model fails closed but its answered request stays charged", async () => {
     const f = await fixture();
     const runId = await f.schedule(routing(), "qa");
     const http = transport((body) => ({
@@ -370,6 +450,23 @@ profiles:
     });
     expect(http.requests).toHaveLength(1);
     expect((await f.runs.findRun(runId))!.snapshot().result).toBeUndefined();
+
+    // The substituted model is unpriced, so the reserved worst case is charged
+    // rather than released; the usage row keeps what actually answered.
+    const reserved = reservationFor(http.requests[0]!, 2000);
+    expect(f.costRows(runId)).toEqual([
+      {
+        model: "economy-model-2026-01-01",
+        provider_request_id: "resp_drift",
+        input_tokens: 10,
+        output_tokens: 10,
+        charge_basis: "reserved_envelope",
+        reserved_micros: Number(reserved),
+        actual_micros: Number(reserved),
+        overage_micros: 0,
+        reservation_status: "consumed",
+      },
+    ]);
     const budget = await f.costs.findBudget(
       "p",
       "agent_run",
@@ -377,7 +474,107 @@ profiles:
       "USD",
       now,
     );
-    expect(budget?.reservedMicros).toBe(0n);
+    // Capacity is not restored as if no request had happened.
+    expect(budget).toMatchObject({ spentMicros: reserved, reservedMicros: 0n });
+  });
+
+  test("a rejected answer reusing a recorded provider request id is not charged twice", async () => {
+    const f = await fixture();
+    const first = await f.schedule(routing(), "qa");
+    const second = await f.schedule(routing(), "qa");
+    const host = (model: (requested: string) => string) =>
+      providers(
+        { OPENAI_API_KEY: apiKey },
+        transport((body) => ({
+          id: "resp_same",
+          model: model(String(body.model)),
+          status: "completed",
+          output_text: JSON.stringify({ summary: "Plan", content: "Draft" }),
+          usage: { input_tokens: 10, output_tokens: 10 },
+        })).fetcher,
+      );
+    expect(
+      (
+        await f.execute(
+          first,
+          host((value) => value),
+        )
+      ).status,
+    ).toBe("completed");
+    expect(
+      await f.execute(
+        second,
+        host((value) => `${value}-snapshot`),
+      ),
+    ).toMatchObject({
+      status: "failed",
+      error: { code: "WORKER_MODEL_MISMATCH" },
+    });
+    expect(f.usageRows()).toEqual([
+      { provider: "openai", model: "economy-model", agent_run_id: first },
+    ]);
+    expect(f.reservations(second)).toMatchObject([{ status: "released" }]);
+  });
+
+  test("a malformed provider response is rejected and charged at the reserved envelope", async () => {
+    const f = await fixture();
+    const artifact = JSON.stringify({ summary: "Plan", content: "Draft" });
+    for (const answer of [
+      // No usage at all: nothing reported can be trusted.
+      { id: "resp_no_usage", model: "economy-model", output_text: artifact },
+      // Impossible subsets: cached above input, reasoning above output.
+      {
+        id: "resp_bad_cache",
+        model: "economy-model",
+        status: "completed",
+        output_text: artifact,
+        usage: {
+          input_tokens: 10,
+          input_tokens_details: { cached_tokens: 11 },
+          output_tokens: 5,
+        },
+      },
+      {
+        id: "resp_bad_reasoning",
+        model: "economy-model",
+        status: "completed",
+        output_text: artifact,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          output_tokens_details: { reasoning_tokens: 6 },
+        },
+      },
+    ]) {
+      const runId = await f.schedule(routing(), "qa");
+      const http = transport(() => answer);
+      expect(
+        await f.execute(
+          runId,
+          providers({ OPENAI_API_KEY: apiKey }, http.fetcher),
+        ),
+      ).toMatchObject({
+        status: "failed",
+        error: { code: "WORKER_OUTPUT_INVALID" },
+      });
+      expect((await f.runs.findRun(runId))!.snapshot().result).toBeUndefined();
+      const reserved = Number(reservationFor(http.requests[0]!, 2000));
+      // Rejected usage is recorded as unknown, never as reported. A well-formed
+      // request id is kept for idempotency when the adapter produced a response.
+      expect(f.costRows(runId)).toEqual([
+        {
+          model: "economy-model",
+          provider_request_id: "usage" in answer ? answer.id : null,
+          input_tokens: 0,
+          output_tokens: 0,
+          charge_basis: "reserved_envelope",
+          reserved_micros: reserved,
+          actual_micros: reserved,
+          overage_micros: 0,
+          reservation_status: "consumed",
+        },
+      ]);
+    }
   });
 
   test("unsupported execution parameters and providers fail before any request", async () => {
@@ -492,7 +689,7 @@ profiles:
       status: "failed",
       error: { code: "WORKER_BUDGET_EXHAUSTED" },
     });
-    expect(gatewayDefaultMaxOutputTokens * 8).toBeGreaterThan(125_000);
+    expect(gatewayDefaultMaxOutputTokens * 10).toBeGreaterThan(125_000);
     expect(http.requests).toEqual([]);
     expect(f.usageRows()).toEqual([]);
   });
@@ -517,6 +714,54 @@ profiles:
       error: { code: "WORKER_OUTPUT_INVALID" },
     });
     expect(f.usageRows()).toHaveLength(1);
+    // Valid usage was reported, so it is priced as reported: 10 * 1.25 + 2000 * 10.
+    expect(f.costRows(runId)).toMatchObject([
+      {
+        charge_basis: "reported_usage",
+        actual_micros: 20_012,
+        reservation_status: "consumed",
+      },
+    ]);
     expect((await f.runs.findRun(runId))!.snapshot().result).toBeUndefined();
+  });
+
+  test("a budget that fits the true worst case is not refused for double counting", async () => {
+    const f = await fixture();
+    // high_reasoning caps output at 4000 tokens.
+    const runId = await f.schedule(routing(), "developer");
+    await f.costs.saveBudget(
+      {
+        id: "narrow",
+        projectId: "p",
+        scopeType: "agent_run",
+        scopeId: runId,
+        currency: "USD",
+        limitMicros: 60_000n,
+      },
+      now,
+    );
+    const http = transport();
+    const result = await f.execute(
+      runId,
+      providers({ OPENAI_API_KEY: apiKey }, http.fetcher),
+    );
+    expect(result.status).toBe("completed");
+    const request = http.requests[0]!;
+    const reserved = reservationFor(request, 4000);
+    expect(reserved).toBeLessThan(60_000n);
+    // Charging every token at both of its bucket rates would not have fit.
+    expect(
+      (BigInt(inputBound(request)) * 1_375_000n + 4000n * 20_000_000n) /
+        1_000_000n,
+    ).toBeGreaterThan(60_000n);
+    expect(
+      projectWorkerOutput((await f.runs.findRun(runId))!.snapshot().result)
+        ?.metering,
+    ).toMatchObject({
+      model: "reasoning-model",
+      budgetLimitMicros: "60000",
+      reservedMicros: String(reserved),
+      actualMicros: "4012",
+    });
   });
 });

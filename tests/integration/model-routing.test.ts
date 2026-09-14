@@ -396,7 +396,10 @@ test("upgrading keeps pre-routing runs explicitly unrecorded and executable with
     )
     .run(taskId, "legacy", now.toISOString(), "2026-09-15T00:00:00.000Z");
   const upgrade = migrate(f.db, migrations);
-  expect(upgrade.applied).toEqual(["0030_agent_run_model_routing.sql"]);
+  expect(upgrade.applied).toEqual([
+    "0030_agent_run_model_routing.sql",
+    "0031_cost_event_charge_basis.sql",
+  ]);
   expect(migrate(f.db, migrations).applied).toEqual([]);
   const repository = new SqliteAgentRuntimeRepository(f.db);
   const legacy = (await repository.findRun("legacy"))!;

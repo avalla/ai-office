@@ -17,7 +17,7 @@ import {
   PricingNotFoundError,
 } from "@ai-office/application/cost-errors.ts";
 import type { AgentRunModelSelection } from "@ai-office/domain/agent/agent-run-model.ts";
-import type { ModelUsage } from "@ai-office/domain/cost/cost.ts";
+import type { ModelUsageBound } from "@ai-office/domain/cost/cost.ts";
 import { MeteredLlmGateway } from "./metered-gateway.ts";
 import {
   defaultModelProviderDescriptors,
@@ -164,7 +164,8 @@ function inputTokenBound(request: ModelRequest): number {
  *   pricing lookup, reservation or request;
  * - the role's `maxCostMicros` is the run's `agent_run` budget, and the gateway
  *   reserves the worst-case cost of the bounded request against it first;
- * - a different reported provider or model fails closed.
+ * - a different reported provider or model fails closed; the answered request
+ *   is still charged at its reserved worst case, never released as free.
  */
 export class GatewayWorkerRuntime implements WorkerRuntime {
   readonly id = "llm-gateway";
@@ -251,14 +252,11 @@ export class GatewayWorkerRuntime implements WorkerRuntime {
         maxOutputTokens,
       },
     };
-    const inputBound = inputTokenBound(request);
-    // Upper bound under the gateway's own cost formula: cached input is part of
-    // input, and reasoning is part of the capped output.
-    const estimatedUsage: ModelUsage = {
-      inputTokens: inputBound,
-      cachedInputTokens: inputBound,
+    // Totals only: the gateway prices each at its dearer bucket rate (cached or
+    // uncached input, reasoning or ordinary output), never both.
+    const usageBound: ModelUsageBound = {
+      inputTokens: inputTokenBound(request),
       outputTokens: maxOutputTokens,
-      reasoningTokens: maxOutputTokens,
     };
     const budgetLimitMicros = await this.ensureRunBudget(
       context,
@@ -287,7 +285,7 @@ export class GatewayWorkerRuntime implements WorkerRuntime {
           agentId: context.agent.id,
           agentRunId: context.runId,
           purpose: "agent_run.gateway_worker",
-          estimatedUsage,
+          usageBound,
           budgetScopeType: "agent_run",
           budgetScopeId: context.runId,
           reservationTtlMs: limits.timeoutMs + reservationGraceMs,
