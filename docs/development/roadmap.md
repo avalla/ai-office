@@ -712,9 +712,11 @@ remaining items below are future.
   symlink, file-type, owner, permission, size and format checks that fail
   closed; a non-secret `AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home`
   marker in the managed Runtime unit and plist that makes the Runtime ignore
-  ambient credential variables; foreground environment precedence preserved;
-  local `credential set|status|remove` with stdin-only input and atomic
-  owner-only writes; `model:check` credential presence by name and origin; no
+  ambient credential variables; strict source separation, so a foreground
+  Runtime keeps reading only its environment and never the credential files;
+  local `credential set|status|remove` with bounded stdin-only input, atomic
+  owner-only replacement and metadata-only status; debug diagnostics without
+  credential-derived data; `model:check` credential presence by name and origin; no
   migration and no portable-format change. See
   [ADR-0020](../adr/ADR-0020-managed-provider-credential-boundary.md).
 - **Gateway execution for Anthropic models.** Acceptance: a native adapter that

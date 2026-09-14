@@ -609,10 +609,10 @@ routing, runs stay `unrouted` and the Claude worker keeps its default. See
 [agent model routing](docs/development/llm-cost-control.md#agent-model-routing)
 and [ADR-0019](docs/adr/ADR-0019-agent-model-routing.md).
 
-A foreground Runtime reads `OPENAI_API_KEY` from its environment. The managed
-Runtime service reads provider credentials only from owner-only files in
-`<AI_OFFICE_HOME>/credentials/`, never from a unit, plist or shell. Store one
-from stdin, then restart the Runtime:
+A foreground Runtime reads `OPENAI_API_KEY` only from its environment and never
+from the credential files below. The managed Runtime service reads provider
+credentials only from owner-only files in `<AI_OFFICE_HOME>/credentials/`, never
+from a unit, plist or shell. Store one from stdin, then restart the Runtime:
 
 ```bash
 read -rs KEY && printf '%s' "$KEY" | ai-office credential set OPENAI_API_KEY; unset KEY

@@ -61,22 +61,35 @@ marker constants live in `packages/runtime-paths` so service rendering does not
 depend on the gateway. The domain knows nothing of files, environment variables,
 systemd or launchd.
 
-### Source selection and precedence
+### Source selection
 
 The Runtime composition root loads credentials once, per declared name, into an
-immutable in-memory snapshot:
+immutable in-memory snapshot. The marker alone selects the source, and sources
+never mix: there is no precedence and no fallback between them.
 
 | Runtime                                                       | Source                                                                                                                                       |
 | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | managed (`AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home`) | only the Runtime home file; the same name in the service manager environment is ignored and reported by name (`MANAGED_ENVIRONMENT_IGNORED`) |
-| foreground (marker unset)                                     | the Runtime's own environment variable when set; otherwise the Runtime home file when present                                                |
+| foreground or pre-marker managed definition (marker unset)    | only the Runtime's own environment variables; the Runtime home credential directory is never inspected                                       |
 | any other marker value                                        | every credential `invalid` (`CREDENTIAL_SOURCE_INVALID`)                                                                                     |
 
-In the foreground an invalid Runtime home file is reported `invalid` and is not
-treated as missing. An environment variable is higher precedence, not a
-fallback, so it is used without consulting the file. This mirrors
-`AI_OFFICE_MODEL_ROUTING_FILE` over `model-routing.yaml` in ADR-0019 and keeps
-existing foreground `OPENAI_API_KEY` usage unchanged.
+A foreground Runtime with no `OPENAI_API_KEY` reports it `missing` even when
+`credentials/OPENAI_API_KEY` is valid, and a malformed or insecure Runtime home
+file cannot make a foreground credential `invalid`, because the foreground never
+opens the store. This is deliberate source separation:
+
+- a developer or operator invoking AI Office by hand cannot silently consume the
+  credential configured for the managed Runtime, with its billing and data
+  access;
+- a managed definition generated before the marker is indistinguishable from a
+  foreground start, so it keeps its previous environment-only behavior until
+  `service install` upgrades it, instead of starting to read Runtime home
+  credentials unannounced;
+- existing foreground `OPENAI_API_KEY` usage is unchanged.
+
+Unlike `AI_OFFICE_MODEL_ROUTING_FILE` in ADR-0019, which a foreground Runtime
+may use in place of `model-routing.yaml`, credentials have no foreground
+override of the file and no file fallback of the environment.
 
 ### Service management
 
@@ -116,10 +129,23 @@ value crosses IPC, the command protocol, audit or SQLite. Because it writes
 host configuration that is not project state, it records no audit event, just
 as editing `model-routing.yaml` does not. `set` refuses a terminal stdin (which
 would echo), never accepts the value as an argument, never echoes arguments in
-errors, creates the directory `0700` and a same-directory temporary file with
-`O_CREAT|O_EXCL|O_NOFOLLOW` and mode `0600`, `fsync`s and renames it atomically,
-and refuses (never repairs) an insecure directory or a symlink or non-file at
-the name. `remove` unlinks a symlink without following it.
+errors, and retains at most the 4096-byte bound plus a few bytes of stdin
+however large the input chunks are. It creates the directory `0700` and a
+same-directory temporary file with `O_CREAT|O_EXCL|O_NOFOLLOW` and mode `0600`,
+writes the validated bytes without decoding them, `fsync`s the file and renames
+it over the name, and refuses (never repairs) an insecure directory or a symlink
+or non-file at the name. The rename makes replacement atomic for readers, which
+see the previous or the new complete file, never a partial one. It is not a
+crash-durability guarantee: the following directory `fsync` is best effort and
+unavailable or weaker on some platforms and filesystems, so after a crash the
+previous file may still be in place. `remove` unlinks a symlink without
+following it.
+
+`credential status` is metadata only. It uses an inspection that performs the
+same open, bounded read and byte-level validation as loading but never decodes
+the bytes into a string, zeroes its read buffer, and can return only `present`,
+`missing` or `invalid` with an issue code. It reports no value, length,
+fingerprint or other secret-derived identifier.
 
 ### Diagnostics
 
@@ -135,9 +161,15 @@ reservation or any request.
 ### Value handling
 
 Application code sees only `ProviderCredentialSource` (status by name). The
-value accessor exists on the infrastructure `ProviderCredentials` snapshot and
-is used only by `CredentialGatewayModelProviders`, which passes the registry
-exactly the resolved provider's own credentials — never the host environment.
+infrastructure `ProviderCredentials` snapshot has no secret-by-name accessor.
+Values are reachable only through `resolvedProviderCredentialEnvironment`,
+which takes a resolved provider descriptor and returns just that provider's
+declared credentials; `CredentialGatewayModelProviders` is its only production
+caller and passes the result to the registry — never the host environment and
+never another provider's credential. Only `loadProviderCredentials` turns a
+Runtime home file into a string. An architecture test keeps both functions to
+those callers and keeps application, domain and Runtime command code from
+importing the credential modules.
 Values are held in a private field: they are not enumerable and `JSON.stringify`
 and `util.inspect` of the snapshot show statuses only.
 
@@ -171,9 +203,14 @@ trusted-local model of [ADR-0014](ADR-0014-runtime-authority-and-persistent-daem
 - Agents and workers never receive a credential, a credential tool or an option
   to choose the credential source; no action payload, run field or command
   argument selects or reloads it.
-- `AI_OFFICE_DEBUG_LLM=1` keeps its existing opt-in stderr diagnostics (provider,
-  model, key presence, length and a truncated SHA-256 fingerprint). It is off by
-  default, never written by `service install`, and unchanged by this decision.
+- `AI_OFFICE_DEBUG_LLM=1` diagnostics report provider, model and a boolean
+  `credential_available` only. They never emit a value, prefix or suffix,
+  length, hash or fingerprint, encoded or transformed value, or credential file
+  path. The key length and truncated SHA-256 fingerprint the flag previously
+  printed are removed: debug output can reach persistent journal or launchd
+  logs, and a service manager environment can carry the flag whether or not
+  `service install` renders it, so the boundary cannot rely on the flag being
+  absent.
 
 Windows services are unsupported, and the file source requires a POSIX uid.
 
@@ -183,7 +220,10 @@ Windows services are unsupported, and the file source requires a POSIX uid.
   restart on systemd and launchd alike, without the service manager environment.
 - Existing managed installs report `managed_outdated` until `service install`
   is re-run.
-- Foreground `OPENAI_API_KEY` keeps working and wins over a Runtime home file.
+- Foreground `OPENAI_API_KEY` keeps working. A foreground Runtime never reads
+  the Runtime home credential directory, so an operator who wants to run the
+  gateway worker by hand supplies the credential in that shell's environment.
+- `AI_OFFICE_DEBUG_LLM=1` no longer prints a key length or fingerprint.
 - No migration and no portable-format change: credentials are never persisted
   in `project.sqlite`, `global.sqlite`, snapshots, backups or the office manifest.
 

@@ -131,13 +131,22 @@ ai-office model:check                                       # OPENAI_API_KEY: pr
 ```
 
 `credential set` accepts the value only on non-terminal stdin, never as an
-argument, and writes it atomically as a `0600` file in a `0700` directory. It is
-a local command: it does not need or contact the Runtime. A file that is a
+argument, reads at most a bounded prefix of stdin, and atomically replaces a
+`0600` file in a `0700` directory (readers see the old or the new file; the
+directory `fsync` that would make the rename crash-durable is best effort). It
+is a local command: it does not need or contact the Runtime. A file that is a
 symlink, not a regular file, not owned by the Runtime user, group- or
 world-accessible, larger than 4096 bytes, or not a single token of visible ASCII
 is reported `invalid` and never used; the Runtime does not fall back to another
 source. Credentials are read once at start, so restart the Runtime after
 `credential set` or `credential remove`.
+
+Without the marker — a foreground `ai-office runtime start`, or a Runtime unit
+or plist generated before the marker, which `service status` reports as
+`managed_outdated` — the Runtime reads credentials only from its own
+environment and never opens `<AI_OFFICE_HOME>/credentials/`. Re-run
+`ai-office service install` to switch an outdated managed Runtime to the
+credential files.
 
 Credential values, names and paths are never rendered into a unit or plist or
 passed in argv, and `service install` copies nothing from the invoking shell: it

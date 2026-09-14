@@ -49,12 +49,14 @@ or `launchctl kickstart -k gui/$(id -u)/com.ai-office.runtime`), not a reinstall
 
 Credentials are Runtime host configuration, separate from routing
 ([ADR-0020](../adr/ADR-0020-managed-provider-credential-boundary.md)). The
-Runtime loads them once at start; restart it after a change.
+Runtime loads them once at start; restart it after a change. The marker alone
+selects the source; sources never mix or fall back to each other.
 
-| Runtime | Source for each credential (for example `OPENAI_API_KEY`) |
+| `AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE` | Source for each credential (for example `OPENAI_API_KEY`) |
 | --- | --- |
-| managed service (`AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home`) | only `<AI_OFFICE_HOME>/credentials/<NAME>`; the service manager's environment is ignored |
-| foreground | the Runtime's environment variable, otherwise `<AI_OFFICE_HOME>/credentials/<NAME>` when present |
+| `runtime_home` (managed service) | only `<AI_OFFICE_HOME>/credentials/<NAME>`; the service manager's environment is ignored |
+| unset (foreground, or a managed definition from before the marker) | only the Runtime's environment variable; `<AI_OFFICE_HOME>/credentials/` is never read |
+| any other value | every credential `invalid` (`CREDENTIAL_SOURCE_INVALID`) |
 
 ```bash
 read -rs KEY && printf '%s' "$KEY" | ai-office credential set OPENAI_API_KEY; unset KEY
@@ -64,10 +66,14 @@ ai-office credential remove OPENAI_API_KEY
 
 Each file is `0600` in a `0700` directory owned by the Runtime user and holds
 only the value. A symlink, non-regular file, wrong owner, group/other access,
-oversized or malformed value makes that credential `invalid`; it is never used
-and no other source replaces it. The generated unit and plist carry only the
-non-secret marker. `credential` is a local command that never contacts the
-Runtime, so no value crosses IPC, audit or SQLite.
+oversized or malformed value makes that managed credential `invalid`; it is
+never used and no other source replaces it. A foreground Runtime never opens
+these files, so they cannot supply or invalidate its credentials. The generated
+unit and plist carry only the non-secret marker. `credential` is a local command
+that never contacts the Runtime, so no value crosses IPC, audit or SQLite;
+`credential status` inspects metadata only and never loads a value.
+`AI_OFFICE_DEBUG_LLM=1` reports provider, model and `credential_available`
+only, never a value, length, hash, fingerprint or path.
 
 ### File format
 
