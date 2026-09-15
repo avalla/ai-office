@@ -604,11 +604,22 @@ ai-office run:tick --project <id> --worker claude    # executes routed anthropic
 Each run's model is frozen when it is scheduled and shown by `run:show`; later
 configuration changes never alter it, and role budgets stay authoritative. The
 gateway worker meters cost against the role budget and needs active pricing and
-`OPENAI_API_KEY` in the Runtime host environment (managed services are never
-given credentials); the Claude worker reports only its client estimate. Without
+`OPENAI_API_KEY`; the Claude worker reports only its client estimate. Without
 routing, runs stay `unrouted` and the Claude worker keeps its default. See
 [agent model routing](docs/development/llm-cost-control.md#agent-model-routing)
 and [ADR-0019](docs/adr/ADR-0019-agent-model-routing.md).
+
+A foreground Runtime reads `OPENAI_API_KEY` only from its environment and never
+from the credential files below. The managed Runtime service reads provider
+credentials only from owner-only files in `<AI_OFFICE_HOME>/credentials/`, never
+from a unit, plist or shell. Store one from stdin, then restart the Runtime:
+
+```bash
+read -rs KEY && printf '%s' "$KEY" | ai-office credential set OPENAI_API_KEY; unset KEY
+ai-office credential status
+```
+
+See [ADR-0020](docs/adr/ADR-0020-managed-provider-credential-boundary.md).
 
 ## Project lifecycle
 

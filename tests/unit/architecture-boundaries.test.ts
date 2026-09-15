@@ -327,3 +327,65 @@ test("project memory stays behind its application port and the CairnKeep adapter
   );
   expect([...toolNames]).toEqual(["memory_search"]);
 });
+
+test("raw provider credential values are reachable only at the gateway provider construction boundary", () => {
+  const productionFiles = ["packages", "apps"].flatMap((directory) =>
+    typescriptFiles(join(repositoryRoot, directory))
+      .map((file) => relative(repositoryRoot, file))
+      .filter((file) => !file.split("/").includes("node_modules")),
+  );
+  const referencing = (identifier: string): string[] =>
+    productionFiles
+      .filter((file) =>
+        new RegExp(`\\b${identifier}\\b`, "u").test(
+          readFileSync(join(repositoryRoot, file), "utf8"),
+        ),
+      )
+      .sort();
+
+  // The only accessor that returns values, scoped to one resolved provider.
+  expect(referencing("resolvedProviderCredentialEnvironment")).toEqual([
+    "packages/llm-gateway/src/gateway-worker-runtime.ts",
+    "packages/llm-gateway/src/provider-credentials.ts",
+  ]);
+  // The only function that turns a Runtime home credential into a string.
+  expect(referencing("loadRuntimeHomeCredentialValue")).toEqual([
+    "packages/llm-gateway/src/provider-credentials.ts",
+    "packages/llm-gateway/src/runtime-home-credential-store.ts",
+  ]);
+  // No generic secret-by-name accessor exists any more.
+  expect(
+    productionFiles.filter((file) =>
+      /\.secret\(|\bsecret\(name/u.test(
+        readFileSync(join(repositoryRoot, file), "utf8"),
+      ),
+    ),
+  ).toEqual([]);
+  // `credential status` inspects metadata only.
+  const credentialCli = readFileSync(
+    join(repositoryRoot, "apps/cli/src/credential-cli.ts"),
+    "utf8",
+  );
+  expect(credentialCli).toMatch(/\binspectRuntimeHomeCredential\b/u);
+  expect(credentialCli).not.toMatch(
+    /\b(?:loadRuntimeHomeCredentialValue|loadProviderCredentials)\b/u,
+  );
+
+  // Application, domain and Runtime command code never import the value side.
+  const valueModules: string[] = [];
+  for (const directory of [
+    "packages/application",
+    "packages/domain",
+    "packages/runtime-host",
+  ])
+    for (const file of typescriptFiles(join(repositoryRoot, directory)))
+      if (
+        importedSpecifiers(readFileSync(file, "utf8")).some((specifier) =>
+          /(?:provider-credentials|runtime-home-credential-store)(?:\.ts)?$/u.test(
+            specifier,
+          ),
+        )
+      )
+        valueModules.push(relative(repositoryRoot, file));
+  expect(valueModules).toEqual([]);
+});

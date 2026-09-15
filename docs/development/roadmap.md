@@ -693,20 +693,32 @@ Delivered:
   client-reported cost;
 - unchanged role budgets and portable snapshot schema.
 
-Not included, tracked in M7.13: a credential boundary for managed services,
-gateway execution for Anthropic models, co-reservation of wider budget scopes,
-an audited override mutation command, dashboard rendering of the selection, and
-routing hot reload. See [ADR-0019](../adr/ADR-0019-agent-model-routing.md).
+Not included, tracked in M7.13: a credential boundary for managed services
+(since implemented, ADR-0020), gateway execution for Anthropic models,
+co-reservation of wider budget scopes, an audited override mutation command,
+dashboard rendering of the selection, and routing hot reload. See [ADR-0019](../adr/ADR-0019-agent-model-routing.md).
 
 ## M7.13 — Model routing follow-ups
 
-Status: future.
+Status: in progress; managed-service provider credentials implemented. The
+remaining items below are future.
 
-- **Managed-service provider credentials.** Acceptance: a managed Runtime can
-  execute gateway runs without credentials in service definitions, routing
-  files, SQLite, logs, diagnostics or dashboard state; the secret source is
-  explicit, owner-only, documented for systemd and launchd equally, and
-  `model:check` reports presence by name only.
+- **Managed-service provider credentials** — implemented. Acceptance: a managed
+  Runtime can execute gateway runs without credentials in service definitions,
+  routing files, SQLite, logs, diagnostics or dashboard state; the secret source
+  is explicit, owner-only, documented for systemd and launchd equally, and
+  `model:check` reports presence by name only. Delivered: owner-only
+  `<AI_OFFICE_HOME>/credentials/<NAME>` files read once at Runtime start with
+  symlink, file-type, owner, permission, size and format checks that fail
+  closed; a non-secret `AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home`
+  marker in the managed Runtime unit and plist that makes the Runtime ignore
+  ambient credential variables; strict source separation, so a foreground
+  Runtime keeps reading only its environment and never the credential files;
+  local `credential set|status|remove` with bounded stdin-only input, atomic
+  owner-only replacement and metadata-only status; debug diagnostics without
+  credential-derived data; `model:check` credential presence by name and origin; no
+  migration and no portable-format change. See
+  [ADR-0020](../adr/ADR-0020-managed-provider-credential-boundary.md).
 - **Gateway execution for Anthropic models.** Acceptance: a native adapter that
   applies or rejects `reasoning_effort` and `max_output_tokens` exactly, reports
   the effective model and request ID, and passes the same gateway worker

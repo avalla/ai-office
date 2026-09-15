@@ -1,5 +1,4 @@
 import { ChatAnthropic } from "@langchain/anthropic";
-import { createHash } from "node:crypto";
 import { LangChainModelProvider } from "./langchain-model-provider.ts";
 import { OpenAiResponsesProvider } from "./openai-provider.ts";
 import type { LlmProvider } from "./provider.ts";
@@ -88,7 +87,8 @@ export class ModelProviderRegistry {
       logProviderConfiguration(
         parsed.providerId,
         parsed.model,
-        nonEmpty(environment[registration.apiKeyEnvironmentVariable]) ?? "",
+        nonEmpty(environment[registration.apiKeyEnvironmentVariable]) !==
+          undefined,
       );
     const missing = registration.requiredEnvironmentVariables.filter(
       (name) => nonEmpty(environment[name]) === undefined,
@@ -110,21 +110,21 @@ function llmDebugEnabled(environment: ModelProviderEnvironment): boolean {
   return environment.AI_OFFICE_DEBUG_LLM === "1";
 }
 
+/**
+ * Debug configuration diagnostics. They report credential availability as a
+ * boolean and nothing derived from a credential: no value, prefix, suffix,
+ * length, hash or fingerprint, and no path. Debug output can end up in
+ * persistent service manager logs.
+ */
 function logProviderConfiguration(
   providerId: string,
   model: string,
-  apiKey: string,
+  credentialAvailable: boolean,
 ): void {
-  const fingerprint = createHash("sha256")
-    .update(apiKey)
-    .digest("hex")
-    .slice(0, 12);
   console.error(
     `[llm:config] pid=${process.pid} provider=${providerId} model=${model}`,
   );
-  console.error(
-    `[llm:config] api_key_present=${apiKey.length > 0} api_key_length=${apiKey.length} api_key_fingerprint=${fingerprint}`,
-  );
+  console.error(`[llm:config] credential_available=${credentialAvailable}`);
 }
 
 function descriptor(providerId: string): ModelProviderDescriptor {

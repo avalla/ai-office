@@ -4,6 +4,11 @@ import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.p
 import type { Clock } from "../ports/clock.port.ts";
 import type { CostRepository } from "../ports/cost-repository.port.ts";
 import type { ModelProviderCatalog } from "../ports/model-provider-catalog.port.ts";
+import type {
+  ProviderCredentialIssueCode,
+  ProviderCredentialOrigin,
+  ProviderCredentialState,
+} from "../ports/provider-credential-source.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import {
   ModelRoutingError,
@@ -67,8 +72,18 @@ export interface ModelRoutingReport {
     supported: boolean;
     /** Whether the metered gateway worker can execute this provider's models. */
     gatewayExecution: boolean;
+    /** Names of unusable (missing or invalid) credentials. */
     missingCredentials: string[];
+    /** Presence by logical name only: never a value, length or path. */
+    credentials: {
+      name: string;
+      state: ProviderCredentialState;
+      origin: ProviderCredentialOrigin | null;
+      issue: ProviderCredentialIssueCode | null;
+    }[];
   }[];
+  /** `managed`: provider credentials are read only from the Runtime home. */
+  credentialSource: "managed" | "foreground";
   project: { projectId: string; agents: AgentModelRoute[] } | null;
   findings: ModelRoutingFinding[];
 }
@@ -136,24 +151,57 @@ export class DescribeModelRouting {
     const providerIds = [
       ...new Set([...concreteModels.values()].map((model) => model.providerId)),
     ].sort(byText);
+    const managedCredentials = this.providers.credentialsManaged();
+    const credentialLocation = managedCredentials
+      ? "the Runtime home credentials directory (managed Runtime)"
+      : "the Runtime host environment or the Runtime home credentials directory";
     const providers = providerIds.map((providerId) => {
       const missing = this.providers.missingCredentials(providerId);
       const gatewayExecution =
         this.providers.supportsGatewayExecution(providerId);
       // Only a gateway-executable provider reads host credentials; client-login
-      // workers use their own login.
-      if (gatewayExecution && missing !== null && missing.length > 0)
+      // workers use their own login. Statuses carry names, never values.
+      const statuses = gatewayExecution
+        ? (this.providers.credentialStatuses(providerId) ?? [])
+        : [];
+      const credentials = statuses.map((status) => ({
+        name: status.name,
+        state: status.state,
+        origin: status.origin,
+        issue: status.issue,
+      }));
+      for (const status of statuses)
+        if (status.state === "invalid")
+          findings.push({
+            severity: "warning",
+            code: "PROVIDER_CREDENTIAL_INVALID",
+            subject: status.name,
+            message: `${status.name} is present but unusable (${status.issue ?? "CREDENTIAL_UNREADABLE"}); gateway execution for provider ${providerId} fails closed until it is corrected and the Runtime restarts.`,
+          });
+      const absent = credentials
+        .filter((status) => status.state === "missing")
+        .map((status) => status.name);
+      if (absent.length > 0)
         findings.push({
           severity: "warning",
           code: "PROVIDER_CREDENTIALS_MISSING",
           subject: providerId,
-          message: `Gateway execution for provider ${providerId} needs ${missing.join(", ")} in the Runtime host environment. Client-login workers do not use these variables.`,
+          message: `Gateway execution for provider ${providerId} needs ${absent.join(", ")} in ${credentialLocation}. Client-login workers do not use these credentials.`,
         });
+      for (const status of statuses)
+        if (status.ambientIgnored)
+          findings.push({
+            severity: "warning",
+            code: "MANAGED_ENVIRONMENT_IGNORED",
+            subject: status.name,
+            message: `${status.name} is ignored by the managed Runtime service, which reads provider credentials only from the Runtime home credentials directory.`,
+          });
       return {
         providerId,
         supported: missing !== null,
         gatewayExecution,
         missingCredentials: gatewayExecution ? [...(missing ?? [])] : [],
+        credentials,
       };
     });
 
@@ -321,6 +369,7 @@ export class DescribeModelRouting {
           ),
       ],
       providers,
+      credentialSource: managedCredentials ? "managed" : "foreground",
       project,
       findings,
     };

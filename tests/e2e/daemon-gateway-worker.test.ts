@@ -144,6 +144,14 @@ test("the gateway worker executes a routed openai run with its persisted model a
         supported: true,
         gatewayExecution: true,
         missingCredentials: [],
+        credentials: [
+          {
+            name: "OPENAI_API_KEY",
+            state: "present",
+            origin: "environment",
+            issue: null,
+          },
+        ],
       },
     ]);
 
@@ -346,7 +354,7 @@ test("the gateway worker refuses unrouted runs and missing credentials before an
     ]);
     expect(refused.exitCode).toBe(1);
     expect(refused.stderr.join(" ")).toContain(
-      "the Runtime host environment has no OPENAI_API_KEY",
+      "the Runtime host has no usable OPENAI_API_KEY",
     );
     expect(missing.requests).toEqual([]);
     expect(

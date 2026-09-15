@@ -121,6 +121,7 @@ describe.each(["systemd", "launchd"] as const)(
       expect(runtime.environment).toEqual({
         AI_OFFICE_HOME: home,
         AI_OFFICE_MODEL_ROUTING_SOURCE: "runtime_home",
+        AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: "runtime_home",
       });
       const state = managedStart(runtime.environment);
       expect(state).toMatchObject({

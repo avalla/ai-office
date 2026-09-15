@@ -112,10 +112,20 @@ export async function handleModelCommand(
       context.io.stdout(
         `Agent override (${override.scope === "host" ? "host-global, every project" : `project ${override.projectId}`}) ${override.agent} -> ${override.profile === null ? override.modelRef : `profile ${override.profile}`}`,
       );
-    for (const provider of report.providers)
+    if (report.providers.some((provider) => provider.gatewayExecution))
+      context.io.stdout(
+        `Provider credentials: ${report.credentialSource === "managed" ? "credentials directory in AI_OFFICE_HOME only (managed service)" : "Runtime environment only (foreground; the credentials directory in AI_OFFICE_HOME is not read)"}`,
+      );
+    for (const provider of report.providers) {
       context.io.stdout(
         `Provider ${provider.providerId}: ${provider.gatewayExecution ? `gateway-executable (run:tick --worker gateway)${provider.missingCredentials.length === 0 ? "" : `; missing ${provider.missingCredentials.join(", ")}`}` : "not gateway-executable; needs a client worker that supports it"}`,
       );
+      // Presence by logical name only; never a value, length or path.
+      for (const credential of provider.credentials)
+        context.io.stdout(
+          `  ${credential.name}: ${credential.state}${credential.origin === null ? "" : ` (${credential.origin})`}${credential.issue === null ? "" : ` ${credential.issue}`}`,
+        );
+    }
     for (const agent of report.project?.agents ?? [])
       context.io.stdout(
         `Agent ${agent.agent}: ${agent.status === "resolved" ? `${agent.modelRef} (${agent.source})` : agent.status === "unrouted" ? "unrouted" : `error ${agent.error?.code ?? "UNKNOWN"}`}`,

@@ -29,6 +29,7 @@ test("product version stays local in both launchers and the reusable client", as
       resolveRuntimePaths: forbidden,
       legacyCheckoutDatabasePath: forbidden,
       withRuntimePathOverrides: forbidden,
+      ensureRuntimeHome: forbidden,
     }));
     mock.module("bun:sqlite", () => ({ Database: class Database { constructor() { forbidden(); } } }));
     globalThis.fetch = forbidden;

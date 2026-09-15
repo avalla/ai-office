@@ -37,6 +37,7 @@ import {
   parseArguments,
   type CommandIo,
 } from "@ai-office/command-support/arguments.ts";
+import { providerCredentialNames } from "@ai-office/llm-gateway/provider-credentials.ts";
 import { dashboardDefaultPort } from "./dashboard-cli.ts";
 
 /**
@@ -81,10 +82,10 @@ function managedEnvironmentNotes(
     notes.push(
       `Model routing: ${routing.join(" and ")} from this shell are not used by the managed Runtime, which reads only model-routing.yaml in AI_OFFICE_HOME. Place the routing there and restart the Runtime service.`,
     );
-  const credentials = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"].filter(set);
+  const credentials = providerCredentialNames().filter(set);
   if (credentials.length > 0)
     notes.push(
-      `Provider credentials: ${credentials.join(" and ")} are never written to service definitions. Gateway runs under the managed Runtime fail before any request unless the service manager's own environment provides them.`,
+      `Provider credentials: ${credentials.join(" and ")} from this shell are never written to service definitions and are not used by the managed Runtime, which reads them only from the credentials directory in AI_OFFICE_HOME. Store each with ai-office credential set <NAME> (value on stdin) and restart the Runtime service.`,
     );
   return notes;
 }

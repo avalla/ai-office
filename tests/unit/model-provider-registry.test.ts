@@ -59,7 +59,7 @@ describe("model provider registry", () => {
     expect(error).not.toHaveBeenCalled();
   });
 
-  test("emits deterministic redacted configuration diagnostics when enabled", () => {
+  test("emits deterministic configuration diagnostics with credential availability only", () => {
     const apiKey = "diagnostic-openai-key";
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
     const environment = {
@@ -77,10 +77,12 @@ describe("model provider registry", () => {
       `[llm:config] pid=${process.pid} provider=openai model=gpt-5.4`,
     );
     expect(logs[1]).toBe(
-      "[llm:config] api_key_present=true api_key_length=21 api_key_fingerprint=0756f8d6f3fa",
+      "[llm:config] credential_available=true",
     );
     expect(logs[3]).toBe(logs[1]);
-    expect(logs.join("\n")).not.toContain(apiKey);
+    const rendered = logs.join("\n");
+    expect(rendered).not.toContain(apiKey);
+    expect(rendered).not.toMatch(/length|fingerprint|0756f8d6f3fa|\b21\b/u);
   });
 
   test("reports an absent API key without changing configuration validation", () => {
@@ -95,7 +97,7 @@ describe("model provider registry", () => {
 
     expect(error.mock.calls.flatMap((call) => call.map(String))).toEqual([
       `[llm:config] pid=${process.pid} provider=openai model=gpt-5.4`,
-      "[llm:config] api_key_present=false api_key_length=0 api_key_fingerprint=e3b0c44298fc",
+      "[llm:config] credential_available=false",
     ]);
   });
 

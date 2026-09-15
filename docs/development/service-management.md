@@ -88,11 +88,12 @@ same authoritative home whatever environment the supervisor happens to give it.
 
 ## Model routing and credentials
 
-The Runtime definition (not the dashboard's) also carries a non-secret routing
-source marker:
+The Runtime definition (not the dashboard's) also carries two non-secret source
+markers, identically in the systemd unit and the launchd plist:
 
 ```ini
 Environment="AI_OFFICE_MODEL_ROUTING_SOURCE=runtime_home"
+Environment="AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home"
 ```
 
 With it, the managed Runtime reads [model routing](llm-cost-control.md#agent-model-routing)
@@ -108,17 +109,53 @@ systemctl --user restart ai-office-runtime.service          # Linux
 launchctl kickstart -k gui/$(id -u)/com.ai-office.runtime   # macOS
 ```
 
-A Runtime definition generated before the marker existed reports
+A Runtime definition generated before either marker existed reports
 `managed_outdated`; `ai-office service install` replaces it. The routing file's
-content is not part of the definition, so editing it never makes a definition
-outdated.
+and credentials' content is not part of the definition, so editing them never
+makes a definition outdated.
 
-Provider credentials are never rendered into a unit or plist, and
-`service install` only names (never prints) routing variables and credentials
-set in the invoking shell that the service will not receive. Gateway-executed
-runs under a managed Runtime fail before any provider request with a credential
-error unless the service manager's own environment provides the key; AI Office
-does not write that environment.
+### Provider credentials
+
+With the credential marker, the managed Runtime reads provider credentials such
+as `OPENAI_API_KEY` only from owner-only files in `<AI_OFFICE_HOME>/credentials/`
+and ignores the same variables in the service manager's environment (reported by
+name as `MANAGED_ENVIRONMENT_IGNORED` in `model:check`). The procedure is the
+same on Linux and macOS:
+
+```bash
+read -rs KEY && printf '%s' "$KEY" | ai-office credential set OPENAI_API_KEY; unset KEY
+ai-office credential status
+systemctl --user restart ai-office-runtime.service          # Linux
+launchctl kickstart -k gui/$(id -u)/com.ai-office.runtime   # macOS
+ai-office model:check                                       # OPENAI_API_KEY: present (runtime_home)
+```
+
+`credential set` accepts the value only on non-terminal stdin, never as an
+argument, reads at most a bounded prefix of stdin, and atomically replaces a
+`0600` file in a `0700` directory (readers see the old or the new file; the
+directory `fsync` that would make the rename crash-durable is best effort). It
+is a local command: it does not need or contact the Runtime. A file that is a
+symlink, not a regular file, not owned by the Runtime user, group- or
+world-accessible, larger than 4096 bytes, or not a single token of visible ASCII
+is reported `invalid` and never used; the Runtime does not fall back to another
+source. Credentials are read once at start, so restart the Runtime after
+`credential set` or `credential remove`.
+
+Without the marker — a foreground `ai-office runtime start`, or a Runtime unit
+or plist generated before the marker, which `service status` reports as
+`managed_outdated` — the Runtime reads credentials only from its own
+environment and never opens `<AI_OFFICE_HOME>/credentials/`. Re-run
+`ai-office service install` to switch an outdated managed Runtime to the
+credential files.
+
+Credential values, names and paths are never rendered into a unit or plist or
+passed in argv, and `service install` copies nothing from the invoking shell: it
+only names routing variables and credentials set there that the service will not
+use. `service uninstall` and `runtime:purge` leave the credentials directory in
+place; remove credentials explicitly with `ai-office credential remove <NAME>`.
+This protects against accidental exposure and other local users, not against
+other processes of the same user. See
+[ADR-0020](../adr/ADR-0020-managed-provider-credential-boundary.md).
 
 ## Absolute executable path
 

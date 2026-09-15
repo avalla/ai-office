@@ -271,7 +271,7 @@ export async function handleRunCommand(
         const missing = gateway.missingCredentials(selection);
         if (missing.length > 0)
           throw new CliUsageError(
-            `Run ${snapshot.id} is assigned ${selection.modelRef}, but the Runtime host environment has no ${missing.join(", ")}. The gateway worker reads provider credentials only from the Runtime host environment; managed services are not given credentials. No runs were started.`,
+            `Run ${snapshot.id} is assigned ${selection.modelRef}, but the Runtime host has no usable ${missing.join(", ")}. A managed Runtime reads provider credentials only from the credentials directory in AI_OFFICE_HOME (ai-office credential set); a foreground Runtime reads only its own environment. Credentials are loaded at Runtime start; see model:check. No runs were started.`,
           );
         continue;
       }

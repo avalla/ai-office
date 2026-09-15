@@ -34,6 +34,10 @@ Commands:
     manages the per-user Runtime and dashboard OS services
     Linux systemd --user, macOS launchd LaunchAgents; no sudo, never system-wide
     see ai-office service --help
+  credential set <NAME>|status [--json]|remove <NAME>
+    owner-only provider credentials in <AI_OFFICE_HOME>/credentials; local, no Runtime access
+    set reads the value from non-terminal stdin, never from arguments
+    see ai-office credential --help
   project:create <name> [--description <description>] [--json]
   project:import [path] [--name <name>] [--json]
   project:answer --project <id> --question <id> --answer <value>  # legacy stored questions only
@@ -134,4 +138,7 @@ Model routing (Runtime host; read once at host start; restart after changes):
   <AI_OFFICE_HOME>/model-routing.yaml  canonical profile file; the only source of a managed service
   AI_OFFICE_MODEL_ROUTING_FILE  foreground override: absolute or ~/ path to a YAML/JSON profile file
   AI_OFFICE_LLM_MODEL           foreground legacy <provider>:<model> default (lowest precedence)
-  OPENAI_API_KEY                gateway worker credential; host environment only, never in routing files`;
+
+Provider credentials (Runtime host; read once at host start; restart after changes):
+  <AI_OFFICE_HOME>/credentials/<NAME>  owner-only files written by credential set; the only source of a managed service
+  OPENAI_API_KEY                foreground gateway worker credential; the only foreground source (the credentials directory is never read); never in routing files`;

@@ -21,7 +21,7 @@ Model selection keeps four concepts apart
 | model policy (`economical`, `balanced`, `high_reasoning`) | role definition, SQLite | yes |
 | model profile (`<provider>:<model>` plus parameters) | host routing file | no |
 | resolved model | `agent_run.model_routing_json`, frozen at scheduling | no |
-| provider credentials | Runtime host environment or client login | never |
+| provider credentials | Runtime host credential source ([below](#provider-credentials)) or client login | never |
 
 ### Where routing is read
 
@@ -44,6 +44,36 @@ definition generated before this marker is reported `managed_outdated`; run
 `ai-office service install` once to replace it. Afterwards, changing routing
 needs only a Runtime restart (`systemctl --user restart ai-office-runtime.service`
 or `launchctl kickstart -k gui/$(id -u)/com.ai-office.runtime`), not a reinstall.
+
+### Provider credentials
+
+Credentials are Runtime host configuration, separate from routing
+([ADR-0020](../adr/ADR-0020-managed-provider-credential-boundary.md)). The
+Runtime loads them once at start; restart it after a change. The marker alone
+selects the source; sources never mix or fall back to each other.
+
+| `AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE` | Source for each credential (for example `OPENAI_API_KEY`) |
+| --- | --- |
+| `runtime_home` (managed service) | only `<AI_OFFICE_HOME>/credentials/<NAME>`; the service manager's environment is ignored |
+| unset (foreground, or a managed definition from before the marker) | only the Runtime's environment variable; `<AI_OFFICE_HOME>/credentials/` is never read |
+| any other value | every credential `invalid` (`CREDENTIAL_SOURCE_INVALID`) |
+
+```bash
+read -rs KEY && printf '%s' "$KEY" | ai-office credential set OPENAI_API_KEY; unset KEY
+ai-office credential status [--json]      # present | missing | invalid <CODE>, by name
+ai-office credential remove OPENAI_API_KEY
+```
+
+Each file is `0600` in a `0700` directory owned by the Runtime user and holds
+only the value. A symlink, non-regular file, wrong owner, group/other access,
+oversized or malformed value makes that managed credential `invalid`; it is
+never used and no other source replaces it. A foreground Runtime never opens
+these files, so they cannot supply or invalidate its credentials. The generated
+unit and plist carry only the non-secret marker. `credential` is a local command
+that never contacts the Runtime, so no value crosses IPC, audit or SQLite;
+`credential status` inspects metadata only and never loads a value.
+`AI_OFFICE_DEBUG_LLM=1` reports provider, model and `credential_available`
+only, never a value, length, hash, fingerprint or path.
 
 ### File format
 
@@ -97,11 +127,13 @@ ai-office run:show --project <id> --run <id> [--json]
 
 `model:check` reports the routing source, override scope, undefined policies
 and profiles, malformed refs, unsupported providers, invalid parameters,
-unresolved defaults and overrides as errors; and as warnings missing gateway
-credentials (by variable name only), missing pricing, overrides for unknown
+unresolved defaults and overrides as errors; and as warnings missing or invalid
+gateway credentials, missing pricing, overrides for unknown
 agents or projects, ignored ambient settings of a managed Runtime and deprecated
 legacy forms. For each assigned provider it states whether the gateway worker
-can execute it.
+can execute it and, for a gateway-executable provider, each credential by name
+as `present`, `missing` or `invalid` with its origin (`environment` or
+`runtime_home`) and issue code — never a value, length, fingerprint or path.
 
 ### Execution
 
@@ -138,10 +170,11 @@ The gateway worker:
   output limits; a truncated or malformed answer is metered but never accepted,
   and a provider response with missing or impossible usage is rejected and
   charged at the reserved worst case;
-- reads `OPENAI_API_KEY` from the Runtime host environment only. Managed services
-  are never given credentials: under a managed Runtime, gateway runs fail with a
-  credential error before any request unless the service manager's own
-  environment provides the key.
+- authenticates with `OPENAI_API_KEY` from the Runtime's loaded
+  [credential source](#provider-credentials) and passes the registry only that
+  provider's credential; a missing or invalid credential fails the batch before
+  admission and the run with `WORKER_CREDENTIALS_MISSING` before any request.
+  Changing a credential never changes a scheduled run's model.
 
 ### Cost governance
 
@@ -192,7 +225,7 @@ The registry derives the provider from the prefix, validates the model and requi
 
 For backwards compatibility, a bare `AI_OFFICE_LLM_MODEL=<model>` is accepted only when `AI_OFFICE_LLM_PROVIDER=<provider>` is also set. This compatibility form is deprecated. When the model is prefixed, its prefix is authoritative and the compatibility variable is ignored.
 
-Provider-native credentials remain infrastructure concerns. The current registry reads only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`; keys are never passed through domain or application objects. Missing configuration errors list environment-variable names, never their values.
+Provider-native credentials remain infrastructure concerns. The current registry reads only `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`; keys are never passed through domain or application objects, which see credential presence by name only. The Runtime composition root supplies them from its [credential source](#provider-credentials). Missing configuration errors list credential names, never their values.
 
 ## Dependency and execution boundary
 
