@@ -20,6 +20,7 @@ import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import { projectWorkerOutput } from "@ai-office/application/read-models/worker-output.ts";
 import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
+import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
 import {
   CliUsageError,
   type CommandContext,
@@ -178,6 +179,7 @@ export async function handleRunCommand(
       transactions,
       context.pipelines,
       context.modelRouting,
+      context.jobOutbox,
     ).execute({
       projectId: requiredOption(parsed, "project"),
       taskId: requiredOption(parsed, "task"),
@@ -201,14 +203,33 @@ export async function handleRunCommand(
   if (command === "run:tick") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "capacity", "worker", "worker-model"]),
+      new Set(["project", "run", "capacity", "worker", "worker-model"]),
       new Set(["json", "simulate"]),
     );
-    const projectId = requiredOption(parsed, "project");
+    const projectOption = parsed.options.get("project");
+    const runOption = parsed.options.get("run");
+    if (projectOption === undefined && runOption === undefined)
+      throw new CliUsageError("run:tick requires --project or --run");
     const capacity = Number(parsed.options.get("capacity") ?? "1");
     if (!Number.isSafeInteger(capacity) || capacity < 1 || capacity > 100)
       throw new CliUsageError("Capacity must be an integer between 1 and 100");
-    const queued = await runtime.listQueuedRuns(projectId, capacity);
+    const selected =
+      runOption === undefined ? null : await runtime.findRun(runOption);
+    if (runOption !== undefined && selected === null)
+      throw new CliUsageError("Agent run not found");
+    if (
+      selected !== null &&
+      projectOption !== undefined &&
+      selected.snapshot().projectId !== projectOption
+    )
+      throw new CliUsageError("Agent run does not belong to project");
+    const projectId = projectOption ?? selected!.snapshot().projectId;
+    const queued =
+      selected === null
+        ? await runtime.listQueuedRuns(projectId, capacity)
+        : selected.snapshot().status === "queued"
+          ? [selected]
+          : [];
     const worker = parsed.options.get("worker");
     if (worker !== undefined && worker !== "claude" && worker !== "gateway")
       throw new CliUsageError(
@@ -324,6 +345,17 @@ export async function handleRunCommand(
       clock,
       context.executionControl.ownerId,
     );
+    const pipelineManager = new ManagePipelineRuns(
+      context.officeManifests,
+      context.pipelines,
+      tasks,
+      runtime,
+      context.audit,
+      ids,
+      clock,
+      transactions,
+      context.jobOutbox,
+    );
     const results = (
       await Promise.all(
         queued.map(async (value) => {
@@ -346,7 +378,21 @@ export async function handleRunCommand(
                   message: "Run authority is no longer eligible",
                 },
               };
-            return await execute.execute(claimed, signal);
+            const result = await execute.execute(claimed, signal);
+            if (
+              result.status === "completed" &&
+              claimed.snapshot().pipelineRunId !== undefined
+            )
+              await pipelineManager.completeStageFromAgentRun({
+                projectId: claimed.snapshot().projectId,
+                agentRunId: claimed.snapshot().id,
+                ...(claimed.snapshot().pipelineRunId === undefined
+                  ? {}
+                  : {
+                      expectedPipelineRunId: claimed.snapshot().pipelineRunId,
+                    }),
+              });
+            return result;
           } finally {
             context.executionControl.release(id);
           }

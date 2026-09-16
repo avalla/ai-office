@@ -69,6 +69,8 @@ describe("project database migrations", () => {
       "0029_agent_run_memory_query_digests.sql",
       "0030_agent_run_model_routing.sql",
       "0031_cost_event_charge_basis.sql",
+      "0032_job_outbox.sql",
+      "0033_role_execution_guidance.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -110,6 +112,8 @@ describe("project database migrations", () => {
       { version: "0029_agent_run_memory_query_digests.sql" },
       { version: "0030_agent_run_model_routing.sql" },
       { version: "0031_cost_event_charge_basis.sql" },
+      { version: "0032_job_outbox.sql" },
+      { version: "0033_role_execution_guidance.sql" },
     ]);
     database.close();
   });

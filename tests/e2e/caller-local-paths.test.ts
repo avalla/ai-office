@@ -148,6 +148,10 @@ describe("caller-local filesystem paths across the Runtime boundary", () => {
         "  timeout_seconds: 900",
       ].join("\n"),
     );
+    writeFileSync(
+      join(callerRoot, "agents", "reviewer", "system.md"),
+      "Review only the supplied evidence.",
+    );
     const socket = createTestUnixSocket();
     temporaryDirectories.push(socket.root);
     const socketPath = socket.socketPath;

@@ -69,6 +69,7 @@
     {
       "id": "delivery",
       "name": "Feature delivery",
+      "enforcement": "enforced",
       "description": "Plan, implement, review, and verify product changes",
       "defaultFor": ["feature", "maintenance"],
       "stages": [
@@ -78,6 +79,7 @@
           "roleId": "architect",
           "objective": "Define the smallest coherent change and its acceptance criteria",
           "checks": ["Dependencies and security boundaries are explicit"],
+          "capabilities": [],
           "requiresApproval": false
         },
         {
@@ -86,6 +88,7 @@
           "roleId": "developer",
           "objective": "Implement the agreed change with focused tests",
           "checks": ["Relevant tests pass", "Typecheck passes"],
+          "capabilities": [],
           "requiresApproval": false
         },
         {
@@ -94,6 +97,7 @@
           "roleId": "reviewer",
           "objective": "Review correctness, security, and scope",
           "checks": ["No unresolved blocking findings remain"],
+          "capabilities": [],
           "requiresApproval": true
         },
         {
@@ -102,6 +106,7 @@
           "roleId": "qa",
           "objective": "Validate acceptance criteria and regression safety",
           "checks": ["Full relevant check suite passes"],
+          "capabilities": [],
           "requiresApproval": false
         }
       ]
@@ -165,7 +170,10 @@
           "name": "Readiness review",
           "roleId": "reviewer",
           "objective": "Confirm scope, risks, and unresolved findings",
-          "checks": ["Release scope is explicit", "Blocking findings are resolved"],
+          "checks": [
+            "Release scope is explicit",
+            "Blocking findings are resolved"
+          ],
           "requiresApproval": false
         },
         {

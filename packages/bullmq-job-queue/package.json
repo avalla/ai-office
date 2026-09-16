@@ -1,0 +1,8 @@
+{
+  "name": "@ai-office/bullmq-job-queue",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "bullmq": "^5.58.0"
+  }
+}

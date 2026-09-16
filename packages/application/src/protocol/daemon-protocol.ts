@@ -31,6 +31,13 @@ export interface DaemonHealthResponse {
   protocolVersion: typeof daemonProtocolVersion;
   status: "ok";
   startedAt: string;
+  queue?: {
+    provider: "disabled" | "configured" | "misconfigured";
+    redis: "reachable" | "unreachable" | "not_checked";
+    outboxPending: number;
+    orchestrationWorker: boolean;
+    agentRunWorker: boolean;
+  };
 }
 
 export interface DaemonErrorResponse {

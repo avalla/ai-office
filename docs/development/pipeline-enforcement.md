@@ -49,9 +49,16 @@ AgentRun/action-request binding state. Existing rows receive null bindings,
 existing databases upgrade forward, and projects with no active enforced run
 keep their previous authorization behavior.
 
-The current engine is intentionally sequential. Branching, retries, automated
-worker dispatch, typed artifacts, GitHub-specific gates, cryptographic operator
-identity, and arbitrary conditions remain deferred.
+The engine is intentionally sequential, with queue-backed stage orchestration
+now available when `AI_OFFICE_QUEUE_PROVIDER=bullmq` is configured. SQLite remains
+the authority: BullMQ delivers disposable wake-up jobs, and every worker reloads
+and validates the project, pipeline, stage, assignment, run, model, and lease
+before acting. The transactional outbox makes state changes and delivery intent
+one commit. Duplicate delivery is harmless; stale or forged jobs do nothing.
+Branching, typed artifacts, GitHub-specific gates, and cryptographic operator
+identity remain deferred. Retryable delivery/provider failures are bounded;
+ambiguous effects, stale fences, validation failures, and approval decisions are
+not automatically retried.
 
 AI Office is still trusted-local and single-user rather than cryptographically
 authenticated. The local daemon cannot distinguish a same-user worker from the

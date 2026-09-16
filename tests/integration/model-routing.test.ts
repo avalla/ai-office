@@ -399,6 +399,8 @@ test("upgrading keeps pre-routing runs explicitly unrecorded and executable with
   expect(upgrade.applied).toEqual([
     "0030_agent_run_model_routing.sql",
     "0031_cost_event_charge_basis.sql",
+    "0032_job_outbox.sql",
+    "0033_role_execution_guidance.sql",
   ]);
   expect(migrate(f.db, migrations).applied).toEqual([]);
   const repository = new SqliteAgentRuntimeRepository(f.db);

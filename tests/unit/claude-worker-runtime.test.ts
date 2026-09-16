@@ -111,6 +111,35 @@ describe("bounded Claude worker", () => {
     expect(existsSync(calls[1]!.cwd)).toBe(false);
   });
 
+  test("injects the pinned role guidance into the worker system prompt", async () => {
+    const prompts: string[] = [];
+    const runtime = new ClaudeWorkerRuntime("test", async (request) => {
+      if (request.args[0] === "--version") return "2.1.259 (Claude Code)\n";
+      prompts.push(
+        request.args[request.args.indexOf("--system-prompt") + 1] ?? "",
+      );
+      return JSON.stringify(envelope);
+    });
+    await runtime.execute(
+      {
+        ...context,
+        roleGuidance: { version: 1, text: "Architect guidance only." },
+      },
+      limits,
+    );
+    await runtime.execute(
+      {
+        ...context,
+        roleGuidance: { version: 1, text: "Developer guidance only." },
+      },
+      limits,
+    );
+    expect(prompts[0]).toContain("Architect guidance only.");
+    expect(prompts[0]).not.toContain("Developer guidance only.");
+    expect(prompts[1]).toContain("Developer guidance only.");
+    expect(prompts[1]).not.toContain("Architect guidance only.");
+  });
+
   test("refuses clients below the supported version before task dispatch", async () => {
     const calls: WorkerProcessRequest[] = [];
     const runtime = new ClaudeWorkerRuntime("test", async (request) => {

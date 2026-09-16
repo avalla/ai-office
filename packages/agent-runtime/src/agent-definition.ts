@@ -6,6 +6,7 @@ export interface AgentDefinition {
   capabilities: string[];
   tools: string[];
   modelPolicy: string;
+  roleGuidance: string;
   limits: {
     maxIterations: number;
     maxCostMicros: bigint;
@@ -81,6 +82,10 @@ export function parseAgentDefinition(
     !stringArray(row.tools) ||
     typeof row.model_policy !== "string" ||
     row.model_policy.trim() === "" ||
+    (row.role_guidance !== undefined &&
+      (typeof row.role_guidance !== "string" ||
+        row.role_guidance.trim() === "" ||
+        new TextEncoder().encode(row.role_guidance).byteLength > 65536)) ||
     limit.max_iterations === undefined ||
     limit.max_cost_micros === undefined ||
     limit.timeout_seconds === undefined
@@ -98,6 +103,8 @@ export function parseAgentDefinition(
     capabilities: row.capabilities,
     tools: row.tools,
     modelPolicy: row.model_policy,
+    roleGuidance:
+      typeof row.role_guidance === "string" ? row.role_guidance : "",
     limits: {
       maxIterations: positiveInteger(
         limit.max_iterations,

@@ -31,6 +31,10 @@ import {
   EnvironmentGatewayModelProviders,
   type GatewayModelProviders,
 } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
+import { BullMqJobQueue } from "@ai-office/bullmq-job-queue/bullmq-job-queue.ts";
+import { readQueueConfiguration } from "@ai-office/bullmq-job-queue/config.ts";
+import { SqliteJobOutboxRepository } from "@ai-office/storage-sqlite/repositories/sqlite-job-outbox.repository.ts";
+import { QueueRuntime } from "./queue-runtime.ts";
 import {
   ensureRuntimeHome,
   resolveRuntimePaths,
@@ -143,16 +147,58 @@ export async function bootstrap(
     },
   );
 
+  const queueConfiguration = readQueueConfiguration(process.env);
+  if (queueConfiguration.status === "misconfigured")
+    console.error(
+      "Queue configuration is invalid; queue-backed orchestration is disabled.",
+    );
+  const outbox = new SqliteJobOutboxRepository(database);
+  const queue =
+    queueConfiguration.status === "configured" &&
+    queueConfiguration.redisUrl !== undefined
+      ? new BullMqJobQueue(queueConfiguration.redisUrl)
+      : undefined;
+  const queueRuntime =
+    queue === undefined
+      ? undefined
+      : new QueueRuntime(
+          runtime,
+          outbox,
+          queue,
+          new SystemClock(),
+          options.agentExecutor === undefined
+            ? queueConfiguration.worker
+            : undefined,
+        );
+  const queueStatus = async () => ({
+    provider:
+      queueConfiguration.status === "disabled"
+        ? ("disabled" as const)
+        : queueConfiguration.status === "misconfigured"
+          ? ("misconfigured" as const)
+          : ("configured" as const),
+    redis:
+      queue === undefined ? ("not_checked" as const) : await queue.health(),
+    outboxPending: await outbox.pendingCount(),
+    orchestrationWorker: queue?.consuming.orchestrate_pipeline ?? false,
+    agentRunWorker: queue?.consuming.execute_agent_run ?? false,
+  });
+
   return new PersistentRuntimeHost({
     socketPath: runtimePaths.socketPath,
     queryApi: new QueryApi({ queries, events: queryEvents }),
     queryEvents,
     handler: new LocalCommandHandler(runtime),
     events,
+    onStarting: () => queueRuntime?.start() ?? Promise.resolve(),
+    queueStatus,
     onStopped: () => {
       globalDatabase.close();
       database.close();
     },
-    onStopping: () => runtime.stop(),
+    onStopping: async () => {
+      await queueRuntime?.stop();
+      await runtime.stop();
+    },
   });
 }

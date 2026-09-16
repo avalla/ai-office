@@ -204,23 +204,34 @@ async function addActivePipeline(f: Awaited<ReturnType<typeof fixture>>) {
     },
     office: {
       name: "Test",
-      roles: [{ id: "architect", title: "Architect", purpose: "Design", responsibilities: [] }],
+      roles: [
+        {
+          id: "architect",
+          title: "Architect",
+          purpose: "Design",
+          responsibilities: [],
+        },
+      ],
     },
-    pipelines: [{
-      id: "analysis",
-      name: "Analysis",
-      description: "One stage",
-      defaultFor: [],
-      enforcement: "enforced",
-      stages: [{
-        id: "design",
-        name: "Design",
-        roleId: "architect",
-        objective: "Assess",
-        checks: [],
-        requiresApproval: false,
-      }],
-    }],
+    pipelines: [
+      {
+        id: "analysis",
+        name: "Analysis",
+        description: "One stage",
+        defaultFor: [],
+        enforcement: "enforced",
+        stages: [
+          {
+            id: "design",
+            name: "Design",
+            roleId: "architect",
+            objective: "Assess",
+            checks: [],
+            requiresApproval: false,
+          },
+        ],
+      },
+    ],
   };
   await new SqliteOfficeManifestRepository(f.db).save({
     id: "manifest",
@@ -426,11 +437,17 @@ test.each(["task", "agent", "role", "lock"] as const)(
     await startedPromise;
     const changedAt = new Date(now.getTime() + 1000).toISOString();
     if (kind === "task")
-      f.db.exec(`UPDATE task SET title='changed', updated_at='${changedAt}' WHERE id='t'`);
+      f.db.exec(
+        `UPDATE task SET title='changed', updated_at='${changedAt}' WHERE id='t'`,
+      );
     if (kind === "agent")
-      f.db.exec(`UPDATE agent SET enabled=0, updated_at='${changedAt}' WHERE id='a'`);
+      f.db.exec(
+        `UPDATE agent SET enabled=0, updated_at='${changedAt}' WHERE id='a'`,
+      );
     if (kind === "role")
-      f.db.exec(`UPDATE role SET version=2, updated_at='${changedAt}' WHERE id='role'`);
+      f.db.exec(
+        `UPDATE role SET version=2, updated_at='${changedAt}' WHERE id='role'`,
+      );
     if (kind === "lock") {
       f.db.exec(
         `INSERT INTO agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at) VALUES ('other','p','t','a','running','${changedAt}','${changedAt}')`,
@@ -446,7 +463,9 @@ test.each(["task", "agent", "role", "lock"] as const)(
     expect((await f.runs.findRun("r"))?.snapshot().status).toBe("failed");
     expect((await f.runs.findRun("r"))?.snapshot().result).toBeUndefined();
     expect(
-      (await f.runs.listRunEvents("r")).some((event) => event.status === "reviewing"),
+      (await f.runs.listRunEvents("r")).some(
+        (event) => event.status === "reviewing",
+      ),
     ).toBe(false);
   },
 );
@@ -561,6 +580,8 @@ test("upgrading legacy runs preserves unknown provenance and protects new dispat
     "0029_agent_run_memory_query_digests.sql",
     "0030_agent_run_model_routing.sql",
     "0031_cost_event_charge_basis.sql",
+    "0032_job_outbox.sql",
+    "0033_role_execution_guidance.sql",
   ]);
   expect(
     (await f.runs.findRun("legacy"))?.snapshot().execution,
@@ -658,7 +679,14 @@ async function runWith(
   };
   return new ExecuteAgentRun(
     f.runs,
-    new WorkerAgentExecutor(worker, f.runs, f.tasks, f.pipelines, clock, assembler),
+    new WorkerAgentExecutor(
+      worker,
+      f.runs,
+      f.tasks,
+      f.pipelines,
+      clock,
+      assembler,
+    ),
     new InMemoryWorktreeManager(),
     clock,
   ).execute(await f.admitted());
@@ -672,16 +700,20 @@ test("a disabled project memory provider leaves the worker context and input dig
   const provider = new DisabledProjectMemoryProvider();
   let context: WorkerContext | undefined;
   expect(
-    (await runWith(disabled, assemblerFor(disabled, provider), (value) => {
-      context = value;
-    })).status,
+    (
+      await runWith(disabled, assemblerFor(disabled, provider), (value) => {
+        context = value;
+      })
+    ).status,
   ).toBe("completed");
   expect(context).not.toHaveProperty("projectMemory");
-  expect((await disabled.runs.findRun("r"))?.snapshot().execution?.inputHash).toBe(
-    (await baseline.runs.findRun("r"))?.snapshot().execution?.inputHash,
-  );
   expect(
-    await new SqliteProjectMemoryProvenanceRepository(disabled.db).findRetrieval("r"),
+    (await disabled.runs.findRun("r"))?.snapshot().execution?.inputHash,
+  ).toBe((await baseline.runs.findRun("r"))?.snapshot().execution?.inputHash);
+  expect(
+    await new SqliteProjectMemoryProvenanceRepository(
+      disabled.db,
+    ).findRetrieval("r"),
   ).toBeNull();
 });
 
@@ -735,9 +767,15 @@ test("retrieved project memory is bounded advisory context pinned in the digest 
   expect(
     (await f.pipelines.findById("pipeline", "p"))?.currentStage(),
   ).toMatchObject({ status: "active" });
-  for (const table of ["capability_grants", "action_requests", "action_approvals"])
+  for (const table of [
+    "capability_grants",
+    "action_requests",
+    "action_approvals",
+  ])
     expect(
-      f.db.query<{ count: number }, []>(`SELECT COUNT(*) count FROM ${table}`).get()?.count,
+      f.db
+        .query<{ count: number }, []>(`SELECT COUNT(*) count FROM ${table}`)
+        .get()?.count,
     ).toBe(0);
 });
 
@@ -749,9 +787,11 @@ test("an unavailable project memory provider never blocks the run and records th
   });
   let context: WorkerContext | undefined;
   expect(
-    (await runWith(f, assemblerFor(f, provider), (value) => {
-      context = value;
-    })).status,
+    (
+      await runWith(f, assemblerFor(f, provider), (value) => {
+        context = value;
+      })
+    ).status,
   ).toBe("completed");
   expect(context).not.toHaveProperty("projectMemory");
   expect(
@@ -778,7 +818,11 @@ test("a controlled-action run never consults project memory", async () => {
   const executor = new ControlledActionAgentExecutor(
     { invoke: gateway },
     new WorkerAgentExecutor(
-      { id: "w", inspect: async () => ({ version: "1" }), execute: async () => output },
+      {
+        id: "w",
+        inspect: async () => ({ version: "1" }),
+        execute: async () => output,
+      },
       f.runs,
       f.tasks,
       f.pipelines,
@@ -804,11 +848,19 @@ test("a controlled-action run never consults project memory", async () => {
       arguments: {},
     },
   });
-  const run = (await new AdmitAgentRun(f.runs, f.tasks, f.pipelines, clock).execute(
-    (await f.runs.findRun("controlled"))!,
-  ))!;
+  const run = (await new AdmitAgentRun(
+    f.runs,
+    f.tasks,
+    f.pipelines,
+    clock,
+  ).execute((await f.runs.findRun("controlled"))!))!;
   expect(run.snapshot().actionIntent).toBeDefined();
-  await new ExecuteAgentRun(f.runs, executor, new InMemoryWorktreeManager(), clock).execute(run);
+  await new ExecuteAgentRun(
+    f.runs,
+    executor,
+    new InMemoryWorktreeManager(),
+    clock,
+  ).execute(run);
   expect(provider.calls).toBe(0);
   expect(gateway).toHaveBeenCalledTimes(1);
 });
@@ -845,7 +897,10 @@ test("project memory never pushes a large worker context over its limit", async 
   expect(provider.calls).toBe(0);
   expect(
     await new SqliteProjectMemoryProvenanceRepository(f.db).findRetrieval("r"),
-  ).toMatchObject({ outcome: "skipped", errorCode: "CONTEXT_BUDGET_EXHAUSTED" });
+  ).toMatchObject({
+    outcome: "skipped",
+    errorCode: "CONTEXT_BUDGET_EXHAUSTED",
+  });
 });
 
 test("direct worker execution forwards cancellation through project memory preparation", async () => {
@@ -951,7 +1006,9 @@ test("an interrupted prepared run is never prepared again with a context its pro
   const current = (await f.runs.findRun("r"))!;
   expect(current.snapshot().status).toBe("preparing");
   expect(
-    await new AdmitAgentRun(f.runs, f.tasks, f.pipelines, clock).execute(current),
+    await new AdmitAgentRun(f.runs, f.tasks, f.pipelines, clock).execute(
+      current,
+    ),
   ).toBeNull();
 
   // Even if a caller prepared it again, preparation is refused and nothing is

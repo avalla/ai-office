@@ -159,6 +159,10 @@ describe("bundled agent synchronization through the daemon", () => {
         const directory = join(selection, definition.id);
         mkdirSync(directory, { recursive: true });
         copyFileSync(sourcePath, join(directory, "agent.yaml"));
+        copyFileSync(
+          join(sourcePath, "..", "system.md"),
+          join(directory, "system.md"),
+        );
       }
       expect(
         (

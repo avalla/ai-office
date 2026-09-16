@@ -524,6 +524,31 @@ client-integration boundaries:
 Detecting or configuring a client does not authenticate it as a pipeline worker
 and does not grant it capabilities.
 
+### Durable queue delivery
+
+Queue-backed orchestration is an optional Runtime-host capability. With
+`AI_OFFICE_QUEUE_PROVIDER=bullmq` and a host-local `AI_OFFICE_REDIS_URL`, the
+daemon runs one outbox dispatcher and two logical consumers:
+`ai-office-orchestration` and `ai-office-agent-runs`. BullMQ/Redis or Valkey
+only delivers disposable jobs; it is never the source of task, pipeline, stage,
+run, approval, capability, budget, model, memory, audit, or governance truth.
+
+Authoritative state changes append bounded, secret-free outbox intents in the
+same SQLite transaction. The dispatcher publishes them with deterministic
+BullMQ IDs and marks them delivered only after acceptance. At-least-once
+replay, duplicate jobs, Runtime restart, and pending delivery after a Redis
+outage are therefore safe because workers reload SQLite and use the existing
+admission and completion fences. Redis loss does not erase authoritative work;
+pending outbox rows are redispatched on Runtime startup. Queue configuration is
+disabled by default, credentials are never persisted or logged, and a
+misconfigured endpoint fails queue-backed orchestration closed.
+
+The pipeline engine, not BullMQ FlowProducer, owns stage activation, assignment,
+approvals, separation of duties, cancellation, and task completion. A successful
+fenced AgentRun completion validates its exact current-stage binding and
+requests the next stage through the outbox. Approval stages stop at
+`awaiting_approval`; QA is not scheduled until the approval transition commits.
+
 ### Generic pipeline authority
 
 The pipeline engine belongs to the domain/application side of AI Office.

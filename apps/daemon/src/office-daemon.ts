@@ -26,6 +26,7 @@ export interface PersistentRuntimeHostOptions {
   events: RecordAuditEvent;
   now?: () => Date;
   onStopped?: () => void;
+  onStarting?: () => Promise<void>;
   onStopping?: () => Promise<void>;
   commandTimeoutMs?: number;
   /**
@@ -35,6 +36,7 @@ export interface PersistentRuntimeHostOptions {
   queryApi?: QueryApi;
   /** Publishes invalidation hints after a command completes. */
   queryEvents?: OperationalEventBus;
+  queueStatus?: () => Promise<NonNullable<DaemonHealthResponse["queue"]>>;
 }
 
 function json(value: unknown, status = 200): Response {
@@ -73,6 +75,7 @@ export class PersistentRuntimeHost {
           this.route(request, () => host.timeout(request, 0)),
       });
       chmodSync(this.options.socketPath, 0o600);
+      await this.options.onStarting?.();
       await this.options.events.execute({
         eventType: "daemon.started",
         actorType: "daemon",
@@ -120,6 +123,9 @@ export class PersistentRuntimeHost {
         protocolVersion: daemonProtocolVersion,
         status: "ok",
         startedAt: this.startedAt?.toISOString() ?? this.now().toISOString(),
+        ...(this.options.queueStatus === undefined
+          ? {}
+          : { queue: await this.options.queueStatus() }),
       };
       return json(response);
     }

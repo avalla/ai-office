@@ -1,5 +1,5 @@
 id: reviewer
-role_key: code-reviewer
+role_key: reviewer
 role: code-reviewer
 version: 1
 capabilities:

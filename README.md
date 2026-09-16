@@ -46,10 +46,35 @@ Runs without an action intent require an explicitly selected worker or simulatio
 `run:tick --worker claude` invokes a real, tool-free Claude Code worker for
 bounded task analysis and drafted content; `--simulate` selects a test run.
 See [agent runtime](docs/development/agent-runtime.md) for setup and limits.
+
+### Optional queue-backed orchestration
+
+The Runtime can dispatch enforced pipeline stages automatically through BullMQ
+backed by Redis or Valkey. It is disabled by default and AI Office never installs
+Redis or Valkey. Configure the Runtime host explicitly:
+
+```bash
+export AI_OFFICE_QUEUE_PROVIDER=bullmq
+export AI_OFFICE_REDIS_URL=redis://127.0.0.1:6379
+```
+
+For Linux, install Redis/Valkey with the distribution package manager; for
+macOS, install it with Homebrew (for example `brew install redis`). Start and
+secure that host-local service according to its own documentation. Do not put
+credentials in project files or command output. A credential-bearing URL is
+accepted only in the Runtime host environment and is never written to SQLite,
+audit, portable state, dashboard output, or queue payloads.
+
+BullMQ delivers disposable wake-up jobs. SQLite remains authoritative through
+the transactional outbox, deterministic job IDs, admission fences, and
+approval transitions. The daemon health response includes queue configuration,
+Redis reachability, pending outbox work, and worker status. See [ADR-0020](docs/adr/ADR-0020-durable-queue-driven-orchestration.md).
+
 Controlled runs can request or simulate an authorized connector action and return
 its action ID for inspection, approval, and execution. A real LLM tool loop and
-Git worktree manager are not implemented, so AI Office is not yet autonomous end
-to end.
+Git worktree manager are not implemented, but configured queue-backed runs can
+progress the enforced pipeline automatically through the existing bounded worker
+and approval gates.
 
 ## How it works
 
