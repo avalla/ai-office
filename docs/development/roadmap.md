@@ -883,6 +883,42 @@ Exit direction:
 - the engine contains no GitHub-, Codex-, Claude-, Gemini-, or OpenCode-specific
   workflow logic.
 
+## M11.5 — Durable Queue-Driven Agent Orchestration
+
+Status: implemented.
+
+Goal: make an enforced PipelineRun progress through the existing authoritative
+agent and approval lifecycle without requiring repeated `run:tick` commands.
+
+Implemented:
+
+- provider-neutral application queue and outbox ports with an optional BullMQ
+  adapter for host-local Redis/Valkey;
+- additive SQLite transactional outbox with bounded secret-free payloads,
+  deterministic delivery IDs, at-least-once replay, and sanitized queue health;
+- Runtime-owned dispatcher and logical orchestration/AgentRun consumers with
+  graceful shutdown and pending-intent restart recovery;
+- manifest-driven deterministic agent assignment, exact canonical role identity,
+  separation checks, and SQLite validation on every delivery;
+- persisted/versioned role guidance loaded during `agent:sync`, pinned to each
+  AgentRun, included in execution provenance, and injected separately from
+  generic Runtime constraints;
+- fenced AgentRun completion bridged to exact current PipelineStage completion,
+  approval blocking, automatic next-stage orchestration, and terminal task
+  completion.
+
+BullMQ is delivery only: it is not a workflow engine, authority store, approval
+store, model router, capability grant, memory store, or audit log. Retry policy
+is application-owned and excludes ambiguous effects, stale fences, validation
+failures, and approval decisions. CairnKeep remains read-only.
+
+Redis/Valkey is an external operator prerequisite and is never installed by AI
+Office. Redis data loss is recoverable for pending SQLite outbox intent; a
+completed authoritative run is a safe no-op when a stale job is replayed.
+Multi-host scheduling, stronger hostile-local-process security, structured stage
+artifacts, branching/cycles, autonomous memory promotion, and true tool-loop or
+worktree execution remain future work under M11/M12/M14.
+
 ## M12 — Worker runtime adapters and organization profiles
 
 Status: future.
@@ -1319,7 +1355,7 @@ M6E office definitions + M6 policy/actions + M8.5 context
                   |             |
                   v             v
        M12 Runtime adapters   M13 GitHub connector
-                  \             /
+                               /
                    v           v
               M14 Software development pipelines
                          |

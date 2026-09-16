@@ -15,10 +15,10 @@ describe("bundled agent catalog contract", () => {
     expect(
       core.map(({ definition }) => [definition.id, definition.roleKey]),
     ).toEqual([
-      ["architect", "software-architect"],
-      ["developer", "software-developer"],
-      ["qa", "quality-assurance"],
-      ["reviewer", "code-reviewer"],
+      ["architect", "architect"],
+      ["developer", "developer"],
+      ["qa", "qa"],
+      ["reviewer", "reviewer"],
     ]);
   });
 

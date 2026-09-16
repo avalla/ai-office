@@ -37,12 +37,15 @@ interface RoleRow {
   model_policy: string;
   limits_json: string;
   source_path: string;
+  guidance_text: string;
+  guidance_version: number;
   created_at: string;
   updated_at: string;
 }
 interface RunRow {
   execution_json: string | null;
   model_routing_json: string | null;
+  role_guidance_json: string | null;
   id: string;
   project_id: string;
   task_id: string;
@@ -93,6 +96,14 @@ const run = (row: RunRow): AgentRun =>
             JSON.parse(row.model_routing_json) as unknown,
           ),
         }),
+    ...(row.role_guidance_json == null
+      ? {}
+      : {
+          roleGuidance: JSON.parse(row.role_guidance_json) as {
+            version: number;
+            text: string;
+          },
+        }),
     ...(row.action_intent_json === null
       ? {}
       : {
@@ -116,8 +127,9 @@ const run = (row: RunRow): AgentRun =>
       : { completedAt: new Date(row.completed_at) }),
     updatedAt: new Date(row.updated_at),
   });
-const runColumns =
+const legacyRunColumns =
   "id, project_id, task_id, agent_id, action_intent_json, pipeline_run_id, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at, execution_json, model_routing_json";
+const currentRunColumns = `${legacyRunColumns}, role_guidance_json`;
 
 function parseStoredStringArray(json: string, field: string): string[] {
   const value = JSON.parse(json) as unknown;
@@ -169,7 +181,30 @@ function parseStoredRoleLimits(json: string): RoleLimits {
 }
 
 export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
-  constructor(private readonly database: Database) {}
+  private readonly hasRoleGuidance: boolean;
+  private readonly hasRunGuidance: boolean;
+  private readonly runColumns: string;
+
+  constructor(private readonly database: Database) {
+    const roleColumns = new Set(
+      database
+        .query<{ name: string }, []>("PRAGMA table_info(role)")
+        .all()
+        .map((row) => row.name),
+    );
+    const runColumns = new Set(
+      database
+        .query<{ name: string }, []>("PRAGMA table_info(agent_run)")
+        .all()
+        .map((row) => row.name),
+    );
+    this.hasRoleGuidance =
+      roleColumns.has("guidance_text") && roleColumns.has("guidance_version");
+    this.hasRunGuidance = runColumns.has("role_guidance_json");
+    this.runColumns = this.hasRunGuidance
+      ? currentRunColumns
+      : legacyRunColumns;
+  }
   async executionOwner(runId: string): Promise<string | null> {
     return (
       this.database
@@ -195,7 +230,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
     return this.database.transaction(() => {
       const current = this.database
         .query<RunRow, [string]>(
-          `SELECT ${runColumns} FROM agent_run WHERE id=? AND status='queued'`,
+          `SELECT ${this.runColumns} FROM agent_run WHERE id=? AND status='queued'`,
         )
         .get(input.runId);
       if (current === null) return null;
@@ -277,33 +312,49 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
   }
   async saveRole(role: Role): Promise<void> {
     const v = role.snapshot();
+    const base = [
+      v.id,
+      v.projectId,
+      v.key,
+      v.name,
+      v.version,
+      JSON.stringify(v.capabilities),
+      JSON.stringify(v.tools),
+      v.modelPolicy,
+      JSON.stringify({
+        maxIterations: v.limits.maxIterations,
+        maxCostMicros: v.limits.maxCostMicros.toString(),
+        timeoutSeconds: v.limits.timeoutSeconds,
+      }),
+      v.sourcePath,
+    ];
+    if (this.hasRoleGuidance) {
+      this.database
+        .prepare(
+          `INSERT INTO role(id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy, limits_json, source_path, guidance_text, guidance_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, role_key) DO UPDATE SET name=excluded.name, version=excluded.version, capabilities_json=excluded.capabilities_json, tools_json=excluded.tools_json, model_policy=excluded.model_policy, limits_json=excluded.limits_json, source_path=excluded.source_path, guidance_text=excluded.guidance_text, guidance_version=excluded.guidance_version, updated_at=excluded.updated_at`,
+        )
+        .run(
+          ...base,
+          v.guidanceText ?? "",
+          v.guidanceVersion ?? 1,
+          v.createdAt.toISOString(),
+          v.updatedAt.toISOString(),
+        );
+      return;
+    }
     this.database
       .prepare(
         `INSERT INTO role(id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy, limits_json, source_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, role_key) DO UPDATE SET name=excluded.name, version=excluded.version, capabilities_json=excluded.capabilities_json, tools_json=excluded.tools_json, model_policy=excluded.model_policy, limits_json=excluded.limits_json, source_path=excluded.source_path, updated_at=excluded.updated_at`,
       )
-      .run(
-        v.id,
-        v.projectId,
-        v.key,
-        v.name,
-        v.version,
-        JSON.stringify(v.capabilities),
-        JSON.stringify(v.tools),
-        v.modelPolicy,
-        JSON.stringify({
-          maxIterations: v.limits.maxIterations,
-          maxCostMicros: v.limits.maxCostMicros.toString(),
-          timeoutSeconds: v.limits.timeoutSeconds,
-        }),
-        v.sourcePath,
-        v.createdAt.toISOString(),
-        v.updatedAt.toISOString(),
-      );
+      .run(...base, v.createdAt.toISOString(), v.updatedAt.toISOString());
   }
   async findRole(id: string, projectId: string): Promise<Role | null> {
+    const roleColumns = this.hasRoleGuidance
+      ? ", guidance_text, guidance_version"
+      : "";
     const row = this.database
       .query<RoleRow, [string, string]>(
-        "SELECT id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy, limits_json, source_path, created_at, updated_at FROM role WHERE id=? AND project_id=?",
+        `SELECT id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy, limits_json, source_path${roleColumns}, created_at, updated_at FROM role WHERE id=? AND project_id=?`,
       )
       .get(id, projectId);
     if (row === null) return null;
@@ -321,6 +372,12 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
       modelPolicy: row.model_policy,
       limits: parseStoredRoleLimits(row.limits_json),
       sourcePath: row.source_path,
+      ...(this.hasRoleGuidance && row.guidance_text !== ""
+        ? { guidanceText: row.guidance_text }
+        : {}),
+      ...(this.hasRoleGuidance
+        ? { guidanceVersion: row.guidance_version }
+        : {}),
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     });
@@ -364,29 +421,37 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
           "SELECT status FROM agent_run WHERE id=?",
         )
         .get(v.id);
+      const values = [
+        v.id,
+        v.projectId,
+        v.taskId,
+        v.agentId,
+        v.actionIntent === undefined ? null : JSON.stringify(v.actionIntent),
+        v.pipelineRunId ?? null,
+        v.status,
+        v.worktreePath ?? null,
+        v.result === undefined ? null : JSON.stringify(v.result),
+        v.error === undefined ? null : JSON.stringify(v.error),
+        v.createdAt.toISOString(),
+        v.startedAt?.toISOString() ?? null,
+        v.completedAt?.toISOString() ?? null,
+        v.updatedAt.toISOString(),
+        v.execution === undefined ? null : JSON.stringify(v.execution),
+        // Inserted once; the conflict update never rewrites immutable inputs.
+        v.modelRouting === undefined ? null : JSON.stringify(v.modelRouting),
+        ...(this.hasRunGuidance
+          ? [
+              v.roleGuidance === undefined
+                ? null
+                : JSON.stringify(v.roleGuidance),
+            ]
+          : []),
+      ];
       this.database
         .prepare(
-          `INSERT INTO agent_run(${runColumns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at, execution_json=excluded.execution_json`,
+          `INSERT INTO agent_run(${this.runColumns}) VALUES (${values.map(() => "?").join(", ")}) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at, execution_json=excluded.execution_json`,
         )
-        .run(
-          v.id,
-          v.projectId,
-          v.taskId,
-          v.agentId,
-          v.actionIntent === undefined ? null : JSON.stringify(v.actionIntent),
-          v.pipelineRunId ?? null,
-          v.status,
-          v.worktreePath ?? null,
-          v.result === undefined ? null : JSON.stringify(v.result),
-          v.error === undefined ? null : JSON.stringify(v.error),
-          v.createdAt.toISOString(),
-          v.startedAt?.toISOString() ?? null,
-          v.completedAt?.toISOString() ?? null,
-          v.updatedAt.toISOString(),
-          v.execution === undefined ? null : JSON.stringify(v.execution),
-          // Inserted once; the conflict update never rewrites the routing record.
-          v.modelRouting === undefined ? null : JSON.stringify(v.modelRouting),
-        );
+        .run(...values);
       if (previous?.status !== v.status)
         this.database
           .prepare(
@@ -516,14 +581,16 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
   }
   async findRun(id: string): Promise<AgentRun | null> {
     const row = this.database
-      .query<RunRow, [string]>(`SELECT ${runColumns} FROM agent_run WHERE id=?`)
+      .query<RunRow, [string]>(
+        `SELECT ${this.runColumns} FROM agent_run WHERE id=?`,
+      )
       .get(id);
     return row === null ? null : run(row);
   }
   async listRuns(projectId: string): Promise<AgentRun[]> {
     return this.database
       .query<RunRow, [string]>(
-        `SELECT ${runColumns} FROM agent_run WHERE project_id=? ORDER BY created_at, id`,
+        `SELECT ${this.runColumns} FROM agent_run WHERE project_id=? ORDER BY created_at, id`,
       )
       .all(projectId)
       .map(run);
@@ -531,7 +598,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
   async listQueuedRuns(projectId: string, limit: number): Promise<AgentRun[]> {
     return this.database
       .query<RunRow, [string, number]>(
-        `SELECT ${runColumns} FROM agent_run WHERE project_id=? AND status='queued' ORDER BY created_at, id LIMIT ?`,
+        `SELECT ${this.runColumns} FROM agent_run WHERE project_id=? AND status='queued' ORDER BY created_at, id LIMIT ?`,
       )
       .all(projectId, limit)
       .map(run);
@@ -539,7 +606,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
   async listRecoverableRuns(projectId: string): Promise<AgentRun[]> {
     return this.database
       .query<RunRow, [string]>(
-        `SELECT ${runColumns} FROM agent_run WHERE project_id=? AND status IN ('preparing','running','reviewing') ORDER BY updated_at,id`,
+        `SELECT ${this.runColumns} FROM agent_run WHERE project_id=? AND status IN ('preparing','running','reviewing') ORDER BY updated_at,id`,
       )
       .all(projectId)
       .map(run);

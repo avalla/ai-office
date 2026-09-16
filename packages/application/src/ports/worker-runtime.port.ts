@@ -34,6 +34,11 @@ export interface WorkerContext {
     roleKey: string;
     roleVersion: number;
   };
+  /** Captured from the synchronized role and pinned on AgentRun. */
+  roleGuidance?: {
+    version: number;
+    text: string;
+  };
   /**
    * The run's persisted model selection. Omitted for unrouted and historical
    * runs, so their context and input digest stay byte-identical.
@@ -161,9 +166,7 @@ export interface WorkerRuntime {
    * including its execution parameters. An adapter without this method cannot
    * execute routed runs; it is never allowed to substitute its own model.
    */
-  supportsModel?(
-    selection: AgentRunModelSelection,
-  ):
+  supportsModel?(selection: AgentRunModelSelection):
     | { supported: true }
     | {
         supported: false;

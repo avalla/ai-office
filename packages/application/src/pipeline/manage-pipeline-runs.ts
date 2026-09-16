@@ -17,6 +17,7 @@ import type { OfficeManifestRepository } from "../ports/office-manifest-reposito
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import type { JobOutboxRepository } from "../ports/job-outbox-repository.port.ts";
 import type {
   AgentExecutionPrincipal,
   OperatorPrincipal,
@@ -42,6 +43,7 @@ export class ManagePipelineRuns {
     private readonly ids: IdGenerator,
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
+    private readonly outbox?: JobOutboxRepository,
   ) {}
 
   async start(input: {
@@ -97,6 +99,7 @@ export class ManagePipelineRuns {
       await this.event(run, "pipeline.stage_activated", input.principal, {
         stageId: run.currentStage()!.stageId,
       });
+      await this.enqueueCurrentStage(run);
     });
     return run;
   }
@@ -147,7 +150,11 @@ export class ManagePipelineRuns {
       input.expectedPipelineRunId !== agent.pipelineRunId
     )
       throw new PipelineActorUnauthorizedError("stage completion");
-    if (!(agent.status === "running" || agent.status === "reviewing"))
+    if (!(
+      agent.status === "completed" ||
+      agent.status === "running" ||
+      agent.status === "reviewing"
+    ))
       throw new PipelineActorUnauthorizedError("stage completion");
     const principal: AgentExecutionPrincipal = {
       kind: "agent",
@@ -162,7 +169,16 @@ export class ManagePipelineRuns {
       const stage = run.currentStage();
       if (snapshot.taskId !== principal.taskId || stage === null)
         throw new PipelineActorUnauthorizedError("stage completion");
+      const assignedAgent = await this.agents.findAgent(principal.agentId);
+      const assignedRole =
+        assignedAgent === null
+          ? null
+          : await this.agents.findRole(assignedAgent.roleId, input.projectId);
       if (
+        assignedAgent === null ||
+        assignedAgent.projectId !== input.projectId ||
+        assignedRole === null ||
+        assignedRole.snapshot().key !== stage.roleId ||
         stage.status !== "active" ||
         stage.assignedAgentId !== principal.agentId ||
         (stage.assignedAt !== undefined &&
@@ -188,6 +204,11 @@ export class ManagePipelineRuns {
         await this.event(run, "pipeline.stage_activated", principal, {
           stageId: after.stages[after.currentStageIndex]!.stageId,
         });
+      if (
+        after.status === "active" &&
+        after.currentStageIndex !== before.currentStageIndex
+      )
+        await this.enqueueCurrentStage(run);
     });
   }
 
@@ -362,6 +383,30 @@ export class ManagePipelineRuns {
       await this.event(run, "pipeline.stage_activated", actor, {
         stageId: after.stages[after.currentStageIndex]!.stageId,
       });
+    if (after.status === "active") await this.enqueueCurrentStage(run);
+  }
+
+  private async enqueueCurrentStage(run: PipelineRun): Promise<void> {
+    const stage = run.currentStage();
+    if (
+      this.outbox === undefined ||
+      stage === null ||
+      stage.status !== "active"
+    )
+      return;
+    const snapshot = run.snapshot();
+    const now = this.clock.now();
+    await this.outbox.append({
+      id: `outbox:pipeline:${snapshot.id}:${stage.id}:${snapshot.version}`,
+      projectId: snapshot.projectId,
+      jobType: "orchestrate_pipeline",
+      aggregateType: "pipeline_run",
+      aggregateId: snapshot.id,
+      dedupeKey: `pipeline:${snapshot.id}:stage:${stage.id}:v${snapshot.version}`,
+      payload: { projectId: snapshot.projectId, pipelineRunId: snapshot.id },
+      availableAt: now,
+      createdAt: now,
+    });
   }
 
   private async syncTaskTerminal(run: PipelineRun): Promise<void> {

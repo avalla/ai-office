@@ -99,6 +99,7 @@ import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/r
 import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
+import { SqliteJobOutboxRepository } from "@ai-office/storage-sqlite/repositories/sqlite-job-outbox.repository.ts";
 import { SqliteMemoryReferenceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-memory-reference.repository.ts";
 import { SqliteProjectMemoryProvenanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-memory-provenance.repository.ts";
 import {
@@ -215,6 +216,7 @@ const commands = [
   "pipeline:assign",
   "pipeline:transition",
   "pipeline:override",
+  "pipeline:orchestrate",
   "client:detect",
   "client:inspect",
   "client:plan",
@@ -561,6 +563,7 @@ export async function executeRuntimeCommand(
         options.modelProviders ?? new EnvironmentModelProviderCatalog({}),
       gatewayProviders:
         options.gatewayProviders ?? new EnvironmentGatewayModelProviders({}),
+      jobOutbox: new SqliteJobOutboxRepository(database),
       ...(globalDatabase === null
         ? {}
         : { memory: new SqliteGlobalMemoryRepository(globalDatabase) }),

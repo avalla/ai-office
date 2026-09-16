@@ -38,6 +38,8 @@ export class SyncAgentDefinitions {
             modelPolicy: item.definition.modelPolicy,
             limits: item.definition.limits,
             sourcePath: item.sourcePath,
+            guidanceText: item.definition.roleGuidance,
+            guidanceVersion: item.definition.version,
             now,
           }),
         );

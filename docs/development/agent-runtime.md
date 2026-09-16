@@ -21,11 +21,14 @@ pipeline without an office revision. A revision is required for pipeline routing
 Sync upserts definitions: it neither removes nor disables previously synchronized
 specialists when only the core set is synchronized again. It does not grant
 controlled-action authority or change the office manifest or default pipelines.
-Companion `system.md` files describe each role's method, handoff, and boundaries;
-they are not loaded, persisted, versioned, or injected by the Runtime. Repository
-contract tests validate their presence and sections without making them execution
-inputs. See the profile guide for synchronization commands and the pre-existing
-manifest role ID versus Runtime role key compatibility limitation.
+Companion `system.md` files are trusted role guidance inputs. `agent:sync` loads,
+validates, bounds, and persists their text with a version in the synchronized
+role. Each scheduled `AgentRun` pins that guidance; changing a source file after
+scheduling cannot change the run. The worker receives generic Runtime constraints
+and the pinned role guidance as separate system sections. Guidance is bounded and
+never copied into audit or queue payloads. The canonical role key is the manifest
+role ID (`architect`, `developer`, `reviewer`, `qa`); synchronization fails closed
+when a catalog uses an incompatible key.
 
 `run:schedule` validates project, runnable task, and enabled agent, creates a queued run,
 and acquires the task lock in one short transaction. In that transaction it
@@ -137,9 +140,10 @@ provider failures never fail the run. Preparation honors the run's AbortSignal,
 including direct `WorkerAgentExecutor.execute`, so cancellation during retrieval
 cancels the run before any worker starts. A run that already has retrieval
 provenance is never prepared again; see [project memory](project-memory.md).
-It receives no repository path, resource tools, role source files, skills or
-`system.md` prompt. Tool declarations in a role do not grant tools to this
-adapter. Filesystem reads/writes, shell tests, commits and connectors are not
+It receives no repository path, resource tools, role source files, or skills.
+The trusted, pinned role guidance is injected separately from the generic Runtime
+system constraints; task text remains data in the user/task context. Tool
+declarations in a role do not grant tools to this adapter. Filesystem reads/writes, shell tests, commits and connectors are not
 part of this worker contract.
 
 The application pins adapter/version and the SHA-256 of this bounded context
