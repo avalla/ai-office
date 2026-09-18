@@ -1098,6 +1098,151 @@ Core capabilities to assess:
 - retention, redaction, confidentiality, export, and audit requirements exposed
   through explicit contracts rather than hidden in prompts.
 
+
+### Product editions and deployment profiles
+
+M15 should preserve one shared core while allowing distinct deployment
+profiles. `Lite` and `Pro` are packaging and infrastructure profiles, not
+separate product forks and not duplicated domain implementations.
+
+Candidate direction:
+
+```text
+AI Office Lite
+  - local-first, single-user
+  - SQLite authority
+  - local filesystem artifacts
+  - local Runtime / CLI / dashboard
+
+AI Office Pro
+  - shared organization deployment
+  - Supabase-backed PostgreSQL authority
+  - Supabase Auth, Storage, RLS, and Realtime where appropriate
+  - multi-user organization / site / department boundaries
+  - domain packs and external-system integrations
+```
+
+The orchestration, capability, approval, provenance, audit, agent, task, and
+pipeline semantics must remain common to both profiles. Product packaging must
+not introduce edition-specific policy branches throughout the core. Optional
+capabilities should instead compose through explicit modules and ports.
+
+Portable project state should remain a migration boundary between local and
+shared deployments. A future Lite-to-Pro migration must preserve compatible
+project state without transferring machine-local capability grants, action
+approvals, secrets, or other non-portable authority.
+
+Supabase is the preferred candidate data platform for Pro because it combines
+PostgreSQL, authentication, object storage, RLS, and realtime facilities behind
+one operational platform. This direction is not current implementation truth and
+requires an ADR before replacing SQLite authority in any deployed Runtime.
+
+### Manufacturing reference vertical
+
+Manufacturing is a reference operational vertical alongside the legal design
+probe. Legal stresses provenance, evidence, professional approval, and
+confidentiality; manufacturing stresses event-driven orchestration,
+departmental boundaries, high-volume operational context, physical-world side
+effects, and integration with systems of record.
+
+The manufacturing vertical should be able to model domain context such as:
+
+- organization, site, department, work center, production line, and machine;
+- product, material, BOM, routing, production order, operation, batch, and lot;
+- warehouse, inventory, stock movement, shipment, supplier, and purchasing
+  context;
+- quality checks, non-conformities, scrap, CAPA, and maintenance events;
+- commercial, accounting, logistics, and planning relationships needed to
+  coordinate work across departments.
+
+The first implementation direction should focus on exception management rather
+than direct machine control. Candidate end-to-end scenarios include:
+
+1. delayed production order;
+2. material shortage affecting an order;
+3. abnormal scrap or quality event.
+
+AI Office should orchestrate analysis, task creation, assignment, escalation,
+approval, and controlled actions while ERP, MES, WMS, QMS, CMMS, PLC, and other
+industrial systems remain authoritative for their own operational data and
+execution responsibilities.
+
+Direct model-to-machine mutation is outside the intended boundary. Physical or
+safety-relevant actions must pass through deterministic services, capability
+policy, execution preconditions, and human approval where required.
+
+### Domain Store and canonical operational model
+
+Pro deployments should assess a domain-specific operational store behind a
+generic Domain Provider boundary. The domain store is not a replacement ERP,
+MES, WMS, QMS, or CMMS. It is a canonical, queryable context layer that can
+normalize external identities and relationships while preserving source-system
+ownership and provenance.
+
+For a Supabase-backed Pro deployment, candidate schema boundaries are:
+
+```text
+core.*
+manufacturing.*
+integration.*
+audit.*
+```
+
+The manufacturing store may contain normalized entities and event projections,
+while source systems remain authoritative. High-frequency telemetry should not
+be copied blindly into the AI Office authority database; event buses,
+historians, or time-series systems remain appropriate for machine-scale data.
+
+The generic application boundary should support operations conceptually similar
+to:
+
+```text
+DomainProvider
+  - getEntity(reference)
+  - query(query)
+  - getDocuments(reference)
+  - getEvents(reference)
+```
+
+Agents should consume domain data through this boundary, never through direct
+database credentials or unrestricted SQL.
+
+Shared deployments should assess first-class organization structure without
+forcing it into software-project vocabulary:
+
+```text
+Organization
+  -> Site
+    -> Department
+      -> Team
+        -> Role / Agent
+```
+
+Department and site scope should compose with the existing deny-by-default
+capability system and future authenticated user identity. Supabase RLS may
+enforce storage visibility, but it does not replace AI Office capability policy
+or controlled-action authorization.
+
+Manufacturing integrations should favor event-driven ingestion and typed
+connectors:
+
+```text
+ERP / MES / WMS / QMS / CMMS / OPC-UA / MQTT
+                    |
+                    v
+          integration / event layer
+                    |
+          +---------+---------+
+          |                   |
+          v                   v
+    domain projections   AI Office triggers
+```
+
+Supabase Realtime may support user-facing synchronization and operational views,
+but it is not assumed to be the industrial event bus. MQTT, NATS, Kafka, or
+another dedicated transport may be more appropriate depending on deployment
+scale and latency requirements.
+
 ### Legal reference vertical
 
 Legal work is the reference second vertical for testing the domain-neutral
