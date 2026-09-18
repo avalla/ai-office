@@ -10,8 +10,8 @@ The reported version identifies the CLI distribution, not a running daemon.
 ## Source revision and displayed version
 
 The product version says which release line the code belongs to; a source
-revision says which exact code is running. They are reported together, never
-merged into `package.json`:
+revision says which commit the running source checkout is based on (its `HEAD`).
+They are reported together, never merged into `package.json`:
 
 ```text
 Product version:
@@ -27,7 +27,8 @@ Displayed source-linked version:
 `ai-office --version` and `-V` print the displayed version: the product version
 plus [SemVer build metadata](https://semver.org/#spec-item-10)
 `+git.<first 12 characters of the revision>`. Build metadata identifies the
-running code, does not change SemVer precedence, and is not a protocol, schema,
+`HEAD` revision of the running source checkout, not necessarily the exact bytes
+executing (see dirty state below), does not change SemVer precedence, and is not a protocol, schema,
 migration, or profile version. It is deliberately not a prerelease
 (`0.1.0-6fe106c41945` would sort below `0.1.0`). If the revision is not
 authoritatively known, the plain product version is printed with exit code `0`;
@@ -71,10 +72,19 @@ source user-runtime opt-in. HEAD resolution, revision validation, 12-character
 formatting, and tracked dirty state are the same code `ai-office update` uses,
 so the two commands cannot disagree about the checkout.
 
-Dirty means tracked changes, staged or not; untracked files do not count. The
-dirty state is reported separately and is not part of the compact version: the
-compact version is a deterministic identity of the revision, while a working
-tree can change without changing it. Use `ai-office version` to see it.
+Dirty means tracked changes, staged or not; untracked files do not count.
+`0.1.0+git.<revision>` identifies the checkout's base (`HEAD`) revision only.
+`Dirty: yes` means the running source tree is not byte-equivalent to that
+commit, so the executing files can differ from `HEAD`. The dirty state is
+reported separately and is not part of the compact version (no `.dirty`
+suffix): the compact version is a deterministic identity of the revision, while
+a working tree can change without changing it. Use `ai-office version` to see
+it.
+
+The distribution root is the only source-identity provenance. A library caller
+of the reusable client that supplies no distribution root, such as one that only
+knows a project root, gets the plain product version and `null` revision,
+dirty and distribution; a managed user project is never inspected.
 
 A future packaged distribution supplies its version, revision, and
 distribution kind from build-time metadata instead of Git inspection; the

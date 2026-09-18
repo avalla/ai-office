@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Report the running source revision. `ai-office --version` and `-V` now print
+- Report the running source checkout's `HEAD` revision. `ai-office --version` and `-V` now print
   SemVer build metadata for a source-linked checkout, for example
   `0.1.0+git.6fe106c41945` (12-character revision), and still print the plain
   product version with exit code `0` when the revision cannot be determined

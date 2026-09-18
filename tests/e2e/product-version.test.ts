@@ -261,6 +261,62 @@ test("product version stays local in both launchers and the reusable client", as
   }
 });
 
+test("projectRoot is never source-identity provenance; only distributionRoot is", async () => {
+  const root = temporaryRoot();
+  const { path: distribution, head: distributionHead } = sourceCheckout(root);
+  const userProject = join(root, "user-project");
+  const userProjectHead = repositoryWithCommit(userProject);
+  expect(userProjectHead).not.toBe(distributionHead);
+
+  const run = async (args: string[], distributionRoot?: string) => {
+    const output: string[] = [];
+    const code = await runRuntimeCli(args, {
+      projectRoot: userProject,
+      workingDirectory: userProject,
+      ...(distributionRoot === undefined ? {} : { distributionRoot }),
+      io: {
+        stdout: (line) => output.push(line),
+        stderr: () => {
+          throw new Error("Unexpected stderr");
+        },
+      },
+      get runtimePaths(): never {
+        throw new Error("Runtime paths accessed");
+      },
+      get runtimeClient(): never {
+        throw new Error("Runtime client accessed");
+      },
+    });
+    return { code, output };
+  };
+
+  // No distribution root: the user project's SHA must not leak into the version.
+  for (const flag of ["--version", "-V"])
+    expect(await run([flag])).toEqual({ code: 0, output: [productVersion] });
+  const unknown = await run(["version", "--json"]);
+  expect(unknown.code).toBe(0);
+  expect(JSON.parse(unknown.output.join("\n"))).toMatchObject({
+    version: productVersion,
+    displayVersion: productVersion,
+    revision: null,
+    dirty: null,
+    distribution: null,
+  });
+
+  // An explicit distribution root reports only its own revision.
+  expect(await run(["--version"], distribution)).toEqual({
+    code: 0,
+    output: [`${productVersion}+git.${distributionHead.slice(0, 12)}`],
+  });
+  const known = await run(["version", "--json"], distribution);
+  expect(JSON.parse(known.output.join("\n"))).toMatchObject({
+    revision: distributionHead,
+    dirty: false,
+    distribution: "source-linked",
+  });
+  expect(known.output.join("\n")).not.toContain(userProjectHead);
+});
+
 describe("source-linked revision reporting", () => {
   test("--version and -V append the 12-character revision from any working directory", async () => {
     const root = temporaryRoot();

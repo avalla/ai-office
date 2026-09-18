@@ -71,6 +71,18 @@ describe("revision formatting", () => {
       expect(isGitRevision(bad)).toBe(false);
   });
 
+  test("accepts only the exact SHA-1 and SHA-256 object ID lengths", () => {
+    for (let length = 0; length <= 70; length += 1) {
+      expect(isGitRevision("a".repeat(length))).toBe(
+        length === 40 || length === 64,
+      );
+    }
+    for (const length of [41, 50, 63]) {
+      expect(isGitRevision("a".repeat(length))).toBe(false);
+      expect(displayVersion("0.1.0", "a".repeat(length))).toBe("0.1.0");
+    }
+  });
+
   test("compact form is the first 12 characters as SemVer build metadata", () => {
     expect(shortRevision(sha1)).toBe("6fe106c41945");
     expect(displayVersion("0.1.0", sha1)).toBe("0.1.0+git.6fe106c41945");

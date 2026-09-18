@@ -27,9 +27,9 @@ export interface DistributionIdentity {
   distribution: DistributionKind | null;
 }
 
-/** The single definition of a Git object name (SHA-1 or SHA-256). */
+/** The single definition of a Git object name: a full SHA-1 or SHA-256 ID. */
 export function isGitRevision(value: string): boolean {
-  return /^[0-9a-f]{40,64}$/.test(value);
+  return /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value);
 }
 
 /** Compact revision used in build metadata and human-readable messages. */

@@ -250,10 +250,13 @@ export async function runRuntimeCli(
 ): Promise<number> {
   const io = options.io ?? defaultIo;
   if (isLocalVersionInvocation(args)) {
-    const sourceRoot = options.distributionRoot ?? options.projectRoot;
+    // Only the program distribution root is source-identity provenance;
+    // projectRoot may be any user project and is never inspected for it.
     return runVersionCli(args, {
       io,
-      ...(sourceRoot === undefined ? {} : { distributionRoot: sourceRoot }),
+      ...(options.distributionRoot === undefined
+        ? {}
+        : { distributionRoot: options.distributionRoot }),
     });
   }
   if (isLocalHelpInvocation(args)) {
