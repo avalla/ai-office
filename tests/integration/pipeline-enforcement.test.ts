@@ -409,6 +409,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0031_cost_event_charge_basis.sql",
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
+      "0034_exact_pipeline_stage_bindings.sql",
     ]);
     expect(
       database

@@ -71,6 +71,7 @@ describe("project database migrations", () => {
       "0031_cost_event_charge_basis.sql",
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
+      "0034_exact_pipeline_stage_bindings.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -114,6 +115,7 @@ describe("project database migrations", () => {
       { version: "0031_cost_event_charge_basis.sql" },
       { version: "0032_job_outbox.sql" },
       { version: "0033_role_execution_guidance.sql" },
+      { version: "0034_exact_pipeline_stage_bindings.sql" },
     ]);
     database.close();
   });

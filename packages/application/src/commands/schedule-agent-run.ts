@@ -87,17 +87,6 @@ export class ScheduleAgentRun {
     const agent = await this.runtime.findAgent(input.agentId);
     if (agent === null || agent.projectId !== input.projectId || !agent.enabled)
       throw new AgentNotFoundError(input.agentId);
-    const pipeline = await this.pipelines?.findActiveByTask(
-      input.taskId,
-      input.projectId,
-    );
-    if (pipeline !== undefined && pipeline !== null) {
-      const stage = pipeline.currentStage();
-      if (stage?.status !== "active" || stage.assignedAgentId !== input.agentId)
-        throw new AgentNotFoundError(
-          `${input.agentId} is not assigned to the active pipeline stage`,
-        );
-    }
     const now = this.clock.now();
     const id = this.ids.generate();
     await this.transactions.run(async () => {
@@ -113,12 +102,30 @@ export class ScheduleAgentRun {
       const role = await this.runtime.findRole(current.roleId, input.projectId);
       if (role === null) throw new AgentNotFoundError(input.agentId);
       const roleState = role.snapshot();
+      const pipeline = await this.pipelines?.findActiveByTask(
+        input.taskId,
+        input.projectId,
+      );
+      const pipelineSnapshot = pipeline?.snapshot();
+      const stage = pipeline?.currentStage();
+      if (
+        pipelineSnapshot !== undefined &&
+        (stage?.status !== "active" || stage.assignedAgentId !== input.agentId)
+      )
+        throw new AgentNotFoundError(
+          `${input.agentId} is not assigned to the active pipeline stage`,
+        );
       const run = AgentRun.create({
         id,
         ...input,
-        ...(pipeline === undefined || pipeline === null
+        ...(pipelineSnapshot === undefined ||
+        stage === null ||
+        stage === undefined
           ? {}
-          : { pipelineRunId: pipeline.snapshot().id }),
+          : {
+              pipelineRunId: pipelineSnapshot.id,
+              pipelineStageRunId: stage.id,
+            }),
         ...(roleState.guidanceText === undefined ||
         roleState.guidanceText.trim() === ""
           ? {}
@@ -150,10 +157,16 @@ export class ScheduleAgentRun {
           jobType: "execute_agent_run",
           aggregateType: "agent_run",
           aggregateId: run.snapshot().id,
+          ...(run.snapshot().pipelineStageRunId === undefined
+            ? {}
+            : { pipelineStageRunId: run.snapshot().pipelineStageRunId }),
           dedupeKey: `agent-run:${run.snapshot().id}`,
           payload: {
             projectId: input.projectId,
             runId: run.snapshot().id,
+            ...(run.snapshot().pipelineStageRunId === undefined
+              ? {}
+              : { pipelineStageRunId: run.snapshot().pipelineStageRunId }),
           },
           availableAt: now,
           createdAt: now,

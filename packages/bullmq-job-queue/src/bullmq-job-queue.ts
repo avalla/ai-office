@@ -17,9 +17,19 @@ export const queueNames = {
   agentRuns: "ai-office-agent-runs",
 } as const;
 
-export function sanitizedRedisDiagnostic(error: unknown): string {
-  return error instanceof Error ? error.name : "Redis connection failed";
+export function sanitizedRedisDiagnostic(_error: unknown): string {
+  // Redis errors can contain a credential-bearing URL or server response.
+  return "Redis queue unavailable";
 }
+
+export const queueJobOptions = {
+  attempts: 3,
+  backoff: { type: "exponential" as const, delay: 250 },
+  removeOnComplete: { age: 86_400, count: 1_000 },
+  // Final retryable failures must release the deterministic ID so SQLite
+  // recovery can enqueue the still-authoritative queued work again.
+  removeOnFail: true,
+};
 
 function queueFor(job: QueueJob): string {
   return job.type === "execute_agent_run"
@@ -36,10 +46,16 @@ export class BullMqJobQueue implements JobQueue, JobQueueConsumer {
     this.redisUrl = redisUrl;
     const connection = { url: redisUrl } as QueueOptions["connection"];
     this.queues = new Map(
-      Object.values(queueNames).map((name) => [
-        name,
-        new Queue(name, { connection }),
-      ]),
+      Object.values(queueNames).map((name) => {
+        const queue = new Queue(name, { connection });
+        queue.on("error", (error) => {
+          console.error(
+            "Queue Redis diagnostic:",
+            sanitizedRedisDiagnostic(error),
+          );
+        });
+        return [name, queue];
+      }),
     );
   }
 
@@ -48,18 +64,22 @@ export class BullMqJobQueue implements JobQueue, JobQueueConsumer {
     if (queue === undefined) throw new Error("Queue is not configured");
     const result = await queue.add(job.type, job.payload, {
       jobId: job.jobId,
-      attempts: 1,
-      removeOnComplete: true,
-      removeOnFail: { age: 86_400, count: 1_000 },
+      ...queueJobOptions,
     });
     return { accepted: true, duplicate: result.id !== job.jobId };
   }
 
   async health(): Promise<"reachable" | "unreachable"> {
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("queue health timeout")), 1_000),
+    );
     try {
-      await Promise.all(
-        [...this.queues.values()].map((queue) => queue.getJobCounts()),
-      );
+      await Promise.race([
+        Promise.all(
+          [...this.queues.values()].map((queue) => queue.getJobCounts()),
+        ),
+        timeout,
+      ]);
       return "reachable";
     } catch {
       return "unreachable";
@@ -88,17 +108,30 @@ export class BullMqJobQueue implements JobQueue, JobQueueConsumer {
             payload === null ||
             Array.isArray(payload)
           )
-            throw new Error("Queue payload is invalid");
-          const disposition = await handler.process({
-            type,
-            jobId: String(job.id ?? ""),
-            payload: payload as Readonly<Record<string, CanonicalJsonValue>>,
-          });
+            return;
+          let disposition: Awaited<ReturnType<QueueJobHandler["process"]>>;
+          try {
+            disposition = await handler.process({
+              type,
+              jobId: String(job.id ?? ""),
+              payload: payload as Readonly<Record<string, CanonicalJsonValue>>,
+            });
+          } catch {
+            // An unexpected handler failure is ambiguous at the delivery
+            // boundary; do not turn it into an automatic duplicate attempt.
+            return;
+          }
           if (disposition === "retryable")
             throw new Error("Queue work is retryable");
         },
         { connection: { url: this.redisUrl } as QueueOptions["connection"] },
       );
+      worker.on("error", (error) => {
+        console.error(
+          "Queue Redis diagnostic:",
+          sanitizedRedisDiagnostic(error),
+        );
+      });
       this.workers.push(worker);
     }
   }

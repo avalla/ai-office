@@ -6,6 +6,7 @@ export interface JobOutboxRecord {
   jobType: QueueJobType;
   aggregateType: "pipeline_run" | "agent_run";
   aggregateId: string;
+  pipelineStageRunId?: string;
   dedupeKey: string;
   payload: Readonly<Record<string, unknown>>;
   availableAt: Date;
@@ -21,6 +22,7 @@ export interface JobOutboxRepository {
     jobType: QueueJobType;
     aggregateType: JobOutboxRecord["aggregateType"];
     aggregateId: string;
+    pipelineStageRunId?: string;
     dedupeKey: string;
     payload: Readonly<Record<string, unknown>>;
     availableAt: Date;

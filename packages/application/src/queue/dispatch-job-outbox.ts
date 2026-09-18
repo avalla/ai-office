@@ -12,7 +12,8 @@ const maxBackoffMs = 60_000;
 function jobId(record: JobOutboxRecord): string {
   if (record.jobType === "execute_agent_run")
     return `agent-run-${record.aggregateId}`;
-  return `pipeline-orchestration-${record.aggregateId}-${record.dedupeKey}`.replaceAll(
+  const stage = record.pipelineStageRunId ?? record.dedupeKey;
+  return `pipeline-orchestration-${record.aggregateId}-${stage}`.replaceAll(
     ":",
     "-",
   );

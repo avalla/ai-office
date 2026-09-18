@@ -72,6 +72,8 @@ export class WorkerAgentExecutor implements AgentExecutor {
     const stage = pipeline?.currentStage();
     if (
       (pipeline?.snapshot().id ?? undefined) !== snapshot.pipelineRunId ||
+      (pipeline?.currentStage()?.id ?? undefined) !==
+        snapshot.pipelineStageRunId ||
       (pipeline !== null &&
         (stage?.status !== "active" ||
           stage.assignedAgentId !== agent.id ||
@@ -192,6 +194,7 @@ export class WorkerAgentExecutor implements AgentExecutor {
           ? null
           : {
               id: pipeline.snapshot().id,
+              stageRunId: stage.id,
               version: pipeline.snapshot().version,
               currentStageIndex: pipeline.snapshot().currentStageIndex,
               stageId: stage.stageId,

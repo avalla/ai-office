@@ -21,7 +21,7 @@ describe("durable queue-driven pipeline orchestration", () => {
       const root = mkdtempSync(join(tmpdir(), "ai-office-queue-e2e-"));
       const socket = createTestUnixSocket();
       const port = 20_000 + Math.floor(Math.random() * 10_000);
-      const redis = Bun.spawn(
+      let redis = Bun.spawn(
         [
           "redis-server",
           "--bind",
@@ -36,6 +36,11 @@ describe("durable queue-driven pipeline orchestration", () => {
         { stdout: "ignore", stderr: "ignore" },
       );
       const guidance: Array<{ runId: string; text: string }> = [];
+      let releaseExecution!: () => void;
+      const executionGate = new Promise<void>((resolve) => {
+        releaseExecution = resolve;
+      });
+      let holdFirstExecution = true;
       const executor: AgentExecutor = {
         prepare: async (run) => {
           const value = run.snapshot();
@@ -51,10 +56,16 @@ describe("durable queue-driven pipeline orchestration", () => {
               inputHash: "0".repeat(64),
             },
             usesWorktree: false,
-            execute: async () => ({
-              summary: "Queue E2E result",
-              artifacts: [],
-            }),
+            execute: async () => {
+              if (holdFirstExecution) {
+                await executionGate;
+                holdFirstExecution = false;
+              }
+              return {
+                summary: "Queue E2E result",
+                artifacts: [],
+              };
+            },
             accept: async () => undefined,
           };
         },
@@ -126,6 +137,48 @@ describe("durable queue-driven pipeline orchestration", () => {
         ]);
         expect(started.exitCode, started.stderr.join("\\n")).toBe(0);
         const pipelineRunId = JSON.parse(started.stdout[0]!).id as string;
+
+        await eventually(async () => {
+          const status = await command([
+            "pipeline:status",
+            "--project",
+            projectId,
+            "--run",
+            pipelineRunId,
+          ]);
+          if (status.exitCode !== 0) return false;
+          return (
+            JSON.parse(status.stdout[0]!).stages[0].status === "active" &&
+            guidance.length === 1
+          );
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        expect(guidance).toHaveLength(1);
+
+        redis.kill();
+        await eventually(async () => {
+          const health = await client.health();
+          return health.queue?.redis === "unreachable";
+        });
+        releaseExecution();
+        redis = Bun.spawn(
+          [
+            "redis-server",
+            "--bind",
+            "127.0.0.1",
+            "--port",
+            String(port),
+            "--save",
+            "",
+            "--appendonly",
+            "no",
+          ],
+          { stdout: "ignore", stderr: "ignore" },
+        );
+        await eventually(async () => {
+          const health = await client.health();
+          return health.queue?.redis === "reachable";
+        });
 
         await eventually(async () => {
           const status = await command([
@@ -223,6 +276,16 @@ describe("durable queue-driven pipeline orchestration", () => {
             type: "execute_agent_run",
             jobId: `forged-run-${pipelineRunId}`,
             payload: { projectId, runId: `forged-${pipelineRunId}` },
+          });
+          await replay.enqueue({
+            type: "orchestrate_pipeline",
+            jobId: `stale-stage-${pipelineRunId}`,
+            payload: {
+              projectId,
+              pipelineRunId,
+              pipelineStageRunId: JSON.parse(completedStatus.stdout[0]!)
+                .stages[0].id,
+            },
           });
           await new Promise((resolve) => setTimeout(resolve, 500));
         } finally {

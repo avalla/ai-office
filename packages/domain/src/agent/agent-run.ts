@@ -33,6 +33,8 @@ export interface AgentRunProps {
   taskId: string;
   agentId: string;
   pipelineRunId?: string;
+  /** Immutable binding to the exact pipeline stage run that authorized this run. */
+  pipelineStageRunId?: string;
   actionIntent?: AgentActionIntent;
   roleGuidance?: AgentRunRoleGuidance;
   execution?: AgentExecutionProvenance;
@@ -116,6 +118,7 @@ export class AgentRun {
     taskId: string;
     agentId: string;
     pipelineRunId?: string;
+    pipelineStageRunId?: string;
     actionIntent?: AgentActionIntentInput;
     roleGuidance?: AgentRunRoleGuidance;
     modelRouting?: AgentRunModelRouting;

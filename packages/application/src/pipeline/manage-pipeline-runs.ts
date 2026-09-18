@@ -150,6 +150,8 @@ export class ManagePipelineRuns {
       input.expectedPipelineRunId !== agent.pipelineRunId
     )
       throw new PipelineActorUnauthorizedError("stage completion");
+    if (agent.pipelineStageRunId === undefined)
+      throw new PipelineActorUnauthorizedError("stage completion");
     if (!(
       agent.status === "completed" ||
       agent.status === "running" ||
@@ -163,11 +165,16 @@ export class ManagePipelineRuns {
       projectId: agent.projectId,
       taskId: agent.taskId,
       pipelineRunId: agent.pipelineRunId,
+      pipelineStageRunId: agent.pipelineStageRunId,
     };
     return this.change(input.projectId, agent.pipelineRunId, async (run) => {
       const snapshot = run.snapshot();
       const stage = run.currentStage();
-      if (snapshot.taskId !== principal.taskId || stage === null)
+      if (
+        snapshot.taskId !== principal.taskId ||
+        stage === null ||
+        stage.id !== principal.pipelineStageRunId
+      )
         throw new PipelineActorUnauthorizedError("stage completion");
       const assignedAgent = await this.agents.findAgent(principal.agentId);
       const assignedRole =
@@ -180,9 +187,7 @@ export class ManagePipelineRuns {
         assignedRole === null ||
         assignedRole.snapshot().key !== stage.roleId ||
         stage.status !== "active" ||
-        stage.assignedAgentId !== principal.agentId ||
-        (stage.assignedAt !== undefined &&
-          agent.createdAt.getTime() < stage.assignedAt.getTime())
+        stage.assignedAgentId !== principal.agentId
       )
         throw new PipelineActorUnauthorizedError("stage completion");
       const before = run.snapshot();
@@ -402,8 +407,13 @@ export class ManagePipelineRuns {
       jobType: "orchestrate_pipeline",
       aggregateType: "pipeline_run",
       aggregateId: snapshot.id,
+      pipelineStageRunId: stage.id,
       dedupeKey: `pipeline:${snapshot.id}:stage:${stage.id}:v${snapshot.version}`,
-      payload: { projectId: snapshot.projectId, pipelineRunId: snapshot.id },
+      payload: {
+        projectId: snapshot.projectId,
+        pipelineRunId: snapshot.id,
+        pipelineStageRunId: stage.id,
+      },
       availableAt: now,
       createdAt: now,
     });

@@ -14,6 +14,7 @@ interface OutboxRow {
   job_type: string;
   aggregate_type: JobOutboxRecord["aggregateType"];
   aggregate_id: string;
+  pipeline_stage_run_id: string | null;
   dedupe_key: string;
   payload_json: string;
   available_at: string;
@@ -35,6 +36,9 @@ function record(row: OutboxRow): JobOutboxRecord {
     jobType: jobType(row.job_type),
     aggregateType: row.aggregate_type,
     aggregateId: row.aggregate_id,
+    ...(row.pipeline_stage_run_id === null
+      ? {}
+      : { pipelineStageRunId: row.pipeline_stage_run_id }),
     dedupeKey: row.dedupe_key,
     payload: JSON.parse(row.payload_json) as Readonly<Record<string, unknown>>,
     availableAt: new Date(row.available_at),
@@ -59,9 +63,9 @@ export class SqliteJobOutboxRepository implements JobOutboxRepository {
     const result = this.database
       .prepare(
         `INSERT INTO job_outbox(
-          id, project_id, job_type, aggregate_type, aggregate_id, dedupe_key,
-          payload_json, available_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          id, project_id, job_type, aggregate_type, aggregate_id,
+          pipeline_stage_run_id, dedupe_key, payload_json, available_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(project_id, dedupe_key) DO NOTHING`,
       )
       .run(
@@ -70,6 +74,7 @@ export class SqliteJobOutboxRepository implements JobOutboxRepository {
         input.jobType,
         input.aggregateType,
         input.aggregateId,
+        input.pipelineStageRunId ?? null,
         input.dedupeKey,
         payload,
         input.availableAt.toISOString(),
@@ -84,8 +89,8 @@ export class SqliteJobOutboxRepository implements JobOutboxRepository {
     return this.database
       .query<OutboxRow, [string, number]>(
         `SELECT id, project_id, job_type, aggregate_type, aggregate_id,
-          dedupe_key, payload_json, available_at, attempt_count, dispatched_at,
-          created_at
+          pipeline_stage_run_id, dedupe_key, payload_json, available_at,
+          attempt_count, dispatched_at, created_at
          FROM job_outbox
          WHERE dispatched_at IS NULL AND available_at <= ?
          ORDER BY created_at, id LIMIT ?`,
@@ -100,21 +105,32 @@ export class SqliteJobOutboxRepository implements JobOutboxRepository {
     return this.database
       .query<OutboxRow, [number]>(
         `SELECT jo.id, jo.project_id, jo.job_type, jo.aggregate_type,
-          jo.aggregate_id, jo.dedupe_key, jo.payload_json, jo.available_at,
-          jo.attempt_count, jo.dispatched_at, jo.created_at
+          jo.aggregate_id, jo.pipeline_stage_run_id, jo.dedupe_key,
+          jo.payload_json, jo.available_at, jo.attempt_count, jo.dispatched_at,
+          jo.created_at
          FROM job_outbox jo
-         WHERE (jo.job_type = 'execute_agent_run' AND EXISTS (
-           SELECT 1 FROM agent_run ar
-           WHERE ar.project_id = jo.project_id AND ar.id = jo.aggregate_id
-             AND ar.status = 'queued'
-         )) OR (jo.job_type = 'orchestrate_pipeline' AND EXISTS (
-           SELECT 1 FROM pipeline_run pr
-           JOIN pipeline_stage_run psr
-             ON psr.project_id = pr.project_id AND psr.pipeline_run_id = pr.id
-            AND psr.stage_index = pr.current_stage_index
-           WHERE pr.project_id = jo.project_id AND pr.id = jo.aggregate_id
-             AND pr.status = 'active' AND psr.status = 'active'
-         ))
+         WHERE jo.dispatched_at IS NOT NULL AND (
+           (jo.job_type = 'execute_agent_run' AND EXISTS (
+             SELECT 1 FROM agent_run ar
+             WHERE ar.project_id = jo.project_id AND ar.id = jo.aggregate_id
+               AND ar.pipeline_stage_run_id IS jo.pipeline_stage_run_id
+               AND ar.status = 'queued'
+           )) OR (jo.job_type = 'orchestrate_pipeline' AND
+             jo.pipeline_stage_run_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM pipeline_run pr
+             JOIN pipeline_stage_run psr
+               ON psr.project_id = pr.project_id AND psr.pipeline_run_id = pr.id
+              AND psr.id = jo.pipeline_stage_run_id
+             WHERE pr.project_id = jo.project_id AND pr.id = jo.aggregate_id
+               AND pr.status = 'active' AND psr.status = 'active'
+               AND NOT EXISTS (
+                 SELECT 1 FROM agent_run ar
+                 WHERE ar.project_id = jo.project_id
+                   AND ar.pipeline_stage_run_id = psr.id
+                   AND ar.status IN ('queued', 'preparing', 'running', 'reviewing', 'completed')
+               )
+           ))
+         )
          ORDER BY jo.created_at, jo.id LIMIT ?`,
       )
       .all(limit)

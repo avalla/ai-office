@@ -66,10 +66,24 @@ export class QueueRuntime {
     const projectId = payload(job.payload, "projectId");
     const runId =
       payload(job.payload, "pipelineRunId") ?? payload(job.payload, "runId");
-    if (projectId === null || runId === null) return "terminal";
+    const stageRunId = payload(job.payload, "pipelineStageRunId");
+    if (
+      projectId === null ||
+      runId === null ||
+      (job.type === "orchestrate_pipeline" && stageRunId === null)
+    )
+      return "terminal";
     const args =
       job.type === "orchestrate_pipeline"
-        ? ["pipeline:orchestrate", "--project", projectId, "--run", runId]
+        ? [
+            "pipeline:orchestrate",
+            "--project",
+            projectId,
+            "--run",
+            runId,
+            "--stage-run",
+            stageRunId!,
+          ]
         : [
             "run:tick",
             "--project",

@@ -52,6 +52,7 @@ interface RunRow {
   agent_id: string;
   action_intent_json: string | null;
   pipeline_run_id: string | null;
+  pipeline_stage_run_id?: string | null;
   status: AgentRunStatus;
   worktree_path: string | null;
   result_json: string | null;
@@ -112,6 +113,9 @@ const run = (row: RunRow): AgentRun =>
     ...(row.pipeline_run_id === null
       ? {}
       : { pipelineRunId: row.pipeline_run_id }),
+    ...(row.pipeline_stage_run_id == null
+      ? {}
+      : { pipelineStageRunId: row.pipeline_stage_run_id }),
     status: row.status,
     ...(row.worktree_path === null ? {} : { worktreePath: row.worktree_path }),
     ...(row.result_json === null
@@ -129,7 +133,6 @@ const run = (row: RunRow): AgentRun =>
   });
 const legacyRunColumns =
   "id, project_id, task_id, agent_id, action_intent_json, pipeline_run_id, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at, execution_json, model_routing_json";
-const currentRunColumns = `${legacyRunColumns}, role_guidance_json`;
 
 function parseStoredStringArray(json: string, field: string): string[] {
   const value = JSON.parse(json) as unknown;
@@ -183,6 +186,7 @@ function parseStoredRoleLimits(json: string): RoleLimits {
 export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
   private readonly hasRoleGuidance: boolean;
   private readonly hasRunGuidance: boolean;
+  private readonly hasRunStageBinding: boolean;
   private readonly runColumns: string;
 
   constructor(private readonly database: Database) {
@@ -201,9 +205,12 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
     this.hasRoleGuidance =
       roleColumns.has("guidance_text") && roleColumns.has("guidance_version");
     this.hasRunGuidance = runColumns.has("role_guidance_json");
-    this.runColumns = this.hasRunGuidance
-      ? currentRunColumns
-      : legacyRunColumns;
+    this.hasRunStageBinding = runColumns.has("pipeline_stage_run_id");
+    this.runColumns = [
+      legacyRunColumns,
+      ...(this.hasRunStageBinding ? ["pipeline_stage_run_id"] : []),
+      ...(this.hasRunGuidance ? ["role_guidance_json"] : []),
+    ].join(", ");
   }
   async executionOwner(runId: string): Promise<string | null> {
     return (
@@ -245,10 +252,15 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
           JOIN task_lock l ON l.run_id=r.id AND l.task_id=r.task_id
           WHERE r.id=? AND t.status=? AND t.updated_at=?
           AND g.enabled=1 AND g.role_id=? AND g.updated_at=? AND l.expires_at>?
-          AND ((? IS NULL AND r.pipeline_run_id IS NULL AND NOT EXISTS
-            (SELECT 1 FROM pipeline_run p WHERE p.task_id=r.task_id AND p.status='active'))
-            OR EXISTS (SELECT 1 FROM pipeline_run p WHERE p.id=? AND p.id=r.pipeline_run_id
-              AND p.task_id=r.task_id AND p.project_id=r.project_id AND p.version=? AND p.status='active'))`,
+          AND ((? IS NULL AND r.pipeline_run_id IS NULL
+            AND r.pipeline_stage_run_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM pipeline_run p WHERE p.task_id=r.task_id AND p.status='active'))
+            OR EXISTS (SELECT 1 FROM pipeline_run p
+              JOIN pipeline_stage_run s ON s.pipeline_run_id=p.id
+                AND s.project_id=p.project_id AND s.id=r.pipeline_stage_run_id
+              WHERE p.id=? AND p.id=r.pipeline_run_id
+                AND p.task_id=r.task_id AND p.project_id=r.project_id
+                AND p.version=? AND s.id=? AND p.status='active'))`,
           )
           .get(
             input.runId,
@@ -260,6 +272,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
             a.pipelineId,
             a.pipelineId,
             a.pipelineVersion,
+            a.pipelineStageRunId,
           );
         accepted = valid !== null;
       }
@@ -439,6 +452,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
         v.execution === undefined ? null : JSON.stringify(v.execution),
         // Inserted once; the conflict update never rewrites immutable inputs.
         v.modelRouting === undefined ? null : JSON.stringify(v.modelRouting),
+        ...(this.hasRunStageBinding ? [v.pipelineStageRunId ?? null] : []),
         ...(this.hasRunGuidance
           ? [
               v.roleGuidance === undefined
@@ -519,7 +533,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
                    WHERE p.id=? AND p.project_id=r.project_id
                      AND p.task_id=r.task_id AND p.status='active'
                      AND p.version=? AND p.current_stage_index=?
-                     AND s.stage_id=? AND s.role_id=?
+                     AND s.stage_id=? AND s.id=? AND r.pipeline_stage_run_id=s.id AND s.role_id=?
                      AND s.status='active' AND s.assigned_agent_id=?
                 )
               )`,
@@ -546,6 +560,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
           fence.pipeline?.version ?? null,
           fence.pipeline?.currentStageIndex ?? null,
           fence.pipeline?.stageId ?? null,
+          fence.pipeline?.stageRunId ?? null,
           fence.pipeline?.stageRoleId ?? null,
           fence.pipeline?.assignedAgentId ?? null,
         );

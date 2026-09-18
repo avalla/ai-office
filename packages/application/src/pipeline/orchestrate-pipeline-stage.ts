@@ -25,6 +25,7 @@ export class OrchestratePipelineStage {
   async execute(input: {
     projectId: string;
     pipelineRunId: string;
+    pipelineStageRunId: string;
   }): Promise<string | null> {
     const pipeline = await this.pipelines.findById(
       input.pipelineRunId,
@@ -37,7 +38,8 @@ export class OrchestratePipelineStage {
     if (
       snapshot.status !== "active" ||
       stage === null ||
-      stage.status !== "active"
+      stage.status !== "active" ||
+      stage.id !== input.pipelineStageRunId
     )
       return null;
 
@@ -46,7 +48,7 @@ export class OrchestratePipelineStage {
         const value = run.snapshot();
         return (
           value.pipelineRunId === snapshot.id &&
-          value.taskId === snapshot.taskId &&
+          value.pipelineStageRunId === stage.id &&
           value.status !== "completed" &&
           value.status !== "failed" &&
           value.status !== "cancelled"
@@ -62,7 +64,7 @@ export class OrchestratePipelineStage {
         const value = run.snapshot();
         return (
           value.pipelineRunId === snapshot.id &&
-          value.taskId === snapshot.taskId &&
+          value.pipelineStageRunId === stage.id &&
           value.status === "completed" &&
           stage.assignedAgentId === value.agentId
         );

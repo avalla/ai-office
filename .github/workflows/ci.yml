@@ -48,6 +48,38 @@ jobs:
             git diff --check "${{ github.event.before }}...${{ github.sha }}"
           fi
 
+  queue-e2e:
+    name: Redis queue E2E
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.6"
+
+      - name: Install Redis
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          command -v redis-server
+          redis-server --version
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run mandatory real Redis queue E2E
+        run: |
+          if ! command -v redis-server >/dev/null 2>&1; then
+            echo "redis-server is required for the durable queue E2E" >&2
+            exit 1
+          fi
+          bunx --bun vitest run tests/e2e/durable-queue-orchestration.test.ts
+
   macos-validate:
     name: macOS validate
     # macOS is a first-class target, so the whole repository validation runs on

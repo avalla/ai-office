@@ -24,6 +24,7 @@ export interface WorkerAuthorityFence {
   roleUpdatedAt: Date;
   pipeline: {
     id: string;
+    stageRunId: string;
     version: number;
     currentStageIndex: number;
     stageId: string;
@@ -85,6 +86,7 @@ export interface RunAdmission {
     agentRoleId: string;
     agentUpdatedAt: Date;
     pipelineId: string | null;
+    pipelineStageRunId: string | null;
     pipelineVersion: number | null;
   };
 }

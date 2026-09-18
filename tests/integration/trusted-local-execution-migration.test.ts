@@ -191,7 +191,7 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "fresh.sqlite"));
     expect(migrate(database, migrationSource).applied.at(-1)).toBe(
-      "0033_role_execution_guidance.sql",
+      "0034_exact_pipeline_stage_bindings.sql",
     );
     expect(
       database
@@ -255,6 +255,7 @@ describe("M6C-lite migration", () => {
       "0031_cost_event_charge_basis.sql",
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
+      "0034_exact_pipeline_stage_bindings.sql",
     ]);
     expect(
       database

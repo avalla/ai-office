@@ -79,9 +79,13 @@ export async function handlePipelineCommand(
 ): Promise<number | null> {
   const manager = service(context);
   if (command === "pipeline:orchestrate") {
-    const parsed = parseArguments(args, new Set(["project", "run"]));
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "run", "stage-run"]),
+    );
     const projectId = requiredOption(parsed, "project");
     const pipelineRunId = requiredOption(parsed, "run");
+    const pipelineStageRunId = requiredOption(parsed, "stage-run");
     const schedule = new ScheduleAgentRun(
       context.projects,
       context.tasks,
@@ -99,7 +103,7 @@ export async function handlePipelineCommand(
       context.tasks,
       manager,
       schedule,
-    ).execute({ projectId, pipelineRunId });
+    ).execute({ projectId, pipelineRunId, pipelineStageRunId });
     if (result !== null) context.io.stdout(`Agent run scheduled: ${result}`);
     return 0;
   }
