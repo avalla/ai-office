@@ -123,11 +123,17 @@ export class SqliteJobOutboxRepository implements JobOutboxRepository {
               AND psr.id = jo.pipeline_stage_run_id
              WHERE pr.project_id = jo.project_id AND pr.id = jo.aggregate_id
                AND pr.status = 'active' AND psr.status = 'active'
-               AND NOT EXISTS (
-                 SELECT 1 FROM agent_run ar
-                 WHERE ar.project_id = jo.project_id
-                   AND ar.pipeline_stage_run_id = psr.id
-                   AND ar.status IN ('queued', 'preparing', 'running', 'reviewing')
+               AND (
+                 NOT EXISTS (
+                   SELECT 1 FROM agent_run ar
+                   WHERE ar.project_id = jo.project_id
+                     AND ar.pipeline_stage_run_id = psr.id
+                 ) OR EXISTS (
+                   SELECT 1 FROM agent_run ar
+                   WHERE ar.project_id = jo.project_id
+                     AND ar.pipeline_stage_run_id = psr.id
+                     AND ar.status = 'completed'
+                 )
                )
            ))
          )

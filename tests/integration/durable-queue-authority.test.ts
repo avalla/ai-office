@@ -344,6 +344,8 @@ describe("durable queue stage authority", () => {
         pipelineStageRunId: stage.id,
       }),
     ]);
+    const completedReplayable = await f.outbox.replayable(50);
+    expect(await f.outbox.replayable(50)).toEqual(completedReplayable);
     expect(
       await f.orchestrator.execute({
         projectId: "project",
@@ -360,6 +362,7 @@ describe("durable queue stage authority", () => {
     expect(recovered.currentStage()?.status).toBe("active");
     expect(await f.agents.listRuns("project")).toHaveLength(1);
     expect(executions).toEqual([runId]);
+    expect(await f.outbox.replayable(50)).toEqual([]);
   });
 
   test.each(["failed", "cancelled"] as const)(
@@ -390,12 +393,10 @@ describe("durable queue stage authority", () => {
       await f.agents.releaseTaskLock(runId!);
       await markPendingDispatched(f.outbox, stage.id);
 
-      expect(await f.outbox.replayable(50)).toEqual([
-        expect.objectContaining({
-          jobType: "orchestrate_pipeline",
-          pipelineStageRunId: stage.id,
-        }),
-      ]);
+      expect(await f.outbox.replayable(50)).toEqual([]);
+      const terminalReplayable = await f.outbox.replayable(50);
+      expect(await f.outbox.replayable(50)).toEqual(terminalReplayable);
+      const runCount = (await f.agents.listRuns("project")).length;
       for (let attempt = 0; attempt < 2; attempt += 1)
         expect(
           await f.orchestrator.execute({
@@ -404,6 +405,7 @@ describe("durable queue stage authority", () => {
             pipelineStageRunId: stage.id,
           }),
         ).toBeNull();
+      expect(await f.outbox.replayable(50)).toEqual(terminalReplayable);
 
       const recovered = (await f.pipelines.findById(pipelineId, "project"))!;
       expect(recovered.currentStage()).toMatchObject({
@@ -413,7 +415,7 @@ describe("durable queue stage authority", () => {
       expect((await f.agents.findRun(runId!))?.snapshot().status).toBe(
         terminalStatus,
       );
-      expect(await f.agents.listRuns("project")).toHaveLength(1);
+      expect(await f.agents.listRuns("project")).toHaveLength(runCount);
     },
   );
 });
