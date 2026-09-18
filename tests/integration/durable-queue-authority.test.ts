@@ -2,10 +2,13 @@ import { afterEach, describe, expect, test } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
+import { InMemoryWorktreeManager } from "@ai-office/agent-runtime/worktree.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
+import { ExecuteAgentRun } from "@ai-office/application/commands/execute-agent-run.ts";
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
 import { OrchestratePipelineStage } from "@ai-office/application/pipeline/orchestrate-pipeline-stage.ts";
 import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent-run.ts";
@@ -284,4 +287,133 @@ describe("durable queue stage authority", () => {
     expect(await f.outbox.replayable(50)).toEqual([]);
     expect(await f.outbox.replayable(50)).toEqual([]);
   });
+
+  test("bridges a completed exact stage after Redis delivery is lost", async () => {
+    const f = await fixture();
+    const started = await f.manager.start({
+      projectId: "project",
+      taskId: "task",
+      pipelineId: "repeated-role",
+      principal: localOperatorPrincipal,
+    });
+    const pipelineId = started.snapshot().id;
+    const stage = started.currentStage()!;
+    await markPendingDispatched(f.outbox, stage.id);
+
+    const runId = await f.orchestrator.execute({
+      projectId: "project",
+      pipelineRunId: pipelineId,
+      pipelineStageRunId: stage.id,
+    });
+    expect(runId).not.toBeNull();
+    await markPendingDispatched(f.outbox, stage.id);
+
+    const executions: string[] = [];
+    const executor: AgentExecutor = {
+      prepare: async (run) => ({
+        provenance: {
+          kind: "worker",
+          adapterId: "recovery-test-worker",
+          adapterVersion: "1",
+          inputHash: "0".repeat(64),
+        },
+        usesWorktree: false,
+        execute: async () => {
+          executions.push(run.snapshot().id);
+          return { summary: "completed", artifacts: [] };
+        },
+      }),
+      execute: async () => {
+        throw new Error("unexpected direct worker execution");
+      },
+    };
+    const run = await f.agents.findRun(runId!);
+    const result = await new ExecuteAgentRun(
+      f.agents,
+      executor,
+      new InMemoryWorktreeManager(),
+      f.clock,
+    ).execute(run!);
+    expect(result.status).toBe("completed");
+    expect(executions).toEqual([runId]);
+
+    // Redis is absent: recovery reads the dispatched SQLite intent directly.
+    expect(await f.outbox.replayable(50)).toEqual([
+      expect.objectContaining({
+        jobType: "orchestrate_pipeline",
+        pipelineStageRunId: stage.id,
+      }),
+    ]);
+    expect(
+      await f.orchestrator.execute({
+        projectId: "project",
+        pipelineRunId: pipelineId,
+        pipelineStageRunId: stage.id,
+      }),
+    ).toBeNull();
+
+    const recovered = (await f.pipelines.findById(pipelineId, "project"))!;
+    expect(recovered.snapshot().stages[0]).toMatchObject({
+      id: stage.id,
+      status: "completed",
+    });
+    expect(recovered.currentStage()?.status).toBe("active");
+    expect(await f.agents.listRuns("project")).toHaveLength(1);
+    expect(executions).toEqual([runId]);
+  });
+
+  test.each(["failed", "cancelled"] as const)(
+    "does not replace a %s exact-stage run after Redis delivery is lost",
+    async (terminalStatus) => {
+      const f = await fixture();
+      const started = await f.manager.start({
+        projectId: "project",
+        taskId: "task",
+        pipelineId: "repeated-role",
+        principal: localOperatorPrincipal,
+      });
+      const pipelineId = started.snapshot().id;
+      const stage = started.currentStage()!;
+      await markPendingDispatched(f.outbox, stage.id);
+      const runId = await f.orchestrator.execute({
+        projectId: "project",
+        pipelineRunId: pipelineId,
+        pipelineStageRunId: stage.id,
+      });
+      const run = await f.agents.findRun(runId!);
+      run!.transition("preparing", now);
+      run!.transition("running", now);
+      run!.transition(terminalStatus, now, {
+        error: { code: `TEST_${terminalStatus.toUpperCase()}` },
+      });
+      await f.agents.saveRun(run!);
+      await f.agents.releaseTaskLock(runId!);
+      await markPendingDispatched(f.outbox, stage.id);
+
+      expect(await f.outbox.replayable(50)).toEqual([
+        expect.objectContaining({
+          jobType: "orchestrate_pipeline",
+          pipelineStageRunId: stage.id,
+        }),
+      ]);
+      for (let attempt = 0; attempt < 2; attempt += 1)
+        expect(
+          await f.orchestrator.execute({
+            projectId: "project",
+            pipelineRunId: pipelineId,
+            pipelineStageRunId: stage.id,
+          }),
+        ).toBeNull();
+
+      const recovered = (await f.pipelines.findById(pipelineId, "project"))!;
+      expect(recovered.currentStage()).toMatchObject({
+        id: stage.id,
+        status: "active",
+      });
+      expect((await f.agents.findRun(runId!))?.snapshot().status).toBe(
+        terminalStatus,
+      );
+      expect(await f.agents.listRuns("project")).toHaveLength(1);
+    },
+  );
 });

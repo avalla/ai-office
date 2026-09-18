@@ -43,34 +43,32 @@ export class OrchestratePipelineStage {
     )
       return null;
 
-    const existing = (await this.agents.listRuns(input.projectId)).find(
+    const boundRuns = (await this.agents.listRuns(input.projectId)).filter(
       (run) => {
         const value = run.snapshot();
         return (
           value.pipelineRunId === snapshot.id &&
-          value.pipelineStageRunId === stage.id &&
-          value.status !== "completed" &&
-          value.status !== "failed" &&
-          value.status !== "cancelled"
+          value.pipelineStageRunId === stage.id
         );
       },
+    );
+    const existing = boundRuns.find((run) =>
+      ["queued", "preparing", "running", "reviewing"].includes(
+        run.snapshot().status,
+      ),
     );
     if (existing !== undefined) return existing.snapshot().id;
 
     // A completed run can be left just before the SQLite stage bridge by a
     // process crash. Replaying the stage intent repairs that exact binding.
-    const completed = (await this.agents.listRuns(input.projectId)).find(
-      (run) => {
-        const value = run.snapshot();
-        return (
-          value.pipelineRunId === snapshot.id &&
-          value.pipelineStageRunId === stage.id &&
-          value.status === "completed" &&
-          stage.assignedAgentId === value.agentId
-        );
-      },
+    const completed = boundRuns.find(
+      (run) => run.snapshot().status === "completed",
     );
     if (completed !== undefined) {
+      if (stage.assignedAgentId !== completed.snapshot().agentId)
+        throw new PipelineStageOrchestrationError(
+          "Completed AgentRun cannot reconcile the assigned pipeline stage",
+        );
       await this.pipelineManagement.completeStageFromAgentRun({
         projectId: input.projectId,
         agentRunId: completed.snapshot().id,
@@ -78,6 +76,15 @@ export class OrchestratePipelineStage {
       });
       return null;
     }
+
+    // Failed and cancelled runs are authoritative terminal outcomes. The
+    // active stage remains visible for explicit operator reconciliation.
+    if (
+      boundRuns.some((run) =>
+        ["failed", "cancelled"].includes(run.snapshot().status),
+      )
+    )
+      return null;
 
     let assignedAgentId = stage.assignedAgentId;
     if (assignedAgentId === undefined) {

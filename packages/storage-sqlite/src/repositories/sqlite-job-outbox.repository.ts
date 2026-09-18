@@ -127,7 +127,7 @@ export class SqliteJobOutboxRepository implements JobOutboxRepository {
                  SELECT 1 FROM agent_run ar
                  WHERE ar.project_id = jo.project_id
                    AND ar.pipeline_stage_run_id = psr.id
-                   AND ar.status IN ('queued', 'preparing', 'running', 'reviewing', 'completed')
+                   AND ar.status IN ('queued', 'preparing', 'running', 'reviewing')
                )
            ))
          )
