@@ -34,7 +34,8 @@
       "@ai-office/project-binding/*": ["packages/project-binding/src/*"],
       "@ai-office/runtime-host/*": ["packages/runtime-host/src/*"],
       "@ai-office/service-management/*": ["packages/service-management/src/*"],
-      "@ai-office/cairnkeep-memory/*": ["packages/cairnkeep-memory/src/*"]
+      "@ai-office/cairnkeep-memory/*": ["packages/cairnkeep-memory/src/*"],
+      "@ai-office/bullmq-job-queue/*": ["packages/bullmq-job-queue/src/*"]
     }
   },
   "include": [

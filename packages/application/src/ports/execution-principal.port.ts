@@ -21,6 +21,7 @@ export interface AgentExecutionPrincipal {
   readonly projectId: string;
   readonly taskId: string;
   readonly pipelineRunId?: string;
+  readonly pipelineStageRunId?: string;
 }
 
 export type ExecutionPrincipal = OperatorPrincipal | AgentExecutionPrincipal;

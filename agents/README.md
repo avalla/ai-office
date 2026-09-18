@@ -13,10 +13,10 @@ one canonical source directory; the default sync does not traverse the catalog.
 
 | Agent ID | Runtime role key | Owns | Main handoff |
 | --- | --- | --- | --- |
-| `architect` | `software-architect` | Technical boundaries, alternatives, and implementation design | Design, invariants, plan, acceptance criteria |
-| `developer` | `software-developer` | Scoped implementation and regression coverage | Patch, validation evidence, limitations |
-| `reviewer` | `code-reviewer` | Independent correctness and architecture assessment | Prioritized findings and recommendation |
-| `qa` | `quality-assurance` | Observable acceptance behavior and regression verification | Criterion-by-criterion results and reproducible defects |
+| `architect` | `architect` | Technical boundaries, alternatives, and implementation design | Design, invariants, plan, acceptance criteria |
+| `developer` | `developer` | Scoped implementation and regression coverage | Patch, validation evidence, limitations |
+| `reviewer` | `reviewer` | Independent correctness and architecture assessment | Prioritized findings and recommendation |
+| `qa` | `qa` | Observable acceptance behavior and regression verification | Criterion-by-criterion results and reproducible defects |
 
 Each directory contains a role-specific `system.md` with a method, expected
 handoff, and responsibility boundaries. Product analysis refines the intended
@@ -111,10 +111,10 @@ decisions.
   again does not disable or remove previously synchronized specialists. This
   layout change also does not disable specialists registered using the earlier
   sync-all layout of this PR.
-- `system.md` is authored behavioral guidance. The current loader reads only
-  `agent.yaml`: it does not load, persist, version, or inject these Markdown
-  profiles into an executor. A host can read them explicitly as role guidance;
-  automatic worker context assembly remains future work.
+- `system.md` is authored behavioral guidance. Synchronization validates and
+  captures it as immutable role execution guidance with the YAML version. An
+  AgentRun pins that guidance before queue delivery; workers never read the
+  repository profile at execution time.
 - YAML capabilities, tool names, and model policies are descriptive metadata.
   They do not install tools, select an operational worker, grant access, or
   guarantee that an executor enforces the listed budgets. Actual resources,
@@ -127,10 +127,11 @@ decisions.
   stage referencing that manifest role, validate the complete manifest, and apply it
   through the Runtime after confirmation. For enforced assignment, the manifest
   role ID and stage `roleId` must match the Runtime role key in the tables above,
-  not the agent ID. The default manifest's short role IDs are guidance defaults;
-  resolving their pre-existing mismatch with Runtime role keys is a separate
-  follow-up before enforced real-worker pipelines. This PR does not redesign
-  that contract. An office revision changes routing, not basic run eligibility.
+  not the agent ID. Core role keys intentionally use the default manifest's
+  canonical IDs (`architect`, `developer`, `reviewer`, `qa`). The bundled feature
+  delivery pipeline is enforced; other catalogs must use an exact, validated role
+  identity; no fuzzy role matching exists. An office revision changes routing, not
+  basic run eligibility.
 - Role prose and recommendations never authorize a side effect or establish
   reviewer independence. Runtime identity, provenance, configured pipeline
   policy, and controlled-action approvals remain authoritative.

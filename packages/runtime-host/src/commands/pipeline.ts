@@ -7,6 +7,8 @@ import {
   requiredOption,
 } from "./shared.ts";
 import { PipelineActorUnauthorizedError } from "@ai-office/application/pipeline-errors.ts";
+import { OrchestratePipelineStage } from "@ai-office/application/pipeline/orchestrate-pipeline-stage.ts";
+import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent-run.ts";
 
 function operatorPrincipal(context: CommandContext) {
   if (context.principal === undefined)
@@ -24,6 +26,7 @@ function service(context: CommandContext): ManagePipelineRuns {
     context.ids,
     context.clock,
     context.transactions,
+    context.jobOutbox,
   );
 }
 
@@ -75,6 +78,35 @@ export async function handlePipelineCommand(
   context: CommandContext,
 ): Promise<number | null> {
   const manager = service(context);
+  if (command === "pipeline:orchestrate") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "run", "stage-run"]),
+    );
+    const projectId = requiredOption(parsed, "project");
+    const pipelineRunId = requiredOption(parsed, "run");
+    const pipelineStageRunId = requiredOption(parsed, "stage-run");
+    const schedule = new ScheduleAgentRun(
+      context.projects,
+      context.tasks,
+      context.runtime,
+      context.ids,
+      context.clock,
+      context.transactions,
+      context.pipelines,
+      context.modelRouting,
+      context.jobOutbox,
+    );
+    const result = await new OrchestratePipelineStage(
+      context.pipelines,
+      context.runtime,
+      context.tasks,
+      manager,
+      schedule,
+    ).execute({ projectId, pipelineRunId, pipelineStageRunId });
+    if (result !== null) context.io.stdout(`Agent run scheduled: ${result}`);
+    return 0;
+  }
   if (command === "pipeline:start") {
     const parsed = parseArguments(
       args,

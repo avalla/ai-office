@@ -22,13 +22,21 @@ export type AgentRunStatus =
   | "failed"
   | "cancelled";
 
+export interface AgentRunRoleGuidance {
+  version: number;
+  text: string;
+}
+
 export interface AgentRunProps {
   id: string;
   projectId: string;
   taskId: string;
   agentId: string;
   pipelineRunId?: string;
+  /** Immutable binding to the exact pipeline stage run that authorized this run. */
+  pipelineStageRunId?: string;
   actionIntent?: AgentActionIntent;
+  roleGuidance?: AgentRunRoleGuidance;
   execution?: AgentExecutionProvenance;
   /** Frozen at scheduling; absent only for runs that predate model routing. */
   modelRouting?: AgentRunModelRouting;
@@ -52,6 +60,19 @@ export interface AgentActionIntentInput {
   resourceId: string;
   operation: string;
   arguments: Readonly<Record<string, unknown>>;
+}
+
+function normalizeRoleGuidance(
+  guidance: AgentRunRoleGuidance,
+): AgentRunRoleGuidance {
+  if (
+    !Number.isSafeInteger(guidance.version) ||
+    guidance.version < 1 ||
+    guidance.text.trim() === "" ||
+    new TextEncoder().encode(guidance.text).byteLength > 65536
+  )
+    throw new DomainValidationError("Agent run role guidance is invalid");
+  return { version: guidance.version, text: guidance.text };
 }
 
 function normalizeActionIntent(
@@ -97,7 +118,9 @@ export class AgentRun {
     taskId: string;
     agentId: string;
     pipelineRunId?: string;
+    pipelineStageRunId?: string;
     actionIntent?: AgentActionIntentInput;
+    roleGuidance?: AgentRunRoleGuidance;
     modelRouting?: AgentRunModelRouting;
     now: Date;
   }): AgentRun {
@@ -115,12 +138,16 @@ export class AgentRun {
     // Action arguments are domain payload (a connector may legitimately carry
     // a `model` field). Model selection comes only from `modelRouting`, which
     // the scheduler derives from host routing and the agent's role.
-    const { now, actionIntent, modelRouting, ...identifiers } = input;
+    const { now, actionIntent, roleGuidance, modelRouting, ...identifiers } =
+      input;
     return new AgentRun({
       ...identifiers,
       ...(actionIntent === undefined
         ? {}
         : { actionIntent: normalizeActionIntent(actionIntent) }),
+      ...(roleGuidance === undefined
+        ? {}
+        : { roleGuidance: normalizeRoleGuidance(roleGuidance) }),
       ...(modelRouting === undefined
         ? {}
         : { modelRouting: parseAgentRunModelRouting(modelRouting) }),
@@ -139,6 +166,9 @@ export class AgentRun {
       ...(props.actionIntent === undefined
         ? {}
         : { actionIntent: normalizeActionIntent(props.actionIntent) }),
+      ...(props.roleGuidance === undefined
+        ? {}
+        : { roleGuidance: normalizeRoleGuidance(props.roleGuidance) }),
       ...(props.modelRouting === undefined
         ? {}
         : { modelRouting: parseAgentRunModelRouting(props.modelRouting) }),

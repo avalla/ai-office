@@ -1,5 +1,5 @@
 id: qa
-role_key: quality-assurance
+role_key: qa
 role: quality-assurance
 version: 1
 capabilities:

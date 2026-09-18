@@ -31,6 +31,7 @@ import type { ProjectMemoryProvenanceRepository } from "@ai-office/application/p
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
+import type { JobOutboxRepository } from "@ai-office/application/ports/job-outbox-repository.port.ts";
 
 export interface CommandContext {
   onRunChanged?: () => void;
@@ -71,6 +72,7 @@ export interface CommandContext {
   modelProviders: ModelProviderCatalog;
   /** Host provider access for gateway-executed routed runs; credentials never leave it. */
   gatewayProviders: GatewayModelProviders;
+  jobOutbox?: JobOutboxRepository;
 }
 
 export * from "@ai-office/command-support/arguments.ts";

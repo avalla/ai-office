@@ -259,12 +259,26 @@ describe("daemon enforced pipeline lifecycle", () => {
           arguments: Readonly<Record<string, unknown>>;
         },
       ) => {
+        const pipelineStatus = await command([
+          "pipeline:status",
+          "--project",
+          projectId,
+          "--run",
+          runId,
+        ]);
+        const activeStage = (
+          JSON.parse(pipelineStatus.stdout[0]!) as {
+            stages: Array<{ id: string; status: string }>;
+          }
+        ).stages.find((stage) => stage.status === "active");
+        if (activeStage === undefined) throw new Error("active stage required");
         const run = AgentRun.create({
           id: crypto.randomUUID(),
           projectId,
           taskId,
           agentId,
           pipelineRunId: runId,
+          pipelineStageRunId: activeStage.id,
           ...(actionIntent === undefined ? {} : { actionIntent }),
           now: new Date(),
         });

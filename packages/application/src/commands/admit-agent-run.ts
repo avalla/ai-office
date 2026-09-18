@@ -35,6 +35,7 @@ export class AdmitAgentRun {
       agent.projectId === r.projectId &&
       agent.enabled &&
       (pipeline?.snapshot().id ?? undefined) === r.pipelineRunId &&
+      (pipeline?.currentStage()?.id ?? undefined) === r.pipelineStageRunId &&
       (pipeline === null ||
         (stage?.status === "active" &&
           stage.assignedAgentId === r.agentId &&
@@ -55,6 +56,7 @@ export class AdmitAgentRun {
         agentRoleId: agent.roleId,
         agentUpdatedAt: agent.updatedAt,
         pipelineId: pipeline?.snapshot().id ?? null,
+        pipelineStageRunId: pipeline?.currentStage()?.id ?? null,
         pipelineVersion: pipeline?.snapshot().version ?? null,
       },
     });

@@ -50,7 +50,7 @@ describe("office manifest schema", () => {
     expect(instructions).toContain(
       "Pipeline guidance describes expected work; it is not the security boundary",
     );
-    expect(instructions).toContain("Feature delivery [guidance]");
+    expect(instructions).toContain("Feature delivery [enforced]");
     expect(instructions).toContain("AI Office authorization");
   });
 
@@ -90,6 +90,7 @@ describe("office manifest schema", () => {
     const delivery = pipelines[0]!;
     delivery.enforcement = "enforced";
     const stages = delivery.stages as Array<Record<string, unknown>>;
+    delete stages[0]!.capabilities;
 
     const missingCapabilities = officeManifestSchema.safeParse(value);
     expect(missingCapabilities.success).toBe(false);

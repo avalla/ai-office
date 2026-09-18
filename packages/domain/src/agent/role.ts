@@ -17,6 +17,8 @@ export interface RoleProps {
   modelPolicy: string;
   limits: RoleLimits;
   sourcePath: string;
+  guidanceText?: string;
+  guidanceVersion?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -50,6 +52,17 @@ export class Role {
     ) {
       throw new DomainValidationError("Role limits must be non-negative");
     }
+    if (
+      input.guidanceText !== undefined &&
+      new TextEncoder().encode(input.guidanceText).byteLength > 65536
+    )
+      throw new DomainValidationError("Role guidance is too large");
+    if (
+      input.guidanceVersion !== undefined &&
+      (!Number.isSafeInteger(input.guidanceVersion) ||
+        input.guidanceVersion < 1)
+    )
+      throw new DomainValidationError("Role guidance version is invalid");
     return new Role({
       ...input,
       key: input.key.trim(),

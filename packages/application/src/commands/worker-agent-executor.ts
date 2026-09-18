@@ -57,6 +57,12 @@ export class WorkerAgentExecutor implements AgentExecutor {
     const role = await this.runtime.findRole(agent.roleId, snapshot.projectId);
     if (role === null) throw new WorkerRuntimeError("WORKER_CONTEXT_INVALID");
     const roleState = role.snapshot();
+    if (
+      snapshot.roleGuidance !== undefined &&
+      (roleState.guidanceVersion !== snapshot.roleGuidance.version ||
+        roleState.guidanceText !== snapshot.roleGuidance.text)
+    )
+      throw new WorkerRuntimeError("WORKER_CONTEXT_INVALID");
     if (roleState.limits.maxCostMicros === 0n)
       throw new WorkerRuntimeError("WORKER_BUDGET_EXHAUSTED");
     const pipeline = await this.pipelines.findActiveByTask(
@@ -66,6 +72,8 @@ export class WorkerAgentExecutor implements AgentExecutor {
     const stage = pipeline?.currentStage();
     if (
       (pipeline?.snapshot().id ?? undefined) !== snapshot.pipelineRunId ||
+      (pipeline?.currentStage()?.id ?? undefined) !==
+        snapshot.pipelineStageRunId ||
       (pipeline !== null &&
         (stage?.status !== "active" ||
           stage.assignedAgentId !== agent.id ||
@@ -112,6 +120,9 @@ export class WorkerAgentExecutor implements AgentExecutor {
         roleKey: roleState.key,
         roleVersion: roleState.version,
       },
+      ...(snapshot.roleGuidance === undefined
+        ? {}
+        : { roleGuidance: { ...snapshot.roleGuidance } }),
       ...(selection === undefined ? {} : { model: { ...selection } }),
       stage:
         pipeline === null ||
@@ -183,6 +194,7 @@ export class WorkerAgentExecutor implements AgentExecutor {
           ? null
           : {
               id: pipeline.snapshot().id,
+              stageRunId: stage.id,
               version: pipeline.snapshot().version,
               currentStageIndex: pipeline.snapshot().currentStageIndex,
               stageId: stage.stageId,

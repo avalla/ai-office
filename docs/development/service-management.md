@@ -157,6 +157,26 @@ This protects against accidental exposure and other local users, not against
 other processes of the same user. See
 [ADR-0020](../adr/ADR-0020-managed-provider-credential-boundary.md).
 
+### Queue-backed orchestration
+
+Queue delivery is optional and disabled unless the Runtime service environment
+sets both values:
+
+```ini
+AI_OFFICE_QUEUE_PROVIDER=bullmq
+AI_OFFICE_REDIS_URL=redis://127.0.0.1:6379
+```
+
+Set these through the operating system's user-service environment mechanism;
+do not place credential-bearing URLs in generated definitions. The Runtime
+service owns one outbox dispatcher and two queue consumers, so no additional OS
+service is installed. The daemon health response reports configured versus
+misconfigured, sanitized Redis reachability, pending SQLite outbox rows, and
+consumer status. Redis/Valkey is an external prerequisite: install it separately
+with the platform package manager and keep it host-local. Stopping Redis leaves
+SQLite outbox intent pending or replayable; restarting the Runtime dispatches it
+again with deterministic IDs.
+
 ## Absolute executable path
 
 A per-user service inherits a minimal environment, so nothing in a generated

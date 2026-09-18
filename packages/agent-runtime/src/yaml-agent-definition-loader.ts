@@ -11,6 +11,10 @@ export interface LoadedAgentDefinition {
   sourcePath: string;
 }
 
+export interface AgentDefinitionLoadOptions {
+  requireGuidance?: boolean;
+}
+
 export class AgentDefinitionDirectoryError extends Error {
   constructor(directory: string, detail: string) {
     super(`Cannot load agent definitions from ${directory}: ${detail}`);
@@ -19,7 +23,10 @@ export class AgentDefinitionDirectoryError extends Error {
 }
 
 export class YamlAgentDefinitionLoader {
-  load(directory: string): LoadedAgentDefinition[] {
+  load(
+    directory: string,
+    options: AgentDefinitionLoadOptions = {},
+  ): LoadedAgentDefinition[] {
     let entries;
     try {
       entries = readdirSync(directory, { withFileTypes: true });
@@ -51,7 +58,33 @@ export class YamlAgentDefinitionLoader {
           error instanceof Error ? error.message : "invalid YAML",
         );
       }
-      const definition = parseAgentDefinition(value, sourcePath);
+      let definition = parseAgentDefinition(value, sourcePath);
+      if (options.requireGuidance) {
+        const guidancePath = join(sourcePath, "..", "system.md");
+        if (!existsSync(guidancePath))
+          throw new AgentDefinitionDirectoryError(
+            directory,
+            `missing ${guidancePath}`,
+          );
+        let guidance: string;
+        try {
+          guidance = readFileSync(guidancePath, "utf8");
+        } catch (error) {
+          throw new InvalidAgentDefinitionError(
+            guidancePath,
+            error instanceof Error ? error.message : "guidance is not readable",
+          );
+        }
+        if (
+          guidance.trim() === "" ||
+          new TextEncoder().encode(guidance).byteLength > 65536
+        )
+          throw new InvalidAgentDefinitionError(
+            guidancePath,
+            "guidance must be non-empty and at most 65536 bytes",
+          );
+        definition = { ...definition, roleGuidance: guidance };
+      }
       if (agentIds.has(definition.id))
         throw new InvalidAgentDefinitionError(
           sourcePath,

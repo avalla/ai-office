@@ -22,7 +22,12 @@ export async function handleAgentCommand(
       ids,
       clock,
       transactions,
-    ).execute(projectId, new YamlAgentDefinitionLoader().load(directory));
+    ).execute(
+      projectId,
+      new YamlAgentDefinitionLoader().load(directory, {
+        requireGuidance: true,
+      }),
+    );
     io.stdout(`Agent definitions synchronized: ${count}`);
     return 0;
   }

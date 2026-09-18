@@ -13,6 +13,7 @@ import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
+import type { JobOutboxRepository } from "../ports/job-outbox-repository.port.ts";
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
 import { taskRunLeaseDurationMs } from "../runtime/run-policy.ts";
 import {
@@ -57,6 +58,8 @@ export class ScheduleAgentRun {
     private readonly pipelines?: PipelineRunRepository,
     /** Immutable host routing; unconfigured records runs as `unrouted`. */
     private readonly modelRouting: ModelRoutingState = unconfiguredModelRouting,
+    /** Durable delivery intent; omitted by legacy/manual compositions. */
+    private readonly outbox?: JobOutboxRepository,
   ) {}
   async execute(input: {
     projectId: string;
@@ -84,17 +87,6 @@ export class ScheduleAgentRun {
     const agent = await this.runtime.findAgent(input.agentId);
     if (agent === null || agent.projectId !== input.projectId || !agent.enabled)
       throw new AgentNotFoundError(input.agentId);
-    const pipeline = await this.pipelines?.findActiveByTask(
-      input.taskId,
-      input.projectId,
-    );
-    if (pipeline !== undefined && pipeline !== null) {
-      const stage = pipeline.currentStage();
-      if (stage?.status !== "active" || stage.assignedAgentId !== input.agentId)
-        throw new AgentNotFoundError(
-          `${input.agentId} is not assigned to the active pipeline stage`,
-        );
-    }
     const now = this.clock.now();
     const id = this.ids.generate();
     await this.transactions.run(async () => {
@@ -109,12 +101,40 @@ export class ScheduleAgentRun {
         throw new AgentNotFoundError(input.agentId);
       const role = await this.runtime.findRole(current.roleId, input.projectId);
       if (role === null) throw new AgentNotFoundError(input.agentId);
+      const roleState = role.snapshot();
+      const pipeline = await this.pipelines?.findActiveByTask(
+        input.taskId,
+        input.projectId,
+      );
+      const pipelineSnapshot = pipeline?.snapshot();
+      const stage = pipeline?.currentStage();
+      if (
+        pipelineSnapshot !== undefined &&
+        (stage?.status !== "active" || stage.assignedAgentId !== input.agentId)
+      )
+        throw new AgentNotFoundError(
+          `${input.agentId} is not assigned to the active pipeline stage`,
+        );
       const run = AgentRun.create({
         id,
         ...input,
-        ...(pipeline === undefined || pipeline === null
+        ...(pipelineSnapshot === undefined ||
+        stage === null ||
+        stage === undefined
           ? {}
-          : { pipelineRunId: pipeline.snapshot().id }),
+          : {
+              pipelineRunId: pipelineSnapshot.id,
+              pipelineStageRunId: stage.id,
+            }),
+        ...(roleState.guidanceText === undefined ||
+        roleState.guidanceText.trim() === ""
+          ? {}
+          : {
+              roleGuidance: {
+                text: roleState.guidanceText,
+                version: roleState.guidanceVersion ?? roleState.version,
+              },
+            }),
         modelRouting: resolveAgentRunModel(this.modelRouting, {
           projectId: input.projectId,
           agentName: current.name,
@@ -130,6 +150,27 @@ export class ScheduleAgentRun {
         new Date(now.getTime() + taskRunLeaseDurationMs),
       );
       if (!locked) throw new TaskLockActiveError(input.taskId);
+      if (this.outbox !== undefined)
+        await this.outbox.append({
+          id: `outbox:agent-run:${run.snapshot().id}`,
+          projectId: input.projectId,
+          jobType: "execute_agent_run",
+          aggregateType: "agent_run",
+          aggregateId: run.snapshot().id,
+          ...(run.snapshot().pipelineStageRunId === undefined
+            ? {}
+            : { pipelineStageRunId: run.snapshot().pipelineStageRunId }),
+          dedupeKey: `agent-run:${run.snapshot().id}`,
+          payload: {
+            projectId: input.projectId,
+            runId: run.snapshot().id,
+            ...(run.snapshot().pipelineStageRunId === undefined
+              ? {}
+              : { pipelineStageRunId: run.snapshot().pipelineStageRunId }),
+          },
+          availableAt: now,
+          createdAt: now,
+        });
     });
     return id;
   }
