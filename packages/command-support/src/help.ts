@@ -6,9 +6,13 @@ export function isLocalHelpInvocation(args: readonly string[]): boolean {
 export const runtimeCommandHelp = `AI Office CLI
 
 Local options:
-  --version, -V  # product version; no Runtime access or source opt-in required
+  --version, -V  # product version, with +git.<12-char revision> build metadata for a source checkout
+                 # local only: no Runtime access, network or source opt-in required
 
 Commands:
+  version [--json]
+    local diagnostic: product version, full source revision, distribution kind, and tracked dirty state
+    prints unavailable/null when the revision cannot be determined; exit 0
   install [path] [--rebind] [--json]
     reconciles repository identity, shared AI-OFFICE.md guidance, and detected host skills
     exit 0: installed; exit 2: installed with warnings; exit 1: failed/partial

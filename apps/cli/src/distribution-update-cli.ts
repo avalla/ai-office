@@ -19,6 +19,7 @@ import {
   parseArguments,
   type CommandIo,
 } from "@ai-office/command-support/arguments.ts";
+import { shortRevision } from "@ai-office/command-support/version.ts";
 import {
   LocalDistributionUpdateAdapter,
   LocalDistributionUpdateError,
@@ -31,10 +32,10 @@ export interface DistributionUpdateCliOptions {
   adapter?: DistributionUpdateAdapter;
 }
 
-function shortRevision(revision: string | null): string {
+function displayRevision(revision: string | null): string {
   return revision === null
     ? "unknown (inspect checkout)"
-    : revision.slice(0, 12);
+    : shortRevision(revision);
 }
 
 function stepLabel(step: DistributionUpdateStep): string {
@@ -63,8 +64,8 @@ function printPlan(plan: DistributionUpdatePlan, io: CommandIo): void {
   io.stdout(`  root: ${plan.distributionRoot}`);
   io.stdout(`  branch: ${plan.branch}`);
   io.stdout(`  upstream: ${plan.upstream.remote}:${plan.upstream.sourceRef}`);
-  io.stdout(`  current: ${shortRevision(plan.currentRevision)}`);
-  io.stdout(`  target: ${shortRevision(plan.targetRevision)}`);
+  io.stdout(`  current: ${displayRevision(plan.currentRevision)}`);
+  io.stdout(`  target: ${displayRevision(plan.targetRevision)}`);
   io.stdout("");
   if (!plan.updateAvailable) {
     io.stdout("Status: already current");
@@ -89,7 +90,7 @@ function printResult(result: DistributionUpdateResult, io: CommandIo): void {
   output(result.message);
   output(`Installation: ${result.distributionRoot}`);
   output(
-    `Revision: ${shortRevision(result.fromRevision)} -> ${shortRevision(result.toRevision)}`,
+    `Revision: ${displayRevision(result.fromRevision)} -> ${displayRevision(result.toRevision)}`,
   );
   if (result.completedSteps.length > 0)
     output(`Completed: ${result.completedSteps.map(stepLabel).join(", ")}`);

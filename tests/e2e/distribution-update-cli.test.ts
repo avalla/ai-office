@@ -103,6 +103,24 @@ describe("source-linked distribution update CLI", () => {
     });
   });
 
+  test("prints 12-character revisions in the human-readable plan", async () => {
+    const root = temporaryRoot();
+    const output = captureIo();
+    expect(
+      await runDistributionUpdateCli([], {
+        distributionRoot: root,
+        runtimeGuard: stoppedRuntime,
+        io: output.io,
+        adapter: {
+          plan: async () => updateDraft(root),
+          apply: async () => ({}) as never,
+        },
+      }),
+    ).toBe(0);
+    expect(output.stdout).toContain(`  current: ${"a".repeat(12)}`);
+    expect(output.stdout).toContain(`  target: ${"b".repeat(12)}`);
+  });
+
   test("refuses to mutate program files while a Runtime host is running", async () => {
     const root = temporaryRoot();
     let planned = false;

@@ -8,52 +8,22 @@ import type {
   DistributionUpdateStep,
 } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
 import { DistributionUpdatePreconditionError } from "@ai-office/application/ports/distribution-update-adapter.port.ts";
+import { isGitRevision } from "@ai-office/command-support/version.ts";
+import {
+  BunDistributionCommandRunner,
+  readCheckoutRoot,
+  readHeadRevision,
+  readTrackedDirty,
+  type DistributionCommandResult,
+  type DistributionCommandRunner,
+} from "./distribution-source-identity.ts";
+
+export type { DistributionCommandResult, DistributionCommandRunner };
 
 export class LocalDistributionUpdateError extends DistributionUpdatePreconditionError {
   constructor(message: string) {
     super(message);
     this.name = "LocalDistributionUpdateError";
-  }
-}
-
-export interface DistributionCommandResult {
-  exitCode: number;
-  stdout: string;
-  stderr: string;
-}
-
-export interface DistributionCommandRunner {
-  run(
-    command: readonly string[],
-    cwd: string,
-  ): Promise<DistributionCommandResult>;
-}
-
-class BunDistributionCommandRunner implements DistributionCommandRunner {
-  async run(
-    command: readonly string[],
-    cwd: string,
-  ): Promise<DistributionCommandResult> {
-    try {
-      const child = Bun.spawn([...command], {
-        cwd,
-        env: {
-          ...process.env,
-          GIT_TERMINAL_PROMPT: "0",
-          GIT_OPTIONAL_LOCKS: "0",
-        },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [exitCode, stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-      return { exitCode, stdout, stderr };
-    } catch {
-      return { exitCode: 127, stdout: "", stderr: "" };
-    }
   }
 }
 
@@ -116,7 +86,7 @@ function trimmed(result: DistributionCommandResult): string {
 }
 
 function revision(value: string, source: string): string {
-  if (!/^[0-9a-f]{40,64}$/.test(value))
+  if (!isGitRevision(value))
     throw new LocalDistributionUpdateError(
       `AI Office update received an invalid revision from ${source}`,
     );
@@ -219,23 +189,24 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
   }
 
   private async head(distributionRoot: string): Promise<string> {
-    const result = await this.command(
-      distributionRoot,
-      ["git", "rev-parse", "HEAD"],
-      "AI Office update could not resolve the current Git revision",
+    const head = await readHeadRevision(this.runner, distributionRoot);
+    if (head.ok) return head.value;
+    throw new LocalDistributionUpdateError(
+      head.reason === "command_failed"
+        ? "AI Office update could not resolve the current Git revision"
+        : "AI Office update received an invalid revision from the local checkout",
     );
-    return revision(trimmed(result), "the local checkout");
   }
 
   private async requireCleanTrackedWorktree(
     distributionRoot: string,
   ): Promise<void> {
-    const trackedStatus = await this.command(
-      distributionRoot,
-      ["git", "status", "--porcelain=v1", "--untracked-files=no"],
-      "AI Office update could not inspect the Git working tree",
-    );
-    if (trimmed(trackedStatus) !== "")
+    const dirty = await readTrackedDirty(this.runner, distributionRoot);
+    if (!dirty.ok)
+      throw new LocalDistributionUpdateError(
+        "AI Office update could not inspect the Git working tree",
+      );
+    if (dirty.value)
       throw new LocalDistributionUpdateError(
         "AI Office update requires a clean tracked Git working tree. Commit or restore tracked changes, then run ai-office update again.",
       );
@@ -382,20 +353,14 @@ export class LocalDistributionUpdateAdapter implements DistributionUpdateAdapter
       ["git", "rev-parse", "--is-inside-work-tree"],
       "AI Office update requires a source-linked Git checkout",
     );
-    const topLevelResult = await this.command(
-      distributionRoot,
-      ["git", "rev-parse", "--show-toplevel"],
-      "AI Office update could not resolve the Git checkout root",
-    );
-    let topLevel: string;
-    try {
-      topLevel = realpathSync(trimmed(topLevelResult));
-    } catch {
+    const topLevel = await readCheckoutRoot(this.runner, distributionRoot);
+    if (!topLevel.ok)
       throw new LocalDistributionUpdateError(
-        "AI Office update could not canonicalize the Git checkout root",
+        topLevel.reason === "command_failed"
+          ? "AI Office update could not resolve the Git checkout root"
+          : "AI Office update could not canonicalize the Git checkout root",
       );
-    }
-    if (topLevel !== distributionRoot)
+    if (topLevel.value !== distributionRoot)
       throw new LocalDistributionUpdateError(
         "AI Office update requires the distribution root to be the Git checkout root",
       );

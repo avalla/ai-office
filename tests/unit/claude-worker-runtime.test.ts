@@ -1,10 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-} from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -268,38 +263,38 @@ describe("bounded Claude worker", () => {
   test.skipIf(process.platform === "win32")(
     "POSIX cancellation kills a persistent grandchild and cleans the test directory",
     async () => {
-    const root = mkdtempSync(join(tmpdir(), "ao-worker-tree-"));
-    const pidFile = join(root, "grandchild.pid");
-    try {
-      const script = [
-        "const { spawn } = require('node:child_process');",
-        "const fs = require('node:fs');",
-        `const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
-        "setInterval(() => {}, 1000);",
-      ].join(" ");
-      await expect(
-        runWorkerProcess({
-          executable: process.execPath,
-          args: ["-e", script],
-          cwd: root,
-          input: "",
-          timeoutMs: 100,
-        }),
-      ).rejects.toMatchObject({ code: "WORKER_TIMEOUT" });
-      const pid = Number(readFileSync(pidFile, "utf8"));
-      for (let attempt = 0; attempt < 50; attempt += 1) {
-        try {
-          process.kill(pid, 0);
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        } catch {
-          break;
+      const root = mkdtempSync(join(tmpdir(), "ao-worker-tree-"));
+      const pidFile = join(root, "grandchild.pid");
+      try {
+        const script = [
+          "const { spawn } = require('node:child_process');",
+          "const fs = require('node:fs');",
+          `const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+          "setInterval(() => {}, 1000);",
+        ].join(" ");
+        await expect(
+          runWorkerProcess({
+            executable: process.execPath,
+            args: ["-e", script],
+            cwd: root,
+            input: "",
+            timeoutMs: 100,
+          }),
+        ).rejects.toMatchObject({ code: "WORKER_TIMEOUT" });
+        const pid = Number(readFileSync(pidFile, "utf8"));
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          try {
+            process.kill(pid, 0);
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          } catch {
+            break;
+          }
         }
+        expect(() => process.kill(pid, 0)).toThrow();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+        expect(existsSync(root)).toBe(false);
       }
-      expect(() => process.kill(pid, 0)).toThrow();
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-      expect(existsSync(root)).toBe(false);
-    }
     },
   );
 
@@ -324,12 +319,30 @@ describe("bounded Claude worker", () => {
           timeoutMs: 5000,
           signal: control.signal,
         });
-        for (let attempt = 0; attempt < 50 && !existsSync(pidFile); attempt += 1)
-          await new Promise((resolve) => setTimeout(resolve, 10));
-        const pid = Number(readFileSync(pidFile, "utf8"));
+        // The file exists before its content is written; an empty read would
+        // become pid 0, and process.kill(0, 0) signals the test's own group and
+        // never throws. Wait for a complete positive pid instead.
+        let pid = 0;
+        for (let attempt = 0; attempt < 500 && pid === 0; attempt += 1) {
+          const text = existsSync(pidFile) ? readFileSync(pidFile, "utf8") : "";
+          if (/^\d+$/.test(text)) pid = Number(text);
+          else await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(pid).toBeGreaterThan(1);
         control.abort();
-        await expect(execution).rejects.toMatchObject({ name: "AbortError" });
-        expect(() => process.kill(pid, 0)).toThrow();
+        try {
+          await expect(execution).rejects.toMatchObject({ name: "AbortError" });
+          // Rejection is only allowed once the whole group is gone.
+          expect(() => process.kill(pid, 0)).toThrow();
+        } catch (error) {
+          // Do not leak the surviving grandchild when the assertion fails.
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // Already gone.
+          }
+          throw error;
+        }
       } finally {
         rmSync(root, { recursive: true, force: true });
         expect(existsSync(root)).toBe(false);

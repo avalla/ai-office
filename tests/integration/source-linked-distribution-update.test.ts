@@ -230,6 +230,61 @@ describe("source-linked distribution update adapter", () => {
     );
   });
 
+  test("fails closed on staged-only changes and ignores untracked-only files", async () => {
+    const { distribution } = sourceLinkedInstallation();
+    writeFileSync(join(distribution, "untracked.txt"), "untracked\n");
+    const adapter = new LocalDistributionUpdateAdapter(
+      new GitWithFakeBunRunner(),
+      "/test/fake-bun",
+    );
+    // Untracked files pass the dirty precondition; planning then stops at the
+    // network-dependent upstream step, so the clean-tree message must be absent.
+    git(
+      distribution,
+      "remote",
+      "set-url",
+      "origin",
+      join(distribution, "gone"),
+    );
+    await expect(adapter.plan(distribution)).rejects.not.toThrow(
+      "clean tracked Git working tree",
+    );
+
+    writeFileSync(join(distribution, "version.txt"), "staged edit\n");
+    git(distribution, "add", "version.txt");
+    await expect(adapter.plan(distribution)).rejects.toThrow(
+      "clean tracked Git working tree",
+    );
+  });
+
+  test("resolves the current revision through Git and rejects malformed HEAD output", async () => {
+    const { distribution } = sourceLinkedInstallation();
+    const head = git(distribution, "rev-parse", "HEAD");
+    class MalformedHeadRunner extends GitWithFakeBunRunner {
+      override async run(
+        command: readonly string[],
+        cwd: string,
+      ): Promise<DistributionCommandResult> {
+        const result = await super.run(command, cwd);
+        return command.join(" ") === "git rev-parse HEAD"
+          ? { ...result, stdout: "not-a-revision\n" }
+          : result;
+      }
+    }
+    await expect(
+      new LocalDistributionUpdateAdapter(new MalformedHeadRunner()).plan(
+        distribution,
+      ),
+    ).rejects.toThrow("invalid revision from the local checkout");
+    expect(
+      (
+        await new LocalDistributionUpdateAdapter(
+          new GitWithFakeBunRunner(),
+        ).plan(distribution)
+      ).currentRevision,
+    ).toBe(head);
+  });
+
   test("rejects divergent local and remote commits before approving an absent target", async () => {
     const { source, distribution } = sourceLinkedInstallation();
     git(distribution, "config", "user.name", "AI Office Test");
