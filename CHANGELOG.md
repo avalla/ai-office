@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Report the running source revision. `ai-office --version` and `-V` now print
+  SemVer build metadata for a source-linked checkout, for example
+  `0.1.0+git.6fe106c41945` (12-character revision), and still print the plain
+  product version with exit code `0` when the revision cannot be determined
+  (no `git`, no or corrupt Git metadata, a nested checkout, a future packaged
+  distribution). The new local `ai-office version [--json]` prints the full
+  revision, distribution kind and tracked dirty state; `--json` has
+  `contractVersion` 1 and uses `null` for unknown values. Resolution is local
+  Git inspection of the executable's own distribution root, shares HEAD,
+  revision validation and tracked-dirty logic with `ai-office update`, and
+  needs no Runtime, SQLite, network or source opt-in. The product version stays
+  `0.1.0`; the revision is not a protocol, schema or migration version.
 - Add a managed Runtime provider credential boundary.
   `ai-office credential set`, `status` and `remove` store provider credentials
   such as `OPENAI_API_KEY` as owner-only files in

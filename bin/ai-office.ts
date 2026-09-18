@@ -2,15 +2,13 @@
 
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  isLocalVersionInvocation,
-  productVersion,
-} from "@ai-office/command-support/version.ts";
+import { isLocalVersionInvocation } from "@ai-office/command-support/version.ts";
 import {
   isLocalHelpInvocation,
   runtimeCommandHelp,
 } from "@ai-office/command-support/help.ts";
 import { runRuntimeCli } from "../apps/cli/src/daemon-cli.ts";
+import { runVersionCli } from "../apps/cli/src/version-cli.ts";
 import { parseRuntimeHostStart } from "../apps/cli/src/runtime-lifecycle.ts";
 import {
   legacyCheckoutDatabasePath,
@@ -21,10 +19,16 @@ import {
 
 const distributionRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = Bun.argv.slice(2);
-if (isLocalVersionInvocation(args)) {
-  console.log(productVersion);
-  process.exit(0);
-}
+if (isLocalVersionInvocation(args))
+  process.exit(
+    await runVersionCli(args, {
+      distributionRoot,
+      io: {
+        stdout: (message) => console.log(message),
+        stderr: (message) => console.error(message),
+      },
+    }),
+  );
 if (isLocalHelpInvocation(args)) {
   console.log(runtimeCommandHelp);
   process.exit(0);

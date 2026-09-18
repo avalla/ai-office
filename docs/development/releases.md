@@ -1,10 +1,85 @@
 # Product versions and releases
 
 AI Office uses one product version, owned by `version` in the root
-`package.json`. `ai-office --version` and `ai-office -V` print that value and
+`package.json`. `ai-office --version` and `ai-office -V` print that value, plus
+source revision build metadata described below, and
 exit locally, including through the development launcher. They do not select
 a Runtime, open SQLite, contact IPC, or require source user-runtime opt-in.
 The reported version identifies the CLI distribution, not a running daemon.
+
+## Source revision and displayed version
+
+The product version says which release line the code belongs to; a source
+revision says which exact code is running. They are reported together, never
+merged into `package.json`:
+
+```text
+Product version:
+0.1.0
+
+Source revision:
+6fe106c41945909937466047926861f187bf32b8
+
+Displayed source-linked version:
+0.1.0+git.6fe106c41945
+```
+
+`ai-office --version` and `-V` print the displayed version: the product version
+plus [SemVer build metadata](https://semver.org/#spec-item-10)
+`+git.<first 12 characters of the revision>`. Build metadata identifies the
+running code, does not change SemVer precedence, and is not a protocol, schema,
+migration, or profile version. It is deliberately not a prerelease
+(`0.1.0-6fe106c41945` would sort below `0.1.0`). If the revision is not
+authoritatively known, the plain product version is printed with exit code `0`;
+no placeholder such as `+git.unknown` is invented.
+
+`ai-office version` is the local diagnostic:
+
+```text
+AI Office 0.1.0
+Revision: 6fe106c41945909937466047926861f187bf32b8
+Distribution: source-linked
+Dirty: no
+```
+
+Unknown values print `unavailable` (`Distribution: unknown`).
+`ai-office version --json` has a stable contract; `null` means not
+authoritatively known:
+
+```json
+{
+  "contractVersion": 1,
+  "version": "0.1.0",
+  "displayVersion": "0.1.0+git.6fe106c41945",
+  "revision": "6fe106c41945909937466047926861f187bf32b8",
+  "dirty": false,
+  "distribution": "source-linked"
+}
+```
+
+New `distribution` values may be added without changing `contractVersion`.
+
+Resolution is local Git inspection of the distribution root derived from the
+executable, never from the working directory, and never the network:
+`git rev-parse --show-toplevel`, `git rev-parse HEAD`, and, for `version`
+only, `git status --porcelain=v1 --untracked-files=no`. Repository-selecting
+variables such as `GIT_DIR` are ignored, and a distribution nested inside some
+other repository does not report that repository's revision. It works for a
+`.git` directory, a `.git` file, and linked worktrees. Neither command selects a
+Runtime, opens SQLite, uses IPC, checks branches or upstreams, or requires
+source user-runtime opt-in. HEAD resolution, revision validation, 12-character
+formatting, and tracked dirty state are the same code `ai-office update` uses,
+so the two commands cannot disagree about the checkout.
+
+Dirty means tracked changes, staged or not; untracked files do not count. The
+dirty state is reported separately and is not part of the compact version: the
+compact version is a deterministic identity of the revision, while a working
+tree can change without changing it. Use `ai-office version` to see it.
+
+A future packaged distribution supplies its version, revision, and
+distribution kind from build-time metadata instead of Git inspection; the
+public commands and JSON contract do not change. That packaging is not
+implemented yet.
 
 Workspace packages remain private implementation modules without independently
 published versions. Protocol versions, query API versions, SQLite migration

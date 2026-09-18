@@ -17,8 +17,11 @@ The product is local-first and auditable: SQLite is authoritative, generated Mar
 ## Current status
 
 The product version is defined in the root `package.json`; inspect it locally
-with `ai-office --version` (or `bun run dev:cli -- --version`). This does not
-contact the Runtime or require source user-runtime opt-in. See the
+with `ai-office --version` (or `bun run dev:cli -- --version`). In a
+source-linked checkout it also names the exact revision that is running, for
+example `0.1.0+git.6fe106c41945`; `ai-office version [--json]` adds the full
+revision and tracked dirty state. Neither contacts the Runtime, the network, or
+requires source user-runtime opt-in. See the
 [release policy](docs/development/releases.md) and [changelog](CHANGELOG.md).
 
 The current implementation on `main` includes:

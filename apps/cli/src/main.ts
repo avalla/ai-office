@@ -2,29 +2,34 @@ import { runRuntimeCli } from "./daemon-cli.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  isLocalVersionInvocation,
-  productVersion,
-} from "@ai-office/command-support/version.ts";
+import { isLocalVersionInvocation } from "@ai-office/command-support/version.ts";
+import { runVersionCli } from "./version-cli.ts";
 
 import {
   isLocalHelpInvocation,
   runtimeCommandHelp,
 } from "@ai-office/command-support/help.ts";
 
-if (isLocalVersionInvocation(Bun.argv.slice(2))) {
-  console.log(productVersion);
-  process.exit(0);
-}
+const projectRoot = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
+
+if (isLocalVersionInvocation(Bun.argv.slice(2)))
+  process.exit(
+    await runVersionCli(Bun.argv.slice(2), {
+      distributionRoot: projectRoot,
+      io: {
+        stdout: (message) => console.log(message),
+        stderr: (message) => console.error(message),
+      },
+    }),
+  );
 if (isLocalHelpInvocation(Bun.argv.slice(2))) {
   console.log(runtimeCommandHelp);
   process.exit(0);
 }
 
-const projectRoot = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../..",
-);
 const runtimePaths = resolveRuntimePaths({
   mode: "development",
   developmentRoot: projectRoot,

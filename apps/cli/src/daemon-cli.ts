@@ -1,9 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { resolve } from "node:path";
-import {
-  isLocalVersionInvocation,
-  productVersion,
-} from "@ai-office/command-support/version.ts";
+import { isLocalVersionInvocation } from "@ai-office/command-support/version.ts";
+import { runVersionCli } from "./version-cli.ts";
 import { resolveCallerLocalPaths } from "@ai-office/command-support/caller-local-paths.ts";
 import {
   isLocalHelpInvocation,
@@ -252,8 +250,11 @@ export async function runRuntimeCli(
 ): Promise<number> {
   const io = options.io ?? defaultIo;
   if (isLocalVersionInvocation(args)) {
-    io.stdout(productVersion);
-    return 0;
+    const sourceRoot = options.distributionRoot ?? options.projectRoot;
+    return runVersionCli(args, {
+      io,
+      ...(sourceRoot === undefined ? {} : { distributionRoot: sourceRoot }),
+    });
   }
   if (isLocalHelpInvocation(args)) {
     io.stdout(cliHelp);
