@@ -5,10 +5,13 @@ set local search_path = extensions, public, core;
 
 select * from no_plan();
 
-insert into core.project(id, name, created_at, updated_at)
+insert into core.tenant(id, name, created_at, updated_at)
+values ('pgtap-project-tenant', 'Project Tenant', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
+
+insert into core.project(id, name, tenant_id, created_at, updated_at)
 values
-  ('pgtap-project-a', 'Project A', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
-  ('pgtap-project-b', 'Project B', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
+  ('pgtap-project-a', 'Project A', 'pgtap-project-tenant', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
+  ('pgtap-project-b', 'Project B', 'pgtap-project-tenant', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
 
 insert into core.task(
   id, project_id, title, status, priority, created_at, updated_at

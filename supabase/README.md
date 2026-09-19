@@ -18,7 +18,9 @@ adapter and bootstrap explicitly reports the provider as complete.
 - Human access is `JWT -> authenticated -> auth.uid() -> core.tenant_member ->
   RLS`. JWT claims are identity context only; tenant membership and roles remain
   database authority. The Runtime uses its existing server-side PostgreSQL trust
-  boundary and does not depend on Supabase `service_role`.
+  boundary and does not depend on Supabase `service_role`. PostgreSQL
+  repositories are composed with an explicit trusted tenant ID; table-owner
+  access is still guarded by tenant predicates/checks.
 - Tenant visibility/access: membership-backed RLS determines which tenant and
   project rows an authenticated human can read; JWT tenant/role claims do not.
 - Collaboration mutation authority: ordinary project-owned collaboration tables
@@ -77,17 +79,39 @@ directly.
 
 ## Tenant authority foundation
 
-The first tenancy slice adds `core.tenant`, `core.tenant_member`,
-`core.tenant_invite`, and staged `core.project.tenant_id` ownership. Tenant
+The tenancy slice adds `core.tenant`, `core.tenant_member`,
+`core.tenant_invite`, and mandatory `core.project.tenant_id` ownership. Tenant
 identity is PostgreSQL infrastructure metadata: the portable `Project` domain and
 SQLite/Lite composition remain tenant-agnostic.
 
-`project.tenant_id` is intentionally nullable during the migration phase so the
-current PostgreSQL repository contracts remain valid. A project may move from
-unassigned to one tenant exactly once; ordinary reassignment or detachment then
-fails at the database boundary. The authenticated Pro surface must later deny
-unassigned projects, and a later migration may make ownership mandatory after
-all Pro creation/import paths carry explicit tenant context.
+`20260919050000_project_tenant_required.sql` completes the staged migration. It
+fails closed when existing rows have `tenant_id IS NULL`; operators must establish
+a deterministic authoritative ownership mapping before retrying. It then enforces
+`core.project.tenant_id IS NOT NULL`, while the existing tenant FK and immutable
+assignment trigger remain active.
+
+`ProjectStorageBootstrap` requires `AI_OFFICE_POSTGRES_TENANT_ID` for environment
+selected PostgreSQL and binds that trusted deployment/bootstrap value into
+`ProjectStorageConfig`, then into the project, task, task-link, and governance
+repositories. One PostgreSQL `ProjectStorage` handle is bound to exactly one
+trusted tenant context. The value is not tenant membership authority and is not
+a request-scoped authenticated tenant selector; it must never come from client
+JWT tenant or role claims. A future shared Pro HTTP/API process must bind each
+request to its own authenticated principal and tenant authority rather than
+reuse one process-global tenant selection for arbitrary requests. That
+request-principal and API-routing boundary is a separate future slice; this PR
+does not define multi-tenant HTTP/API request routing authority.
+
+The default bootstrap reads this value from `process.env` as deployment
+configuration. An explicit `ProjectStorageConfig` can supply the same trusted
+composition input. Tenant creation/provisioning remains external to opening a
+handle: bootstrap intentionally does not require the configured tenant row to
+exist, so a handle may precede provisioning. The tenant foreign key rejects
+project writes until the operator creates the tenant; this is not a claim that
+the configured value is valid request authority. A standalone
+administrative/migration connection may operate above a tenant only through
+explicit SQL/tooling; the human/runtime repository path is never an accidental
+table-owner bypass.
 
 Human principal IDs are UUIDs but core tables intentionally do not foreign-key
 `auth.users`. That binding belongs to the Supabase Auth/RLS surface so the same
@@ -104,10 +128,12 @@ grants.
 
 ## Next slices
 
-The remaining sequence after tenant authorization is:
+The remaining sequence after tenant-scoped project authority is:
 
-1. tenant-scoped Pro project creation/import and, once migration is complete,
-   mandatory project tenant ownership;
-2. invite acceptance/auth binding and remaining PostgreSQL repository parity,
+1. invite acceptance/auth binding and remaining PostgreSQL repository parity,
    designed tenant-aware from creation;
-3. a separately designed PostgreSQL AgentRuntime principal and parity slice.
+2. a separately designed PostgreSQL AgentRuntime principal and parity slice.
+
+Portable `Project` identity is not PostgreSQL tenant ownership. Repository identity
+is a portable checkout binding, not tenant authority. Authenticated identity is
+not tenant membership authority: membership remains database-backed.

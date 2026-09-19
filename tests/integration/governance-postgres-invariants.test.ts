@@ -25,6 +25,7 @@ import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories
 
 const connectionString = process.env.AI_OFFICE_TEST_POSTGRES_URL;
 const migrationDirectory = join(process.cwd(), "supabase", "migrations");
+const tenantId = "governance-invariant-tenant";
 const now = new Date("2026-08-05T00:00:00.000Z");
 let database!: PostgresClient;
 let projects!: PostgresProjectRepository;
@@ -37,8 +38,12 @@ describe.skipIf(connectionString === undefined)(
     beforeAll(async () => {
       database = new PostgresClient(connectionString!);
       await migratePostgres(database, migrationDirectory);
-      projects = new PostgresProjectRepository(database);
-      governance = new PostgresGovernanceRepository(database);
+      await database.query(
+        "INSERT INTO core.tenant(id, name, created_at, updated_at) VALUES ($1, $2, $3, $3) ON CONFLICT DO NOTHING",
+        [tenantId, "Governance Invariant Tenant", now],
+      );
+      projects = new PostgresProjectRepository(database, tenantId);
+      governance = new PostgresGovernanceRepository(database, tenantId);
     });
 
     beforeEach(() => {
@@ -170,7 +175,7 @@ describe.skipIf(connectionString === undefined)(
         title: "Task",
         now,
       });
-      await new PostgresTaskRepository(database).save(task);
+      await new PostgresTaskRepository(database, tenantId).save(task);
       const milestone = await saveMilestone(project.snapshot().id, "milestone");
       const requirementValue = await saveRequirement(
         project.snapshot().id,

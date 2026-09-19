@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { readdirSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, afterAll, describe, expect, test } from "vitest";
 import type { RequirementStatus } from "@ai-office/domain/governance/governance.ts";
@@ -18,6 +25,7 @@ import { defineProjectStorageContracts } from "../contracts/project-storage.cont
 
 const connectionString = process.env.AI_OFFICE_TEST_POSTGRES_URL;
 const migrationDirectory = join(process.cwd(), "supabase", "migrations");
+const tenantId = "contract-tenant";
 
 describe.skipIf(connectionString === undefined)(
   "PostgreSQL project storage contracts",
@@ -27,6 +35,10 @@ describe.skipIf(connectionString === undefined)(
     beforeAll(async () => {
       database = new PostgresClient(connectionString!);
       await migratePostgres(database, migrationDirectory);
+      await database.query(
+        "INSERT INTO core.tenant(id, name, created_at, updated_at) VALUES ($1, $2, $3, $3) ON CONFLICT DO NOTHING",
+        [tenantId, "Contract Tenant", new Date("2026-01-01T00:00:00.000Z")],
+      );
       expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
       expect(
         await database.query<{ exists: boolean }>(
@@ -65,9 +77,9 @@ describe.skipIf(connectionString === undefined)(
     });
 
     defineProjectStorageContracts(async () => ({
-      projects: new PostgresProjectRepository(database),
-      tasks: new PostgresTaskRepository(database),
-      taskRequirements: new PostgresTaskRequirementRepository(database),
+      projects: new PostgresProjectRepository(database, tenantId),
+      tasks: new PostgresTaskRepository(database, tenantId),
+      taskRequirements: new PostgresTaskRequirementRepository(database, tenantId),
       transactions: new PostgresTransactionRunner(database),
       async seedRequirement(input: {
         id: string;
@@ -98,8 +110,8 @@ describe.skipIf(connectionString === undefined)(
     test("keeps repository writes on one transaction-bound session", async () => {
       const subject = new PostgresClient(connectionString!);
       const observer = new PostgresClient(connectionString!);
-      const projects = new PostgresProjectRepository(subject);
-      const tasks = new PostgresTaskRepository(subject);
+      const projects = new PostgresProjectRepository(subject, tenantId);
+      const tasks = new PostgresTaskRepository(subject, tenantId);
       const transactions = new PostgresTransactionRunner(subject);
       const projectId = `session-${randomUUID()}`;
       const taskId = `session-${randomUUID()}`;
@@ -114,14 +126,14 @@ describe.skipIf(connectionString === undefined)(
             Task.create({ id: taskId, projectId, title: "Session task", now }),
           );
           expect(
-            await new PostgresProjectRepository(observer).findById(projectId),
+            await new PostgresProjectRepository(observer, tenantId).findById(projectId),
           ).toBeNull();
         });
         expect(
-          await new PostgresProjectRepository(observer).findById(projectId),
+          await new PostgresProjectRepository(observer, tenantId).findById(projectId),
         ).not.toBeNull();
         expect(
-          await new PostgresTaskRepository(observer).findById(taskId),
+          await new PostgresTaskRepository(observer, tenantId).findById(taskId),
         ).not.toBeNull();
       } finally {
         await subject.close();
@@ -159,7 +171,7 @@ describe.skipIf(connectionString === undefined)(
 
     test("fails closed for an escaped transaction context", async () => {
       const subject = new PostgresClient(connectionString!);
-      const projects = new PostgresProjectRepository(subject);
+      const projects = new PostgresProjectRepository(subject, tenantId);
       const transactions = new PostgresTransactionRunner(subject);
       let releaseEscapedWork!: () => void;
       const escapedGate = new Promise<void>((resolve) => {
@@ -250,6 +262,111 @@ describe.skipIf(connectionString === undefined)(
         ]);
       } finally {
         await Promise.allSettled([first.close(), second.close()]);
+        const cleanup = new PostgresClient(connectionString!);
+        try {
+          await cleanup.query(`DROP DATABASE "${databaseName}"`);
+        } finally {
+          await cleanup.close();
+        }
+      }
+    });
+
+    test("recovers a staged NULL-tenant migration after authoritative assignment", async () => {
+      const databaseName = `ai_office_orphan_${randomUUID().replaceAll("-", "")}`;
+      const partialRoot = mkdtempSync(
+        join(tmpdir(), "ai-office-postgres-migration-recovery-"),
+      );
+      const partialMigrationDirectory = join(partialRoot, "migrations");
+      mkdirSync(partialMigrationDirectory);
+      const requiredMigration = "20260919050000_project_tenant_required.sql";
+      for (const file of readdirSync(migrationDirectory)
+        .filter((value) => value.endsWith(".sql"))
+        .sort()) {
+        if (file < requiredMigration)
+          copyFileSync(
+            join(migrationDirectory, file),
+            join(partialMigrationDirectory, file),
+          );
+      }
+
+      const admin = new PostgresClient(connectionString!);
+      await admin.query(`CREATE DATABASE "${databaseName}"`);
+      await admin.close();
+      const isolatedConnection = new URL(connectionString!);
+      isolatedConnection.pathname = `/${databaseName}`;
+      const database = new PostgresClient(isolatedConnection.toString());
+      const tenantId = `recovery-tenant-${randomUUID()}`;
+      const projectId = `recovery-project-${randomUUID()}`;
+
+      try {
+        expect(
+          (await migratePostgres(database, partialMigrationDirectory)).at(-1),
+        ).toBe("20260919040000_governance_authority_boundary.sql");
+        await database.query(
+          "INSERT INTO core.tenant(id, name, created_at, updated_at) VALUES ($1, $2, $3, $3)",
+          [tenantId, "Recovery Tenant", new Date("2026-09-19T00:00:00.000Z")],
+        );
+        await database.query(
+          "INSERT INTO core.project(id, name, created_at, updated_at) VALUES ($1, $2, $3, $3)",
+          [projectId, "Orphan Project", new Date("2026-09-19T00:00:00.000Z")],
+        );
+
+        await expect(
+          migratePostgres(database, migrationDirectory),
+        ).rejects.toThrow(
+          "cannot make core.project.tenant_id NOT NULL while NULL-tenant projects exist",
+        );
+        expect(
+          await database.query<{ count: string }>(
+            "SELECT count(*) FROM core.schema_migration WHERE version = $1",
+            [requiredMigration],
+          ),
+        ).toEqual([{ count: "0" }]);
+        expect(
+          await database.query<{ is_nullable: string }>(
+            `
+              SELECT is_nullable
+              FROM information_schema.columns
+              WHERE table_schema = 'core'
+                AND table_name = 'project'
+                AND column_name = 'tenant_id'
+            `,
+          ),
+        ).toEqual([{ is_nullable: "YES" }]);
+        expect(
+          await database.query<{ tenant_id: string | null }>(
+            "SELECT tenant_id FROM core.project WHERE id = $1",
+            [projectId],
+          ),
+        ).toEqual([{ tenant_id: null }]);
+
+        await database.query(
+          "UPDATE core.project SET tenant_id = $1 WHERE id = $2",
+          [tenantId, projectId],
+        );
+        expect(await migratePostgres(database, migrationDirectory)).toEqual([
+          requiredMigration,
+        ]);
+        expect(
+          await database.query<{ is_nullable: string }>(
+            `
+              SELECT is_nullable
+              FROM information_schema.columns
+              WHERE table_schema = 'core'
+                AND table_name = 'project'
+                AND column_name = 'tenant_id'
+            `,
+          ),
+        ).toEqual([{ is_nullable: "NO" }]);
+        expect(
+          await database.query<{ tenant_id: string }>(
+            "SELECT tenant_id FROM core.project WHERE id = $1",
+            [projectId],
+          ),
+        ).toEqual([{ tenant_id: tenantId }]);
+      } finally {
+        await database.close();
+        rmSync(partialRoot, { recursive: true, force: true });
         const cleanup = new PostgresClient(connectionString!);
         try {
           await cleanup.query(`DROP DATABASE "${databaseName}"`);

@@ -34,7 +34,12 @@ export type ProjectStorageProvider = "sqlite" | "postgres";
 
 export type ProjectStorageConfig =
   | { provider: "sqlite"; databasePath: string }
-  | { provider: "postgres"; connectionString: string };
+  | {
+      provider: "postgres";
+      connectionString: string;
+      /** Trusted deployment/bootstrap context; never sourced from client JWT claims. */
+      tenantId: string;
+    };
 
 export const projectStorageCapabilityNames = [
   "projects",
@@ -140,7 +145,12 @@ export class ProjectStorageBootstrap {
           throw new StorageProviderConfigurationError(
             "AI_OFFICE_POSTGRES_URL is required when AI_OFFICE_STORAGE_PROVIDER=postgres",
           );
-        return { provider, connectionString };
+        const tenantId = this.environment.AI_OFFICE_POSTGRES_TENANT_ID;
+        if (tenantId === undefined || tenantId.trim() !== tenantId || tenantId.length === 0)
+          throw new StorageProviderConfigurationError(
+            "AI_OFFICE_POSTGRES_TENANT_ID is required as trusted composition context when AI_OFFICE_STORAGE_PROVIDER=postgres",
+          );
+        return { provider, connectionString, tenantId };
       }
       default:
         throw new StorageProviderConfigurationError(
@@ -212,10 +222,10 @@ export class ProjectStorageBootstrap {
         migrationDirectory ?? this.postgresMigrationDirectory,
       );
       const repositories = {
-        projects: new PostgresProjectRepository(database),
-        tasks: new PostgresTaskRepository(database),
-        taskRequirements: new PostgresTaskRequirementRepository(database),
-        governance: new PostgresGovernanceRepository(database),
+        projects: new PostgresProjectRepository(database, configuration.tenantId),
+        tasks: new PostgresTaskRepository(database, configuration.tenantId),
+        taskRequirements: new PostgresTaskRequirementRepository(database, configuration.tenantId),
+        governance: new PostgresGovernanceRepository(database, configuration.tenantId),
         transactions: new PostgresTransactionRunner(database),
       } satisfies Pick<
         ProjectStorage,
@@ -266,6 +276,13 @@ function validateConfiguration(
       if (configuration.connectionString.length === 0)
         throw new StorageProviderConfigurationError(
           "PostgreSQL project storage requires a connection string",
+        );
+      if (
+        configuration.tenantId.length === 0 ||
+        configuration.tenantId.trim() !== configuration.tenantId
+      )
+        throw new StorageProviderConfigurationError(
+          "PostgreSQL project storage requires a non-empty, trimmed tenant ID",
         );
       return configuration;
     default:

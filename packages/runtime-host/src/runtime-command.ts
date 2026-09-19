@@ -171,6 +171,11 @@ import {
   ProjectPortabilityError,
   ProjectRestorePartialError,
 } from "@ai-office/application/project-portability/manage-project-portability.ts";
+import {
+  PostgresTenantContextError,
+  PostgresTenantScopeError,
+  PostgresProjectTenantConflictError,
+} from "@ai-office/application/ports/project-tenant-errors.ts";
 
 export { CliPromptRequiredError } from "./commands/shared.ts";
 
@@ -440,7 +445,10 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ProjectPortabilityError ||
     error instanceof ProjectRestorePartialError ||
     error instanceof StorageProviderConfigurationError ||
-    error instanceof StorageProviderIncompleteError
+    error instanceof StorageProviderIncompleteError ||
+    error instanceof PostgresTenantContextError ||
+    error instanceof PostgresTenantScopeError ||
+    error instanceof PostgresProjectTenantConflictError
   )
     return error.message;
   return null;

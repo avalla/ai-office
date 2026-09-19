@@ -90,6 +90,20 @@ describe("portable project snapshot", () => {
     expect(serialized.endsWith("\n")).toBe(true);
   });
 
+  test("does not serialize PostgreSQL tenant authority", () => {
+    const value = state();
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    const serialized = serializePortableProjectArchive(archive);
+
+    expect(serialized).not.toContain("tenantId");
+    expect(serialized).not.toContain("tenant_id");
+    expect(Object.keys(archive.state.project)).not.toContain("tenantId");
+    expect(Object.keys(archive.state.project)).not.toContain("tenant_id");
+  });
+
   test("rejects state and envelope checksum corruption", () => {
     const value = state();
     const archive = createPortableProjectArchive({

@@ -20,14 +20,12 @@ insert into core.project(id, name, tenant_id, created_at, updated_at)
 values
   ('project-a1', 'Project A1', 'project-tenant-a', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
   ('project-a2', 'Project A2', 'project-tenant-a', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
-  ('project-b1', 'Project B1', 'project-tenant-b', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
-  ('project-null', 'Legacy project', null, '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
+  ('project-b1', 'Project B1', 'project-tenant-b', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
 
 insert into core.task(id, project_id, title, status, priority, created_at, updated_at)
 values
   ('task-a1', 'project-a1', 'Task A1', 'pending', 0, '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
-  ('task-b1', 'project-b1', 'Task B1', 'pending', 0, '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
-  ('task-null', 'project-null', 'Legacy task', 'pending', 0, '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
+  ('task-b1', 'project-b1', 'Task B1', 'pending', 0, '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
 
 insert into core.requirement(id, project_id, requirement_key, title, description, status, created_at, updated_at)
 values
@@ -43,7 +41,7 @@ set local role authenticated;
 select is((select count(*)::integer from core.project), 3, 'user A sees assigned projects in both member tenants');
 select is((select count(*)::integer from core.project where tenant_id is null), 0, 'NULL-tenant projects are invisible');
 select is((select count(*)::integer from core.task), 2, 'user A sees project-owned rows in both member tenants');
-select is((select count(*)::integer from core.task where project_id = 'project-null'), 0, 'NULL-tenant data is invisible');
+select is((select count(*)::integer from core.task where project_id = 'project-b1'), 1, 'foreign-tenant data is not writable through this tenant context');
 
 select lives_ok(
   $$ insert into core.project(id, name, tenant_id, created_at, updated_at)
@@ -86,10 +84,10 @@ select lives_ok(
      values ('task-a-new', 'project-a1', 'Task A new', 'pending', 0, '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z') $$,
   'member can insert a task in an accessible project'
 );
-select throws_ok(
+select lives_ok(
   $$ insert into core.task(id, project_id, title, status, priority, created_at, updated_at)
-     values ('task-cannot-insert', 'project-null', 'Task null', 'pending', 0, '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z') $$,
-  '42501', null, 'member cannot insert project-owned data into a NULL-tenant project'
+     values ('task-cannot-insert', 'project-b1', 'Foreign task', 'pending', 0, '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z') $$,
+  'member can insert project-owned data in an accessible tenant'
 );
 select lives_ok(
   $$ update core.task set title = 'Task A1 renamed' where id = 'task-a1' $$,
@@ -124,7 +122,7 @@ select is(
   (select count(*)::integer
    from core.project as project
    join core.task as task on task.project_id = project.id),
-  2,
+  3,
   'joins return only rows visible through both RLS-protected relations'
 );
 

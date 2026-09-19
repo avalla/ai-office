@@ -80,8 +80,12 @@ scrivere come server-side owner, mentre una connessione umana senza Supabase
 Auth resta fail-closed.
 
 Lite resta SQLite, local-first e tenant-agnostic; il domain `Project` non riceve
-`tenantId`. La colonna PostgreSQL `core.project.tenant_id` resta nullable nella
-migrazione staged. Non sono incluse tenant-aware project creation/import,
+`tenantId`. La migrazione staged della colonna PostgreSQL
+`core.project.tenant_id` è completata: `20260919050000_project_tenant_required.sql`
+rifiuta i database con righe NULL e poi applica `NOT NULL`. La
+creazione/import/restore Pro usa repository PostgreSQL legati a un tenant
+esplicito fornito dalla composizione trusted; le policy RLS continuano a
+richiedere owner/admin membership e non usano claim JWT. Non sono incluse
 invite acceptance, signup, auth.users binding, ownership transfer, API/UI,
 billing, Storage/Realtime, un permission engine generico o il Runtime service
 principal definitivo. Queste decisioni appartengono alle slice successive.
