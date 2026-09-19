@@ -175,15 +175,21 @@ idempotent for local integration setup and future Supabase deployment.
 
 `core.requirement` is now authoritative for both `GovernanceRepository` and
 `TaskRequirementRepository`. Its governance fields match SQLite, including
-`milestone_id`, and the database enforces same-project milestone ownership. The
-same migration adds milestones, ADRs, hardened reviews, approvals, and
-append-only governance events. Review subject ownership covers the current
-SQLite subject set; `core.agent_run` is only the identity/ownership projection
-needed by governance until the later agent-runtime parity slice. The reverse
-`task_requirement_requirement_idx(requirement_id, task_id)` index remains for
-requirement-first linkage lookup. Portable export/import remains owned by the
-SQLite `ProjectStateRepository`; PostgreSQL project-state parity is a later
-slice, so this repository does not claim portable-state authority.
+`milestone_id`. A composite foreign key binds
+`(requirement.milestone_id, requirement.project_id)` to the milestone's
+same-project identity; deleting a milestone sets only `milestone_id` to NULL
+and preserves the requirement project. The same migration adds milestones,
+ADRs, hardened reviews, approvals, and append-only governance events. Review
+subject ownership covers the current SQLite subject set and remains true after
+review creation: project ownership changes and deletes of reviewed subjects are
+rejected, while the review trigger locks the subject row during validation.
+`core.agent_run` is only the identity/ownership projection needed by governance;
+a future agent-runtime migration must extend this table rather than create a
+second authority. The reverse `task_requirement_requirement_idx(requirement_id,
+task_id)` index remains for requirement-first linkage lookup. Portable
+export/import remains owned by the SQLite `ProjectStateRepository`; PostgreSQL
+project-state parity is a later slice, so this repository does not claim
+portable-state authority.
 
 The PostgreSQL adapter uses the server-side `postgres` driver. A shared
 `PostgresClient` owns the pool and an async transaction-session context;

@@ -1331,8 +1331,12 @@ parity: `ProjectRepository`, `TaskRepository`, `TaskRequirementRepository`,
 `GovernanceRepository`, and `TransactionRunner` are now implemented and
 contract-tested against real PostgreSQL. The governance slice includes
 milestones, full requirements, ADRs, reviews, approvals, governance events,
-project ownership constraints, append-only rules, and transactional finalization.
-PostgreSQL remains intentionally partial: a request to use it as complete Runtime
+project ownership constraints, append-only rules, transactional finalization,
+the same-project requirement/milestone composite foreign key with
+column-specific delete nulling, and persistent review-subject ownership guards.
+PostgreSQL remains intentionally partial: its implemented capability groups are
+exactly `projects`, `tasks`, `taskRequirements`, `governance`, and
+`transactions`; a request to use it as complete Runtime
 authority still fails closed with the missing capability list; no SQLite fallback
 or hybrid authority is allowed. PostgreSQL connection configuration is explicit
 through `AI_OFFICE_STORAGE_PROVIDER=postgres` and `AI_OFFICE_POSTGRES_URL`, and

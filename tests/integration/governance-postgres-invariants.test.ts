@@ -45,6 +45,12 @@ describe.skipIf(connectionString === undefined)(
       prefix = `governance-pg-invariant-${randomUUID()}`;
     });
 
+    test("migration creates the agent_run governance ownership projection", async () => {
+      const [projection] = await database.query<{
+        table_name: string | null;
+      }>("SELECT to_regclass('core.agent_run')::text AS table_name");
+      expect(projection?.table_name).toBe("core.agent_run");
+    });
 
     afterAll(async () => {
       await database.close();
@@ -66,6 +72,55 @@ describe.skipIf(connectionString === undefined)(
       ).rejects.toThrow(
         "requirement milestone must belong to the same project",
       );
+    });
+
+    test("rejects milestone ownership changes and preserves project on delete", async () => {
+      const project = await createProject("project");
+      const other = await createProject("other");
+      const milestone = await saveMilestone(project.snapshot().id, "milestone");
+      const requirementValue = {
+        ...requirement(project.snapshot().id, "requirement"),
+        milestoneId: milestone.id,
+      };
+      await governance.saveRequirement(requirementValue);
+
+      await expect(
+        database.query(
+          "UPDATE core.milestone SET project_id = $1 WHERE id = $2",
+          [other.snapshot().id, milestone.id],
+        ),
+      ).rejects.toThrow();
+
+      const [unchangedMilestone] = await database.query<{
+        project_id: string;
+      }>("SELECT project_id FROM core.milestone WHERE id = $1", [milestone.id]);
+      const [unchangedRequirement] = await database.query<{
+        project_id: string;
+        milestone_id: string | null;
+      }>(
+        "SELECT project_id, milestone_id FROM core.requirement WHERE id = $1",
+        [requirementValue.id],
+      );
+      expect(unchangedMilestone?.project_id).toBe(project.snapshot().id);
+      expect(unchangedRequirement).toEqual({
+        project_id: project.snapshot().id,
+        milestone_id: milestone.id,
+      });
+
+      await database.query("DELETE FROM core.milestone WHERE id = $1", [
+        milestone.id,
+      ]);
+      const [afterDelete] = await database.query<{
+        project_id: string;
+        milestone_id: string | null;
+      }>(
+        "SELECT project_id, milestone_id FROM core.requirement WHERE id = $1",
+        [requirementValue.id],
+      );
+      expect(afterDelete).toEqual({
+        project_id: project.snapshot().id,
+        milestone_id: null,
+      });
     });
 
     test("rejects an ADR superseding another project's ADR", async () => {
@@ -253,6 +308,44 @@ describe.skipIf(connectionString === undefined)(
       ).toHaveLength(1);
     });
 
+    test("rejects direct terminal and incomplete review inserts", async () => {
+      const project = await createProject("project");
+      const requirementValue = await saveRequirement(
+        project.snapshot().id,
+        "requirement",
+      );
+
+      const insertReview = (
+        id: string,
+        status: "pending" | "approved" | "rejected",
+        completedAt: Date | null = null,
+      ) =>
+        database.query(
+          `INSERT INTO core.review(
+             id, project_id, subject_type, subject_id, reviewer_actor_type,
+             reviewer_actor_id, status, created_at, completed_at
+           ) VALUES ($1, $2, 'requirement', $3, 'user', 'reviewer', $4, $5, $6)`,
+          [
+            id,
+            project.snapshot().id,
+            requirementValue.id,
+            status,
+            now,
+            completedAt,
+          ],
+        );
+
+      await expect(
+        insertReview(`${prefix}-approved-insert`, "approved"),
+      ).rejects.toThrow("new review must be pending without completion");
+      await expect(
+        insertReview(`${prefix}-rejected-insert`, "rejected"),
+      ).rejects.toThrow("new review must be pending without completion");
+      await expect(
+        insertReview(`${prefix}-pending-completed-insert`, "pending", now),
+      ).rejects.toThrow("new review must be pending without completion");
+    });
+
     test("prevents terminal reviews without approval and prevents returning to pending", async () => {
       const project = await createProject("project");
       const requirementValue = await saveRequirement(
@@ -270,19 +363,82 @@ describe.skipIf(connectionString === undefined)(
           "UPDATE core.review SET status = 'approved' WHERE id = $1",
           [reviewValue.id],
         ),
-      ).rejects.toThrow("review status requires a matching decision");
+      ).rejects.toThrow("review terminal state requires its matching approval");
 
       await expect(
         governance.decideReview(
           approvalValue(project.snapshot().id, reviewValue.id),
         ),
       ).resolves.toBe("decided");
+
+      const [finalized] = await database.query<{
+        status: string;
+        completed_at: Date | string | null;
+      }>("SELECT status, completed_at FROM core.review WHERE id = $1", [
+        reviewValue.id,
+      ]);
+      expect(finalized?.status).toBe("approved");
+      expect(new Date(finalized?.completed_at ?? 0)).toEqual(now);
+
+      await expect(
+        database.query(
+          "UPDATE core.review SET completed_at = $1 WHERE id = $2",
+          [new Date(now.getTime() + 1000), reviewValue.id],
+        ),
+      ).rejects.toThrow();
+
+      await expect(
+        database.query(
+          "UPDATE core.review SET status = 'rejected' WHERE id = $1",
+          [reviewValue.id],
+        ),
+      ).rejects.toThrow("terminal review decision is immutable");
+
       await expect(
         database.query(
           "UPDATE core.review SET status = 'pending' WHERE id = $1",
           [reviewValue.id],
         ),
       ).rejects.toThrow("decided review cannot return to pending");
+    });
+
+    test("prevents a reviewed subject from changing ownership or being deleted", async () => {
+      const project = await createProject("project");
+      const other = await createProject("other");
+      const requirementValue = await saveRequirement(
+        project.snapshot().id,
+        "requirement",
+      );
+      const reviewValue = await saveReview(
+        project.snapshot().id,
+        "review",
+        requirementValue.id,
+      );
+
+      await expect(
+        database.query(
+          "UPDATE core.requirement SET project_id = $1 WHERE id = $2",
+          [other.snapshot().id, requirementValue.id],
+        ),
+      ).rejects.toThrow("review subject ownership is immutable after review");
+      await expect(
+        database.query("DELETE FROM core.requirement WHERE id = $1", [
+          requirementValue.id,
+        ]),
+      ).rejects.toThrow("review subject ownership is immutable after review");
+
+      await expect(
+        governance.findReview(reviewValue.id, project.snapshot().id),
+      ).resolves.toMatchObject({
+        id: reviewValue.id,
+        projectId: project.snapshot().id,
+        subjectId: requirementValue.id,
+      });
+      const [subject] = await database.query<{ project_id: string }>(
+        "SELECT project_id FROM core.requirement WHERE id = $1",
+        [requirementValue.id],
+      );
+      expect(subject?.project_id).toBe(project.snapshot().id);
     });
   },
 );

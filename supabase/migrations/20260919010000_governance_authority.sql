@@ -2,8 +2,9 @@
 --
 -- This migration extends the linkage-support requirement table created by the
 -- foundation migration. The agent_run subject table is intentionally only the
--- identity/ownership projection needed by GovernanceRepository; the agent
--- runtime repository remains a later storage slice.
+-- identity/ownership projection needed by GovernanceRepository; a future
+-- agent-runtime migration must extend this table rather than create a second
+-- authority. The agent runtime repository remains a later storage slice.
 
 CREATE TABLE core.milestone (
   id text PRIMARY KEY,
@@ -30,7 +31,9 @@ ALTER TABLE core.requirement
 
 ALTER TABLE core.requirement
   ADD CONSTRAINT requirement_milestone_fk
-  FOREIGN KEY (milestone_id) REFERENCES core.milestone(id) ON DELETE SET NULL;
+  FOREIGN KEY (milestone_id, project_id)
+  REFERENCES core.milestone(id, project_id)
+  ON DELETE SET NULL (milestone_id);
 
 CREATE INDEX requirement_project_status_key_id_idx
 ON core.requirement(project_id, status, requirement_key, id);
@@ -159,18 +162,22 @@ BEGIN
     WHEN 'task' THEN EXISTS (
       SELECT 1 FROM core.task
       WHERE id = NEW.subject_id AND project_id = NEW.project_id
+      FOR UPDATE
     )
     WHEN 'agent_run' THEN EXISTS (
       SELECT 1 FROM core.agent_run
       WHERE id = NEW.subject_id AND project_id = NEW.project_id
+      FOR UPDATE
     )
     WHEN 'requirement' THEN EXISTS (
       SELECT 1 FROM core.requirement
       WHERE id = NEW.subject_id AND project_id = NEW.project_id
+      FOR UPDATE
     )
     WHEN 'adr' THEN EXISTS (
       SELECT 1 FROM core.architecture_decision
       WHERE id = NEW.subject_id AND project_id = NEW.project_id
+      FOR UPDATE
     )
     WHEN 'milestone' THEN EXISTS (
       SELECT 1 FROM core.milestone
@@ -190,6 +197,77 @@ $$;
 CREATE TRIGGER review_subject_ownership
 BEFORE INSERT OR UPDATE OF project_id, subject_type, subject_id ON core.review
 FOR EACH ROW EXECUTE FUNCTION core.enforce_review_subject_ownership();
+
+CREATE OR REPLACE FUNCTION core.prevent_review_subject_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  expected_subject_type text;
+BEGIN
+  expected_subject_type := CASE TG_TABLE_NAME
+    WHEN 'architecture_decision' THEN 'adr'
+    ELSE TG_TABLE_NAME
+  END;
+
+  IF TG_OP = 'UPDATE'
+     AND NEW.project_id IS NOT DISTINCT FROM OLD.project_id THEN
+    RETURN NEW;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM core.review AS existing_review
+    WHERE existing_review.subject_type = expected_subject_type
+      AND existing_review.subject_id = OLD.id
+  ) THEN
+    RAISE EXCEPTION 'review subject ownership is immutable after review'
+      USING ERRCODE = '23514', CONSTRAINT = 'review_subject_ownership_immutable';
+  END IF;
+
+  RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+END;
+$$;
+
+CREATE TRIGGER task_review_subject_project_immutable
+BEFORE UPDATE OF project_id ON core.task
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
+
+CREATE TRIGGER task_review_subject_delete_guard
+BEFORE DELETE ON core.task
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
+
+CREATE TRIGGER agent_run_review_subject_project_immutable
+BEFORE UPDATE OF project_id ON core.agent_run
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
+
+CREATE TRIGGER agent_run_review_subject_delete_guard
+BEFORE DELETE ON core.agent_run
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
+
+CREATE TRIGGER requirement_review_subject_project_immutable
+BEFORE UPDATE OF project_id ON core.requirement
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
+
+CREATE TRIGGER requirement_review_subject_delete_guard
+BEFORE DELETE ON core.requirement
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
+
+CREATE TRIGGER adr_review_subject_project_immutable
+BEFORE UPDATE OF project_id ON core.architecture_decision
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
+
+CREATE TRIGGER adr_review_subject_delete_guard
+BEFORE DELETE ON core.architecture_decision
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
+
+CREATE TRIGGER milestone_review_subject_project_immutable
+BEFORE UPDATE OF project_id ON core.milestone
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
+
+CREATE TRIGGER milestone_review_subject_delete_guard
+BEFORE DELETE ON core.milestone
+FOR EACH ROW EXECUTE FUNCTION core.prevent_review_subject_mutation();
 
 CREATE OR REPLACE FUNCTION core.finalize_review_from_approval()
 RETURNS trigger
@@ -220,31 +298,48 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF NEW.status IN ('approved', 'rejected') AND NOT EXISTS (
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.status <> 'pending' OR NEW.completed_at IS NOT NULL THEN
+      RAISE EXCEPTION 'new review must be pending without completion'
+        USING ERRCODE = '23514', CONSTRAINT = 'review_initial_pending';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF NEW.status = 'pending' THEN
+    IF OLD.status <> 'pending' THEN
+      RAISE EXCEPTION 'decided review cannot return to pending'
+        USING ERRCODE = '23514', CONSTRAINT = 'review_pending_after_approval';
+    END IF;
+    IF NEW.completed_at IS NOT NULL THEN
+      RAISE EXCEPTION 'pending review cannot have completed_at'
+        USING ERRCODE = '23514', CONSTRAINT = 'review_pending_completed_at';
+    END IF;
+    RETURN NEW;
+  END IF;
+
+  IF OLD.status <> 'pending' AND NEW.status IS DISTINCT FROM OLD.status THEN
+    RAISE EXCEPTION 'terminal review decision is immutable'
+      USING ERRCODE = '23514', CONSTRAINT = 'review_terminal_decision_immutable';
+  END IF;
+
+  IF NEW.completed_at IS NULL OR NOT EXISTS (
     SELECT 1
     FROM core.approval
     WHERE review_id = NEW.id
       AND project_id = NEW.project_id
       AND decision = NEW.status
+      AND created_at = NEW.completed_at
   ) THEN
-    RAISE EXCEPTION 'review status requires a matching decision'
+    RAISE EXCEPTION 'review terminal state requires its matching approval'
       USING ERRCODE = '23514', CONSTRAINT = 'review_status_requires_approval';
-  END IF;
-
-  IF NEW.status = 'pending' AND EXISTS (
-    SELECT 1
-    FROM core.approval
-    WHERE review_id = NEW.id AND project_id = NEW.project_id
-  ) THEN
-    RAISE EXCEPTION 'decided review cannot return to pending'
-      USING ERRCODE = '23514', CONSTRAINT = 'review_pending_after_approval';
   END IF;
   RETURN NEW;
 END;
 $$;
 
 CREATE TRIGGER review_terminal_status_requires_approval
-BEFORE UPDATE OF status ON core.review
+BEFORE INSERT OR UPDATE OF status, completed_at ON core.review
 FOR EACH ROW EXECUTE FUNCTION core.enforce_review_terminal_status();
 
 CREATE OR REPLACE FUNCTION core.prevent_approval_mutation()
