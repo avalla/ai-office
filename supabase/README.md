@@ -10,14 +10,26 @@ adapter and bootstrap explicitly reports the provider as complete.
 - `supabase/migrations/` is the authoritative ordered PostgreSQL schema history.
 - `core` contains internal project authority. It is not intended to become the
   browser/mobile API surface merely because it lives in Supabase.
-- future `private` schema functions will hold authorization helpers such as
-  tenant/project membership checks. Security-definer helpers must use a fixed,
-  empty `search_path` and fully-qualified references.
+- `private` contains the authorization helpers for tenant/project membership.
+  It is not a Data API surface. Security-definer helpers use a fixed, empty
+  `search_path` and fully-qualified references; public `EXECUTE` is revoked.
 - a future `api` schema may expose security-invoker views and narrowly scoped
   RPCs to authenticated clients. `public` is not the application authority.
-- Supabase Auth, RLS, Storage, Realtime, tenancy, and Runtime service principals
-  are separate slices and are not silently implied by the current PostgreSQL
-  repository parity.
+- Human access is `JWT -> authenticated -> auth.uid() -> core.tenant_member ->
+  RLS`. JWT claims are identity context only; tenant membership and roles remain
+  database authority. The Runtime uses its existing server-side PostgreSQL trust
+  boundary and does not depend on Supabase `service_role`.
+- Tenant visibility/access: membership-backed RLS determines which tenant and
+  project rows an authenticated human can read; JWT tenant/role claims do not.
+- Collaboration mutation authority: ordinary project-owned collaboration tables
+  retain their table-specific owner/admin/member policies.
+- Governance authority: `core.review`, `core.approval`, and
+  `core.governance_event` are authoritative surfaces with authenticated
+  tenant-scoped `SELECT` only; no direct human governance CRUD or forged actor.
+- Runtime authority: `core.agent_run` is a Runtime projection with authenticated
+  tenant-scoped `SELECT` only. Governance and projection writes stay on the
+  Runtime/server-side table-owner path pending a separately designed bound
+  RPC/API slice.
 
 ## Test split
 
@@ -27,7 +39,8 @@ Use pgTAP for invariants owned by PostgreSQL itself:
 - cross-project / future cross-tenant ownership;
 - append-only and immutable records;
 - atomic database state-machine guards;
-- future RLS allow/deny matrices.
+- RLS allow/deny matrices, including the separation between tenant visibility
+  and governance authority.
 
 Keep Vitest for TypeScript/application behavior:
 
@@ -81,13 +94,20 @@ Human principal IDs are UUIDs but core tables intentionally do not foreign-key
 migration history remains valid against ordinary PostgreSQL. See
 `docs/adr/ADR-0023-postgres-tenant-authority.md`.
 
+The authorization migration keeps ordinary PostgreSQL portable: when
+`auth.uid()` or the `authenticated` role is absent, human identity resolves to
+`NULL`, no Supabase-specific grants/policies are installed, and helper decisions
+fail closed. The server-side PostgreSQL storage owner remains usable for the
+existing Runtime contracts. `tenant_invite.token_hash` is write-only to the
+authenticated table surface; safe invitation columns use explicit column
+grants.
+
 ## Next slices
 
-The intended sequence after the tenant authority foundation is:
+The remaining sequence after tenant authorization is:
 
-1. authorization helpers in a non-exposed `private` schema;
-2. RLS and pgTAP multi-user/multi-tenant allow/deny coverage, including fail-closed
-   behavior for unassigned projects;
-3. tenant-scoped Pro project creation/import and, once migration is complete,
+1. tenant-scoped Pro project creation/import and, once migration is complete,
    mandatory project tenant ownership;
-4. remaining PostgreSQL repository parity, designed tenant-aware from creation.
+2. invite acceptance/auth binding and remaining PostgreSQL repository parity,
+   designed tenant-aware from creation;
+3. a separately designed PostgreSQL AgentRuntime principal and parity slice.
