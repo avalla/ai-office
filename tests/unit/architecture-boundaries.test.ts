@@ -107,7 +107,8 @@ describe("application architecture boundaries", () => {
     expect(storageSqliteImports(contextPath)).toEqual([]);
     expect(storageSqliteImports(projectStoragePath)).toEqual([]);
     expect(importedSpecifiers(projectStorage)).not.toContain("bun:sqlite");
-    expect(runtimeCommand).toContain("createSqliteProjectStorage");
+    expect(runtimeCommand).toContain("ProjectStorageBootstrap");
+    expect(runtimeCommand).not.toContain("createSqliteProjectStorage");
     expect(
       storageSqliteImports(runtimeCommandPath).filter(
         (specifier) =>
@@ -132,6 +133,7 @@ describe("application architecture boundaries", () => {
     const allowed = new Set([
       "packages/runtime-host/src/runtime-command.ts",
       "apps/daemon/src/bootstrap.ts",
+      "packages/storage-bootstrap/src/project-storage-bootstrap.ts",
     ]);
     const offenders: string[] = [];
     for (const directory of ["packages", "apps"])
@@ -140,6 +142,38 @@ describe("application architecture boundaries", () => {
         if (location.startsWith("packages/storage-sqlite/")) continue;
         if (!allowed.has(location) && storageSqliteImports(file).length > 0)
           offenders.push(location);
+      }
+    expect(offenders).toEqual([]);
+  });
+
+  test("Runtime and daemon use the centralized provider bootstrap", () => {
+    const bootstrapPath = join(
+      repositoryRoot,
+      "packages",
+      "storage-bootstrap",
+      "src",
+      "project-storage-bootstrap.ts",
+    );
+    const bootstrap = readFileSync(bootstrapPath, "utf8");
+    expect(bootstrap).toContain("@ai-office/storage-sqlite/");
+    expect(bootstrap).toContain("@ai-office/storage-postgres/");
+
+    const offenders: string[] = [];
+    for (const directory of [
+      join(repositoryRoot, "packages", "runtime-host"),
+      join(repositoryRoot, "apps", "daemon"),
+    ])
+      for (const file of typescriptFiles(directory)) {
+        const location = relative(repositoryRoot, file);
+        const source = readFileSync(file, "utf8");
+        if (source.includes("createSqliteProjectStorage"))
+          offenders.push(`${location} constructs SQLite project storage`);
+        if (
+          importedSpecifiers(source).some((specifier) =>
+            importsStoragePostgres(file, specifier),
+          )
+        )
+          offenders.push(`${location} imports PostgreSQL storage directly`);
       }
     expect(offenders).toEqual([]);
   });

@@ -80,7 +80,9 @@ jobs:
       - name: Run real PostgreSQL storage contracts
         env:
           AI_OFFICE_TEST_POSTGRES_URL: postgres://postgres:postgres@127.0.0.1:5432/ai_office_test
-        run: bunx --bun vitest run tests/integration/storage-contracts-postgres.test.ts
+        run: bunx --bun vitest run \
+          tests/integration/storage-contracts-postgres.test.ts \
+          tests/integration/storage-bootstrap-postgres.test.ts
 
   queue-e2e:
     name: Redis queue E2E

@@ -14,6 +14,7 @@ import type { ProjectMemoryProvider } from "@ai-office/application/ports/project
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
+import type { ProjectStorage } from "@ai-office/application/ports/project-storage.port.ts";
 import {
   CliPromptRequiredError,
   executeRuntimeCommand,
@@ -69,6 +70,7 @@ export class ApplicationRuntime implements AiOfficeRuntime {
       providers: ModelProviderCatalog;
       gateway: GatewayModelProviders;
     },
+    private readonly projectStorage?: ProjectStorage,
   ) {}
 
   private async executeCommand(
@@ -125,6 +127,9 @@ export class ApplicationRuntime implements AiOfficeRuntime {
               modelProviders: this.modelRouting.providers,
               gatewayProviders: this.modelRouting.gateway,
             }),
+        ...(this.projectStorage === undefined
+          ? {}
+          : { projectStorage: this.projectStorage }),
         io,
         propagatePromptRequired: true,
       });

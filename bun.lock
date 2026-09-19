@@ -79,6 +79,9 @@
     "packages/service-management": {
       "name": "@ai-office/service-management",
     },
+    "packages/storage-bootstrap": {
+      "name": "@ai-office/storage-bootstrap",
+    },
     "packages/storage-postgres": {
       "name": "@ai-office/storage-postgres",
       "dependencies": {
@@ -125,6 +128,8 @@
     "@ai-office/runtime-paths": ["@ai-office/runtime-paths@workspace:packages/runtime-paths"],
 
     "@ai-office/service-management": ["@ai-office/service-management@workspace:packages/service-management"],
+
+    "@ai-office/storage-bootstrap": ["@ai-office/storage-bootstrap@workspace:packages/storage-bootstrap"],
 
     "@ai-office/storage-postgres": ["@ai-office/storage-postgres@workspace:packages/storage-postgres"],
 

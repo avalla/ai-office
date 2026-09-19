@@ -77,10 +77,8 @@ import {
   InvalidTaskCorrectionError,
   InvalidTaskTransitionError,
 } from "@ai-office/domain/errors.ts";
-import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { migrateGlobal } from "@ai-office/storage-sqlite/database/migrate-global.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
-import { createSqliteProjectStorage } from "@ai-office/storage-sqlite/sqlite-project-storage.ts";
 import { RequirementNotFoundError } from "@ai-office/application/commands/manage-task-requirements.ts";
 import { TaskReconciliationApprovalError } from "@ai-office/application/commands/reconcile-tasks.ts";
 import { TaskCompletionApprovalError } from "@ai-office/application/commands/record-task-completion.ts";
@@ -160,6 +158,15 @@ import { localOperatorPrincipal } from "@ai-office/application/ports/execution-p
 import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project-archive-adapter.port.ts";
 import { LocalProjectArchiveAdapter } from "./local-project-archive-adapter.ts";
 import { PortableProjectArchiveError } from "@ai-office/application/project-portability/project-snapshot.ts";
+import type { ProjectStorage } from "@ai-office/application/ports/project-storage.port.ts";
+import {
+  ProjectStorageBootstrap,
+  requireCompleteProjectStorage,
+  StorageProviderConfigurationError,
+  StorageProviderIncompleteError,
+  type ProjectStorageConfig,
+  type ProjectStorageHandle,
+} from "@ai-office/storage-bootstrap/project-storage-bootstrap.ts";
 import {
   ProjectPortabilityError,
   ProjectRestorePartialError,
@@ -295,6 +302,10 @@ export interface RuntimeCommandOptions {
   modelProviders?: ModelProviderCatalog;
   /** Composition-supplied gateway provider access; absent means no credentials. */
   gatewayProviders?: GatewayModelProviders;
+  /** A daemon-owned full project authority, when the Runtime is hosted. */
+  projectStorage?: ProjectStorage;
+  /** Explicit project storage selection for direct Runtime command execution. */
+  projectStorageConfig?: ProjectStorageConfig;
 }
 
 function defaultOfficeManifest(): OfficeManifest {
@@ -424,7 +435,9 @@ function formatKnownError(error: unknown): string | null {
     error instanceof PipelineTransitionError ||
     error instanceof PortableProjectArchiveError ||
     error instanceof ProjectPortabilityError ||
-    error instanceof ProjectRestorePartialError
+    error instanceof ProjectRestorePartialError ||
+    error instanceof StorageProviderConfigurationError ||
+    error instanceof StorageProviderIncompleteError
   )
     return error.message;
   return null;
@@ -473,14 +486,27 @@ export async function executeRuntimeCommand(
       ? {}
       : { globalDatabasePath: options.globalDatabasePath },
   );
-  const database = openDatabase(runtimePaths.projectDatabasePath);
   let globalDatabase: ReturnType<typeof openDatabase> | null = null;
+  let projectStorageHandle: ProjectStorageHandle | undefined;
   try {
-    migrate(
-      database,
-      options.migrationDirectory ??
-        join(sourceDirectory, "..", "..", "..", "migrations", "project"),
-    );
+    let projectStorage: ProjectStorage;
+    if (options.projectStorage !== undefined) {
+      projectStorage = options.projectStorage;
+    } else {
+      const storageBootstrap = new ProjectStorageBootstrap({
+        sqliteDatabasePath: runtimePaths.projectDatabasePath,
+      });
+      projectStorageHandle = await storageBootstrap.open({
+        ...(options.projectStorageConfig === undefined
+          ? {}
+          : { configuration: options.projectStorageConfig }),
+        ...(options.migrationDirectory === undefined
+          ? {}
+          : { sqliteMigrationDirectory: options.migrationDirectory }),
+        requireComplete: true,
+      });
+      projectStorage = requireCompleteProjectStorage(projectStorageHandle);
+    }
     if (command.startsWith("memory:") || command === "run:tick") {
       globalDatabase = openDatabase(runtimePaths.globalDatabasePath);
       migrateGlobal(
@@ -491,7 +517,6 @@ export async function executeRuntimeCommand(
     }
     const ids = new CryptoIdGenerator();
     const clock = new SystemClock();
-    const projectStorage = createSqliteProjectStorage(database);
     const context: CommandContext = {
       ...(options.onRunChanged === undefined
         ? {}
@@ -546,8 +571,8 @@ export async function executeRuntimeCommand(
     io.stderr("AI Office failed because of an unexpected error.");
     return 1;
   } finally {
+    await projectStorageHandle?.close();
     globalDatabase?.close();
-    database.close();
   }
 }
 

@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
-import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
-import { createSqliteProjectStorage } from "@ai-office/storage-sqlite/sqlite-project-storage.ts";
 import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
+import {
+  ProjectStorageBootstrap,
+  requireCompleteProjectStorage,
+  type ProjectStorageConfig,
+} from "@ai-office/storage-bootstrap/project-storage-bootstrap.ts";
 import { migrateGlobal } from "@ai-office/storage-sqlite/database/migrate-global.ts";
 import { OperationalEventBus } from "@ai-office/application/events/operational-event-bus.ts";
 import { OperationalQueryService } from "@ai-office/application/queries/operational-query-service.ts";
@@ -78,6 +81,8 @@ export interface BootstrapOptions {
   providerCredentials?: ProviderCredentials;
   /** Optional gateway provider access; defaults to the loaded credentials. */
   gatewayProviders?: GatewayModelProviders;
+  /** Explicit project storage selection; absent means the bootstrap environment/default. */
+  projectStorageConfig?: ProjectStorageConfig;
 }
 
 export async function bootstrap(
@@ -99,6 +104,14 @@ export async function bootstrap(
         : { globalDatabasePath: options.globalDatabasePath }),
     },
   );
+  const storageBootstrap = new ProjectStorageBootstrap({
+    sqliteDatabasePath: runtimePaths.projectDatabasePath,
+  });
+  // Resolve before touching Runtime state so invalid provider configuration
+  // cannot fall through to SQLite or start a partially configured host.
+  const storageConfiguration = storageBootstrap.resolve(
+    options.projectStorageConfig,
+  );
   ensureRuntimeHome(runtimePaths);
   // Read once; a credential change takes effect on Runtime restart.
   const credentials =
@@ -109,15 +122,20 @@ export async function bootstrap(
   const migrationDirectory =
     options.migrationDirectory ??
     join(sourceDirectory, "..", "..", "..", "migrations", "project");
-  const database = openDatabase(runtimePaths.projectDatabasePath);
-  migrate(database, migrationDirectory);
+  const projectStorageHandle = await storageBootstrap.open({
+    configuration: storageConfiguration,
+    ...(options.migrationDirectory === undefined
+      ? {}
+      : { sqliteMigrationDirectory: options.migrationDirectory }),
+    requireComplete: true,
+  });
+  const projectStorage = requireCompleteProjectStorage(projectStorageHandle);
   const globalDatabase = openDatabase(runtimePaths.globalDatabasePath);
   migrateGlobal(
     globalDatabase,
     options.globalMigrationDirectory ??
       join(sourceDirectory, "..", "..", "..", "migrations", "global"),
   );
-  const projectStorage = createSqliteProjectStorage(database);
   const events = new RecordAuditEvent(
     projectStorage.auditEvents,
     new CryptoIdGenerator(),
@@ -160,6 +178,7 @@ export async function bootstrap(
           debug: process.env.AI_OFFICE_DEBUG_LLM === "1",
         }),
     },
+    projectStorage,
   );
 
   const queueConfiguration = readQueueConfiguration(process.env);
@@ -207,9 +226,9 @@ export async function bootstrap(
     events,
     onStarting: () => queueRuntime?.start() ?? Promise.resolve(),
     queueStatus,
-    onStopped: () => {
+    onStopped: async () => {
+      await projectStorageHandle.close();
       globalDatabase.close();
-      database.close();
     },
     onStopping: async () => {
       await queueRuntime?.stop();

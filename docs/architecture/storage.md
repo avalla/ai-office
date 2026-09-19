@@ -95,15 +95,23 @@ the operational history for every project recorded in that runtime.
 ## Project-authority ports and migration inventory
 
 `ProjectStorage` is the application-level composition of the repository ports
-and transaction runner backed by one project authority. The SQLite composition
-continues to instantiate the existing adapters; this table is the contract
-inventory for a future PostgreSQL composition, not a new schema or migration.
-This PR establishes that repository/composition boundary only: SQLite is the
-only implemented project-authority provider. `runtime-command.ts` and daemon
-bootstrap still open and migrate `project.sqlite` directly before calling the
-SQLite composition factory. A future provider-selection slice should centralize
-connection, migration, and bootstrap selection without spreading it through
-Runtime command handlers.
+and transaction runner backed by one project authority. `ProjectStorageBootstrap`
+in `packages/storage-bootstrap` is the single provider-selection and
+construction boundary. It owns provider configuration, connection opening,
+provider migrations, adapter composition, capability reporting, and close
+lifecycle. Runtime command execution and daemon bootstrap consume its result
+through application-facing repository ports; they do not construct provider
+adapters directly.
+
+SQLite remains the default and only complete Runtime authority. PostgreSQL is
+selectable with `AI_OFFICE_STORAGE_PROVIDER=postgres` and
+`AI_OFFICE_POSTGRES_URL`, and its migration runner reuses the SQL files under
+`supabase/migrations/`. PostgreSQL currently exposes only `ProjectRepository`,
+`TaskRepository`, `TaskRequirementRepository`, and `TransactionRunner`. The
+bootstrap reports those capabilities without fabricating missing repositories;
+requiring complete Runtime authority therefore fails with
+`StorageProviderIncompleteError` and lists the missing capabilities. There is
+no SQLite fallback or mixed-provider authority.
 
 | Port                                | Classification                                              | Migration notes                                                                            |
 | ----------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ |

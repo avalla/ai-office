@@ -30,6 +30,7 @@ export default defineConfig({
       "@ai-office/service-management": sourceDirectory("service-management"),
       "@ai-office/storage-sqlite": sourceDirectory("storage-sqlite"),
       "@ai-office/storage-postgres": sourceDirectory("storage-postgres"),
+      "@ai-office/storage-bootstrap": sourceDirectory("storage-bootstrap"),
       "@ai-office/bullmq-job-queue": sourceDirectory("bullmq-job-queue"),
     },
   },
@@ -43,6 +44,8 @@ export default defineConfig({
       AI_OFFICE_MODEL_ROUTING_SOURCE: "",
       AI_OFFICE_LLM_MODEL: "",
       AI_OFFICE_LLM_PROVIDER: "",
+      AI_OFFICE_STORAGE_PROVIDER: "sqlite",
+      AI_OFFICE_POSTGRES_URL: "",
     },
   },
 });
