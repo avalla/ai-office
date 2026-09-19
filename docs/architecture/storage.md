@@ -155,10 +155,26 @@ but it belongs to `global.sqlite` and is intentionally excluded here. These
 hotspots are documentation for subsequent adapter work; this boundary PR does
 not rewrite them.
 
-The recommended next vertical slice is PostgreSQL implementations of
-`ProjectRepository`, `TaskRepository`, `TaskRequirementRepository`, and
-`TransactionRunner`, with shared repository contract tests executed against
-both SQLite and PostgreSQL.
+The first PostgreSQL foundation now implements `ProjectRepository`,
+`TaskRepository`, `TaskRequirementRepository`, and `TransactionRunner` in the
+`storage-postgres` package. Shared repository contracts run against both
+adapters; PostgreSQL integration tests use the SQL in `supabase/migrations/`
+against a real server. The migration runner is intentionally small and
+idempotent for local integration setup and future Supabase deployment.
+
+The PostgreSQL adapter uses the server-side `postgres` driver. A shared
+`PostgresClient` owns the pool and an async transaction-session context;
+`PostgresTransactionRunner` reserves one driver transaction, and every
+repository built from that client routes queries through the transaction-bound
+session while the callback is active. Nested transactions preserve the
+application-visible `TransactionAlreadyActiveError` behavior. No Runtime
+composition or provider selection uses this package yet.
+
+The next storage slice is centralized Runtime storage-provider/bootstrap
+selection, followed by incremental migration of the remaining project
+repositories. `global.sqlite`, governance beyond the requirement seed needed
+by this slice, audit, capabilities, agent runtime, pipelines, and the code
+index remain outside this PR.
 
 ## `global.sqlite` — implemented durable reusable memory
 

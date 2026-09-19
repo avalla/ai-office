@@ -1285,7 +1285,6 @@ Core capabilities to assess:
 - retention, redaction, confidentiality, export, and audit requirements exposed
   through explicit contracts rather than hidden in prompts.
 
-
 ### Product editions and deployment profiles
 
 M15 should preserve one shared core while allowing distinct deployment
@@ -1321,13 +1320,14 @@ approvals, secrets, or other non-portable authority.
 
 Supabase is the preferred candidate data platform for Pro because it combines
 PostgreSQL, authentication, object storage, RLS, and realtime facilities behind
-one operational platform. This direction is not current implementation truth and
-requires an ADR before replacing SQLite authority in any deployed Runtime. ADR-0022
-now records the persistence boundary: repository ports and server-side PostgreSQL
-transactions are the future Pro path, while SQLite remains the Lite composition
-and Supabase Auth, Storage, RLS, and Realtime remain future capabilities. The
-boundary preparation does not implement a PostgreSQL backend or change the
-current Runtime authority.
+one operational platform. This direction is not current Runtime selection truth
+and requires a follow-up provider/bootstrap decision before replacing SQLite
+authority in any deployed Runtime. ADR-0022 records the persistence boundary:
+repository ports and server-side PostgreSQL transactions are shared paths, while
+SQLite remains the Lite composition and Supabase Auth, Storage, RLS, and
+Realtime remain future capabilities. The first PostgreSQL foundation now exists
+for Project, Task, TaskRequirement, and TransactionRunner contracts, with real
+PostgreSQL integration coverage; the Runtime still selects SQLite only.
 
 ### Manufacturing reference vertical
 

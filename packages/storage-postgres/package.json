@@ -1,0 +1,8 @@
+{
+  "name": "@ai-office/storage-postgres",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "postgres": "^3.4.8"
+  }
+}

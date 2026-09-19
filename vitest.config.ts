@@ -29,6 +29,7 @@ export default defineConfig({
       "@ai-office/runtime-paths": sourceDirectory("runtime-paths"),
       "@ai-office/service-management": sourceDirectory("service-management"),
       "@ai-office/storage-sqlite": sourceDirectory("storage-sqlite"),
+      "@ai-office/storage-postgres": sourceDirectory("storage-postgres"),
       "@ai-office/bullmq-job-queue": sourceDirectory("bullmq-job-queue"),
     },
   },
