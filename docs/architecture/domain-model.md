@@ -9,7 +9,7 @@ The current domain and application model includes:
 - pinned pipeline runs, stage runs, assignments, workflow gates, and overrides;
 - roles, agents, agent runs, and task locks;
 - pricing versions, budgets, reservations, normalized usage, and costs;
-- milestones, requirements, architecture-decision records, reviews, and governance decisions;
+- milestones, requirements, architecture-decision records, governance reviews, and governance decisions;
 - resources, capability grants, action requests, simulation artifacts, action approvals, and action executions;
 - versioned global roles and reusable patterns, lessons, and project memory references;
 - append-only audit and agent-run events.
@@ -54,6 +54,104 @@ That generalized chain does not replace the current software chain. It defines
 the provenance requirement a future vertical layer must satisfy without
 inventing evidence or collapsing domain-specific decisions into one generic
 status.
+
+## Artifact Review & Approval Workflow
+
+The long-term core treats reviewable output as a generic capability rather than
+as a software-development concept. An **Artifact** is a verifiable output of a
+task or execution. It may be an AI Office record or a reference to an external
+resource, and it is not necessarily a file. A logical artifact may have several
+immutable versions; each version has a stable identity/fingerprint, metadata,
+and provenance to the `AgentRun` or operator that produced it.
+
+The conceptual shape is intentionally a domain-neutral contract, not a runtime
+schema:
+
+```text
+Artifact
+  - id / logical identity
+  - task reference
+  - artifact type
+  - version identity
+  - fingerprint
+  - producer AgentRun or operator
+  - domain metadata
+```
+
+Review is a separate relation to an artifact version. A `ReviewRequest` names
+the exact `artifactId` and `artifactFingerprint`, optionally pins a review
+policy, and declares reviewer requirements. A `ReviewResult` records one
+reviewer's verdict (`approved`, `changes_requested`, or `rejected`), findings,
+reviewer identity and provenance, timestamp, and the exact fingerprint reviewed.
+The reviewer may be a human, an LLM, a deterministic policy/rules checker, CI or
+other automated verification, an external system, or a domain-specific verifier.
+These are adapters/providers; the core does not assume that a reviewer is an
+LLM.
+
+`ReviewPolicy` is the deterministic policy layer for zero, one, or multiple
+reviewers; required versus optional reviewers; quorum; artifact-type and
+risk-based routing; domain constraints; and mandatory human approval. It may
+permit fully automated approval for a low-risk workflow, but review remains
+separate from authorization of a final external action.
+
+The workflow is therefore:
+
+```text
+Task -> AgentRun -> Artifact version -> ReviewRequest -> ReviewResult
+     -> approved / changes_requested / rejected
+     -> Approval -> Authoritative Execution / Publish / Release -> Task completion
+```
+
+`changes_requested` starts a correction loop. The same task may own multiple
+AgentRuns and artifact versions without creating a new task for each iteration:
+
+```text
+Agent -> Artifact v1 -> Review -> changes_requested
+      -> Agent -> Artifact v2 -> v1 review is stale -> new Review -> approved
+```
+
+The following are core invariants for the future capability:
+
+- `AgentRun` completed is not `Task` completed when review or approval is still required;
+- an artifact produced is not an artifact approved, and an approved artifact is
+  not an external effect executed;
+- every review and approval identifies exactly one artifact version/fingerprint;
+- changing an artifact does not delete history, but makes earlier review/approval
+  stale or non-current unless an explicit policy says otherwise;
+- review history, reviewer identity and producer provenance are append-only and
+  auditable;
+- an agent cannot self-assert approval unless policy explicitly permits that
+  subject and independence rules still allow it;
+- recovery and replay never silently turn stale approval into current approval;
+- human review is a first-class workflow state, not an LLM action in disguise;
+- domain adapters cannot weaken these invariants.
+
+The conceptual lifecycle may be projected as `pending -> running ->
+artifact_ready -> awaiting_review -> changes_requested -> running ->
+artifact_ready -> awaiting_review -> approved -> completed`. These are pipeline,
+artifact, review and read-model conditions, not a decision to add all of these
+values to the current `TaskStatus`. The current `Task` and `AgentRun` aggregates
+remain authoritative for their own states until an implementation assessment
+selects a compatible composition.
+
+Indicative audit events such as `artifact.created`, `review.requested`,
+`review.completed`, `review.stale`, `artifact.approved` and `artifact.released`
+must reuse the existing append-only audit/event model where possible. They are
+not yet implemented event names. Any persisted event must carry the artifact
+identity, version/fingerprint, review/approval identity, producer/reviewer
+provenance and the plan/policy hash needed for deterministic recovery.
+
+Software Pull Requests, patches, commits and release candidates are one adapter
+family. A `PullRequestArtifact` may add repository, branch, base branch, PR
+number/URL and `headSha`; a review of `abc123` must never authorize `def456`.
+Manufacturing proposals, legal drafts, accounting reports and compliance
+documents use the same generic semantics with their own domain types and
+policies. GitHub and other external systems remain connector/adapter concerns.
+
+This capability is planned, not implemented by the current domain model. It
+extends the existing M5 governance review, M6 controlled-action approval,
+pipeline approval and Runtime audit concepts without creating a competing
+review or authority engine. See [ADR-0021](../adr/ADR-0021-artifact-review-and-approval-workflow.md).
 
 ## Virtual office manifests
 
@@ -111,8 +209,9 @@ independent reviewer, approver, or merger when the pipeline requires distinct
 actors. Different role labels or separate runtime processes are not sufficient
 proof of independence.
 
-Stage outputs may include structured artifacts. A provisional review result
-could have this shape:
+Stage outputs may include structured artifacts. The following provisional review
+result shape is illustrative only; a future implementation must additionally bind
+it to one Artifact version/fingerprint and preserve reviewer provenance:
 
 ```json
 {

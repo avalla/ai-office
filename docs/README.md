@@ -34,6 +34,9 @@ AI Office keeps different kinds of documentation separate so current product tru
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
   audit constraints.
+- [Artifact Review & Approval Workflow](adr/ADR-0021-artifact-review-and-approval-workflow.md):
+  accepted cross-domain artifact identity, review binding, stale-review,
+  approval, and authoritative-execution decision.
 - [Testing strategy](development/testing.md): current validation categories and CI expectations.
 - [Product versions and releases](development/releases.md): product version ownership,
   compatibility boundaries, changelog, and release gates.

@@ -143,6 +143,83 @@ subject, artifact revision, approver identity, scope, and invalidation rules.
 Review or professional approval never grants a capability or substitutes for
 approval of one exact controlled action.
 
+## Artifact Review & Approval Workflow
+
+Artifact review is a shared platform capability, not a software-only workflow.
+The generic lifecycle is:
+
+```text
+Task -> Execution / AgentRun -> Artifact version
+     -> ReviewRequest -> ReviewResult
+     -> Approval / Changes Requested / Rejection
+     -> optional new Execution and Artifact version
+     -> Approved Artifact -> Publish / Execute / Release
+     -> Task completion
+```
+
+An Artifact is a verifiable output of a task or run. It can be a document,
+proposal, record, external-resource reference, or another non-file object. Each
+version has a stable identity/fingerprint and producer provenance. ReviewRequest
+and ReviewResult are separate from the artifact and bind to its exact
+fingerprint. If the artifact changes, prior reviews stay in the append-only
+history but become stale/non-current for the new version. A ReviewPolicy may
+require zero, one, or many reviewers, quorum, artifact-type/risk/domain routing,
+or human approval. Reviewers are adapters, not a core assumption: Human
+Reviewer, LLM Reviewer, Policy/Rules Reviewer, CI or automated verifier,
+External System Reviewer, and domain-specific verifiers are all valid.
+
+The platform must keep these statements distinct:
+
+- work executed != artifact produced;
+- AgentRun completed != Task completed;
+- artifact produced != artifact approved;
+- artifact approved != external action executed.
+
+Review determines whether an artifact is acceptable. Authoritative execution
+determines whether a permitted external side effect is performed. The latter
+continues through Runtime, capability, connector, controlled-action and domain
+trust boundaries. Human review is a first-class state, not an LLM action
+masquerading as a human decision.
+
+### Manufacturing example
+
+```text
+Task: Reduce reject rate on production line 4
+  -> Quality Analyst Agent analyzes MES data
+  -> Process Change Proposal v1
+  -> Process Engineer review
+  -> Quality Manager approval
+  -> authoritative executor updates approved MES configuration
+  -> production metrics verification
+  -> Task completed
+```
+
+The AI may propose an oven change such as 182°C -> 178°C, but the proposal is
+not the process mutation. Only an authorized executor may update MES/PLC/SCADA
+or another production system. Every proposal, artifact version, review,
+approval, execution and observed outcome must retain provenance and audit.
+
+### Legal example
+
+```text
+Task: Prepare defensive brief
+  -> Legal Research Agent -> Research Artifact
+  -> Legal Drafter -> Draft v1
+  -> Legal LLM Reviewer -> findings
+  -> Draft v2 -> citation and policy checks
+  -> Lawyer Reviewer -> approved
+  -> authoritative publication/submission step
+  -> Task completed
+```
+
+Citation checking and policy checking may be automatic, while professional
+approval may be mandatory human approval. The workflow must identify the exact
+draft version that the lawyer approved before any authoritative submission.
+
+A software Pull Request, commit, patch or release candidate is another adapter
+specialization. A review of one PR head SHA must not authorize a later SHA.
+GitHub remains an external connector; it is not part of the generic core.
+
 ## Vertical plugins and profiles
 
 A future plugin/profile boundary may provide:
