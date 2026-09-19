@@ -92,6 +92,74 @@ by `schema_migration`. The standalone project migration command targets the same
 current-working-directory path. The database is not a cache: deleting it loses
 the operational history for every project recorded in that runtime.
 
+## Project-authority ports and migration inventory
+
+`ProjectStorage` is the application-level composition of the repository ports
+and transaction runner backed by one project authority. The SQLite composition
+continues to instantiate the existing adapters; this table is the contract
+inventory for a future PostgreSQL composition, not a new schema or migration.
+This PR establishes that repository/composition boundary only: SQLite is the
+only implemented project-authority provider. `runtime-command.ts` and daemon
+bootstrap still open and migrate `project.sqlite` directly before calling the
+SQLite composition factory. A future provider-selection slice should centralize
+connection, migration, and bootstrap selection without spreading it through
+Runtime command handlers.
+
+| Port                                | Classification                                              | Migration notes                                                                            |
+| ----------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `ProjectRepository`                 | simple CRUD                                                 | Project aggregate identity and ownership checks remain application rules.                  |
+| `ProjectProfileRepository`          | simple CRUD; runtime-local/non-portable data                | Local source paths and scans need an explicit Pro representation.                          |
+| `OfficeManifestRepository`          | append-only/event                                           | Manifest revisions are versioned authority.                                                |
+| `TaskRepository`                    | simple CRUD                                                 | The next vertical slice must preserve task lifecycle validation.                           |
+| `TaskRequirementRepository`         | conditional/concurrent mutation                             | Link/unlink ownership and idempotency are contract behavior.                               |
+| `AgentRuntimeRepository`            | conditional/concurrent mutation; runtime-local/non-portable | Locks, admission fences, run transitions, and append-only run events are safety-sensitive. |
+| `PipelineRunRepository`             | transactional aggregate                                     | Stage ordering, assignments, and transition constraints are aggregate behavior.            |
+| `GovernanceRepository`              | transactional aggregate; append-only/event                  | Governance events and final review decisions require atomicity.                            |
+| `CostRepository`                    | transactional aggregate; conditional/concurrent mutation    | Reservations, usage, and charge accounting must retain concurrency guarantees.             |
+| `CapabilityPolicyRepository`        | conditional/concurrent mutation; runtime-local/non-portable | Capability policy remains authoritative in AI Office.                                      |
+| `ControlledExecutionRepository`     | conditional/concurrent mutation; runtime-local/non-portable | Approval and execution state transitions must not be replayed.                             |
+| `AuditEventRepository`              | append-only/event; runtime-local/non-portable               | Audit records remain sanitized and append-only.                                            |
+| `RepositoryIdentityRepository`      | conditional/concurrent mutation; runtime-local/non-portable | Checkout identity and local path association are not portable authority.                   |
+| `ProjectStateRepository`            | transactional aggregate                                     | Portable semantic state is the preferred Lite-to-Pro migration boundary.                   |
+| `MemoryReferenceRepository`         | simple CRUD                                                 | Project-scoped references remain separate from global memory bodies.                       |
+| `ProjectMemoryProvenanceRepository` | append-only/event; runtime-local/non-portable               | Retrieval provenance is excluded from portable snapshots.                                  |
+| `OperationalReadRepository`         | simple CRUD/read-side query                                 | Read models query project authority and are not an independent source of truth.            |
+| `TransactionRunner`                 | transactional aggregate boundary                            | PostgreSQL must use server-side connection transactions, not a PostgREST abstraction.      |
+| `JobOutboxRepository`               | append-only/event; runtime-local/non-portable               | The outbox is project authority for queue wake-ups, while SQLite remains authoritative.    |
+
+The following are intentionally outside this first project-storage boundary:
+`GlobalMemoryRepository` backed by `global.sqlite`, the optional external
+`ProjectMemoryProvider`, and the future regenerable code index backed by
+`index.sqlite`. They must not be merged into the first PostgreSQL project
+authority implementation.
+
+### SQLite transaction migration hotspots
+
+These existing SQLite transaction boundaries are deliberately unchanged. A
+PostgreSQL adapter must account for them explicitly rather than assuming that
+repository methods are independent statements:
+
+| SQLite implementation                                         | Current boundary                                                                                                  |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `database/sqlite-transaction-runner.ts`                       | `run()` uses `BEGIN IMMEDIATE` and owns commit/rollback.                                                          |
+| `repositories/sqlite-agent-runtime.repository.ts`             | `admitQueuedRun()`, `saveRun()`, and `acceptWorkerResult()` use `database.transaction()`.                         |
+| `repositories/sqlite-governance.repository.ts`                | `immediate()` uses `BEGIN IMMEDIATE`; milestone, requirement, ADR, and review saves use `database.transaction()`. |
+| `repositories/sqlite-cost.repository.ts`                      | `immediate()` uses `BEGIN IMMEDIATE` for reservation/usage accounting.                                            |
+| `repositories/sqlite-project-profile.repository.ts`           | `removeSource()` uses `database.transaction()`.                                                                   |
+| `repositories/sqlite-memory-reference.repository.ts`          | `saveReference()` uses `database.transaction()`.                                                                  |
+| `repositories/sqlite-project-memory-provenance.repository.ts` | `recordRetrieval()` uses `database.transaction()`.                                                                |
+| `database/migrate.ts`                                         | Migration application is transactional; this is a schema-runner concern, not a repository contract.               |
+
+`sqlite-global-memory.repository.ts` also contains an internal transaction,
+but it belongs to `global.sqlite` and is intentionally excluded here. These
+hotspots are documentation for subsequent adapter work; this boundary PR does
+not rewrite them.
+
+The recommended next vertical slice is PostgreSQL implementations of
+`ProjectRepository`, `TaskRepository`, `TaskRequirementRepository`, and
+`TransactionRunner`, with shared repository contract tests executed against
+both SQLite and PostgreSQL.
+
 ## `global.sqlite` — implemented durable reusable memory
 
 `<runtime-home>/global.sqlite` stores immutable versions of reusable roles and

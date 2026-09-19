@@ -8,8 +8,6 @@ import {
   withRuntimePathOverrides,
   type RuntimePaths,
 } from "@ai-office/runtime-paths/runtime-paths.ts";
-import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
-import { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 import { InvalidAgentDefinitionError } from "@ai-office/agent-runtime/agent-definition.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { AgentDefinitionDirectoryError } from "@ai-office/agent-runtime/yaml-agent-definition-loader.ts";
@@ -82,26 +80,11 @@ import {
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { migrateGlobal } from "@ai-office/storage-sqlite/database/migrate-global.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
-import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
-import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
-import { SqliteCostRepository } from "@ai-office/storage-sqlite/repositories/sqlite-cost.repository.ts";
-import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
-import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
-import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
-import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
-import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
+import { createSqliteProjectStorage } from "@ai-office/storage-sqlite/sqlite-project-storage.ts";
 import { RequirementNotFoundError } from "@ai-office/application/commands/manage-task-requirements.ts";
 import { TaskReconciliationApprovalError } from "@ai-office/application/commands/reconcile-tasks.ts";
 import { TaskCompletionApprovalError } from "@ai-office/application/commands/record-task-completion.ts";
-import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
-import { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
-import { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
-import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
-import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
-import { SqliteJobOutboxRepository } from "@ai-office/storage-sqlite/repositories/sqlite-job-outbox.repository.ts";
-import { SqliteMemoryReferenceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-memory-reference.repository.ts";
-import { SqliteProjectMemoryProvenanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-memory-provenance.repository.ts";
 import {
   DisabledProjectMemoryProvider,
   type ProjectMemoryProvider,
@@ -508,9 +491,7 @@ export async function executeRuntimeCommand(
     }
     const ids = new CryptoIdGenerator();
     const clock = new SystemClock();
-    const capabilities = new SqliteCapabilityPolicyRepository(database);
-    const controlled = new SqliteControlledExecutionRepository(database);
-    const costs = new SqliteCostRepository(database);
+    const projectStorage = createSqliteProjectStorage(database);
     const context: CommandContext = {
       ...(options.onRunChanged === undefined
         ? {}
@@ -523,47 +504,25 @@ export async function executeRuntimeCommand(
       runtimeHome: runtimePaths.runtimeHome,
       io,
       principal: localOperatorPrincipal,
-      projects: new SqliteProjectRepository(database),
-      profiles: new SqliteProjectProfileRepository(database),
-      officeManifests: new SqliteOfficeManifestRepository(database),
-      pipelines: new SqlitePipelineRunRepository(database),
-      tasks: new SqliteTaskRepository(database),
-      taskRequirements: new SqliteTaskRequirementRepository(database),
-      runtime: new SqliteAgentRuntimeRepository(database),
-      costs,
-      governance: new SqliteGovernanceRepository(database),
-      capabilities,
-      controlled,
-      audit: new RecordAuditEvent(
-        new SqliteAuditEventRepository(database),
-        ids,
-        clock,
-      ),
+      ...projectStorage,
+      audit: new RecordAuditEvent(projectStorage.auditEvents, ids, clock),
       ids,
       clock,
-      transactions: new SqliteTransactionRunner(database),
       connectors: createDefaultConnectorRegistry(),
       agentClients: options.agentClients ?? new DefaultAgentClientCatalog(),
       projectBindings:
         options.projectBindings ?? new LocalProjectBindingAdapter(),
-      repositoryIdentities: new SqliteRepositoryIdentityRepository(database),
-      projectStates: new SqliteProjectStateRepository(database),
       projectArchives:
         options.projectArchives ?? new LocalProjectArchiveAdapter(),
       defaultOfficeManifest:
         options.defaultOfficeManifest ?? defaultOfficeManifest(),
-      memoryReferences: new SqliteMemoryReferenceRepository(database),
       projectMemory:
         options.projectMemory ?? new DisabledProjectMemoryProvider(),
-      projectMemoryProvenance: new SqliteProjectMemoryProvenanceRepository(
-        database,
-      ),
       modelRouting: options.modelRouting ?? unconfiguredModelRouting,
       modelProviders:
         options.modelProviders ?? new EnvironmentModelProviderCatalog({}),
       gatewayProviders:
         options.gatewayProviders ?? new EnvironmentGatewayModelProviders({}),
-      jobOutbox: new SqliteJobOutboxRepository(database),
       ...(globalDatabase === null
         ? {}
         : { memory: new SqliteGlobalMemoryRepository(globalDatabase) }),
