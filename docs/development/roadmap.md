@@ -1326,24 +1326,28 @@ SQLite remains the Lite composition and Supabase Auth, Storage, RLS, and
 Realtime remain future capabilities.
 
 PR #55 adds the centralized `ProjectStorageBootstrap` boundary. SQLite remains
-the default and complete Runtime authority. PostgreSQL is now selectable and
-migration-capable infrastructure, but it is intentionally partial: it exposes
-only `ProjectRepository`, `TaskRepository`, `TaskRequirementRepository`, and
-`TransactionRunner`. A request to use it as complete Runtime authority fails
-closed with the missing capability list; no SQLite fallback or hybrid authority
-is allowed. PostgreSQL connection configuration is explicit through
-`AI_OFFICE_STORAGE_PROVIDER=postgres` and `AI_OFFICE_POSTGRES_URL`, and secrets
-remain runtime configuration rather than project state.
+the default and complete Runtime authority. PR #56 adds PostgreSQL governance
+parity: `ProjectRepository`, `TaskRepository`, `TaskRequirementRepository`,
+`GovernanceRepository`, and `TransactionRunner` are now implemented and
+contract-tested against real PostgreSQL. The governance slice includes
+milestones, full requirements, ADRs, reviews, approvals, governance events,
+project ownership constraints, append-only rules, transactional finalization,
+the same-project requirement/milestone composite foreign key with
+column-specific delete nulling, and persistent review-subject ownership guards.
+PostgreSQL remains intentionally partial: its implemented capability groups are
+exactly `projects`, `tasks`, `taskRequirements`, `governance`, and
+`transactions`; a request to use it as complete Runtime
+authority still fails closed with the missing capability list; no SQLite fallback
+or hybrid authority is allowed. PostgreSQL connection configuration is explicit
+through `AI_OFFICE_STORAGE_PROVIDER=postgres` and `AI_OFFICE_POSTGRES_URL`, and
+secrets remain runtime configuration rather than project state.
 
-The next storage slice is PostgreSQL repository parity in coherent
-transaction boundaries (starting with governance, agents/roles, pipelines/runs,
-reviews/approvals, artifacts, audit, capabilities/resources, or job outbox as
+The next storage slice is parity for the remaining `ProjectStorage` repositories
+(agents/roles, pipelines/runs, audit, capabilities/resources, or job outbox as
 dependency analysis warrants). Only after all required `ProjectStorage`
-repositories exist may PostgreSQL become a complete Runtime authority. Its
-`core.requirement` table remains a linkage-support subset for
-`TaskRequirement`, not `RequirementRepository` parity: scalar fields shared with
-SQLite are present, while `milestone_id` is deferred with the milestone
-aggregate and ownership constraints.
+repositories exist may PostgreSQL become a complete Runtime authority. The
+identity-only `core.agent_run` projection used to validate governance review
+subjects is not agent-runtime repository parity.
 
 ### Manufacturing reference vertical
 

@@ -83,6 +83,8 @@ jobs:
         run: |
           bunx --bun vitest run \
             tests/integration/storage-contracts-postgres.test.ts \
+            tests/integration/governance-contracts-postgres.test.ts \
+            tests/integration/governance-postgres-invariants.test.ts \
             tests/integration/storage-bootstrap-postgres.test.ts
 
   queue-e2e:
