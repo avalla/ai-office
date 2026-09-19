@@ -19,6 +19,17 @@ adapter and bootstrap explicitly reports the provider as complete.
   RLS`. JWT claims are identity context only; tenant membership and roles remain
   database authority. The Runtime uses its existing server-side PostgreSQL trust
   boundary and does not depend on Supabase `service_role`.
+- Tenant visibility/access: membership-backed RLS determines which tenant and
+  project rows an authenticated human can read; JWT tenant/role claims do not.
+- Collaboration mutation authority: ordinary project-owned collaboration tables
+  retain their table-specific owner/admin/member policies.
+- Governance authority: `core.review`, `core.approval`, and
+  `core.governance_event` are authoritative surfaces with authenticated
+  tenant-scoped `SELECT` only; no direct human governance CRUD or forged actor.
+- Runtime authority: `core.agent_run` is a Runtime projection with authenticated
+  tenant-scoped `SELECT` only. Governance and projection writes stay on the
+  Runtime/server-side table-owner path pending a separately designed bound
+  RPC/API slice.
 
 ## Test split
 
@@ -28,7 +39,8 @@ Use pgTAP for invariants owned by PostgreSQL itself:
 - cross-project / future cross-tenant ownership;
 - append-only and immutable records;
 - atomic database state-machine guards;
-- future RLS allow/deny matrices.
+- RLS allow/deny matrices, including the separation between tenant visibility
+  and governance authority.
 
 Keep Vitest for TypeScript/application behavior:
 

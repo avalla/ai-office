@@ -38,6 +38,17 @@ admin/member, admin può gestire member, member non gestisce membership. Le
 membership owner non sono mutabili tramite ordinary CRUD. `tenant_id IS NULL`
 è sempre invisibile agli utenti autenticati.
 
+Tenant visibility is deliberately separate from governance authority. The
+authenticated role has tenant-scoped `SELECT` only on `core.review`,
+`core.approval`, `core.governance_event`, and the Runtime-owned
+`core.agent_run` projection. It has no direct governance INSERT/UPDATE/DELETE
+path, regardless of whether the database membership role is owner, admin, or
+member. Review provenance, approval actor identity, review finalization, and
+governance event insertion therefore remain on the existing Runtime/server-side
+table-owner boundary. This staged boundary avoids trusting client-supplied
+human, agent, or system actor fields; a future human decision RPC must derive
+and bind the human actor from `auth.uid()` and the review's expected reviewer.
+
 Un trigger riusabile confronta il tenant effettivo del vecchio e del nuovo
 `project_id` su ogni riga project-owned e rifiuta il reparenting cross-tenant.
 Il reparenting fra progetti dello stesso tenant resta possibile quando le altre
@@ -53,6 +64,12 @@ Il Runtime/server-side PostgreSQL continua a usare il trust boundary esistente
 del proprio principal tecnico e non assume `service_role`. Il flusso umano è
 `JWT -> authenticated -> auth.uid() -> core.tenant_member -> RLS`; il principal
 definitivo del Runtime sarà deciso nella futura slice AgentRuntime parity.
+
+The role matrix is intentionally asymmetric: owner/admin retain the project and
+membership management authority described above; owner/admin/member share
+tenant-scoped governance visibility; none of them directly write authoritative
+governance records; non-members and `anon` have no access. This does not change
+the Runtime table-owner contract or the portable Project domain.
 
 ## Conseguenze
 
