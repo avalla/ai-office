@@ -64,6 +64,21 @@ function storageSqliteImports(file: string): string[] {
   );
 }
 
+const allowedGlobalSqliteImports = new Set([
+  "@ai-office/storage-sqlite/database/migrate-global.ts",
+  "@ai-office/storage-sqlite/database/open-database.ts",
+  "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts",
+]);
+
+function isAllowedGlobalSqliteImport(file: string, specifier: string): boolean {
+  const location = relative(repositoryRoot, file);
+  return (
+    (location === "apps/daemon/src/bootstrap.ts" ||
+      location === "packages/runtime-host/src/runtime-command.ts") &&
+    allowedGlobalSqliteImports.has(specifier)
+  );
+}
+
 function importsStoragePostgres(file: string, specifier: string): boolean {
   if (specifier === "@ai-office/storage-postgres") return true;
   if (specifier.startsWith("@ai-office/storage-postgres/")) return true;
@@ -107,7 +122,8 @@ describe("application architecture boundaries", () => {
     expect(storageSqliteImports(contextPath)).toEqual([]);
     expect(storageSqliteImports(projectStoragePath)).toEqual([]);
     expect(importedSpecifiers(projectStorage)).not.toContain("bun:sqlite");
-    expect(runtimeCommand).toContain("createSqliteProjectStorage");
+    expect(runtimeCommand).toContain("ProjectStorageBootstrap");
+    expect(runtimeCommand).not.toContain("createSqliteProjectStorage");
     expect(
       storageSqliteImports(runtimeCommandPath).filter(
         (specifier) =>
@@ -129,17 +145,52 @@ describe("application architecture boundaries", () => {
   });
 
   test("SQLite adapter imports stay in infrastructure composition roots", () => {
-    const allowed = new Set([
-      "packages/runtime-host/src/runtime-command.ts",
-      "apps/daemon/src/bootstrap.ts",
-    ]);
     const offenders: string[] = [];
     for (const directory of ["packages", "apps"])
       for (const file of typescriptFiles(join(repositoryRoot, directory))) {
         const location = relative(repositoryRoot, file);
         if (location.startsWith("packages/storage-sqlite/")) continue;
-        if (!allowed.has(location) && storageSqliteImports(file).length > 0)
-          offenders.push(location);
+        const disallowed = storageSqliteImports(file).filter(
+          (specifier) => !isAllowedGlobalSqliteImport(file, specifier),
+        );
+        if (
+          disallowed.length > 0 &&
+          location !==
+            "packages/storage-bootstrap/src/project-storage-bootstrap.ts"
+        )
+          offenders.push(location + " -> " + disallowed.join(", "));
+      }
+    expect(offenders).toEqual([]);
+  });
+
+  test("Runtime and daemon use the centralized provider bootstrap", () => {
+    const bootstrapPath = join(
+      repositoryRoot,
+      "packages",
+      "storage-bootstrap",
+      "src",
+      "project-storage-bootstrap.ts",
+    );
+    const bootstrap = readFileSync(bootstrapPath, "utf8");
+    expect(bootstrap).toContain("@ai-office/storage-sqlite/");
+    expect(bootstrap).toContain("@ai-office/storage-postgres/");
+
+    const offenders: string[] = [];
+    for (const directory of [
+      join(repositoryRoot, "packages", "runtime-host"),
+      join(repositoryRoot, "apps", "daemon"),
+    ])
+      for (const file of typescriptFiles(directory)) {
+        const location = relative(repositoryRoot, file);
+        const source = readFileSync(file, "utf8");
+        if (source.includes("createSqliteProjectStorage"))
+          offenders.push(`${location} constructs SQLite project storage`);
+        if (
+          importedSpecifiers(source).some((specifier) =>
+            importsStoragePostgres(file, specifier),
+          )
+        )
+          offenders.push(`${location} imports PostgreSQL storage directly`);
       }
     expect(offenders).toEqual([]);
   });

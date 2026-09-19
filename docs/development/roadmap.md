@@ -1320,19 +1320,30 @@ approvals, secrets, or other non-portable authority.
 
 Supabase is the preferred candidate data platform for Pro because it combines
 PostgreSQL, authentication, object storage, RLS, and realtime facilities behind
-one operational platform. This direction is not current Runtime selection truth
-and requires a follow-up provider/bootstrap decision before replacing SQLite
-authority in any deployed Runtime. ADR-0022 records the persistence boundary:
+one operational platform. ADR-0022 records the persistence boundary:
 repository ports and server-side PostgreSQL transactions are shared paths, while
 SQLite remains the Lite composition and Supabase Auth, Storage, RLS, and
-Realtime remain future capabilities. The first PostgreSQL foundation now exists
-for Project, Task, TaskRequirement, and TransactionRunner contracts, with real
-PostgreSQL integration coverage; the Runtime still selects SQLite only. Its
-`core.requirement` table is a linkage-support subset for `TaskRequirement`, not
-`RequirementRepository` parity: scalar fields shared with SQLite are present,
-while `milestone_id` is deferred with the milestone aggregate and ownership
-constraints. A future RequirementRepository migration must add that model before
-PostgreSQL can claim RequirementRepository parity.
+Realtime remain future capabilities.
+
+PR #55 adds the centralized `ProjectStorageBootstrap` boundary. SQLite remains
+the default and complete Runtime authority. PostgreSQL is now selectable and
+migration-capable infrastructure, but it is intentionally partial: it exposes
+only `ProjectRepository`, `TaskRepository`, `TaskRequirementRepository`, and
+`TransactionRunner`. A request to use it as complete Runtime authority fails
+closed with the missing capability list; no SQLite fallback or hybrid authority
+is allowed. PostgreSQL connection configuration is explicit through
+`AI_OFFICE_STORAGE_PROVIDER=postgres` and `AI_OFFICE_POSTGRES_URL`, and secrets
+remain runtime configuration rather than project state.
+
+The next storage slice is PostgreSQL repository parity in coherent
+transaction boundaries (starting with governance, agents/roles, pipelines/runs,
+reviews/approvals, artifacts, audit, capabilities/resources, or job outbox as
+dependency analysis warrants). Only after all required `ProjectStorage`
+repositories exist may PostgreSQL become a complete Runtime authority. Its
+`core.requirement` table remains a linkage-support subset for
+`TaskRequirement`, not `RequirementRepository` parity: scalar fields shared with
+SQLite are present, while `milestone_id` is deferred with the milestone
+aggregate and ownership constraints.
 
 ### Manufacturing reference vertical
 

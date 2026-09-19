@@ -25,7 +25,7 @@ export interface PersistentRuntimeHostOptions {
   handler: DaemonCommandHandler;
   events: RecordAuditEvent;
   now?: () => Date;
-  onStopped?: () => void;
+  onStopped?: () => void | Promise<void>;
   onStarting?: () => Promise<void>;
   onStopping?: () => Promise<void>;
   commandTimeoutMs?: number;
@@ -108,7 +108,7 @@ export class PersistentRuntimeHost {
         // them here keeps a stopped daemon from retaining either.
         this.options.queryEvents?.clear();
         if (server !== undefined) this.removeSocket();
-        this.options.onStopped?.();
+        await this.options.onStopped?.();
       }
     }
   }

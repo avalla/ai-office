@@ -4,10 +4,15 @@ import { fileURLToPath } from "node:url";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
-import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
-import { createSqliteProjectStorage } from "@ai-office/storage-sqlite/sqlite-project-storage.ts";
 import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
+import {
+  ProjectStorageBootstrap,
+  requireCompleteProjectStorage,
+  type OpenProjectStorageOptions,
+  type ProjectStorageConfig,
+  type ProjectStorageHandle,
+} from "@ai-office/storage-bootstrap/project-storage-bootstrap.ts";
 import { migrateGlobal } from "@ai-office/storage-sqlite/database/migrate-global.ts";
 import { OperationalEventBus } from "@ai-office/application/events/operational-event-bus.ts";
 import { OperationalQueryService } from "@ai-office/application/queries/operational-query-service.ts";
@@ -78,6 +83,17 @@ export interface BootstrapOptions {
   providerCredentials?: ProviderCredentials;
   /** Optional gateway provider access; defaults to the loaded credentials. */
   gatewayProviders?: GatewayModelProviders;
+  /** Explicit project storage selection; absent means the bootstrap environment/default. */
+  projectStorageConfig?: ProjectStorageConfig;
+  /** Internal bootstrap seam for deterministic acquisition-failure tests. */
+  projectStorageBootstrap?: ProjectStorageBootstrapLike;
+  /** Internal bootstrap seam for deterministic global-database failure tests. */
+  openGlobalDatabase?: typeof openDatabase;
+}
+
+interface ProjectStorageBootstrapLike {
+  resolve(configuration?: ProjectStorageConfig): ProjectStorageConfig;
+  open(options?: OpenProjectStorageOptions): Promise<ProjectStorageHandle>;
 }
 
 export async function bootstrap(
@@ -99,6 +115,16 @@ export async function bootstrap(
         : { globalDatabasePath: options.globalDatabasePath }),
     },
   );
+  const storageBootstrap =
+    options.projectStorageBootstrap ??
+    new ProjectStorageBootstrap({
+      sqliteDatabasePath: runtimePaths.projectDatabasePath,
+    });
+  // Resolve before touching Runtime state so invalid provider configuration
+  // cannot fall through to SQLite or start a partially configured host.
+  const storageConfiguration = storageBootstrap.resolve(
+    options.projectStorageConfig,
+  );
   ensureRuntimeHome(runtimePaths);
   // Read once; a credential change takes effect on Runtime restart.
   const credentials =
@@ -109,111 +135,134 @@ export async function bootstrap(
   const migrationDirectory =
     options.migrationDirectory ??
     join(sourceDirectory, "..", "..", "..", "migrations", "project");
-  const database = openDatabase(runtimePaths.projectDatabasePath);
-  migrate(database, migrationDirectory);
-  const globalDatabase = openDatabase(runtimePaths.globalDatabasePath);
-  migrateGlobal(
-    globalDatabase,
-    options.globalMigrationDirectory ??
-      join(sourceDirectory, "..", "..", "..", "migrations", "global"),
-  );
-  const projectStorage = createSqliteProjectStorage(database);
-  const events = new RecordAuditEvent(
-    projectStorage.auditEvents,
-    new CryptoIdGenerator(),
-    new SystemClock(),
-  );
-
-  // The query surface reuses the persistent host's already-migrated
-  // connection. It is read-only, so it needs no transaction runner and adds no
-  // write path.
-  const queryEvents = new OperationalEventBus();
-  const queries = new OperationalQueryService({
-    reads: projectStorage.operationalReads,
-    clock: new SystemClock(),
-    memory: new SqliteGlobalMemoryRepository(globalDatabase),
-  });
-
-  const runtime = new ApplicationRuntime(
-    runtimePaths,
-    commandRoot,
-    migrationDirectory,
-    options.globalMigrationDirectory,
-    options.agentClients,
-    options.projectBindings,
-    options.defaultOfficeManifest,
-    options.agentExecutor,
-    () => queryEvents.publish(["run.updated", "task.updated"]),
-    options.projectMemory ?? createProjectMemoryProvider(process.env),
-    {
-      state:
-        options.modelRouting ??
-        loadModelRoutingState(process.env, {
-          runtimeHome: runtimePaths.runtimeHome,
-        }),
-      providers:
-        options.modelProviders ??
-        new CredentialModelProviderCatalog(credentials),
-      gateway:
-        options.gatewayProviders ??
-        new CredentialGatewayModelProviders(credentials, {
-          debug: process.env.AI_OFFICE_DEBUG_LLM === "1",
-        }),
-    },
-  );
-
-  const queueConfiguration = readQueueConfiguration(process.env);
-  if (queueConfiguration.status === "misconfigured")
-    console.error(
-      "Queue configuration is invalid; queue-backed orchestration is disabled.",
+  let projectStorageHandle: ProjectStorageHandle | undefined;
+  let globalDatabase: ReturnType<typeof openDatabase> | undefined;
+  let ownershipTransferred = false;
+  try {
+    projectStorageHandle = await storageBootstrap.open({
+      configuration: storageConfiguration,
+      ...(options.migrationDirectory === undefined
+        ? {}
+        : { sqliteMigrationDirectory: options.migrationDirectory }),
+      requireComplete: true,
+    });
+    const projectStorage = requireCompleteProjectStorage(projectStorageHandle);
+    globalDatabase = (options.openGlobalDatabase ?? openDatabase)(
+      runtimePaths.globalDatabasePath,
     );
-  const outbox = projectStorage.jobOutbox;
-  const queue =
-    queueConfiguration.status === "configured" &&
-    queueConfiguration.redisUrl !== undefined
-      ? new BullMqJobQueue(queueConfiguration.redisUrl)
-      : undefined;
-  const queueRuntime =
-    queue === undefined
-      ? undefined
-      : new QueueRuntime(
-          runtime,
-          outbox,
-          queue,
-          new SystemClock(),
-          options.agentExecutor === undefined
-            ? queueConfiguration.worker
-            : undefined,
-        );
-  const queueStatus = async () => ({
-    provider:
-      queueConfiguration.status === "disabled"
-        ? ("disabled" as const)
-        : queueConfiguration.status === "misconfigured"
-          ? ("misconfigured" as const)
-          : ("configured" as const),
-    redis:
-      queue === undefined ? ("not_checked" as const) : await queue.health(),
-    outboxPending: await outbox.pendingCount(),
-    orchestrationWorker: queue?.consuming.orchestrate_pipeline ?? false,
-    agentRunWorker: queue?.consuming.execute_agent_run ?? false,
-  });
+    migrateGlobal(
+      globalDatabase,
+      options.globalMigrationDirectory ??
+        join(sourceDirectory, "..", "..", "..", "migrations", "global"),
+    );
+    const events = new RecordAuditEvent(
+      projectStorage.auditEvents,
+      new CryptoIdGenerator(),
+      new SystemClock(),
+    );
 
-  return new PersistentRuntimeHost({
-    socketPath: runtimePaths.socketPath,
-    queryApi: new QueryApi({ queries, events: queryEvents }),
-    queryEvents,
-    handler: new LocalCommandHandler(runtime),
-    events,
-    onStarting: () => queueRuntime?.start() ?? Promise.resolve(),
-    queueStatus,
-    onStopped: () => {
-      globalDatabase.close();
-      database.close();
-    },
-    onStopping: async () => {
-      await queueRuntime?.stop();
-      await runtime.stop();
-    },
-  });
+    // The query surface reuses the persistent host's already-migrated
+    // connection. It is read-only, so it needs no transaction runner and adds no
+    // write path.
+    const queryEvents = new OperationalEventBus();
+    const queries = new OperationalQueryService({
+      reads: projectStorage.operationalReads,
+      clock: new SystemClock(),
+      memory: new SqliteGlobalMemoryRepository(globalDatabase),
+    });
+
+    const runtime = new ApplicationRuntime(
+      runtimePaths,
+      commandRoot,
+      migrationDirectory,
+      options.globalMigrationDirectory,
+      options.agentClients,
+      options.projectBindings,
+      options.defaultOfficeManifest,
+      options.agentExecutor,
+      () => queryEvents.publish(["run.updated", "task.updated"]),
+      options.projectMemory ?? createProjectMemoryProvider(process.env),
+      {
+        state:
+          options.modelRouting ??
+          loadModelRoutingState(process.env, {
+            runtimeHome: runtimePaths.runtimeHome,
+          }),
+        providers:
+          options.modelProviders ??
+          new CredentialModelProviderCatalog(credentials),
+        gateway:
+          options.gatewayProviders ??
+          new CredentialGatewayModelProviders(credentials, {
+            debug: process.env.AI_OFFICE_DEBUG_LLM === "1",
+          }),
+      },
+      projectStorage,
+    );
+
+    const queueConfiguration = readQueueConfiguration(process.env);
+    if (queueConfiguration.status === "misconfigured")
+      console.error(
+        "Queue configuration is invalid; queue-backed orchestration is disabled.",
+      );
+    const outbox = projectStorage.jobOutbox;
+    const queue =
+      queueConfiguration.status === "configured" &&
+      queueConfiguration.redisUrl !== undefined
+        ? new BullMqJobQueue(queueConfiguration.redisUrl)
+        : undefined;
+    const queueRuntime =
+      queue === undefined
+        ? undefined
+        : new QueueRuntime(
+            runtime,
+            outbox,
+            queue,
+            new SystemClock(),
+            options.agentExecutor === undefined
+              ? queueConfiguration.worker
+              : undefined,
+          );
+    const queueStatus = async () => ({
+      provider:
+        queueConfiguration.status === "disabled"
+          ? ("disabled" as const)
+          : queueConfiguration.status === "misconfigured"
+            ? ("misconfigured" as const)
+            : ("configured" as const),
+      redis:
+        queue === undefined ? ("not_checked" as const) : await queue.health(),
+      outboxPending: await outbox.pendingCount(),
+      orchestrationWorker: queue?.consuming.orchestrate_pipeline ?? false,
+      agentRunWorker: queue?.consuming.execute_agent_run ?? false,
+    });
+
+    const host = new PersistentRuntimeHost({
+      socketPath: runtimePaths.socketPath,
+      queryApi: new QueryApi({ queries, events: queryEvents }),
+      queryEvents,
+      handler: new LocalCommandHandler(runtime),
+      events,
+      onStarting: () => queueRuntime?.start() ?? Promise.resolve(),
+      queueStatus,
+      onStopped: async () => {
+        await projectStorageHandle?.close();
+        globalDatabase?.close();
+      },
+      onStopping: async () => {
+        await queueRuntime?.stop();
+        await runtime.stop();
+      },
+    });
+    ownershipTransferred = true;
+    return host;
+  } finally {
+    if (!ownershipTransferred) {
+      try {
+        await projectStorageHandle?.close();
+      } finally {
+        globalDatabase?.close();
+      }
+    }
+  }
 }

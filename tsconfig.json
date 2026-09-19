@@ -20,6 +20,7 @@
       "@ai-office/application/*": ["packages/application/src/*"],
       "@ai-office/storage-sqlite/*": ["packages/storage-sqlite/src/*"],
       "@ai-office/storage-postgres/*": ["packages/storage-postgres/src/*"],
+      "@ai-office/storage-bootstrap/*": ["packages/storage-bootstrap/src/*"],
       "@ai-office/agent-runtime/*": ["packages/agent-runtime/src/*"],
       "@ai-office/agent-client-integrations/*": [
         "packages/agent-client-integrations/src/*"
