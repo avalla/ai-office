@@ -64,6 +64,16 @@ function storageSqliteImports(file: string): string[] {
   );
 }
 
+function importsStoragePostgres(file: string, specifier: string): boolean {
+  if (specifier === "@ai-office/storage-postgres") return true;
+  if (specifier.startsWith("@ai-office/storage-postgres/")) return true;
+  const target = resolvedTarget(file, specifier);
+  return (
+    target === "packages/storage-postgres" ||
+    target?.startsWith("packages/storage-postgres/") === true
+  );
+}
+
 describe("application architecture boundaries", () => {
   test("project Runtime composition consumes repository ports, not SQLite classes", () => {
     const contextPath = join(
@@ -132,6 +142,44 @@ describe("application architecture boundaries", () => {
           offenders.push(location);
       }
     expect(offenders).toEqual([]);
+  });
+
+  test("PostgreSQL storage remains an inward infrastructure adapter", () => {
+    const adapterRoot = join(repositoryRoot, "packages", "storage-postgres");
+    const adapterFiles = typescriptFiles(adapterRoot);
+    const adapterOffenders = adapterFiles.flatMap((file) =>
+      importedSpecifiers(readFileSync(file, "utf8"))
+        .filter((specifier) => importsStorageSqlite(file, specifier))
+        .map(
+          (specifier) => `${relative(repositoryRoot, file)} -> ${specifier}`,
+        ),
+    );
+    expect(adapterOffenders).toEqual([]);
+
+    const applicationAndDomain = [
+      ...typescriptFiles(join(repositoryRoot, "packages", "application")),
+      ...typescriptFiles(join(repositoryRoot, "packages", "domain")),
+    ];
+    const inwardOffenders = applicationAndDomain.flatMap((file) =>
+      importedSpecifiers(readFileSync(file, "utf8"))
+        .filter((specifier) => importsStoragePostgres(file, specifier))
+        .map(
+          (specifier) => `${relative(repositoryRoot, file)} -> ${specifier}`,
+        ),
+    );
+    expect(inwardOffenders).toEqual([]);
+
+    const runtimeOffenders = [
+      ...typescriptFiles(join(repositoryRoot, "packages", "runtime-host")),
+      ...typescriptFiles(join(repositoryRoot, "apps", "daemon")),
+    ].flatMap((file) =>
+      importedSpecifiers(readFileSync(file, "utf8"))
+        .filter((specifier) => importsStoragePostgres(file, specifier))
+        .map(
+          (specifier) => `${relative(repositoryRoot, file)} -> ${specifier}`,
+        ),
+    );
+    expect(runtimeOffenders).toEqual([]);
   });
 
   test("the persistent Runtime host does not depend on the CLI client", () => {

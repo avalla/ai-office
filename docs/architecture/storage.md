@@ -155,10 +155,44 @@ but it belongs to `global.sqlite` and is intentionally excluded here. These
 hotspots are documentation for subsequent adapter work; this boundary PR does
 not rewrite them.
 
-The recommended next vertical slice is PostgreSQL implementations of
-`ProjectRepository`, `TaskRepository`, `TaskRequirementRepository`, and
-`TransactionRunner`, with shared repository contract tests executed against
-both SQLite and PostgreSQL.
+The first PostgreSQL foundation now implements `ProjectRepository`,
+`TaskRepository`, `TaskRequirementRepository`, and `TransactionRunner` in the
+`storage-postgres` package. Shared repository contracts run against both
+adapters; PostgreSQL integration tests use the SQL in `supabase/migrations/`
+against a real server. Migration authority is serialized by a transaction-scoped
+PostgreSQL advisory lock, so concurrent bootstrap applies each ordered migration
+once before committing. The migration runner is intentionally small and
+idempotent for local integration setup and future Supabase deployment.
+
+`core.requirement` is supporting schema for `TaskRequirementRepository` linkage,
+not a migrated `RequirementRepository`. It currently carries the SQLite scalar
+fields `id`, `project_id`, `requirement_key`, `title`, `description`,
+`status`, `created_at`, and `updated_at`. `milestone_id` is intentionally
+deferred because this slice does not introduce the `Milestone` aggregate or its
+ownership constraints; a future `RequirementRepository` migration must add that
+field with the corresponding milestone ownership model before PostgreSQL can claim
+`RequirementRepository` parity. The reverse
+`task_requirement_requirement_idx(requirement_id, task_id)` index is present for
+future requirement-first lookup without expanding the current repository API.
+
+The PostgreSQL adapter uses the server-side `postgres` driver. A shared
+`PostgresClient` owns the pool and an async transaction-session context;
+`PostgresTransactionRunner` reserves one driver transaction, and every
+repository built from that client routes queries through the transaction-bound
+session while the callback is active. Each context also has an explicit lifetime
+token; escaped async work fails with a deterministic infrastructure error after
+commit or rollback instead of falling back to the pool or using an ended session.
+Normal awaited concurrency remains independent across top-level transactions, and
+nested transactions preserve the application-visible
+`TransactionAlreadyActiveError` behavior. No Runtime composition or provider
+selection uses this package yet.
+
+The next storage slice is centralized Runtime storage-provider/bootstrap
+selection, followed by incremental migration of the remaining project
+repositories. `global.sqlite`, governance beyond the requirement seed needed
+by this slice, audit, capabilities, agent runtime, pipelines, and the code
+index remain outside this PR. Runtime and daemon remain SQLite-only; this
+PostgreSQL package is not Runtime authority.
 
 ## `global.sqlite` — implemented durable reusable memory
 
