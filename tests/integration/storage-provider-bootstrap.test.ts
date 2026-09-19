@@ -121,6 +121,7 @@ describe("project storage provider bootstrap", () => {
           projectStorageConfig: {
             provider: "postgres",
             connectionString: "postgres://example",
+            tenantId: "bootstrap-tenant",
           },
           io: {
             stdout: () => {},

@@ -27,13 +27,17 @@ and RLS, while the generic PostgreSQL migration set must not require
    PostgreSQL.
 4. `core.project.tenant_id` is PostgreSQL infrastructure metadata, not a field on
    the portable `Project` domain object.
-5. Tenant assignment is staged. Existing PostgreSQL repository writes may create
-   an unassigned project while migration work is in progress. `NULL -> tenant`
-   is allowed once; an assigned project cannot be detached or moved through an
-   ordinary update.
-6. The authenticated Pro surface must later fail closed for projects whose
-   `tenant_id` is NULL. Once all Pro project-creation/import paths are explicitly
-   tenant-scoped, a later migration may make `tenant_id` mandatory.
+5. Tenant-aware PostgreSQL project provisioning is an explicit composition
+   boundary. The tenant-bound PostgreSQL repositories receive a trusted tenant
+   context from `ProjectStorageBootstrap`; it is never derived from JWT claims,
+   ambient state, or a default tenant. Project creation, repository import, and
+   portable restore all use that bound context, while SQLite remains
+   tenant-agnostic.
+6. Migration `20260919050000_project_tenant_required.sql` completes the staged
+   transition by refusing to run while any project has `tenant_id IS NULL`, then
+   enforcing `core.project.tenant_id NOT NULL`. Existing orphan rows must be
+   assigned by an authoritative operator before retrying the migration; the
+   migration never guesses ownership.
 7. Tenant deletion is restricted while projects remain assigned. Memberships and
    invitations are tenant-owned support records and cascade on tenant deletion.
 8. Project IDs remain globally unique. `UNIQUE (id, tenant_id)` is nevertheless
@@ -56,8 +60,12 @@ and RLS, while the generic PostgreSQL migration set must not require
 - SQLite/Lite remains free of tenant/account concepts.
 - The PostgreSQL/Supabase schema gains a stable ownership root before more
   repository parity expands the schema.
-- Existing PostgreSQL contracts continue to run during the staged migration.
-- Supabase RLS can later derive access through
+- Existing PostgreSQL contracts require explicit tenant fixtures/context.
+- Tenant-bound server-side repositories add tenant predicates/checks even when
+  the table-owner connection bypasses RLS; administrative SQL remains a
+  separate, explicit authority.
+- Portable Project identity and repository identity are not tenant authority.
+- Supabase RLS can derive access through
   `principal -> tenant_member -> tenant -> project` without putting a "current
   tenant" mutable global into the database or JWT.
 - The database retains a clear distinction between human membership and future

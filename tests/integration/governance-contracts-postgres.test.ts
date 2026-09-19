@@ -9,6 +9,7 @@ import { defineGovernanceRepositoryContracts } from "../contracts/governance-rep
 
 const connectionString = process.env.AI_OFFICE_TEST_POSTGRES_URL;
 const migrationDirectory = join(process.cwd(), "supabase", "migrations");
+const tenantId = "governance-contract-tenant";
 
 describe.skipIf(connectionString === undefined)(
   "PostgreSQL governance repository contracts",
@@ -18,6 +19,10 @@ describe.skipIf(connectionString === undefined)(
     beforeAll(async () => {
       database = new PostgresClient(connectionString!);
       await migratePostgres(database, migrationDirectory);
+      await database.query(
+        "INSERT INTO core.tenant(id, name, created_at, updated_at) VALUES ($1, $2, $3, $3) ON CONFLICT DO NOTHING",
+        [tenantId, "Governance Contract Tenant", new Date("2026-01-01T00:00:00.000Z")],
+      );
     });
 
     afterAll(async () => {
@@ -25,8 +30,8 @@ describe.skipIf(connectionString === undefined)(
     });
 
     defineGovernanceRepositoryContracts(async () => ({
-      projects: new PostgresProjectRepository(database),
-      governance: new PostgresGovernanceRepository(database),
+      projects: new PostgresProjectRepository(database, tenantId),
+      governance: new PostgresGovernanceRepository(database, tenantId),
       async seedEvent(value: GovernanceEventRecord): Promise<void> {
         await database.query(
           `INSERT INTO core.governance_event(

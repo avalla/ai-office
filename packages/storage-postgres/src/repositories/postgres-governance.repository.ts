@@ -16,6 +16,10 @@ import type {
   ReviewSubjectType,
 } from "@ai-office/domain/governance/governance.ts";
 import { PostgresClient } from "../database/postgres-client.ts";
+import {
+  PostgresTenantScopeError,
+  requirePostgresTenantId,
+} from "../database/postgres-tenant-context.ts";
 
 interface MilestoneRow extends Record<string, unknown> {
   id: string;
@@ -97,10 +101,18 @@ const tableForSubject = (type: ReviewSubjectType): string => {
 };
 
 export class PostgresGovernanceRepository implements GovernanceRepository {
-  constructor(private readonly database: PostgresClient) {}
+  private readonly tenantId: string;
+
+  constructor(
+    private readonly database: PostgresClient,
+    tenantId: string,
+  ) {
+    this.tenantId = requirePostgresTenantId(tenantId);
+  }
 
   async saveMilestone(value: MilestoneRecord): Promise<void> {
     await this.database.transaction(async () => {
+      await this.assertProjectTenant(value.projectId);
       await this.database.query(
         `
           INSERT INTO core.milestone(
@@ -131,6 +143,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
   async saveRequirement(value: RequirementRecord): Promise<void> {
     try {
       await this.database.transaction(async () => {
+        await this.assertProjectTenant(value.projectId);
         await this.database.query(
           `
             INSERT INTO core.requirement(
@@ -168,6 +181,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
 
   async saveAdr(value: AdrRecord): Promise<void> {
     await this.database.transaction(async () => {
+      await this.assertProjectTenant(value.projectId);
       await this.database.query(
         `
           INSERT INTO core.architecture_decision(
@@ -201,6 +215,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
 
   async saveReview(value: ReviewRecord): Promise<void> {
     await this.database.transaction(async () => {
+      await this.assertProjectTenant(value.projectId);
       await this.database.query(
         `
           INSERT INTO core.review(
@@ -239,8 +254,11 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
 
   async findMilestoneProject(id: string): Promise<string | null> {
     const [row] = await this.database.query<{ project_id: string }>(
-      "SELECT project_id FROM core.milestone WHERE id = $1",
-      [id],
+      `SELECT milestone.project_id
+       FROM core.milestone AS milestone
+       JOIN core.project AS project ON project.id = milestone.project_id
+       WHERE milestone.id = $1 AND project.tenant_id = $2`,
+      [id, this.tenantId],
     );
     return row?.project_id ?? null;
   }
@@ -250,8 +268,11 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
     id: string,
   ): Promise<string | null> {
     const [row] = await this.database.query<{ project_id: string }>(
-      `SELECT project_id FROM core.${tableForSubject(type)} WHERE id = $1`,
-      [id],
+      `SELECT subject.project_id
+       FROM core.${tableForSubject(type)} AS subject
+       JOIN core.project AS project ON project.id = subject.project_id
+       WHERE subject.id = $1 AND project.tenant_id = $2`,
+      [id, this.tenantId],
     );
     return row?.project_id ?? null;
   }
@@ -264,10 +285,12 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
     const [row] = await this.database.query<{ status: string }>(
       `
         SELECT status
-        FROM core.${tableForKind(kind)}
-        WHERE id = $1 AND project_id = $2
+        FROM core.${tableForKind(kind)} AS item
+        JOIN core.project AS project ON project.id = item.project_id
+        WHERE item.id = $1 AND item.project_id = $2
+          AND project.tenant_id = $3
       `,
-      [id, projectId],
+      [id, projectId, this.tenantId],
     );
     return (row?.status as GovernanceStatusByKind[K] | undefined) ?? null;
   }
@@ -278,13 +301,15 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
   ): Promise<ReviewRecord | null> {
     const [row] = await this.database.query<ReviewRow>(
       `
-        SELECT id, project_id, subject_type, subject_id,
-               reviewer_actor_type, reviewer_actor_id, reviewer_display_name,
-               status, summary, created_at, completed_at
-        FROM core.review
-        WHERE id = $1 AND project_id = $2
+        SELECT review.id, review.project_id, review.subject_type, review.subject_id,
+               review.reviewer_actor_type, review.reviewer_actor_id, review.reviewer_display_name,
+               review.status, review.summary, review.created_at, review.completed_at
+        FROM core.review AS review
+        JOIN core.project AS project ON project.id = review.project_id
+        WHERE review.id = $1 AND review.project_id = $2
+          AND project.tenant_id = $3
       `,
-      [id, projectId],
+      [id, projectId, this.tenantId],
     );
     return row === undefined ? null : reviewFromRow(row);
   }
@@ -298,14 +323,19 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
     now: Date,
   ): Promise<boolean> {
     return this.database.transaction(async () => {
+      await this.assertProjectTenant(projectId);
       const rows = await this.database.query<{ id: string }>(
         `
           UPDATE core.${tableForKind(kind)}
           SET status = $1, updated_at = $2
           WHERE id = $3 AND project_id = $4 AND status = $5
+            AND EXISTS (
+              SELECT 1 FROM core.project
+              WHERE id = $4 AND tenant_id = $6
+            )
           RETURNING id
         `,
-        [status, now, id, projectId, expectedStatus],
+        [status, now, id, projectId, expectedStatus, this.tenantId],
       );
       if (rows.length !== 1) return false;
       await this.appendEvent({
@@ -322,16 +352,19 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
 
   async decideReview(value: ApprovalRecord): Promise<ReviewDecisionResult> {
     return this.database.transaction(async () => {
+      await this.assertProjectTenant(value.projectId);
       const [review] = await this.database.query<{
         status: ReviewRecord["status"];
       }>(
         `
           SELECT status
-          FROM core.review
-          WHERE id = $1 AND project_id = $2
+          FROM core.review AS review
+          JOIN core.project AS project ON project.id = review.project_id
+          WHERE review.id = $1 AND review.project_id = $2
+            AND project.tenant_id = $3
           FOR UPDATE
         `,
-        [value.reviewId, value.projectId],
+        [value.reviewId, value.projectId, this.tenantId],
       );
       if (review === undefined) return "not_found";
       if (review.status !== "pending") return "already_finalized";
@@ -374,31 +407,43 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
           `
             SELECT id, project_id, title, description, status, created_at,
                    updated_at
-            FROM core.milestone
-            WHERE project_id = $1
-            ORDER BY created_at, id
+            FROM core.milestone AS item
+            WHERE item.project_id = $1
+              AND EXISTS (
+                SELECT 1 FROM core.project
+                WHERE id = item.project_id AND tenant_id = $2
+              )
+            ORDER BY item.created_at, item.id
           `,
-          [projectId],
+          [projectId, this.tenantId]
         ),
         this.database.query<RequirementRow>(
           `
             SELECT id, project_id, milestone_id, requirement_key, title,
                    description, status, created_at, updated_at
-            FROM core.requirement
-            WHERE project_id = $1
-            ORDER BY requirement_key, id
+            FROM core.requirement AS item
+            WHERE item.project_id = $1
+              AND EXISTS (
+                SELECT 1 FROM core.project
+                WHERE id = item.project_id AND tenant_id = $2
+              )
+            ORDER BY item.requirement_key, item.id
           `,
-          [projectId],
+          [projectId, this.tenantId]
         ),
         this.database.query<AdrRow>(
           `
             SELECT id, project_id, title, context, decision, consequences,
                    status, superseded_by_id, created_at, updated_at
-            FROM core.architecture_decision
-            WHERE project_id = $1
-            ORDER BY created_at, id
+            FROM core.architecture_decision AS item
+            WHERE item.project_id = $1
+              AND EXISTS (
+                SELECT 1 FROM core.project
+                WHERE id = item.project_id AND tenant_id = $2
+              )
+            ORDER BY item.created_at, item.id
           `,
-          [projectId],
+          [projectId, this.tenantId]
         ),
         this.database.query<ReviewRow>(
           `
@@ -406,21 +451,29 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
                    reviewer_actor_type, reviewer_actor_id,
                    reviewer_display_name, status, summary, created_at,
                    completed_at
-            FROM core.review
-            WHERE project_id = $1
-            ORDER BY created_at, id
+            FROM core.review AS item
+            WHERE item.project_id = $1
+              AND EXISTS (
+                SELECT 1 FROM core.project
+                WHERE id = item.project_id AND tenant_id = $2
+              )
+            ORDER BY item.created_at, item.id
           `,
-          [projectId],
+          [projectId, this.tenantId]
         ),
         this.database.query<ApprovalRow>(
           `
             SELECT id, project_id, review_id, decision, actor_type, actor_id,
                    display_name, rationale, created_at
-            FROM core.approval
-            WHERE project_id = $1
-            ORDER BY created_at, id
+            FROM core.approval AS item
+            WHERE item.project_id = $1
+              AND EXISTS (
+                SELECT 1 FROM core.project
+                WHERE id = item.project_id AND tenant_id = $2
+              )
+            ORDER BY item.created_at, item.id
           `,
-          [projectId],
+          [projectId, this.tenantId]
         ),
       ]);
 
@@ -438,11 +491,15 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
       `
         SELECT id, project_id, event_type, aggregate_id, metadata_json,
                occurred_at
-        FROM core.governance_event
-        WHERE project_id = $1
-        ORDER BY sequence
+        FROM core.governance_event AS event
+        WHERE event.project_id = $1
+          AND EXISTS (
+            SELECT 1 FROM core.project
+            WHERE id = event.project_id AND tenant_id = $2
+          )
+        ORDER BY event.sequence
       `,
-      [projectId],
+      [projectId, this.tenantId]
     );
     return rows.map((row) => ({
       id: row.id,
@@ -455,6 +512,15 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
           : row.metadata_json,
       occurredAt: toDate(row.occurred_at),
     }));
+  }
+
+  private async assertProjectTenant(projectId: string): Promise<void> {
+    const rows = await this.database.query<{ id: string }>(
+      "SELECT id FROM core.project WHERE id = $1 AND tenant_id = $2",
+      [projectId, this.tenantId],
+    );
+    if (rows.length !== 1)
+      throw new PostgresTenantScopeError("Project", projectId);
   }
 
   private async appendEvent(value: GovernanceEventRecord): Promise<void> {

@@ -18,6 +18,7 @@ import { defineProjectStorageContracts } from "../contracts/project-storage.cont
 
 const connectionString = process.env.AI_OFFICE_TEST_POSTGRES_URL;
 const migrationDirectory = join(process.cwd(), "supabase", "migrations");
+const tenantId = "contract-tenant";
 
 describe.skipIf(connectionString === undefined)(
   "PostgreSQL project storage contracts",
@@ -27,6 +28,10 @@ describe.skipIf(connectionString === undefined)(
     beforeAll(async () => {
       database = new PostgresClient(connectionString!);
       await migratePostgres(database, migrationDirectory);
+      await database.query(
+        "INSERT INTO core.tenant(id, name, created_at, updated_at) VALUES ($1, $2, $3, $3) ON CONFLICT DO NOTHING",
+        [tenantId, "Contract Tenant", new Date("2026-01-01T00:00:00.000Z")],
+      );
       expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
       expect(
         await database.query<{ exists: boolean }>(
@@ -65,9 +70,9 @@ describe.skipIf(connectionString === undefined)(
     });
 
     defineProjectStorageContracts(async () => ({
-      projects: new PostgresProjectRepository(database),
-      tasks: new PostgresTaskRepository(database),
-      taskRequirements: new PostgresTaskRequirementRepository(database),
+      projects: new PostgresProjectRepository(database, tenantId),
+      tasks: new PostgresTaskRepository(database, tenantId),
+      taskRequirements: new PostgresTaskRequirementRepository(database, tenantId),
       transactions: new PostgresTransactionRunner(database),
       async seedRequirement(input: {
         id: string;
@@ -98,8 +103,8 @@ describe.skipIf(connectionString === undefined)(
     test("keeps repository writes on one transaction-bound session", async () => {
       const subject = new PostgresClient(connectionString!);
       const observer = new PostgresClient(connectionString!);
-      const projects = new PostgresProjectRepository(subject);
-      const tasks = new PostgresTaskRepository(subject);
+      const projects = new PostgresProjectRepository(subject, tenantId);
+      const tasks = new PostgresTaskRepository(subject, tenantId);
       const transactions = new PostgresTransactionRunner(subject);
       const projectId = `session-${randomUUID()}`;
       const taskId = `session-${randomUUID()}`;
@@ -114,14 +119,14 @@ describe.skipIf(connectionString === undefined)(
             Task.create({ id: taskId, projectId, title: "Session task", now }),
           );
           expect(
-            await new PostgresProjectRepository(observer).findById(projectId),
+            await new PostgresProjectRepository(observer, tenantId).findById(projectId),
           ).toBeNull();
         });
         expect(
-          await new PostgresProjectRepository(observer).findById(projectId),
+          await new PostgresProjectRepository(observer, tenantId).findById(projectId),
         ).not.toBeNull();
         expect(
-          await new PostgresTaskRepository(observer).findById(taskId),
+          await new PostgresTaskRepository(observer, tenantId).findById(taskId),
         ).not.toBeNull();
       } finally {
         await subject.close();
@@ -159,7 +164,7 @@ describe.skipIf(connectionString === undefined)(
 
     test("fails closed for an escaped transaction context", async () => {
       const subject = new PostgresClient(connectionString!);
-      const projects = new PostgresProjectRepository(subject);
+      const projects = new PostgresProjectRepository(subject, tenantId);
       const transactions = new PostgresTransactionRunner(subject);
       let releaseEscapedWork!: () => void;
       const escapedGate = new Promise<void>((resolve) => {

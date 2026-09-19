@@ -80,40 +80,33 @@ select throws_ok(
   'membership roles are constrained to owner/admin/member'
 );
 
-select lives_ok(
+select is(
+  (select is_nullable from information_schema.columns
+   where table_schema = 'core' and table_name = 'project' and column_name = 'tenant_id'),
+  'NO',
+  'project tenant ownership is mandatory after migration'
+);
+
+select throws_ok(
   $$
     insert into core.project(id, name, created_at, updated_at)
-    values ('pgtap-unassigned-project', 'Legacy project', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z')
+    values ('pgtap-null-project', 'Invalid project', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z')
   $$,
-  'the migration phase preserves existing tenant-agnostic PostgreSQL repository writes'
+  '23502',
+  null,
+  'project creation without tenant ownership is rejected'
 );
 
-select is(
-  (select tenant_id from core.project where id = 'pgtap-unassigned-project'),
-  null::text,
-  'legacy/unmigrated project begins without tenant ownership'
-);
-
-select lives_ok(
-  $$
-    update core.project
-    set tenant_id = 'pgtap-tenant-a'
-    where id = 'pgtap-unassigned-project'
-  $$,
-  'an unassigned project can receive tenant ownership exactly once'
-);
-
-select is(
-  (select tenant_id from core.project where id = 'pgtap-unassigned-project'),
-  'pgtap-tenant-a',
-  'project records its assigned tenant'
-);
+insert into core.project(id, name, tenant_id, created_at, updated_at)
+values
+  ('pgtap-owned-project', 'Owned project', 'pgtap-tenant-a', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
+  ('pgtap-other-project', 'Other project', 'pgtap-tenant-b', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
 
 select throws_ok(
   $$
     update core.project
     set tenant_id = 'pgtap-tenant-b'
-    where id = 'pgtap-unassigned-project'
+    where id = 'pgtap-owned-project'
   $$,
   '23514',
   'project tenant assignment is immutable',
@@ -124,11 +117,21 @@ select throws_ok(
   $$
     update core.project
     set tenant_id = null
-    where id = 'pgtap-unassigned-project'
+    where id = 'pgtap-owned-project'
   $$,
   '23514',
   'project tenant assignment is immutable',
   'assigned project cannot be detached from its tenant'
+);
+
+insert into core.task(id, project_id, title, status, created_at, updated_at)
+values ('pgtap-owned-task', 'pgtap-owned-project', 'Owned task', 'pending', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
+
+select throws_ok(
+  $$ update core.task set project_id = 'pgtap-other-project' where id = 'pgtap-owned-task' $$,
+  '23514',
+  'project-owned row cannot change tenant through project reassignment',
+  'project-owned records cannot be reparented across tenants'
 );
 
 select throws_ok(
@@ -137,6 +140,9 @@ select throws_ok(
   null,
   'tenant deletion is restricted while it still owns a project'
 );
+
+-- Free tenant B for the cascade checks below after using it as the cross-tenant target.
+delete from core.project where id = 'pgtap-other-project';
 
 select lives_ok(
   $$

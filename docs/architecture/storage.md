@@ -104,8 +104,9 @@ through application-facing repository ports; they do not construct provider
 adapters directly.
 
 SQLite remains the default and only complete Runtime authority. PostgreSQL is
-selectable with `AI_OFFICE_STORAGE_PROVIDER=postgres` and
-`AI_OFFICE_POSTGRES_URL`, and its migration runner reuses the SQL files under
+selectable with `AI_OFFICE_STORAGE_PROVIDER=postgres`,
+`AI_OFFICE_POSTGRES_URL`, and the trusted composition value
+`AI_OFFICE_POSTGRES_TENANT_ID`; its migration runner reuses the SQL files under
 `supabase/migrations/`. PostgreSQL currently implements exactly these capability
 groups: `projects`, `tasks`, `taskRequirements`, `governance`, and
 `transactions`; all other `ProjectStorage` capabilities remain false. The
@@ -113,6 +114,16 @@ bootstrap reports those capabilities without fabricating missing repositories;
 requiring complete Runtime authority therefore fails with
 `StorageProviderIncompleteError` and lists the missing capabilities. There is
 no SQLite fallback or mixed-provider authority.
+
+The PostgreSQL project repository is tenant-bound at composition time. Its
+`findById` and `save` predicates include the bound tenant, project provisioning
+writes that tenant in the same transaction as the application use case, and a
+same-ID/different-tenant conflict fails closed. Task, task-link, and governance
+adapters apply the same explicit project-tenant checks because a table-owner
+connection may bypass RLS. The generic `Project` aggregate, SQLite persistence,
+portable repository identity, and `.aioffice` archive state remain tenant-free:
+portable Project identity is not PostgreSQL tenant ownership, repository identity
+is not tenant authority, and authenticated identity is not membership authority.
 
 | Port                                | Classification                                              | Migration notes                                                                            |
 | ----------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------ |

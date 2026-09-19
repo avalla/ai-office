@@ -74,8 +74,7 @@ values
 insert into core.project(id, name, tenant_id, created_at, updated_at)
 values
   ('rls-project-a', 'Project A', 'rls-tenant-a', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
-  ('rls-project-b', 'Project B', 'rls-tenant-b', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z'),
-  ('rls-project-legacy', 'Legacy project', null, '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
+  ('rls-project-b', 'Project B', 'rls-tenant-b', '2026-09-19T00:00:00Z', '2026-09-19T00:00:00Z');
 
 set local request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
 set local role authenticated;
@@ -89,7 +88,7 @@ select is(private.has_tenant_role('rls-tenant-a', array['owner']::text[]), true,
 select is(private.has_tenant_role('rls-tenant-b', array['owner']::text[]), false, 'user A is not owner in tenant B');
 select is(private.can_access_project('rls-project-a'), true, 'user A can access project A');
 select is(private.can_access_project('rls-project-b'), true, 'user A can access project B');
-select is(private.can_access_project('rls-project-legacy'), false, 'NULL-tenant project access fails closed');
+select is(private.can_access_project('rls-project-missing'), false, 'unknown project access fails closed');
 select is(private.can_manage_project('rls-project-a'), true, 'user A can manage project A');
 select is(private.can_manage_project('rls-project-b'), false, 'user A cannot manage project B as a member');
 select lives_ok(

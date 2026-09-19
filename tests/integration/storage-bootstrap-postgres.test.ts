@@ -36,6 +36,7 @@ describe.skipIf(connectionString === undefined)(
       const configuration = {
         provider: "postgres" as const,
         connectionString: connectionString!,
+        tenantId: "bootstrap-tenant",
       };
       await expect(
         bootstrap.open({

@@ -5,6 +5,7 @@ import type {
   TaskRequirementRepository,
 } from "@ai-office/application/ports/task-requirement-repository.port.ts";
 import { PostgresClient } from "../database/postgres-client.ts";
+import { requirePostgresTenantId } from "../database/postgres-tenant-context.ts";
 
 interface LinkedRequirementRow extends Record<string, unknown> {
   task_id: string;
@@ -28,7 +29,14 @@ function placeholders(count: number, startAt: number): string {
 }
 
 export class PostgresTaskRequirementRepository implements TaskRequirementRepository {
-  constructor(private readonly database: PostgresClient) {}
+  private readonly tenantId: string;
+
+  constructor(
+    private readonly database: PostgresClient,
+    tenantId: string,
+  ) {
+    this.tenantId = requirePostgresTenantId(tenantId);
+  }
 
   async link(input: {
     projectId: string;
@@ -46,12 +54,13 @@ export class PostgresTaskRequirementRepository implements TaskRequirementReposit
           SELECT 1
           FROM core.task t
           JOIN core.requirement r ON r.id = $3
+          JOIN core.project p ON p.id = $1 AND p.tenant_id = $5
           WHERE t.id = $2 AND t.project_id = $1 AND r.project_id = $1
         )
         ON CONFLICT(task_id, requirement_id) DO NOTHING
         RETURNING task_id
       `,
-      [input.projectId, input.taskId, input.requirementId, input.now],
+      [input.projectId, input.taskId, input.requirementId, input.now, this.tenantId],
     );
     return rows.length === 1;
   }
@@ -67,9 +76,13 @@ export class PostgresTaskRequirementRepository implements TaskRequirementReposit
         WHERE link.task_id = $1
           AND link.requirement_id = $2
           AND link.project_id = $3
+          AND EXISTS (
+            SELECT 1 FROM core.project p
+            WHERE p.id = link.project_id AND p.tenant_id = $4
+          )
         RETURNING link.task_id
       `,
-      [input.taskId, input.requirementId, input.projectId],
+      [input.taskId, input.requirementId, input.projectId, this.tenantId],
     );
     return rows.length === 1;
   }
@@ -85,12 +98,13 @@ export class PostgresTaskRequirementRepository implements TaskRequirementReposit
         FROM core.task_requirement link
         JOIN core.requirement r ON r.id = link.requirement_id
         JOIN core.task t ON t.id = link.task_id
+        JOIN core.project p ON p.id = link.project_id AND p.tenant_id = $3
         WHERE link.task_id = $1
           AND link.project_id = $2
           AND t.project_id = r.project_id
         ORDER BY r.requirement_key, r.id
       `,
-      [taskId, projectId],
+      [taskId, projectId, this.tenantId],
     );
     return rows.map(toLinkedRequirement);
   }
@@ -108,12 +122,13 @@ export class PostgresTaskRequirementRepository implements TaskRequirementReposit
         FROM core.task_requirement link
         JOIN core.requirement r ON r.id = link.requirement_id
         JOIN core.task t ON t.id = link.task_id
+        JOIN core.project p ON p.id = link.project_id AND p.tenant_id = $2
         WHERE link.project_id = $1
           AND r.project_id = t.project_id
-          AND link.task_id IN (${placeholders(taskIds.length, 2)})
+          AND link.task_id IN (${placeholders(taskIds.length, 3)})
         ORDER BY link.task_id, r.requirement_key, r.id
       `,
-      [projectId, ...taskIds],
+      [projectId, this.tenantId, ...taskIds],
     );
     for (const value of rows) {
       const list = grouped.get(value.task_id) ?? [];
@@ -128,10 +143,11 @@ export class PostgresTaskRequirementRepository implements TaskRequirementReposit
       `
         SELECT link.task_id, link.requirement_id, link.created_at
         FROM core.task_requirement link
+        JOIN core.project p ON p.id = link.project_id AND p.tenant_id = $2
         WHERE link.project_id = $1
         ORDER BY link.task_id, link.requirement_id
       `,
-      [projectId],
+      [projectId, this.tenantId],
     );
     return rows.map((value) => ({
       taskId: value.task_id,

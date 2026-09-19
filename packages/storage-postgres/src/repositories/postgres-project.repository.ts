@@ -2,6 +2,12 @@ import type { ProjectId } from "@ai-office/domain/project/project.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import type { ProjectRepository } from "@ai-office/application/ports/project-repository.port.ts";
 import { PostgresClient } from "../database/postgres-client.ts";
+import { requirePostgresTenantId } from "../database/postgres-tenant-context.ts";
+
+export {
+  PostgresProjectTenantConflictError,
+} from "@ai-office/application/ports/project-tenant-errors.ts";
+import { PostgresProjectTenantConflictError } from "@ai-office/application/ports/project-tenant-errors.ts";
 
 interface ProjectRow extends Record<string, unknown> {
   id: string;
@@ -12,16 +18,23 @@ interface ProjectRow extends Record<string, unknown> {
 }
 
 export class PostgresProjectRepository implements ProjectRepository {
-  constructor(private readonly database: PostgresClient) {}
+  private readonly tenantId: string;
+
+  constructor(
+    private readonly database: PostgresClient,
+    tenantId: string,
+  ) {
+    this.tenantId = requirePostgresTenantId(tenantId);
+  }
 
   async findById(id: ProjectId): Promise<Project | null> {
     const [row] = await this.database.query<ProjectRow>(
       `
         SELECT id, name, description, created_at, updated_at
         FROM core.project
-        WHERE id = $1
+        WHERE id = $1 AND tenant_id = $2
       `,
-      [id],
+      [id, this.tenantId],
     );
     if (row === undefined) return null;
 
@@ -36,14 +49,17 @@ export class PostgresProjectRepository implements ProjectRepository {
 
   async save(project: Project): Promise<void> {
     const value = project.snapshot();
-    await this.database.query(
+    const rows = await this.database.query<{ id: string }>(
       `
-        INSERT INTO core.project(id, name, description, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO core.project(
+          id, name, description, created_at, updated_at, tenant_id
+        ) VALUES ($1, $2, $3, $4, $5, $6)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           description = excluded.description,
           updated_at = excluded.updated_at
+        WHERE core.project.tenant_id = excluded.tenant_id
+        RETURNING id
       `,
       [
         value.id,
@@ -51,8 +67,11 @@ export class PostgresProjectRepository implements ProjectRepository {
         value.description ?? null,
         value.createdAt,
         value.updatedAt,
+        this.tenantId,
       ],
     );
+    if (rows.length !== 1)
+      throw new PostgresProjectTenantConflictError(value.id);
   }
 }
 
