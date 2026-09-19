@@ -43,6 +43,14 @@ semantics. A stage approval authorizes one workflow transition. An action
 approval remains bound to one exact simulated side effect and is still required
 when its connector descriptor requires it. Neither substitutes for the other.
 
+The future Artifact Review & Approval capability adds a third distinction:
+artifact review evaluates one exact Artifact version/fingerprint, while stage
+approval authorizes a pipeline transition and controlled-action approval
+authorizes one exact side effect. A completed AgentRun or stage does not imply
+that its Artifact is approved or that the Task is complete. The capability is
+planned under M11.6 and must reuse these boundaries rather than introduce a
+second approval authority.
+
 Migrations `0020_pipeline_enforcement.sql` and
 `0021_agent_action_provenance.sql` add the run, stage, override, and immutable
 AgentRun/action-request binding state. Existing rows receive null bindings,

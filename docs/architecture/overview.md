@@ -311,6 +311,45 @@ Claude generates onboarding questions in the host session; only the accepted
 manifest crosses into the daemon. LangChain does not cross into
 application/domain code or own orchestration.
 
+## Artifact Review & Approval as a cross-domain capability
+
+AI Office is not a software-development workflow engine. Software development is
+one domain that can use the generic task-to-artifact-to-review-to-approval model.
+The future core capability is:
+
+```text
+Task -> AgentRun -> Artifact version -> ReviewRequest -> ReviewResult
+     -> Approval / Changes Requested / Rejection
+     -> new AgentRun and Artifact version when needed
+     -> Approved Artifact -> Authoritative Execution / Publish / Release
+     -> Task completion
+```
+
+An Artifact is a verifiable output, not necessarily a file. It can be internal to
+AI Office or represent an external resource. Its logical identity, version,
+fingerprint, metadata, and producer AgentRun/operator provenance are separate
+from the review that evaluates it. A ReviewRequest binds the exact artifact
+fingerprint to a policy and reviewer requirements; a ReviewResult records verdict,
+findings, reviewer identity, provenance, timestamp, and the reviewed fingerprint.
+Reviewers are pluggable adapters: human, LLM, policy/rules, CI or other
+automated verifier, external system, or domain-specific verifier.
+
+The binding is strict: a review of version/fingerprint `abc123` cannot approve
+`def456`. When an artifact changes, the earlier review remains in the
+append-only audit trail but is stale/non-current for the new version. Review
+determines artifact acceptability; it does not authorize an external side
+effect. Authoritative execution continues through the Runtime, capability and
+connector/controlled-action boundaries.
+
+M5 governance reviews, pipeline-stage approval gates, professional approval, and
+M6C-lite `ActionApproval` remain distinct by subject and authority. A future
+read model may show `artifact_ready`, `awaiting_review`, or `approved` without
+adding those values to the current Task aggregate. In particular,
+AgentRun completed != Task completed, Artifact produced != Artifact approved, and
+Artifact approved != external action executed when the policy requires an
+authoritative executor. The capability is architecturally defined but not yet
+implemented; see [ADR-0021](../adr/ADR-0021-artifact-review-and-approval-workflow.md).
+
 Governance stores milestones, requirements, ADRs, reviews, and approval decisions as structured project state. This M5 governance approval model is separate from M6C-lite `ActionApproval`, which binds a controlled filesystem mutation to its authorization and simulation artifact.
 
 ## Optional project memory

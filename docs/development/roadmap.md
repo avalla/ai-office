@@ -35,6 +35,13 @@ Vertical profiles
         `-- legal (reference vertical)
 ```
 
+The reusable core is expected to converge on Projects or other work containers,
+Tasks, Agents and AgentRuns, Pipelines, Artifacts, Reviews, Approvals, Policies,
+Memory, Audit, and Authoritative Executors. Domain packs and adapters may add
+vocabulary, schemas, reviewers, evidence, connectors and policy constraints for
+software, manufacturing, legal, finance, operations, compliance and procurement,
+but they do not fork those governance and authority semantics.
+
 Three boundaries govern this direction:
 
 1. A generic, client-agnostic Agent Pipeline Engine owns pipeline and stage
@@ -915,9 +922,150 @@ failures, and approval decisions. CairnKeep remains read-only.
 Redis/Valkey is an external operator prerequisite and is never installed by AI
 Office. Redis data loss is recoverable for pending SQLite outbox intent; a
 completed authoritative run is a safe no-op when a stale job is replayed.
-Multi-host scheduling, stronger hostile-local-process security, structured stage
-artifacts, branching/cycles, autonomous memory promotion, and true tool-loop or
-worktree execution remain future work under M11/M12/M14.
+Multi-host scheduling, stronger hostile-local-process security, persisted
+Artifact Review & Approval runtime behavior, branching/cycles, autonomous memory
+promotion, and true tool-loop or worktree execution remain future work under
+M11.6/M12/M14.
+
+## M11.6 — Artifact Review & Approval Workflow
+
+Status: Phase A documented; Phases B-D future.
+
+Goal: make reviewable output a generic, cross-domain orchestration capability.
+AI Office is not a software-development workflow engine: software engineering is
+one domain adapter over the shared task, artifact, review, approval and
+authoritative-execution model.
+
+The capability does not replace the current Task, AgentRun, PipelineRun, M5
+governance review, M6 controlled-action approval, or Runtime audit. It
+coordinates them while preserving each subject, authority boundary, provenance
+and recovery rule. The current runtime does not yet persist or execute this
+workflow.
+
+### Phase A — Domain model and documentation
+
+Status: documented by [ADR-0021](../adr/ADR-0021-artifact-review-and-approval-workflow.md),
+the [domain model](../architecture/domain-model.md), and the
+[architecture overview](../architecture/overview.md).
+
+- define a verifiable, non-file-specific Artifact and immutable artifact
+  versions with logical identity, type, metadata, producer AgentRun/operator
+  provenance, and stable fingerprint;
+- define separate ReviewRequest and ReviewResult concepts, with every review
+  bound to the exact artifact version/fingerprint;
+- define pluggable human, LLM, policy/rules, CI, external-system, and
+  domain-specific reviewers without making an LLM the default authority;
+- define deterministic ReviewPolicy for required/optional reviewers, quorum,
+  artifact type, risk, domain routing, and mandatory human approval;
+- define stale-review semantics, correction loops, audit/provenance, replay and
+  recovery invariants;
+- document the distinction between work executed, artifact produced, artifact
+  reviewed, artifact approved, external action executed, and task completed.
+
+This phase changes documentation only. It does not claim a persisted Artifact
+aggregate, review commands, policy evaluator, or new Task status values.
+
+### Phase B — Core Runtime
+
+Status: future.
+
+- persist artifacts and immutable versions, fingerprints, producer provenance and
+  external-resource references;
+- persist review requests/results and append-only stale transitions;
+- evaluate review policies and quorum deterministically;
+- support changes_requested -> new AgentRun -> new artifact version -> new
+  review while retaining one task and the full history;
+- expose artifact/review/approval state through the authoritative Runtime and
+  existing operational read-model conventions;
+- emit or extend existing audit events only after checking for duplicate
+  lifecycle events; candidate names include artifact.created,
+  artifact.version_created, review.requested, review.completed,
+  review.changes_requested, review.approved, review.stale, artifact.approved,
+  and artifact.released;
+- preserve exact artifact fingerprint, review/approval identity, policy/plan hash,
+  producer/reviewer provenance, and execution binding for replay and recovery.
+
+The implementation must choose compatible aggregates, migrations, ports and
+read-model projections. It must not add a competing review engine or hold a
+transaction open across workers, providers, human decisions, connectors or
+external effects.
+
+### Phase C — Software adapter
+
+Status: future; depends on M13 and M14.
+
+- represent a Git Pull Request as a software-domain PullRequestArtifact, not
+  as a core-domain entity;
+- retain repository, branch, base branch, PR number/URL and a version fingerprint
+  such as headSha;
+- support human, LLM, CI/check and security reviewers through adapters;
+- ensure approval of abc123 cannot authorize merge of def456;
+- connect approved artifacts to the existing GitHub connector and authoritative
+  merge executor only after all policy and controlled-action gates pass.
+
+A software flow is therefore Task -> AgentRun -> branch/PR artifact ->
+ReviewRequest -> independent reviews -> approval -> authoritative GitHub merge.
+PR/code review is one specialization, not the platform model.
+
+### Phase D — Domain adapters
+
+Status: future; depends on M11.6 core runtime, M12, M15 and relevant product/security work.
+
+Assess domain packs or adapters for manufacturing, legal, finance, operations,
+compliance, procurement and other professional workflows. Candidate artifact
+types include process-change proposals, quality plans, legal research
+memoranda, contract drafts, court-filing drafts, purchase-order proposals,
+accounting reports and compliance reports. Candidate package names such as
+@ai-office/domain-manufacturing or @ai-office/domain-legal are directional
+only and are not selected package contracts.
+
+A manufacturing flow may be:
+
+```text
+Reduce reject rate on production line 4
+  -> Quality Analyst Agent analyzes MES data
+  -> Process Change Proposal v1
+  -> Process Engineer review
+  -> Quality Manager approval
+  -> authoritative MES executor
+  -> production-metric verification
+  -> Task completed
+```
+
+The AI may propose 182°C -> 178°C, but it cannot equate the proposal with a
+process change. Only an authorized executor may mutate MES/PLC/SCADA state, and
+every proposal, review, approval, execution and observed outcome needs
+provenance/audit.
+
+A legal flow may be:
+
+```text
+Defensive brief task
+  -> Legal Research Agent -> Research Artifact
+  -> Legal Drafter -> Draft v1
+  -> Legal LLM Reviewer -> findings
+  -> Draft v2 -> citation/policy checks
+  -> Lawyer Reviewer -> approved
+  -> authoritative publication/submission
+  -> Task completed
+```
+
+Professional approval may be mandatory human approval even when citation
+checking or policy checking is automated. The system must identify the exact
+draft version actually approved.
+
+### Cross-phase invariants
+
+- an agent cannot self-assert approval unless policy explicitly permits it;
+- every approval identifies the exact artifact version/fingerprint reviewed;
+- changing an artifact makes earlier approval stale/non-current unless policy
+  explicitly defines otherwise; history is never deleted;
+- review is not authorization for an external side effect;
+- human review is a first-class state;
+- replay/recovery never converts stale approval into current approval;
+- AgentRun completed != Task completed when review is required;
+- domain adapters cannot weaken provenance, identity, policy, capability,
+  authoritative-executor or audit invariants.
 
 ## M12 — Worker runtime adapters and organization profiles
 
@@ -1117,6 +1265,9 @@ Core capabilities to assess:
 - a domain-neutral work container that can host tasks, requirements or
   obligations, artifacts, evidence, events, decisions, reviews, approvals, and
   pipelines without assuming a Git repository;
+- the Artifact Review & Approval capability, including exact version binding,
+  stale-review semantics, correction loops, policy-driven reviewer requirements,
+  and separation from authoritative external execution;
 - first-class provenance from source material through extracted evidence or
   claims, agent/stage execution, generated artifacts, review, and final human
   approval;
@@ -1352,6 +1503,9 @@ M6E office definitions + M6 policy/actions + M8.5 context
                          |
                          v
                 M11 Pipeline Engine
+                  |
+                  v
+        M11.6 Artifact Review & Approval
                   |             |
                   v             v
        M12 Runtime adapters   M13 GitHub connector

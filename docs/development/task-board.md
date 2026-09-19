@@ -19,6 +19,33 @@ state.
 None of these derives another. In particular, **verified requirements do not
 complete a task**, and a completed task does not verify a requirement.
 
+## Artifact review is a separate lifecycle
+
+The future Artifact Review & Approval capability adds another explicit chain; it
+does not collapse artifact, review, approval, execution, and task state:
+
+```text
+Task -> AgentRun -> Artifact version -> ReviewRequest -> ReviewResult
+     -> approved / changes_requested / rejected
+     -> optional new AgentRun and Artifact version
+     -> Approved Artifact -> Authoritative Execution / Publish / Release
+     -> Task completion
+```
+
+An AgentRun can complete while its Artifact awaits review. An Artifact can be
+produced without being approved, and an approved Artifact can still await a
+separate authoritative external action. When a task requires review, completion
+must be derived from the effective pipeline and review policy, not from worker
+completion or artifact creation alone. A review is bound to the exact artifact
+version/fingerprint; a later version leaves the old review auditable but stale
+for the current version.
+
+The current `waiting_review` task status is the operational board state and is
+not a new Artifact Review record. Future pipeline/read-model work may expose
+`artifact_ready`, `awaiting_review`, `changes_requested`, or `approved`
+without adding all of those values to `TaskStatus`. See [Artifact Review &
+Approval in the domain model](../architecture/domain-model.md#artifact-review--approval-workflow).
+
 ## The task lifecycle
 
 ```text
