@@ -126,6 +126,38 @@ export function defineProjectStorageContracts(
       expect(restored?.snapshot().createdAt).toEqual(createdAt);
     });
 
+    test("preserves immutable project ownership on update", async () => {
+      const project = await createProject(harness, `${prefix}-owner-project`);
+      const otherProject = await createProject(
+        harness,
+        `${prefix}-other-owner-project`,
+      );
+      const task = Task.create({
+        id: `${prefix}-owned-task`,
+        projectId: project.snapshot().id,
+        title: "Owned task",
+        now: new Date("2026-02-02T03:04:05.000Z"),
+      });
+      await harness.tasks.save(task);
+
+      await harness.tasks.save(
+        Task.restore({
+          ...task.snapshot(),
+          projectId: otherProject.snapshot().id,
+          title: "Updated owned task",
+          updatedAt: new Date("2026-02-03T03:04:05.000Z"),
+        }),
+      );
+
+      expect(
+        (await harness.tasks.findById(task.snapshot().id))?.snapshot(),
+      ).toMatchObject({
+        id: task.snapshot().id,
+        projectId: project.snapshot().id,
+        title: "Updated owned task",
+      });
+    });
+
     test("lists only the requested project in exact priority/time/id order", async () => {
       const project = await createProject(harness, `${prefix}-list-project`);
       const otherProject = await createProject(

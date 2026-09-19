@@ -1327,7 +1327,12 @@ repository ports and server-side PostgreSQL transactions are shared paths, while
 SQLite remains the Lite composition and Supabase Auth, Storage, RLS, and
 Realtime remain future capabilities. The first PostgreSQL foundation now exists
 for Project, Task, TaskRequirement, and TransactionRunner contracts, with real
-PostgreSQL integration coverage; the Runtime still selects SQLite only.
+PostgreSQL integration coverage; the Runtime still selects SQLite only. Its
+`core.requirement` table is a linkage-support subset for `TaskRequirement`, not
+`RequirementRepository` parity: scalar fields shared with SQLite are present,
+while `milestone_id` is deferred with the milestone aggregate and ownership
+constraints. A future RequirementRepository migration must add that model before
+PostgreSQL can claim RequirementRepository parity.
 
 ### Manufacturing reference vertical
 

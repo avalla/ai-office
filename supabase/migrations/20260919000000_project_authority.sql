@@ -28,14 +28,20 @@ CREATE TABLE core.task (
 CREATE INDEX task_project_priority_created_id_idx
 ON core.task(project_id, priority DESC, created_at ASC, id ASC);
 
+-- This is linkage-support schema for TaskRequirementRepository, not a
+-- PostgreSQL RequirementRepository migration. milestone_id is deferred until
+-- the Milestone aggregate and matching ownership constraints are migrated.
 CREATE TABLE core.requirement (
   id text PRIMARY KEY,
   project_id text NOT NULL REFERENCES core.project(id) ON DELETE CASCADE,
   requirement_key text NOT NULL,
   title text NOT NULL CHECK (length(trim(title)) > 0),
+  description text NOT NULL,
   status text NOT NULL CHECK (
     status IN ('proposed', 'accepted', 'implemented', 'verified', 'rejected')
   ),
+  created_at timestamptz NOT NULL,
+  updated_at timestamptz NOT NULL,
   UNIQUE (id, project_id),
   UNIQUE (project_id, requirement_key)
 );
@@ -57,3 +63,8 @@ CREATE TABLE core.task_requirement (
 
 CREATE INDEX task_requirement_project_task_requirement_idx
 ON core.task_requirement(project_id, task_id, requirement_id);
+
+-- Reverse lookups (which tasks deliver a requirement) need their own path;
+-- the primary key and project/task-first index only serve task-first access.
+CREATE INDEX task_requirement_requirement_idx
+ON core.task_requirement(requirement_id, task_id);
