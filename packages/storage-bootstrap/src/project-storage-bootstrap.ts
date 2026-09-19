@@ -4,6 +4,7 @@ import type { ProjectStorage } from "@ai-office/application/ports/project-storag
 import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-postgres.ts";
 import { PostgresClient } from "@ai-office/storage-postgres/database/postgres-client.ts";
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
+import { PostgresGovernanceRepository } from "@ai-office/storage-postgres/repositories/postgres-governance.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
 import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
@@ -214,10 +215,15 @@ export class ProjectStorageBootstrap {
         projects: new PostgresProjectRepository(database),
         tasks: new PostgresTaskRepository(database),
         taskRequirements: new PostgresTaskRequirementRepository(database),
+        governance: new PostgresGovernanceRepository(database),
         transactions: new PostgresTransactionRunner(database),
       } satisfies Pick<
         ProjectStorage,
-        "projects" | "tasks" | "taskRequirements" | "transactions"
+        | "projects"
+        | "tasks"
+        | "taskRequirements"
+        | "governance"
+        | "transactions"
       >;
       return {
         provider: "postgres",
@@ -278,6 +284,7 @@ function postgresCapabilities(): ProjectStorageCapabilities {
     "projects",
     "tasks",
     "taskRequirements",
+    "governance",
     "transactions",
   ]);
 }

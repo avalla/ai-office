@@ -51,6 +51,7 @@ describe.skipIf(connectionString === undefined)(
         { column_name: "status" },
         { column_name: "created_at" },
         { column_name: "updated_at" },
+        { column_name: "milestone_id" },
       ]);
       expect(
         await database.query<{ exists: boolean }>(
@@ -230,7 +231,9 @@ describe.skipIf(connectionString === undefined)(
               SELECT to_regclass(relation_name) AS relation
               FROM unnest(ARRAY[
                 'core.project', 'core.task', 'core.requirement',
-                'core.task_requirement'
+                'core.task_requirement', 'core.milestone',
+                'core.architecture_decision', 'core.review', 'core.approval',
+                'core.governance_event'
               ]) AS relation_name
             `,
           ),
@@ -239,6 +242,11 @@ describe.skipIf(connectionString === undefined)(
           { relation: "core.task" },
           { relation: "core.requirement" },
           { relation: "core.task_requirement" },
+          { relation: "core.milestone" },
+          { relation: "core.architecture_decision" },
+          { relation: "core.review" },
+          { relation: "core.approval" },
+          { relation: "core.governance_event" },
         ]);
       } finally {
         await Promise.allSettled([first.close(), second.close()]);

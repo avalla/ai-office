@@ -106,8 +106,9 @@ adapters directly.
 SQLite remains the default and only complete Runtime authority. PostgreSQL is
 selectable with `AI_OFFICE_STORAGE_PROVIDER=postgres` and
 `AI_OFFICE_POSTGRES_URL`, and its migration runner reuses the SQL files under
-`supabase/migrations/`. PostgreSQL currently exposes only `ProjectRepository`,
-`TaskRepository`, `TaskRequirementRepository`, and `TransactionRunner`. The
+`supabase/migrations/`. PostgreSQL currently implements exactly these capability
+groups: `projects`, `tasks`, `taskRequirements`, `governance`, and
+`transactions`; all other `ProjectStorage` capabilities remain false. The
 bootstrap reports those capabilities without fabricating missing repositories;
 requiring complete Runtime authority therefore fails with
 `StorageProviderIncompleteError` and lists the missing capabilities. There is
@@ -163,25 +164,26 @@ but it belongs to `global.sqlite` and is intentionally excluded here. These
 hotspots are documentation for subsequent adapter work; this boundary PR does
 not rewrite them.
 
-The first PostgreSQL foundation now implements `ProjectRepository`,
-`TaskRepository`, `TaskRequirementRepository`, and `TransactionRunner` in the
-`storage-postgres` package. Shared repository contracts run against both
+The PostgreSQL adapter now implements `ProjectRepository`, `TaskRepository`,
+`TaskRequirementRepository`, `GovernanceRepository`, and `TransactionRunner` in
+the `storage-postgres` package. Shared repository contracts run against both
 adapters; PostgreSQL integration tests use the SQL in `supabase/migrations/`
 against a real server. Migration authority is serialized by a transaction-scoped
 PostgreSQL advisory lock, so concurrent bootstrap applies each ordered migration
 once before committing. The migration runner is intentionally small and
 idempotent for local integration setup and future Supabase deployment.
 
-`core.requirement` is supporting schema for `TaskRequirementRepository` linkage,
-not a migrated `RequirementRepository`. It currently carries the SQLite scalar
-fields `id`, `project_id`, `requirement_key`, `title`, `description`,
-`status`, `created_at`, and `updated_at`. `milestone_id` is intentionally
-deferred because this slice does not introduce the `Milestone` aggregate or its
-ownership constraints; a future `RequirementRepository` migration must add that
-field with the corresponding milestone ownership model before PostgreSQL can claim
-`RequirementRepository` parity. The reverse
-`task_requirement_requirement_idx(requirement_id, task_id)` index is present for
-future requirement-first lookup without expanding the current repository API.
+`core.requirement` is now authoritative for both `GovernanceRepository` and
+`TaskRequirementRepository`. Its governance fields match SQLite, including
+`milestone_id`, and the database enforces same-project milestone ownership. The
+same migration adds milestones, ADRs, hardened reviews, approvals, and
+append-only governance events. Review subject ownership covers the current
+SQLite subject set; `core.agent_run` is only the identity/ownership projection
+needed by governance until the later agent-runtime parity slice. The reverse
+`task_requirement_requirement_idx(requirement_id, task_id)` index remains for
+requirement-first linkage lookup. Portable export/import remains owned by the
+SQLite `ProjectStateRepository`; PostgreSQL project-state parity is a later
+slice, so this repository does not claim portable-state authority.
 
 The PostgreSQL adapter uses the server-side `postgres` driver. A shared
 `PostgresClient` owns the pool and an async transaction-session context;
@@ -200,11 +202,10 @@ but selecting it for complete Runtime startup fails closed with
 `StorageProviderIncompleteError`. There is no SQLite fallback or mixed
 SQLite/PostgreSQL project authority.
 
-The next storage slice is PostgreSQL repository parity in coherent transaction
-boundaries. `global.sqlite`, governance beyond the requirement seed needed by
-this slice, audit, capabilities, agent runtime, pipelines, and the code index
-remain outside this PR. PostgreSQL remains intentionally incomplete until the
-remaining `ProjectStorage` repositories are implemented.
+The next storage slice is PostgreSQL repository parity for the remaining
+`ProjectStorage` ports. `global.sqlite`, audit, capabilities, agent runtime,
+pipelines, and the code index remain outside this PR. PostgreSQL remains
+intentionally incomplete until the remaining repositories are implemented.
 
 ## `global.sqlite` — implemented durable reusable memory
 
