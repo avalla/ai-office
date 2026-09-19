@@ -1,0 +1,7 @@
+# Local Supabase configuration for AI Office Pro database development.
+# Keep this file deterministic: CI and local pgTAP runs must exercise the same
+# PostgreSQL major version used by the PostgreSQL storage-contract job.
+project_id = "ai-office"
+
+[db]
+major_version = 17

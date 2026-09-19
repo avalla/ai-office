@@ -443,23 +443,48 @@ describe("daemon query API", () => {
 
       const { body } = await harness.get("/api/activity?limit=3");
       const page = body.activity as {
-        items: Record<string, unknown>[];
+        items: {
+          eventId: string;
+          eventType: string;
+          occurredAt: string;
+          detail: Record<string, unknown>;
+        }[];
         nextCursor: string | null;
       };
       expect(page.items).toHaveLength(3);
       expect(page.nextCursor).toEqual(expect.any(String));
-      const first = page.items[0]!;
-      expect(first.eventType).toBe("command.completed");
+
+      // Activity ordering is the repository's keyset order: timestamp
+      // descending, then event id descending. Two audit events may legitimately
+      // share the same millisecond, and UUID ids are not causal sequence
+      // numbers, so a command.received row is allowed to sort ahead of its
+      // command.completed row when their timestamps tie.
+      const orderedKeys = page.items.map((entry) => [
+        entry.occurredAt,
+        entry.eventId,
+      ]);
+      const expectedKeys = [...page.items]
+        .sort(
+          (left, right) =>
+            right.occurredAt.localeCompare(left.occurredAt) ||
+            right.eventId.localeCompare(left.eventId),
+        )
+        .map((entry) => [entry.occurredAt, entry.eventId]);
+      expect(orderedKeys).toEqual(expectedKeys);
+
       // Command arguments never enter the audit payload, so they cannot appear.
       expect(JSON.stringify(page.items)).not.toContain("Project 3");
-      expect(first.detail).toMatchObject({ command: "project:create" });
+      const commandEntry = page.items.find((entry) =>
+        entry.eventType.startsWith("command."),
+      );
+      expect(commandEntry?.detail).toMatchObject({ command: "project:create" });
 
       const paged = await harness.get(
         `/api/activity?limit=2&cursor=${encodeURIComponent(page.nextCursor!)}`,
       );
       const older = (paged.body.activity as { items: { eventId: string }[] })
         .items;
-      const seen = new Set(page.items.map((entry) => entry.eventId as string));
+      const seen = new Set(page.items.map((entry) => entry.eventId));
       for (const entry of older) expect(seen.has(entry.eventId)).toBe(false);
     } finally {
       await harness.stop();
