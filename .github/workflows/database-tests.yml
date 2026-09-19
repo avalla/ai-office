@@ -1,0 +1,32 @@
+name: Supabase database tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  pgtap:
+    name: Supabase pgTAP
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+
+      - name: Start local database and apply migrations
+        run: supabase db start
+
+      - name: Run pgTAP database tests
+        run: supabase test db
+
+      - name: Lint database schema
+        run: supabase db lint --level error
