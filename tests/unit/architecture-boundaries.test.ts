@@ -48,7 +48,92 @@ function resolvedTarget(file: string, specifier: string): string | null {
   return relative(repositoryRoot, resolve(dirname(file), specifier));
 }
 
+function importsStorageSqlite(file: string, specifier: string): boolean {
+  if (specifier === "@ai-office/storage-sqlite") return true;
+  if (specifier.startsWith("@ai-office/storage-sqlite/")) return true;
+  const target = resolvedTarget(file, specifier);
+  return (
+    target === "packages/storage-sqlite" ||
+    target?.startsWith("packages/storage-sqlite/") === true
+  );
+}
+
+function storageSqliteImports(file: string): string[] {
+  return importedSpecifiers(readFileSync(file, "utf8")).filter((specifier) =>
+    importsStorageSqlite(file, specifier),
+  );
+}
+
 describe("application architecture boundaries", () => {
+  test("project Runtime composition consumes repository ports, not SQLite classes", () => {
+    const contextPath = join(
+      repositoryRoot,
+      "packages",
+      "runtime-host",
+      "src",
+      "commands",
+      "shared.ts",
+    );
+    const runtimeCommandPath = join(
+      repositoryRoot,
+      "packages",
+      "runtime-host",
+      "src",
+      "runtime-command.ts",
+    );
+    const projectStoragePath = join(
+      repositoryRoot,
+      "packages",
+      "application",
+      "src",
+      "ports",
+      "project-storage.port.ts",
+    );
+    const context = readFileSync(contextPath, "utf8");
+    const runtimeCommand = readFileSync(runtimeCommandPath, "utf8");
+    const projectStorage = readFileSync(projectStoragePath, "utf8");
+
+    expect(context).toContain("extends ProjectStorage");
+    expect(storageSqliteImports(contextPath)).toEqual([]);
+    expect(storageSqliteImports(projectStoragePath)).toEqual([]);
+    expect(importedSpecifiers(projectStorage)).not.toContain("bun:sqlite");
+    expect(runtimeCommand).toContain("createSqliteProjectStorage");
+    expect(
+      storageSqliteImports(runtimeCommandPath).filter(
+        (specifier) =>
+          specifier.includes("/repositories/") &&
+          !specifier.endsWith("/sqlite-global-memory.repository.ts"),
+      ),
+    ).toEqual([]);
+  });
+
+  test("Runtime command handlers cannot import SQLite adapters", () => {
+    const offenders: string[] = [];
+    for (const file of typescriptFiles(
+      join(repositoryRoot, "packages", "runtime-host", "src", "commands"),
+    )) {
+      for (const specifier of storageSqliteImports(file))
+        offenders.push(`${relative(repositoryRoot, file)} -> ${specifier}`);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("SQLite adapter imports stay in infrastructure composition roots", () => {
+    const allowed = new Set([
+      "packages/runtime-host/src/runtime-command.ts",
+      "apps/daemon/src/bootstrap.ts",
+    ]);
+    const offenders: string[] = [];
+    for (const directory of ["packages", "apps"])
+      for (const file of typescriptFiles(join(repositoryRoot, directory))) {
+        const location = relative(repositoryRoot, file);
+        if (location.startsWith("packages/storage-sqlite/")) continue;
+        if (!allowed.has(location) && storageSqliteImports(file).length > 0)
+          offenders.push(location);
+      }
+    expect(offenders).toEqual([]);
+  });
+
   test("the persistent Runtime host does not depend on the CLI client", () => {
     const offenders: string[] = [];
     for (const file of typescriptFiles(

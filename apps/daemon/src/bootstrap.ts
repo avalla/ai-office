@@ -6,8 +6,7 @@ import { SystemClock } from "@ai-office/application/ports/clock.port.ts";
 import { CryptoIdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
-import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
-import { SqliteOperationalReadRepository } from "@ai-office/storage-sqlite/repositories/sqlite-operational-read.repository.ts";
+import { createSqliteProjectStorage } from "@ai-office/storage-sqlite/sqlite-project-storage.ts";
 import { SqliteGlobalMemoryRepository } from "@ai-office/storage-sqlite/repositories/sqlite-global-memory.repository.ts";
 import { migrateGlobal } from "@ai-office/storage-sqlite/database/migrate-global.ts";
 import { OperationalEventBus } from "@ai-office/application/events/operational-event-bus.ts";
@@ -33,7 +32,6 @@ import {
 } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import { BullMqJobQueue } from "@ai-office/bullmq-job-queue/bullmq-job-queue.ts";
 import { readQueueConfiguration } from "@ai-office/bullmq-job-queue/config.ts";
-import { SqliteJobOutboxRepository } from "@ai-office/storage-sqlite/repositories/sqlite-job-outbox.repository.ts";
 import { QueueRuntime } from "./queue-runtime.ts";
 import {
   loadProviderCredentials,
@@ -119,8 +117,9 @@ export async function bootstrap(
     options.globalMigrationDirectory ??
       join(sourceDirectory, "..", "..", "..", "migrations", "global"),
   );
+  const projectStorage = createSqliteProjectStorage(database);
   const events = new RecordAuditEvent(
-    new SqliteAuditEventRepository(database),
+    projectStorage.auditEvents,
     new CryptoIdGenerator(),
     new SystemClock(),
   );
@@ -130,7 +129,7 @@ export async function bootstrap(
   // write path.
   const queryEvents = new OperationalEventBus();
   const queries = new OperationalQueryService({
-    reads: new SqliteOperationalReadRepository(database),
+    reads: projectStorage.operationalReads,
     clock: new SystemClock(),
     memory: new SqliteGlobalMemoryRepository(globalDatabase),
   });
@@ -168,7 +167,7 @@ export async function bootstrap(
     console.error(
       "Queue configuration is invalid; queue-backed orchestration is disabled.",
     );
-  const outbox = new SqliteJobOutboxRepository(database);
+  const outbox = projectStorage.jobOutbox;
   const queue =
     queueConfiguration.status === "configured" &&
     queueConfiguration.redisUrl !== undefined

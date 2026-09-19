@@ -3,76 +3,43 @@ import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { RunExecutionControl } from "@ai-office/application/runtime/run-execution-control.ts";
 import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
-import type { TransactionRunner } from "@ai-office/application/ports/transaction-runner.port.ts";
-import type { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
-import type { SqliteCostRepository } from "@ai-office/storage-sqlite/repositories/sqlite-cost.repository.ts";
-import type { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
-import type { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-profile.repository.ts";
-import type { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
-import type { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
-import type { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
-import type { SqliteCapabilityPolicyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-capability-policy.repository.ts";
-import type { SqliteControlledExecutionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-controlled-execution.repository.ts";
+import type { ProjectStorage } from "@ai-office/application/ports/project-storage.port.ts";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import type { ConnectorRegistry } from "@ai-office/connector-sdk/connector-registry.ts";
-import type { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { GlobalMemoryRepository } from "@ai-office/application/ports/global-memory-repository.port.ts";
-import type { MemoryReferenceRepository } from "@ai-office/application/ports/memory-reference-repository.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
-import type { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
-import type { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import type { OperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project-archive-adapter.port.ts";
-import type { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
-import type { ProjectMemoryProvenanceRepository } from "@ai-office/application/ports/project-memory-provenance-repository.port.ts";
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
-import type { JobOutboxRepository } from "@ai-office/application/ports/job-outbox-repository.port.ts";
 
-export interface CommandContext {
+export interface CommandContext extends ProjectStorage {
   onRunChanged?: () => void;
   executionControl: RunExecutionControl;
   agentExecutor?: AgentExecutor;
   runtimeHome: string;
   io: CommandIo;
   principal: OperatorPrincipal;
-  projects: SqliteProjectRepository;
-  profiles: SqliteProjectProfileRepository;
-  officeManifests: SqliteOfficeManifestRepository;
-  pipelines: SqlitePipelineRunRepository;
-  tasks: SqliteTaskRepository;
-  taskRequirements: SqliteTaskRequirementRepository;
-  runtime: SqliteAgentRuntimeRepository;
-  costs: SqliteCostRepository;
-  governance: SqliteGovernanceRepository;
-  capabilities: SqliteCapabilityPolicyRepository;
-  controlled: SqliteControlledExecutionRepository;
   audit: RecordAuditEvent;
   ids: IdGenerator;
   clock: Clock;
-  transactions: TransactionRunner;
   connectors: ConnectorRegistry;
   agentClients: AgentClientCatalog;
   projectBindings: ProjectBindingAdapter;
-  repositoryIdentities: SqliteRepositoryIdentityRepository;
-  projectStates: SqliteProjectStateRepository;
   projectArchives: ProjectArchiveAdapter;
   defaultOfficeManifest: OfficeManifest;
   memory?: GlobalMemoryRepository;
-  memoryReferences: MemoryReferenceRepository;
   /** Optional, non-authoritative project memory; disabled unless configured. */
   projectMemory: ProjectMemoryProvider;
-  projectMemoryProvenance: ProjectMemoryProvenanceRepository;
   /** Host model routing, read once by the composition root; never persisted as configuration. */
   modelRouting: ModelRoutingState;
   modelProviders: ModelProviderCatalog;
   /** Host provider access for gateway-executed routed runs; credentials never leave it. */
   gatewayProviders: GatewayModelProviders;
-  jobOutbox?: JobOutboxRepository;
 }
 
 export * from "@ai-office/command-support/arguments.ts";
