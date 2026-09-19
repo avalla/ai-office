@@ -28,10 +28,17 @@ and RLS, while the generic PostgreSQL migration set must not require
 4. `core.project.tenant_id` is PostgreSQL infrastructure metadata, not a field on
    the portable `Project` domain object.
 5. Tenant-aware PostgreSQL project provisioning is an explicit composition
-   boundary. The tenant-bound PostgreSQL repositories receive a trusted tenant
-   context from `ProjectStorageBootstrap`; it is never derived from JWT claims,
-   ambient state, or a default tenant. Project creation, repository import, and
-   portable restore all use that bound context, while SQLite remains
+   boundary. Trusted deployment/bootstrap configuration, such as
+   `AI_OFFICE_POSTGRES_TENANT_ID`, may supply the tenant ID to
+   `ProjectStorageBootstrap`; bootstrap converts it into explicit immutable
+   `ProjectStorageConfig` and tenant-bound repository context. This configuration
+   is not membership authority: the tenant ID must never come from client JWT
+   tenant/role claims or arbitrary request input, and there is no implicit or
+   default tenant. A future shared multi-tenant API must bind tenant authority to
+   each authenticated request/principal and must not reuse one process-global
+   tenant selection for arbitrary requests; that request/principal binding is a
+   separate slice not defined by this ADR. Project creation, repository import,
+   and portable restore all use that bound context, while SQLite remains
    tenant-agnostic.
 6. Migration `20260919050000_project_tenant_required.sql` completes the staged
    transition by refusing to run while any project has `tenant_id IS NULL`, then
