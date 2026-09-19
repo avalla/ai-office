@@ -37,7 +37,7 @@ export type ProjectStorageConfig =
   | {
       provider: "postgres";
       connectionString: string;
-      /** Trusted composition context; never sourced from client JWT claims. */
+      /** Trusted deployment/bootstrap context; never sourced from client JWT claims. */
       tenantId: string;
     };
 

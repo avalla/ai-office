@@ -14,6 +14,7 @@ import {
   PostgresProjectTenantConflictError,
 } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
+import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
 
 const connectionString = process.env.AI_OFFICE_TEST_POSTGRES_URL;
 const migrationDirectory = join(process.cwd(), "supabase", "migrations");
@@ -127,6 +128,98 @@ describe.skipIf(connectionString === undefined)(
           projectA.snapshot().id,
         ),
       ).toEqual([]);
+    });
+
+    test("keeps task-requirement link semantics and reads tenant-scoped", async () => {
+      const projectA = Project.create({
+        id: `tenant-link-a-${randomUUID()}`,
+        name: "Link A",
+        now,
+      });
+      const projectB = Project.create({
+        id: `tenant-link-b-${randomUUID()}`,
+        name: "Link B",
+        now,
+      });
+      const taskA = Task.create({
+        id: `tenant-link-task-a-${randomUUID()}`,
+        projectId: projectA.snapshot().id,
+        title: "Link task A",
+        now,
+      });
+      const taskB = Task.create({
+        id: `tenant-link-task-b-${randomUUID()}`,
+        projectId: projectB.snapshot().id,
+        title: "Link task B",
+        now,
+      });
+      await new PostgresProjectRepository(database, tenantA).save(projectA);
+      await new PostgresProjectRepository(database, tenantB).save(projectB);
+      await new PostgresTaskRepository(database, tenantA).save(taskA);
+      await new PostgresTaskRepository(database, tenantB).save(taskB);
+
+      const requirementA = `tenant-link-requirement-a-${randomUUID()}`;
+      const requirementB = `tenant-link-requirement-b-${randomUUID()}`;
+      await database.query(
+        `
+          INSERT INTO core.requirement(
+            id, project_id, requirement_key, title, description, status,
+            created_at, updated_at
+          ) VALUES
+            ($1, $3, $5, $5, $5, 'proposed', $7, $7),
+            ($2, $4, $6, $6, $6, 'proposed', $7, $7)
+        `,
+        [
+          requirementA,
+          requirementB,
+          projectA.snapshot().id,
+          projectB.snapshot().id,
+          "REQ-A",
+          "REQ-B",
+          now,
+        ],
+      );
+
+      const linksA = new PostgresTaskRequirementRepository(database, tenantA);
+      const linksB = new PostgresTaskRequirementRepository(database, tenantB);
+      const linkA = {
+        projectId: projectA.snapshot().id,
+        taskId: taskA.snapshot().id,
+        requirementId: requirementA,
+        now,
+      };
+      expect(await linksA.link(linkA)).toBe(true);
+      expect(await linksA.link(linkA)).toBe(false);
+
+      await expect(
+        linksA.link({
+          projectId: projectB.snapshot().id,
+          taskId: taskB.snapshot().id,
+          requirementId: requirementB,
+          now,
+        }),
+      ).rejects.toBeInstanceOf(PostgresTenantScopeError);
+      expect(
+        await database.query(
+          "SELECT 1 FROM core.task_requirement WHERE project_id = $1",
+          [projectB.snapshot().id],
+        ),
+      ).toEqual([]);
+
+      const linkB = {
+        projectId: projectB.snapshot().id,
+        taskId: taskB.snapshot().id,
+        requirementId: requirementB,
+        now,
+      };
+      expect(await linksB.link(linkB)).toBe(true);
+      expect(await linksA.listForTask(linkB.projectId, linkB.taskId)).toEqual(
+        [],
+      );
+      expect(await linksA.listByProject(linkB.projectId)).toEqual([]);
+      expect(await linksA.unlink(linkB)).toBe(false);
+      expect(await linksB.listByProject(linkB.projectId)).toHaveLength(1);
+      expect(await linksB.unlink(linkB)).toBe(true);
     });
   },
 );

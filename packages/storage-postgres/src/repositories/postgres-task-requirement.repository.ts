@@ -5,7 +5,10 @@ import type {
   TaskRequirementRepository,
 } from "@ai-office/application/ports/task-requirement-repository.port.ts";
 import { PostgresClient } from "../database/postgres-client.ts";
-import { requirePostgresTenantId } from "../database/postgres-tenant-context.ts";
+import {
+  PostgresTenantScopeError,
+  requirePostgresTenantId,
+} from "../database/postgres-tenant-context.ts";
 
 interface LinkedRequirementRow extends Record<string, unknown> {
   task_id: string;
@@ -44,6 +47,17 @@ export class PostgresTaskRequirementRepository implements TaskRequirementReposit
     requirementId: string;
     now: Date;
   }): Promise<boolean> {
+    const [project] = await this.database.query<{ id: string }>(
+      `
+        SELECT id
+        FROM core.project
+        WHERE id = $1 AND tenant_id = $2
+      `,
+      [input.projectId, this.tenantId],
+    );
+    if (project === undefined)
+      throw new PostgresTenantScopeError("Project", input.projectId);
+
     const rows = await this.database.query<{ task_id: string }>(
       `
         INSERT INTO core.task_requirement(

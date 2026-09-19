@@ -91,12 +91,27 @@ a deterministic authoritative ownership mapping before retrying. It then enforce
 assignment trigger remain active.
 
 `ProjectStorageBootstrap` requires `AI_OFFICE_POSTGRES_TENANT_ID` for environment
-selected PostgreSQL and binds that trusted value into project, task, task-link,
-and governance repositories. Project creation, repository import, and portable
-restore therefore provision through an explicit tenant-bound composition. A
-standalone administrative/migration connection may operate above a tenant only
-through explicit SQL/tooling; the human/runtime repository path is never an
-accidental table-owner bypass.
+selected PostgreSQL and binds that trusted deployment/bootstrap value into
+`ProjectStorageConfig`, then into the project, task, task-link, and governance
+repositories. One PostgreSQL `ProjectStorage` handle is bound to exactly one
+trusted tenant context. The value is not tenant membership authority and is not
+a request-scoped authenticated tenant selector; it must never come from client
+JWT tenant or role claims. A future shared Pro HTTP/API process must bind each
+request to its own authenticated principal and tenant authority rather than
+reuse one process-global tenant selection for arbitrary requests. That
+request-principal and API-routing boundary is a separate future slice; this PR
+does not define multi-tenant HTTP/API request routing authority.
+
+The default bootstrap reads this value from `process.env` as deployment
+configuration. An explicit `ProjectStorageConfig` can supply the same trusted
+composition input. Tenant creation/provisioning remains external to opening a
+handle: bootstrap intentionally does not require the configured tenant row to
+exist, so a handle may precede provisioning. The tenant foreign key rejects
+project writes until the operator creates the tenant; this is not a claim that
+the configured value is valid request authority. A standalone
+administrative/migration connection may operate above a tenant only through
+explicit SQL/tooling; the human/runtime repository path is never an accidental
+table-owner bypass.
 
 Human principal IDs are UUIDs but core tables intentionally do not foreign-key
 `auth.users`. That binding belongs to the Supabase Auth/RLS surface so the same

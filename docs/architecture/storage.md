@@ -107,7 +107,16 @@ SQLite remains the default and only complete Runtime authority. PostgreSQL is
 selectable with `AI_OFFICE_STORAGE_PROVIDER=postgres`,
 `AI_OFFICE_POSTGRES_URL`, and the trusted composition value
 `AI_OFFICE_POSTGRES_TENANT_ID`; its migration runner reuses the SQL files under
-`supabase/migrations/`. PostgreSQL currently implements exactly these capability
+`supabase/migrations/`. This environment value is trusted deployment/bootstrap
+configuration read into an explicit `ProjectStorageConfig`, not a request-scoped
+authenticated tenant selector. Each PostgreSQL `ProjectStorage` handle is bound
+to exactly one tenant context; the value must never come from client JWT tenant
+or role claims. A future shared Pro API must bind tenant authority per request
+and must not reuse one process-global tenant selection for arbitrary requests;
+that request-principal/API-routing boundary is a separate slice not defined by
+this PR. Bootstrap may open a handle before external tenant provisioning; the
+tenant FK, rather than speculative bootstrap lookup, guards project writes.
+PostgreSQL currently implements exactly these capability
 groups: `projects`, `tasks`, `taskRequirements`, `governance`, and
 `transactions`; all other `ProjectStorage` capabilities remain false. The
 bootstrap reports those capabilities without fabricating missing repositories;
