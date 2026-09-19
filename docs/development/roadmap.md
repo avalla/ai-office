@@ -1335,8 +1335,8 @@ is allowed. PostgreSQL connection configuration is explicit through
 `AI_OFFICE_STORAGE_PROVIDER=postgres` and `AI_OFFICE_POSTGRES_URL`, and secrets
 remain runtime configuration rather than project state.
 
-The next storage slice should add PostgreSQL parity in coherent transaction
-boundaries (starting with governance, agents/roles, pipelines/runs,
+The next storage slice is PostgreSQL repository parity in coherent
+transaction boundaries (starting with governance, agents/roles, pipelines/runs,
 reviews/approvals, artifacts, audit, capabilities/resources, or job outbox as
 dependency analysis warrants). Only after all required `ProjectStorage`
 repositories exist may PostgreSQL become a complete Runtime authority. Its

@@ -304,7 +304,10 @@ export interface RuntimeCommandOptions {
   gatewayProviders?: GatewayModelProviders;
   /** A daemon-owned full project authority, when the Runtime is hosted. */
   projectStorage?: ProjectStorage;
-  /** Explicit project storage selection for direct Runtime command execution. */
+  /**
+   * Explicit project storage selection for direct Runtime command execution.
+   * Mutually exclusive with the daemon-owned projectStorage.
+   */
   projectStorageConfig?: ProjectStorageConfig;
 }
 
@@ -489,6 +492,14 @@ export async function executeRuntimeCommand(
   let globalDatabase: ReturnType<typeof openDatabase> | null = null;
   let projectStorageHandle: ProjectStorageHandle | undefined;
   try {
+    if (
+      options.projectStorage !== undefined &&
+      options.projectStorageConfig !== undefined
+    )
+      throw new StorageProviderConfigurationError(
+        "projectStorage and projectStorageConfig cannot be supplied together",
+      );
+
     let projectStorage: ProjectStorage;
     if (options.projectStorage !== undefined) {
       projectStorage = options.projectStorage;

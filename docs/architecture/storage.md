@@ -192,15 +192,19 @@ token; escaped async work fails with a deterministic infrastructure error after
 commit or rollback instead of falling back to the pool or using an ended session.
 Normal awaited concurrency remains independent across top-level transactions, and
 nested transactions preserve the application-visible
-`TransactionAlreadyActiveError` behavior. No Runtime composition or provider
-selection uses this package yet.
+`TransactionAlreadyActiveError` behavior. Runtime command execution and daemon
+bootstrap now route project-authority construction through
+`ProjectStorageBootstrap`. SQLite remains the default and only complete Runtime
+authority; PostgreSQL is selectable and bootstrapped as partial infrastructure,
+but selecting it for complete Runtime startup fails closed with
+`StorageProviderIncompleteError`. There is no SQLite fallback or mixed
+SQLite/PostgreSQL project authority.
 
-The next storage slice is centralized Runtime storage-provider/bootstrap
-selection, followed by incremental migration of the remaining project
-repositories. `global.sqlite`, governance beyond the requirement seed needed
-by this slice, audit, capabilities, agent runtime, pipelines, and the code
-index remain outside this PR. Runtime and daemon remain SQLite-only; this
-PostgreSQL package is not Runtime authority.
+The next storage slice is PostgreSQL repository parity in coherent transaction
+boundaries. `global.sqlite`, governance beyond the requirement seed needed by
+this slice, audit, capabilities, agent runtime, pipelines, and the code index
+remain outside this PR. PostgreSQL remains intentionally incomplete until the
+remaining `ProjectStorage` repositories are implemented.
 
 ## `global.sqlite` — implemented durable reusable memory
 

@@ -10,6 +10,7 @@ import {
   projectStorageCapabilityNames,
 } from "@ai-office/storage-bootstrap/project-storage-bootstrap.ts";
 import { SqliteJobOutboxRepository } from "@ai-office/storage-sqlite/repositories/sqlite-job-outbox.repository.ts";
+import { executeRuntimeCommand } from "@ai-office/runtime-host/runtime-command.ts";
 
 const roots: string[] = [];
 
@@ -100,5 +101,38 @@ describe("project storage provider bootstrap", () => {
     const error = new StorageProviderIncompleteError("postgres", ["jobOutbox"]);
     expect(error.message).not.toContain("postgres://");
     expect(error.missingCapabilities).toEqual(["jobOutbox"]);
+  });
+
+  test("rejects conflicting injected authority and storage configuration", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-storage-bootstrap-"));
+    roots.push(root);
+    const bootstrap = new ProjectStorageBootstrap({
+      sqliteDatabasePath: join(root, "project.sqlite"),
+      environment: {},
+    });
+    const handle = await bootstrap.open({ requireComplete: true });
+    const stderr: string[] = [];
+
+    try {
+      await expect(
+        executeRuntimeCommand(["project:create", "ambiguous"], {
+          projectRoot: root,
+          projectStorage: requireCompleteProjectStorage(handle),
+          projectStorageConfig: {
+            provider: "postgres",
+            connectionString: "postgres://example",
+          },
+          io: {
+            stdout: () => {},
+            stderr: (message) => stderr.push(message),
+          },
+        }),
+      ).resolves.toBe(1);
+      expect(stderr).toEqual([
+        "projectStorage and projectStorageConfig cannot be supplied together",
+      ]);
+    } finally {
+      await handle.close();
+    }
   });
 });
