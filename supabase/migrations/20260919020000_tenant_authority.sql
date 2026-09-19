@@ -31,7 +31,10 @@ COMMENT ON COLUMN core.tenant_member.user_id IS
 CREATE TABLE core.tenant_invite (
   id text PRIMARY KEY,
   tenant_id text NOT NULL REFERENCES core.tenant(id) ON DELETE CASCADE,
-  invited_email text NOT NULL CHECK (length(trim(invited_email)) > 0),
+  invited_email text NOT NULL CHECK (
+    length(trim(invited_email)) > 0
+    AND invited_email = btrim(invited_email)
+  ),
   role text NOT NULL CHECK (role IN ('admin', 'member')),
   token_hash text NOT NULL UNIQUE CHECK (length(trim(token_hash)) > 0),
   invited_by uuid NOT NULL,
@@ -39,7 +42,10 @@ CREATE TABLE core.tenant_invite (
   accepted_at timestamptz,
   created_at timestamptz NOT NULL,
   CHECK (expires_at > created_at),
-  CHECK (accepted_at IS NULL OR accepted_at >= created_at)
+  CHECK (
+    accepted_at IS NULL
+    OR (accepted_at >= created_at AND accepted_at <= expires_at)
+  )
 );
 
 CREATE UNIQUE INDEX tenant_invite_active_email_unique

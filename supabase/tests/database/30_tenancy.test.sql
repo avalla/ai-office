@@ -174,6 +174,22 @@ select throws_ok(
       id, tenant_id, invited_email, role, token_hash, invited_by,
       expires_at, created_at
     ) values (
+      'pgtap-whitespace-invite', 'pgtap-tenant-b', ' member@example.test ', 'member',
+      'hash-whitespace', '11111111-1111-1111-1111-111111111111',
+      '2026-09-20T00:00:00Z', '2026-09-19T00:00:00Z'
+    )
+  $$,
+  '23514',
+  null,
+  'invitation emails must not contain leading or trailing whitespace'
+);
+
+select throws_ok(
+  $$
+    insert into core.tenant_invite(
+      id, tenant_id, invited_email, role, token_hash, invited_by,
+      expires_at, created_at
+    ) values (
       'pgtap-owner-invite', 'pgtap-tenant-b', 'owner@example.test', 'owner',
       'hash-owner', '11111111-1111-1111-1111-111111111111',
       '2026-09-20T00:00:00Z', '2026-09-19T00:00:00Z'
@@ -184,9 +200,45 @@ select throws_ok(
   'owner authority is not granted through an ordinary invitation'
 );
 
-update core.tenant_invite
-set accepted_at = '2026-09-19T01:00:00Z'
-where id = 'pgtap-invite-a';
+select throws_ok(
+  $$
+    update core.tenant_invite
+    set accepted_at = '2026-09-18T23:59:59Z'
+    where id = 'pgtap-invite-a'
+  $$,
+  '23514',
+  null,
+  'an invitation cannot be accepted before it was created'
+);
+
+select lives_ok(
+  $$
+    update core.tenant_invite
+    set accepted_at = '2026-09-19T01:00:00Z'
+    where id = 'pgtap-invite-a'
+  $$,
+  'an invitation can be accepted between creation and expiry'
+);
+
+select lives_ok(
+  $$
+    update core.tenant_invite
+    set accepted_at = '2026-09-20T00:00:00Z'
+    where id = 'pgtap-invite-a'
+  $$,
+  'an invitation can be accepted exactly at expiry'
+);
+
+select throws_ok(
+  $$
+    update core.tenant_invite
+    set accepted_at = '2026-09-20T00:00:01Z'
+    where id = 'pgtap-invite-a'
+  $$,
+  '23514',
+  null,
+  'an invitation cannot be accepted after expiry'
+);
 
 select lives_ok(
   $$
