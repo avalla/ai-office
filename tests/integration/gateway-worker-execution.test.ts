@@ -395,6 +395,54 @@ describe("gateway worker execution of routed runs", () => {
     expect(budget?.reservedMicros).toBe(0n);
     expect(Buffer.from(f.db.serialize()).includes(apiKey)).toBe(false);
   });
+  test("co-reserves configured project, task and agent budgets", async () => {
+    const f = await fixture();
+    const runId = await f.schedule(routing(), "qa");
+    for (const [scopeType, scopeId] of [
+      ["project", "p"],
+      ["task", "t1"],
+      ["agent", "agent-qa"],
+    ] as const)
+      await f.costs.saveBudget(
+        {
+          id: `budget-${scopeType}`,
+          projectId: "p",
+          scopeType,
+          scopeId,
+          currency: "USD",
+          limitMicros: 125_000n,
+        },
+        now,
+      );
+
+    const http = transport();
+    await expect(
+      f.execute(runId, providers({ OPENAI_API_KEY: apiKey }, http.fetcher)),
+    ).resolves.toMatchObject({ status: "completed" });
+
+    expect(f.reservations(runId)).toHaveLength(4);
+    expect(
+      f.reservations(runId).every((row) => row.status === "consumed"),
+    ).toBe(true);
+    for (const [scopeType, scopeId] of [
+      ["project", "p"],
+      ["task", "t1"],
+      ["agent", "agent-qa"],
+      ["agent_run", runId],
+    ] as const) {
+      const budget = await f.costs.findBudget(
+        "p",
+        scopeType,
+        scopeId,
+        "USD",
+        now,
+      );
+      expect(budget).toMatchObject({
+        spentMicros: 4012n,
+        reservedMicros: 0n,
+      });
+    }
+  });
 
   test("uses the persisted model after routing changes and ignores ambient model settings", async () => {
     const f = await fixture();
@@ -581,7 +629,7 @@ profiles:
     const f = await fixture();
     for (const [agent, code] of [
       ["odd", "WORKER_MODEL_UNSUPPORTED"],
-      ["claude", "WORKER_MODEL_UNSUPPORTED"],
+      ["claude", "WORKER_CREDENTIALS_MISSING"],
     ] as const) {
       const runId = await f.schedule(routing(), agent);
       const http = transport();
@@ -591,9 +639,14 @@ profiles:
       );
       expect(result).toMatchObject({ status: "failed", error: { code } });
       expect(http.requests).toEqual([]);
-      expect(
-        (await f.runs.findRun(runId))!.snapshot().execution,
-      ).toBeUndefined();
+      if (agent === "odd")
+        expect(
+          (await f.runs.findRun(runId))!.snapshot().execution,
+        ).toBeUndefined();
+      else
+        expect(
+          (await f.runs.findRun(runId))!.snapshot().execution,
+        ).toMatchObject({ kind: "worker", adapterId: "llm-gateway" });
     }
     expect(f.usageRows()).toEqual([]);
   });

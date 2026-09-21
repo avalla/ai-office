@@ -36,12 +36,19 @@ export interface RecordUsageAndCostInput {
   providerRequestId?: string;
   usage: ModelUsage;
   pricingVersionId: string;
+  /** The primary reservation retained on cost_event for compatibility. */
   reservationId?: string;
+  /** All co-reservations finalized with this usage record. */
+  reservationIds?: readonly string[];
   estimated: CostAmount;
   actual: CostAmount;
   /** Defaults to `reported_usage`. */
   chargeBasis?: CostChargeBasis;
   occurredAt: Date;
+}
+
+export interface AuthorizeAndReserveManyInput {
+  reservations: readonly AuthorizeReservationInput[];
 }
 
 export interface CostRepository {
@@ -70,10 +77,16 @@ export interface CostRepository {
   authorizeAndReserve(
     input: AuthorizeReservationInput,
   ): Promise<BudgetReservation>;
+  /** Atomic across all supplied budgets when implemented by the storage adapter. */
+  authorizeAndReserveMany?: (
+    input: AuthorizeAndReserveManyInput,
+  ) => Promise<readonly BudgetReservation[]>;
   releaseReservation(
     id: string,
     now: Date,
   ): Promise<"released" | "already_released" | "consumed">;
+  /** Releases all supplied reservations atomically when supported. */
+  releaseReservations?: (ids: readonly string[], now: Date) => Promise<void>;
   releaseExpiredReservations(now: Date): Promise<number>;
   recordUsageAndCost(
     input: RecordUsageAndCostInput,

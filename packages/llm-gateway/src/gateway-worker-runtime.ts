@@ -344,6 +344,12 @@ export class GatewayWorkerRuntime implements WorkerRuntime {
           usageBound,
           budgetScopeType: "agent_run",
           budgetScopeId: context.runId,
+          budgetScopes: [
+            { scopeType: "project", scopeId: context.projectId },
+            { scopeType: "task", scopeId: context.task.id },
+            { scopeType: "agent", scopeId: context.agent.id },
+            { scopeType: "agent_run", scopeId: context.runId },
+          ],
           reservationTtlMs: limits.timeoutMs + reservationGraceMs,
         },
         control.signal,
