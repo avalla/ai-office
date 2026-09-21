@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { AnthropicMessagesProvider } from "@ai-office/llm-gateway/anthropic-provider.ts";
 import { LangChainModelProvider } from "@ai-office/llm-gateway/langchain-model-provider.ts";
 import {
   createDefaultModelProviderRegistry,
@@ -44,7 +45,7 @@ describe("model provider registry", () => {
       model: "claude-sonnet-4-6",
       compatibilityConfiguration: false,
     });
-    expect(resolved.provider).toBeInstanceOf(LangChainModelProvider);
+    expect(resolved.provider).toBeInstanceOf(AnthropicMessagesProvider);
     expect(resolved.provider.id).toBe("anthropic");
   });
 
@@ -76,9 +77,7 @@ describe("model provider registry", () => {
     expect(logs[0]).toBe(
       `[llm:config] pid=${process.pid} provider=openai model=gpt-5.4`,
     );
-    expect(logs[1]).toBe(
-      "[llm:config] credential_available=true",
-    );
+    expect(logs[1]).toBe("[llm:config] credential_available=true");
     expect(logs[3]).toBe(logs[1]);
     const rendered = logs.join("\n");
     expect(rendered).not.toContain(apiKey);
@@ -159,7 +158,6 @@ describe("model provider registry", () => {
       compatibilityConfiguration: false,
     });
   });
-
 });
 
 describe("LangChain model provider", () => {

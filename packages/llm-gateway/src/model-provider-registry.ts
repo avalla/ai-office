@@ -1,5 +1,4 @@
-import { ChatAnthropic } from "@langchain/anthropic";
-import { LangChainModelProvider } from "./langchain-model-provider.ts";
+import { AnthropicMessagesProvider } from "./anthropic-provider.ts";
 import { OpenAiResponsesProvider } from "./openai-provider.ts";
 import type { LlmProvider } from "./provider.ts";
 import {
@@ -148,21 +147,10 @@ export function createDefaultModelProviderRegistry(): ModelProviderRegistry {
     },
     {
       ...descriptor("anthropic"),
-      create: (model, environment) => {
-        const apiKey = required(environment, "ANTHROPIC_API_KEY");
-        const debug = llmDebugEnabled(environment);
-        return new LangChainModelProvider(
-          "anthropic",
-          model,
-          new ChatAnthropic({
-            model,
-            apiKey,
-            maxRetries: 0,
-          }),
-          undefined,
-          debug,
-        );
-      },
+      create: (_model, environment) =>
+        new AnthropicMessagesProvider(
+          required(environment, "ANTHROPIC_API_KEY"),
+        ),
     },
   ]);
 }
