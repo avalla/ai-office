@@ -362,6 +362,20 @@ default_profile: balanced
         ?.modelRef,
     ).toBe("openai:override-model");
     expect((await r.command(["model:reload", "--json"])).exitCode).toBe(0);
+    writeFileSync(
+      join(r.root, ".ai-office", "model-routing.yaml"),
+      `schema_version: 1
+profiles:
+  broken: { model: "unknown-provider:model" }
+default_profile: broken
+`,
+    );
+    const misconfigured = await r.command(["model:reload", "--json"]);
+    expect(misconfigured.exitCode).toBe(1);
+    expect(JSON.parse(misconfigured.stdout[0]!)).toMatchObject({
+      schemaVersion: 1,
+      status: "misconfigured",
+    });
   } finally {
     await r.close();
   }

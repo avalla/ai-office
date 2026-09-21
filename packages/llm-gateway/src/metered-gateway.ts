@@ -12,7 +12,9 @@ import type {
   PricingVersion,
 } from "@ai-office/domain/cost/cost.ts";
 import {
+  AtomicReservationUnavailableError,
   BudgetNotFoundError,
+  DuplicateProviderUsageError,
   PricingCurrencyMismatchError,
   PricingNotFoundError,
 } from "@ai-office/application/cost-errors.ts";
@@ -210,6 +212,11 @@ export class MeteredLlmGateway {
         budgetScopeType = reservationInputs[0]!.scopeType;
         budgetScopeId = reservationInputs[0]!.scopeId;
       }
+      if (
+        reservationInputs.length > 1 &&
+        this.costs.authorizeAndReserveMany === undefined
+      )
+        throw new AtomicReservationUnavailableError();
       if (this.costs.authorizeAndReserveMany !== undefined)
         await this.costs.authorizeAndReserveMany({
           reservations: reservationInputs,
@@ -292,6 +299,10 @@ export class MeteredLlmGateway {
     } catch (error) {
       if (received === undefined) {
         // No answer was received: nothing is known to have been billed.
+        await releaseReservations();
+        throw error;
+      }
+      if (error instanceof DuplicateProviderUsageError) {
         await releaseReservations();
         throw error;
       }

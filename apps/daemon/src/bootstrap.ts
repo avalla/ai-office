@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import { fileURLToPath } from "node:url";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
@@ -30,6 +30,7 @@ import type { ModelProviderCatalog } from "@ai-office/application/ports/model-pr
 import {
   CredentialModelProviderCatalog,
   loadModelRoutingState,
+  resolveModelRoutingFilePath,
 } from "@ai-office/llm-gateway/model-routing-configuration.ts";
 import {
   CredentialGatewayModelProviders,
@@ -48,7 +49,6 @@ import {
   withRuntimePathOverrides,
   type RuntimePaths,
 } from "@ai-office/runtime-paths/runtime-paths.ts";
-import { runtimeHomeModelRoutingPath } from "@ai-office/runtime-paths/model-routing-location.ts";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 
@@ -172,36 +172,26 @@ export async function bootstrap(
       memory: new SqliteGlobalMemoryRepository(globalDatabase),
     });
 
-    const routingFileSetting =
-      process.env.AI_OFFICE_MODEL_ROUTING_SOURCE === "runtime_home"
-        ? undefined
-        : process.env.AI_OFFICE_MODEL_ROUTING_FILE?.trim() || undefined;
-    const modelRoutingFile =
-      routingFileSetting === undefined
-        ? runtimeHomeModelRoutingPath(runtimePaths.runtimeHome)
-        : routingFileSetting.startsWith("~/")
-          ? join(
-              process.env.HOME ?? runtimePaths.runtimeHome,
-              routingFileSetting.slice(2),
-            )
-          : isAbsolute(routingFileSetting)
-            ? resolve(routingFileSetting)
-            : routingFileSetting;
-    const initialRouting =
-      options.modelRouting ??
-      loadModelRoutingState(process.env, {
+    const routingEnvironment = { ...process.env };
+    const loadRouting = (readFile?: (path: string) => string) =>
+      loadModelRoutingState(routingEnvironment, {
         runtimeHome: runtimePaths.runtimeHome,
+        ...(readFile === undefined ? {} : { readFile }),
       });
+    const modelRoutingFile = resolveModelRoutingFilePath(
+      routingEnvironment,
+      runtimePaths.runtimeHome,
+    );
+    const initialRouting = options.modelRouting ?? loadRouting();
     const routing = {
       state: initialRouting,
+      load: loadRouting,
       reload: () => {
-        const next = loadModelRoutingState(process.env, {
-          runtimeHome: runtimePaths.runtimeHome,
-        });
+        const next = loadRouting();
         routing.state = next;
         return next;
       },
-      file: modelRoutingFile,
+      ...(modelRoutingFile === undefined ? {} : { file: modelRoutingFile }),
       providers:
         options.modelProviders ??
         new CredentialModelProviderCatalog(credentials),

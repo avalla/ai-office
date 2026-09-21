@@ -281,24 +281,24 @@ describe("task board", () => {
     await verify(root, projectId, second);
 
     const listed = await cli(root, ["task:list", "--project", projectId]);
-    const header = listed.stdout[0]!;
-    expect(header).toContain("STATUS");
-    expect(header).toContain("REQUIREMENTS");
-    expect(header).not.toContain("\t");
+    expect(listed.stdout[0]).toBe(
+      "ID\tSTATUS\tREQUIREMENTS\tPRIORITY\tTITLE",
+    );
     const rows = listed.stdout.slice(1);
-    const staleRow = rows.find((row) => row.startsWith(stale))!;
-    const healthyRow = rows.find((row) => row.startsWith(healthy))!;
+    const staleRow = rows.find((row) => row.startsWith(stale + "\t"))!;
+    const healthyRow = rows.find((row) => row.startsWith(healthy + "\t"))!;
 
-    const statusColumn = header.indexOf("STATUS");
-    const requirementsColumn = header.indexOf("REQUIREMENTS");
-    expect(staleRow.indexOf("pending !")).toBe(statusColumn);
-    expect(staleRow.indexOf("2/2 verified")).toBe(requirementsColumn);
-    expect(healthyRow.indexOf("pending")).toBe(statusColumn);
-    expect(healthyRow.indexOf("0/1 verified")).toBe(requirementsColumn);
+    expect(staleRow.split("\t").slice(1, 3)).toEqual([
+      "pending !",
+      "2/2 verified",
+    ]);
+    expect(healthyRow.split("\t").slice(1, 3)).toEqual([
+      "pending",
+      "0/1 verified",
+    ]);
 
     // STATUS stays the task's real state; the marker says the two disagree.
-    expect(staleRow).toContain("pending !");
-    expect(staleRow).toContain("2/2 verified");
+    expect(staleRow).toContain("\tpending !\t2/2 verified\t");
     // A task whose requirements are still open is not a contradiction.
     expect(healthyRow).not.toContain("!");
 

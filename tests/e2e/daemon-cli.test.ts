@@ -228,6 +228,117 @@ describe("CLI to daemon end-to-end", () => {
     }
   });
 
+  test("uses model override scope for project autodiscovery", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-model-cli-"));
+    temporaryDirectories.push(projectRoot);
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+    try {
+      await waitForDaemon(socket.socketPath);
+      const installed = await invoke(["install", ".", "--json"]);
+      expect(installed.code).toBe(0);
+      const projectId = (
+        JSON.parse(installed.stdout[0]!) as { project: { id: string } }
+      ).project.id;
+      const routingFile = join(projectRoot, ".ai-office", "model-routing.yaml");
+      writeFileSync(
+        routingFile,
+        `schema_version: 1
+default_profile: balanced
+profiles:
+  balanced: { model: "openai:test-model" }
+`,
+      );
+
+      const host = await invoke([
+        "model:override",
+        "--scope",
+        "host",
+        "--agent",
+        "architect",
+        "--model",
+        "openai:host-model",
+        "--json",
+      ]);
+      expect(host.code).toBe(0);
+      expect(JSON.parse(host.stdout[0]!)).toMatchObject({
+        scope: "host",
+        reloaded: true,
+      });
+
+      const discoveredProject = await invoke([
+        "model:override",
+        "--scope",
+        "project",
+        "--agent",
+        "architect",
+        "--model",
+        "openai:project-model",
+        "--json",
+      ]);
+      expect(discoveredProject.code).toBe(0);
+      expect(JSON.parse(discoveredProject.stdout[0]!)).toMatchObject({
+        scope: "project",
+        projectId,
+        reloaded: true,
+      });
+
+      const explicitProject = await invoke([
+        "model:override",
+        "--scope",
+        "project",
+        "--project",
+        projectId,
+        "--agent",
+        "architect",
+        "--model",
+        "openai:explicit-model",
+        "--json",
+      ]);
+      expect(explicitProject.code).toBe(0);
+      expect(JSON.parse(explicitProject.stdout[0]!)).toMatchObject({
+        scope: "project",
+        projectId,
+        reloaded: true,
+      });
+
+      const invalidHost = await invoke([
+        "model:override",
+        "--scope",
+        "host",
+        "--project",
+        projectId,
+        "--agent",
+        "architect",
+        "--model",
+        "openai:invalid-host-project",
+      ]);
+      expect(invalidHost.code).toBe(1);
+      expect(invalidHost.stderr.join("\n")).toContain(
+        "--project is only valid with project scope",
+      );
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
   test("records a historical task completion through the socket", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-daemon-task-"));
     temporaryDirectories.push(projectRoot);

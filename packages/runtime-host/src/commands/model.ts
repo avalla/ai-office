@@ -3,12 +3,17 @@ import {
   type ModelRoutingReport,
 } from "@ai-office/application/model-routing/describe-model-routing.ts";
 import { dirname } from "node:path";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import {
   parseCanonicalModelRef,
   ModelProviderConfigurationError,
 } from "@ai-office/llm-gateway/model-ref.ts";
-import { loadModelRoutingState } from "@ai-office/llm-gateway/model-routing-configuration.ts";
 import { modelTokenPattern } from "@ai-office/domain/agent/agent-run-model.ts";
 import {
   CliUsageError,
@@ -69,11 +74,23 @@ function writeRoutingDocument(
 ): void {
   mkdirSync(dirname(path), { recursive: true });
   const temporary = path + "." + token + ".tmp";
-  writeFileSync(temporary, JSON.stringify(document, null, 2) + "\n", {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  renameSync(temporary, path);
+  try {
+    writeFileSync(temporary, JSON.stringify(document, null, 2) + "\n", {
+      encoding: "utf8",
+      mode: 0o600,
+    });
+    renameSync(temporary, path);
+  } catch {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // The mutation failed; preserve the original error semantics without
+      // exposing a host-local path.
+    }
+    throw new CliUsageError(
+      "Model routing file could not be written; reload was not attempted",
+    );
+  }
 }
 
 function routingOverrideDocument(
@@ -135,6 +152,7 @@ async function overrideModel(
 ): Promise<number> {
   requireOperator(context);
   if (
+    context.modelRoutingLoader === undefined ||
     context.reloadModelRouting === undefined ||
     context.modelRoutingFile === undefined
   )
@@ -181,10 +199,7 @@ async function overrideModel(
     agent,
     target,
   );
-  const candidate = loadModelRoutingState(
-    { AI_OFFICE_MODEL_ROUTING_FILE: context.modelRoutingFile },
-    { readFile: () => JSON.stringify(document) },
-  );
+  const candidate = context.modelRoutingLoader(() => JSON.stringify(document));
   if (candidate.status === "misconfigured")
     throw new CliUsageError(
       "The override would make model routing invalid; no change was written",
@@ -212,20 +227,24 @@ async function overrideModel(
       routingStatus: reloaded.status,
     },
   });
+  const reloadedSuccessfully = reloaded.status !== "misconfigured";
   const result = {
     schemaVersion: 1,
     scope,
     ...(projectId === undefined ? {} : { projectId }),
     agent,
     ...target,
-    reloaded: true,
+    routingStatus: reloaded.status,
+    reloaded: reloadedSuccessfully,
   };
   context.io.stdout(
     parsed.flags.has("json")
       ? JSON.stringify(result)
-      : "Model routing override applied for " + agent + ".",
+      : reloadedSuccessfully
+        ? "Model routing override applied for " + agent + "."
+        : "Model routing override was written but reload failed: misconfigured.",
   );
-  return 0;
+  return reloadedSuccessfully ? 0 : 1;
 }
 
 async function reloadModel(

@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { AnthropicMessagesProvider } from "@ai-office/llm-gateway/anthropic-provider.ts";
-import { UnsupportedModelParameterError } from "@ai-office/llm-gateway/provider.ts";
+import {
+  InvalidProviderResponseError,
+  LlmProviderError,
+  ProviderCancelledError,
+  UnsupportedModelParameterError,
+} from "@ai-office/llm-gateway/provider.ts";
 
 const request = {
   model: "claude-test",
@@ -82,5 +87,88 @@ describe("Anthropic native provider", () => {
       }),
     ).rejects.toBeInstanceOf(UnsupportedModelParameterError);
     expect(calls).toBe(0);
+  });
+
+  for (const status of [408, 409, 429, 500, 503])
+    test("classifies HTTP " + status + " as retryable", async () => {
+      const provider = new AnthropicMessagesProvider(
+        "test-key",
+        "https://provider.test/v1/messages",
+        async () => new Response("{}", { status }),
+      );
+      await expect(provider.complete(request)).rejects.toMatchObject({
+        code: "HTTP",
+        retryable: true,
+      });
+    });
+
+  test("classifies other HTTP errors as non-retryable", async () => {
+    const provider = new AnthropicMessagesProvider(
+      "test-key",
+      "https://provider.test/v1/messages",
+      async () => new Response("{}", { status: 400 }),
+    );
+    await expect(provider.complete(request)).rejects.toMatchObject({
+      code: "HTTP",
+      retryable: false,
+    });
+  });
+
+  test("requires effective model, request id and valid usage", async () => {
+    const base = {
+      id: "msg_1",
+      model: "claude-effective",
+      content: [{ type: "text", text: "answer" }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    };
+    for (const value of [
+      { ...base, id: undefined },
+      { ...base, model: undefined },
+      { ...base, usage: { input_tokens: "bad", output_tokens: 1 } },
+    ]) {
+      const provider = new AnthropicMessagesProvider(
+        "test-key",
+        "https://provider.test/v1/messages",
+        async () => Response.json(value),
+      );
+      await expect(provider.complete(request)).rejects.toBeInstanceOf(
+        InvalidProviderResponseError,
+      );
+    }
+  });
+
+  test("passes AbortSignal and never leaks the API key on transport failure", async () => {
+    const key = "anthropic-secret-key";
+    const controller = new AbortController();
+    let signal: AbortSignal | undefined;
+    const provider = new AnthropicMessagesProvider(
+      key,
+      "https://provider.test/v1/messages",
+      async (_input, init) => {
+        signal = init?.signal as AbortSignal | undefined;
+        throw new Error(key);
+      },
+    );
+    const failure = provider.complete(request, controller.signal);
+    await expect(failure).rejects.toBeInstanceOf(LlmProviderError);
+    await expect(failure).rejects.not.toThrow(key);
+    await expect(failure).rejects.toMatchObject({
+      code: "NETWORK",
+      retryable: true,
+    });
+    expect(signal).toBe(controller.signal);
+  });
+
+  test("maps AbortError to cancellation", async () => {
+    const provider = new AnthropicMessagesProvider(
+      "test-key",
+      "https://provider.test/v1/messages",
+      async () => {
+        throw new DOMException("aborted", "AbortError");
+      },
+    );
+    await expect(provider.complete(request)).rejects.toBeInstanceOf(
+      ProviderCancelledError,
+    );
   });
 });

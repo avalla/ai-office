@@ -303,6 +303,10 @@ export interface RuntimeCommandOptions {
   modelRouting?: ModelRoutingState;
   /** Reads the current immutable routing snapshot for this command. */
   modelRoutingProvider?: () => ModelRoutingState;
+  /** Loads routing with the daemon's effective source semantics. */
+  modelRoutingLoader?: (
+    readFile?: (path: string) => string,
+  ) => ModelRoutingState;
   /** Atomically replaces the current routing snapshot for future schedules. */
   reloadModelRouting?: () => ModelRoutingState;
   /** Host-local file used by operator model:override. */
@@ -566,6 +570,9 @@ export async function executeRuntimeCommand(
         options.modelRoutingProvider?.() ??
         options.modelRouting ??
         unconfiguredModelRouting,
+      ...(options.modelRoutingLoader === undefined
+        ? {}
+        : { modelRoutingLoader: options.modelRoutingLoader }),
       ...(options.reloadModelRouting === undefined
         ? {}
         : { reloadModelRouting: options.reloadModelRouting }),

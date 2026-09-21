@@ -54,7 +54,6 @@ function requirementCell(requirements: readonly LinkedRequirement[]): string {
 }
 
 function formatTaskBoard(rows: readonly TaskBoardRow[]): string[] {
-  const headers = ["ID", "STATUS", "REQUIREMENTS", "PRIORITY", "TITLE"];
   const values = rows.map((row) => [
     row.taskId,
     `${row.status}${row.contradictsRequirements ? " !" : ""}`,
@@ -62,16 +61,8 @@ function formatTaskBoard(rows: readonly TaskBoardRow[]): string[] {
     String(row.priority),
     row.title,
   ]);
-  const widths = headers.map((header, index) =>
-    Math.max(header.length, ...values.map((value) => value[index]?.length ?? 0)),
-  );
-
-  return [headers, ...values].map((value) =>
-    value
-      .map((cell, index) =>
-        index === value.length - 1 ? cell : cell.padEnd(widths[index] ?? 0),
-      )
-      .join("  "),
+  return [["ID", "STATUS", "REQUIREMENTS", "PRIORITY", "TITLE"], ...values].map(
+    (value) => value.join("\t"),
   );
 }
 

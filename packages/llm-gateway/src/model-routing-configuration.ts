@@ -72,6 +72,26 @@ export interface LoadModelRoutingOptions {
   readonly runtimeHome?: string;
 }
 
+/** Resolves the same host-local file selected by `loadModelRoutingState`. */
+export function resolveModelRoutingFilePath(
+  environment: ModelProviderEnvironment,
+  runtimeHome?: string,
+): string | undefined {
+  if (
+    nonEmpty(environment[modelRoutingEnvironment.source]) ===
+    runtimeHomeModelRoutingSource
+  )
+    return runtimeHome === undefined
+      ? undefined
+      : runtimeHomeModelRoutingPath(runtimeHome);
+  const configured = nonEmpty(environment[modelRoutingEnvironment.file]);
+  if (configured === undefined)
+    return runtimeHome === undefined
+      ? undefined
+      : runtimeHomeModelRoutingPath(runtimeHome);
+  return routingFilePath(configured, environment.HOME) ?? undefined;
+}
+
 class Issues {
   readonly items: ModelRoutingIssue[] = [];
   add(code: ModelRoutingIssueCode, subject: string, message: string): void {
