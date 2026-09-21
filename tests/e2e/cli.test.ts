@@ -119,13 +119,23 @@ describe("Project/Task CLI vertical slice", () => {
         io: listOutput.io,
       }),
     ).toBe(0);
-    expect(listOutput.stdout[0]).toBe(
-      "ID\tSTATUS\tREQUIREMENTS\tPRIORITY\tTITLE",
-    );
+    const header = listOutput.stdout[0]!;
+    expect(header).toContain("STATUS");
+    expect(header).toContain("REQUIREMENTS");
+    expect(header).not.toContain("\t");
+    const statusColumn = header.indexOf("STATUS");
+    const requirementsColumn = header.indexOf("REQUIREMENTS");
+    const priorityColumn = header.indexOf("PRIORITY");
     // No linked requirements yet, so the progress column is empty and the
     // status column carries no inconsistency marker.
-    expect(listOutput.stdout[1]).toMatch(/\tpending\t—\t10\tHigh$/);
-    expect(listOutput.stdout[2]).toMatch(/\tpending\t—\t1\tLow$/);
+    expect(listOutput.stdout[1]!.indexOf("pending")).toBe(statusColumn);
+    expect(listOutput.stdout[1]!.indexOf("—")).toBe(requirementsColumn);
+    expect(listOutput.stdout[1]!.startsWith("10", priorityColumn)).toBe(true);
+    expect(listOutput.stdout[1]).toMatch(/High$/);
+    expect(listOutput.stdout[2]!.indexOf("pending")).toBe(statusColumn);
+    expect(listOutput.stdout[2]!.indexOf("—")).toBe(requirementsColumn);
+    expect(listOutput.stdout[2]!.startsWith("1", priorityColumn)).toBe(true);
+    expect(listOutput.stdout[2]).toMatch(/Low$/);
     expect(listOutput.stderr).toEqual([]);
   });
 

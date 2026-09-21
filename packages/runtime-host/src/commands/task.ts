@@ -12,7 +12,10 @@ import {
   type TaskCompletionRecordPlan,
 } from "@ai-office/application/commands/record-task-completion.ts";
 import { requirementProgress } from "@ai-office/application/commands/task-requirement-progress.ts";
-import { ListTaskBoard } from "@ai-office/application/queries/list-task-board.ts";
+import {
+  ListTaskBoard,
+  type TaskBoardRow,
+} from "@ai-office/application/queries/list-task-board.ts";
 import type { LinkedRequirement } from "@ai-office/application/ports/task-requirement-repository.port.ts";
 import {
   CliUsageError,
@@ -48,6 +51,28 @@ function requirementCell(requirements: readonly LinkedRequirement[]): string {
   if (requirements.length === 0) return "—";
   const progress = requirementProgress(requirements);
   return `${progress.verified}/${progress.total} verified`;
+}
+
+function formatTaskBoard(rows: readonly TaskBoardRow[]): string[] {
+  const headers = ["ID", "STATUS", "REQUIREMENTS", "PRIORITY", "TITLE"];
+  const values = rows.map((row) => [
+    row.taskId,
+    `${row.status}${row.contradictsRequirements ? " !" : ""}`,
+    requirementCell(row.requirements),
+    String(row.priority),
+    row.title,
+  ]);
+  const widths = headers.map((header, index) =>
+    Math.max(header.length, ...values.map((value) => value[index]?.length ?? 0)),
+  );
+
+  return [headers, ...values].map((value) =>
+    value
+      .map((cell, index) =>
+        index === value.length - 1 ? cell : cell.padEnd(widths[index] ?? 0),
+      )
+      .join("  "),
+  );
 }
 
 /**
@@ -162,11 +187,7 @@ export async function handleTaskCommand(
     // STATUS is the task's own state and nothing else. Requirement progress is
     // a separate column, and a contradiction between them is marked rather than
     // resolved: rewriting the displayed status would hide the defect.
-    io.stdout("ID\tSTATUS\tREQUIREMENTS\tPRIORITY\tTITLE");
-    for (const row of rows)
-      io.stdout(
-        `${row.taskId}\t${row.status}${row.contradictsRequirements ? " !" : ""}\t${requirementCell(row.requirements)}\t${row.priority}\t${row.title}`,
-      );
+    for (const line of formatTaskBoard(rows)) io.stdout(line);
     for (const row of rows.filter((value) => value.contradictsRequirements))
       io.stderr(
         `warning: task ${row.taskId} is ${row.status} while all linked requirements are terminal; run ai-office task:reconcile --project ${projectId} for details`,

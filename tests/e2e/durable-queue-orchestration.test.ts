@@ -254,7 +254,7 @@ describe("durable queue-driven pipeline orchestration", () => {
         });
         const tasks = await command(["task:list", "--project", projectId]);
         expect(
-          tasks.stdout.some((line) => line.includes(`${taskId}\tcompleted`)),
+          tasks.stdout.some((line) => line.startsWith(`${taskId}  completed`)),
         ).toBe(true);
         expect(guidance).toHaveLength(4);
         expect(new Set(guidance.map((value) => value.text)).size).toBe(4);
