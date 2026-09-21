@@ -231,6 +231,11 @@ describe("CLI to daemon end-to-end", () => {
   test("uses model override scope for project autodiscovery", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-model-cli-"));
     temporaryDirectories.push(projectRoot);
+    writeFileSync(
+      join(projectRoot, "package.json"),
+      JSON.stringify({ name: "model-routing-cli-fixture" }),
+    );
+    writeFileSync(join(projectRoot, "index.ts"), "export const value = 1;\n");
     const socket = createTestUnixSocket();
     temporaryDirectories.push(socket.root);
     const daemon = await bootstrap({
