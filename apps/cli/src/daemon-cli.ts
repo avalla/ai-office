@@ -139,6 +139,7 @@ const projectScopedCommands = new Set([
   "agent:list",
   "agent:models",
   "model:check",
+  "model:override",
   "run:schedule",
   "run:tick",
   "run:list",

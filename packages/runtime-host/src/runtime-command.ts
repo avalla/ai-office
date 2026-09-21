@@ -231,6 +231,8 @@ const commands = [
   "agent:list",
   "agent:models",
   "model:check",
+  "model:override",
+  "model:reload",
   "run:schedule",
   "run:tick",
   "run:cancel",
@@ -299,6 +301,12 @@ export interface RuntimeCommandOptions {
   projectMemory?: ProjectMemoryProvider;
   /** Composition-supplied host model routing; absent means unconfigured. */
   modelRouting?: ModelRoutingState;
+  /** Reads the current immutable routing snapshot for this command. */
+  modelRoutingProvider?: () => ModelRoutingState;
+  /** Atomically replaces the current routing snapshot for future schedules. */
+  reloadModelRouting?: () => ModelRoutingState;
+  /** Host-local file used by operator model:override. */
+  modelRoutingFile?: string;
   modelProviders?: ModelProviderCatalog;
   /** Composition-supplied gateway provider access; absent means no credentials. */
   gatewayProviders?: GatewayModelProviders;
@@ -554,7 +562,16 @@ export async function executeRuntimeCommand(
         options.defaultOfficeManifest ?? defaultOfficeManifest(),
       projectMemory:
         options.projectMemory ?? new DisabledProjectMemoryProvider(),
-      modelRouting: options.modelRouting ?? unconfiguredModelRouting,
+      modelRouting:
+        options.modelRoutingProvider?.() ??
+        options.modelRouting ??
+        unconfiguredModelRouting,
+      ...(options.reloadModelRouting === undefined
+        ? {}
+        : { reloadModelRouting: options.reloadModelRouting }),
+      ...(options.modelRoutingFile === undefined
+        ? {}
+        : { modelRoutingFile: options.modelRoutingFile }),
       modelProviders:
         options.modelProviders ?? new EnvironmentModelProviderCatalog({}),
       gatewayProviders:

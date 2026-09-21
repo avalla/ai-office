@@ -8,6 +8,7 @@
 
 import type { AgentRunStatus } from "@ai-office/domain/agent/agent-run.ts";
 import { parseAgentExecution } from "@ai-office/domain/agent/agent-execution.ts";
+import { parseAgentRunModelRouting } from "@ai-office/domain/agent/agent-run-model.ts";
 import { requirementProgressFromCounts } from "../commands/task-requirement-progress.ts";
 import type {
   RequirementStatus,
@@ -442,6 +443,15 @@ const maxFailureMessageLength = 500;
  * documented `{ message, code }` execution-error shape is published; anything
  * else is reported as present without republishing its content.
  */
+function projectModelRouting(value: unknown): AgentRunState["model"] {
+  if (value === null || value === undefined) return null;
+  try {
+    return parseAgentRunModelRouting(value);
+  } catch {
+    return null;
+  }
+}
+
 export function projectRunFailure(
   error: unknown,
 ): AgentRunFailureSummary | null {
@@ -490,6 +500,7 @@ export function projectAgentRunState(
   return {
     runId: record.id,
     execution: executionProvenance(record),
+    model: projectModelRouting(record.modelRouting),
     projectId: record.projectId,
     task:
       record.taskTitle === null

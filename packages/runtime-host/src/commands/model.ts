@@ -2,7 +2,16 @@ import {
   DescribeModelRouting,
   type ModelRoutingReport,
 } from "@ai-office/application/model-routing/describe-model-routing.ts";
+import { dirname } from "node:path";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import {
+  parseCanonicalModelRef,
+  ModelProviderConfigurationError,
+} from "@ai-office/llm-gateway/model-ref.ts";
+import { loadModelRoutingState } from "@ai-office/llm-gateway/model-routing-configuration.ts";
+import { modelTokenPattern } from "@ai-office/domain/agent/agent-run-model.ts";
+import {
+  CliUsageError,
   type CommandContext,
   parseArguments,
   requiredOption,
@@ -22,6 +31,97 @@ function describe(context: CommandContext, projectId: string | null) {
 const dash = (value: string | number | null) =>
   value === null ? "-" : String(value);
 
+function record(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function routingDocument(path: string): Record<string, unknown> {
+  try {
+    const root = record(Bun.YAML.parse(readFileSync(path, "utf8")));
+    if (root === null)
+      throw new CliUsageError("Model routing file must be a map");
+    return root;
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      (error as { code?: unknown }).code === "ENOENT"
+    )
+      return {
+        schema_version: 1,
+        profiles: {},
+        policies: {},
+        default_profile: null,
+        agents: {},
+        projects: {},
+      };
+    throw new CliUsageError("Model routing file cannot be read or parsed");
+  }
+}
+
+function writeRoutingDocument(
+  path: string,
+  document: Record<string, unknown>,
+  token: string,
+): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = path + "." + token + ".tmp";
+  writeFileSync(temporary, JSON.stringify(document, null, 2) + "\n", {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  renameSync(temporary, path);
+}
+
+function routingOverrideDocument(
+  document: Record<string, unknown>,
+  scope: "host" | "project",
+  projectId: string | undefined,
+  agent: string,
+  target: Record<string, string>,
+): Record<string, unknown> {
+  const next = JSON.parse(JSON.stringify(document)) as Record<string, unknown>;
+  const root =
+    scope === "host"
+      ? next
+      : (() => {
+          const projects = record(next.projects) ?? {};
+          const project = record(projects[projectId!]) ?? {};
+          projects[projectId!] = project;
+          next.projects = projects;
+          return project;
+        })();
+  const agents = record(root.agents) ?? {};
+  agents[agent] = target;
+  root.agents = agents;
+  if (next.schema_version === undefined) next.schema_version = 1;
+  return next;
+}
+
+function modelTarget(model: string, providers: readonly string[]): string {
+  try {
+    const parsed = parseCanonicalModelRef(model);
+    if (!providers.includes(parsed.providerId))
+      throw new CliUsageError("Unsupported LLM provider " + parsed.providerId);
+    return parsed.modelRef;
+  } catch (error) {
+    if (error instanceof CliUsageError) throw error;
+    if (error instanceof ModelProviderConfigurationError)
+      throw new CliUsageError(
+        "Model must be a canonical <provider>:<model> reference",
+      );
+    throw error;
+  }
+}
+
+function requireOperator(context: CommandContext): void {
+  if (context.principal.kind !== "operator")
+    throw new CliUsageError("Model routing overrides are operator-only");
+}
+
 function printFindings(context: CommandContext, report: ModelRoutingReport) {
   for (const finding of report.findings)
     context.io.stdout(
@@ -29,6 +129,131 @@ function printFindings(context: CommandContext, report: ModelRoutingReport) {
     );
 }
 
+async function overrideModel(
+  args: string[],
+  context: CommandContext,
+): Promise<number> {
+  requireOperator(context);
+  if (
+    context.reloadModelRouting === undefined ||
+    context.modelRoutingFile === undefined
+  )
+    throw new CliUsageError(
+      "Model routing mutation is unavailable in this Runtime composition",
+    );
+  const parsed = parseArguments(
+    args,
+    new Set(["scope", "project", "agent", "profile", "model"]),
+    new Set(["json"]),
+  );
+  const scope = requiredOption(parsed, "scope");
+  if (scope !== "host" && scope !== "project")
+    throw new CliUsageError("--scope must be host or project");
+  const projectId = parsed.options.get("project");
+  if (scope === "project") {
+    if (projectId === undefined)
+      throw new CliUsageError("--project is required for project scope");
+    await context.projects.findById(projectId);
+  } else if (projectId !== undefined)
+    throw new CliUsageError("--project is only valid with project scope");
+  const agent = requiredOption(parsed, "agent");
+  if (!modelTokenPattern.test(agent))
+    throw new CliUsageError("--agent must be a valid agent name");
+  const profile = parsed.options.get("profile");
+  const model = parsed.options.get("model");
+  if ((profile === undefined) === (model === undefined))
+    throw new CliUsageError("Set exactly one of --profile or --model");
+  if (profile !== undefined && !modelTokenPattern.test(profile))
+    throw new CliUsageError("--profile must be a valid profile key");
+  const target =
+    profile === undefined
+      ? {
+          model: modelTarget(
+            model!,
+            context.modelProviders.supportedProviders(),
+          ),
+        }
+      : { profile };
+  const document = routingOverrideDocument(
+    routingDocument(context.modelRoutingFile),
+    scope,
+    projectId,
+    agent,
+    target,
+  );
+  const candidate = loadModelRoutingState(
+    { AI_OFFICE_MODEL_ROUTING_FILE: context.modelRoutingFile },
+    { readFile: () => JSON.stringify(document) },
+  );
+  if (candidate.status === "misconfigured")
+    throw new CliUsageError(
+      "The override would make model routing invalid; no change was written",
+    );
+  writeRoutingDocument(
+    context.modelRoutingFile,
+    document,
+    context.ids.generate(),
+  );
+  const reloaded = context.reloadModelRouting();
+  await context.audit.execute({
+    eventType: "model.routing.override",
+    actorType: "daemon",
+    actorId: context.principal.id,
+    aggregateType: "model_routing",
+    ...(scope === "host"
+      ? { aggregateId: "host" }
+      : { aggregateId: projectId! }),
+    ...(scope === "project" ? { projectId: projectId! } : {}),
+    payload: {
+      scope,
+      ...(scope === "project" ? { projectId: projectId! } : {}),
+      agent,
+      ...target,
+      routingStatus: reloaded.status,
+    },
+  });
+  const result = {
+    schemaVersion: 1,
+    scope,
+    ...(projectId === undefined ? {} : { projectId }),
+    agent,
+    ...target,
+    reloaded: true,
+  };
+  context.io.stdout(
+    parsed.flags.has("json")
+      ? JSON.stringify(result)
+      : "Model routing override applied for " + agent + ".",
+  );
+  return 0;
+}
+
+async function reloadModel(
+  args: string[],
+  context: CommandContext,
+): Promise<number> {
+  requireOperator(context);
+  if (context.reloadModelRouting === undefined)
+    throw new CliUsageError(
+      "Model routing reload is unavailable in this Runtime composition",
+    );
+  const parsed = parseArguments(args, new Set(), new Set(["json"]));
+  const state = context.reloadModelRouting();
+  await context.audit.execute({
+    eventType: "model.routing.reload",
+    actorType: "daemon",
+    actorId: context.principal.id,
+    aggregateType: "model_routing",
+    aggregateId: "host",
+    payload: { status: state.status },
+  });
+  context.io.stdout(
+    parsed.flags.has("json")
+      ? JSON.stringify({ schemaVersion: 1, status: state.status })
+      : "Model routing reloaded: " + state.status,
+  );
+  return state.status === "misconfigured" ? 1 : 0;
+}
 /** Read-only model routing inspection; it never sends a model request. */
 export async function handleModelCommand(
   command: string,
@@ -138,5 +363,7 @@ export async function handleModelCommand(
     );
     return report.valid ? 0 : 1;
   }
+  if (command === "model:override") return overrideModel(args, context);
+  if (command === "model:reload") return reloadModel(args, context);
   return null;
 }

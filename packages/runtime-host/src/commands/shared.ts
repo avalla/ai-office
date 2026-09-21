@@ -35,8 +35,12 @@ export interface CommandContext extends ProjectStorage {
   memory?: GlobalMemoryRepository;
   /** Optional, non-authoritative project memory; disabled unless configured. */
   projectMemory: ProjectMemoryProvider;
-  /** Host model routing, read once by the composition root; never persisted as configuration. */
+  /** Host model routing snapshot used by this command. */
   modelRouting: ModelRoutingState;
+  /** Operator-only host reload; absent for non-daemon direct composition. */
+  reloadModelRouting?: () => ModelRoutingState;
+  /** Selected host-local routing file; never emitted in audit/read models. */
+  modelRoutingFile?: string;
   modelProviders: ModelProviderCatalog;
   /** Host provider access for gateway-executed routed runs; credentials never leave it. */
   gatewayProviders: GatewayModelProviders;

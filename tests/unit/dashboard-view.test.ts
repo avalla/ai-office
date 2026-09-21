@@ -761,6 +761,19 @@ describe("rendering", () => {
         },
         status: "failed",
         terminal: true,
+        model: {
+          status: "resolved",
+          selection: {
+            policy: "balanced",
+            profile: "balanced",
+            modelRef: "openai:balanced-model",
+            providerId: "openai",
+            model: "balanced-model",
+            reasoningEffort: "medium",
+            maxOutputTokens: 2000,
+            source: "role_policy",
+          },
+        },
         pipelineRunId: null,
         actionIntent: {
           resourceId: "resource-1",
@@ -790,6 +803,30 @@ describe("rendering", () => {
         ],
       },
       actions: [{ requestId: "action-1", status: "approval_pending" }],
+      workerOutput: {
+        schemaVersion: 1,
+        summary: "Gateway summary",
+        content: "Gateway content",
+        sessionId: null,
+        model: "balanced-model",
+        usage: { inputTokens: 10, outputTokens: 4 },
+        estimatedCostUsd: null,
+        metering: {
+          kind: "gateway",
+          providerId: "openai",
+          model: "balanced-model",
+          providerRequestId: "resp-1",
+          usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 4, reasoningTokens: 0 },
+          appliedParameters: { reasoningEffort: "medium", maxOutputTokens: 2000 },
+          currency: "USD",
+          pricingVersionId: "price-1",
+          budgetScope: "agent_run",
+          budgetLimitMicros: "1000000",
+          reservedMicros: "100",
+          estimatedMicros: "100",
+          actualMicros: "100",
+        },
+      },
       pipeline: null,
       reviews: [],
       activity: { items: [], nextCursor: null },
@@ -810,6 +847,9 @@ describe("rendering", () => {
     expect(html).toContain("action-1");
     expect(html).toContain("values are not exposed");
     expect(html).toContain("1s");
+    expect(html).toContain("openai:balanced-model");
+    expect(html).toContain("actual model");
+    expect(html).toContain("100 micros USD");
   });
 
   test("renders a message page for load failures", () => {

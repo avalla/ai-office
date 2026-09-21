@@ -707,8 +707,9 @@ dashboard rendering of the selection, and routing hot reload. See [ADR-0019](../
 
 ## M7.13 — Model routing follow-ups
 
-Status: in progress; managed-service provider credentials implemented. The
-remaining items below are future.
+Status: complete. Managed-service credentials, native Anthropic gateway execution,
+co-reservation, audited operator overrides, dashboard detail and hot reload are
+implemented.
 
 - **Managed-service provider credentials** — implemented. Acceptance: a managed
   Runtime can execute gateway runs without credentials in service definitions,

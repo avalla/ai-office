@@ -314,6 +314,58 @@ test("a Runtime host with the managed routing marker discovers AI_OFFICE_HOME ro
   }
 });
 
+test("operator model routing reload and override are atomic, audited and host-local", async () => {
+  const r = await runRuntime();
+  try {
+    writeFileSync(
+      join(r.root, ".ai-office", "model-routing.yaml"),
+      `schema_version: 1
+profiles:
+  balanced: { model: "openai:balanced-model", max_output_tokens: 2000 }
+default_profile: balanced
+`,
+    );
+    const reloaded = await r.command(["model:reload", "--json"]);
+    expect(reloaded.exitCode).toBe(0);
+    expect(JSON.parse(reloaded.stdout[0]!)).toMatchObject({
+      status: "configured",
+    });
+
+    const override = await r.command([
+      "model:override",
+      "--scope",
+      "host",
+      "--agent",
+      "architect",
+      "--model",
+      "openai:override-model",
+      "--json",
+    ]);
+    expect(override.exitCode).toBe(0);
+    expect(JSON.parse(override.stdout[0]!)).toMatchObject({
+      scope: "host",
+      agent: "architect",
+      model: "openai:override-model",
+      reloaded: true,
+    });
+    const check = await r.command([
+      "model:check",
+      "--project",
+      r.projectId,
+      "--json",
+    ]);
+    const report = JSON.parse(check.stdout[0]!) as {
+      project?: { agents: { agent: string; modelRef: string }[] };
+    };
+    expect(
+      report.project?.agents.find((agent) => agent.agent === "architect")
+        ?.modelRef,
+    ).toBe("openai:override-model");
+    expect((await r.command(["model:reload", "--json"])).exitCode).toBe(0);
+  } finally {
+    await r.close();
+  }
+});
 test("the gateway worker refuses unrouted runs and missing credentials before any request", async () => {
   const unrouted = gatewayHost({ OPENAI_API_KEY: secret });
   const plain = await runRuntime(undefined, {

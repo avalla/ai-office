@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import { fileURLToPath } from "node:url";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
@@ -48,6 +48,7 @@ import {
   withRuntimePathOverrides,
   type RuntimePaths,
 } from "@ai-office/runtime-paths/runtime-paths.ts";
+import { runtimeHomeModelRoutingPath } from "@ai-office/runtime-paths/model-routing-location.ts";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 
@@ -171,6 +172,45 @@ export async function bootstrap(
       memory: new SqliteGlobalMemoryRepository(globalDatabase),
     });
 
+    const routingFileSetting =
+      process.env.AI_OFFICE_MODEL_ROUTING_SOURCE === "runtime_home"
+        ? undefined
+        : process.env.AI_OFFICE_MODEL_ROUTING_FILE?.trim() || undefined;
+    const modelRoutingFile =
+      routingFileSetting === undefined
+        ? runtimeHomeModelRoutingPath(runtimePaths.runtimeHome)
+        : routingFileSetting.startsWith("~/")
+          ? join(
+              process.env.HOME ?? runtimePaths.runtimeHome,
+              routingFileSetting.slice(2),
+            )
+          : isAbsolute(routingFileSetting)
+            ? resolve(routingFileSetting)
+            : routingFileSetting;
+    const initialRouting =
+      options.modelRouting ??
+      loadModelRoutingState(process.env, {
+        runtimeHome: runtimePaths.runtimeHome,
+      });
+    const routing = {
+      state: initialRouting,
+      reload: () => {
+        const next = loadModelRoutingState(process.env, {
+          runtimeHome: runtimePaths.runtimeHome,
+        });
+        routing.state = next;
+        return next;
+      },
+      file: modelRoutingFile,
+      providers:
+        options.modelProviders ??
+        new CredentialModelProviderCatalog(credentials),
+      gateway:
+        options.gatewayProviders ??
+        new CredentialGatewayModelProviders(credentials, {
+          debug: process.env.AI_OFFICE_DEBUG_LLM === "1",
+        }),
+    };
     const runtime = new ApplicationRuntime(
       runtimePaths,
       commandRoot,
@@ -182,21 +222,7 @@ export async function bootstrap(
       options.agentExecutor,
       () => queryEvents.publish(["run.updated", "task.updated"]),
       options.projectMemory ?? createProjectMemoryProvider(process.env),
-      {
-        state:
-          options.modelRouting ??
-          loadModelRoutingState(process.env, {
-            runtimeHome: runtimePaths.runtimeHome,
-          }),
-        providers:
-          options.modelProviders ??
-          new CredentialModelProviderCatalog(credentials),
-        gateway:
-          options.gatewayProviders ??
-          new CredentialGatewayModelProviders(credentials, {
-            debug: process.env.AI_OFFICE_DEBUG_LLM === "1",
-          }),
-      },
+      routing,
       projectStorage,
     );
 
