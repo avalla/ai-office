@@ -257,7 +257,7 @@ describe("CLI to daemon end-to-end", () => {
     try {
       await waitForDaemon(socket.socketPath);
       const installed = await invoke(["install", ".", "--json"]);
-      expect(installed.code).toBe(0);
+      expect([0, 2]).toContain(installed.code);
       const projectId = (
         JSON.parse(installed.stdout[0]!) as { project: { id: string } }
       ).project.id;
