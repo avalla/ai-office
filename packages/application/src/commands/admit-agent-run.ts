@@ -34,6 +34,8 @@ export class AdmitAgentRun {
       agent !== null &&
       agent.projectId === r.projectId &&
       agent.enabled &&
+      role !== null &&
+      role.snapshot().projectId === r.projectId &&
       (pipeline?.snapshot().id ?? undefined) === r.pipelineRunId &&
       (pipeline?.currentStage()?.id ?? undefined) === r.pipelineStageRunId &&
       (pipeline === null ||
@@ -55,6 +57,11 @@ export class AdmitAgentRun {
         taskUpdatedAt: task.updatedAt,
         agentRoleId: agent.roleId,
         agentUpdatedAt: agent.updatedAt,
+        roleId: role.snapshot().id,
+        roleKey: role.snapshot().key,
+        roleVersion: role.snapshot().version,
+        roleLimits: { ...role.snapshot().limits },
+        roleUpdatedAt: role.snapshot().updatedAt,
         pipelineId: pipeline?.snapshot().id ?? null,
         pipelineStageRunId: pipeline?.currentStage()?.id ?? null,
         pipelineVersion: pipeline?.snapshot().version ?? null,

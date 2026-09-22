@@ -8,7 +8,10 @@ import { Task } from "@ai-office/domain/task/task.ts";
 import { PostgresClient } from "@ai-office/storage-postgres/database/postgres-client.ts";
 import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-postgres.ts";
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
-import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
+import {
+  PostgresAuditEventRepository,
+  PostgresHostAuditEventRepository,
+} from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
 import { PostgresAgentRuntimeRepository } from "@ai-office/storage-postgres/repositories/postgres-agent-runtime.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
@@ -183,6 +186,39 @@ describe.skipIf(connectionString === undefined)(
       ).rejects.toThrow("outside the PostgreSQL tenant context");
     });
 
+    test("separates tenant-scoped and explicit host-global audit authority", async () => {
+      const f = await fixture();
+      const host = new PostgresHostAuditEventRepository(database);
+      const globalEvent = AuditEvent.create({
+        id: `host-audit-${randomUUID()}`,
+        eventType: "host.test",
+        actorType: "system",
+        payload: { scope: "host" },
+        occurredAt: now,
+      });
+      await expect(f.auditEvents.append(globalEvent)).rejects.toThrow(
+        "outside the PostgreSQL tenant context",
+      );
+      await host.append(globalEvent);
+      await expect(
+        host.append(
+          AuditEvent.create({
+            id: `host-project-${randomUUID()}`,
+            eventType: "host.project",
+            actorType: "system",
+            projectId: f.projectId,
+            payload: {},
+            occurredAt: now,
+          }),
+        ),
+      ).rejects.toThrow("outside the PostgreSQL tenant context");
+      expect(
+        await database.query(
+          "SELECT id FROM core.audit_event WHERE id = $1 AND project_id IS NULL",
+          [globalEvent.snapshot().id],
+        ),
+      ).toEqual([{ id: globalEvent.snapshot().id }]);
+    });
     test("has one real concurrent task-lock winner and owner-only renewal/release", async () => {
       const f = await fixture();
       const runA = AgentRun.create({
@@ -254,6 +290,11 @@ describe.skipIf(connectionString === undefined)(
         taskUpdatedAt: f.task.snapshot().updatedAt,
         agentRoleId: f.agent.roleId,
         agentUpdatedAt: f.agent.updatedAt,
+        roleId: f.role.snapshot().id,
+        roleKey: f.role.snapshot().key,
+        roleVersion: f.role.snapshot().version,
+        roleLimits: { ...f.role.snapshot().limits },
+        roleUpdatedAt: f.role.snapshot().updatedAt,
         pipelineId: null,
         pipelineStageRunId: null,
         pipelineVersion: null,
@@ -273,6 +314,83 @@ describe.skipIf(connectionString === undefined)(
           (event) => event.status,
         ),
       ).toEqual(["queued", "preparing"]);
+    });
+
+    test("serializes admission with a concurrent task authority mutation", async () => {
+      const f = await fixture();
+      const run = AgentRun.create({
+        id: `admit-race-${randomUUID()}`,
+        projectId: f.projectId,
+        taskId: f.task.snapshot().id,
+        agentId: f.agent.id,
+        now,
+      });
+      await f.runtime.saveRun(run);
+      await f.runtime.acquireTaskLock(
+        f.task.snapshot().id,
+        run.snapshot().id,
+        now,
+        new Date(now.getTime() + 10_000),
+      );
+      const authority = {
+        taskStatus: f.task.snapshot().status,
+        taskUpdatedAt: f.task.snapshot().updatedAt,
+        agentRoleId: f.agent.roleId,
+        agentUpdatedAt: f.agent.updatedAt,
+        roleId: f.role.snapshot().id,
+        roleKey: f.role.snapshot().key,
+        roleVersion: f.role.snapshot().version,
+        roleLimits: { ...f.role.snapshot().limits },
+        roleUpdatedAt: f.role.snapshot().updatedAt,
+        pipelineId: null,
+        pipelineStageRunId: null,
+        pipelineVersion: null,
+      };
+      const mutation = new PostgresClient(connectionString!);
+      const observer = new PostgresClient(connectionString!);
+      let release!: () => void;
+      let locked!: () => void;
+      const lockAcquired = new Promise<void>((resolve) => {
+        locked = resolve;
+      });
+      const releaseGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const mutationDone = mutation.transaction(async () => {
+        await mutation.query(
+          "UPDATE core.task SET status = 'running', updated_at = $2 WHERE id = $1",
+          [f.task.snapshot().id, new Date(now.getTime() + 1)],
+        );
+        locked();
+        await releaseGate;
+      });
+      try {
+        await lockAcquired;
+        const admission = f.runtime.admitQueuedRun({
+          runId: run.snapshot().id,
+          now,
+          authority,
+        });
+        for (let attempt = 0; attempt < 1000; attempt += 1) {
+          const [row] = await observer.query<{ count: number }>(
+            `SELECT count(*)::int AS count FROM pg_stat_activity
+             WHERE wait_event_type = 'Lock' AND state = 'active'
+`,
+          );
+          if ((row?.count ?? 0) > 0) break;
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          if (attempt === 999)
+            throw new Error("admission did not reach task lock");
+        }
+        release();
+        expect((await admission)?.snapshot().status).toBe("cancelled");
+        await mutationDone;
+      } finally {
+        release();
+        await mutationDone.catch(() => undefined);
+        await observer.close();
+        await mutation.close();
+      }
     });
 
     test("rejects stale task, agent, role, and pipeline fences", async () => {
@@ -447,6 +565,102 @@ describe.skipIf(connectionString === undefined)(
           acceptedAt: new Date(now.getTime() + 1000),
         }),
       ).toBe(false);
+
+      const waitForAuthorityLock = async (observer: PostgresClient) => {
+        for (let attempt = 0; attempt < 1000; attempt += 1) {
+          const [row] = await observer.query<{ count: number }>(
+            `SELECT count(*)::int AS count
+             FROM pg_stat_activity
+             WHERE wait_event_type = 'Lock'
+               AND state = 'active'
+`,
+          );
+          if ((row?.count ?? 0) > 0) return;
+          await new Promise<void>((resolve) => setImmediate(resolve));
+        }
+        throw new Error("authority operation did not reach the task lock");
+      };
+      const runAcceptRace = async (
+        prepared: Awaited<ReturnType<typeof prepare>>,
+        statement: string,
+        values: (
+          prepared: Awaited<ReturnType<typeof prepare>>,
+        ) => readonly unknown[],
+      ) => {
+        const mutation = new PostgresClient(connectionString!);
+        const observer = new PostgresClient(connectionString!);
+        let release!: () => void;
+        let locked!: () => void;
+        const lockAcquired = new Promise<void>((resolve) => {
+          locked = resolve;
+        });
+        const releaseGate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const mutationDone = mutation.transaction(async () => {
+          await mutation.query(statement, values(prepared));
+          locked();
+          await releaseGate;
+        });
+        try {
+          await lockAcquired;
+          const acceptance = prepared.f.runtime.acceptWorkerResult({
+            fence: prepared.fence,
+            run: prepared.run!,
+            result: prepared.result,
+            acceptedAt: new Date(now.getTime() + 1000),
+          });
+          await waitForAuthorityLock(observer);
+          release();
+          const accepted = await acceptance;
+          await mutationDone;
+          return accepted;
+        } finally {
+          release();
+          await mutationDone.catch(() => undefined);
+          await observer.close();
+          await mutation.close();
+        }
+      };
+
+      expect(
+        await runAcceptRace(
+          await prepare(),
+          "UPDATE core.task SET status = 'running', updated_at = $2 WHERE id = $1",
+          (prepared) => [prepared.fence.taskId, new Date(now.getTime() + 1)],
+        ),
+      ).toBe(false);
+      expect(
+        await runAcceptRace(
+          await prepare(),
+          "UPDATE core.agent SET enabled = false, updated_at = $2 WHERE id = $1",
+          (prepared) => [prepared.fence.agentId, new Date(now.getTime() + 1)],
+        ),
+      ).toBe(false);
+      expect(
+        await runAcceptRace(
+          await prepare(),
+          "UPDATE core.role SET version = 2, updated_at = $2 WHERE id = $1",
+          (prepared) => [prepared.fence.roleId, new Date(now.getTime() + 1)],
+        ),
+      ).toBe(false);
+      expect(
+        await runAcceptRace(
+          await prepare(true),
+          "UPDATE core.pipeline_run SET version = 2, current_stage_index = 1, updated_at = $2 WHERE id = $1",
+          (prepared) => [
+            prepared.fence.pipeline!.id,
+            new Date(now.getTime() + 1),
+          ],
+        ),
+      ).toBe(false);
+      expect(
+        await runAcceptRace(
+          await prepare(true),
+          "UPDATE core.pipeline_stage_run SET assigned_agent_id = NULL WHERE id = $1",
+          (prepared) => [prepared.fence.pipeline!.stageRunId],
+        ),
+      ).toBe(false);
     });
 
     test("accepts exactly one concurrent worker result only with the complete fence", async () => {
@@ -521,6 +735,67 @@ describe.skipIf(connectionString === undefined)(
           (event) => event.status,
         ),
       ).toEqual(["queued", "preparing", "running", "reviewing"]);
+    });
+
+    test("serializes concurrent saves and rejects stale snapshots", async () => {
+      const f = await fixture();
+      const run = AgentRun.create({
+        id: `save-race-${randomUUID()}`,
+        projectId: f.projectId,
+        taskId: f.task.snapshot().id,
+        agentId: f.agent.id,
+        now,
+      });
+      await f.runtime.saveRun(run);
+      const clientA = new PostgresClient(connectionString!);
+      const clientB = new PostgresClient(connectionString!);
+      const repositoryA = new PostgresAgentRuntimeRepository(
+        clientA,
+        f.tenantId,
+      );
+      const repositoryB = new PostgresAgentRuntimeRepository(
+        clientB,
+        f.tenantId,
+      );
+      try {
+        const first = AgentRun.restore(run.snapshot());
+        const second = AgentRun.restore(run.snapshot());
+        const preparingAt = new Date(now.getTime() + 1);
+        first.transition("preparing", preparingAt);
+        second.transition("preparing", preparingAt);
+        await Promise.all([
+          repositoryA.saveRun(first),
+          repositoryB.saveRun(second),
+        ]);
+        expect(
+          (await f.runtime.listRunEvents(run.snapshot().id)).map(
+            (event) => event.status,
+          ),
+        ).toEqual(["queued", "preparing"]);
+
+        const stale = AgentRun.restore(run.snapshot());
+        const current = await repositoryA.findRun(run.snapshot().id);
+        current!.transition("running", new Date(now.getTime() + 2), {
+          execution: {
+            kind: "worker",
+            adapterId: "worker.test",
+            adapterVersion: "1",
+            inputHash: "c".repeat(64),
+          },
+        });
+        await repositoryA.saveRun(current!);
+        await expect(repositoryB.saveRun(stale)).rejects.toThrow(
+          "changed concurrently",
+        );
+        expect(
+          (await f.runtime.listRunEvents(run.snapshot().id)).map(
+            (event) => event.status,
+          ),
+        ).toEqual(["queued", "preparing", "running"]);
+      } finally {
+        await clientA.close();
+        await clientB.close();
+      }
     });
 
     test("rolls back runtime and audit writes in one external transaction", async () => {

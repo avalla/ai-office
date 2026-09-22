@@ -18,6 +18,8 @@ export class PostgresAuditEventRepository implements AuditEventRepository {
 
   async append(event: AuditEvent): Promise<void> {
     const value = event.snapshot();
+    if (value.projectId === undefined)
+      throw new PostgresTenantScopeError("AuditEvent", value.id);
     const rows = await this.database.query<{ id: string }>(
       `
       INSERT INTO core.audit_event(
@@ -25,15 +27,13 @@ export class PostgresAuditEventRepository implements AuditEventRepository {
         aggregate_type, aggregate_id, payload_json, occurred_at
       )
       SELECT $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9
-      WHERE $2::text IS NULL OR EXISTS (
-        SELECT 1 FROM core.project
-        WHERE id = $2 AND tenant_id = $10
-      )
+      FROM core.project AS project
+      WHERE project.id = $2 AND project.tenant_id = $10
       RETURNING id
     `,
       [
         value.id,
-        value.projectId ?? null,
+        value.projectId,
         value.eventType,
         value.actorType,
         value.actorId ?? null,
@@ -46,5 +46,34 @@ export class PostgresAuditEventRepository implements AuditEventRepository {
     );
     if (rows.length !== 1)
       throw new PostgresTenantScopeError("AuditEvent", value.id);
+  }
+}
+
+/** Explicit host authority for host-global audit only. */
+export class PostgresHostAuditEventRepository implements AuditEventRepository {
+  constructor(private readonly database: PostgresClient) {}
+
+  async append(event: AuditEvent): Promise<void> {
+    const value = event.snapshot();
+    if (value.projectId !== undefined)
+      throw new PostgresTenantScopeError("HostAuditEvent", value.id);
+    await this.database.query(
+      `
+      INSERT INTO core.audit_event(
+        id, project_id, event_type, actor_type, actor_id,
+        aggregate_type, aggregate_id, payload_json, occurred_at
+      ) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7::jsonb, $8)
+      `,
+      [
+        value.id,
+        value.eventType,
+        value.actorType,
+        value.actorId ?? null,
+        value.aggregateType ?? null,
+        value.aggregateId ?? null,
+        value.payload,
+        value.occurredAt,
+      ],
+    );
   }
 }

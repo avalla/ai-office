@@ -1,3 +1,7 @@
+import {
+  AgentRunPersistenceConflictError,
+  canPersistAgentRunTransition,
+} from "@ai-office/application/ports/agent-runtime-repository.port.ts";
 import type {
   AgentRunEvent,
   AgentRuntimeRepository,
@@ -21,6 +25,7 @@ import {
 import { PostgresClient } from "../database/postgres-client.ts";
 
 type Timestamp = Date | string;
+type NumericColumn = number | string;
 type JsonColumn = unknown;
 interface AgentRow {
   id: string;
@@ -36,14 +41,14 @@ interface RoleRow {
   project_id: string;
   role_key: string;
   name: string;
-  version: number;
+  version: NumericColumn;
   capabilities_json: JsonColumn;
   tools_json: JsonColumn;
   model_policy: string;
   limits_json: JsonColumn;
   source_path: string;
   guidance_text: string;
-  guidance_version: number;
+  guidance_version: NumericColumn;
   created_at: Timestamp;
   updated_at: Timestamp;
 }
@@ -80,6 +85,17 @@ function toDate(value: Timestamp): Date {
 }
 function jsonValue(value: JsonColumn): unknown {
   return typeof value === "string" ? (JSON.parse(value) as unknown) : value;
+}
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 function jsonObject(value: JsonColumn, label: string): Record<string, unknown> {
   const parsed = jsonValue(value);
@@ -121,6 +137,12 @@ function roleLimits(value: JsonColumn): RoleLimits {
     timeoutSeconds: record.timeoutSeconds,
   };
 }
+function safeNumber(value: NumericColumn, label: string): number {
+  const result = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(result))
+    throw new Error(`Stored ${label} is invalid`);
+  return result;
+}
 function restoreAgent(row: AgentRow): Agent {
   return {
     id: row.id,
@@ -138,14 +160,14 @@ function restoreRole(row: RoleRow): Role {
     projectId: row.project_id,
     key: row.role_key,
     name: row.name,
-    version: row.version,
+    version: safeNumber(row.version, "role version"),
     capabilities: stringArray(row.capabilities_json, "capabilities"),
     tools: stringArray(row.tools_json, "tools"),
     modelPolicy: row.model_policy,
     limits: roleLimits(row.limits_json),
     sourcePath: row.source_path,
     ...(row.guidance_text === "" ? {} : { guidanceText: row.guidance_text }),
-    guidanceVersion: row.guidance_version,
+    guidanceVersion: safeNumber(row.guidance_version, "role guidance version"),
     createdAt: toDate(row.created_at),
     updatedAt: toDate(row.updated_at),
   });
@@ -326,20 +348,38 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
     return row === undefined ? null : restoreAgent(row);
   }
 
+  private async appendRunEvent(
+    run: ReturnType<AgentRun["snapshot"]>,
+    previousStatus: AgentRunStatus | undefined,
+  ): Promise<void> {
+    await this.database.query(
+      `
+      INSERT INTO core.agent_run_event(
+        id, run_id, project_id, status, payload_json, occurred_at
+      )
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+      ON CONFLICT (id) DO NOTHING`,
+      [
+        `${run.id}:${run.status}`,
+        run.id,
+        run.projectId,
+        run.status,
+        {
+          hasResult: run.result !== undefined,
+          hasError: run.error !== undefined,
+          ...(run.execution === undefined ? {} : { execution: run.execution }),
+          ...(previousStatus === undefined && run.modelRouting !== undefined
+            ? { modelRouting: run.modelRouting }
+            : {}),
+        },
+        run.updatedAt,
+      ],
+    );
+  }
   async saveRun(value: AgentRun): Promise<void> {
     const run = value.snapshot();
     await this.database.runInTransaction(async () => {
-      const [previous] = await this.database.query<{
-        status: AgentRunStatus | null;
-      }>(
-        `
-        SELECT run.status FROM core.agent_run AS run
-        JOIN core.project AS project
-          ON project.id = run.project_id AND project.tenant_id = $2
-        WHERE run.id = $1`,
-        [run.id, this.tenantId],
-      );
-      const rows = await this.database.query<{ id: string }>(
+      const inserted = await this.database.query<{ id: string }>(
         `
         INSERT INTO core.agent_run(
           id, project_id, task_id, agent_id, action_intent_json, pipeline_run_id,
@@ -353,14 +393,7 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
         WHERE project.id = $2 AND project.tenant_id = $19
           AND EXISTS (SELECT 1 FROM core.task WHERE id = $3 AND project_id = $2)
           AND EXISTS (SELECT 1 FROM core.agent WHERE id = $4 AND project_id = $2)
-        ON CONFLICT (id) DO UPDATE SET
-          status = excluded.status, worktree_path = excluded.worktree_path,
-          result_json = excluded.result_json, error_json = excluded.error_json,
-          started_at = excluded.started_at, completed_at = excluded.completed_at,
-          updated_at = excluded.updated_at, execution_json = excluded.execution_json
-        WHERE core.agent_run.project_id = excluded.project_id
-          AND core.agent_run.status IS NOT NULL
-          AND EXISTS (SELECT 1 FROM core.project WHERE id = core.agent_run.project_id AND tenant_id = $19)
+        ON CONFLICT (id) DO NOTHING
         RETURNING id`,
         [
           run.id,
@@ -384,31 +417,84 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
           this.tenantId,
         ],
       );
-      if (rows.length !== 1)
+      if (inserted.length === 1) {
+        await this.appendRunEvent(run, undefined);
+        return;
+      }
+      const [current] = await this.database.query<RunRow>(
+        `SELECT ${runColumns} FROM core.agent_run AS run
+         JOIN core.project AS project
+           ON project.id = run.project_id AND project.tenant_id = $2
+         WHERE run.id = $1 FOR UPDATE OF run`,
+        [run.id, this.tenantId],
+      );
+      if (current === undefined || current.status === null)
         throw new PostgresTenantScopeError("AgentRun", run.id);
-      if (previous?.status !== run.status)
-        await this.database.query(
-          `
-          INSERT INTO core.agent_run_event(id, run_id, project_id, status, payload_json, occurred_at)
-          VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
-          [
-            `${run.id}:${run.status}`,
-            run.id,
-            run.projectId,
-            run.status,
-            {
-              hasResult: run.result !== undefined,
-              hasError: run.error !== undefined,
-              ...(run.execution === undefined
-                ? {}
-                : { execution: run.execution }),
-              ...(previous === undefined && run.modelRouting !== undefined
-                ? { modelRouting: run.modelRouting }
-                : {}),
-            },
-            run.updatedAt,
-          ],
-        );
+      if (
+        current.project_id !== run.projectId ||
+        current.task_id !== run.taskId ||
+        current.agent_id !== run.agentId ||
+        current.pipeline_run_id !== (run.pipelineRunId ?? null) ||
+        current.pipeline_stage_run_id !== (run.pipelineStageRunId ?? null) ||
+        stableJson(jsonValue(current.action_intent_json)) !==
+          stableJson(run.actionIntent ?? null) ||
+        stableJson(jsonValue(current.model_routing_json)) !==
+          stableJson(run.modelRouting ?? null) ||
+        stableJson(jsonValue(current.role_guidance_json)) !==
+          stableJson(run.roleGuidance ?? null) ||
+        toDate(current.created_at).getTime() !== run.createdAt.getTime()
+      )
+        throw new AgentRunPersistenceConflictError(run.id);
+      if (current.status === run.status) {
+        const sameMutableState =
+          current.worktree_path === (run.worktreePath ?? null) &&
+          stableJson(jsonValue(current.result_json)) ===
+            stableJson(run.result ?? null) &&
+          stableJson(jsonValue(current.error_json)) ===
+            stableJson(run.error ?? null) &&
+          (current.started_at === null
+            ? undefined
+            : toDate(current.started_at).getTime()) ===
+            (run.startedAt?.getTime() ?? undefined) &&
+          (current.completed_at === null
+            ? undefined
+            : toDate(current.completed_at).getTime()) ===
+            (run.completedAt?.getTime() ?? undefined) &&
+          stableJson(jsonValue(current.execution_json)) ===
+            stableJson(run.execution ?? null) &&
+          toDate(current.updated_at).getTime() === run.updatedAt.getTime();
+        if (sameMutableState) return;
+        throw new AgentRunPersistenceConflictError(run.id);
+      }
+      if (
+        !canPersistAgentRunTransition(current.status, run.status) ||
+        toDate(current.updated_at).getTime() > run.updatedAt.getTime()
+      )
+        throw new AgentRunPersistenceConflictError(run.id);
+      const [updated] = await this.database.query<{ id: string }>(
+        `UPDATE core.agent_run AS current
+         SET status = $2, worktree_path = $3, result_json = $4::jsonb,
+             error_json = $5::jsonb, started_at = $6, completed_at = $7,
+             updated_at = $8, execution_json = $9::jsonb
+         WHERE current.id = $1 AND current.status = $10 AND current.updated_at = $11
+         RETURNING current.id`,
+        [
+          run.id,
+          run.status,
+          run.worktreePath ?? null,
+          run.result === undefined ? null : run.result,
+          run.error === undefined ? null : run.error,
+          run.startedAt ?? null,
+          run.completedAt ?? null,
+          run.updatedAt,
+          run.execution === undefined ? null : run.execution,
+          current.status,
+          current.updated_at,
+        ],
+      );
+      if (updated === undefined)
+        throw new AgentRunPersistenceConflictError(run.id);
+      await this.appendRunEvent(run, current.status);
     });
   }
 
@@ -497,13 +583,100 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
     return row?.owner ?? null;
   }
 
+  /**
+   * Authority lock order: task → agent → role → task_lock → pipeline_run →
+   * pipeline_stage_run → agent_run. The task lock also closes the negative
+   * pipeline case: pipeline/task_lock inserts must take a FK key-share lock on
+   * this task and therefore cannot create a phantom authority while this
+   * transaction is deciding admission/result acceptance. Future PostgreSQL
+   * pipeline writers must use this same task-scoped boundary.
+   */
+  private async lockAuthorityRows(
+    projectId: string,
+    taskId: string,
+    agentId: string,
+  ): Promise<void> {
+    await this.database.query(
+      `SELECT task.id FROM core.task AS task
+       JOIN core.project AS project
+         ON project.id = task.project_id AND project.tenant_id = $3
+       WHERE task.id = $1 AND task.project_id = $2
+       FOR UPDATE OF task`,
+      [taskId, projectId, this.tenantId],
+    );
+    const [agent] = await this.database.query<{ role_id: string }>(
+      `SELECT agent.role_id FROM core.agent AS agent
+       JOIN core.project AS project
+         ON project.id = agent.project_id AND project.tenant_id = $3
+       WHERE agent.id = $1 AND agent.project_id = $2
+       FOR UPDATE OF agent`,
+      [agentId, projectId, this.tenantId],
+    );
+    if (agent !== undefined)
+      await this.database.query(
+        `SELECT role.id FROM core.role AS role
+         JOIN core.project AS project
+           ON project.id = role.project_id AND project.tenant_id = $3
+         WHERE role.id = $1 AND role.project_id = $2
+         FOR UPDATE OF role`,
+        [agent.role_id, projectId, this.tenantId],
+      );
+    await this.database.query(
+      `SELECT lock.task_id FROM core.task_lock AS lock
+       JOIN core.project AS project
+         ON project.id = lock.project_id AND project.tenant_id = $3
+       WHERE lock.task_id = $1 AND lock.project_id = $2
+       FOR UPDATE OF lock`,
+      [taskId, projectId, this.tenantId],
+    );
+    await this.database.query(
+      `SELECT pipeline.id FROM core.pipeline_run AS pipeline
+       JOIN core.project AS project
+         ON project.id = pipeline.project_id AND project.tenant_id = $2
+       WHERE pipeline.project_id = $1 AND pipeline.task_id = $3
+       ORDER BY pipeline.id
+       FOR UPDATE OF pipeline`,
+      [projectId, this.tenantId, taskId],
+    );
+    await this.database.query(
+      `SELECT stage.id FROM core.pipeline_stage_run AS stage
+       JOIN core.pipeline_run AS pipeline
+         ON pipeline.id = stage.pipeline_run_id
+        AND pipeline.project_id = stage.project_id
+       JOIN core.project AS project
+         ON project.id = stage.project_id AND project.tenant_id = $2
+       WHERE stage.project_id = $1 AND pipeline.task_id = $3
+       ORDER BY pipeline.id, stage.stage_index, stage.id
+       FOR UPDATE OF stage`,
+      [projectId, this.tenantId, taskId],
+    );
+  }
   async admitQueuedRun(input: RunAdmission): Promise<AgentRun | null> {
     return this.database.runInTransaction(async () => {
+      const [candidate] = await this.database.query<{
+        project_id: string;
+        task_id: string;
+        agent_id: string;
+      }>(
+        `SELECT run.project_id, run.task_id, run.agent_id
+         FROM core.agent_run AS run
+         JOIN core.project AS project
+           ON project.id = run.project_id AND project.tenant_id = $2
+         WHERE run.id = $1 AND run.status = 'queued'`,
+        [input.runId, this.tenantId],
+      );
+      if (candidate === undefined) return null;
+      await this.lockAuthorityRows(
+        candidate.project_id,
+        candidate.task_id,
+        candidate.agent_id,
+      );
       const [current] = await this.database.query<RunRow>(
-        `
-        SELECT ${runColumns} FROM core.agent_run AS run
-        JOIN core.project AS project ON project.id = run.project_id AND project.tenant_id = $2
-        WHERE run.id = $1 AND run.status = 'queued' FOR UPDATE`,
+        `SELECT ${runColumns} FROM core.agent_run AS run
+         JOIN core.project AS project
+           ON project.id = run.project_id AND project.tenant_id = $2
+         WHERE run.id = $1 AND run.status = 'queued'
+         FOR UPDATE OF run`,
         [input.runId, this.tenantId],
       );
       if (current === undefined) return null;
@@ -513,7 +686,7 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
         const [valid] = await this.database.query<{ id: string }>(
           `
           SELECT run.id FROM core.agent_run AS run
-          JOIN core.project AS project ON project.id = run.project_id AND project.tenant_id = $7
+          JOIN core.project AS project ON project.id = run.project_id AND project.tenant_id = $12
           JOIN core.task AS task ON task.id = run.task_id AND task.project_id = run.project_id
           JOIN core.agent AS agent ON agent.id = run.agent_id AND agent.project_id = run.project_id
           JOIN core.role AS role ON role.id = agent.role_id AND role.project_id = agent.project_id
@@ -521,8 +694,10 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
           WHERE run.id = $1 AND run.status = 'queued'
             AND task.status = $2 AND task.updated_at = $3
             AND agent.enabled AND agent.role_id = $4 AND agent.updated_at = $5
-            AND lock.expires_at > $6 AND (
-              ($8::text IS NULL AND run.pipeline_run_id IS NULL AND run.pipeline_stage_run_id IS NULL
+            AND role.id = $6 AND role.role_key = $7 AND role.version = $8
+            AND role.limits_json = $9::jsonb AND role.updated_at = $10
+            AND lock.expires_at > $11 AND (
+              ($13::text IS NULL AND run.pipeline_run_id IS NULL AND run.pipeline_stage_run_id IS NULL
                 AND NOT EXISTS (SELECT 1 FROM core.pipeline_run AS p
                   WHERE p.project_id = run.project_id AND p.task_id = run.task_id AND p.status = 'active'))
               OR EXISTS (
@@ -530,17 +705,26 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
                 JOIN core.pipeline_stage_run AS s
                   ON s.pipeline_run_id = p.id AND s.project_id = p.project_id
                  AND s.id = run.pipeline_stage_run_id AND s.stage_index = p.current_stage_index
-                WHERE p.id = $8 AND p.project_id = run.project_id AND p.task_id = run.task_id
-                  AND p.status = 'active' AND p.version = $9 AND s.id = $10
+                WHERE p.id = $13 AND p.project_id = run.project_id AND p.task_id = run.task_id
+                  AND p.status = 'active' AND p.version = $14 AND s.id = $15
                   AND s.status = 'active' AND s.assigned_agent_id = run.agent_id
                   AND s.role_id = role.role_key AND run.pipeline_run_id = p.id))
-          FOR UPDATE OF run`,
+          `,
           [
             input.runId,
             authority.taskStatus,
             authority.taskUpdatedAt,
             authority.agentRoleId,
             authority.agentUpdatedAt,
+            authority.roleId,
+            authority.roleKey,
+            authority.roleVersion,
+            {
+              maxIterations: authority.roleLimits.maxIterations,
+              maxCostMicros: authority.roleLimits.maxCostMicros.toString(),
+              timeoutSeconds: authority.roleLimits.timeoutSeconds,
+            },
+            authority.roleUpdatedAt,
             input.now,
             this.tenantId,
             authority.pipelineId,
@@ -620,6 +804,13 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
       timeoutSeconds: fence.roleLimits.timeoutSeconds,
     };
     return this.database.runInTransaction(async () => {
+      // Lock the entire fence before evaluating it; UPDATE rechecks only after
+      // every authority writer in the documented order has been serialized.
+      await this.lockAuthorityRows(
+        fence.projectId,
+        fence.taskId,
+        fence.agentId,
+      );
       const [updated] = await this.database.query<{ id: string }>(
         `
         UPDATE core.agent_run AS run

@@ -61,6 +61,11 @@ and RLS, while the generic PostgreSQL migration set must not require
 11. RLS, authorization helpers, API views/RPCs, Supabase Auth binding, and
     Runtime service-principal behavior are follow-up slices. This ADR does not
     claim tenant isolation is complete merely because tenant tables exist.
+12. A tenant-bound `PostgresAuditEventRepository` accepts only project-scoped
+    events whose project belongs to its bound tenant. Host-global audit events
+    require the separate `PostgresHostAuditEventRepository` host composition
+    path and remain `project_id IS NULL`; they are not assigned a fake tenant or
+    project and are excluded from project-scoped authenticated RLS reads.
 
 ## Consequences
 
