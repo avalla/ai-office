@@ -401,7 +401,8 @@ test("upgrading keeps pre-routing runs explicitly unrecorded and executable with
     "0031_cost_event_charge_basis.sql",
     "0032_job_outbox.sql",
     "0033_role_execution_guidance.sql",
-      "0034_exact_pipeline_stage_bindings.sql",
+    "0034_exact_pipeline_stage_bindings.sql",
+    "0035_pipeline_manifest_revision_tuple.sql",
   ]);
   expect(migrate(f.db, migrations).applied).toEqual([]);
   const repository = new SqliteAgentRuntimeRepository(f.db);

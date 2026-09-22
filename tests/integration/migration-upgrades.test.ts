@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0034_exact_pipeline_stage_bindings.sql",
+        "0035_pipeline_manifest_revision_tuple.sql",
       );
       expect(
         database
@@ -121,6 +121,7 @@ describe("migration upgrades", () => {
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
+      "0035_pipeline_manifest_revision_tuple.sql",
     ]);
     expect(
       database
@@ -191,6 +192,7 @@ describe("migration upgrades", () => {
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
+      "0035_pipeline_manifest_revision_tuple.sql",
     ]);
     expect(
       database
@@ -341,6 +343,7 @@ describe("migration upgrades", () => {
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
+      "0035_pipeline_manifest_revision_tuple.sql",
     ]);
     expect(
       database
@@ -395,6 +398,7 @@ describe("migration upgrades", () => {
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
+      "0035_pipeline_manifest_revision_tuple.sql",
     ]);
     database
       .prepare(
@@ -723,6 +727,7 @@ describe("migration upgrades", () => {
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
+      "0035_pipeline_manifest_revision_tuple.sql",
     ]);
     expect(
       upgraded
@@ -779,6 +784,7 @@ describe("migration upgrades", () => {
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
+      "0035_pipeline_manifest_revision_tuple.sql",
     ]);
     expect(
       database

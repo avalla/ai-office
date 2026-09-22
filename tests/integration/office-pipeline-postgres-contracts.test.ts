@@ -253,6 +253,69 @@ describe.skipIf(connectionString === undefined)(
       }
     });
 
+    test("keeps legacy projection rows compatible with worker-fence updates", async () => {
+      const fixture = await createFixture();
+      const projectId = "pipeline-project-legacy";
+      const taskId = "pipeline-project-legacy-task";
+      const stageId = "pipeline-project-legacy-stage";
+      const now = new Date("2026-09-22T00:00:00.000Z");
+      try {
+        await fixture.projects.save(
+          Project.create({ id: projectId, name: projectId, now }),
+        );
+        await fixture.tasks.save(
+          Task.create({ id: taskId, projectId, title: "Legacy", now }),
+        );
+        await fixture.prepareAgents?.(projectId);
+        await database.query(
+          `INSERT INTO core.pipeline_run(
+             id, project_id, task_id, status, current_stage_index, version,
+             created_at, updated_at
+           ) VALUES ($1, $2, $3, 'active', 0, 1, $4, $4)`,
+          ["pipeline-project-legacy-run", projectId, taskId, now],
+        );
+        await database.query(
+          `INSERT INTO core.pipeline_stage_run(
+             id, pipeline_run_id, project_id, stage_id, stage_index, role_id,
+             status, assigned_agent_id
+           ) VALUES ($1, $2, $3, 'build', 0, 'developer', 'active', $4)`,
+          [
+            stageId,
+            "pipeline-project-legacy-run",
+            projectId,
+            `${projectId}-agent-1`,
+          ],
+        );
+
+        await expect(
+          database.query(
+            "UPDATE core.pipeline_run SET current_stage_index = 1, version = 2, updated_at = $2 WHERE id = $1",
+            ["pipeline-project-legacy-run", new Date(now.getTime() + 1)],
+          ),
+        ).resolves.toBeDefined();
+        await expect(
+          database.query(
+            "UPDATE core.pipeline_stage_run SET assigned_agent_id = NULL WHERE id = $1",
+            [stageId],
+          ),
+        ).resolves.toBeDefined();
+        await expect(
+          database.query(
+            "SELECT id, current_stage_index, version FROM core.pipeline_run WHERE id = $1",
+            ["pipeline-project-legacy-run"],
+          ),
+        ).resolves.toEqual([
+          {
+            id: "pipeline-project-legacy-run",
+            current_stage_index: 1,
+            version: 2,
+          },
+        ]);
+      } finally {
+        await fixture.close();
+      }
+    });
+
     test("rolls back the whole run when a stage insert fails", async () => {
       const fixture = await createFixture();
       const now = new Date("2026-09-22T00:00:00.000Z");

@@ -23,6 +23,7 @@ CREATE TABLE core.office_manifest_revision (
   applied_at timestamptz NOT NULL,
   UNIQUE (id, project_id),
   UNIQUE (project_id, revision),
+  UNIQUE (id, project_id, revision),
   CHECK (manifest_json #>> '{provenance,host}' = source_host),
   CHECK (manifest_json #>> '{provenance,skill}' = source_skill),
   CHECK (manifest_json #>> '{provenance,skillVersion}' = source_skill_version)
@@ -53,8 +54,8 @@ ALTER TABLE core.pipeline_run
   ADD COLUMN completed_at timestamptz,
   ADD COLUMN cancelled_at timestamptz,
   ADD CONSTRAINT pipeline_run_manifest_same_project_fk
-    FOREIGN KEY (manifest_revision_id, project_id)
-    REFERENCES core.office_manifest_revision(id, project_id),
+    FOREIGN KEY (manifest_revision_id, project_id, manifest_revision)
+    REFERENCES core.office_manifest_revision(id, project_id, revision),
   ADD CONSTRAINT pipeline_run_authoritative_shape CHECK (
     (
       manifest_revision_id IS NULL
@@ -151,6 +152,28 @@ CREATE TRIGGER pipeline_run_version_transition
 BEFORE UPDATE ON core.pipeline_run
 FOR EACH ROW EXECUTE FUNCTION core.enforce_pipeline_run_version_transition();
 
+CREATE OR REPLACE FUNCTION core.enforce_pipeline_run_status_transition()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.status IS DISTINCT FROM OLD.status
+     AND OLD.manifest_revision_id IS NOT NULL
+     AND NOT (
+       OLD.status = 'active'
+       AND NEW.status IN ('completed', 'cancelled')
+     ) THEN
+    RAISE EXCEPTION 'invalid pipeline run status transition'
+      USING ERRCODE = '55000', CONSTRAINT = 'pipeline_run_status_transition';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER pipeline_run_status_transition
+BEFORE UPDATE OF status ON core.pipeline_run
+FOR EACH ROW EXECUTE FUNCTION core.enforce_pipeline_run_status_transition();
+
 CREATE OR REPLACE FUNCTION core.prevent_pipeline_stage_identity_mutation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -173,6 +196,106 @@ CREATE TRIGGER pipeline_stage_run_identity_immutable
 BEFORE UPDATE OF id, pipeline_run_id, project_id, stage_id, stage_index, role_id
 ON core.pipeline_stage_run
 FOR EACH ROW EXECUTE FUNCTION core.prevent_pipeline_stage_identity_mutation();
+
+CREATE OR REPLACE FUNCTION core.enforce_pipeline_stage_status_transition()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.status IS DISTINCT FROM OLD.status
+     AND EXISTS (
+       SELECT 1
+       FROM core.pipeline_run AS pipeline
+       WHERE pipeline.id = NEW.pipeline_run_id
+         AND pipeline.project_id = NEW.project_id
+         AND pipeline.manifest_revision_id IS NOT NULL
+     )
+     AND NOT (
+       (OLD.status = 'pending' AND NEW.status IN ('active', 'cancelled'))
+       OR (OLD.status = 'active' AND NEW.status IN (
+         'awaiting_approval', 'completed', 'cancelled'
+       ))
+       OR (OLD.status = 'awaiting_approval' AND NEW.status IN (
+         'completed', 'cancelled'
+       ))
+     ) THEN
+    RAISE EXCEPTION 'invalid pipeline stage status transition'
+      USING ERRCODE = '55000', CONSTRAINT = 'pipeline_stage_run_status_transition';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER pipeline_stage_run_status_transition
+BEFORE UPDATE OF status ON core.pipeline_stage_run
+FOR EACH ROW EXECUTE FUNCTION core.enforce_pipeline_stage_status_transition();
+
+CREATE OR REPLACE FUNCTION core.enforce_pipeline_stage_assignment_once()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF (
+    NEW.assigned_agent_id IS DISTINCT FROM OLD.assigned_agent_id
+    OR NEW.assigned_at IS DISTINCT FROM OLD.assigned_at
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM core.pipeline_run AS pipeline
+    WHERE pipeline.id = NEW.pipeline_run_id
+      AND pipeline.project_id = NEW.project_id
+      AND pipeline.manifest_revision_id IS NOT NULL
+  )
+  AND (
+    OLD.assigned_agent_id IS NOT NULL
+    OR NEW.assigned_agent_id IS NULL
+    OR OLD.status <> 'active'
+  ) THEN
+    RAISE EXCEPTION 'pipeline stage assignment is immutable'
+      USING ERRCODE = '55000', CONSTRAINT = 'pipeline_stage_run_assignment_once';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER pipeline_stage_run_assignment_once
+BEFORE UPDATE OF assigned_agent_id, assigned_at ON core.pipeline_stage_run
+FOR EACH ROW EXECUTE FUNCTION core.enforce_pipeline_stage_assignment_once();
+
+CREATE OR REPLACE FUNCTION core.enforce_pipeline_stage_approval_once()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF (
+    NEW.approved_by IS DISTINCT FROM OLD.approved_by
+    OR NEW.approval_decision IS DISTINCT FROM OLD.approval_decision
+    OR NEW.approval_rationale IS DISTINCT FROM OLD.approval_rationale
+    OR NEW.approved_at IS DISTINCT FROM OLD.approved_at
+  )
+  AND EXISTS (
+    SELECT 1
+    FROM core.pipeline_run AS pipeline
+    WHERE pipeline.id = NEW.pipeline_run_id
+      AND pipeline.project_id = NEW.project_id
+      AND pipeline.manifest_revision_id IS NOT NULL
+  )
+  AND (
+    OLD.approved_by IS NOT NULL
+    OR NEW.approved_by IS NULL
+    OR OLD.status <> 'awaiting_approval'
+  ) THEN
+    RAISE EXCEPTION 'pipeline stage approval is immutable'
+      USING ERRCODE = '55000', CONSTRAINT = 'pipeline_stage_run_approval_once';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER pipeline_stage_run_approval_once
+BEFORE UPDATE OF approved_by, approval_decision, approval_rationale, approved_at
+ON core.pipeline_stage_run
+FOR EACH ROW EXECUTE FUNCTION core.enforce_pipeline_stage_approval_once();
 
 CREATE OR REPLACE FUNCTION core.enforce_pipeline_stage_authoritative_shape()
 RETURNS trigger

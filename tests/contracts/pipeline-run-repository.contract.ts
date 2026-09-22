@@ -164,6 +164,27 @@ export function definePipelineRunRepositoryContracts(
       }
     });
 
+    test("rejects a pinned manifest revision number mismatch", async () => {
+      const fixture = await create();
+      try {
+        const run = await seed(
+          fixture,
+          "manifest-project-tuple",
+          "manifest-project-tuple-task",
+          "manifest-project-tuple",
+        );
+        const mismatched = PipelineRun.restore({
+          ...run.snapshot(),
+          manifestRevision: 2,
+        });
+        await expect(
+          fixture.pipelines.insert(mismatched),
+        ).rejects.toBeDefined();
+      } finally {
+        await fixture.close();
+      }
+    });
+
     test("lists deterministically and isolates projects", async () => {
       const fixture = await create();
       try {

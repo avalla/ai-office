@@ -410,6 +410,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
+      "0035_pipeline_manifest_revision_tuple.sql",
     ]);
     expect(
       database
@@ -607,6 +608,190 @@ describe("pipeline enforcement persistence and authorization", () => {
         )
         .get()?.count,
     ).toBe(1);
+    context.database.close();
+  });
+
+  test("enforces pipeline persistence transition and one-shot invariants", async () => {
+    const context = await fixture();
+    const timestamp = (offset: number): string =>
+      new Date(now.getTime() + offset).toISOString();
+    const insertTask = async (id: string): Promise<void> => {
+      await context.tasks.save(
+        Task.create({ id, projectId: "project", title: id, now }),
+      );
+    };
+    const insertRun = async (
+      id: string,
+      status: "active" | "completed" | "cancelled" = "active",
+      manifestRevision = 1,
+    ): Promise<void> => {
+      await insertTask(`${id}-task`);
+      context.database
+        .prepare(
+          `INSERT INTO pipeline_run(
+             id, project_id, task_id, manifest_revision_id, manifest_revision,
+             definition_json, status, current_stage_index, started_by, version,
+             created_at, updated_at, completed_at, cancelled_at
+           ) VALUES (?, 'project', ?, 'manifest-1', ?, '{}', ?, 0, 'runtime', 1, ?, ?, ?, ?)`,
+        )
+        .run(
+          id,
+          `${id}-task`,
+          manifestRevision,
+          status,
+          timestamp(0),
+          timestamp(0),
+          status === "completed" ? timestamp(1) : null,
+          status === "cancelled" ? timestamp(1) : null,
+        );
+    };
+    const insertStage = (
+      id: string,
+      runId: string,
+      status:
+        "pending" | "active" | "awaiting_approval" | "completed" | "cancelled",
+    ): void => {
+      context.database
+        .prepare(
+          `INSERT INTO pipeline_stage_run(
+             id, pipeline_run_id, project_id, stage_id, stage_index, role_id,
+             status, assigned_agent_id, assigned_at, completed_at,
+             approved_by, approval_decision, approval_rationale, approved_at
+           ) VALUES (?, ?, 'project', ?, 0, 'architect', ?, NULL, NULL, ?, NULL, NULL, NULL, NULL)`,
+        )
+        .run(
+          id,
+          runId,
+          id,
+          status,
+          status === "completed" ? timestamp(1) : null,
+        );
+    };
+
+    await insertRun("completed-to-active", "completed");
+    expect(() =>
+      context.database
+        .prepare(
+          "UPDATE pipeline_run SET status='active', version=2, updated_at=?, completed_at=NULL WHERE id=?",
+        )
+        .run(timestamp(2), "completed-to-active"),
+    ).toThrow();
+
+    await insertRun("cancelled-to-active", "cancelled");
+    expect(() =>
+      context.database
+        .prepare(
+          "UPDATE pipeline_run SET status='active', version=2, updated_at=?, cancelled_at=NULL WHERE id=?",
+        )
+        .run(timestamp(2), "cancelled-to-active"),
+    ).toThrow();
+
+    await insertRun("completed-to-cancelled", "completed");
+    expect(() =>
+      context.database
+        .prepare(
+          "UPDATE pipeline_run SET status='cancelled', version=2, updated_at=?, completed_at=NULL, cancelled_at=? WHERE id=?",
+        )
+        .run(timestamp(2), timestamp(2), "completed-to-cancelled"),
+    ).toThrow();
+
+    for (const [runId, stageStatus, nextStatus] of [
+      ["stage-completed", "completed", "active"],
+      ["stage-cancelled", "cancelled", "active"],
+      ["stage-awaiting", "awaiting_approval", "pending"],
+      ["stage-active", "active", "pending"],
+    ] as const) {
+      await insertRun(runId);
+      insertStage(`${runId}-row`, runId, stageStatus);
+      expect(() =>
+        context.database
+          .prepare("UPDATE pipeline_stage_run SET status=? WHERE id=?")
+          .run(nextStatus, `${runId}-row`),
+      ).toThrow();
+    }
+
+    await insertRun("assignment-run");
+    insertStage("assignment-stage", "assignment-run", "active");
+    expect(() =>
+      context.database
+        .prepare(
+          "UPDATE pipeline_stage_run SET assigned_agent_id=?, assigned_at=? WHERE id=?",
+        )
+        .run("architect-agent", timestamp(1), "assignment-stage"),
+    ).not.toThrow();
+    expect(() =>
+      context.database
+        .prepare(
+          "UPDATE pipeline_stage_run SET assigned_agent_id=?, assigned_at=? WHERE id=?",
+        )
+        .run("developer-agent", timestamp(2), "assignment-stage"),
+    ).toThrow();
+    expect(() =>
+      context.database
+        .prepare(
+          "UPDATE pipeline_stage_run SET assigned_agent_id=NULL, assigned_at=NULL WHERE id=?",
+        )
+        .run("assignment-stage"),
+    ).toThrow();
+    expect(() =>
+      context.database
+        .prepare("UPDATE pipeline_stage_run SET assigned_at=? WHERE id=?")
+        .run(timestamp(2), "assignment-stage"),
+    ).toThrow();
+
+    await insertRun("approval-run");
+    insertStage("approval-stage", "approval-run", "awaiting_approval");
+    expect(() =>
+      context.database
+        .prepare(
+          `UPDATE pipeline_stage_run
+           SET status='completed', completed_at=?, approved_by=?,
+               approval_decision='approved', approval_rationale=?, approved_at=?
+           WHERE id=?`,
+        )
+        .run(
+          timestamp(1),
+          "reviewer",
+          "Looks good",
+          timestamp(1),
+          "approval-stage",
+        ),
+    ).not.toThrow();
+    expect(() =>
+      context.database
+        .prepare("UPDATE pipeline_stage_run SET approved_by=? WHERE id=?")
+        .run("replacement", "approval-stage"),
+    ).toThrow();
+    expect(() =>
+      context.database
+        .prepare(
+          "UPDATE pipeline_stage_run SET approval_decision='rejected' WHERE id=?",
+        )
+        .run("approval-stage"),
+    ).toThrow();
+    expect(() =>
+      context.database
+        .prepare(
+          `UPDATE pipeline_stage_run
+           SET approved_by=NULL, approval_decision=NULL,
+               approval_rationale=NULL, approved_at=NULL
+           WHERE id=?`,
+        )
+        .run("approval-stage"),
+    ).toThrow();
+
+    expect(() =>
+      context.database
+        .prepare(
+          "INSERT INTO pipeline_run(id, project_id, task_id, manifest_revision_id, manifest_revision, definition_json, status, current_stage_index, started_by, version, created_at, updated_at) VALUES (?, 'project', ?, 'manifest-1', 2, '{}', 'active', 0, 'runtime', 1, ?, ?)",
+        )
+        .run(
+          "manifest-tuple-mismatch",
+          "completed-to-active-task",
+          timestamp(0),
+          timestamp(0),
+        ),
+    ).toThrow();
     context.database.close();
   });
 
