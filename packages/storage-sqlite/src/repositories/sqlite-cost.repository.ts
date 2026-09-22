@@ -403,7 +403,9 @@ export class SqliteCostRepository implements CostRepository {
         const reservationIds =
           v.reservationIds ??
           (v.reservationId === undefined ? [] : [v.reservationId]);
-        const primaryReservationId = v.reservationId ?? reservationIds[0];
+        // `reservationId` is the explicit compatibility primary. Co-reservation
+        // order is intentionally never used to infer its meaning.
+        const primaryReservationId = v.reservationId;
         let reserved = 0n;
         if (reservationIds.length > 0) {
           for (const reservationId of reservationIds) {

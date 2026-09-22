@@ -207,11 +207,17 @@ export class MeteredLlmGateway {
           now.getTime() + (context.reservationTtlMs ?? 15 * 60_000),
         ),
       }));
+    const primaryReservationId =
+      budgetScopeType === undefined || budgetScopeId === undefined
+        ? undefined
+        : reservationInputs.find(
+            (input) =>
+              input.scopeType === budgetScopeType &&
+              input.scopeId === budgetScopeId,
+          )?.id;
+    if (reservationInputs.length > 0 && primaryReservationId === undefined)
+      throw new BudgetNotFoundError();
     if (reservationInputs.length > 0) {
-      if (budgetScopeType === undefined) {
-        budgetScopeType = reservationInputs[0]!.scopeType;
-        budgetScopeId = reservationInputs[0]!.scopeId;
-      }
       if (
         reservationInputs.length > 1 &&
         this.costs.authorizeAndReserveMany === undefined
@@ -239,6 +245,11 @@ export class MeteredLlmGateway {
       }
       reservationIds.push(...reservationInputs.map((input) => input.id));
     }
+    const reservationFields = () => {
+      if (reservationIds.length === 0) return {};
+      if (primaryReservationId === undefined) throw new BudgetNotFoundError();
+      return { reservationId: primaryReservationId, reservationIds };
+    };
     const releaseReservations = async () =>
       this.releaseReservations(reservationIds);
     let received: { response: ModelResponse | null } | undefined;
@@ -273,9 +284,7 @@ export class MeteredLlmGateway {
           : { providerRequestId: response.providerRequestId }),
         usage: response.usage,
         pricingVersionId: pricing.id,
-        ...(reservationIds.length === 0
-          ? {}
-          : { reservationId: reservationIds[0], reservationIds }),
+        ...reservationFields(),
         estimated,
         actual,
         chargeBasis: "reported_usage",
@@ -318,6 +327,7 @@ export class MeteredLlmGateway {
           envelope,
           currency,
           reservationIds,
+          primaryReservationId,
         );
       } catch {
         // The original failure is what the caller must see.
@@ -346,6 +356,7 @@ export class MeteredLlmGateway {
     envelope: { pricing: PricingVersion; micros: bigint },
     currency: Currency,
     reservationIds: readonly string[],
+    primaryReservationId: string | undefined,
   ): Promise<void> {
     // Only well-formed reported values are kept; anything else is recorded as
     // unknown (the configured identity and zero usage), never guessed.
@@ -367,6 +378,14 @@ export class MeteredLlmGateway {
     }
     const providerRequestId = text(response?.providerRequestId);
     const charge = { micros: envelope.micros, currency };
+    const reservationFields =
+      reservationIds.length === 0
+        ? {}
+        : primaryReservationId === undefined
+          ? (() => {
+              throw new BudgetNotFoundError();
+            })()
+          : { reservationId: primaryReservationId, reservationIds };
     const recording = await this.costs.recordUsageAndCost({
       usageId: this.ids.generate(),
       costEventId: this.ids.generate(),
@@ -377,9 +396,7 @@ export class MeteredLlmGateway {
       ...(providerRequestId === undefined ? {} : { providerRequestId }),
       usage,
       pricingVersionId: envelope.pricing.id,
-      ...(reservationIds.length === 0
-        ? {}
-        : { reservationId: reservationIds[0], reservationIds }),
+      ...reservationFields,
       estimated: charge,
       actual: charge,
       chargeBasis: "reserved_envelope",

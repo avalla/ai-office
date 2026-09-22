@@ -191,6 +191,9 @@ export async function bootstrap(
         routing.state = next;
         return next;
       },
+      restore: (state: ModelRoutingState) => {
+        routing.state = state;
+      },
       ...(modelRoutingFile === undefined ? {} : { file: modelRoutingFile }),
       providers:
         options.modelProviders ??

@@ -43,6 +43,8 @@ export interface CommandContext extends ProjectStorage {
   ) => ModelRoutingState;
   /** Operator-only host reload; absent for non-daemon direct composition. */
   reloadModelRouting?: () => ModelRoutingState;
+  /** Restores a prior snapshot when an audited routing mutation fails. */
+  restoreModelRouting?: (state: ModelRoutingState) => void;
   /** Selected host-local routing file; never emitted in audit/read models. */
   modelRoutingFile?: string;
   modelProviders: ModelProviderCatalog;

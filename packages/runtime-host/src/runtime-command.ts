@@ -309,6 +309,8 @@ export interface RuntimeCommandOptions {
   ) => ModelRoutingState;
   /** Atomically replaces the current routing snapshot for future schedules. */
   reloadModelRouting?: () => ModelRoutingState;
+  /** Restores a prior snapshot when an audited routing mutation fails. */
+  restoreModelRouting?: (state: ModelRoutingState) => void;
   /** Host-local file used by operator model:override. */
   modelRoutingFile?: string;
   modelProviders?: ModelProviderCatalog;
@@ -576,6 +578,9 @@ export async function executeRuntimeCommand(
       ...(options.reloadModelRouting === undefined
         ? {}
         : { reloadModelRouting: options.reloadModelRouting }),
+      ...(options.restoreModelRouting === undefined
+        ? {}
+        : { restoreModelRouting: options.restoreModelRouting }),
       ...(options.modelRoutingFile === undefined
         ? {}
         : { modelRoutingFile: options.modelRoutingFile }),

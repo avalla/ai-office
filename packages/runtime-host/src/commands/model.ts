@@ -2,6 +2,7 @@ import {
   DescribeModelRouting,
   type ModelRoutingReport,
 } from "@ai-office/application/model-routing/describe-model-routing.ts";
+import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
 import { dirname } from "node:path";
 import {
   mkdirSync,
@@ -93,6 +94,54 @@ function writeRoutingDocument(
   }
 }
 
+function readRoutingFileBytes(path: string): Uint8Array | null {
+  try {
+    return new Uint8Array(readFileSync(path));
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      (error as { code?: unknown }).code === "ENOENT"
+    )
+      return null;
+    throw new CliUsageError("Model routing file cannot be read");
+  }
+}
+
+function restoreRoutingFile(
+  path: string,
+  bytes: Uint8Array | null,
+  token: string,
+): void {
+  const temporary = path + "." + token + ".rollback.tmp";
+  try {
+    if (bytes === null) {
+      try {
+        unlinkSync(path);
+      } catch (error) {
+        if (
+          typeof error !== "object" ||
+          error === null ||
+          (error as { code?: unknown }).code !== "ENOENT"
+        )
+          throw error;
+      }
+      return;
+    }
+    writeFileSync(temporary, bytes, { mode: 0o600 });
+    renameSync(temporary, path);
+  } catch {
+    try {
+      unlinkSync(temporary);
+    } catch {
+      // Preserve the mutation failure without exposing the host-local path.
+    }
+    throw new CliUsageError(
+      "Model routing mutation could not be rolled back safely",
+    );
+  }
+}
+
 function routingOverrideDocument(
   document: Record<string, unknown>,
   scope: "host" | "project",
@@ -154,6 +203,7 @@ async function overrideModel(
   if (
     context.modelRoutingLoader === undefined ||
     context.reloadModelRouting === undefined ||
+    context.restoreModelRouting === undefined ||
     context.modelRoutingFile === undefined
   )
     throw new CliUsageError(
@@ -171,7 +221,8 @@ async function overrideModel(
   if (scope === "project") {
     if (projectId === undefined)
       throw new CliUsageError("--project is required for project scope");
-    await context.projects.findById(projectId);
+    const project = await context.projects.findById(projectId);
+    if (project === null) throw new ProjectNotFoundError(projectId);
   } else if (projectId !== undefined)
     throw new CliUsageError("--project is only valid with project scope");
   const agent = requiredOption(parsed, "agent");
@@ -192,6 +243,8 @@ async function overrideModel(
           ),
         }
       : { profile };
+  const previousRouting = context.modelRouting;
+  const previousFile = readRoutingFileBytes(context.modelRoutingFile);
   const document = routingOverrideDocument(
     routingDocument(context.modelRoutingFile),
     scope,
@@ -209,42 +262,58 @@ async function overrideModel(
     document,
     context.ids.generate(),
   );
-  const reloaded = context.reloadModelRouting();
-  await context.audit.execute({
-    eventType: "model.routing.override",
-    actorType: "daemon",
-    actorId: context.principal.id,
-    aggregateType: "model_routing",
-    ...(scope === "host"
-      ? { aggregateId: "host" }
-      : { aggregateId: projectId! }),
-    ...(scope === "project" ? { projectId: projectId! } : {}),
-    payload: {
-      scope,
+  try {
+    const reloaded = context.reloadModelRouting();
+    await context.audit.execute({
+      eventType: "model.routing.override",
+      actorType: "cli",
+      actorId: context.principal.id,
+      aggregateType: "model_routing",
+      ...(scope === "host"
+        ? { aggregateId: "host" }
+        : { aggregateId: projectId! }),
       ...(scope === "project" ? { projectId: projectId! } : {}),
+      payload: {
+        scope,
+        ...(scope === "project" ? { projectId: projectId! } : {}),
+        agent,
+        ...target,
+        routingStatus: reloaded.status,
+      },
+    });
+    const reloadedSuccessfully = reloaded.status !== "misconfigured";
+    const result = {
+      schemaVersion: 1,
+      scope,
+      ...(projectId === undefined ? {} : { projectId }),
       agent,
       ...target,
       routingStatus: reloaded.status,
-    },
-  });
-  const reloadedSuccessfully = reloaded.status !== "misconfigured";
-  const result = {
-    schemaVersion: 1,
-    scope,
-    ...(projectId === undefined ? {} : { projectId }),
-    agent,
-    ...target,
-    routingStatus: reloaded.status,
-    reloaded: reloadedSuccessfully,
-  };
-  context.io.stdout(
-    parsed.flags.has("json")
-      ? JSON.stringify(result)
-      : reloadedSuccessfully
-        ? "Model routing override applied for " + agent + "."
-        : "Model routing override was written but reload failed: misconfigured.",
-  );
-  return reloadedSuccessfully ? 0 : 1;
+      reloaded: reloadedSuccessfully,
+    };
+    context.io.stdout(
+      parsed.flags.has("json")
+        ? JSON.stringify(result)
+        : reloadedSuccessfully
+          ? "Model routing override applied for " + agent + "."
+          : "Model routing override was written but reload failed: misconfigured.",
+    );
+    return reloadedSuccessfully ? 0 : 1;
+  } catch (error) {
+    try {
+      restoreRoutingFile(
+        context.modelRoutingFile,
+        previousFile,
+        context.ids.generate(),
+      );
+      context.restoreModelRouting(previousRouting);
+    } catch {
+      throw new CliUsageError(
+        "Model routing audit failed and the mutation could not be rolled back safely",
+      );
+    }
+    throw error;
+  }
 }
 
 async function reloadModel(
@@ -257,15 +326,25 @@ async function reloadModel(
       "Model routing reload is unavailable in this Runtime composition",
     );
   const parsed = parseArguments(args, new Set(), new Set(["json"]));
+  if (context.restoreModelRouting === undefined)
+    throw new CliUsageError(
+      "Model routing reload is unavailable in this Runtime composition",
+    );
+  const previousRouting = context.modelRouting;
   const state = context.reloadModelRouting();
-  await context.audit.execute({
-    eventType: "model.routing.reload",
-    actorType: "daemon",
-    actorId: context.principal.id,
-    aggregateType: "model_routing",
-    aggregateId: "host",
-    payload: { status: state.status },
-  });
+  try {
+    await context.audit.execute({
+      eventType: "model.routing.reload",
+      actorType: "cli",
+      actorId: context.principal.id,
+      aggregateType: "model_routing",
+      aggregateId: "host",
+      payload: { status: state.status },
+    });
+  } catch (error) {
+    context.restoreModelRouting(previousRouting);
+    throw error;
+  }
   context.io.stdout(
     parsed.flags.has("json")
       ? JSON.stringify({ schemaVersion: 1, status: state.status })

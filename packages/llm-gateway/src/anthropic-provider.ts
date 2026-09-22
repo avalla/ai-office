@@ -11,10 +11,12 @@ import {
 interface AnthropicResponse {
   id?: unknown;
   model?: unknown;
+  stop_reason?: unknown;
   content?: unknown;
   usage?: {
     input_tokens?: unknown;
     cache_read_input_tokens?: unknown;
+    cache_creation_input_tokens?: unknown;
     output_tokens?: unknown;
   };
 }
@@ -170,13 +172,50 @@ export class AnthropicMessagesProvider implements LlmProvider {
         this.id,
         "Provider response did not contain the effective model",
       );
+    if (
+      typeof value.stop_reason !== "string" ||
+      value.stop_reason.trim() === ""
+    )
+      throw new InvalidProviderResponseError(
+        this.id,
+        "Provider response did not contain stop_reason",
+      );
     if (typeof value.usage !== "object" || value.usage === null)
       throw new InvalidProviderResponseError(
         this.id,
         "Provider response did not contain usage",
       );
+    const inputTokens = count(
+      value.usage.input_tokens,
+      this.id,
+      "usage.input_tokens",
+    );
+    const cachedInputTokens = count(
+      value.usage.cache_read_input_tokens,
+      this.id,
+      "usage.cache_read_input_tokens",
+      true,
+    );
+    const cacheCreationInputTokens = count(
+      value.usage.cache_creation_input_tokens,
+      this.id,
+      "usage.cache_creation_input_tokens",
+      true,
+    );
+    if (cacheCreationInputTokens > 0)
+      throw new InvalidProviderResponseError(
+        this.id,
+        "Anthropic cache creation usage is not representable by the configured pricing contract",
+      );
+    const inclusiveInputTokens = inputTokens + cachedInputTokens;
+    if (!Number.isSafeInteger(inclusiveInputTokens))
+      throw new InvalidProviderResponseError(
+        this.id,
+        "usage input token total must be a non-negative safe integer",
+      );
     const text = responseText(value);
-    if (text === null)
+    const completed = value.stop_reason === "end_turn";
+    if (completed && text === null)
       throw new InvalidProviderResponseError(
         this.id,
         "Provider response did not contain text output",
@@ -184,19 +223,17 @@ export class AnthropicMessagesProvider implements LlmProvider {
     return {
       providerId: this.id,
       model: value.model,
-      text,
+      // Non-normal stop reasons may have no text (for example tool_use). The
+      // gateway rejects them from worker execution using this status, after it
+      // has recorded the provider-reported usage.
+      text: text ?? "",
+      providerMetadata: {
+        status: completed ? "completed" : "incomplete",
+        stopReason: value.stop_reason,
+      },
       usage: {
-        inputTokens: count(
-          value.usage.input_tokens,
-          this.id,
-          "usage.input_tokens",
-        ),
-        cachedInputTokens: count(
-          value.usage.cache_read_input_tokens,
-          this.id,
-          "usage.cache_read_input_tokens",
-          true,
-        ),
+        inputTokens: inclusiveInputTokens,
+        cachedInputTokens,
         outputTokens: count(
           value.usage.output_tokens,
           this.id,
