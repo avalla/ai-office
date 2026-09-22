@@ -117,10 +117,10 @@ that request-principal/API-routing boundary is a separate slice not defined by
 this PR. Bootstrap may open a handle before external tenant provisioning; the
 tenant FK, rather than speculative bootstrap lookup, guards project writes.
 PostgreSQL currently implements exactly these capability
-groups: `projects`, `tasks`, `taskRequirements`, `governance`, and
-`transactions`; all other `ProjectStorage` capabilities remain false. The
-bootstrap reports those capabilities without fabricating missing repositories;
-requiring complete Runtime authority therefore fails with
+groups: `projects`, `tasks`, `taskRequirements`, `governance`, `runtime`,
+`auditEvents`, and `transactions`; all other `ProjectStorage` capabilities
+remain false. The bootstrap reports those capabilities without fabricating
+missing repositories; requiring complete Runtime authority therefore fails with
 `StorageProviderIncompleteError` and lists the missing capabilities. There is
 no SQLite fallback or mixed-provider authority.
 
@@ -185,10 +185,10 @@ hotspots are documentation for subsequent adapter work; this boundary PR does
 not rewrite them.
 
 The PostgreSQL adapter now implements `ProjectRepository`, `TaskRepository`,
-`TaskRequirementRepository`, `GovernanceRepository`, and `TransactionRunner` in
-the `storage-postgres` package. Shared repository contracts run against both
-adapters; PostgreSQL integration tests use the SQL in `supabase/migrations/`
-against a real server. Migration authority is serialized by a transaction-scoped
+`TaskRequirementRepository`, `GovernanceRepository`, `AgentRuntimeRepository`,
+`AuditEventRepository`, and `TransactionRunner` in the `storage-postgres`
+package. Shared repository contracts run against both adapters; PostgreSQL
+integration tests use the SQL in `supabase/migrations/` against a real server. Migration authority is serialized by a transaction-scoped
 PostgreSQL advisory lock, so concurrent bootstrap applies each ordered migration
 once before committing. The migration runner is intentionally small and
 idempotent for local integration setup and future Supabase deployment.
@@ -203,9 +203,10 @@ ADRs, hardened reviews, approvals, and append-only governance events. Review
 subject ownership covers the current SQLite subject set and remains true after
 review creation: project ownership changes and deletes of reviewed subjects are
 rejected, while the review trigger locks the subject row during validation.
-`core.agent_run` is only the identity/ownership projection needed by governance;
-a future agent-runtime migration must extend this table rather than create a
-second authority. The reverse `task_requirement_requirement_idx(requirement_id,
+`core.agent_run` began as the identity/ownership projection needed by
+governance and is now extended in place by the AgentRuntime migration; identity-
+only rows remain valid and are excluded from runtime reads. The migration does
+not create a second run authority. The reverse `task_requirement_requirement_idx(requirement_id,
 task_id)` index remains for requirement-first linkage lookup. Portable
 export/import remains owned by the SQLite `ProjectStateRepository`; PostgreSQL
 project-state parity is a later slice, so this repository does not claim

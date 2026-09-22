@@ -4,6 +4,8 @@ import type { ProjectStorage } from "@ai-office/application/ports/project-storag
 import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-postgres.ts";
 import { PostgresClient } from "@ai-office/storage-postgres/database/postgres-client.ts";
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
+import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
+import { PostgresAgentRuntimeRepository } from "@ai-office/storage-postgres/repositories/postgres-agent-runtime.repository.ts";
 import { PostgresGovernanceRepository } from "@ai-office/storage-postgres/repositories/postgres-governance.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
@@ -146,7 +148,11 @@ export class ProjectStorageBootstrap {
             "AI_OFFICE_POSTGRES_URL is required when AI_OFFICE_STORAGE_PROVIDER=postgres",
           );
         const tenantId = this.environment.AI_OFFICE_POSTGRES_TENANT_ID;
-        if (tenantId === undefined || tenantId.trim() !== tenantId || tenantId.length === 0)
+        if (
+          tenantId === undefined ||
+          tenantId.trim() !== tenantId ||
+          tenantId.length === 0
+        )
           throw new StorageProviderConfigurationError(
             "AI_OFFICE_POSTGRES_TENANT_ID is required as trusted composition context when AI_OFFICE_STORAGE_PROVIDER=postgres",
           );
@@ -222,10 +228,27 @@ export class ProjectStorageBootstrap {
         migrationDirectory ?? this.postgresMigrationDirectory,
       );
       const repositories = {
-        projects: new PostgresProjectRepository(database, configuration.tenantId),
+        projects: new PostgresProjectRepository(
+          database,
+          configuration.tenantId,
+        ),
         tasks: new PostgresTaskRepository(database, configuration.tenantId),
-        taskRequirements: new PostgresTaskRequirementRepository(database, configuration.tenantId),
-        governance: new PostgresGovernanceRepository(database, configuration.tenantId),
+        taskRequirements: new PostgresTaskRequirementRepository(
+          database,
+          configuration.tenantId,
+        ),
+        governance: new PostgresGovernanceRepository(
+          database,
+          configuration.tenantId,
+        ),
+        runtime: new PostgresAgentRuntimeRepository(
+          database,
+          configuration.tenantId,
+        ),
+        auditEvents: new PostgresAuditEventRepository(
+          database,
+          configuration.tenantId,
+        ),
         transactions: new PostgresTransactionRunner(database),
       } satisfies Pick<
         ProjectStorage,
@@ -233,6 +256,8 @@ export class ProjectStorageBootstrap {
         | "tasks"
         | "taskRequirements"
         | "governance"
+        | "runtime"
+        | "auditEvents"
         | "transactions"
       >;
       return {
@@ -302,6 +327,8 @@ function postgresCapabilities(): ProjectStorageCapabilities {
     "tasks",
     "taskRequirements",
     "governance",
+    "runtime",
+    "auditEvents",
     "transactions",
   ]);
 }

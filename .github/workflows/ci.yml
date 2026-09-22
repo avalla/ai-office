@@ -85,6 +85,8 @@ jobs:
             tests/integration/storage-contracts-postgres.test.ts \
             tests/integration/governance-contracts-postgres.test.ts \
             tests/integration/governance-postgres-invariants.test.ts \
+            tests/integration/agent-runtime-postgres-contracts.test.ts \
+            tests/integration/agent-runtime-postgres.test.ts \
             tests/integration/storage-bootstrap-postgres.test.ts
 
   queue-e2e:
