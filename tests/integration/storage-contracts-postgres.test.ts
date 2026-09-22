@@ -363,6 +363,7 @@ describe.skipIf(connectionString === undefined)(
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           requiredMigration,
           "20260922000000_agent_runtime_audit_authority.sql",
+          "20260922010000_agent_runtime_audit_hardening.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(
