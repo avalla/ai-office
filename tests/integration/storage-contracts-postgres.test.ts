@@ -253,7 +253,8 @@ describe.skipIf(connectionString === undefined)(
                 'core.task_requirement', 'core.milestone',
                 'core.architecture_decision', 'core.review', 'core.approval',
                 'core.governance_event', 'core.role', 'core.agent',
-                'core.pipeline_run', 'core.pipeline_stage_run', 'core.task_lock',
+                'core.office_manifest_revision', 'core.pipeline_run',
+                'core.pipeline_stage_run', 'core.pipeline_override', 'core.task_lock',
                 'core.agent_run_event', 'core.audit_event'
               ]) AS relation_name
             `,
@@ -270,8 +271,10 @@ describe.skipIf(connectionString === undefined)(
           { relation: "core.governance_event" },
           { relation: "core.role" },
           { relation: "core.agent" },
+          { relation: "core.office_manifest_revision" },
           { relation: "core.pipeline_run" },
           { relation: "core.pipeline_stage_run" },
+          { relation: "core.pipeline_override" },
           { relation: "core.task_lock" },
           { relation: "core.agent_run_event" },
           { relation: "core.audit_event" },
@@ -364,6 +367,7 @@ describe.skipIf(connectionString === undefined)(
           requiredMigration,
           "20260922000000_agent_runtime_audit_authority.sql",
           "20260922010000_agent_runtime_audit_hardening.sql",
+          "20260922020000_office_manifest_pipeline_authority.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

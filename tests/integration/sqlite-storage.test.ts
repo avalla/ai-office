@@ -72,6 +72,7 @@ describe("project database migrations", () => {
       "0032_job_outbox.sql",
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
+      "0035_pipeline_manifest_revision_tuple.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -116,6 +117,7 @@ describe("project database migrations", () => {
       { version: "0032_job_outbox.sql" },
       { version: "0033_role_execution_guidance.sql" },
       { version: "0034_exact_pipeline_stage_bindings.sql" },
+      { version: "0035_pipeline_manifest_revision_tuple.sql" },
     ]);
     database.close();
   });

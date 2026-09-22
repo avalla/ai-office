@@ -10,6 +10,8 @@ import {
 import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
 import { PostgresAgentRuntimeRepository } from "@ai-office/storage-postgres/repositories/postgres-agent-runtime.repository.ts";
 import { PostgresGovernanceRepository } from "@ai-office/storage-postgres/repositories/postgres-governance.repository.ts";
+import { PostgresOfficeManifestRepository } from "@ai-office/storage-postgres/repositories/postgres-office-manifest.repository.ts";
+import { PostgresPipelineRunRepository } from "@ai-office/storage-postgres/repositories/postgres-pipeline-run.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
 import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
@@ -66,6 +68,12 @@ describe.skipIf(connectionString === undefined)(
         expect(handle.repositories.governance).toBeInstanceOf(
           PostgresGovernanceRepository,
         );
+        expect(handle.repositories.officeManifests).toBeInstanceOf(
+          PostgresOfficeManifestRepository,
+        );
+        expect(handle.repositories.pipelines).toBeInstanceOf(
+          PostgresPipelineRunRepository,
+        );
         expect(handle.repositories.runtime).toBeInstanceOf(
           PostgresAgentRuntimeRepository,
         );
@@ -81,6 +89,8 @@ describe.skipIf(connectionString === undefined)(
             .map(([capability]) => capability),
         ).toEqual([
           "projects",
+          "officeManifests",
+          "pipelines",
           "tasks",
           "taskRequirements",
           "runtime",
@@ -92,7 +102,7 @@ describe.skipIf(connectionString === undefined)(
           StorageProviderIncompleteError,
         );
         expect(() => requireCompleteProjectStorage(handle)).toThrow(
-          "profiles, officeManifests, pipelines, costs, capabilities, controlled, repositoryIdentities, projectStates, memoryReferences, projectMemoryProvenance, operationalReads, jobOutbox",
+          "profiles, costs, capabilities, controlled, repositoryIdentities, projectStates, memoryReferences, projectMemoryProvenance, operationalReads, jobOutbox",
         );
       } finally {
         await handle.close();

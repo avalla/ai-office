@@ -194,7 +194,8 @@ test("upgrading an existing database adds provenance without touching historical
     "0031_cost_event_charge_basis.sql",
     "0032_job_outbox.sql",
     "0033_role_execution_guidance.sql",
-      "0034_exact_pipeline_stage_bindings.sql",
+    "0034_exact_pipeline_stage_bindings.sql",
+    "0035_pipeline_manifest_revision_tuple.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   expect(
@@ -307,7 +308,8 @@ test("upgrading 0028 provenance keeps its context digest and leaves the unreport
     "0031_cost_event_charge_basis.sql",
     "0032_job_outbox.sql",
     "0033_role_execution_guidance.sql",
-      "0034_exact_pipeline_stage_bindings.sql",
+    "0034_exact_pipeline_stage_bindings.sql",
+    "0035_pipeline_manifest_revision_tuple.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   const repository = new SqliteProjectMemoryProvenanceRepository(db);

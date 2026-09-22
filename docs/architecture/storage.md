@@ -117,9 +117,9 @@ that request-principal/API-routing boundary is a separate slice not defined by
 this PR. Bootstrap may open a handle before external tenant provisioning; the
 tenant FK, rather than speculative bootstrap lookup, guards project writes.
 PostgreSQL currently implements exactly these capability
-groups: `projects`, `tasks`, `taskRequirements`, `governance`, `runtime`,
-`auditEvents`, and `transactions`; all other `ProjectStorage` capabilities
-remain false. The bootstrap reports those capabilities without fabricating
+groups: `projects`, `officeManifests`, `pipelines`, `tasks`,
+`taskRequirements`, `governance`, `runtime`, `auditEvents`, and
+`transactions`; all other `ProjectStorage` capabilities remain false. The bootstrap reports those capabilities without fabricating
 missing repositories; requiring complete Runtime authority therefore fails with
 `StorageProviderIncompleteError` and lists the missing capabilities. There is
 no SQLite fallback or mixed-provider authority.
@@ -139,7 +139,7 @@ is not tenant authority, and authenticated identity is not membership authority.
 | `ProjectRepository`                 | simple CRUD                                                 | Project aggregate identity and ownership checks remain application rules.                  |
 | `ProjectProfileRepository`          | simple CRUD; runtime-local/non-portable data                | Local source paths and scans need an explicit Pro representation.                          |
 | `OfficeManifestRepository`          | append-only/event                                           | Manifest revisions are versioned authority.                                                |
-| `TaskRepository`                    | simple CRUD                                                 | The next vertical slice must preserve task lifecycle validation.                           |
+| `TaskRepository`                    | simple CRUD                                                 | Task lifecycle validation is preserved by the PostgreSQL adapter.                          |
 | `TaskRequirementRepository`         | conditional/concurrent mutation                             | Link/unlink ownership and idempotency are contract behavior.                               |
 | `AgentRuntimeRepository`            | conditional/concurrent mutation; runtime-local/non-portable | Locks, admission fences, run transitions, and append-only run events are safety-sensitive. |
 | `PipelineRunRepository`             | transactional aggregate                                     | Stage ordering, assignments, and transition constraints are aggregate behavior.            |
@@ -185,9 +185,10 @@ hotspots are documentation for subsequent adapter work; this boundary PR does
 not rewrite them.
 
 The PostgreSQL adapter now implements `ProjectRepository`, `TaskRepository`,
-`TaskRequirementRepository`, `GovernanceRepository`, `AgentRuntimeRepository`,
-`AuditEventRepository`, and `TransactionRunner` in the `storage-postgres`
-package. Shared repository contracts run against both adapters; PostgreSQL
+`TaskRequirementRepository`, `GovernanceRepository`,
+`OfficeManifestRepository`, `PipelineRunRepository`,
+`AgentRuntimeRepository`, `AuditEventRepository`, and `TransactionRunner`
+in the `storage-postgres` package. Shared repository contracts run against both adapters; PostgreSQL
 integration tests use the SQL in `supabase/migrations/` against a real server. Migration authority is serialized by a transaction-scoped
 PostgreSQL advisory lock, so concurrent bootstrap applies each ordered migration
 once before committing. The migration runner is intentionally small and
@@ -230,9 +231,10 @@ but selecting it for complete Runtime startup fails closed with
 SQLite/PostgreSQL project authority.
 
 The next storage slice is PostgreSQL repository parity for the remaining
-`ProjectStorage` ports. `global.sqlite`, audit, capabilities, agent runtime,
-pipelines, and the code index remain outside this PR. PostgreSQL remains
-intentionally incomplete until the remaining repositories are implemented.
+`ProjectStorage` ports. `global.sqlite`, capabilities, controlled actions,
+profiles, costs, project state, memory, operational reads, outbox, and the code
+index remain outside this PR. PostgreSQL remains intentionally incomplete until
+the remaining repositories are implemented.
 
 ## `global.sqlite` — implemented durable reusable memory
 
