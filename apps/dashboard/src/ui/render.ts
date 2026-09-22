@@ -439,6 +439,10 @@ export function renderRun(view: RunView): string {
           )
           .join("")}</tbody></table></div>`;
 
+  const gatewayMetering =
+    view.workerOutput?.metering === undefined
+      ? ""
+      : `<div><dt>gateway metered cost</dt><dd>${escapeHtml(view.workerOutput.metering.actualMicros)} micros ${escapeHtml(view.workerOutput.metering.currency)}</dd></div><div><dt>gateway usage</dt><dd>${view.workerOutput.metering.usage.inputTokens} input / ${view.workerOutput.metering.usage.outputTokens} output tokens</dd></div>`;
   const facts = `<dl class="facts wide">
     <div><dt>run</dt><dd class="mono">${escapeHtml(run.runId)}</dd></div>
     <div><dt>status</dt><dd>${badge(run.status, runStatusTone(run.status))}</dd></div>
@@ -446,11 +450,11 @@ export function renderRun(view: RunView): string {
     ${run.execution?.inputHash === undefined ? "" : `<div><dt>input SHA-256</dt><dd class="mono">${escapeHtml(run.execution.inputHash)}</dd></div>`}
     <div><dt>task</dt><dd>${run.task === null ? "Task unavailable" : taskLink(run.projectId, run.task.taskId, run.task.title)}</dd></div>
     <div><dt>agent</dt><dd>${escapeHtml(run.agent?.name ?? "—")}</dd></div>
+    <div><dt>assigned model</dt><dd>${run.model === null ? "Not recorded" : run.model.status === "unrouted" ? "Executor default (unrouted)" : `<span class="mono">${escapeHtml(run.model.selection.modelRef)}</span> · ${escapeHtml(run.model.selection.source)}`}</dd></div>
     <div><dt>created</dt><dd class="mono">${escapeHtml(formatTimestamp(run.createdAt))}</dd></div>
     <div><dt>started</dt><dd class="mono">${escapeHtml(formatTimestamp(run.startedAt))}</dd></div>
     <div><dt>completed</dt><dd class="mono">${escapeHtml(formatTimestamp(run.completedAt))}</dd></div>
     <div><dt>duration</dt><dd class="mono">${escapeHtml(view.duration)}</dd></div>
-    ${run.worktreePath === null ? "" : `<div><dt>worktree</dt><dd class="mono">${escapeHtml(run.worktreePath)}</dd></div>`}
   </dl>`;
 
   const pipeline =
@@ -464,7 +468,7 @@ export function renderRun(view: RunView): string {
       ? ""
       : section(
           "Worker output",
-          `<p class="section-intro">Generated content. This result does not establish file changes, test success or human approval.</p><p><strong>${escapeHtml(view.workerOutput.summary)}</strong></p><pre class="task-description">${escapeHtml(view.workerOutput.content)}</pre><dl class="facts wide"><div><dt>model</dt><dd>${escapeHtml(view.workerOutput.model ?? "Not reported")}</dd></div><div><dt>session</dt><dd class="mono">${escapeHtml(view.workerOutput.sessionId ?? "Not reported")}</dd></div><div><dt>reported tokens (uncached input / output)</dt><dd>${view.workerOutput.usage === null ? "Not reported" : `${view.workerOutput.usage.inputTokens} / ${view.workerOutput.usage.outputTokens}`}</dd></div><div><dt>CLI cost estimate (USD)</dt><dd>${view.workerOutput.estimatedCostUsd === null ? "Not reported" : escapeHtml(new Intl.NumberFormat("en", { maximumSignificantDigits: 6 }).format(view.workerOutput.estimatedCostUsd))}</dd></div></dl><p class="calm">External worker usage is separate from gateway billing. Actual billed cost is unknown.</p>`,
+          `<p class="section-intro">Generated content. This result does not establish file changes, test success or human approval.</p><p><strong>${escapeHtml(view.workerOutput.summary)}</strong></p><pre class="task-description">${escapeHtml(view.workerOutput.content)}</pre><dl class="facts wide"><div><dt>actual model</dt><dd>${escapeHtml(view.workerOutput.model ?? "Not reported")}</dd></div><div><dt>session</dt><dd class="mono">${escapeHtml(view.workerOutput.sessionId ?? "Not reported")}</dd></div><div><dt>reported tokens (uncached input / output)</dt><dd>${view.workerOutput.usage === null ? "Not reported" : `${view.workerOutput.usage.inputTokens} / ${view.workerOutput.usage.outputTokens}`}</dd></div><div><dt>CLI cost estimate (USD)</dt><dd>${view.workerOutput.estimatedCostUsd === null ? "Not reported" : escapeHtml(new Intl.NumberFormat("en", { maximumSignificantDigits: 6 }).format(view.workerOutput.estimatedCostUsd))}</dd></div>${gatewayMetering}</dl><p class="calm">Gateway metering is authoritative for gateway runs; client estimates are advisory.</p>`,
         ),
     section("Overview", facts),
     view.attention.length === 0

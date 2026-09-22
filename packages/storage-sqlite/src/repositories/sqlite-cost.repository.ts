@@ -289,6 +289,54 @@ export class SqliteCostRepository implements CostRepository {
       };
     });
   }
+  async authorizeAndReserveMany(
+    input: import("@ai-office/application/ports/cost-repository.port.ts").AuthorizeAndReserveManyInput,
+  ): Promise<readonly BudgetReservation[]> {
+    const invalid = input.reservations.find(
+      (value) => value.expiresAt.getTime() <= value.now.getTime(),
+    );
+    if (invalid !== undefined) throw new ReservationExpiredError(invalid.id);
+    return this.immediate(() => {
+      const rows = input.reservations.map((value) => {
+        const budget = this.database
+          .query<BudgetRow, [string, string, string, string]>(
+            "SELECT id,project_id,scope_type,scope_id,currency,limit_micros FROM budget WHERE project_id=? AND scope_type=? AND scope_id=? AND currency=?",
+          )
+          .get(value.projectId, value.scopeType, value.scopeId, value.currency);
+        if (budget === null) throw new BudgetNotFoundError();
+        const amount = safe(value.amountMicros);
+        if (
+          this.spentMicros(budget) +
+            this.reservedMicros(budget.id, value.now) +
+            value.amountMicros >
+          restoredInteger(budget.limit_micros)
+        )
+          throw new BudgetExceededError();
+        return { value, budget, amount };
+      });
+      for (const { value, budget, amount } of rows)
+        this.database
+          .prepare(
+            "INSERT INTO budget_reservation(id,budget_id,agent_run_id,amount_micros,status,created_at,expires_at) VALUES (?,?,?,?, 'active',?,?)",
+          )
+          .run(
+            value.id,
+            budget.id,
+            value.agentRunId ?? null,
+            amount,
+            value.now.toISOString(),
+            value.expiresAt.toISOString(),
+          );
+      return rows.map(({ value, budget }) => ({
+        id: value.id,
+        budgetId: budget.id,
+        reservedMicros: value.amountMicros,
+        currency: value.currency,
+        status: "active" as const,
+        expiresAt: value.expiresAt,
+      }));
+    });
+  }
   async releaseReservation(
     id: string,
     now: Date,
@@ -308,6 +356,19 @@ export class SqliteCostRepository implements CostRepository {
         )
         .run(now.toISOString(), id);
       return "released";
+    });
+  }
+  async releaseReservations(ids: readonly string[], now: Date): Promise<void> {
+    if (ids.length === 0) return;
+    this.immediate(() => {
+      const placeholders = ids.map(() => "?").join(",");
+      this.database
+        .prepare(
+          `UPDATE budget_reservation
+           SET status='released',finalized_at=?
+           WHERE id IN (${placeholders}) AND status='active'`,
+        )
+        .run(now.toISOString(), ...ids);
     });
   }
   async releaseExpiredReservations(now: Date): Promise<number> {
@@ -339,24 +400,33 @@ export class SqliteCostRepository implements CostRepository {
             .get(v.provider, v.providerRequestId) !== null
         )
           return "duplicate";
+        const reservationIds =
+          v.reservationIds ??
+          (v.reservationId === undefined ? [] : [v.reservationId]);
+        // `reservationId` is the explicit compatibility primary. Co-reservation
+        // order is intentionally never used to infer its meaning.
+        const primaryReservationId = v.reservationId;
         let reserved = 0n;
-        if (v.reservationId !== undefined) {
-          const reservation = this.database
-            .query<ReservationRow, [string]>(
-              "SELECT id,budget_id,amount_micros,status,expires_at FROM budget_reservation WHERE id=?",
+        if (reservationIds.length > 0) {
+          for (const reservationId of reservationIds) {
+            const reservation = this.database
+              .query<ReservationRow, [string]>(
+                "SELECT id,budget_id,amount_micros,status,expires_at FROM budget_reservation WHERE id=?",
+              )
+              .get(reservationId);
+            if (
+              reservation === null ||
+              reservation.status === "released" ||
+              reservation.expires_at <= v.occurredAt.toISOString()
             )
-            .get(v.reservationId);
-          if (
-            reservation === null ||
-            reservation.status === "released" ||
-            reservation.expires_at <= v.occurredAt.toISOString()
-          )
-            throw new ReservationExpiredError(v.reservationId);
-          if (reservation.status === "consumed") return "duplicate";
-          reserved = restoredInteger(reservation.amount_micros);
+              throw new ReservationExpiredError(reservationId);
+            if (reservation.status === "consumed") return "duplicate";
+            if (reserved === 0n)
+              reserved = restoredInteger(reservation.amount_micros);
+          }
         }
         const overage =
-          v.reservationId !== undefined && v.actual.micros > reserved
+          primaryReservationId !== undefined && v.actual.micros > reserved
             ? v.actual.micros - reserved
             : 0n;
         this.database
@@ -388,7 +458,7 @@ export class SqliteCostRepository implements CostRepository {
             v.context.projectId,
             v.usageId,
             v.pricingVersionId,
-            v.reservationId ?? null,
+            primaryReservationId ?? null,
             safe(v.estimated.micros),
             safe(reserved),
             safe(v.actual.micros),
@@ -397,14 +467,14 @@ export class SqliteCostRepository implements CostRepository {
             v.chargeBasis ?? "reported_usage",
             v.occurredAt.toISOString(),
           );
-        if (v.reservationId !== undefined) {
+        for (const reservationId of reservationIds) {
           const result = this.database
             .prepare(
               "UPDATE budget_reservation SET status='consumed',finalized_at=? WHERE id=? AND status='active'",
             )
-            .run(v.occurredAt.toISOString(), v.reservationId);
+            .run(v.occurredAt.toISOString(), reservationId);
           if (result.changes !== 1)
-            throw new ReservationExpiredError(v.reservationId);
+            throw new ReservationExpiredError(reservationId);
         }
         return "recorded";
       });

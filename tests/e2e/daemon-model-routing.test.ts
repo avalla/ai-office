@@ -151,8 +151,8 @@ test("operators inspect routing, and a scheduled run keeps its model across host
       findings: { severity: string; code: string }[];
     };
     expect(report.valid).toBe(true);
-    // Anthropic assignments run through the Claude login, not host credentials.
-    expect(report.findings).not.toContainEqual(
+    // Anthropic gateway execution is enabled, so its host credential absence is reported by name only.
+    expect(report.findings).toContainEqual(
       expect.objectContaining({ code: "PROVIDER_CREDENTIALS_MISSING" }),
     );
     expect(report.findings).toContainEqual(

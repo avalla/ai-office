@@ -236,6 +236,8 @@ const commands = [
   "agent:list",
   "agent:models",
   "model:check",
+  "model:override",
+  "model:reload",
   "run:schedule",
   "run:tick",
   "run:cancel",
@@ -304,6 +306,18 @@ export interface RuntimeCommandOptions {
   projectMemory?: ProjectMemoryProvider;
   /** Composition-supplied host model routing; absent means unconfigured. */
   modelRouting?: ModelRoutingState;
+  /** Reads the current immutable routing snapshot for this command. */
+  modelRoutingProvider?: () => ModelRoutingState;
+  /** Loads routing with the daemon's effective source semantics. */
+  modelRoutingLoader?: (
+    readFile?: (path: string) => string,
+  ) => ModelRoutingState;
+  /** Atomically replaces the current routing snapshot for future schedules. */
+  reloadModelRouting?: () => ModelRoutingState;
+  /** Restores a prior snapshot when an audited routing mutation fails. */
+  restoreModelRouting?: (state: ModelRoutingState) => void;
+  /** Host-local file used by operator model:override. */
+  modelRoutingFile?: string;
   modelProviders?: ModelProviderCatalog;
   /** Composition-supplied gateway provider access; absent means no credentials. */
   gatewayProviders?: GatewayModelProviders;
@@ -562,7 +576,22 @@ export async function executeRuntimeCommand(
         options.defaultOfficeManifest ?? defaultOfficeManifest(),
       projectMemory:
         options.projectMemory ?? new DisabledProjectMemoryProvider(),
-      modelRouting: options.modelRouting ?? unconfiguredModelRouting,
+      modelRouting:
+        options.modelRoutingProvider?.() ??
+        options.modelRouting ??
+        unconfiguredModelRouting,
+      ...(options.modelRoutingLoader === undefined
+        ? {}
+        : { modelRoutingLoader: options.modelRoutingLoader }),
+      ...(options.reloadModelRouting === undefined
+        ? {}
+        : { reloadModelRouting: options.reloadModelRouting }),
+      ...(options.restoreModelRouting === undefined
+        ? {}
+        : { restoreModelRouting: options.restoreModelRouting }),
+      ...(options.modelRoutingFile === undefined
+        ? {}
+        : { modelRoutingFile: options.modelRoutingFile }),
       modelProviders:
         options.modelProviders ?? new EnvironmentModelProviderCatalog({}),
       gatewayProviders:

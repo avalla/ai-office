@@ -12,7 +12,9 @@ import type {
   PricingVersion,
 } from "@ai-office/domain/cost/cost.ts";
 import {
+  AtomicReservationUnavailableError,
   BudgetNotFoundError,
+  DuplicateProviderUsageError,
   PricingCurrencyMismatchError,
   PricingNotFoundError,
 } from "@ai-office/application/cost-errors.ts";
@@ -32,6 +34,11 @@ const price = (pricing: PricingVersion) => ({
   outputPerMillionMicros: pricing.outputPerMillionMicros,
   reasoningPerMillionMicros: pricing.reasoningPerMillionMicros,
 });
+export interface BudgetScope {
+  scopeType: BudgetScopeType;
+  scopeId: string;
+}
+
 export interface MeteredRequestContext extends UsageContext {
   /**
    * Upper bounds on the request's input and output totals. The reservation is
@@ -40,6 +47,8 @@ export interface MeteredRequestContext extends UsageContext {
   usageBound: ModelUsageBound;
   budgetScopeType?: BudgetScopeType;
   budgetScopeId?: string;
+  /** Configured scopes are co-reserved with one atomic storage operation. */
+  budgetScopes?: readonly BudgetScope[];
   reservationTtlMs?: number;
   useProjectBudgetIfConfigured?: boolean;
 }
@@ -132,13 +141,15 @@ export class MeteredLlmGateway {
         context.budgetScopeId === undefined)
     )
       throw new BudgetNotFoundError();
+
     let budgetScopeType = context.budgetScopeType;
     let budgetScopeId = context.budgetScopeId;
-    if (
-      budgetScopeType === undefined &&
-      budgetScopeId === undefined &&
-      context.useProjectBudgetIfConfigured === true
-    ) {
+    const scopes: BudgetScope[] = context.budgetScopes
+      ? [...context.budgetScopes]
+      : budgetScopeType !== undefined && budgetScopeId !== undefined
+        ? [{ scopeType: budgetScopeType, scopeId: budgetScopeId }]
+        : [];
+    if (scopes.length === 0 && context.useProjectBudgetIfConfigured === true) {
       const projectBudgetCurrencies = await this.costs.listBudgetCurrencies(
         context.projectId,
         "project",
@@ -147,32 +158,100 @@ export class MeteredLlmGateway {
       if (
         projectBudgetCurrencies.length > 0 &&
         !projectBudgetCurrencies.some((value) => value === currency)
-      ) {
+      )
         throw new PricingCurrencyMismatchError();
-      }
       if (projectBudgetCurrencies.some((value) => value === currency)) {
+        scopes.push({ scopeType: "project", scopeId: context.projectId });
         budgetScopeType = "project";
         budgetScopeId = context.projectId;
       }
     }
-    let reservationId: string | undefined;
-    if (budgetScopeType !== undefined && budgetScopeId !== undefined) {
-      reservationId = this.ids.generate();
-      const ttl = context.reservationTtlMs ?? 15 * 60_000;
-      await this.costs.authorizeAndReserve({
-        id: reservationId,
+
+    const reservationIds: string[] = [];
+    const configuredScopeKeys = new Set<string>();
+    if (context.budgetScopes !== undefined) {
+      for (const scope of [...scopes]) {
+        const currencies = await this.costs.listBudgetCurrencies(
+          context.projectId,
+          scope.scopeType,
+          scope.scopeId,
+        );
+        if (
+          currencies.length > 0 &&
+          !currencies.some((value) => value === currency)
+        )
+          throw new PricingCurrencyMismatchError();
+        if (currencies.some((value) => value === currency))
+          configuredScopeKeys.add(`${scope.scopeType}\\0${scope.scopeId}`);
+      }
+    }
+    const reservationInputs = scopes
+      .filter(
+        (scope) =>
+          context.budgetScopes === undefined ||
+          configuredScopeKeys.has(`${scope.scopeType}\\0${scope.scopeId}`) ||
+          scope.scopeType === "agent_run",
+      )
+      .map((scope) => ({
+        id: this.ids.generate(),
         projectId: context.projectId,
-        scopeType: budgetScopeType,
-        scopeId: budgetScopeId,
+        scopeType: scope.scopeType,
+        scopeId: scope.scopeId,
         currency,
         amountMicros: reservedMicros,
         ...(context.agentRunId === undefined
           ? {}
           : { agentRunId: context.agentRunId }),
         now,
-        expiresAt: new Date(now.getTime() + ttl),
-      });
+        expiresAt: new Date(
+          now.getTime() + (context.reservationTtlMs ?? 15 * 60_000),
+        ),
+      }));
+    const primaryReservationId =
+      budgetScopeType === undefined || budgetScopeId === undefined
+        ? undefined
+        : reservationInputs.find(
+            (input) =>
+              input.scopeType === budgetScopeType &&
+              input.scopeId === budgetScopeId,
+          )?.id;
+    if (reservationInputs.length > 0 && primaryReservationId === undefined)
+      throw new BudgetNotFoundError();
+    if (reservationInputs.length > 0) {
+      if (
+        reservationInputs.length > 1 &&
+        this.costs.authorizeAndReserveMany === undefined
+      )
+        throw new AtomicReservationUnavailableError();
+      if (this.costs.authorizeAndReserveMany !== undefined)
+        await this.costs.authorizeAndReserveMany({
+          reservations: reservationInputs,
+        });
+      else {
+        const created: string[] = [];
+        try {
+          for (const input of reservationInputs) {
+            await this.costs.authorizeAndReserve(input);
+            created.push(input.id);
+          }
+        } catch (error) {
+          await Promise.all(
+            created.map((id) =>
+              this.costs.releaseReservation(id, this.clock.now()),
+            ),
+          );
+          throw error;
+        }
+      }
+      reservationIds.push(...reservationInputs.map((input) => input.id));
     }
+    const reservationFields = () => {
+      if (reservationIds.length === 0) return {};
+      if (primaryReservationId === undefined) throw new BudgetNotFoundError();
+      return { reservationId: primaryReservationId, reservationIds };
+    };
+    const releaseReservations = async () =>
+      this.releaseReservations(reservationIds);
     let received: { response: ModelResponse | null } | undefined;
     try {
       let response: ModelResponse;
@@ -205,21 +284,20 @@ export class MeteredLlmGateway {
           : { providerRequestId: response.providerRequestId }),
         usage: response.usage,
         pricingVersionId: pricing.id,
-        ...(reservationId === undefined ? {} : { reservationId }),
+        ...reservationFields(),
         estimated,
         actual,
         chargeBasis: "reported_usage",
         occurredAt: this.clock.now(),
       });
       received = undefined;
-      if (recording === "duplicate" && reservationId !== undefined)
-        await this.costs.releaseReservation(reservationId, this.clock.now());
+      if (recording === "duplicate") await releaseReservations();
       return {
         response,
         metering: {
           currency: actual.currency,
           pricingVersionId: pricing.id,
-          reservedMicros: reservationId === undefined ? null : reservedMicros,
+          reservedMicros: reservationIds.length === 0 ? null : reservedMicros,
           estimatedMicros: estimated.micros,
           actualMicros: actual.micros,
           budgetScopeType: budgetScopeType ?? null,
@@ -230,8 +308,11 @@ export class MeteredLlmGateway {
     } catch (error) {
       if (received === undefined) {
         // No answer was received: nothing is known to have been billed.
-        if (reservationId !== undefined)
-          await this.costs.releaseReservation(reservationId, this.clock.now());
+        await releaseReservations();
+        throw error;
+      }
+      if (error instanceof DuplicateProviderUsageError) {
+        await releaseReservations();
         throw error;
       }
       // The vendor answered but the answer was rejected. Its work may have
@@ -245,7 +326,8 @@ export class MeteredLlmGateway {
           context,
           envelope,
           currency,
-          reservationId,
+          reservationIds,
+          primaryReservationId,
         );
       } catch {
         // The original failure is what the caller must see.
@@ -254,13 +336,27 @@ export class MeteredLlmGateway {
     }
   }
 
+  private async releaseReservations(
+    reservationIds: readonly string[],
+  ): Promise<void> {
+    if (reservationIds.length === 0) return;
+    if (this.costs.releaseReservations !== undefined)
+      await this.costs.releaseReservations(reservationIds, this.clock.now());
+    else
+      await Promise.all(
+        reservationIds.map((id) =>
+          this.costs.releaseReservation(id, this.clock.now()),
+        ),
+      );
+  }
   private async chargeRejectedResponse(
     response: ModelResponse | null,
     request: ModelRequest,
     context: MeteredRequestContext,
     envelope: { pricing: PricingVersion; micros: bigint },
     currency: Currency,
-    reservationId: string | undefined,
+    reservationIds: readonly string[],
+    primaryReservationId: string | undefined,
   ): Promise<void> {
     // Only well-formed reported values are kept; anything else is recorded as
     // unknown (the configured identity and zero usage), never guessed.
@@ -282,6 +378,14 @@ export class MeteredLlmGateway {
     }
     const providerRequestId = text(response?.providerRequestId);
     const charge = { micros: envelope.micros, currency };
+    const reservationFields =
+      reservationIds.length === 0
+        ? {}
+        : primaryReservationId === undefined
+          ? (() => {
+              throw new BudgetNotFoundError();
+            })()
+          : { reservationId: primaryReservationId, reservationIds };
     const recording = await this.costs.recordUsageAndCost({
       usageId: this.ids.generate(),
       costEventId: this.ids.generate(),
@@ -292,13 +396,13 @@ export class MeteredLlmGateway {
       ...(providerRequestId === undefined ? {} : { providerRequestId }),
       usage,
       pricingVersionId: envelope.pricing.id,
-      ...(reservationId === undefined ? {} : { reservationId }),
+      ...reservationFields,
       estimated: charge,
       actual: charge,
       chargeBasis: "reserved_envelope",
       occurredAt: this.clock.now(),
     });
-    if (recording === "duplicate" && reservationId !== undefined)
-      await this.costs.releaseReservation(reservationId, this.clock.now());
+    if (recording === "duplicate" && reservationIds.length > 0)
+      await this.releaseReservations(reservationIds);
   }
 }

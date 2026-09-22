@@ -87,6 +87,10 @@ Commands:
   agent:list --project <id>
   agent:models --project <id> [--json]  # read-only; policy, profile and model each agent would be scheduled with
   model:check [--project <id>] [--json]  # read-only model routing validation; sends no model request
+  model:override --scope <host|project> --agent <name> [--project <id>] (--profile <key>|--model <provider:model>) [--json]
+    operator-only audited override; atomically updates host-local routing and reloads future schedules
+  model:reload [--json]
+    operator-only audited reload of host-local routing between scheduled runs
   run:schedule --project <id> --task <id> --agent <id> [--resource <id> --operation <name> [--arguments <json>]]
   run:tick --project <id> [--worker claude [--worker-model <model>] | --worker gateway | --simulate] [--capacity <1-100>] [--json]
   run:cancel --project <id> --run <id> --reason <text> [--json]
@@ -138,7 +142,7 @@ Environment (Runtime host; optional project memory, disabled by default):
   AI_OFFICE_CAIRNKEEP_COMMAND          executable name or absolute path; defaults to cairn
   AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS  100..30000; defaults to 5000
 
-Model routing (Runtime host; read once at host start; restart after changes):
+Model routing (Runtime host; loaded at host start; operator reload/override applies between schedules):
   <AI_OFFICE_HOME>/model-routing.yaml  canonical profile file; the only source of a managed service
   AI_OFFICE_MODEL_ROUTING_FILE  foreground override: absolute or ~/ path to a YAML/JSON profile file
   AI_OFFICE_LLM_MODEL           foreground legacy <provider>:<model> default (lowest precedence)

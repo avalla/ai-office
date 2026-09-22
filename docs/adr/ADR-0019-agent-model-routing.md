@@ -38,9 +38,10 @@ dispatch, and inexpensive models could not be reserved for high-volume roles.
 
 ### Configuration sources
 
-Routing is non-secret, host-local configuration read once by the Runtime
-composition root and immutable for the host's lifetime; a change needs a Runtime
-restart. Sources are deterministic:
+Routing is non-secret, host-local configuration owned by the Runtime
+composition root. The loaded routing state is an immutable snapshot; an operator
+may atomically reload the effective source between schedules. Sources are
+deterministic:
 
 - **Canonical file:** `<AI_OFFICE_HOME>/model-routing.yaml` (strict YAML/JSON,
   `schema_version: 1`, sections `profiles`, `policies`, `default_profile`,
@@ -62,7 +63,10 @@ The routing source marker is part of the rendered definition, so the existing
 text-based ownership classification reports a pre-routing Runtime definition as
 `managed_outdated` and `service install` replaces it; reinstalling an unchanged
 plan stays idempotent. Routing file content is deliberately not part of the
-definition: editing it needs a Runtime restart, not a reinstall.
+definition: `model:reload` swaps the immutable snapshot atomically between
+schedules. Runs already scheduled retain their persisted `model_routing_json`;
+reload and override affect only future scheduling and never reinterpret historical
+runs or retry selection.
 
 Provider/model parsing and provider support stay in `packages/llm-gateway`
 (`parseCanonicalModelRef`, provider descriptors,
@@ -166,8 +170,12 @@ provider): LangChain may drop reasoning options for some models and falls back
 to the configured model name when the vendor reports none, while the native
 adapter forwards parameters verbatim (the vendor rejects ones a model does not
 support), requires the effective model and request ID, reports response status,
-sends `store: false`, and never retries on its own. The Anthropic registration
-keeps LangChain and therefore refuses execution parameters.
+sends `store: false`, and never retries on its own. Anthropic now has a native
+Messages API adapter and is gateway-executable. It maps `max_output_tokens` to
+Anthropic's `max_tokens`, rejects provider-neutral `reasoning_effort` because it
+is not equivalent to Anthropic's thinking budget, requires the effective model
+and provider request ID, validates usage, classifies network/HTTP failures, and
+also performs no internal retry.
 
 ### Cost governance
 
@@ -181,10 +189,14 @@ lowered to the role limit. `MeteredLlmGateway` remains the only accounting
 component: it resolves active pricing (unknown pricing still fails closed with
 `PricingNotFoundError`, reported as `WORKER_PRICING_UNAVAILABLE`), reserves the
 worst-case cost of the bounded request — a byte-count upper bound for input and
-the output cap for output and reasoning — against that budget in one atomic
-transaction before the request (`WORKER_BUDGET_EXHAUSTED` when it does not fit),
-records usage and cost idempotently afterwards, and releases the reservation on
-failure. `completeMetered` returns the cost evidence the gateway recorded, so
+the output cap for output and reasoning — against the configured project, task,
+agent and `agent_run` budgets in the same currency using one atomic batch
+operation (`WORKER_BUDGET_EXHAUSTED` when any scope does not fit). A repository
+without atomic batch capability fails closed before creating any reservation.
+The `agent_run` budget is always applied; configured wider scopes are optional
+co-reservations. Failed provider requests release every reservation; successful
+usage consumes and finalizes every reservation. Usage and cost recording remains
+idempotent, including duplicate provider request handling. `completeMetered` returns the cost evidence the gateway recorded, so
 the executor copies rather than recomputes it. Usage is recorded before the
 answer is judged: a truncated or malformed answer still cost what the provider
 reported and is never accepted.
@@ -206,12 +218,14 @@ concrete model needs a future, explicitly versioned portable-state decision.
 
 ### Security
 
-Model selection is configuration, not an agent capability. There is no
-operator mutation command and no worker-, action- or run-supplied model option,
-and workers receive no tool that could change configuration. A persisted
-selection is immutable in the domain and in SQLite. Diagnostics name
-configuration keys, model refs and credential variable names only; they never
-echo values that may be credentials, invalid project keys or host paths.
+Model selection is configuration, not an agent capability. The operator-only
+`model:override` mutation and `model:reload` command are the only mutation
+boundary; both are audited, and the resulting configuration remains host-local
+and non-portable. There is no worker-, action- or run-supplied model option, and
+workers receive no tool that could change configuration. A persisted selection
+is immutable in the domain and in SQLite. Diagnostics name configuration keys,
+model refs and credential variable names only; they never echo values that may
+be credentials, invalid project keys or host paths.
 
 ## Consequences
 
@@ -232,10 +246,5 @@ echo values that may be credentials, invalid project keys or host paths.
 - A drifted provider response cannot be priced (pricing is keyed by the exact
   model), so its reservation is released without a usage record; the run fails
   closed with `WORKER_MODEL_MISMATCH`.
-- Gateway execution reserves only the `agent_run` budget; project, task and
-  agent budgets are not reserved in the same request.
-
-Deferred, with roadmap items: a credential boundary for managed services
-(since delivered by ADR-0020), gateway execution for Anthropic models,
-co-reservation of wider budget scopes, an audited override mutation command,
-dashboard rendering of the selection, and hot reload of routing files.
+Deferred, with roadmap items: additional portable concrete-model policy and
+future executor/provider integrations that require a separate decision.

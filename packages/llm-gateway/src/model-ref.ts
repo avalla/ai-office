@@ -63,6 +63,10 @@ export const defaultModelProviderDescriptors: readonly ModelProviderDescriptor[]
       providerId: "anthropic",
       requiredEnvironmentVariables: ["ANTHROPIC_API_KEY"],
       apiKeyEnvironmentVariable: "ANTHROPIC_API_KEY",
+      gatewayExecution: Object.freeze({
+        reasoningEfforts: Object.freeze([]),
+        maxOutputTokens: true,
+      }),
     },
   ];
 

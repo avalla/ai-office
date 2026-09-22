@@ -6,6 +6,10 @@ import type {
   RecordUsageAndCostInput,
 } from "@ai-office/application/ports/cost-repository.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
+import {
+  AtomicReservationUnavailableError,
+  DuplicateProviderUsageError,
+} from "@ai-office/application/cost-errors.ts";
 import type {
   BudgetSnapshot,
   Currency,
@@ -116,6 +120,154 @@ const retryingProvider = (retryable: boolean): LlmProvider => ({
   complete: async () => {
     throw new LlmProviderError("primary", "failed", retryable);
   },
+});
+
+class AtomicMemoryCosts extends MemoryCosts {
+  constructor() {
+    super();
+    this.pricing.set("mock\0model", pricing("mock", 1_000_000n));
+    this.pricing.set("primary\0model", pricing("primary", 1_000_000n));
+  }
+
+  batchCalls = 0;
+  batchFailure = false;
+  duplicate = false;
+  readonly active = new Set<string>();
+
+  override async listBudgetCurrencies(): Promise<Currency[]> {
+    return ["USD"];
+  }
+
+  async authorizeAndReserveMany(input: {
+    reservations: readonly AuthorizeReservationInput[];
+  }) {
+    this.batchCalls += 1;
+    if (this.batchFailure) throw new Error("budget denied");
+    for (const reservation of input.reservations) this.active.add(reservation.id);
+    return input.reservations.map((reservation) => ({
+      id: reservation.id,
+      budgetId: "budget",
+      reservedMicros: reservation.amountMicros,
+      currency: reservation.currency,
+      status: "active" as const,
+      expiresAt: reservation.expiresAt,
+    }));
+  }
+
+  async releaseReservations(ids: readonly string[]) {
+    for (const id of ids) {
+      this.active.delete(id);
+      this.released += 1;
+    }
+  }
+
+  override async recordUsageAndCost(input: RecordUsageAndCostInput) {
+    if (this.duplicate)
+      throw new DuplicateProviderUsageError(
+        input.provider,
+        input.providerRequestId ?? "unknown",
+      );
+    const result = await super.recordUsageAndCost(input);
+    for (const id of input.reservationIds ?? []) this.active.delete(id);
+    return result;
+  }
+}
+
+describe("atomic multi-budget metering", () => {
+  const scoped = {
+    projectId: "project",
+    purpose: "test",
+    usageBound: usage,
+    budgetScopeType: "agent_run" as const,
+    budgetScopeId: "run",
+    budgetScopes: [
+      { scopeType: "project" as const, scopeId: "project" },
+      { scopeType: "agent_run" as const, scopeId: "run" },
+    ],
+  };
+
+  test("uses one atomic operation and finalizes every reservation", async () => {
+    const costs = new AtomicMemoryCosts();
+    costs.pricing.set("primary\0model", pricing("primary", 1_000_000n));
+    await new MeteredLlmGateway(
+      new MockLlmProvider({ model: "model", text: "response", usage }),
+      costs,
+      new Ids(),
+      new FixedClock(),
+    ).complete({ model: "model", messages: [] }, scoped);
+    expect(costs.batchCalls).toBe(1);
+    expect(costs.reserved).toBeUndefined();
+    expect(costs.active).toHaveLength(0);
+  });
+
+  test("keeps all reservations absent when atomic authorization rejects", async () => {
+    const costs = new AtomicMemoryCosts();
+    costs.batchFailure = true;
+    costs.pricing.set("primary\0model", pricing("primary", 1_000_000n));
+    await expect(
+      new MeteredLlmGateway(
+        new MockLlmProvider({ model: "model", text: "response", usage }),
+        costs,
+        new Ids(),
+        new FixedClock(),
+      ).complete({ model: "model", messages: [] }, scoped),
+    ).rejects.toThrow("budget denied");
+    expect(costs.batchCalls).toBe(1);
+    expect(costs.active).toHaveLength(0);
+  });
+
+  test("fails closed before any partial reservation without atomic capability", async () => {
+    const costs = new MemoryCosts();
+    costs.listBudgetCurrencies = async () => ["USD"];
+    costs.pricing.set("mock\0model", pricing("mock", 1_000_000n));
+    costs.pricing.set("primary\0model", pricing("primary", 1_000_000n));
+    await expect(
+      new MeteredLlmGateway(
+        new MockLlmProvider({ model: "model", text: "response", usage }),
+        costs,
+        new Ids(),
+        new FixedClock(),
+      ).complete({ model: "model", messages: [] }, scoped),
+    ).rejects.toBeInstanceOf(AtomicReservationUnavailableError);
+    expect(costs.reserved).toBeUndefined();
+    expect(costs.released).toBe(0);
+  });
+
+  test("releases every reservation after a provider failure", async () => {
+    const costs = new AtomicMemoryCosts();
+    costs.pricing.set("primary\0model", pricing("primary", 1_000_000n));
+    await expect(
+      new MeteredLlmGateway(
+        retryingProvider(false),
+        costs,
+        new Ids(),
+        new FixedClock(),
+      ).complete({ model: "model", messages: [] }, scoped),
+    ).rejects.toBeInstanceOf(LlmProviderError);
+    expect(costs.released).toBe(2);
+    expect(costs.active).toHaveLength(0);
+  });
+
+  test("releases every reservation when provider usage is duplicate", async () => {
+    const costs = new AtomicMemoryCosts();
+    costs.duplicate = true;
+    costs.pricing.set("primary\0model", pricing("primary", 1_000_000n));
+    await expect(
+      new MeteredLlmGateway(
+        new MockLlmProvider({
+          model: "model",
+          text: "response",
+          providerRequestId: "duplicate-request",
+          usage,
+        }),
+        costs,
+        new Ids(),
+        new FixedClock(),
+      ).complete({ model: "model", messages: [] }, scoped),
+    ).rejects.toBeInstanceOf(DuplicateProviderUsageError);
+    expect(costs.released).toBe(2);
+    expect(costs.active).toHaveLength(0);
+  });
 });
 
 describe("fallback metering", () => {

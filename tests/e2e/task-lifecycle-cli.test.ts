@@ -285,14 +285,21 @@ describe("task board", () => {
       "ID\tSTATUS\tREQUIREMENTS\tPRIORITY\tTITLE",
     );
     const rows = listed.stdout.slice(1);
-    const staleRow = rows.find((row) => row.startsWith(stale))!;
-    const healthyRow = rows.find((row) => row.startsWith(healthy))!;
+    const staleRow = rows.find((row) => row.startsWith(stale + "\t"))!;
+    const healthyRow = rows.find((row) => row.startsWith(healthy + "\t"))!;
+
+    expect(staleRow.split("\t").slice(1, 3)).toEqual([
+      "pending !",
+      "2/2 verified",
+    ]);
+    expect(healthyRow.split("\t").slice(1, 3)).toEqual([
+      "pending",
+      "0/1 verified",
+    ]);
 
     // STATUS stays the task's real state; the marker says the two disagree.
-    expect(staleRow).toContain("pending !");
-    expect(staleRow).toContain("2/2 verified");
+    expect(staleRow).toContain("\tpending !\t2/2 verified\t");
     // A task whose requirements are still open is not a contradiction.
-    expect(healthyRow).toContain("pending\t0/1 verified");
     expect(healthyRow).not.toContain("!");
 
     expect(listed.stderr.join("\n")).toContain(

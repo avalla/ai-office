@@ -28,6 +28,12 @@ export class BudgetExceededError extends Error {
     this.name = "BudgetExceededError";
   }
 }
+export class AtomicReservationUnavailableError extends Error {
+  constructor() {
+    super("Atomic multi-budget reservation is unavailable");
+    this.name = "AtomicReservationUnavailableError";
+  }
+}
 export class ReservationExpiredError extends Error {
   constructor(id: string) {
     super(`Budget reservation ${id} has expired`);

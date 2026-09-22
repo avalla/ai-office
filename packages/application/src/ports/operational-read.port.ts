@@ -110,6 +110,8 @@ export interface OperationalAgentRunRecord {
   pipelineRunId: string | null;
   status: AgentRunStatus;
   worktreePath: string | null;
+  /** Frozen model routing selected when the run was scheduled. */
+  modelRouting: unknown;
   /** Raw persisted result. Callers must sanitize before publishing it. */
   result: unknown;
   /** Raw persisted error. Callers must sanitize before publishing it. */

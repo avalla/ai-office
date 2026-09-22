@@ -30,6 +30,7 @@ import type { ModelProviderCatalog } from "@ai-office/application/ports/model-pr
 import {
   CredentialModelProviderCatalog,
   loadModelRoutingState,
+  resolveModelRoutingFilePath,
 } from "@ai-office/llm-gateway/model-routing-configuration.ts";
 import {
   CredentialGatewayModelProviders,
@@ -171,6 +172,38 @@ export async function bootstrap(
       memory: new SqliteGlobalMemoryRepository(globalDatabase),
     });
 
+    const routingEnvironment = { ...process.env };
+    const loadRouting = (readFile?: (path: string) => string) =>
+      loadModelRoutingState(routingEnvironment, {
+        runtimeHome: runtimePaths.runtimeHome,
+        ...(readFile === undefined ? {} : { readFile }),
+      });
+    const modelRoutingFile = resolveModelRoutingFilePath(
+      routingEnvironment,
+      runtimePaths.runtimeHome,
+    );
+    const initialRouting = options.modelRouting ?? loadRouting();
+    const routing = {
+      state: initialRouting,
+      load: loadRouting,
+      reload: () => {
+        const next = loadRouting();
+        routing.state = next;
+        return next;
+      },
+      restore: (state: ModelRoutingState) => {
+        routing.state = state;
+      },
+      ...(modelRoutingFile === undefined ? {} : { file: modelRoutingFile }),
+      providers:
+        options.modelProviders ??
+        new CredentialModelProviderCatalog(credentials),
+      gateway:
+        options.gatewayProviders ??
+        new CredentialGatewayModelProviders(credentials, {
+          debug: process.env.AI_OFFICE_DEBUG_LLM === "1",
+        }),
+    };
     const runtime = new ApplicationRuntime(
       runtimePaths,
       commandRoot,
@@ -182,21 +215,7 @@ export async function bootstrap(
       options.agentExecutor,
       () => queryEvents.publish(["run.updated", "task.updated"]),
       options.projectMemory ?? createProjectMemoryProvider(process.env),
-      {
-        state:
-          options.modelRouting ??
-          loadModelRoutingState(process.env, {
-            runtimeHome: runtimePaths.runtimeHome,
-          }),
-        providers:
-          options.modelProviders ??
-          new CredentialModelProviderCatalog(credentials),
-        gateway:
-          options.gatewayProviders ??
-          new CredentialGatewayModelProviders(credentials, {
-            debug: process.env.AI_OFFICE_DEBUG_LLM === "1",
-          }),
-      },
+      routing,
       projectStorage,
     );
 

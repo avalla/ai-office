@@ -502,17 +502,24 @@ agents:
       "PRICING_MISSING",
       "PRICING_MISSING",
       "PRICING_MISSING",
+      "PROVIDER_CREDENTIALS_MISSING",
     ].sort(),
   );
-  // Anthropic models run through a client-login worker, which needs no host
-  // credential; OpenAI models are gateway-executable with the host key.
+  // Both native gateway adapters report credential presence by logical name only.
   expect(report.providers).toEqual([
     {
       providerId: "anthropic",
       supported: true,
-      gatewayExecution: false,
-      missingCredentials: [],
-      credentials: [],
+      gatewayExecution: true,
+      missingCredentials: ["ANTHROPIC_API_KEY"],
+      credentials: [
+        {
+          name: "ANTHROPIC_API_KEY",
+          state: "missing",
+          origin: null,
+          issue: null,
+        },
+      ],
     },
     {
       providerId: "openai",

@@ -19,6 +19,7 @@ import {
   gatewayDefaultMaxOutputTokens,
   type GatewayModelProviders,
 } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
+import { AnthropicMessagesProvider } from "@ai-office/llm-gateway/anthropic-provider.ts";
 import { OpenAiResponsesProvider } from "@ai-office/llm-gateway/openai-provider.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
@@ -46,7 +47,7 @@ profiles:
   high_reasoning: { model: "openai:reasoning-model", reasoning_effort: high, max_output_tokens: 4000 }
   uncapped: { model: "openai:economy-model" }
   odd_effort: { model: "openai:economy-model", reasoning_effort: turbo }
-  claude_only: { model: "anthropic:client-model" }
+  claude_only: { model: "anthropic:client-model", max_output_tokens: 4000 }
 agents:
   developer: { profile: high_reasoning }
 `;
@@ -130,11 +131,18 @@ function providers(
       const resolved = await host.resolve(modelRef);
       return {
         ...resolved,
-        provider: new OpenAiResponsesProvider(
-          environment.OPENAI_API_KEY!,
-          "https://provider.test/v1/responses",
-          fetcher,
-        ),
+        provider:
+          resolved.providerId === "anthropic"
+            ? new AnthropicMessagesProvider(
+                environment.ANTHROPIC_API_KEY!,
+                "https://provider.test/v1/messages",
+                fetcher,
+              )
+            : new OpenAiResponsesProvider(
+                environment.OPENAI_API_KEY!,
+                "https://provider.test/v1/responses",
+                fetcher,
+              ),
       };
     },
   };
@@ -208,6 +216,20 @@ async function fixture() {
       },
       now,
     );
+  await costs.savePricing(
+    {
+      id: "price-client-model",
+      provider: "anthropic",
+      model: "client-model",
+      currency: "USD",
+      inputPerMillionMicros: 1_250_000n,
+      cachedInputPerMillionMicros: 125_000n,
+      outputPerMillionMicros: 10_000_000n,
+      reasoningPerMillionMicros: 10_000_000n,
+      effectiveFrom: new Date(0),
+    },
+    now,
+  );
   let taskCount = 0;
   const schedule = async (state: ModelRoutingState, agent: string) => {
     taskCount += 1;
@@ -252,6 +274,14 @@ async function fixture() {
         "SELECT provider, model, agent_run_id FROM model_usage ORDER BY rowid",
       )
       .all();
+  const primaryReservationId = (runId: string) =>
+    db.query<{ reservation_id: string | null }, [string]>(
+      "SELECT reservation_id FROM cost_event c JOIN model_usage u ON u.id = c.usage_id WHERE u.agent_run_id = ?",
+    ).get(runId)?.reservation_id ?? null;
+  const agentRunReservationId = (runId: string) =>
+    db.query<{ id: string }, [string, string]>(
+      "SELECT id FROM budget_reservation WHERE agent_run_id = ? AND budget_id IN (SELECT id FROM budget WHERE scope_type='agent_run' AND scope_id=?)",
+    ).get(runId, runId)?.id ?? null;
   const costRows = (runId: string) =>
     db
       .query<
@@ -293,6 +323,8 @@ async function fixture() {
     usageRows,
     costRows,
     reservations,
+    primaryReservationId,
+    agentRunReservationId,
   };
 }
 
@@ -394,6 +426,167 @@ describe("gateway worker execution of routed runs", () => {
     ]);
     expect(budget?.reservedMicros).toBe(0n);
     expect(Buffer.from(f.db.serialize()).includes(apiKey)).toBe(false);
+  });
+  test("co-reserves configured project, task and agent budgets", async () => {
+    const f = await fixture();
+    const runId = await f.schedule(routing(), "qa");
+    for (const [scopeType, scopeId] of [
+      ["project", "p"],
+      ["task", "t1"],
+      ["agent", "agent-qa"],
+    ] as const)
+      await f.costs.saveBudget(
+        {
+          id: `budget-${scopeType}`,
+          projectId: "p",
+          scopeType,
+          scopeId,
+          currency: "USD",
+          limitMicros: 125_000n,
+        },
+        now,
+      );
+
+    const http = transport();
+    await expect(
+      f.execute(runId, providers({ OPENAI_API_KEY: apiKey }, http.fetcher)),
+    ).resolves.toMatchObject({ status: "completed" });
+
+    expect(f.reservations(runId)).toHaveLength(4);
+    expect(
+      f.reservations(runId).every((row) => row.status === "consumed"),
+    ).toBe(true);
+    expect(f.primaryReservationId(runId)).toBe(
+      f.agentRunReservationId(runId),
+    );
+    for (const [scopeType, scopeId] of [
+      ["project", "p"],
+      ["task", "t1"],
+      ["agent", "agent-qa"],
+      ["agent_run", runId],
+    ] as const) {
+      const budget = await f.costs.findBudget(
+        "p",
+        scopeType,
+        scopeId,
+        "USD",
+        now,
+      );
+      expect(budget).toMatchObject({
+        spentMicros: 4012n,
+        reservedMicros: 0n,
+      });
+    }
+  });
+
+  test("releases all four co-reservations after a provider failure", async () => {
+    const f = await fixture();
+    const runId = await f.schedule(routing(), "qa");
+    for (const [scopeType, scopeId] of [
+      ["project", "p"],
+      ["task", "t1"],
+      ["agent", "agent-qa"],
+    ] as const)
+      await f.costs.saveBudget(
+        {
+          id: `budget-failure-${scopeType}`,
+          projectId: "p",
+          scopeType,
+          scopeId,
+          currency: "USD",
+          limitMicros: 125_000n,
+        },
+        now,
+      );
+
+    const result = await f.execute(
+      runId,
+      providers(
+        { OPENAI_API_KEY: apiKey },
+        async () => {
+          throw new Error("provider unavailable");
+        },
+      ),
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      error: { code: "WORKER_FAILED" },
+    });
+    expect(f.reservations(runId)).toHaveLength(4);
+    expect(f.reservations(runId).every((row) => row.status === "released")).toBe(
+      true,
+    );
+  });
+
+  test("Anthropic end_turn accepts a valid artifact", async () => {
+    const f = await fixture();
+    const runId = await f.schedule(routing(), "claude");
+    const http = transport((body) => ({
+      id: "msg-complete",
+      model: body.model,
+      stop_reason: "end_turn",
+      content: [
+        { type: "text", text: JSON.stringify({ summary: "valid", content: "valid" }) },
+      ],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    }));
+    const result = await f.execute(
+      runId,
+      providers(
+        {
+          OPENAI_API_KEY: apiKey,
+          ANTHROPIC_API_KEY: "anthropic-test-key",
+        },
+        http.fetcher,
+      ),
+    );
+    expect(result, JSON.stringify(result)).toMatchObject({ status: "completed" });
+    expect(f.costRows(runId)).toMatchObject([
+      { charge_basis: "reported_usage", reservation_status: "consumed" },
+    ]);
+  });
+
+  test("Anthropic non-normal stop reasons reject valid artifacts after metering", async () => {
+    for (const stopReason of [
+      "max_tokens",
+      "model_context_window_exceeded",
+      "tool_use",
+      "pause_turn",
+      "refusal",
+    ]) {
+      const f = await fixture();
+      const runId = await f.schedule(routing(), "claude");
+      const http = transport((body) => ({
+        id: `msg-${stopReason}`,
+        model: body.model,
+        stop_reason: stopReason,
+        content:
+          stopReason === "tool_use"
+            ? [{ type: "tool_use", id: "toolu_1", name: "tool" }]
+            : [{ type: "text", text: JSON.stringify({ summary: "valid", content: "valid" }) }],
+        usage: { input_tokens: 10, output_tokens: 5 },
+      }));
+      const result = await f.execute(
+        runId,
+        providers(
+          {
+            OPENAI_API_KEY: apiKey,
+            ANTHROPIC_API_KEY: "anthropic-test-key",
+          },
+          http.fetcher,
+        ),
+      );
+      expect(result).toMatchObject({
+        status: "failed",
+        error: { code: "WORKER_OUTPUT_INVALID" },
+      });
+      expect(f.usageRows()).toEqual([
+        { provider: "anthropic", model: "client-model", agent_run_id: runId },
+      ]);
+      expect(f.costRows(runId)).toMatchObject([
+        { charge_basis: "reported_usage", reservation_status: "consumed" },
+      ]);
+    }
   });
 
   test("uses the persisted model after routing changes and ignores ambient model settings", async () => {
@@ -581,7 +774,7 @@ profiles:
     const f = await fixture();
     for (const [agent, code] of [
       ["odd", "WORKER_MODEL_UNSUPPORTED"],
-      ["claude", "WORKER_MODEL_UNSUPPORTED"],
+      ["claude", "WORKER_CREDENTIALS_MISSING"],
     ] as const) {
       const runId = await f.schedule(routing(), agent);
       const http = transport();
@@ -591,9 +784,14 @@ profiles:
       );
       expect(result).toMatchObject({ status: "failed", error: { code } });
       expect(http.requests).toEqual([]);
-      expect(
-        (await f.runs.findRun(runId))!.snapshot().execution,
-      ).toBeUndefined();
+      if (agent === "odd")
+        expect(
+          (await f.runs.findRun(runId))!.snapshot().execution,
+        ).toBeUndefined();
+      else
+        expect(
+          (await f.runs.findRun(runId))!.snapshot().execution,
+        ).toMatchObject({ kind: "worker", adapterId: "llm-gateway" });
     }
     expect(f.usageRows()).toEqual([]);
   });

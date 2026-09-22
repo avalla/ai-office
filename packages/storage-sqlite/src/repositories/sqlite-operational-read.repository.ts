@@ -1438,6 +1438,7 @@ interface ActivityRow {
 
 interface AgentRunRow {
   execution_json: string | null;
+  model_routing_json: string | null;
   id: string;
   project_id: string;
   task_id: string;
@@ -1465,7 +1466,7 @@ const agentRunColumns = `
     r.role_key AS agent_role_key,
     run.pipeline_run_id, run.status, run.worktree_path,
     run.result_json, run.error_json, run.action_intent_json, run.execution_json,
-    run.created_at, run.started_at, run.completed_at, run.updated_at`;
+    run.model_routing_json, run.created_at, run.started_at, run.completed_at, run.updated_at`;
 
 const agentRunFrom = `
   FROM agent_run run
@@ -1481,6 +1482,10 @@ function agentRunRecord(row: AgentRunRow): OperationalAgentRunRecord {
     intent === null ? null : parseJsonObject(JSON.stringify(intent.arguments));
   return {
     execution: parseJsonObject(row.execution_json),
+    modelRouting:
+      row.model_routing_json === null
+        ? null
+        : safeParse(row.model_routing_json),
     id: row.id,
     projectId: row.project_id,
     taskId: row.task_id,

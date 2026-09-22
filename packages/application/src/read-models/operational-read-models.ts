@@ -16,6 +16,7 @@
  */
 
 import type { AgentRunStatus } from "@ai-office/domain/agent/agent-run.ts";
+import type { AgentRunModelRouting } from "@ai-office/domain/agent/agent-run-model.ts";
 import type { AgentExecutionProvenance } from "@ai-office/domain/agent/agent-execution.ts";
 import type { WorkerOutput } from "../ports/worker-runtime.port.ts";
 import type {
@@ -687,6 +688,7 @@ export interface AgentRunActionOutcome {
 
 export interface AgentRunState {
   execution?: AgentExecutionProvenance | null;
+  model: AgentRunModelRouting | null;
   runId: string;
   projectId: string;
   task: TaskReference | null;

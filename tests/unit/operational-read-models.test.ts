@@ -64,6 +64,7 @@ function run(
     pipelineRunId: null,
     status: "running",
     worktreePath: null,
+    modelRouting: null,
     result: null,
     error: null,
     actionIntent: null,

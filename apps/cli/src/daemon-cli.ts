@@ -139,6 +139,7 @@ const projectScopedCommands = new Set([
   "agent:list",
   "agent:models",
   "model:check",
+  "model:override",
   "run:schedule",
   "run:tick",
   "run:list",
@@ -180,10 +181,15 @@ async function resolvedArguments(
 ): Promise<{ args: string[]; discoveredRoot?: string }> {
   const resolved = resolveCallerLocalPaths(args, workingDirectory);
   const command = resolved[0];
+  const modelOverrideScope =
+    command === "model:override"
+      ? resolved[resolved.indexOf("--scope") + 1]
+      : undefined;
   if (
     command === undefined ||
     !projectScopedCommands.has(command) ||
-    resolved.includes("--project")
+    resolved.includes("--project") ||
+    (command === "model:override" && modelOverrideScope === "host")
   )
     return { args: resolved };
   const inspection = await bindings.inspect(workingDirectory, {

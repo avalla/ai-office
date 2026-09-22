@@ -69,6 +69,10 @@ export class ApplicationRuntime implements AiOfficeRuntime {
       state: ModelRoutingState;
       providers: ModelProviderCatalog;
       gateway: GatewayModelProviders;
+      reload?: () => ModelRoutingState;
+      restore?: (state: ModelRoutingState) => void;
+      load?: (readFile?: (path: string) => string) => ModelRoutingState;
+      file?: string;
     },
     private readonly projectStorage?: ProjectStorage,
   ) {}
@@ -123,7 +127,19 @@ export class ApplicationRuntime implements AiOfficeRuntime {
         ...(this.modelRouting === undefined
           ? {}
           : {
-              modelRouting: this.modelRouting.state,
+              modelRoutingProvider: () => this.modelRouting!.state,
+              ...(this.modelRouting.load === undefined
+                ? {}
+                : { modelRoutingLoader: this.modelRouting.load }),
+              ...(this.modelRouting.reload === undefined
+                ? {}
+                : { reloadModelRouting: this.modelRouting.reload }),
+              ...(this.modelRouting.restore === undefined
+                ? {}
+                : { restoreModelRouting: this.modelRouting.restore }),
+              ...(this.modelRouting.file === undefined
+                ? {}
+                : { modelRoutingFile: this.modelRouting.file }),
               modelProviders: this.modelRouting.providers,
               gatewayProviders: this.modelRouting.gateway,
             }),
