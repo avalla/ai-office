@@ -7,6 +7,8 @@ import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/
 import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
 import { PostgresAgentRuntimeRepository } from "@ai-office/storage-postgres/repositories/postgres-agent-runtime.repository.ts";
 import { PostgresGovernanceRepository } from "@ai-office/storage-postgres/repositories/postgres-governance.repository.ts";
+import { PostgresOfficeManifestRepository } from "@ai-office/storage-postgres/repositories/postgres-office-manifest.repository.ts";
+import { PostgresPipelineRunRepository } from "@ai-office/storage-postgres/repositories/postgres-pipeline-run.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
 import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
@@ -241,6 +243,14 @@ export class ProjectStorageBootstrap {
           database,
           configuration.tenantId,
         ),
+        officeManifests: new PostgresOfficeManifestRepository(
+          database,
+          configuration.tenantId,
+        ),
+        pipelines: new PostgresPipelineRunRepository(
+          database,
+          configuration.tenantId,
+        ),
         runtime: new PostgresAgentRuntimeRepository(
           database,
           configuration.tenantId,
@@ -256,6 +266,8 @@ export class ProjectStorageBootstrap {
         | "tasks"
         | "taskRequirements"
         | "governance"
+        | "officeManifests"
+        | "pipelines"
         | "runtime"
         | "auditEvents"
         | "transactions"
@@ -324,6 +336,8 @@ function completeCapabilities(): ProjectStorageCapabilities {
 function postgresCapabilities(): ProjectStorageCapabilities {
   return capabilities([
     "projects",
+    "officeManifests",
+    "pipelines",
     "tasks",
     "taskRequirements",
     "governance",
