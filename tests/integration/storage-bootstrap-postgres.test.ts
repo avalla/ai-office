@@ -7,6 +7,8 @@ import {
   requireCompleteProjectStorage,
   StorageProviderIncompleteError,
 } from "@ai-office/storage-bootstrap/project-storage-bootstrap.ts";
+import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
+import { PostgresAgentRuntimeRepository } from "@ai-office/storage-postgres/repositories/postgres-agent-runtime.repository.ts";
 import { PostgresGovernanceRepository } from "@ai-office/storage-postgres/repositories/postgres-governance.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
@@ -64,6 +66,12 @@ describe.skipIf(connectionString === undefined)(
         expect(handle.repositories.governance).toBeInstanceOf(
           PostgresGovernanceRepository,
         );
+        expect(handle.repositories.runtime).toBeInstanceOf(
+          PostgresAgentRuntimeRepository,
+        );
+        expect(handle.repositories.auditEvents).toBeInstanceOf(
+          PostgresAuditEventRepository,
+        );
         expect(handle.repositories.transactions).toBeInstanceOf(
           PostgresTransactionRunner,
         );
@@ -75,14 +83,16 @@ describe.skipIf(connectionString === undefined)(
           "projects",
           "tasks",
           "taskRequirements",
+          "runtime",
           "governance",
+          "auditEvents",
           "transactions",
         ]);
         expect(() => requireCompleteProjectStorage(handle)).toThrow(
           StorageProviderIncompleteError,
         );
         expect(() => requireCompleteProjectStorage(handle)).toThrow(
-          "profiles, officeManifests, pipelines, runtime, costs, capabilities, controlled, auditEvents, repositoryIdentities, projectStates, memoryReferences, projectMemoryProvenance, operationalReads, jobOutbox",
+          "profiles, officeManifests, pipelines, costs, capabilities, controlled, repositoryIdentities, projectStates, memoryReferences, projectMemoryProvenance, operationalReads, jobOutbox",
         );
       } finally {
         await handle.close();

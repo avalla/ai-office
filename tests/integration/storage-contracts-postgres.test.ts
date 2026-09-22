@@ -79,7 +79,10 @@ describe.skipIf(connectionString === undefined)(
     defineProjectStorageContracts(async () => ({
       projects: new PostgresProjectRepository(database, tenantId),
       tasks: new PostgresTaskRepository(database, tenantId),
-      taskRequirements: new PostgresTaskRequirementRepository(database, tenantId),
+      taskRequirements: new PostgresTaskRequirementRepository(
+        database,
+        tenantId,
+      ),
       transactions: new PostgresTransactionRunner(database),
       async seedRequirement(input: {
         id: string;
@@ -126,11 +129,15 @@ describe.skipIf(connectionString === undefined)(
             Task.create({ id: taskId, projectId, title: "Session task", now }),
           );
           expect(
-            await new PostgresProjectRepository(observer, tenantId).findById(projectId),
+            await new PostgresProjectRepository(observer, tenantId).findById(
+              projectId,
+            ),
           ).toBeNull();
         });
         expect(
-          await new PostgresProjectRepository(observer, tenantId).findById(projectId),
+          await new PostgresProjectRepository(observer, tenantId).findById(
+            projectId,
+          ),
         ).not.toBeNull();
         expect(
           await new PostgresTaskRepository(observer, tenantId).findById(taskId),
@@ -245,7 +252,9 @@ describe.skipIf(connectionString === undefined)(
                 'core.project', 'core.task', 'core.requirement',
                 'core.task_requirement', 'core.milestone',
                 'core.architecture_decision', 'core.review', 'core.approval',
-                'core.governance_event'
+                'core.governance_event', 'core.role', 'core.agent',
+                'core.pipeline_run', 'core.pipeline_stage_run', 'core.task_lock',
+                'core.agent_run_event', 'core.audit_event'
               ]) AS relation_name
             `,
           ),
@@ -259,6 +268,13 @@ describe.skipIf(connectionString === undefined)(
           { relation: "core.review" },
           { relation: "core.approval" },
           { relation: "core.governance_event" },
+          { relation: "core.role" },
+          { relation: "core.agent" },
+          { relation: "core.pipeline_run" },
+          { relation: "core.pipeline_stage_run" },
+          { relation: "core.task_lock" },
+          { relation: "core.agent_run_event" },
+          { relation: "core.audit_event" },
         ]);
       } finally {
         await Promise.allSettled([first.close(), second.close()]);
@@ -346,6 +362,8 @@ describe.skipIf(connectionString === undefined)(
         );
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           requiredMigration,
+          "20260922000000_agent_runtime_audit_authority.sql",
+          "20260922010000_agent_runtime_audit_hardening.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

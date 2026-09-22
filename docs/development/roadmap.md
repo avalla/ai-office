@@ -1335,20 +1335,24 @@ milestones, full requirements, ADRs, reviews, approvals, governance events,
 project ownership constraints, append-only rules, transactional finalization,
 the same-project requirement/milestone composite foreign key with
 column-specific delete nulling, and persistent review-subject ownership guards.
+The following AgentRuntime and audit slice adds the complete
+`AgentRuntimeRepository` and `AuditEventRepository` ports. It extends the
+existing identity-only `core.agent_run` review subject in place and adds only
+read-only pipeline projections needed for worker fences; it does not add
+PipelineRunRepository parity.
 PostgreSQL remains intentionally partial: its implemented capability groups are
-exactly `projects`, `tasks`, `taskRequirements`, `governance`, and
-`transactions`; a request to use it as complete Runtime
+exactly `projects`, `tasks`, `taskRequirements`, `governance`, `runtime`,
+`auditEvents`, and `transactions`; a request to use it as complete Runtime
 authority still fails closed with the missing capability list; no SQLite fallback
 or hybrid authority is allowed. PostgreSQL connection configuration is explicit
 through `AI_OFFICE_STORAGE_PROVIDER=postgres` and `AI_OFFICE_POSTGRES_URL`, and
 secrets remain runtime configuration rather than project state.
 
-The next storage slice is parity for the remaining `ProjectStorage` repositories
-(agents/roles, pipelines/runs, audit, capabilities/resources, or job outbox as
-dependency analysis warrants). Only after all required `ProjectStorage`
-repositories exist may PostgreSQL become a complete Runtime authority. The
-identity-only `core.agent_run` projection used to validate governance review
-subjects is not agent-runtime repository parity.
+The next storage slices are parity for the remaining `ProjectStorage` repositories
+(profiles, office manifests, pipelines, costs, capabilities/resources, controlled
+actions, repository identities, project state, memory, operational reads, or job
+outbox as dependency analysis warrants). Only after all required `ProjectStorage`
+repositories exist may PostgreSQL become a complete Runtime authority.
 
 ### Manufacturing reference vertical
 

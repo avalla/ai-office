@@ -69,6 +69,17 @@ export class PostgresClient {
     }) as Promise<T>;
   }
 
+  /**
+   * Join the current transaction when a repository is called from an
+   * application TransactionRunner; otherwise create the top-level boundary.
+   */
+  async runInTransaction<T>(work: () => Promise<T>): Promise<T> {
+    const context = this.transactionSession.getStore();
+    if (context !== undefined && !context.lifetime.active)
+      throw new TransactionContextExpiredError();
+    return context === undefined ? this.transaction(work) : work();
+  }
+
   async close(): Promise<void> {
     await this.client.end({ timeout: 5 });
   }

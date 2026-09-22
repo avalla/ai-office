@@ -1,4 +1,8 @@
 import type { Database } from "bun:sqlite";
+import {
+  AgentRunPersistenceConflictError,
+  canPersistAgentRunTransition,
+} from "@ai-office/application/ports/agent-runtime-repository.port.ts";
 import type {
   AgentRunEvent,
   AgentRuntimeRepository,
@@ -67,6 +71,17 @@ interface RunEventRow {
   status: AgentRunStatus;
   payload_json: string;
   occurred_at: string;
+}
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 const agent = (row: AgentRow): Agent => ({
   id: row.id,
@@ -249,18 +264,24 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
             `SELECT r.id FROM agent_run r
           JOIN task t ON t.id=r.task_id AND t.project_id=r.project_id
           JOIN agent g ON g.id=r.agent_id AND g.project_id=r.project_id
+           JOIN role ro ON ro.id=g.role_id AND ro.project_id=g.project_id
           JOIN task_lock l ON l.run_id=r.id AND l.task_id=r.task_id
           WHERE r.id=? AND t.status=? AND t.updated_at=?
-          AND g.enabled=1 AND g.role_id=? AND g.updated_at=? AND l.expires_at>?
+          AND g.enabled=1 AND g.role_id=? AND g.updated_at=?
+           AND ro.id=? AND ro.role_key=? AND ro.version=? AND ro.limits_json=? AND ro.updated_at=?
+           AND l.expires_at>?
           AND ((? IS NULL AND r.pipeline_run_id IS NULL
             AND r.pipeline_stage_run_id IS NULL
             AND NOT EXISTS (SELECT 1 FROM pipeline_run p WHERE p.task_id=r.task_id AND p.status='active'))
             OR EXISTS (SELECT 1 FROM pipeline_run p
               JOIN pipeline_stage_run s ON s.pipeline_run_id=p.id
                 AND s.project_id=p.project_id AND s.id=r.pipeline_stage_run_id
+                 AND s.stage_index=p.current_stage_index
               WHERE p.id=? AND p.id=r.pipeline_run_id
                 AND p.task_id=r.task_id AND p.project_id=r.project_id
-                AND p.version=? AND s.id=? AND p.status='active'))`,
+                AND p.version=? AND s.id=? AND p.status='active'
+                 AND s.status='active' AND s.assigned_agent_id=r.agent_id
+                 AND s.role_id=ro.role_key))`,
           )
           .get(
             input.runId,
@@ -268,6 +289,15 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
             a.taskUpdatedAt.toISOString(),
             a.agentRoleId,
             a.agentUpdatedAt.toISOString(),
+            a.roleId,
+            a.roleKey,
+            a.roleVersion,
+            JSON.stringify({
+              maxIterations: a.roleLimits.maxIterations,
+              maxCostMicros: a.roleLimits.maxCostMicros.toString(),
+              timeoutSeconds: a.roleLimits.timeoutSeconds,
+            }),
+            a.roleUpdatedAt.toISOString(),
             input.now.toISOString(),
             a.pipelineId,
             a.pipelineId,
@@ -426,14 +456,32 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
       .get(id);
     return row === null ? null : agent(row);
   }
+  private appendRunEvent(
+    v: ReturnType<AgentRun["snapshot"]>,
+    previousStatus: AgentRunStatus | undefined,
+  ): void {
+    this.database
+      .prepare(
+        "INSERT OR IGNORE INTO agent_run_event(id,run_id,status,payload_json,occurred_at) VALUES (?,?,?,?,?)",
+      )
+      .run(
+        `${v.id}:${v.status}`,
+        v.id,
+        v.status,
+        JSON.stringify({
+          hasResult: v.result !== undefined,
+          hasError: v.error !== undefined,
+          ...(v.execution === undefined ? {} : { execution: v.execution }),
+          ...(previousStatus === undefined && v.modelRouting !== undefined
+            ? { modelRouting: v.modelRouting }
+            : {}),
+        }),
+        v.updatedAt.toISOString(),
+      );
+  }
   async saveRun(value: AgentRun): Promise<void> {
     const v = value.snapshot();
     this.database.transaction(() => {
-      const previous = this.database
-        .query<{ status: AgentRunStatus }, [string]>(
-          "SELECT status FROM agent_run WHERE id=?",
-        )
-        .get(v.id);
       const values = [
         v.id,
         v.projectId,
@@ -450,7 +498,6 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
         v.completedAt?.toISOString() ?? null,
         v.updatedAt.toISOString(),
         v.execution === undefined ? null : JSON.stringify(v.execution),
-        // Inserted once; the conflict update never rewrites immutable inputs.
         v.modelRouting === undefined ? null : JSON.stringify(v.modelRouting),
         ...(this.hasRunStageBinding ? [v.pipelineStageRunId ?? null] : []),
         ...(this.hasRunGuidance
@@ -461,30 +508,76 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
             ]
           : []),
       ];
-      this.database
+      const inserted = this.database
         .prepare(
-          `INSERT INTO agent_run(${this.runColumns}) VALUES (${values.map(() => "?").join(", ")}) ON CONFLICT(id) DO UPDATE SET status=excluded.status, worktree_path=excluded.worktree_path, result_json=excluded.result_json, error_json=excluded.error_json, started_at=excluded.started_at, completed_at=excluded.completed_at, updated_at=excluded.updated_at, execution_json=excluded.execution_json`,
+          `INSERT INTO agent_run(${this.runColumns}) VALUES (${values.map(() => "?").join(", ")}) ON CONFLICT(id) DO NOTHING`,
         )
-        .run(...values);
-      if (previous?.status !== v.status)
-        this.database
-          .prepare(
-            "INSERT INTO agent_run_event(id,run_id,status,payload_json,occurred_at) VALUES (?,?,?,?,?)",
-          )
-          .run(
-            `${v.id}:${v.status}`,
-            v.id,
-            v.status,
-            JSON.stringify({
-              hasResult: v.result !== undefined,
-              hasError: v.error !== undefined,
-              ...(v.execution === undefined ? {} : { execution: v.execution }),
-              ...(previous === null && v.modelRouting !== undefined
-                ? { modelRouting: v.modelRouting }
-                : {}),
-            }),
-            v.updatedAt.toISOString(),
-          );
+        .run(...values).changes;
+      if (inserted === 1) {
+        this.appendRunEvent(v, undefined);
+        return;
+      }
+      const currentRow = this.database
+        .query<RunRow, [string]>(
+          `SELECT ${this.runColumns} FROM agent_run WHERE id=?`,
+        )
+        .get(v.id);
+      if (currentRow === null) throw new AgentRunPersistenceConflictError(v.id);
+      const current = run(currentRow).snapshot();
+      if (
+        current.projectId !== v.projectId ||
+        current.taskId !== v.taskId ||
+        current.agentId !== v.agentId ||
+        current.pipelineRunId !== v.pipelineRunId ||
+        current.pipelineStageRunId !== v.pipelineStageRunId ||
+        stableJson(current.actionIntent ?? null) !==
+          stableJson(v.actionIntent ?? null) ||
+        stableJson(current.modelRouting ?? null) !==
+          stableJson(v.modelRouting ?? null) ||
+        stableJson(current.roleGuidance ?? null) !==
+          stableJson(v.roleGuidance ?? null) ||
+        current.createdAt.getTime() !== v.createdAt.getTime()
+      )
+        throw new AgentRunPersistenceConflictError(v.id);
+      if (current.status === v.status) {
+        const sameMutableState =
+          current.worktreePath === v.worktreePath &&
+          stableJson(current.result ?? null) === stableJson(v.result ?? null) &&
+          stableJson(current.error ?? null) === stableJson(v.error ?? null) &&
+          (current.startedAt?.getTime() ?? undefined) ===
+            (v.startedAt?.getTime() ?? undefined) &&
+          (current.completedAt?.getTime() ?? undefined) ===
+            (v.completedAt?.getTime() ?? undefined) &&
+          stableJson(current.execution ?? null) ===
+            stableJson(v.execution ?? null) &&
+          current.updatedAt.getTime() === v.updatedAt.getTime();
+        if (sameMutableState) return;
+        throw new AgentRunPersistenceConflictError(v.id);
+      }
+      if (
+        !canPersistAgentRunTransition(current.status, v.status) ||
+        current.updatedAt.getTime() > v.updatedAt.getTime()
+      )
+        throw new AgentRunPersistenceConflictError(v.id);
+      const changed = this.database
+        .prepare(
+          `UPDATE agent_run SET status=?, worktree_path=?, result_json=?, error_json=?, started_at=?, completed_at=?, updated_at=?, execution_json=? WHERE id=? AND status=? AND updated_at=?`,
+        )
+        .run(
+          v.status,
+          v.worktreePath ?? null,
+          v.result === undefined ? null : JSON.stringify(v.result),
+          v.error === undefined ? null : JSON.stringify(v.error),
+          v.startedAt?.toISOString() ?? null,
+          v.completedAt?.toISOString() ?? null,
+          v.updatedAt.toISOString(),
+          v.execution === undefined ? null : JSON.stringify(v.execution),
+          v.id,
+          current.status,
+          current.updatedAt.toISOString(),
+        ).changes;
+      if (changed !== 1) throw new AgentRunPersistenceConflictError(v.id);
+      this.appendRunEvent(v, current.status);
     })();
   }
   async acceptWorkerResult(input: {

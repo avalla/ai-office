@@ -30,12 +30,20 @@ selection and construction boundary used by Runtime command execution and daemon
 bootstrap. It can explicitly bootstrap the partial PostgreSQL foundation while
 reporting its capabilities.
 
-The decision establishes the repository/composition and provider-selection
-boundaries without claiming PostgreSQL Runtime parity. PostgreSQL selection for
-complete Runtime authority fails closed with `StorageProviderIncompleteError`;
-there is no SQLite fallback or mixed project authority. Server-side PostgreSQL
-connections keep transaction boundaries and concurrency semantics explicit and
-preservable as repository parity is added in a later slice.
+The repository/composition and provider-selection boundaries remain explicit
+as PostgreSQL parity is added incrementally. PostgreSQL now implements the
+`AgentRuntimeRepository` and `AuditEventRepository` ports in addition to the
+project, task, task-requirement, governance, and transaction capabilities. Its
+runtime migration extends the existing governance `core.agent_run` table in
+place; identity-only rows remain valid and are excluded from runtime reads until
+they have a complete runtime shape. The minimal pipeline projection used by
+worker fences is not PipelineRunRepository parity.
+
+PostgreSQL selection for complete Runtime authority still fails closed with
+`StorageProviderIncompleteError`; there is no SQLite fallback or mixed project
+authority. Server-side PostgreSQL connections keep transaction boundaries and
+concurrency semantics explicit and preservable as remaining repository parity is
+added.
 
 Supabase/PostgREST and `supabase-js` are not the core repository abstraction.
 `supabase-js` may be added later for Supabase Auth, Storage, and Realtime.
