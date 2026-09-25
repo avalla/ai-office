@@ -7,6 +7,7 @@ import type {
 import {
   ClaudeAgentClientAdapter,
   CodexAgentClientAdapter,
+  SharedProjectArtifactsAdapter,
 } from "./adapters.ts";
 import {
   LocalAgentClientFiles,
@@ -16,6 +17,7 @@ import {
 
 export class DefaultAgentClientCatalog implements AgentClientCatalog {
   private readonly clients: readonly AgentClientAdapter[];
+  readonly sharedProjectArtifacts: SharedProjectArtifactsAdapter;
 
   constructor(
     input: {
@@ -25,6 +27,7 @@ export class DefaultAgentClientCatalog implements AgentClientCatalog {
   ) {
     const files = new LocalAgentClientFiles(input.fileHooks);
     const executables = new PathExecutableLocator(input.pathValue);
+    this.sharedProjectArtifacts = new SharedProjectArtifactsAdapter(files);
     this.clients = [
       new CodexAgentClientAdapter(files, executables),
       new ClaudeAgentClientAdapter(files, executables),

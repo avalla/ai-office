@@ -27,6 +27,7 @@ import {
   ManageAgentClientIntegration,
   type AgentClientIntegrationPlan,
 } from "../agent-client/manage-agent-client-integration.ts";
+import { ManageSharedProjectArtifacts } from "../agent-client/manage-shared-project-artifacts.ts";
 import {
   ProjectBindingError,
   projectBindingFile,
@@ -289,6 +290,7 @@ interface ProjectLifecycleDependencies {
   importer: ImportProject;
   manifestApplicator: ApplyOfficeManifest;
   clients: ManageAgentClientIntegration;
+  sharedArtifacts: ManageSharedProjectArtifacts;
   bindings: ProjectBindingAdapter;
   ids: IdGenerator;
   clock: Clock;
@@ -346,8 +348,8 @@ function hasManagedClientState(
   if (clientId === "codex")
     return inspection.clientInstructions?.ownership === "ai_office_owned";
   return (
-    inspection.skillInstructions?.ownership === "ai_office_owned" ||
     inspection.clientInstructions?.ownership === "ai_office_owned" ||
+    inspection.skillInstructions?.ownership === "ai_office_owned" ||
     inspection.clientInstructions?.ownership === "merged"
   );
 }
@@ -533,9 +535,6 @@ export class ManageProjectLifecycle {
       );
       const candidates = initialInspections.filter(
         ({ detection, inspection: clientInspection }) =>
-          // Codex owns the shared guidance projection, which install maintains
-          // even when its executable is unavailable to the Runtime host.
-          detection.clientId === "codex" ||
           detection.status === "detected" ||
           hasManagedClientState(detection.clientId, clientInspection),
       );
@@ -543,6 +542,17 @@ export class ManageProjectLifecycle {
         projectName: projectSnapshot.name,
         manifest: prospectiveManifest,
       });
+      const sharedPlan = await this.dependencies.sharedArtifacts.plan({
+        rootPath,
+        contract,
+      });
+      if (sharedPlan.issues.some((issue) => issue.severity === "conflict"))
+        throw new ProjectLifecycleError(
+          `Shared AI Office artifacts have a conflict: ${sharedPlan.issues
+            .filter((issue) => issue.severity === "conflict")
+            .map((issue) => issue.message)
+            .join("; ")}`,
+        );
       for (const { detection } of candidates) {
         const preflight = await this.dependencies.clients.plan({
           clientId: detection.clientId,
@@ -591,6 +601,19 @@ export class ManageProjectLifecycle {
         kind: "create" | "update";
         relativePath: string;
       }> = [];
+      const sharedChanges = sharedPlan.operations
+        .filter(
+          (operation): operation is typeof operation & {
+            kind: "create" | "update";
+          } => operation.kind !== "delete",
+        )
+        .map((operation) => ({
+          kind: operation.kind,
+          relativePath: operation.relativePath,
+        }));
+      await this.dependencies.sharedArtifacts.apply(sharedPlan);
+      changes.push(...sharedChanges);
+      clientPaths.push(...sharedChanges.map((change) => change.relativePath));
       for (const { detection } of candidates) {
         const plan = await this.dependencies.clients.plan({
           clientId: detection.clientId,
@@ -853,6 +876,22 @@ export class ManageProjectLifecycle {
       ),
     );
     issues.push(...clientIssues(clients));
+    if (project !== null && office !== null) {
+      const sharedPlan = await this.dependencies.sharedArtifacts.plan({
+        rootPath: inspection.rootPath,
+        contract: buildProjectInstructionContract({
+          projectName: project.snapshot().name,
+          manifest: office.manifest,
+        }),
+      });
+      if (sharedPlan.operations.length > 0)
+        issues.push({
+          severity: "warning",
+          code: "shared_project_artifacts_drifted",
+          message: "AI Office shared project guidance or skill has drifted",
+          recovery: "Run ai-office install . to reconcile shared AI Office artifacts",
+        });
+    }
     const tasks =
       project === null
         ? null

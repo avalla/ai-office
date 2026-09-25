@@ -9,6 +9,10 @@ import type {
   AgentClientIntegrationIssue,
   AgentClientValidation,
 } from "@ai-office/application/ports/agent-client-adapter.port.ts";
+import type {
+  SharedProjectArtifactAdapter,
+  SharedProjectArtifactDraft,
+} from "@ai-office/application/ports/shared-project-artifact-adapter.port.ts";
 import {
   legacyManagedProjectInstructionsHeader,
   managedProjectInstructionsHeader,
@@ -419,6 +423,33 @@ abstract class BaseAgentClientAdapter implements AgentClientAdapter {
   }
 
   abstract validate(rootPath: string): Promise<AgentClientValidation>;
+}
+
+export class SharedProjectArtifactsAdapter implements SharedProjectArtifactAdapter {
+  constructor(private readonly files: LocalAgentClientFiles) {}
+
+  async plan(input: {
+    rootPath: string;
+    canonicalInstructions: string;
+    projectSkill: string;
+  }): Promise<SharedProjectArtifactDraft> {
+    const root = this.files.resolveRoot(input.rootPath);
+    const canonical = this.files.read(root, canonicalProjectInstructionsPath);
+    const projectSkill = this.files.read(root, codexProjectSkillPath);
+    const legacy = this.files.read(root, "CODEX.md");
+    return {
+      rootPath: root,
+      operations: [
+        ...canonicalOperations(canonical, input.canonicalInstructions),
+        ...projectSkillOperations(projectSkill, input.projectSkill),
+      ],
+      issues: baseIssues(canonical, projectSkill, legacy),
+    };
+  }
+
+  async apply(draft: SharedProjectArtifactDraft): Promise<void> {
+    this.files.apply(this.files.resolveRoot(draft.rootPath), draft.operations);
+  }
 }
 
 export class CodexAgentClientAdapter extends BaseAgentClientAdapter {

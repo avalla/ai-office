@@ -10,6 +10,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -424,7 +425,7 @@ describe("project lifecycle UX", () => {
         created: false,
       },
     });
-    expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(false);
     expect(existsSync(join(harness.projectRoot, "CLAUDE.md"))).toBe(false);
     expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(true);
     expect(
@@ -435,7 +436,7 @@ describe("project lifecycle UX", () => {
   });
 
   test("resolves lifecycle commands from descendants to the managed repository root", async () => {
-    const harness = await startHarness();
+    const harness = await startHarness(["codex"]);
     configureGitIdentity(
       harness.projectRoot,
       "https://example.test/team/descendant.git",
@@ -746,7 +747,7 @@ describe("project lifecycle UX", () => {
         {
           clientId: "codex",
           detection: "not_detected",
-          configuration: "configured",
+          configuration: "not_configured",
         },
         {
           clientId: "claude",
@@ -757,7 +758,11 @@ describe("project lifecycle UX", () => {
       issues: [],
     });
     expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(true);
-    expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(true);
+    expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(harness.projectRoot, "CLAUDE.md"))).toBe(false);
+    expect(
+      existsSync(join(harness.projectRoot, ".claude/skills/ai-office/SKILL.md")),
+    ).toBe(false);
     expect(
       existsSync(
         join(harness.projectRoot, ".agents/skills/ai-office/SKILL.md"),
@@ -769,8 +774,16 @@ describe("project lifecycle UX", () => {
     expect(JSON.parse(status.stdout[0]!)).toMatchObject({
       health: "healthy",
       clients: [
-        { clientId: "codex", detection: "not_detected" },
-        { clientId: "claude", detection: "not_detected" },
+        {
+          clientId: "codex",
+          detection: "not_detected",
+          configuration: "not_configured",
+        },
+        {
+          clientId: "claude",
+          detection: "not_detected",
+          configuration: "not_configured",
+        },
       ],
       issues: [],
     });
@@ -785,11 +798,73 @@ describe("project lifecycle UX", () => {
     expect(JSON.parse(drifted.stdout[0]!)).toMatchObject({
       health: "needs_attention",
       clients: [
-        { clientId: "codex", detection: "not_detected", configuration: "drifted" },
-        { clientId: "claude", detection: "not_detected" },
+        {
+          clientId: "codex",
+          detection: "not_detected",
+          configuration: "not_configured",
+        },
+        {
+          clientId: "claude",
+          detection: "not_detected",
+          configuration: "not_configured",
+        },
       ],
-      issues: [expect.objectContaining({ code: "client_codex_drifted" })],
+      issues: [
+        expect.objectContaining({ code: "shared_project_artifacts_drifted" }),
+      ],
     });
+
+    await run(harness, ["install", ".", "--json"]);
+    const skillPath = join(
+      harness.projectRoot,
+      ".agents/skills/ai-office/SKILL.md",
+    );
+    writeFileSync(skillPath, `${readFileSync(skillPath, "utf8")}\nlocal drift\n`);
+    const skillDrifted = await run(harness, ["status", "--json"]);
+    expect(skillDrifted.exitCode).toBe(1);
+    expect(JSON.parse(skillDrifted.stdout[0]!)).toMatchObject({
+      health: "needs_attention",
+      clients: [
+        { clientId: "codex", configuration: "not_configured" },
+        { clientId: "claude", configuration: "not_configured" },
+      ],
+      issues: [
+        expect.objectContaining({ code: "shared_project_artifacts_drifted" }),
+      ],
+    });
+  });
+
+  test("reconciles existing managed Codex files when its executable disappears", async () => {
+    const harness = await startHarness(["codex"]);
+    await run(harness, ["install", ".", "--json"]);
+    writeFileSync(
+      join(harness.projectRoot, "AI-OFFICE.md"),
+      `${readFileSync(join(harness.projectRoot, "AI-OFFICE.md"), "utf8")}\nlocal drift\n`,
+    );
+    unlinkSync(join(harness.binRoot, "codex"));
+
+    const reconciled = await run(harness, ["install", ".", "--json"]);
+    expect(reconciled.exitCode).toBe(0);
+    expect(JSON.parse(reconciled.stdout[0]!)).toMatchObject({
+      changes: [
+        expect.objectContaining({ relativePath: "AI-OFFICE.md" }),
+      ],
+      clients: [
+        {
+          clientId: "codex",
+          detection: "not_detected",
+          configuration: "configured",
+        },
+        {
+          clientId: "claude",
+          detection: "not_detected",
+          configuration: "not_configured",
+        },
+      ],
+    });
+    expect(readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8")).toContain(
+      "AI-OFFICE.md",
+    );
   });
 
   test("preflights client conflicts before binding or office configuration", async () => {

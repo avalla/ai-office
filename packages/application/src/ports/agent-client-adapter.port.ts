@@ -101,4 +101,6 @@ export interface AgentClientAdapter {
 export interface AgentClientCatalog {
   list(): readonly AgentClientAdapter[];
   get(id: AgentClientId): AgentClientAdapter;
+  /** Client-neutral owner for AI Office's shared repository artifacts. */
+  readonly sharedProjectArtifacts: import("./shared-project-artifact-adapter.port.ts").SharedProjectArtifactAdapter;
 }
