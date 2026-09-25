@@ -5,6 +5,7 @@ import {
   ProjectSourceAssociationError,
 } from "@ai-office/application/commands/import-project.ts";
 import { ManageAgentClientIntegration } from "@ai-office/application/agent-client/manage-agent-client-integration.ts";
+import { ManageSharedProjectArtifacts } from "@ai-office/application/agent-client/manage-shared-project-artifacts.ts";
 import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import {
   ManageProjectLifecycle,
@@ -68,6 +69,9 @@ function service(context: CommandContext): ManageProjectLifecycle {
       context.transactions,
     ),
     clients: new ManageAgentClientIntegration(context.agentClients),
+    sharedArtifacts: new ManageSharedProjectArtifacts(
+      context.agentClients.sharedProjectArtifacts,
+    ),
     bindings: context.projectBindings,
     ids: context.ids,
     clock: context.clock,

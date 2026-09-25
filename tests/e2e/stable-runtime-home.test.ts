@@ -87,7 +87,7 @@ describe("stable user runtime home", () => {
         agentClients: clients,
         io: installOutput.io,
       }),
-    ).toBe(2);
+    ).toBe(0);
     const projectId = (
       JSON.parse(installOutput.stdout[0]!) as { project: { id: string } }
     ).project.id;
@@ -113,14 +113,17 @@ describe("stable user runtime home", () => {
           agentClients: clients,
           io: statusOutput.io,
         }),
-      ).toBe(1);
+      ).toBe(0);
       expect(JSON.parse(statusOutput.stdout[0]!)).toMatchObject({
         installed: true,
+        health: "healthy",
         project: { id: projectId },
         runtime: { home: paths.runtimeHome, authoritativeState: "available" },
-        issues: [
-          expect.objectContaining({ code: "no_supported_client_detected" }),
+        clients: [
+          { clientId: "codex", detection: "not_detected" },
+          { clientId: "claude", detection: "not_detected" },
         ],
+        issues: [],
       });
     } finally {
       secondController.abort();

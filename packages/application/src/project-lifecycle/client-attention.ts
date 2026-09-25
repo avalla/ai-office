@@ -8,14 +8,6 @@ export function clientIssues(
   clients: readonly LifecycleClientStatus[],
 ): LifecycleIssue[] {
   const issues: LifecycleIssue[] = [];
-  if (!clients.some((client) => client.detection === "detected"))
-    issues.push({
-      severity: "warning",
-      code: "no_supported_client_detected",
-      message: "No supported coding client was detected",
-      recovery:
-        "Install a supported client separately if desired, then rerun ai-office install .",
-    });
   for (const client of clients) {
     const requiresAttention =
       (client.detection === "detected" &&

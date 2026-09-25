@@ -57,9 +57,14 @@ ai-office install .
 ai-office status
 ```
 
-Install detects supported executables without launching them, preflights every
-detected or already-managed adapter, then plans and applies clients
-sequentially. The output lists each created, updated, or preserved path.
+Install detects supported executables without launching them and always
+reconciles AI Office-owned shared project guidance (`AI-OFFICE.md` and the
+primary skill) independently from client-specific integrations. It then
+preflights and applies detected or already-managed adapters sequentially. The
+Codex adapter manages `AGENTS.md`; the Claude adapter manages `CLAUDE.md` and
+its skill bridge. The output lists each created, updated, or preserved path.
+Executable detection is informational during project lifecycle; availability is
+required only when a client must actually execute work.
 
 The lower-level commands remain available for automation, debugging, custom
 contracts, and one-client repair:
