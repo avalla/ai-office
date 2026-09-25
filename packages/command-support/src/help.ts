@@ -50,6 +50,8 @@ Commands:
   project:backup --project <id> --output <path.aioffice> [--json]
   project:restore <archive.aioffice> [--root <path>] [--json]
   office:context --project <id>
+  office:workspace --project <id> [--status <active|all|status>] [--search <text>] [--priority <n>] [--agent <id>] [--unassigned] [--milestone <id>] [--sort <milestone|short_name>] [--limit <n>] [--json]
+    read-only project snapshot for Codex/Claude browsing and follow-up; includes tasks, milestones, requirements, agents, runs and activity
   office:validate (--file <path> [--root <path>] | --manifest <json>)
     --file is canonically contained in the nearest binding/Git root from --root
     (--root defaults to caller cwd; standalone directories use that directory)

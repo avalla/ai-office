@@ -196,6 +196,37 @@ describe("task lifecycle CLI", () => {
     );
   });
 
+  test("exposes a read-only workspace snapshot for agent clients", async () => {
+    const { root, projectId } = await board();
+    const taskId = await newTask(root, projectId, "Browse the workspace");
+
+    const workspace = await cli(root, [
+      "office:workspace",
+      "--project",
+      projectId,
+      "--status",
+      "all",
+      "--sort",
+      "short_name",
+      "--json",
+    ]);
+    expect(workspace.code).toBe(0);
+    const snapshot = JSON.parse(workspace.stdout[0]!);
+    expect(snapshot.contractVersion).toBe(1);
+    expect(snapshot.project.tasks.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ taskId, title: "Browse the workspace" }),
+      ]),
+    );
+    expect(snapshot.project.milestones).toEqual([]);
+    expect(snapshot.project.requirements).toEqual([]);
+    expect(snapshot.project.agents).toEqual([]);
+    expect(snapshot.project.taskPage.filters).toEqual({
+      status: "all",
+      sort: "short_name",
+    });
+  });
+
   test("requires a description for task:update", async () => {
     const { root, projectId } = await board();
     const taskId = await newTask(root, projectId, "Ship it");
@@ -339,9 +370,7 @@ describe("task board", () => {
     await verify(root, projectId, second);
 
     const listed = await cli(root, ["task:list", "--project", projectId]);
-    expect(listed.stdout[0]).toBe(
-      "ID\tSTATUS\tREQUIREMENTS\tPRIORITY\tTITLE",
-    );
+    expect(listed.stdout[0]).toBe("ID\tSTATUS\tREQUIREMENTS\tPRIORITY\tTITLE");
     const rows = listed.stdout.slice(1);
     const staleRow = rows.find((row) => row.startsWith(stale + "\t"))!;
     const healthyRow = rows.find((row) => row.startsWith(healthy + "\t"))!;
@@ -383,7 +412,9 @@ describe("task board", () => {
       foreign,
     ]);
     expect(result.code).toBe(1);
-    expect(result.stderr.join("\n")).toContain(`Requirement ${foreign} not found`);
+    expect(result.stderr.join("\n")).toContain(
+      `Requirement ${foreign} not found`,
+    );
   });
 });
 
@@ -403,11 +434,7 @@ describe("task reconciliation CLI", () => {
     ]);
     await verify(root, projectId, requirementId);
 
-    const report = await cli(root, [
-      "task:reconcile",
-      "--project",
-      projectId,
-    ]);
+    const report = await cli(root, ["task:reconcile", "--project", projectId]);
     expect(report.code).toBe(0);
     const text = report.stdout.join("\n");
     expect(text).toContain("stale_pending_task");

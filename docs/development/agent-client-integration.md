@@ -82,6 +82,28 @@ ai-office client:validate --client claude --root /path/to/project
 The optional contract must be a regular JSON file inside the integration root
 and is limited to 256 KiB. Normal lifecycle install does not persist it.
 
+# Agent-facing workspace mode
+
+Codex and Claude use the Runtime-backed CLI as their operational interface. The
+read-only workspace snapshot groups the same authoritative entities shown by the
+dashboard:
+
+```bash
+ai-office office:workspace --project <project-id> --status active --json
+ai-office office:workspace --project <project-id> --status all --milestone <id> --json
+```
+
+The version-1 response includes project detail, task pages, milestones,
+requirements, agents, runs, reviews, attention, and recent activity. It supports
+focused browsing with milestone and task sort filters. After a requested change
+or execution, the client re-reads the snapshot and reports persisted state.
+
+Mutations remain semantic Runtime commands: task:update, task lifecycle,
+milestone and requirement status commands, and run:* execution commands.
+The client never opens SQLite, calls a provider directly, or starts a second
+manual Runtime/dashboard process. Runtime validation, audit, capabilities, and
+controlled-action approvals remain in force.
+
 ## Ownership and status
 
 File ownership and integration status are independent:

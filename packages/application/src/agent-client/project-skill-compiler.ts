@@ -48,6 +48,21 @@ Onboarding is the office-configuration part of the handover above. Run install, 
 
 Classify tasks as feature, bugfix, maintenance, research, or release and resolve \`ai-office office:pipeline --project <projectId> --task-kind <kind>\` before operating them. Guidance-only definitions describe expected work. For an enforced definition, use \`pipeline:start\`, inspect \`pipeline:status\`, bind only the assigned registered agent, and use explicit runtime transitions. Runtime authorization is authoritative: never bypass assignments, stage capabilities, approvals, separation rules, \`action:*\` requests, or controlled execution. Use \`task:*\` and \`run:*\` for work, \`client:*\` only for manual integration recovery, and \`memory:*\` for reusable memory. Never launch Codex or Claude implicitly.
 
+## Browse and follow up
+
+Use ai-office office:workspace --project <projectId> --status active --json as
+the read-only agent workspace contract. It returns project detail, tasks,
+milestones, requirements, agents, runs, reviews, attention items, and recent
+activity. Use --status all, --milestone <milestoneId>, or --sort short_name for
+historical and focused browsing. Re-run it after commands to verify persisted
+state.
+
+Use task:update for descriptions, semantic task lifecycle commands,
+milestone:set-status and requirement:set-status for governance, and
+run:schedule, run:show, run:cancel, or run:tick for execution. Never edit
+SQLite, call providers directly, or launch another manual Runtime or dashboard
+process.
+
 ## Uninstall safely
 
 Preview with \`ai-office uninstall . --json\`, present affected and preserved paths, obtain confirmation, then apply the exact returned plan hash with \`--approve\`. Project uninstall removes only AI Office-owned repository integration and detaches this checkout; it must preserve the portable binding, user files, unrelated skills, runtime state, and global memory. \`runtime:purge\` is a separate destructive offline workflow and requires its own exact approval.

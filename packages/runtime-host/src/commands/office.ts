@@ -5,6 +5,12 @@ import { ApplyOfficeManifest } from "@ai-office/application/commands/apply-offic
 import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
 import { OfficeManifestNotFoundError } from "@ai-office/application/errors.ts";
 import { GetOfficeContext } from "@ai-office/application/queries/get-office-context.ts";
+import { OperationalQueryService } from "@ai-office/application/queries/operational-query-service.ts";
+import {
+  parseLimit,
+  parseTaskPageQuery,
+  queryLimits,
+} from "@ai-office/application/protocol/query-protocol.ts";
 import {
   officeTaskKinds,
   type OfficeManifest,
@@ -150,6 +156,59 @@ export async function handleOfficeCommand(
       context.transactions,
     ).execute(projectId, manifest);
     context.io.stdout(revisionJson(revision));
+    return 0;
+  }
+
+  if (command === "office:workspace") {
+    const parsed = parseArguments(
+      args,
+      new Set([
+        "project",
+        "search",
+        "status",
+        "priority",
+        "agent",
+        "milestone",
+        "sort",
+        "offset",
+        "limit",
+      ]),
+      new Set(["json", "unassigned"]),
+    );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError("office:workspace only accepts named options");
+    const parameters = new URLSearchParams({
+      status: parsed.options.get("status") ?? "active",
+    });
+    for (const name of [
+      "search",
+      "priority",
+      "agent",
+      "milestone",
+      "sort",
+      "offset",
+    ]) {
+      const value = parsed.options.get(name);
+      if (value !== undefined) parameters.set(name, value);
+    }
+    if (parsed.flags.has("unassigned")) parameters.set("unassigned", "true");
+    const detail = await new OperationalQueryService({
+      reads: context.operationalReads,
+      clock: context.clock,
+    }).getProjectDetail(requiredOption(parsed, "project"), {
+      taskLimit: parseLimit(
+        parsed.options.get("limit") ?? null,
+        queryLimits.tasks,
+      ),
+      taskQuery: parseTaskPageQuery(parameters),
+    });
+    context.io.stdout(
+      JSON.stringify({
+        contractVersion: 1,
+        generatedAt: detail.generatedAt,
+        project: detail,
+      }),
+    );
     return 0;
   }
 

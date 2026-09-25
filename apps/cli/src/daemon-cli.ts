@@ -113,6 +113,7 @@ const projectScopedCommands = new Set([
   "project:export",
   "project:backup",
   "office:context",
+  "office:workspace",
   "office:apply",
   "office:show",
   "office:pipeline",

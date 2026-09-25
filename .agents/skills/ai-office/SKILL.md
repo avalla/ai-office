@@ -129,7 +129,7 @@ It does not update Bun itself or select, purge, copy, or rewrite runtime state.
    lacks an upstream, preserve the checkout and explain the reported manual
    recovery. Never stash, reset, switch branches, or rewrite Git history.
 5. Obtain explicit confirmation before rerunning `ai-office update --approve
-   <planHash> --json`. Never reuse an approval after the plan or upstream target
+<planHash> --json`. Never reuse an approval after the plan or upstream target
    changes.
 6. On `updated`, explicitly restart the desired Runtime host and verify
    `ai-office runtime status` (or the corresponding development CLI). User
@@ -185,6 +185,29 @@ Follow the returned stages in order and use the named virtual-office role as the
 AI Office remains trusted-local and single-user. The Runtime and its daemon host do not authenticate human presence: a same-user shell-capable worker can invoke the same local CLI and socket interfaces as the operator. IPC routing, executable identity, TTY ownership, and protocol fields are not authentication. Runtime-mediated action and AgentRun constraints remain authoritative, but strong isolation of operator administration requires a future worker sandbox or authenticated operator-presence boundary.
 
 Stop and explain the missing setup when no manifest, default pipeline, matching runtime agent, resource, or capability exists. Do not silently bypass the runtime to make a protected change.
+
+## Browse and follow up from Codex or Claude
+
+For a complete read-only project snapshot, run:
+
+```text
+ai-office office:workspace --project <projectId> --status active --json
+```
+
+The snapshot is the agent-facing workspace contract: it contains the project
+detail, tasks, milestones, requirements, agents, active runs, reviews,
+attention items, and recent activity. Use `--status all`, `--milestone
+<milestoneId>`, or `--sort short_name` when browsing historical or focused
+work. Re-run the command after an execution or follow-up to verify persisted
+state; do not infer completion from a subprocess result.
+
+Use the existing semantic Runtime commands to act on that snapshot:
+`task:update` for descriptions, `task:start|submit-review|complete|block|fail|cancel`
+for lifecycle, `milestone:set-status` and `requirement:set-status` for
+governance, and `run:schedule`, `run:show`, `run:cancel`, or `run:tick`
+for agent execution. Ask for confirmation before consequential changes when
+the user has not already requested them. Never edit SQLite, call a provider
+directly, or launch a second manual Runtime/dashboard process.
 
 ## Integrate a coding client
 

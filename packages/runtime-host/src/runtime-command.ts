@@ -202,6 +202,7 @@ const commands = [
   "project:backup",
   "project:restore",
   "office:context",
+  "office:workspace",
   "office:validate",
   "office:apply",
   "office:show",
