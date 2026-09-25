@@ -533,6 +533,9 @@ export class ManageProjectLifecycle {
       );
       const candidates = initialInspections.filter(
         ({ detection, inspection: clientInspection }) =>
+          // Codex owns the shared guidance projection, which install maintains
+          // even when its executable is unavailable to the Runtime host.
+          detection.clientId === "codex" ||
           detection.status === "detected" ||
           hasManagedClientState(detection.clientId, clientInspection),
       );

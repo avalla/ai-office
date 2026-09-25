@@ -400,7 +400,7 @@ describe("project lifecycle UX", () => {
     expect(JSON.parse(reconciled.stdout[0]!)).toMatchObject({ changes: [] });
   });
 
-  test("reuses an already imported project and canonicalizes the repository path", async () => {
+  test("reuses an imported project and installs shared guidance without detected clients", async () => {
     const harness = await startHarness();
     const child = join(harness.projectRoot, "temporary-child");
     mkdirSync(child);
@@ -424,9 +424,14 @@ describe("project lifecycle UX", () => {
         created: false,
       },
     });
-    expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(false);
+    expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(true);
     expect(existsSync(join(harness.projectRoot, "CLAUDE.md"))).toBe(false);
-    expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(false);
+    expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(true);
+    expect(
+      existsSync(
+        join(harness.projectRoot, ".agents/skills/ai-office/SKILL.md"),
+      ),
+    ).toBe(true);
   });
 
   test("resolves lifecycle commands from descendants to the managed repository root", async () => {
@@ -558,9 +563,9 @@ describe("project lifecycle UX", () => {
       ["install", ".", "--json"],
       cloneRoot,
     );
-    expect(cloneInstall.exitCode).toBe(2);
+    expect(cloneInstall.exitCode).toBe(0);
     expect(JSON.parse(cloneInstall.stdout[0]!)).toMatchObject({
-      outcome: "installed_with_warnings",
+      outcome: "installed",
       project: {
         id: firstResult.project.id,
         repositoryId: firstResult.project.repositoryId,
@@ -692,7 +697,7 @@ describe("project lifecycle UX", () => {
     renameSync(harness.projectRoot, movedRoot);
 
     const migrated = await run(harness, ["install", ".", "--json"], movedRoot);
-    expect(migrated.exitCode).toBe(2);
+    expect(migrated.exitCode).toBe(0);
     expect(JSON.parse(migrated.stdout[0]!)).toMatchObject({
       project: { id: imported.projectId, created: false },
       repositoryIdentity: {
@@ -731,17 +736,17 @@ describe("project lifecycle UX", () => {
     ).toContain("@AI-OFFICE.md");
   });
 
-  test("reports no detected client as an installed warning, not configured", async () => {
+  test("installs shared guidance without detected clients and reports healthy status", async () => {
     const harness = await startHarness();
     const installed = await run(harness, ["install", ".", "--json"]);
-    expect(installed.exitCode).toBe(2);
+    expect(installed.exitCode).toBe(0);
     expect(JSON.parse(installed.stdout[0]!)).toMatchObject({
-      outcome: "installed_with_warnings",
+      outcome: "installed",
       clients: [
         {
           clientId: "codex",
           detection: "not_detected",
-          configuration: "not_configured",
+          configuration: "configured",
         },
         {
           clientId: "claude",
@@ -749,9 +754,41 @@ describe("project lifecycle UX", () => {
           configuration: "not_configured",
         },
       ],
-      issues: [
-        expect.objectContaining({ code: "no_supported_client_detected" }),
+      issues: [],
+    });
+    expect(existsSync(join(harness.projectRoot, "AI-OFFICE.md"))).toBe(true);
+    expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(true);
+    expect(
+      existsSync(
+        join(harness.projectRoot, ".agents/skills/ai-office/SKILL.md"),
+      ),
+    ).toBe(true);
+
+    const status = await run(harness, ["status", "--json"]);
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout[0]!)).toMatchObject({
+      health: "healthy",
+      clients: [
+        { clientId: "codex", detection: "not_detected" },
+        { clientId: "claude", detection: "not_detected" },
       ],
+      issues: [],
+    });
+    expect(status.stdout[0]).not.toContain("no_supported_client_detected");
+
+    writeFileSync(
+      join(harness.projectRoot, "AI-OFFICE.md"),
+      `${readFileSync(join(harness.projectRoot, "AI-OFFICE.md"), "utf8")}\n# local drift\n`,
+    );
+    const drifted = await run(harness, ["status", "--json"]);
+    expect(drifted.exitCode).toBe(1);
+    expect(JSON.parse(drifted.stdout[0]!)).toMatchObject({
+      health: "needs_attention",
+      clients: [
+        { clientId: "codex", detection: "not_detected", configuration: "drifted" },
+        { clientId: "claude", detection: "not_detected" },
+      ],
+      issues: [expect.objectContaining({ code: "client_codex_drifted" })],
     });
   });
 

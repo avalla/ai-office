@@ -57,9 +57,12 @@ ai-office install .
 ai-office status
 ```
 
-Install detects supported executables without launching them, preflights every
-detected or already-managed adapter, then plans and applies clients
+Install detects supported executables without launching them and always
+reconciles the shared project guide and primary skill through the Codex adapter.
+It then preflights and applies detected or already-managed adapters
 sequentially. The output lists each created, updated, or preserved path.
+Executable detection is informational during project lifecycle; availability is
+required only when a client must actually execute work.
 
 The lower-level commands remain available for automation, debugging, custom
 contracts, and one-client repair:
