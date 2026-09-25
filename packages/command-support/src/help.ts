@@ -106,6 +106,8 @@ Commands:
   milestone:create --project <id> --title <title> [--description <description>]
   milestone:set-status --project <id> --milestone <id> --status <status>
   requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]
+  requirement:list --project <id> [--json]  # lists exact requirement IDs for linking
+  requirement:validate --project <id> --requirement <id> --model <provider:model> [--json]  # advisory, metered LLM analysis; does not change status
   requirement:set-status --project <id> --requirement <id> --status <status>
   adr:create --project <id> --title <title> --context <text> --decision <text> --consequences <text>
   adr:set-status --project <id> --adr <id> --status <status>

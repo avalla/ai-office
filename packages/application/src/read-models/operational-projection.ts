@@ -65,6 +65,7 @@ import {
   type TaskDivergenceReason,
   type TaskLeaseState,
   type TaskMilestoneReference,
+  type TaskRequirementReference,
   type TaskOperationalState,
   type TaskOperationalStatus,
   type TaskReference,
@@ -743,6 +744,8 @@ export function projectTaskOperationalState(input: {
   requirementCounts: readonly TaskRequirementCountRecord[];
   /** Milestones derived from explicit task→requirement→milestone links. */
   milestones?: readonly TaskMilestoneReference[];
+  /** Explicit requirements linked to this task. */
+  requirementReferences?: readonly TaskRequirementReference[];
   /** Bounded sample of the task's in-flight runs, newest-updated first. */
   activeRuns: readonly OperationalAgentRunRecord[];
   /** Exact number of in-flight runs. Authoritative; never a sample length. */
@@ -924,6 +927,9 @@ export function projectTaskOperationalState(input: {
         0,
       ),
     }),
+    ...(input.requirementReferences === undefined
+      ? {}
+      : { requirementReferences: input.requirementReferences }),
     milestone: unavailable(
       "task_milestone_link_not_modelled",
       milestoneLinkageExplanation,

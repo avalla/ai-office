@@ -17,6 +17,7 @@ import type {
   RequirementSummary,
   ReviewState,
   TaskOperationalState,
+  TaskRequirementReference,
   TaskPageQuery,
   GlobalMemoryLesson,
   GlobalMemoryPattern,
@@ -255,6 +256,18 @@ function agentRows(agents: readonly AgentState[]): string {
   return `<div class="table-scroll"><table><thead><tr><th>Agent</th><th>Role</th><th>State</th><th>Task</th><th>Stage</th><th>Run</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+function requirementReferenceLinks(
+  projectId: string,
+  references: readonly TaskRequirementReference[],
+): string {
+  return references
+    .map(
+      (requirement) =>
+        `<a class="requirement-reference" href="${routeHref({ kind: "project", projectId, section: "requirements" })}"><span class="requirement-reference-key mono">${escapeHtml(requirement.key)}</span><span>${escapeHtml(requirement.title)}</span></a>`,
+    )
+    .join("");
+}
+
 function taskRows(
   tasks: readonly TaskOperationalState[],
   taskQuery?: TaskPageQuery,
@@ -296,12 +309,20 @@ function taskRows(
         task.requirements.availability === "available"
           ? `${task.requirements.value.verified}/${task.requirements.value.total} verified`
           : "Unavailable";
+      const linkedRequirements = requirementReferenceLinks(
+        task.projectId,
+        task.requirementReferences ?? [],
+      );
+      const requirementCell =
+        linkedRequirements === ""
+          ? `<span class="calm">${task.requirements.availability === "available" ? "No linked requirements" : "Unavailable"}</span>`
+          : `<div class="requirement-reference-list">${linkedRequirements}</div>`;
       const milestones = task.milestones ?? [];
       const milestone =
         milestones.length === 0
           ? "No milestone"
           : milestones.map((value) => value.title).join(" · ");
-      return `<tr><td class="mono">${escapeHtml(shortId(task.taskId))}</td><td class="task-title">${taskLink(task.projectId, task.taskId, task.title, taskQuery)}${blocker}</td><td>${escapeHtml(milestone)}</td><td>${badge(taskStatusLabel(task.operationalStatus), taskStatusTone(task.operationalStatus))}${divergence}</td><td>${requirements}</td><td class="mono">${task.priority}</td><td>${agent}</td><td>${pipeline}</td><td>${run}</td></tr>`;
+      return `<tr><td class="mono">${escapeHtml(shortId(task.taskId))}</td><td class="task-title">${taskLink(task.projectId, task.taskId, task.title, taskQuery)}${blocker}</td><td>${escapeHtml(milestone)}</td><td>${badge(taskStatusLabel(task.operationalStatus), taskStatusTone(task.operationalStatus))}${divergence}</td><td><span class="requirement-progress">${requirements}</span>${requirementCell}</td><td class="mono">${task.priority}</td><td>${agent}</td><td>${pipeline}</td><td>${run}</td></tr>`;
     })
     .join("");
   return `<div class="table-scroll"><table><thead><tr><th>ID</th><th>Task</th><th>Milestone</th><th>Status</th><th>Requirements</th><th>Prio</th><th>Current agent</th><th>Pipeline</th><th>Run</th></tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -390,7 +411,7 @@ function renderRequirementBoard(
         requirement.description.trim() === ""
           ? "No description recorded."
           : requirement.description;
-      return `<article class="requirement-row" data-status="${escapeHtml(requirement.status)}" data-milestone="${escapeHtml(requirement.milestoneId ?? "none")}"><div class="requirement-row-heading"><div><span class="requirement-key mono">${escapeHtml(requirement.key)}</span><h3>${escapeHtml(requirement.title)}</h3></div>${badge(requirementStatusLabel(requirement.status), requirementStatusTone(requirement.status))}</div><p class="requirement-description">${escapeHtml(description)}</p><dl class="requirement-meta"><div><dt>milestone</dt><dd>${escapeHtml(milestone)}</dd></div><div><dt>linked tasks</dt><dd>${tasks}</dd></div><div><dt>updated</dt><dd class="mono">${escapeHtml(formatTimestamp(requirement.updatedAt))}</dd></div></dl></article>`;
+      return `<article class="requirement-row" data-status="${escapeHtml(requirement.status)}" data-milestone="${escapeHtml(requirement.milestoneId ?? "none")}"><div class="requirement-row-heading"><div><span class="requirement-key mono">${escapeHtml(requirement.key)}</span><span class="requirement-id mono">${escapeHtml(requirement.requirementId)}</span><h3>${escapeHtml(requirement.title)}</h3></div>${badge(requirementStatusLabel(requirement.status), requirementStatusTone(requirement.status))}</div><p class="requirement-description">${escapeHtml(description)}</p><dl class="requirement-meta"><div><dt>milestone</dt><dd>${escapeHtml(milestone)}</dd></div><div><dt>linked tasks</dt><dd>${tasks}</dd></div><div><dt>updated</dt><dd class="mono">${escapeHtml(formatTimestamp(requirement.updatedAt))}</dd></div></dl></article>`;
     })
     .join("");
   return `<div class="requirements-toolbar"><label class="task-select" for="requirement-status-filter">Status<select id="requirement-status-filter"><option value="">All statuses</option>${statusOptions}</select></label><label class="task-select" for="requirement-milestone-filter">Milestone<select id="requirement-milestone-filter">${milestoneOptions}</select></label><span id="requirement-filter-count" class="filter-match" role="status">${requirements.length} of ${requirements.length} requirements</span></div><div id="requirement-list" class="requirements-list">${rows}</div><p id="requirement-filter-empty" class="calm" hidden>No requirements match these filters.</p><p class="chart-note">Requirements are read from the authoritative Runtime state; linked tasks are shown where the domain has an explicit link.</p>`;
@@ -694,11 +715,12 @@ export function renderTask(view: TaskView): string {
     view.runs.total === 0
       ? `<p class="calm">No runs recorded for this task yet.</p>`
       : `<div class="table-scroll"><table><thead><tr><th>Run</th><th>Agent</th><th>Status</th><th>Started</th><th>Duration</th><th>Updated</th></tr></thead><tbody>${view.runs.items.map((run) => `<tr><td><a class="mono" href="${routeHref({ kind: "run", runId: run.runId })}">${escapeHtml(shortId(run.runId))}</a></td><td>${escapeHtml(run.agent?.name ?? "Agent unavailable")}</td><td>${badge(run.status, runStatusTone(run.status))} ${executionBadge(run.execution)}</td><td class="mono">${escapeHtml(formatTimestamp(run.startedAt))}</td><td>${escapeHtml(formatDuration(run.durationMs))}</td><td class="mono">${escapeHtml(formatTimestamp(run.updatedAt))}</td></tr>`).join("")}</tbody></table></div>`;
+  const requirementReferences = task.requirementReferences ?? [];
   const requirements =
     task.requirements.availability === "available"
       ? task.requirements.value.total === 0
         ? `<p class="calm">No requirements linked to this task.</p>`
-        : `<p><strong>${task.requirements.value.verified}/${task.requirements.value.total} verified</strong> · ${task.requirements.value.open} open · ${task.requirements.value.rejected} rejected</p><p class="calm">Requirement verification and task completion are separate decisions.</p>`
+        : `<p><strong>${task.requirements.value.verified}/${task.requirements.value.total} verified</strong> · ${task.requirements.value.open} open · ${task.requirements.value.rejected} rejected</p><div class="task-requirement-list">${requirementReferences.map((requirement) => `<article class="task-requirement"><a href="${routeHref({ kind: "project", projectId: task.projectId, section: "requirements" })}"><span class="requirement-reference-key mono">${escapeHtml(requirement.key)}</span> ${escapeHtml(requirement.title)}</a><p>${escapeHtml(requirement.description)}</p><div class="task-requirement-meta">${badge(requirement.status.replaceAll("_", " "), requirementStatusTone(requirement.status))}</div></article>`).join("")}</div><p class="calm">Requirement verification and task completion are separate decisions.</p>`
       : `<p class="calm">${escapeHtml(task.requirements.explanation)}</p>`;
   const divergence = task.divergesFromRecordedStatus
     ? `<p class="status-explanation">Stored: ${escapeHtml(task.recordedStatus)}. Operational: ${escapeHtml(taskStatusLabel(task.operationalStatus))}.</p><ul class="plain">${task.divergenceReasons.map((reason) => `<li>${escapeHtml(taskDivergenceLabel(reason))}</li>`).join("")}</ul>`

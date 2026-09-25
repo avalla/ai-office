@@ -112,6 +112,7 @@ import { FilesystemConnectorError } from "@ai-office/filesystem-connector/errors
 import { handleAgentCommand } from "./commands/agent.ts";
 import { handleCostCommand } from "./commands/cost.ts";
 import { handleGovernanceCommand } from "./commands/governance.ts";
+import { handleRequirementCommand } from "./commands/requirement.ts";
 import { handleProjectCommand } from "./commands/project.ts";
 import { handleRunCommand } from "./commands/run.ts";
 import {
@@ -251,6 +252,8 @@ const commands = [
   "cost:list",
   "milestone:create",
   "requirement:create",
+  "requirement:list",
+  "requirement:validate",
   "adr:create",
   "milestone:set-status",
   "requirement:set-status",
@@ -366,6 +369,7 @@ const handlers = [
   handleRunCommand,
   handleCostCommand,
   handleGovernanceCommand,
+  handleRequirementCommand,
   handleMemoryCommand,
   handleProjectMemoryCommand,
   handleModelCommand,

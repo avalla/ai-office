@@ -59,6 +59,9 @@ state.
 
 Use task:update for descriptions, semantic task lifecycle commands,
 milestone:set-status and requirement:set-status for governance, and
+requirement:list --json to resolve exact requirement UUIDs before linking.
+Use requirement:validate --requirement <uuid> --model <provider:model> for
+metered, advisory LLM validation; it never changes stored status. Use
 run:schedule, run:show, run:cancel, or run:tick for execution. Never edit
 SQLite, call providers directly, or launch another manual Runtime or dashboard
 process.

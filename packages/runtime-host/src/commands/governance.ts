@@ -126,6 +126,40 @@ export async function handleGovernanceCommand(
     io.stdout(`adr status updated: ${status}`);
     return 0;
   }
+  if (command === "requirement:list") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project"]),
+      new Set(["json"]),
+    );
+    const projectId = requiredOption(parsed, "project");
+    const project = await projects.findById(projectId);
+    if (project === null) throw new ProjectNotFoundError(projectId);
+    const snapshot = await context.governance.getSnapshot(projectId);
+    const requirements = snapshot.requirements.map((requirement) => ({
+      id: requirement.id,
+      key: requirement.key,
+      title: requirement.title,
+      description: requirement.description,
+      status: requirement.status,
+      milestoneId: requirement.milestoneId ?? null,
+    }));
+    if (parsed.flags.has("json")) {
+      io.stdout(JSON.stringify({ schemaVersion: 1, projectId, requirements }));
+    } else if (requirements.length === 0) {
+      io.stdout("No requirements recorded.");
+    } else {
+      io.stdout(
+        requirements
+          .map(
+            (requirement) =>
+              `${requirement.key} [${requirement.status}] ${requirement.id} — ${requirement.title}`,
+          )
+          .join("\n"),
+      );
+    }
+    return 0;
+  }
   if (command === "review:create") {
     const parsed = parseArguments(
       args,
@@ -181,11 +215,7 @@ export async function handleGovernanceCommand(
       io.stdout(markdown.trimEnd());
       return 0;
     }
-    const outputPath = join(
-      context.runtimeHome,
-      "generated",
-      "governance.md",
-    );
+    const outputPath = join(context.runtimeHome, "generated", "governance.md");
     writeTextFileAtomic(outputPath, markdown);
     io.stdout(`Governance exported: ${outputPath}`);
     return 0;

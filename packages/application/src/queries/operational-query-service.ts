@@ -67,6 +67,7 @@ import {
   type DashboardOverview,
   type MilestoneSummary,
   type TaskMilestoneReference,
+  type TaskRequirementReference,
   type PipelineRunState,
   type ProjectDetail,
   type ProjectSummary,
@@ -150,6 +151,35 @@ function taskMilestoneIndex(
       (left, right) =>
         left.title.localeCompare(right.title) ||
         left.milestoneId.localeCompare(right.milestoneId),
+    );
+  return result;
+}
+
+function taskRequirementIndex(
+  requirements: readonly import("../ports/operational-read.port.ts").OperationalRequirementRecord[],
+): Map<string, TaskRequirementReference[]> {
+  const result = new Map<string, TaskRequirementReference[]>();
+  for (const requirement of requirements) {
+    const reference: TaskRequirementReference = {
+      requirementId: requirement.id,
+      key: requirement.key,
+      title: requirement.title,
+      description: requirement.description,
+      status: requirement.status,
+      milestoneId: requirement.milestoneId,
+    };
+    for (const task of requirement.taskReferences) {
+      const values = result.get(task.taskId) ?? [];
+      values.push(reference);
+      result.set(task.taskId, values);
+    }
+  }
+  for (const values of result.values())
+    values.sort(
+      (left, right) =>
+        left.key.localeCompare(right.key) ||
+        left.title.localeCompare(right.title) ||
+        left.requirementId.localeCompare(right.requirementId),
     );
   return result;
 }
@@ -569,6 +599,7 @@ export class OperationalQueryService {
       requirementRecords,
       milestoneReferences,
     );
+    const taskRequirements = taskRequirementIndex(requirementRecords);
     const filteredPage =
       options?.taskQuery === undefined
         ? null
@@ -581,6 +612,7 @@ export class OperationalQueryService {
             taskCounts.reduce((total, row) => total + row.count, 0),
             taskMilestones,
             milestoneReferences,
+            taskRequirements,
           );
     const tasks =
       filteredPage === null
@@ -590,6 +622,7 @@ export class OperationalQueryService {
             agents,
             now,
             taskMilestones,
+            taskRequirements,
           )
         : filteredPage.tasks.items;
     const agentStates = await this.projectAgents(projectId, agentRecords);
@@ -697,22 +730,27 @@ export class OperationalQueryService {
       throw new OperationalResourceNotFoundError("Task", taskId);
 
     const scope = { projectIds: [projectId], taskIds: [taskId] };
-    const [agentRecords, runs, counts, activity] = await Promise.all([
-      this.reads.listAgents([projectId]),
-      this.reads.listAgentRuns({ ...scope, limit: queryLimits.runs.default }),
-      this.reads.countAgentRuns(scope),
-      this.reads.listActivity({
-        projectId,
-        taskId,
-        limit: queryLimits.activity.default,
-      }),
-    ]);
+    const [agentRecords, runs, counts, activity, requirementRecords] =
+      await Promise.all([
+        this.reads.listAgents([projectId]),
+        this.reads.listAgentRuns({ ...scope, limit: queryLimits.runs.default }),
+        this.reads.countAgentRuns(scope),
+        this.reads.listActivity({
+          projectId,
+          taskId,
+          limit: queryLimits.activity.default,
+        }),
+        this.reads.listRequirements(projectId),
+      ]);
     const agents = agentIndex(agentRecords);
+    const taskRequirements = taskRequirementIndex(requirementRecords);
     const [task] = await this.projectTasks(
       projectId,
       [record],
       agents,
       this.clock.now(),
+      new Map(),
+      taskRequirements,
     );
     const pipeline =
       task!.activePipelineRun === null
@@ -746,16 +784,21 @@ export class OperationalQueryService {
     limit: number = queryLimits.tasks.default,
   ): Promise<BoundedList<TaskOperationalState>> {
     await this.requireProject(projectId);
-    const [taskPage, taskCounts, agentRecords] = await Promise.all([
-      this.reads.listTasks(projectId, limit),
-      this.reads.countTasksByStatus([projectId]),
-      this.reads.listAgents([projectId]),
-    ]);
+    const [taskPage, taskCounts, agentRecords, requirementRecords] =
+      await Promise.all([
+        this.reads.listTasks(projectId, limit),
+        this.reads.countTasksByStatus([projectId]),
+        this.reads.listAgents([projectId]),
+        this.reads.listRequirements(projectId),
+      ]);
+    const taskRequirements = taskRequirementIndex(requirementRecords);
     const tasks = await this.projectTasks(
       projectId,
       taskPage,
       agentIndex(agentRecords),
       this.clock.now(),
+      new Map(),
+      taskRequirements,
     );
     return boundedList(
       tasks,
@@ -998,6 +1041,7 @@ export class OperationalQueryService {
     projectTaskCount: number,
     taskMilestones: ReadonlyMap<string, readonly TaskMilestoneReference[]>,
     milestoneOptions: readonly TaskMilestoneReference[],
+    taskRequirements: ReadonlyMap<string, readonly TaskRequirementReference[]>,
   ): Promise<{ tasks: BoundedList<TaskOperationalState>; page: TaskPageInfo }> {
     const { offset = 0, ...filters } = query;
     const priorities = new Set<number>();
@@ -1012,7 +1056,14 @@ export class OperationalQueryService {
       const records = await this.reads.listTasks(projectId, batchSize, cursor);
       if (records.length === 0) break;
       const [tasks, assignments] = await Promise.all([
-        this.projectTasks(projectId, records, agents, now, taskMilestones),
+        this.projectTasks(
+          projectId,
+          records,
+          agents,
+          now,
+          taskMilestones,
+          taskRequirements,
+        ),
         this.reads.listTaskAgentIds(
           projectId,
           records.map((task) => task.id),
@@ -1133,6 +1184,10 @@ export class OperationalQueryService {
       string,
       readonly TaskMilestoneReference[]
     > = new Map(),
+    taskRequirements: ReadonlyMap<
+      string,
+      readonly TaskRequirementReference[]
+    > = new Map(),
   ): Promise<TaskOperationalState[]> {
     if (tasks.length === 0) return [];
     const taskIds = tasks.map((task) => task.id);
@@ -1175,6 +1230,7 @@ export class OperationalQueryService {
         task,
         requirementCounts: requirementsByTask.get(task.id) ?? [],
         milestones: taskMilestones.get(task.id) ?? [],
+        requirementReferences: taskRequirements.get(task.id) ?? [],
         activeRuns: runs?.activeRuns ?? [],
         activeRunCount: runs?.activeRunCount ?? 0,
         executingRunCount: runs?.executingRunCount ?? 0,

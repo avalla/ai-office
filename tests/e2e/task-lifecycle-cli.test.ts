@@ -227,6 +227,58 @@ describe("task lifecycle CLI", () => {
     });
   });
 
+  test("lists exact requirement IDs and exposes task requirement links", async () => {
+    const { root, projectId } = await board();
+    const taskId = await newTask(root, projectId, "Link requirement");
+    const requirementId = await newRequirement(root, projectId, "M6-01");
+
+    const linked = await cli(root, [
+      "task:link-requirement",
+      "--project",
+      projectId,
+      "--task",
+      taskId,
+      "--requirement",
+      requirementId,
+    ]);
+    expect(linked.code).toBe(0);
+
+    const listed = await cli(root, [
+      "requirement:list",
+      "--project",
+      projectId,
+      "--json",
+    ]);
+    expect(listed.code).toBe(0);
+    const list = JSON.parse(listed.stdout[0]!);
+    expect(list.requirements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: requirementId, key: "M6-01" }),
+      ]),
+    );
+
+    const workspace = await cli(root, [
+      "office:workspace",
+      "--project",
+      projectId,
+      "--status",
+      "all",
+      "--json",
+    ]);
+    const snapshot = JSON.parse(workspace.stdout[0]!);
+    const task = snapshot.project.tasks.items.find(
+      (item: { taskId: string }) => item.taskId === taskId,
+    );
+    expect(task).toBeDefined();
+    expect(task.requirementReferences).toEqual([
+      expect.objectContaining({
+        requirementId,
+        key: "M6-01",
+        title: "Requirement M6-01",
+      }),
+    ]);
+  });
+
   test("requires a description for task:update", async () => {
     const { root, projectId } = await board();
     const taskId = await newTask(root, projectId, "Ship it");

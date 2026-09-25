@@ -217,6 +217,15 @@ export interface TaskMilestoneReference {
   status: MilestoneStatus;
 }
 
+export interface TaskRequirementReference {
+  requirementId: string;
+  key: string;
+  title: string;
+  description: string;
+  status: RequirementStatus;
+  milestoneId: string | null;
+}
+
 export interface RequirementSummary {
   requirementId: string;
   projectId: string;
@@ -499,6 +508,8 @@ export interface TaskOperationalState {
    * with zero counts. The unavailable union remains readable for older hosts.
    */
   requirements: Maybe<TaskRequirementSummary>;
+  /** Explicit requirements linked to this task, with current text and status. */
+  requirementReferences?: readonly TaskRequirementReference[];
   /** Unavailable in the current domain: tasks carry no direct milestone reference. */
   milestone: Maybe<MilestoneSummary | null>;
   /**

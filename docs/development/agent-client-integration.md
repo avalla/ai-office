@@ -99,10 +99,13 @@ focused browsing with milestone and task sort filters. After a requested change
 or execution, the client re-reads the snapshot and reports persisted state.
 
 Mutations remain semantic Runtime commands: task:update, task lifecycle,
-milestone and requirement status commands, and run:* execution commands.
-The client never opens SQLite, calls a provider directly, or starts a second
-manual Runtime/dashboard process. Runtime validation, audit, capabilities, and
-controlled-action approvals remain in force.
+milestone and requirement status commands, and run:* execution commands. Use
+`requirement:list --json` to resolve the exact UUID before
+`task:link-requirement`; `requirement:validate --requirement <uuid> --model
+<provider:model>` provides metered, advisory LLM feedback without changing
+stored status. The client never opens SQLite, calls a provider directly, or
+starts a second manual Runtime/dashboard process. Runtime validation, audit,
+capabilities, and controlled-action approvals remain in force.
 
 ## Ownership and status
 
