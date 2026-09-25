@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0035_pipeline_manifest_revision_tuple.sql",
+        "0036_milestone_title_changed_event.sql",
       );
       expect(
         database
@@ -72,6 +72,64 @@ describe("migration upgrades", () => {
       database.close();
     },
   );
+
+  test("upgrades governance events to accept milestone title changes and preserves history", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-governance-event-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0011_governance_hardening.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    }
+
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    database
+      .prepare(
+        `INSERT INTO project(id,name,description,created_at,updated_at)
+         VALUES ('project','Preserved',NULL,?,?)`,
+      )
+      .run("2026-08-05T00:00:00.000Z", "2026-08-05T00:00:00.000Z");
+    database
+      .prepare(
+        `INSERT INTO milestone(
+           id,project_id,title,status,created_at,updated_at
+         ) VALUES ('milestone','project','Before','planned',?,?)`,
+      )
+      .run("2026-08-05T00:00:00.000Z", "2026-08-05T00:00:00.000Z");
+    database
+      .prepare(
+        `INSERT INTO governance_event(
+           id,project_id,event_type,aggregate_id,metadata_json,occurred_at
+         ) VALUES ('created','project','milestone.created','milestone','{}',?)`,
+      )
+      .run("2026-08-05T00:00:00.000Z");
+
+    expect(migrate(database, migrations).applied).toContain(
+      "0036_milestone_title_changed_event.sql",
+    );
+    database
+      .prepare(
+        `INSERT INTO governance_event(
+           id,project_id,event_type,aggregate_id,metadata_json,occurred_at
+         ) VALUES ('title-changed','project','milestone.title_changed','milestone',?,?)`,
+      )
+      .run(JSON.stringify({ from: "Before", to: "After" }), "2026-08-06T00:00:00.000Z");
+
+    expect(
+      database
+        .query<{ event_type: string }, []>(
+          "SELECT event_type FROM governance_event ORDER BY occurred_at, id",
+        )
+        .all()
+        .map((row) => row.event_type),
+    ).toEqual(["milestone.created", "milestone.title_changed"]);
+    expect(() => database.exec("DELETE FROM governance_event")).toThrow(
+      "governance_event is append-only",
+    );
+    database.close();
+  });
 
   test("preserves legacy deterministic onboarding questions with explicit provenance", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-onboarding-upgrade-"));
@@ -122,6 +180,7 @@ describe("migration upgrades", () => {
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
+      "0036_milestone_title_changed_event.sql",
     ]);
     expect(
       database
@@ -193,6 +252,7 @@ describe("migration upgrades", () => {
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
+      "0036_milestone_title_changed_event.sql",
     ]);
     expect(
       database
@@ -344,6 +404,7 @@ describe("migration upgrades", () => {
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
+      "0036_milestone_title_changed_event.sql",
     ]);
     expect(
       database
@@ -399,6 +460,7 @@ describe("migration upgrades", () => {
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
+      "0036_milestone_title_changed_event.sql",
     ]);
     database
       .prepare(
@@ -728,6 +790,7 @@ describe("migration upgrades", () => {
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
+      "0036_milestone_title_changed_event.sql",
     ]);
     expect(
       upgraded
@@ -785,6 +848,7 @@ describe("migration upgrades", () => {
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
+      "0036_milestone_title_changed_event.sql",
     ]);
     expect(
       database

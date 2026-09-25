@@ -584,6 +584,7 @@ test("upgrading legacy runs preserves unknown provenance and protects new dispat
     "0033_role_execution_guidance.sql",
     "0034_exact_pipeline_stage_bindings.sql",
     "0035_pipeline_manifest_revision_tuple.sql",
+    "0036_milestone_title_changed_event.sql",
   ]);
   expect(
     (await f.runs.findRun("legacy"))?.snapshot().execution,

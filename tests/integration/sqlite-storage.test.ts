@@ -73,6 +73,7 @@ describe("project database migrations", () => {
       "0033_role_execution_guidance.sql",
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
+      "0036_milestone_title_changed_event.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -118,6 +119,7 @@ describe("project database migrations", () => {
       { version: "0033_role_execution_guidance.sql" },
       { version: "0034_exact_pipeline_stage_bindings.sql" },
       { version: "0035_pipeline_manifest_revision_tuple.sql" },
+      { version: "0036_milestone_title_changed_event.sql" },
     ]);
     database.close();
   });

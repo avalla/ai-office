@@ -68,6 +68,63 @@ export function defineGovernanceRepositoryContracts(
     expect(snapshot.requirements).toEqual([requirement]);
   });
 
+  test("updates a milestone title and appends an audit event", async () => {
+    const project = await createProject(harness, `${prefix}-project`);
+    const milestone: MilestoneRecord = {
+      id: `${prefix}-milestone`,
+      projectId: project.id,
+      title: "Before",
+      status: "planned",
+      createdAt: date("2026-01-01T00:00:00.000Z"),
+      updatedAt: date("2026-01-01T00:00:00.000Z"),
+    };
+    await harness.governance.saveMilestone(milestone);
+
+    const changedAt = date("2026-01-02T00:00:00.000Z");
+    await expect(
+      harness.governance.updateMilestoneTitle(
+        milestone.id,
+        project.id,
+        milestone.title,
+        "After",
+        changedAt,
+        `${prefix}-title-changed`,
+      ),
+    ).resolves.toBe(true);
+    await expect(
+      harness.governance.updateMilestoneTitle(
+        milestone.id,
+        project.id,
+        milestone.title,
+        "Stale update",
+        date("2026-01-03T00:00:00.000Z"),
+        `${prefix}-stale-title-changed`,
+      ),
+    ).resolves.toBe(false);
+
+    expect((await harness.governance.getSnapshot(project.id)).milestones).toEqual(
+      [{ ...milestone, title: "After", updatedAt: changedAt }],
+    );
+    expect(
+      (await harness.governance.listEvents(project.id)).map((event) => ({
+        eventType: event.eventType,
+        aggregateId: event.aggregateId,
+        metadata: event.metadata,
+      })),
+    ).toEqual([
+      {
+        eventType: "milestone.created",
+        aggregateId: milestone.id,
+        metadata: {},
+      },
+      {
+        eventType: "milestone.title_changed",
+        aggregateId: milestone.id,
+        metadata: { from: "Before", to: "After" },
+      },
+    ]);
+  });
+
   test("rejects duplicate requirement keys within a project", async () => {
     const project = await createProject(harness, `${prefix}-project`);
     const first = requirement(project.id, `${prefix}-first`, "REQ-001");

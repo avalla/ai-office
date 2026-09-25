@@ -164,6 +164,31 @@ limits:
         "Milestone created: ",
         "",
       );
+      expect(
+        (
+          await run([
+            "milestone:update",
+            "--project",
+            projectId,
+            "--milestone",
+            milestoneId,
+            "--title",
+            "M1 renamed",
+          ])
+        ).stdout,
+      ).toEqual(["Milestone title updated."]);
+      expect(
+        (
+          await run([
+            "office:workspace",
+            "--project",
+            projectId,
+            "--status",
+            "all",
+            "--json",
+          ])
+        ).stdout.join("\n"),
+      ).toContain("M1 renamed");
       const requirementArgs = [
         "requirement:create",
         "--project",
