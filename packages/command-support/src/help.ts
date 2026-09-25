@@ -70,6 +70,7 @@ Commands:
   update [--approve <plan-hash>] [--json]  # source maintenance; relevant Runtime hosts must be stopped
   runtime:purge [--approve <plan-hash>]  # local; daemon must be stopped
   task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
+  task:update --project <id> --task <id> --description <description>
   task:list --project <id>
   task:transitions --project <id> --task <id> [--json]   # read-only preflight
   task:start --project <id> --task <id>

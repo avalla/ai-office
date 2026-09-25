@@ -219,6 +219,7 @@ const commands = [
   "client:validate",
   "client:uninstall",
   "task:create",
+  "task:update",
   "task:list",
   "task:transitions",
   "task:start",

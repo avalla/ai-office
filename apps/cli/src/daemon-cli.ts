@@ -122,6 +122,7 @@ const projectScopedCommands = new Set([
   "pipeline:transition",
   "pipeline:override",
   "task:create",
+  "task:update",
   "task:list",
   "task:transitions",
   "task:start",

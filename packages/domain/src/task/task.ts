@@ -183,6 +183,11 @@ export class Task {
     return new Task(props);
   }
 
+  /** Updates descriptive content without changing lifecycle state. */
+  updateDescription(description: string, now: Date): void {
+    this.props = { ...this.props, description, updatedAt: now };
+  }
+
   /** Work has begun. Driven by `pipeline:start` and by `task:start`. */
   start(now: Date): void {
     this.transition("running", now);

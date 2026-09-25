@@ -155,6 +155,64 @@ describe("task lifecycle CLI", () => {
     }
   });
 
+  test("updates an existing task description and audits the change", async () => {
+    const { root, projectId } = await board();
+    const taskId = await newTask(root, projectId, "Ship it");
+
+    const updated = await cli(root, [
+      "task:update",
+      "--project",
+      projectId,
+      "--task",
+      taskId,
+      "--description",
+      "Updated delivery notes",
+    ]);
+    expect(updated.code).toBe(0);
+    expect(updated.stdout[0]).toBe(`Task updated: ${taskId}`);
+
+    const database = openDatabase(join(root, ".ai-office", "project.sqlite"));
+    try {
+      expect(
+        database
+          .query<{ description: string | null; status: string }, [string]>(
+            "SELECT description, status FROM task WHERE id = ?",
+          )
+          .get(taskId),
+      ).toEqual({
+        description: "Updated delivery notes",
+        status: "pending",
+      });
+    } finally {
+      database.close();
+    }
+    expect(auditTrail(root)).toEqual(
+      expect.arrayContaining([
+        {
+          event_type: "task.description_updated",
+          payload_json: JSON.stringify({ descriptionUpdated: true }),
+        },
+      ]),
+    );
+  });
+
+  test("requires a description for task:update", async () => {
+    const { root, projectId } = await board();
+    const taskId = await newTask(root, projectId, "Ship it");
+
+    const result = await cli(root, [
+      "task:update",
+      "--project",
+      projectId,
+      "--task",
+      taskId,
+    ]);
+    expect(result.code).toBe(1);
+    expect(result.stderr.join("\n")).toContain(
+      "Missing required option --description",
+    );
+  });
+
   test("refuses an impossible transition and names what is allowed", async () => {
     const { root, projectId } = await board();
     const taskId = await newTask(root, projectId, "Ship it");

@@ -1,4 +1,5 @@
 import { CreateTask } from "@ai-office/application/commands/create-task.ts";
+import { UpdateTask } from "@ai-office/application/commands/update-task.ts";
 import { manageAgentRuns } from "./run-services.ts";
 import { ManageTaskLifecycle } from "@ai-office/application/commands/manage-task-lifecycle.ts";
 import { ManageTaskRequirements } from "@ai-office/application/commands/manage-task-requirements.ts";
@@ -157,6 +158,29 @@ export async function handleTaskCommand(
       ...(priority === undefined ? {} : { priority }),
     });
     io.stdout(`Task created: ${id}`);
+    return 0;
+  }
+
+  if (command === "task:update") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "task", "description"]),
+    );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError("task:update only accepts named options");
+    const result = await new UpdateTask(
+      projects,
+      tasks,
+      audit,
+      clock,
+      transactions,
+    ).execute({
+      projectId: requiredOption(parsed, "project"),
+      taskId: requiredOption(parsed, "task"),
+      description: requiredOption(parsed, "description"),
+      actorId: principal.id,
+    });
+    io.stdout(`Task updated: ${result.taskId}`);
     return 0;
   }
 
