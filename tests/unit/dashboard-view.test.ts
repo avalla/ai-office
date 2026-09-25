@@ -2,9 +2,11 @@ import { describe, expect, test } from "vitest";
 import type {
   AgentRunDetail,
   DashboardOverview,
+  MilestoneSummary,
   PipelineRunState,
   ProjectDetail,
   ProjectSummary,
+  RequirementSummary,
   TaskOperationalState,
   TaskDetail,
 } from "@ai-office/application/read-models/operational-read-models.ts";
@@ -38,11 +40,7 @@ import {
   parseTaskPageQuery,
   QueryValidationError,
 } from "@ai-office/application/protocol/query-protocol.ts";
-import {
-  decideAccess,
-  readSessionCookie,
-  sessionCookieValue,
-} from "../../apps/dashboard/src/dashboard-session.ts";
+import { decideAccess } from "../../apps/dashboard/src/dashboard-session.ts";
 
 const now = "2026-09-03T12:00:00.000Z";
 
@@ -325,6 +323,7 @@ function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
     generatedAt: now,
     summary: summary(),
     milestones: [],
+    requirements: [],
     tasks: { total: 1, items: [task], truncated: false },
     pipelines: { total: 1, items: [pipeline], truncated: false },
     agents: [
@@ -611,6 +610,80 @@ describe("rendering", () => {
     expect(html).toContain("No current agent");
   });
 
+  test("milestones expose real statuses and requirement progress", () => {
+    const current = summary().currentMilestone!;
+    const completed: MilestoneSummary = {
+      ...current,
+      milestoneId: "milestone-2",
+      title: "M7",
+      status: "completed",
+      requirements: {
+        ...current.requirements,
+        open: 0,
+        verified: current.requirements.total,
+        terminal: current.requirements.total,
+      },
+    };
+    const html = renderProject(
+      projectViewModel(
+        projectDetail({
+          summary: summary({ milestoneCount: 2, activeMilestoneCount: 1 }),
+          milestones: [current, completed],
+        }),
+      ),
+    );
+    expect(html).toContain('id="milestone-status-filter"');
+    expect(html).toContain('data-status="active"');
+    expect(html).toContain('data-status="completed"');
+    expect(html).toContain("3/4 verified");
+    expect(html).toContain("4/4 verified");
+    expect(html).toContain(
+      "Task-to-milestone links are not currently modelled.",
+    );
+  });
+
+  test("requirements expose filters, descriptions, milestones and linked tasks", () => {
+    const requirement: RequirementSummary = {
+      requirementId: "requirement-1",
+      projectId: "project-1",
+      milestoneId: "milestone-1",
+      key: "REQ-1",
+      title: "Capture evidence",
+      description: 'Use <strong>real</strong> evidence.',
+      status: "verified",
+      taskReferences: [{ taskId: "task-1", title: "Ship the thing" }],
+      createdAt: now,
+      updatedAt: now,
+    };
+    const milestone = summary().currentMilestone!;
+    const html = renderProject(
+      projectViewModel(
+        projectDetail({
+          summary: summary({
+            requirements: {
+              ...summary().requirements,
+              total: 1,
+              open: 0,
+              terminal: 1,
+              verified: 1,
+            },
+          }),
+          milestones: [milestone],
+          requirements: [requirement],
+        }),
+      ),
+    );
+    expect(html).toContain('id="requirement-status-filter"');
+    expect(html).toContain('id="requirement-milestone-filter"');
+    expect(html).toContain('data-status="verified"');
+    expect(html).toContain('data-milestone="milestone-1"');
+    expect(html).toContain("Capture evidence");
+    expect(html).toContain("Use &lt;strong&gt;real&lt;/strong&gt; evidence.");
+    expect(html).toContain("#/projects/project-1/tasks/task-1");
+    expect(html).not.toContain("<strong>real</strong>");
+    expect(html).toContain("M8");
+  });
+
   test("task detail exposes assignments, bounded concurrency and escaped description", () => {
     const detail: TaskDetail = {
       generatedAt: now,
@@ -882,92 +955,36 @@ describe("html escaping", () => {
   });
 });
 
-describe("dashboard session access", () => {
+describe("dashboard local access", () => {
   const policy = {
-    token: "0123456789abcdef",
     allowedHosts: new Set(["127.0.0.1:4278", "localhost:4278"]),
   };
   const request = {
     method: "GET",
     pathname: "/",
     hostHeader: "127.0.0.1:4278",
-    cookieHeader: null,
-    queryToken: null,
   };
 
-  test("a matching cookie is allowed", () => {
-    expect(
-      decideAccess(
-        {
-          ...request,
-          cookieHeader: `ai_office_dashboard=${policy.token}; other=1`,
-        },
-        policy,
-      ),
-    ).toEqual({ kind: "allow" });
+  test("loopback GET requests are allowed without a token", () => {
+    expect(decideAccess(request, policy)).toEqual({ kind: "allow" });
   });
 
-  test("a matching query token is adopted once", () => {
-    expect(
-      decideAccess({ ...request, queryToken: policy.token }, policy),
-    ).toEqual({ kind: "adopt_token" });
-  });
-
-  test("no token is refused", () => {
-    const decision = decideAccess(request, policy);
-    expect(decision.kind).toBe("deny");
-    expect(decision).toMatchObject({ status: 403 });
-  });
-
-  test("a wrong or truncated token is refused", () => {
-    expect(
-      decideAccess({ ...request, queryToken: "0123456789abcdee" }, policy).kind,
-    ).toBe("deny");
-    expect(decideAccess({ ...request, queryToken: "0123" }, policy).kind).toBe(
-      "deny",
-    );
-  });
-
-  test("an unexpected Host is refused before the token is considered", () => {
+  test("an unexpected Host is refused", () => {
     const decision = decideAccess(
-      {
-        ...request,
-        hostHeader: "attacker.example.com",
-        queryToken: policy.token,
-      },
+      { ...request, hostHeader: "attacker.example.com" },
       policy,
     );
     expect(decision).toMatchObject({ status: 400 });
   });
 
   test("a missing Host is refused", () => {
-    expect(
-      decideAccess(
-        { ...request, hostHeader: null, queryToken: policy.token },
-        policy,
-      ).kind,
-    ).toBe("deny");
+    expect(decideAccess({ ...request, hostHeader: null }, policy).kind).toBe(
+      "deny",
+    );
   });
 
   test("non-GET methods are refused", () => {
-    const decision = decideAccess(
-      {
-        ...request,
-        method: "POST",
-        cookieHeader: `ai_office_dashboard=${policy.token}`,
-      },
-      policy,
-    );
+    const decision = decideAccess({ ...request, method: "POST" }, policy);
     expect(decision).toMatchObject({ status: 405 });
-  });
-
-  test("the session cookie is host-only, HttpOnly, and same-site", () => {
-    const value = sessionCookieValue("abc");
-    expect(value).toContain("HttpOnly");
-    expect(value).toContain("SameSite=Strict");
-    expect(value).not.toContain("Domain=");
-    expect(readSessionCookie(value.split(";")[0]!)).toBe("abc");
-    expect(readSessionCookie(null)).toBeNull();
-    expect(readSessionCookie("unrelated=1")).toBeNull();
   });
 });

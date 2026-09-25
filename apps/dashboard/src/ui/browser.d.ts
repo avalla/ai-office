@@ -15,7 +15,9 @@ interface DashboardElement {
   selectionEnd: number | null;
   innerHTML: string;
   textContent: string | null;
+  hidden: boolean;
   setAttribute(name: string, value: string): void;
+  getAttribute(name: string): string | null;
   addEventListener(
     type: string,
     listener: (event: { preventDefault(): void }) => void,
@@ -28,6 +30,7 @@ interface DashboardElement {
 interface DashboardDocument {
   activeElement: DashboardElement | null;
   getElementById(id: string): DashboardElement | null;
+  querySelectorAll<T extends DashboardElement>(selector: string): T[];
   addEventListener(type: string, listener: () => void): void;
 }
 

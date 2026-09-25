@@ -7,7 +7,11 @@ import type {
 import { escapeHtml } from "./html.ts";
 import { agentStateLabel, routeHref, type ToneName } from "./view-model.ts";
 
-function bar(value: number, maximum: number, tone: ToneName): string {
+export function chartBar(
+  value: number,
+  maximum: number,
+  tone: ToneName,
+): string {
   const width =
     maximum > 0 ? Math.max(0, Math.min(100, (value / maximum) * 100)) : 0;
   // Numeric SVG attributes work under the host's strict CSP, without inline styles.
@@ -36,7 +40,7 @@ export function renderTaskDistribution(counts: TaskCounts): string {
     .filter(({ key }) => counts.byStatus[key] > 0)
     .map(({ key, label, tone }) => {
       const count = counts.byStatus[key];
-      return `<li><span>${label}</span><span class="chart-value">${count}</span>${bar(count, counts.total, tone)}</li>`;
+      return `<li><span>${label}</span><span class="chart-value">${count}</span>${chartBar(count, counts.total, tone)}</li>`;
     })
     .join("");
   return `<figure class="chart"><figcaption>${counts.total} tasks · recorded status</figcaption><ul class="chart-rows">${rows}</ul><p class="chart-note">All project tasks. Operational status in the table may differ when runs or reviews are active.</p></figure>`;
@@ -64,7 +68,7 @@ export function renderAgentWorkload(agents: readonly AgentState[]): string {
   const rows = ordered
     .map(
       (agent) =>
-        `<li class="workload-agent"><div class="workload-heading"><strong>${escapeHtml(agent.name)}</strong><span class="meta">${escapeHtml(agentStateLabel(agent.state))}</span></div><div class="workload-series"><span>Active runs</span><span class="chart-value">${agent.activeRuns.total}</span>${bar(agent.activeRuns.total, maximum, "active")}</div><div class="workload-series"><span>Assigned stages</span><span class="chart-value">${agent.activeStages.total}</span>${bar(agent.activeStages.total, maximum, "neutral")}</div></li>`,
+        `<li class="workload-agent"><div class="workload-heading"><strong>${escapeHtml(agent.name)}</strong><span class="meta">${escapeHtml(agentStateLabel(agent.state))}</span></div><div class="workload-series"><span>Active runs</span><span class="chart-value">${agent.activeRuns.total}</span>${chartBar(agent.activeRuns.total, maximum, "active")}</div><div class="workload-series"><span>Assigned stages</span><span class="chart-value">${agent.activeStages.total}</span>${chartBar(agent.activeStages.total, maximum, "neutral")}</div></li>`,
     )
     .join("");
   const idleNote =
@@ -80,7 +84,7 @@ export function renderProjectProgress(
   const rows = projects
     .map(
       (project) =>
-        `<li><a href="${routeHref({ kind: "project", projectId: project.projectId })}">${escapeHtml(project.name)}</a><span class="chart-value">${project.tasks.byStatus.completed} / ${project.tasks.total}</span>${bar(project.tasks.byStatus.completed, project.tasks.total, "good")}</li>`,
+        `<li><a href="${routeHref({ kind: "project", projectId: project.projectId })}">${escapeHtml(project.name)}</a><span class="chart-value">${project.tasks.byStatus.completed} / ${project.tasks.total}</span>${chartBar(project.tasks.byStatus.completed, project.tasks.total, "good")}</li>`,
     )
     .join("");
   return `<figure class="chart"><figcaption>Completed tasks / all tasks</figcaption><ul class="chart-rows">${rows}</ul><p class="chart-note">Recorded completion across every task. Cancelled and failed tasks are included in the total.</p></figure>`;

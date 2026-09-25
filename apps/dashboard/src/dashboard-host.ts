@@ -15,12 +15,7 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { queryApiPrefix } from "@ai-office/application/protocol/query-protocol.ts";
-import {
-  decideAccess,
-  sessionCookieValue,
-  sessionTokenParameter,
-  type AccessPolicy,
-} from "./dashboard-session.ts";
+import { decideAccess, type AccessPolicy } from "./dashboard-session.ts";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 
@@ -31,7 +26,6 @@ export interface DashboardHostOptions {
   hostname?: string;
   /** `0` asks the operating system for a free port. */
   port?: number;
-  token?: string;
   assetDirectory?: string;
   /** Overrides bundling, so tests need not run a bundler. */
   clientScript?: string;
@@ -41,7 +35,6 @@ export interface RunningDashboardHost {
   url: string;
   port: number;
   hostname: string;
-  token: string;
   stop(): Promise<void>;
 }
 
@@ -160,7 +153,6 @@ export async function startDashboardHost(
       `The dashboard only binds loopback addresses; refusing ${hostname}`,
     );
 
-  const token = options.token ?? crypto.randomUUID().replaceAll("-", "");
   const assetDirectory =
     options.assetDirectory ?? join(sourceDirectory, "assets");
   const [indexHtml, styles, clientScript] = await Promise.all([
@@ -188,7 +180,6 @@ export async function startDashboardHost(
   }
   const authority = `${hostname === "::1" ? "[::1]" : hostname}:${boundPort}`;
   const policy: AccessPolicy = {
-    token,
     allowedHosts: new Set([authority, `localhost:${boundPort}`]),
   };
 
@@ -199,8 +190,6 @@ export async function startDashboardHost(
         method: request.method,
         pathname: url.pathname,
         hostHeader: request.headers.get("host"),
-        cookieHeader: request.headers.get("cookie"),
-        queryToken: url.searchParams.get(sessionTokenParameter),
       },
       policy,
     );
@@ -211,42 +200,20 @@ export async function startDashboardHost(
         decision.status,
       );
 
-    // The token arrives in the URL the CLI prints and is exchanged for a
-    // cookie, then redirected away so it stops travelling on later requests.
-    // The original URL is still whatever the browser recorded in history; see
-    // dashboard-session.ts for what this does and does not guarantee.
-    const cookieHeaders =
-      decision.kind === "adopt_token"
-        ? { "set-cookie": sessionCookieValue(token) }
-        : undefined;
-    if (
-      decision.kind === "adopt_token" &&
-      url.searchParams.has(sessionTokenParameter)
-    )
-      return new Response(null, {
-        status: 302,
-        headers: {
-          location: `${url.pathname}${url.hash}`,
-          "cache-control": "no-store",
-          ...cookieHeaders,
-        },
-      });
-
     if (url.pathname === "/app.js")
       return text(
         clientScript,
         200,
         "text/javascript; charset=utf-8",
-        cookieHeaders,
       );
     if (url.pathname === "/styles.css")
-      return text(styles, 200, "text/css; charset=utf-8", cookieHeaders);
+      return text(styles, 200, "text/css; charset=utf-8");
 
     if (url.pathname.startsWith(`${queryApiPrefix}/`))
-      return proxy(request, url, cookieHeaders);
+      return proxy(request, url);
 
     if (url.pathname === "/" || url.pathname === "/index.html")
-      return text(indexHtml, 200, "text/html; charset=utf-8", cookieHeaders);
+      return text(indexHtml, 200, "text/html; charset=utf-8");
 
     return json(
       { error: { code: "NOT_FOUND", message: "Unknown dashboard route" } },
@@ -254,11 +221,7 @@ export async function startDashboardHost(
     );
   }
 
-  async function proxy(
-    request: Request,
-    url: URL,
-    cookieHeaders: Record<string, string> | undefined,
-  ): Promise<Response> {
+  async function proxy(request: Request, url: URL): Promise<Response> {
     let upstream: Response;
     try {
       upstream = await fetch(`http://localhost${url.pathname}${url.search}`, {
@@ -279,7 +242,6 @@ export async function startDashboardHost(
           },
         },
         503,
-        cookieHeaders,
       );
     }
 
@@ -289,7 +251,6 @@ export async function startDashboardHost(
       "content-type":
         upstream.headers.get("content-type") ?? "application/json",
       "cache-control": "no-store",
-      ...cookieHeaders,
     });
     return new Response(relay(upstream.body), {
       status: upstream.status,
@@ -301,7 +262,6 @@ export async function startDashboardHost(
     url: `http://${authority}/`,
     port: boundPort,
     hostname,
-    token,
     stop: async () => {
       await server.stop(true);
     },

@@ -13,6 +13,8 @@ import type {
   AttentionReason,
   PipelineRunState,
   ProjectSummary,
+  MilestoneSummary,
+  RequirementSummary,
   ReviewState,
   TaskOperationalState,
   TaskPageQuery,
@@ -32,6 +34,10 @@ import {
   shortId,
   stageChips,
   taskStatusLabel,
+  milestoneStatusLabel,
+  milestoneStatusTone,
+  requirementStatusLabel,
+  requirementStatusTone,
   taskDivergenceLabel,
   taskStatusTone,
   type OverviewView,
@@ -48,6 +54,7 @@ import {
   renderAgentWorkload,
   renderProjectProgress,
   renderTaskDistribution,
+  chartBar,
 } from "./charts.ts";
 export { escapeHtml } from "./html.ts";
 import { renderTaskFilters, renderTaskPagination } from "./task-filters.ts";
@@ -107,13 +114,37 @@ function memoryLesson(lesson: GlobalMemoryLesson): string {
 }
 
 export function renderMemory(view: MemoryView): string {
-  const total = view.memory.roles.length + view.memory.patterns.length + view.memory.lessons.length;
+  const total =
+    view.memory.roles.length +
+    view.memory.patterns.length +
+    view.memory.lessons.length;
   return [
     `<header class="project-header"><h2>Memory</h2><p class="meta">Global reusable memory, read from the authoritative Runtime store. ${total} saved records.</p></header>`,
-    section("How clients use it", `<p class="section-intro">Codex and Claude Code do not open this database directly. Their repository-local AI Office skill tells them to use the Runtime-backed <span class="mono">memory:search</span> command when reusable roles, patterns or lessons are relevant. This page shows the records available through that same authority.</p><p class="meta mono">storage: ${escapeHtml(view.memory.storage)} · snapshot: ${escapeHtml(view.generatedAt)}</p>`),
-    section("Roles", view.memory.roles.length === 0 ? empty("No roles saved", "Create one with memory:role:create.") : view.memory.roles.map(memoryRole).join(""), `${view.memory.roles.length}`),
-    section("Patterns", view.memory.patterns.length === 0 ? empty("No patterns saved", "Create one with memory:pattern:create.") : view.memory.patterns.map(memoryPattern).join(""), `${view.memory.patterns.length}`),
-    section("Lessons", view.memory.lessons.length === 0 ? empty("No lessons saved", "Create one with memory:lesson:create.") : view.memory.lessons.map(memoryLesson).join(""), `${view.memory.lessons.length}`),
+    section(
+      "How clients use it",
+      `<p class="section-intro">Codex and Claude Code do not open this database directly. Their repository-local AI Office skill tells them to use the Runtime-backed <span class="mono">memory:search</span> command when reusable roles, patterns or lessons are relevant. This page shows the records available through that same authority.</p><p class="meta mono">storage: ${escapeHtml(view.memory.storage)} · snapshot: ${escapeHtml(view.generatedAt)}</p>`,
+    ),
+    section(
+      "Roles",
+      view.memory.roles.length === 0
+        ? empty("No roles saved", "Create one with memory:role:create.")
+        : view.memory.roles.map(memoryRole).join(""),
+      `${view.memory.roles.length}`,
+    ),
+    section(
+      "Patterns",
+      view.memory.patterns.length === 0
+        ? empty("No patterns saved", "Create one with memory:pattern:create.")
+        : view.memory.patterns.map(memoryPattern).join(""),
+      `${view.memory.patterns.length}`,
+    ),
+    section(
+      "Lessons",
+      view.memory.lessons.length === 0
+        ? empty("No lessons saved", "Create one with memory:lesson:create.")
+        : view.memory.lessons.map(memoryLesson).join(""),
+      `${view.memory.lessons.length}`,
+    ),
   ].join("");
 }
 
@@ -270,6 +301,62 @@ function taskRows(
   return `<div class="table-scroll"><table><thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Requirements</th><th>Prio</th><th>Current agent</th><th>Pipeline</th><th>Run</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+function renderMilestoneBoard(
+  milestones: readonly MilestoneSummary[],
+  total: number,
+): string {
+  if (milestones.length === 0)
+    return `<p class="calm">Milestone details are not available in this snapshot.</p>`;
+  const statuses = [
+    ...new Set(milestones.map((milestone) => milestone.status)),
+  ].sort();
+  const options = statuses
+    .map(
+      (status) =>
+        `<option value="${escapeHtml(status)}">${escapeHtml(milestoneStatusLabel(status))}</option>`,
+    )
+    .join("");
+  const rows = milestones
+    .map((milestone) => {
+      const requirements = milestone.requirements;
+      return `<li class="milestone-row" data-status="${escapeHtml(milestone.status)}"><div class="milestone-row-heading"><div><strong>${escapeHtml(milestone.title)}</strong><span class="meta mono">${escapeHtml(milestone.milestoneId)}</span></div>${badge(milestoneStatusLabel(milestone.status), milestoneStatusTone(milestone.status))}</div><div class="milestone-progress"><span class="chart-value">${requirements.verified}/${requirements.total} verified</span>${chartBar(requirements.verified, requirements.total, milestoneStatusTone(milestone.status))}</div><p class="meta">${requirements.open} open requirements · updated ${escapeHtml(formatTimestamp(milestone.updatedAt))}</p></li>`;
+    })
+    .join("");
+  return `<div class="milestone-toolbar"><label class="task-select" for="milestone-status-filter">Status<select id="milestone-status-filter"><option value="">All statuses</option>${options}</select></label><span id="milestone-filter-count" class="filter-match" role="status">${milestones.length} of ${total} milestones</span></div><ol id="milestone-list" class="milestone-list">${rows}</ol><p id="milestone-filter-empty" class="calm" hidden>No milestones match this status.</p><p class="chart-note">Progress is based on verified requirements for each persisted milestone. Task-to-milestone links are not currently modelled.</p>`;
+}
+
+function renderRequirementBoard(
+  requirements: readonly RequirementSummary[],
+  milestones: readonly MilestoneSummary[],
+): string {
+  if (requirements.length === 0)
+    return `<p class="calm">No requirements recorded for this project.</p>`;
+  const statuses = [...new Set(requirements.map((requirement) => requirement.status))].sort();
+  const milestoneTitles = new Map(
+    milestones.map((milestone) => [milestone.milestoneId, milestone.title]),
+  );
+  const milestoneOptions = [
+    `<option value="">All milestones</option>`,
+    ...[...new Set(requirements.map((requirement) => requirement.milestoneId).filter((milestoneId): milestoneId is string => milestoneId !== null))]
+      .sort((left, right) => (milestoneTitles.get(left) ?? left).localeCompare(milestoneTitles.get(right) ?? right))
+      .map((milestoneId) => `<option value="${escapeHtml(milestoneId)}">${escapeHtml(milestoneTitles.get(milestoneId) ?? milestoneId)}</option>`),
+    ...(requirements.some((requirement) => requirement.milestoneId === null) ? [`<option value="none">No milestone</option>`] : []),
+  ].join("");
+  const statusOptions = statuses
+    .map((status) => `<option value="${escapeHtml(status)}">${escapeHtml(requirementStatusLabel(status))}</option>`)
+    .join("");
+  const rows = requirements
+    .map((requirement) => {
+      const milestone = requirement.milestoneId === null ? "No milestone" : (milestoneTitles.get(requirement.milestoneId) ?? requirement.milestoneId);
+      const tasks = requirement.taskReferences.length === 0
+        ? `<span class="calm">No linked tasks</span>`
+        : requirement.taskReferences.map((task) => taskLink(requirement.projectId, task.taskId, task.title)).join(", ");
+      const description = requirement.description.trim() === "" ? "No description recorded." : requirement.description;
+      return `<article class="requirement-row" data-status="${escapeHtml(requirement.status)}" data-milestone="${escapeHtml(requirement.milestoneId ?? "none")}"><div class="requirement-row-heading"><div><span class="requirement-key mono">${escapeHtml(requirement.key)}</span><h3>${escapeHtml(requirement.title)}</h3></div>${badge(requirementStatusLabel(requirement.status), requirementStatusTone(requirement.status))}</div><p class="requirement-description">${escapeHtml(description)}</p><dl class="requirement-meta"><div><dt>milestone</dt><dd>${escapeHtml(milestone)}</dd></div><div><dt>linked tasks</dt><dd>${tasks}</dd></div><div><dt>updated</dt><dd class="mono">${escapeHtml(formatTimestamp(requirement.updatedAt))}</dd></div></dl></article>`;
+    })
+    .join("");
+  return `<div class="requirements-toolbar"><label class="task-select" for="requirement-status-filter">Status<select id="requirement-status-filter"><option value="">All statuses</option>${statusOptions}</select></label><label class="task-select" for="requirement-milestone-filter">Milestone<select id="requirement-milestone-filter">${milestoneOptions}</select></label><span id="requirement-filter-count" class="filter-match" role="status">${requirements.length} of ${requirements.length} requirements</span></div><div id="requirement-list" class="requirements-list">${rows}</div><p id="requirement-filter-empty" class="calm" hidden>No requirements match these filters.</p><p class="chart-note">Requirements are read from the authoritative Runtime state; linked tasks are shown where the domain has an explicit link.</p>`;
+}
 function projectCard(project: ProjectSummary): string {
   const milestone =
     project.currentMilestone === null
@@ -360,10 +447,14 @@ export function renderProject(view: ProjectView): string {
     <p class="meta">${escapeHtml(summary.repository.remoteUrl ?? "no remote recorded")} · branch ${escapeHtml(summary.repository.defaultBranch ?? "unknown")}</p>
   </div>`;
 
-  const milestones =
-    summary.currentMilestone === null
-      ? `<p class="calm">No single active milestone (${summary.activeMilestoneCount} active of ${summary.milestoneCount}).</p>`
-      : `<p><strong>${escapeHtml(summary.currentMilestone.title)}</strong> — ${summary.currentMilestone.requirements.open} open / ${summary.currentMilestone.requirements.verified} verified of ${summary.currentMilestone.requirements.total} requirements</p>`;
+  const milestoneSection = renderMilestoneBoard(
+    view.milestones,
+    summary.milestoneCount,
+  );
+  const requirementSection = renderRequirementBoard(
+    view.requirements,
+    view.milestones,
+  );
 
   const pipelines =
     view.pipelines.total === 0
@@ -377,9 +468,14 @@ export function renderProject(view: ProjectView): string {
 
   return [
     header,
-    `<nav class="section-nav" aria-label="Project sections"><button type="button" id="jump-tasks">Tasks</button><button type="button" id="jump-agents">Agents</button>${view.pipelines.total === 0 ? "" : `<button type="button" id="jump-pipelines">Pipelines</button>`}</nav>`,
+    `<nav class="section-nav" aria-label="Project sections"><button type="button" id="jump-tasks">Tasks</button>${summary.milestoneCount === 0 ? "" : `<button type="button" id="jump-milestones">Milestones</button>`}${summary.requirements.total === 0 ? "" : `<button type="button" id="jump-requirements">Requirements</button>`}<button type="button" id="jump-agents">Agents</button>${view.pipelines.total === 0 ? "" : `<button type="button" id="jump-pipelines">Pipelines</button>`}</nav>`,
     `<div class="insights">${section("Task distribution", renderTaskDistribution(summary.tasks))}${section("Agent workload", renderAgentWorkload(view.agents))}</div>`,
-    summary.milestoneCount === 0 ? "" : section("Milestone", milestones),
+    summary.milestoneCount === 0
+      ? ""
+      : `<div id="project-milestones">${section("Milestones", milestoneSection, `${summary.activeMilestoneCount} active of ${summary.milestoneCount}`)}</div>`,
+    summary.requirements.total === 0
+      ? ""
+      : `<div id="project-requirements">${section("Requirements", requirementSection, `${summary.requirements.verified} verified of ${summary.requirements.total}`)}</div>`,
     view.attention.total === 0
       ? ""
       : section(

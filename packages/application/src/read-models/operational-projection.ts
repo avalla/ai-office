@@ -26,6 +26,7 @@ import type {
   OperationalAgentRunRecord,
   OperationalMilestoneRecord,
   OperationalProjectRecord,
+  OperationalRequirementRecord,
   OperationalReviewRecord,
   RequirementCountRecord,
   StatusCountRecord,
@@ -56,6 +57,7 @@ import {
   type PipelineStageCounts,
   type PipelineStageState,
   type ProjectSummary,
+  type RequirementSummary,
   type RequirementCounts,
   type ReviewState,
   type TaskCounts,
@@ -246,6 +248,23 @@ export function projectMilestoneSummary(
     requirements: projectRequirementCounts(
       requirementCounts.filter((value) => value.milestoneId === record.id),
     ),
+    createdAt: iso(record.createdAt),
+    updatedAt: iso(record.updatedAt),
+  };
+}
+
+export function projectRequirementSummary(
+  record: OperationalRequirementRecord,
+): RequirementSummary {
+  return {
+    requirementId: record.id,
+    projectId: record.projectId,
+    milestoneId: record.milestoneId,
+    key: record.key,
+    title: record.title,
+    description: record.description,
+    status: record.status,
+    taskReferences: record.taskReferences,
     createdAt: iso(record.createdAt),
     updatedAt: iso(record.updatedAt),
   };

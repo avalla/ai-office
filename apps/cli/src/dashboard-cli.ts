@@ -150,11 +150,11 @@ export async function runDashboardCli(
     throw error;
   }
 
-  const url = `${host.url}?token=${host.token}`;
+  const url = host.url;
   options.io.stdout("AI Office dashboard");
   options.io.stdout(url);
   options.io.stdout(
-    "Read-only. Local same-user surface; the link carries this session's token.",
+    "Read-only. Local loopback surface; no session token is required.",
   );
 
   if (!parsed.flags.has("no-open")) {

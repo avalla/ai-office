@@ -23,8 +23,8 @@ ai-office dashboard     # in another
 
 ```text
 AI Office dashboard
-http://127.0.0.1:4278/?token=1f0c…
-Read-only. Local same-user surface; the link carries this session's token.
+http://127.0.0.1:4278/
+Read-only. Local loopback surface; no session token is required.
 ```
 
 The command holds the terminal and stops on Ctrl-C, releasing the port with it.
@@ -598,27 +598,17 @@ What is genuinely enforced:
   unchanged. The TCP port belongs to `ai-office dashboard`, is bound to
   loopback, and is released when the command stops. A non-loopback bind is
   refused outright.
-- **A per-process session token.** Generated in memory, never written to disk,
-  and dead when the command exits. Every route requires it, so a process that
-  merely finds the open port — or a page that guesses it — gets nothing. It is
-  exchanged once for an `HttpOnly; SameSite=Strict` host-only cookie so it stops
-  travelling on later requests.
 - **A `Host` allowlist.** This blocks DNS rebinding, where a page the user
   visits resolves an attacker-controlled name to 127.0.0.1 and reads responses
-  as same-origin.
+  as same-origin. No session token or cookie is required.
+- **Loopback-only binding.** The host refuses non-loopback addresses and releases
+  the TCP port when the dashboard command exits.
 - **A strict Content-Security-Policy** on served documents: no inline script, no
   external origin, no framing.
 
-The token is a capability against accidental and blind access — **not a
-secret**. `ai-office dashboard` hands the complete URL to the platform opener,
-so the token appears in that process's arguments, and the browser records it in
-history; whether another local account can read either is platform-dependent.
-So the honest claim is narrow: the port is unusable by anything that has never
-seen the URL, and the token dies with the command. It is not claimed to keep
-project state secret from other local users, and it is not authentication.
-
-`--no-open` keeps the token out of opener arguments. It cannot keep it out of
-browser history. If a machine has local accounts you would not show this data
+The dashboard is intentionally accessible to any local process that can
+reach its loopback port. It is not authentication and is not a same-UID
+security boundary. If a machine has local accounts you would not show this data
 to, do not run the dashboard there.
 
 ### What reaches the browser
@@ -645,10 +635,10 @@ path _beside_ the query surface, not inside it. Concretely:
 3. the dashboard host would forward those as commands, and the browser would
    invoke them through an explicit action module, separate from the render
    layer;
-4. an authenticated human boundary would have to be designed first, because the
-   session token is not one. Until then, a write surface reachable from the
-   browser would be reachable by any same-UID process, which is why this version
-   has none.
+4. an authenticated human boundary would have to be designed before adding
+   a write surface reachable from the browser, because this local dashboard is
+   not one; any same-UID process could otherwise invoke it, which is why this
+   version has none.
 
 Because the current UI renders read models and holds no domain logic, adding
 that path does not require rewriting it.

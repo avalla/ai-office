@@ -17,10 +17,12 @@ import type {
   AgentState,
   AttentionReason,
   DashboardOverview,
+  MilestoneSummary,
   PipelineRunState,
   PipelineStageState,
   ProjectDetail,
   ProjectSummary,
+  RequirementSummary,
   ReviewState,
   TaskOperationalState,
   TaskDetail,
@@ -136,6 +138,47 @@ const taskStatusLabels: Record<TaskOperationalStatus, string> = {
 
 export function taskStatusLabel(status: TaskOperationalStatus): string {
   return taskStatusLabels[status];
+}
+
+type MilestoneStatus = MilestoneSummary["status"];
+
+const milestoneStatusLabels: Record<MilestoneStatus, string> = {
+  planned: "planned",
+  active: "active",
+  completed: "completed",
+  cancelled: "cancelled",
+};
+
+export function milestoneStatusLabel(status: MilestoneStatus): string {
+  return milestoneStatusLabels[status];
+}
+
+export function milestoneStatusTone(status: MilestoneStatus): ToneName {
+  if (status === "active") return "active";
+  if (status === "completed") return "good";
+  if (status === "cancelled") return "muted";
+  return "neutral";
+}
+
+type RequirementStatus = RequirementSummary["status"];
+
+const requirementStatusLabels: Record<RequirementStatus, string> = {
+  proposed: "proposed",
+  accepted: "accepted",
+  implemented: "implemented",
+  verified: "verified",
+  rejected: "rejected",
+};
+
+export function requirementStatusLabel(status: RequirementStatus): string {
+  return requirementStatusLabels[status];
+}
+
+export function requirementStatusTone(status: RequirementStatus): ToneName {
+  if (status === "verified") return "good";
+  if (status === "rejected") return "attention";
+  if (status === "implemented") return "active";
+  return status === "accepted" ? "neutral" : "muted";
 }
 
 const divergenceLabels: Record<TaskDivergenceReason, string> = {
@@ -367,6 +410,8 @@ export function overviewViewModel(dashboard: DashboardOverview): OverviewView {
 export interface ProjectView {
   generatedAt: string;
   summary: ProjectSummary;
+  milestones: readonly MilestoneSummary[];
+  requirements: readonly RequirementSummary[];
   attention: SampleView<AttentionReason>;
   tasks: SampleView<TaskOperationalState>;
   taskPage?: TaskPageInfo;
@@ -403,6 +448,8 @@ export function projectViewModel(detail: ProjectDetail): ProjectView {
   return {
     generatedAt: formatTimestamp(detail.generatedAt),
     summary: detail.summary,
+    milestones: detail.milestones,
+    requirements: detail.requirements,
     attention: sampleView(detail.summary.attention, "items needing attention"),
     tasks: {
       items: tasks,

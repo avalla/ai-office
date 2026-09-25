@@ -1,10 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   mkdtempSync,
-  readFileSync,
-  readdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -106,7 +103,7 @@ describe("ai-office dashboard", () => {
 
       expect(output.stdout[0]).toBe("AI Office dashboard");
       const url = output.stdout[1]!;
-      expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?token=[0-9a-f]+$/);
+      expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
       expect(output.stdout[2]).toContain("Read-only");
       expect(opened).toEqual([url]);
 
@@ -372,26 +369,9 @@ describe("dashboard loopback host", () => {
     }
   }
 
-  test("refuses every request without the session token", async () => {
+  test("serves the read-only console without a session token", async () => {
     await withHost(async ({ get }) => {
-      for (const path of ["/", "/app.js", "/styles.css", "/api/dashboard"]) {
-        const response = await get(path);
-        expect(response.status).toBe(403);
-      }
-    });
-  });
-
-  test("exchanges the token for a cookie and then serves the console", async () => {
-    await withHost(async ({ host, get }) => {
-      const redirect = await get(`/?token=${host.token}`);
-      expect(redirect.status).toBe(302);
-      expect(redirect.headers.get("location")).toBe("/");
-      const cookie = redirect.headers.get("set-cookie")!;
-      expect(cookie).toContain("HttpOnly");
-      expect(cookie).toContain("SameSite=Strict");
-
-      const session = cookie.split(";")[0]!;
-      const page = await get("/", { headers: { cookie: session } });
+      const page = await get("/");
       expect(page.status).toBe(200);
       expect(page.headers.get("content-type")).toContain("text/html");
       const html = await page.text();
@@ -401,21 +381,18 @@ describe("dashboard loopback host", () => {
         "default-src 'none'",
       );
 
-      const script = await get("/app.js", { headers: { cookie: session } });
+      const script = await get("/app.js");
       expect(script.status).toBe(200);
       expect(await script.text()).toBe(stubClientScript);
     });
   });
 
   test("proxies the query API to the daemon socket unchanged", async () => {
-    await withHost(async ({ host, client, get }) => {
+    await withHost(async ({ client, get }) => {
       const created = await client.execute(["project:create", "Proxied"]);
       const projectId = created.stdout[0]!.replace("Project created: ", "");
-      const session = `ai_office_dashboard=${host.token}`;
 
-      const response = await get("/api/dashboard", {
-        headers: { cookie: session },
-      });
+      const response = await get("/api/dashboard");
       expect(response.status).toBe(200);
       const body = (await response.json()) as {
         queryApiVersion: number;
@@ -425,15 +402,13 @@ describe("dashboard loopback host", () => {
       expect(body.dashboard.projects[0]?.projectId).toBe(projectId);
 
       // Daemon-side errors keep their status through the proxy.
-      const missing = await get("/api/projects/nope", {
-        headers: { cookie: session },
-      });
+      const missing = await get("/api/projects/nope");
       expect(missing.status).toBe(404);
     });
   });
 
   test("streams invalidation through to the browser", async () => {
-    await withHost(async ({ host, client, get }) => {
+    await withHost(async ({ client, get }) => {
       const controller = new AbortController();
       let seen = "";
       let pump: Promise<void> = Promise.resolve();
@@ -441,7 +416,6 @@ describe("dashboard loopback host", () => {
         // Bounded on purpose: if the proxy ever buffers instead of streaming,
         // this surfaces as an abort here rather than as an opaque test timeout.
         const response = await get("/api/events", {
-          headers: { cookie: `ai_office_dashboard=${host.token}` },
           signal: AbortSignal.any([
             controller.signal,
             AbortSignal.timeout(15_000),
@@ -489,23 +463,19 @@ describe("dashboard loopback host", () => {
     });
   }, 30_000);
 
-  test("rejects an unexpected Host header even with a valid token", async () => {
-    await withHost(async ({ host, get }) => {
+  test("rejects an unexpected Host header", async () => {
+    await withHost(async ({ get }) => {
       const response = await get("/api/dashboard", {
-        headers: {
-          host: "evil.example.com",
-          cookie: `ai_office_dashboard=${host.token}`,
-        },
+        headers: { host: "evil.example.com" },
       });
       expect(response.status).toBe(400);
     });
   });
 
   test("rejects writes", async () => {
-    await withHost(async ({ host, get }) => {
+    await withHost(async ({ get }) => {
       const response = await get("/api/dashboard", {
         method: "POST",
-        headers: { cookie: `ai_office_dashboard=${host.token}` },
       });
       expect(response.status).toBe(405);
     });
@@ -525,7 +495,6 @@ describe("dashboard loopback host", () => {
       const response = await fetch(
         `http://127.0.0.1:${host.port}/api/dashboard`,
         {
-          headers: { cookie: `ai_office_dashboard=${host.token}` },
           signal: AbortSignal.timeout(5000),
         },
       );
@@ -538,56 +507,8 @@ describe("dashboard loopback host", () => {
     }
   });
 
-  test("the session token is per process and dies with the host", async () => {
-    const projectRoot = mkdtempSync(
-      join(tmpdir(), "ai-office-dashboard-token-"),
-    );
-    temporaryDirectories.push(projectRoot);
-    const socketPath = join(projectRoot, "missing.sock");
 
-    const first = await startDashboardHost({
-      socketPath,
-      port: 0,
-      clientScript: stubClientScript,
-    });
-    const firstToken = first.token;
-    await first.stop();
-
-    const second = await startDashboardHost({
-      socketPath,
-      port: 0,
-      clientScript: stubClientScript,
-    });
-    try {
-      // A token recovered from a previous session — from history, from a
-      // terminal, from another process's arguments — is useless here.
-      expect(second.token).not.toBe(firstToken);
-      const stale = await fetch(
-        `http://127.0.0.1:${second.port}/?token=${firstToken}`,
-        { redirect: "manual", signal: AbortSignal.timeout(5000) },
-      );
-      expect(stale.status).toBe(403);
-
-      const current = await fetch(
-        `http://127.0.0.1:${second.port}/?token=${second.token}`,
-        { redirect: "manual", signal: AbortSignal.timeout(5000) },
-      );
-      expect(current.status).toBe(302);
-
-      // The token is held in memory only: nothing under the runtime root
-      // records it, so stopping the command really does end the session.
-      const files = readdirSync(projectRoot, { recursive: true }) as string[];
-      for (const file of files) {
-        const path = join(projectRoot, file);
-        if (!statSync(path).isFile()) continue;
-        expect(readFileSync(path, "utf8")).not.toContain(second.token);
-      }
-    } finally {
-      await second.stop();
-    }
-  });
-
-  test("--no-open keeps the token out of platform opener arguments", async () => {
+  test("--no-open keeps the browser closed and prints a token-free URL", async () => {
     const runtime = await startRuntime();
     const controller = new AbortController();
     const output = captureIo();
@@ -609,9 +530,8 @@ describe("dashboard loopback host", () => {
       )
         await Bun.sleep(5);
 
-      // The URL still carries the token — it has to — but nothing handed it to
-      // a subprocess. Browser history is a separate exposure the docs name.
-      expect(output.stdout[1]).toContain("token=");
+      expect(output.stdout[1]).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+      expect(output.stdout[1]).not.toContain("token=");
       expect(openerArguments).toEqual([]);
       controller.abort();
       expect(await command).toBe(0);
@@ -643,7 +563,6 @@ describe("dashboard loopback host", () => {
     });
     try {
       const response = await fetch(`http://127.0.0.1:${host.port}/app.js`, {
-        headers: { cookie: `ai_office_dashboard=${host.token}` },
         signal: AbortSignal.timeout(10_000),
       });
       expect(response.status).toBe(200);

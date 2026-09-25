@@ -61,7 +61,23 @@ export function renderTaskFilters(view: ProjectView): string {
     Object.keys(filters).length > 0 || page.offset > 0
       ? `<a href="${routeHref({ kind: "project", projectId: view.summary.projectId })}">Clear filters</a>`
       : "";
-  return `<form id="task-filters" class="task-filters"><label class="task-search" for="task-filter-search">Search tasks<input id="task-filter-search" name="search" type="search" maxlength="${queryLimits.taskSearchLength}" placeholder="Title, description or task ID" value="${escapeHtml(filters.search ?? "")}" /></label>${select("task-filter-status", "Status", filters.status ?? "", [["", "All statuses"], ...options.statuses.map((status) => [status, taskStatusLabel(status)] as [string, string])])}${select("task-filter-priority", "Priority", filters.priority === undefined ? "" : String(filters.priority), [["", "All priorities"], ...options.priorities.map((priority) => [String(priority), String(priority)] as [string, string])])}${select("task-filter-agent", "Agent", filters.unassigned ? "none" : filters.agentId === undefined ? "" : `agent:${filters.agentId}`, agentOptions)}<div class="filter-actions"><button type="submit">Apply filters</button>${reset}</div></form><p id="task-filter-error" class="filter-error" role="alert"></p><p class="section-intro">Searches all project tasks. Status is operational; agent means a current stage assignment or any active run. Higher priority appears first.</p>`;
+  const active = [
+    filters.search === undefined ? "" : `search: ${filters.search}`,
+    filters.status === undefined
+      ? ""
+      : `status: ${taskStatusLabel(filters.status)}`,
+    filters.priority === undefined ? "" : `priority: ${filters.priority}`,
+    filters.unassigned
+      ? "no current agent"
+      : filters.agentId === undefined
+        ? ""
+        : `agent: ${agentOptions.find(([value]) => value === "agent:" + filters.agentId)?.[1] ?? filters.agentId}`,
+  ].filter((value) => value.length > 0);
+  const filterSummary =
+    active.length === 0
+      ? "All project tasks"
+      : `${active.length} active filter${active.length === 1 ? "" : "s"}: ${active.join(" · ")}`;
+  return `<form id="task-filters" class="task-filters"><div class="filter-heading"><div><strong>Find tasks</strong><span class="meta">${escapeHtml(filterSummary)}</span></div><span class="filter-match">${view.tasks.total} matching</span></div><div class="task-filter-grid"><label class="task-search" for="task-filter-search">Search<input id="task-filter-search" name="search" type="search" maxlength="${queryLimits.taskSearchLength}" placeholder="Title, description, or task ID" value="${escapeHtml(filters.search ?? "")}" /></label>${select("task-filter-status", "Status", filters.status ?? "", [["", "All statuses"], ...options.statuses.map((status) => [status, taskStatusLabel(status)] as [string, string])])}${select("task-filter-priority", "Priority", filters.priority === undefined ? "" : String(filters.priority), [["", "All priorities"], ...options.priorities.map((priority) => [String(priority), String(priority)] as [string, string])])}${select("task-filter-agent", "Agent", filters.unassigned ? "none" : filters.agentId === undefined ? "" : `agent:${filters.agentId}`, agentOptions)}</div><div class="filter-actions"><button type="submit">Apply filters</button>${reset}</div></form><p id="task-filter-error" class="filter-error" role="alert"></p><p class="section-intro">Searches title, description, and task ID. Status is operational; agent means a current stage assignment or any active run. Higher priority appears first.</p>`;
 }
 
 export function renderTaskPagination(view: ProjectView): string {

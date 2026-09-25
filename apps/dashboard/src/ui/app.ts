@@ -54,8 +54,20 @@ function publishRoute(
 ): boolean {
   const key = routeHref(route);
   if (key !== routeHref(parseRoute(window.location.hash))) return false;
-  const controls = ["search", "status", "priority", "agent"].map(
-    (name) => `task-filter-${name}`,
+  const controls = [
+    "search",
+    "status",
+    "priority",
+    "agent",
+    "milestone-status-filter",
+    "requirement-status-filter",
+    "requirement-milestone-filter",
+  ].map((name) =>
+    name === "milestone-status-filter" ||
+    name === "requirement-status-filter" ||
+    name === "requirement-milestone-filter"
+      ? name
+      : `task-filter-${name}`,
   );
   const draft =
     displayedRoute === key
@@ -126,6 +138,53 @@ async function getJson<T>(path: string): Promise<T> {
  * Queries and renders one route. It rethrows after rendering the failure so the
  * sync controller can tell a completed synchronization from a failed one.
  */
+function bindMilestoneFilter(): void {
+  const filter = document.getElementById("milestone-status-filter");
+  const count = document.getElementById("milestone-filter-count");
+  const empty = document.getElementById("milestone-filter-empty");
+  if (filter === null || count === null) return;
+  const rows = document.querySelectorAll<DashboardElement>(".milestone-row");
+  const update = () => {
+    const status = filter.value;
+    let visible = 0;
+    for (const row of rows) {
+      const matches =
+        status === "" || row.getAttribute("data-status") === status;
+      row.hidden = !matches;
+      if (matches) visible += 1;
+    }
+    count.textContent = `${visible} of ${rows.length} milestones`;
+    if (empty !== null) empty.hidden = visible > 0;
+  };
+  filter.addEventListener("change", update);
+  update();
+}
+
+function bindRequirementFilters(): void {
+  const statusFilter = document.getElementById("requirement-status-filter");
+  const milestoneFilter = document.getElementById("requirement-milestone-filter");
+  const count = document.getElementById("requirement-filter-count");
+  const empty = document.getElementById("requirement-filter-empty");
+  if (statusFilter === null || milestoneFilter === null || count === null) return;
+  const rows = document.querySelectorAll<DashboardElement>(".requirement-row");
+  const update = () => {
+    const status = statusFilter.value;
+    const milestone = milestoneFilter.value;
+    let visible = 0;
+    for (const row of rows) {
+      const matches =
+        (status === "" || row.getAttribute("data-status") === status) &&
+        (milestone === "" || row.getAttribute("data-milestone") === milestone);
+      row.hidden = !matches;
+      if (matches) visible += 1;
+    }
+    count.textContent = `${visible} of ${rows.length} requirements`;
+    if (empty !== null) empty.hidden = visible > 0;
+  };
+  statusFilter.addEventListener("change", update);
+  milestoneFilter.addEventListener("change", update);
+  update();
+}
 async function renderRoute(
   route: DashboardRoute,
   root: DashboardElement,
@@ -164,6 +223,8 @@ async function renderRoute(
         )
       )
         return;
+      bindMilestoneFilter();
+      bindRequirementFilters();
       document
         .getElementById("task-filters")
         ?.addEventListener("submit", (event) => {
@@ -191,7 +252,7 @@ async function renderRoute(
                 error instanceof Error ? error.message : "Invalid filters";
           }
         });
-      for (const section of ["tasks", "agents", "pipelines"]) {
+      for (const section of ["tasks", "requirements", "agents", "pipelines"]) {
         document
           .getElementById(`jump-${section}`)
           ?.addEventListener("click", () => {

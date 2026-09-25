@@ -32,6 +32,7 @@ import type {
   OperationalPipelineRunRecord,
   OperationalProjectRecord,
   OperationalReadRepository,
+  OperationalRequirementRecord,
   OperationalReviewRecord,
   PipelineRunQuery,
   RequirementCountRecord,
@@ -350,6 +351,69 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
         createdAt: new Date(row.created_at),
         updatedAt: new Date(row.updated_at),
       }));
+  }
+
+  async listRequirements(
+    projectId: string,
+  ): Promise<OperationalRequirementRecord[]> {
+    const rows = this.database
+      .query<
+        {
+          requirement_id: string;
+          project_id: string;
+          milestone_id: string | null;
+          key: string;
+          title: string;
+          description: string;
+          status: RequirementStatus;
+          created_at: string;
+          updated_at: string;
+          task_id: string | null;
+          task_title: string | null;
+        },
+        [string]
+      >(
+        `SELECT r.id AS requirement_id, r.project_id, r.milestone_id,
+                r.requirement_key AS key, r.title, r.description, r.status,
+                r.created_at, r.updated_at,
+                t.id AS task_id, t.title AS task_title
+           FROM requirement r
+           LEFT JOIN task_requirement l ON l.requirement_id = r.id
+           LEFT JOIN task t ON t.id = l.task_id AND t.project_id = r.project_id
+          WHERE r.project_id = ?
+          ORDER BY r.requirement_key, r.id, t.title, t.id`,
+      )
+      .all(projectId);
+
+    type RequirementWithMutableTasks = Omit<
+      OperationalRequirementRecord,
+      "taskReferences"
+    > & { taskReferences: { taskId: string; title: string }[] };
+    const requirements: RequirementWithMutableTasks[] = [];
+    for (const row of rows) {
+      let current = requirements[requirements.length - 1];
+      if (current === undefined || current.id !== row.requirement_id) {
+        current = {
+          id: row.requirement_id,
+          projectId: row.project_id,
+          milestoneId: row.milestone_id,
+          key: row.key,
+          title: row.title,
+          description: row.description,
+          status: row.status,
+          taskReferences: [],
+          createdAt: new Date(row.created_at),
+          updatedAt: new Date(row.updated_at),
+        };
+        requirements.push(current);
+      }
+      if (row.task_id !== null && row.task_title !== null)
+        current.taskReferences.push({
+          taskId: row.task_id,
+          title: row.task_title,
+        });
+    }
+    return requirements;
   }
 
   async listAgents(

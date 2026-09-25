@@ -48,6 +48,7 @@ import {
   taskLeaseAttention,
   projectMilestoneSummary,
   projectPipelineRunState,
+  projectRequirementSummary,
   projectProjectSummary,
   projectReviewState,
   projectRunActions,
@@ -68,6 +69,7 @@ import {
   type PipelineRunState,
   type ProjectDetail,
   type ProjectSummary,
+  type RequirementSummary,
   type ReviewState,
   type TaskOperationalState,
   type TaskDetail,
@@ -458,6 +460,7 @@ export class OperationalQueryService {
       runTotalCounts,
       lastActivity,
       milestoneRecords,
+      requirementRecords,
       agentRecords,
       // Bounded samples.
       taskPage,
@@ -494,6 +497,7 @@ export class OperationalQueryService {
       this.reads.countAgentRuns({ projectIds }),
       this.reads.lastActivityAt(projectIds),
       this.reads.listMilestones(projectIds),
+      this.reads.listRequirements(projectId),
       this.reads.listAgents(projectIds),
       options?.taskQuery === undefined
         ? this.reads.listTasks(projectId, taskLimit)
@@ -585,6 +589,9 @@ export class OperationalQueryService {
     const milestones: MilestoneSummary[] = milestoneRecords.map((record) =>
       projectMilestoneSummary(record, requirementCounts),
     );
+    const requirements: RequirementSummary[] = requirementRecords.map(
+      projectRequirementSummary,
+    );
 
     const taskTotal = taskCounts.reduce(
       (total, record) => total + record.count,
@@ -595,6 +602,7 @@ export class OperationalQueryService {
       generatedAt: this.clock.now().toISOString(),
       summary,
       milestones,
+      requirements,
       agents: agentStates,
       tasks: filteredPage?.tasks ?? boundedList(tasks, taskTotal),
       ...(filteredPage === null ? {} : { taskPage: filteredPage.page }),

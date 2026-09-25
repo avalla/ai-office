@@ -446,8 +446,8 @@ ai-office dashboard
 
 ```text
 AI Office dashboard
-http://127.0.0.1:4278/?token=1f0c…
-Read-only. Local same-user surface; the link carries this session's token.
+http://127.0.0.1:4278/
+Read-only. Local loopback surface; no session token is required.
 ```
 
 It answers the questions you ask between commands: which projects exist, what is
@@ -578,8 +578,8 @@ exposing the port:
 ssh -L 4278:127.0.0.1:4278 user@server
 ```
 
-The dashboard's session token is a local capability, not authentication, and is
-not suitable for Internet exposure.
+The dashboard is intentionally loopback-only and read-only; it is not
+authentication and is not suitable for Internet exposure.
 
 Troubleshooting uses the platform tools:
 
@@ -1439,11 +1439,7 @@ authenticated human or operator boundary. It is read-only and changes no
 authorization. The Runtime host still opens no TCP port; `ai-office dashboard`
 owns a loopback port only while it runs. Because a loopback TCP port is
 reachable by every local Unix account — unlike the owner-only socket — that host
-validates the `Host` header and requires a per-process session token that dies
-with the command.
-
-The token is a barrier to accidental and blind access, not a secret: the command
-hands the whole URL to the platform opener, so it appears in that process's
-arguments and in browser history. It does not authenticate a human, does not
-separate same-UID processes, and is not claimed to keep project state secret
-from other local accounts. Running in a browser is not authentication.
+validates the `Host` header and keeps the surface read-only. The dashboard is
+not a same-UID security boundary: any local process that can reach its loopback
+port can read the published operational data. Running in a browser is not
+authentication.

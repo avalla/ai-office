@@ -211,6 +211,19 @@ export interface MilestoneSummary {
   updatedAt: IsoTimestamp;
 }
 
+export interface RequirementSummary {
+  requirementId: string;
+  projectId: string;
+  milestoneId: string | null;
+  key: string;
+  title: string;
+  description: string;
+  status: RequirementStatus;
+  taskReferences: readonly TaskReference[];
+  createdAt: IsoTimestamp;
+  updatedAt: IsoTimestamp;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Counts                                                                      */
 /* -------------------------------------------------------------------------- */
@@ -877,6 +890,7 @@ export interface ProjectDetail {
   /** Counts and attention here are exact regardless of the samples below. */
   summary: ProjectSummary;
   milestones: readonly MilestoneSummary[];
+  requirements: readonly RequirementSummary[];
   /** Every agent of the project; each state is projected from its own facts. */
   agents: readonly AgentState[];
   tasks: BoundedList<TaskOperationalState>;

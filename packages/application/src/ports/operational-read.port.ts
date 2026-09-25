@@ -64,6 +64,19 @@ export interface RequirementCountRecord extends StatusCountRecord<RequirementSta
   milestoneId: string | null;
 }
 
+export interface OperationalRequirementRecord {
+  id: string;
+  projectId: string;
+  milestoneId: string | null;
+  key: string;
+  title: string;
+  description: string;
+  status: RequirementStatus;
+  taskReferences: readonly { taskId: string; title: string }[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface TaskRequirementCountRecord {
   taskId: string;
   status: RequirementStatus;
@@ -490,6 +503,9 @@ export interface OperationalReadRepository {
   listMilestones(
     projectIds: readonly string[],
   ): Promise<OperationalMilestoneRecord[]>;
+  listRequirements(
+    projectId: string,
+  ): Promise<OperationalRequirementRecord[]>;
   listAgents(projectIds: readonly string[]): Promise<OperationalAgentRecord[]>;
 
   /* --- scoped projection inputs ------------------------------------------ */

@@ -390,6 +390,22 @@ describe("operational read repository", () => {
     const milestones = await context.reads.listMilestones(["project-1"]);
     expect(milestones).toHaveLength(1);
     expect(milestones[0]?.title).toBe("M8");
+
+    const requirements = await context.reads.listRequirements("project-1");
+    expect(requirements).toMatchObject([
+      {
+        key: "REQ-1",
+        title: "First",
+        milestoneId,
+        taskReferences: [],
+      },
+      {
+        key: "REQ-2",
+        title: "Second",
+        milestoneId: null,
+        taskReferences: [],
+      },
+    ]);
   });
 
   test("empty project lists short-circuit rather than scanning", async () => {
