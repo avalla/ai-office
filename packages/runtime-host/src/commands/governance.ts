@@ -32,6 +32,19 @@ export async function handleGovernanceCommand(
     io.stdout(`Milestone created: ${id}`);
     return 0;
   }
+  if (command === "milestone:update") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "milestone", "title"]),
+    );
+    await service.updateMilestoneTitle({
+      projectId: requiredOption(parsed, "project"),
+      milestoneId: requiredOption(parsed, "milestone"),
+      title: requiredOption(parsed, "title"),
+    });
+    io.stdout("Milestone title updated.");
+    return 0;
+  }
   if (command === "requirement:create") {
     const parsed = parseArguments(
       args,

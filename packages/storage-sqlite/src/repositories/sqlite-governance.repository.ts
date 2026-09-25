@@ -86,6 +86,35 @@ export class SqliteGovernanceRepository implements GovernanceRepository {
     })();
   }
 
+  async updateMilestoneTitle(
+    id: string,
+    projectId: string,
+    expectedTitle: string,
+    title: string,
+    now: Date,
+    eventId: string,
+  ): Promise<boolean> {
+    return this.immediate(() => {
+      const result = this.database
+        .prepare(
+          `UPDATE milestone
+           SET title=?, updated_at=?
+           WHERE id=? AND project_id=? AND title=?`,
+        )
+        .run(title, now.toISOString(), id, projectId, expectedTitle);
+      if (result.changes !== 1) return false;
+      this.appendEvent({
+        id: eventId,
+        projectId,
+        eventType: "milestone.title_changed",
+        aggregateId: id,
+        metadata: { from: expectedTitle, to: title },
+        occurredAt: now,
+      });
+      return true;
+    });
+  }
+
   async saveRequirement(value: RequirementRecord): Promise<void> {
     try {
       this.database.transaction(() => {

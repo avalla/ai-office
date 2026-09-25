@@ -22,6 +22,7 @@ export interface GovernanceEventRecord {
   projectId: string;
   eventType:
     | "milestone.created"
+    | "milestone.title_changed"
     | "milestone.status_changed"
     | "requirement.created"
     | "requirement.status_changed"
@@ -39,6 +40,14 @@ export type ReviewDecisionResult =
 
 export interface GovernanceRepository {
   saveMilestone(value: MilestoneRecord): Promise<void>;
+  updateMilestoneTitle(
+    id: string,
+    projectId: string,
+    expectedTitle: string,
+    title: string,
+    now: Date,
+    eventId: string,
+  ): Promise<boolean>;
   saveRequirement(value: RequirementRecord): Promise<void>;
   saveAdr(value: AdrRecord): Promise<void>;
   saveReview(value: ReviewRecord): Promise<void>;

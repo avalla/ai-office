@@ -149,6 +149,7 @@ const projectScopedCommands = new Set([
   "budget:set",
   "cost:list",
   "milestone:create",
+  "milestone:update",
   "milestone:set-status",
   "requirement:create",
   "requirement:list",

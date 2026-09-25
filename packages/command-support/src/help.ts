@@ -104,6 +104,7 @@ Commands:
   budget:set --project <id> --limit <micros> [--currency <USD|EUR>]
   cost:list --project <id> [--group-by <project|task|agent|agent_run>]
   milestone:create --project <id> --title <title> [--description <description>]
+  milestone:update --project <id> --milestone <id> --title <title>
   milestone:set-status --project <id> --milestone <id> --status <status>
   requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]
   requirement:list --project <id> [--json]  # lists exact requirement IDs for linking

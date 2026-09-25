@@ -69,6 +69,31 @@ export class ManageGovernance {
     await this.governance.saveMilestone(v);
     return id;
   }
+  async updateMilestoneTitle(input: {
+    projectId: string;
+    milestoneId: string;
+    title: string;
+  }): Promise<void> {
+    await this.project(input.projectId);
+    const title = required(input.title, "Milestone title");
+    const milestone = (await this.governance.getSnapshot(input.projectId))
+      .milestones.find((value) => value.id === input.milestoneId);
+    if (milestone === undefined)
+      throw new DomainValidationError(`milestone ${input.milestoneId} not found`);
+    if (milestone.title === title) return;
+    const updated = await this.governance.updateMilestoneTitle(
+      input.milestoneId,
+      input.projectId,
+      milestone.title,
+      title,
+      this.clock.now(),
+      this.ids.generate(),
+    );
+    if (!updated)
+      throw new DomainValidationError(
+        `milestone ${input.milestoneId} was modified concurrently`,
+      );
+  }
   async createRequirement(input: {
     projectId: string;
     key: string;

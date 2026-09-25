@@ -251,6 +251,7 @@ const commands = [
   "budget:set",
   "cost:list",
   "milestone:create",
+  "milestone:update",
   "requirement:create",
   "requirement:list",
   "requirement:validate",
