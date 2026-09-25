@@ -66,6 +66,7 @@ import {
   type BoundedList,
   type DashboardOverview,
   type MilestoneSummary,
+  type TaskMilestoneReference,
   type PipelineRunState,
   type ProjectDetail,
   type ProjectSummary,
@@ -120,6 +121,37 @@ function agentIndex(
   return new Map(
     records.map((record) => [record.id, agentReference(record)] as const),
   );
+}
+
+function taskMilestoneIndex(
+  requirements: readonly {
+    milestoneId: string | null;
+    taskReferences: readonly { taskId: string }[];
+  }[],
+  milestones: readonly TaskMilestoneReference[],
+): Map<string, TaskMilestoneReference[]> {
+  const milestonesById = new Map(
+    milestones.map((milestone) => [milestone.milestoneId, milestone]),
+  );
+  const result = new Map<string, TaskMilestoneReference[]>();
+  for (const requirement of requirements) {
+    if (requirement.milestoneId === null) continue;
+    const milestone = milestonesById.get(requirement.milestoneId);
+    if (milestone === undefined) continue;
+    for (const reference of requirement.taskReferences) {
+      const linked = result.get(reference.taskId) ?? [];
+      if (!linked.some((value) => value.milestoneId === milestone.milestoneId))
+        linked.push(milestone);
+      result.set(reference.taskId, linked);
+    }
+  }
+  for (const linked of result.values())
+    linked.sort(
+      (left, right) =>
+        left.title.localeCompare(right.title) ||
+        left.milestoneId.localeCompare(right.milestoneId),
+    );
+  return result;
 }
 
 /** Builds the next keyset cursor, or null when the page ended the stream. */
@@ -526,6 +558,17 @@ export class OperationalQueryService {
     ]);
 
     const agents = agentIndex(agentRecords);
+    const milestoneReferences: TaskMilestoneReference[] = milestoneRecords.map(
+      (record) => ({
+        milestoneId: record.id,
+        title: record.title,
+        status: record.status,
+      }),
+    );
+    const taskMilestones = taskMilestoneIndex(
+      requirementRecords,
+      milestoneReferences,
+    );
     const filteredPage =
       options?.taskQuery === undefined
         ? null
@@ -536,10 +579,18 @@ export class OperationalQueryService {
             agents,
             now,
             taskCounts.reduce((total, row) => total + row.count, 0),
+            taskMilestones,
+            milestoneReferences,
           );
     const tasks =
       filteredPage === null
-        ? await this.projectTasks(projectId, taskPage, agents, now)
+        ? await this.projectTasks(
+            projectId,
+            taskPage,
+            agents,
+            now,
+            taskMilestones,
+          )
         : filteredPage.tasks.items;
     const agentStates = await this.projectAgents(projectId, agentRecords);
 
@@ -945,21 +996,23 @@ export class OperationalQueryService {
     agents: ReadonlyMap<string, AgentReference>,
     now: Date,
     projectTaskCount: number,
+    taskMilestones: ReadonlyMap<string, readonly TaskMilestoneReference[]>,
+    milestoneOptions: readonly TaskMilestoneReference[],
   ): Promise<{ tasks: BoundedList<TaskOperationalState>; page: TaskPageInfo }> {
     const { offset = 0, ...filters } = query;
     const priorities = new Set<number>();
     const statuses = new Set<TaskOperationalStatus>();
     const agentIds = new Set<string>();
     let hasUnassigned = false;
-    let total = 0;
-    const items: TaskOperationalState[] = [];
+    let hasUnassignedMilestone = false;
+    const matches: TaskOperationalState[] = [];
     const search = filters.search?.toLowerCase();
     const batchSize = queryLimits.tasks.default;
     for (let cursor = 0; cursor < projectTaskCount; cursor += batchSize) {
       const records = await this.reads.listTasks(projectId, batchSize, cursor);
       if (records.length === 0) break;
       const [tasks, assignments] = await Promise.all([
-        this.projectTasks(projectId, records, agents, now),
+        this.projectTasks(projectId, records, agents, now, taskMilestones),
         this.reads.listTaskAgentIds(
           projectId,
           records.map((task) => task.id),
@@ -972,6 +1025,8 @@ export class OperationalQueryService {
         statuses.add(task.operationalStatus);
         for (const assignment of involved) agentIds.add(assignment.agentId);
         if (involved.length === 0) hasUnassigned = true;
+        const milestones = task.milestones ?? [];
+        if (milestones.length === 0) hasUnassignedMilestone = true;
         if (
           search &&
           ![task.taskId, task.title, task.description ?? ""].some((value) =>
@@ -1002,12 +1057,40 @@ export class OperationalQueryService {
         )
           continue;
         if (filters.unassigned && involved.length > 0) continue;
-        if (total >= offset && items.length < limit) items.push(task);
-        total += 1;
+        if (
+          filters.milestoneId !== undefined &&
+          (filters.milestoneId === "unassigned"
+            ? milestones.length > 0
+            : !milestones.some(
+                (milestone) => milestone.milestoneId === filters.milestoneId,
+              ))
+        )
+          continue;
+        matches.push(task);
       }
     }
+    const sorted = [...matches].sort((left, right) => {
+      if (filters.sort !== "short_name") {
+        const leftMilestone = left.milestones?.[0];
+        const rightMilestone = right.milestones?.[0];
+        if (leftMilestone === undefined && rightMilestone !== undefined)
+          return 1;
+        if (leftMilestone !== undefined && rightMilestone === undefined)
+          return -1;
+        if (leftMilestone !== undefined && rightMilestone !== undefined) {
+          const byMilestone =
+            leftMilestone.title.localeCompare(rightMilestone.title) ||
+            leftMilestone.milestoneId.localeCompare(rightMilestone.milestoneId);
+          if (byMilestone !== 0) return byMilestone;
+        }
+      }
+      return (
+        left.title.localeCompare(right.title) ||
+        left.taskId.localeCompare(right.taskId)
+      );
+    });
     return {
-      tasks: boundedList(items, total),
+      tasks: boundedList(sorted.slice(offset, offset + limit), sorted.length),
       page: {
         filters,
         offset,
@@ -1015,6 +1098,8 @@ export class OperationalQueryService {
         options: {
           priorities: [...priorities].sort((a, b) => b - a),
           statuses: [...statuses],
+          milestones: milestoneOptions,
+          hasUnassignedMilestone,
           agents: [...agentIds]
             .flatMap((id) => {
               const agent = agents.get(id);
@@ -1044,6 +1129,10 @@ export class OperationalQueryService {
     agents: ReadonlyMap<string, AgentReference>,
     /** Shared with this snapshot's aggregates so lease validity agrees. */
     now: Date,
+    taskMilestones: ReadonlyMap<
+      string,
+      readonly TaskMilestoneReference[]
+    > = new Map(),
   ): Promise<TaskOperationalState[]> {
     if (tasks.length === 0) return [];
     const taskIds = tasks.map((task) => task.id);
@@ -1085,6 +1174,7 @@ export class OperationalQueryService {
       return projectTaskOperationalState({
         task,
         requirementCounts: requirementsByTask.get(task.id) ?? [],
+        milestones: taskMilestones.get(task.id) ?? [],
         activeRuns: runs?.activeRuns ?? [],
         activeRunCount: runs?.activeRunCount ?? 0,
         executingRunCount: runs?.executingRunCount ?? 0,

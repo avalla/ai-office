@@ -14,6 +14,7 @@
 import {
   taskOperationalStatuses,
   type TaskPageQuery,
+  type TaskSort,
 } from "../read-models/operational-read-models.ts";
 
 export const queryApiVersion = 1 as const;
@@ -173,6 +174,18 @@ export function parseTaskPageQuery(parameters: URLSearchParams): TaskPageQuery {
       );
     result.unassigned = true;
   }
+  const milestoneId = parameters.get("milestone");
+  if (milestoneId)
+    result.milestoneId =
+      milestoneId === "unassigned"
+        ? milestoneId
+        : parseIdentifier(milestoneId, "milestone");
+  const sort = parameters.get("sort");
+  if (sort) {
+    if (sort !== "milestone" && sort !== "short_name")
+      throw new QueryValidationError("Unknown task sort");
+    result.sort = sort as TaskSort;
+  }
   const offset = parameters.get("offset");
   if (offset) {
     if (!/^\d+$/.test(offset) || !Number.isSafeInteger(Number(offset)))
@@ -191,7 +204,9 @@ export function taskPageParameters(query: TaskPageQuery): URLSearchParams {
   if (query.priority !== undefined)
     parameters.set("priority", String(query.priority));
   if (query.agentId) parameters.set("agent", query.agentId);
+  if (query.milestoneId) parameters.set("milestone", query.milestoneId);
   if (query.unassigned) parameters.set("unassigned", "true");
+  if (query.sort) parameters.set("sort", query.sort);
   if (query.offset) parameters.set("offset", String(query.offset));
   return parameters;
 }

@@ -59,6 +59,8 @@ function publishRoute(
     "status",
     "priority",
     "agent",
+    "milestone",
+    "sort",
     "milestone-status-filter",
     "requirement-status-filter",
     "requirement-milestone-filter",
@@ -161,10 +163,13 @@ function bindMilestoneFilter(): void {
 
 function bindRequirementFilters(): void {
   const statusFilter = document.getElementById("requirement-status-filter");
-  const milestoneFilter = document.getElementById("requirement-milestone-filter");
+  const milestoneFilter = document.getElementById(
+    "requirement-milestone-filter",
+  );
   const count = document.getElementById("requirement-filter-count");
   const empty = document.getElementById("requirement-filter-empty");
-  if (statusFilter === null || milestoneFilter === null || count === null) return;
+  if (statusFilter === null || milestoneFilter === null || count === null)
+    return;
   const rows = document.querySelectorAll<DashboardElement>(".requirement-row");
   const update = () => {
     const status = statusFilter.value;
@@ -243,6 +248,8 @@ async function renderRoute(
                 status: value("status"),
                 priority: value("priority"),
                 agent: value("agent"),
+                milestone: value("milestone"),
+                sort: value("sort"),
               });
               const destination = routeHref({
                 kind: "project",

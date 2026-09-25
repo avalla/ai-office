@@ -410,6 +410,20 @@ describe("routing", () => {
         agent: "none",
       }),
     ).toEqual({ search: "evidence", priority: -7, unassigned: true });
+    expect(
+      taskFilterQuery({
+        search: "",
+        priority: "",
+        status: "active",
+        agent: "",
+        milestone: "milestone-1",
+        sort: "short_name",
+      }),
+    ).toEqual({
+      status: "active",
+      milestoneId: "milestone-1",
+      sort: "short_name",
+    });
     expect(parseRoute("#/projects/p?priority=invalid").kind).toBe("invalid");
     for (const query of [
       "status=unknown",
@@ -418,6 +432,7 @@ describe("routing", () => {
       "offset=-1",
       "agent=bad%20id",
       "agent=a&unassigned=true",
+      "sort=unknown",
     ])
       expect(() => parseTaskPageQuery(new URLSearchParams(query))).toThrow(
         QueryValidationError,
@@ -662,6 +677,37 @@ describe("rendering", () => {
     expect(html).toContain("No current agent");
   });
 
+  test("task pages expose milestone filtering, default sorting, and milestone cells", () => {
+    const milestoneTask = {
+      ...task,
+      title: "A task",
+      milestones: [
+        { milestoneId: "milestone-1", title: "M8", status: "active" as const },
+      ],
+    };
+    const detail = projectDetail({
+      tasks: { total: 1, items: [milestoneTask], truncated: false },
+      taskPage: {
+        filters: { status: "active" },
+        offset: 0,
+        limit: 20,
+        options: {
+          statuses: ["in_progress"],
+          priorities: [3],
+          agents: [task.assignedAgent!],
+          milestones: milestoneTask.milestones,
+          hasUnassigned: false,
+          hasUnassignedMilestone: false,
+        },
+      },
+    });
+    const html = renderProject(projectViewModel(detail), "tasks");
+    expect(html).toContain('id="task-filter-milestone"');
+    expect(html).toContain('value="milestone-1"');
+    expect(html).toContain("Milestone, short name");
+    expect(html).toContain("<td>M8</td>");
+  });
+
   test("milestones expose real statuses and requirement progress", () => {
     const current = summary().currentMilestone!;
     const completed: MilestoneSummary = {
@@ -702,7 +748,7 @@ describe("rendering", () => {
       milestoneId: "milestone-1",
       key: "REQ-1",
       title: "Capture evidence",
-      description: 'Use <strong>real</strong> evidence.',
+      description: "Use <strong>real</strong> evidence.",
       status: "verified",
       taskReferences: [{ taskId: "task-1", title: "Ship the thing" }],
       createdAt: now,
@@ -943,8 +989,16 @@ describe("rendering", () => {
           providerId: "openai",
           model: "balanced-model",
           providerRequestId: "resp-1",
-          usage: { inputTokens: 10, cachedInputTokens: 0, outputTokens: 4, reasoningTokens: 0 },
-          appliedParameters: { reasoningEffort: "medium", maxOutputTokens: 2000 },
+          usage: {
+            inputTokens: 10,
+            cachedInputTokens: 0,
+            outputTokens: 4,
+            reasoningTokens: 0,
+          },
+          appliedParameters: {
+            reasoningEffort: "medium",
+            maxOutputTokens: 2000,
+          },
           currency: "USD",
           pricingVersionId: "price-1",
           budgetScope: "agent_run",

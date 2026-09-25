@@ -3,8 +3,9 @@
 Task rows include progress across explicitly linked requirements. The query
 adapter groups all relevant links by task and requirement status, so exact
 counts do not depend on presentation limits or require per-row queries. Empty
-relations report zero counts; task status and milestone semantics remain
-independent. This uses the existing version-1 `available` requirement-summary
+relations report zero counts. Task status remains independent of milestone
+linkage; dashboard milestone membership is derived only from explicit
+task→requirement→milestone links. This uses the existing version-1 `available` requirement-summary
 contract; clients still accept the unavailable response from older hosts.
 
 The dashboard is a local, read-only operations console. It answers the questions
@@ -194,10 +195,12 @@ operational status;
 priority is the persisted integer, including zero and negative values. Agent
 matches any active run or current assignment in an active pipeline, and
 "No current agent" matches neither. Historical run agents are excluded.
-Status, priority, and agent choices come from the project's actual tasks.
+Milestone matches any milestone linked through an explicitly linked requirement;
+"No milestone" matches tasks with no such link. Status, priority, agent, and
+milestone choices come from the project's actual tasks and project milestones.
 
 The browser requests `GET /api/projects/:id?taskView=paged`, with optional
-`search`, `status`, `priority`, `agent`, `unassigned=true`, and `offset` parameters.
+`search`, `status`, `priority`, `agent`, `milestone`, `unassigned=true`, `sort`, and `offset` parameters.
 Malformed filters return `400`; selecting both an agent and unassigned tasks is
 invalid. The response adds `taskPage` with applied filters, offset, page limit,
 and project-wide choices. Existing callers without `taskView=paged` retain the
@@ -211,9 +214,10 @@ matches. This reuses the authoritative status rules without a second SQL status
 engine or a schema change. Query work grows with project task count; batching
 bounds intermediate data, not total work.
 
-Pages retain repository ordering: priority descending, creation time ascending,
-then task ID ascending. Filters and offset survive reloads and task-detail
-round trips in the hash URL. Applying filters resets the page; live refreshes
+The default page order is milestone title ascending, then task short name
+(title), then task ID; tasks without a linked milestone come last. The optional
+`short_name` sort uses title then task ID only. Filters, sort, and offset survive
+reloads and task-detail round trips in the hash URL. Applying filters resets the page; live refreshes
 preserve drafts and keyboard focus. Pagination reads current state rather than
 a frozen snapshot, so concurrent changes can move tasks between pages.
 Project summaries, attention, and charts always cover the whole project.

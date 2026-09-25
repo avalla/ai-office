@@ -64,6 +64,7 @@ import {
   type TaskActiveRunReference,
   type TaskDivergenceReason,
   type TaskLeaseState,
+  type TaskMilestoneReference,
   type TaskOperationalState,
   type TaskOperationalStatus,
   type TaskReference,
@@ -740,6 +741,8 @@ export function taskLeaseAttention(input: {
 export function projectTaskOperationalState(input: {
   task: TaskProps;
   requirementCounts: readonly TaskRequirementCountRecord[];
+  /** Milestones derived from explicit task→requirement→milestone links. */
+  milestones?: readonly TaskMilestoneReference[];
   /** Bounded sample of the task's in-flight runs, newest-updated first. */
   activeRuns: readonly OperationalAgentRunRecord[];
   /** Exact number of in-flight runs. Authoritative; never a sample length. */
@@ -925,6 +928,7 @@ export function projectTaskOperationalState(input: {
       "task_milestone_link_not_modelled",
       milestoneLinkageExplanation,
     ),
+    milestones: input.milestones ?? [],
     activeAgentRuns,
     primaryAgentRun,
     lease,

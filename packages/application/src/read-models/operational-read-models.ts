@@ -211,6 +211,12 @@ export interface MilestoneSummary {
   updatedAt: IsoTimestamp;
 }
 
+export interface TaskMilestoneReference {
+  milestoneId: string;
+  title: string;
+  status: MilestoneStatus;
+}
+
 export interface RequirementSummary {
   requirementId: string;
   projectId: string;
@@ -345,23 +351,21 @@ export const taskOperationalStatuses = [
 export type TaskOperationalStatus = (typeof taskOperationalStatuses)[number];
 
 /** Operational statuses omitted by the dashboard's default active-task view. */
-export const terminalTaskOperationalStatuses: readonly TaskOperationalStatus[] = [
-  "failed",
-  "completed",
-  "cancelled",
-];
+export const terminalTaskOperationalStatuses: readonly TaskOperationalStatus[] =
+  ["failed", "completed", "cancelled"];
 
-export type TaskStatusFilter =
-  | TaskOperationalStatus
-  | "active"
-  | "all";
+export type TaskStatusFilter = TaskOperationalStatus | "active" | "all";
+
+export type TaskSort = "milestone" | "short_name";
 
 export interface TaskFilters {
   search?: string;
   status?: TaskStatusFilter;
   priority?: number;
   agentId?: string;
+  milestoneId?: string;
   unassigned?: boolean;
+  sort?: TaskSort;
 }
 
 export interface TaskPageQuery extends TaskFilters {
@@ -377,7 +381,9 @@ export interface TaskPageInfo {
     statuses: readonly TaskOperationalStatus[];
     priorities: readonly number[];
     agents: readonly AgentReference[];
+    milestones?: readonly TaskMilestoneReference[];
     hasUnassigned: boolean;
+    hasUnassignedMilestone?: boolean;
   };
 }
 
@@ -493,8 +499,13 @@ export interface TaskOperationalState {
    * with zero counts. The unavailable union remains readable for older hosts.
    */
   requirements: Maybe<TaskRequirementSummary>;
-  /** Unavailable in the current domain: tasks carry no milestone reference. */
+  /** Unavailable in the current domain: tasks carry no direct milestone reference. */
   milestone: Maybe<MilestoneSummary | null>;
+  /**
+   * Milestones derived from explicit task→requirement→milestone links.
+   * A task may belong to more than one milestone.
+   */
+  milestones?: readonly TaskMilestoneReference[];
   /**
    * Every in-flight run of this task.
    *

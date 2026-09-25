@@ -296,10 +296,15 @@ function taskRows(
         task.requirements.availability === "available"
           ? `${task.requirements.value.verified}/${task.requirements.value.total} verified`
           : "Unavailable";
-      return `<tr><td class="mono">${escapeHtml(shortId(task.taskId))}</td><td class="task-title">${taskLink(task.projectId, task.taskId, task.title, taskQuery)}${blocker}</td><td>${badge(taskStatusLabel(task.operationalStatus), taskStatusTone(task.operationalStatus))}${divergence}</td><td>${requirements}</td><td class="mono">${task.priority}</td><td>${agent}</td><td>${pipeline}</td><td>${run}</td></tr>`;
+      const milestones = task.milestones ?? [];
+      const milestone =
+        milestones.length === 0
+          ? "No milestone"
+          : milestones.map((value) => value.title).join(" · ");
+      return `<tr><td class="mono">${escapeHtml(shortId(task.taskId))}</td><td class="task-title">${taskLink(task.projectId, task.taskId, task.title, taskQuery)}${blocker}</td><td>${escapeHtml(milestone)}</td><td>${badge(taskStatusLabel(task.operationalStatus), taskStatusTone(task.operationalStatus))}${divergence}</td><td>${requirements}</td><td class="mono">${task.priority}</td><td>${agent}</td><td>${pipeline}</td><td>${run}</td></tr>`;
     })
     .join("");
-  return `<div class="table-scroll"><table><thead><tr><th>ID</th><th>Task</th><th>Status</th><th>Requirements</th><th>Prio</th><th>Current agent</th><th>Pipeline</th><th>Run</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  return `<div class="table-scroll"><table><thead><tr><th>ID</th><th>Task</th><th>Milestone</th><th>Status</th><th>Requirements</th><th>Prio</th><th>Current agent</th><th>Pipeline</th><th>Run</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function renderMilestoneBoard(
@@ -332,27 +337,59 @@ function renderRequirementBoard(
 ): string {
   if (requirements.length === 0)
     return `<p class="calm">No requirements recorded for this project.</p>`;
-  const statuses = [...new Set(requirements.map((requirement) => requirement.status))].sort();
+  const statuses = [
+    ...new Set(requirements.map((requirement) => requirement.status)),
+  ].sort();
   const milestoneTitles = new Map(
     milestones.map((milestone) => [milestone.milestoneId, milestone.title]),
   );
   const milestoneOptions = [
     `<option value="">All milestones</option>`,
-    ...[...new Set(requirements.map((requirement) => requirement.milestoneId).filter((milestoneId): milestoneId is string => milestoneId !== null))]
-      .sort((left, right) => (milestoneTitles.get(left) ?? left).localeCompare(milestoneTitles.get(right) ?? right))
-      .map((milestoneId) => `<option value="${escapeHtml(milestoneId)}">${escapeHtml(milestoneTitles.get(milestoneId) ?? milestoneId)}</option>`),
-    ...(requirements.some((requirement) => requirement.milestoneId === null) ? [`<option value="none">No milestone</option>`] : []),
+    ...[
+      ...new Set(
+        requirements
+          .map((requirement) => requirement.milestoneId)
+          .filter((milestoneId): milestoneId is string => milestoneId !== null),
+      ),
+    ]
+      .sort((left, right) =>
+        (milestoneTitles.get(left) ?? left).localeCompare(
+          milestoneTitles.get(right) ?? right,
+        ),
+      )
+      .map(
+        (milestoneId) =>
+          `<option value="${escapeHtml(milestoneId)}">${escapeHtml(milestoneTitles.get(milestoneId) ?? milestoneId)}</option>`,
+      ),
+    ...(requirements.some((requirement) => requirement.milestoneId === null)
+      ? [`<option value="none">No milestone</option>`]
+      : []),
   ].join("");
   const statusOptions = statuses
-    .map((status) => `<option value="${escapeHtml(status)}">${escapeHtml(requirementStatusLabel(status))}</option>`)
+    .map(
+      (status) =>
+        `<option value="${escapeHtml(status)}">${escapeHtml(requirementStatusLabel(status))}</option>`,
+    )
     .join("");
   const rows = requirements
     .map((requirement) => {
-      const milestone = requirement.milestoneId === null ? "No milestone" : (milestoneTitles.get(requirement.milestoneId) ?? requirement.milestoneId);
-      const tasks = requirement.taskReferences.length === 0
-        ? `<span class="calm">No linked tasks</span>`
-        : requirement.taskReferences.map((task) => taskLink(requirement.projectId, task.taskId, task.title)).join(", ");
-      const description = requirement.description.trim() === "" ? "No description recorded." : requirement.description;
+      const milestone =
+        requirement.milestoneId === null
+          ? "No milestone"
+          : (milestoneTitles.get(requirement.milestoneId) ??
+            requirement.milestoneId);
+      const tasks =
+        requirement.taskReferences.length === 0
+          ? `<span class="calm">No linked tasks</span>`
+          : requirement.taskReferences
+              .map((task) =>
+                taskLink(requirement.projectId, task.taskId, task.title),
+              )
+              .join(", ");
+      const description =
+        requirement.description.trim() === ""
+          ? "No description recorded."
+          : requirement.description;
       return `<article class="requirement-row" data-status="${escapeHtml(requirement.status)}" data-milestone="${escapeHtml(requirement.milestoneId ?? "none")}"><div class="requirement-row-heading"><div><span class="requirement-key mono">${escapeHtml(requirement.key)}</span><h3>${escapeHtml(requirement.title)}</h3></div>${badge(requirementStatusLabel(requirement.status), requirementStatusTone(requirement.status))}</div><p class="requirement-description">${escapeHtml(description)}</p><dl class="requirement-meta"><div><dt>milestone</dt><dd>${escapeHtml(milestone)}</dd></div><div><dt>linked tasks</dt><dd>${tasks}</dd></div><div><dt>updated</dt><dd class="mono">${escapeHtml(formatTimestamp(requirement.updatedAt))}</dd></div></dl></article>`;
     })
     .join("");
@@ -513,22 +550,36 @@ export function renderProject(
     overviewInsights,
     view.attention.total === 0
       ? ""
-      : section("Needs attention", attentionList(view.attention), view.attention.note),
+      : section(
+          "Needs attention",
+          attentionList(view.attention),
+          view.attention.note,
+        ),
     view.pipelines.total === 0
       ? ""
       : section("Pipelines", pipelines, view.pipelines.note),
     view.reviews.total === 0
       ? ""
       : section("Reviews", reviewRows(view.reviews.items), view.reviews.note),
-    view.activity.length === 0 ? "" : section("Recent activity", activityList(view.activity)),
+    view.activity.length === 0
+      ? ""
+      : section("Recent activity", activityList(view.activity)),
   ].join("");
   const body =
     current === "tasks"
       ? taskSection
       : current === "milestones"
-        ? section("Milestones", milestoneSection, `${summary.activeMilestoneCount} active of ${summary.milestoneCount}`)
+        ? section(
+            "Milestones",
+            milestoneSection,
+            `${summary.activeMilestoneCount} active of ${summary.milestoneCount}`,
+          )
         : current === "requirements"
-          ? section("Requirements", requirementSection, `${summary.requirements.verified} verified of ${summary.requirements.total}`)
+          ? section(
+              "Requirements",
+              requirementSection,
+              `${summary.requirements.verified} verified of ${summary.requirements.total}`,
+            )
           : current === "agents"
             ? section("Agents", agentRows(view.agents))
             : overview;

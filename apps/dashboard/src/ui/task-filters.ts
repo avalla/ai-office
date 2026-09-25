@@ -7,17 +7,15 @@ import {
   queryLimits,
 } from "@ai-office/application/protocol/query-protocol.ts";
 import { escapeHtml } from "./html.ts";
-import {
-  routeHref,
-  taskStatusLabel,
-  type ProjectView,
-} from "./view-model.ts";
+import { routeHref, taskStatusLabel, type ProjectView } from "./view-model.ts";
 
 export interface TaskFilterValues {
   search: string;
   status: string;
   priority: string;
   agent: string;
+  milestone?: string;
+  sort?: string;
 }
 
 /** Applying a filter always returns to the first page. */
@@ -30,6 +28,8 @@ export function taskFilterQuery(values: TaskFilterValues): TaskPageQuery {
   if (values.agent === "none") parameters.set("unassigned", "true");
   else if (values.agent.startsWith("agent:"))
     parameters.set("agent", values.agent.slice("agent:".length));
+  if (values.milestone) parameters.set("milestone", values.milestone);
+  if (values.sort) parameters.set("sort", values.sort);
   return parseTaskPageQuery(parameters);
 }
 
@@ -70,6 +70,15 @@ export function renderTaskFilters(view: ProjectView): string {
         ] as [string, string],
     ),
   );
+  const milestoneOptions: [string, string][] = [["", "All milestones"]];
+  if (options.hasUnassignedMilestone || filters.milestoneId === "unassigned")
+    milestoneOptions.push(["unassigned", "No milestone"]);
+  milestoneOptions.push(
+    ...(options.milestones ?? []).map(
+      (milestone) =>
+        [milestone.milestoneId, milestone.title] as [string, string],
+    ),
+  );
   const reset =
     Object.keys(filters).length > 0 || page.offset > 0
       ? `<a href="${routeHref({ kind: "project", projectId: view.summary.projectId, section: "tasks" })}">Clear filters</a>`
@@ -80,6 +89,9 @@ export function renderTaskFilters(view: ProjectView): string {
       ? ""
       : `status: ${taskFilterStatusLabel(filters.status)}`,
     filters.priority === undefined ? "" : `priority: ${filters.priority}`,
+    filters.milestoneId === undefined
+      ? ""
+      : `milestone: ${milestoneOptions.find(([value]) => value === filters.milestoneId)?.[1] ?? filters.milestoneId}`,
     filters.unassigned
       ? "no current agent"
       : filters.agentId === undefined
@@ -90,7 +102,15 @@ export function renderTaskFilters(view: ProjectView): string {
     active.length === 0
       ? "All project tasks"
       : `${active.length} active filter${active.length === 1 ? "" : "s"}: ${active.join(" · ")}`;
-  return `<form id="task-filters" class="task-filters"><div class="filter-heading"><div><strong>Find tasks</strong><span class="meta">${escapeHtml(filterSummary)}</span></div><span class="filter-match">${view.tasks.total} matching</span></div><div class="task-filter-grid"><label class="task-search" for="task-filter-search">Search<input id="task-filter-search" name="search" type="search" maxlength="${queryLimits.taskSearchLength}" placeholder="Title, description, or task ID" value="${escapeHtml(filters.search ?? "")}" /></label>${select("task-filter-status", "Status", filters.status ?? "active", [["active", "Active tasks"], ["all", "All statuses"], ...options.statuses.map((status) => [status, taskStatusLabel(status)] as [string, string])])}${select("task-filter-priority", "Priority", filters.priority === undefined ? "" : String(filters.priority), [["", "All priorities"], ...options.priorities.map((priority) => [String(priority), String(priority)] as [string, string])])}${select("task-filter-agent", "Agent", filters.unassigned ? "none" : filters.agentId === undefined ? "" : `agent:${filters.agentId}`, agentOptions)}</div><div class="filter-actions"><button type="submit">Apply filters</button>${reset}</div></form><p id="task-filter-error" class="filter-error" role="alert"></p><p class="section-intro">Active tasks are shown by default; completed, failed, and cancelled tasks remain available through Status. Searches title, description, and task ID. Agent means a current stage assignment or any active run. Higher priority appears first.</p>`;
+  return `<form id="task-filters" class="task-filters"><div class="filter-heading"><div><strong>Find tasks</strong><span class="meta">${escapeHtml(filterSummary)}</span></div><span class="filter-match">${view.tasks.total} matching</span></div><div class="task-filter-grid"><label class="task-search" for="task-filter-search">Search<input id="task-filter-search" name="search" type="search" maxlength="${queryLimits.taskSearchLength}" placeholder="Title, description, or task ID" value="${escapeHtml(filters.search ?? "")}" /></label>${select("task-filter-status", "Status", filters.status ?? "active", [["active", "Active tasks"], ["all", "All statuses"], ...options.statuses.map((status) => [status, taskStatusLabel(status)] as [string, string])])}${select("task-filter-priority", "Priority", filters.priority === undefined ? "" : String(filters.priority), [["", "All priorities"], ...options.priorities.map((priority) => [String(priority), String(priority)] as [string, string])])}${select("task-filter-agent", "Agent", filters.unassigned ? "none" : filters.agentId === undefined ? "" : `agent:${filters.agentId}`, agentOptions)}${select("task-filter-milestone", "Milestone", filters.milestoneId ?? "", milestoneOptions)}${select(
+    "task-filter-sort",
+    "Sort",
+    filters.sort ?? "milestone",
+    [
+      ["milestone", "Milestone, short name"],
+      ["short_name", "Short name"],
+    ],
+  )}</div><div class="filter-actions"><button type="submit">Apply filters</button>${reset}</div></form><p id="task-filter-error" class="filter-error" role="alert"></p><p class="section-intro">Active tasks are shown by default; completed, failed, and cancelled tasks remain available through Status. Tasks are ordered by milestone, then short name; use Sort to switch to short name only. Milestones come from explicit task → requirement → milestone links.</p>`;
 }
 
 export function renderTaskPagination(view: ProjectView): string {

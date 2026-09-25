@@ -10,6 +10,7 @@ import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositori
 import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
 import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import { SqliteOperationalReadRepository } from "@ai-office/storage-sqlite/repositories/sqlite-operational-read.repository.ts";
+import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
 import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
@@ -125,6 +126,7 @@ async function fixture() {
   const pipelines = new SqlitePipelineRunRepository(database);
   const manifests = new SqliteOfficeManifestRepository(database);
   const governance = new SqliteGovernanceRepository(database);
+  const taskRequirements = new SqliteTaskRequirementRepository(database);
   const audit = new RecordAuditEvent(
     new SqliteAuditEventRepository(database),
     ids,
@@ -143,6 +145,7 @@ async function fixture() {
     pipelines,
     manifests,
     governance,
+    taskRequirements,
     audit,
     reads,
     queries,
@@ -405,6 +408,90 @@ describe("operational read repository", () => {
         milestoneId: null,
         taskReferences: [],
       },
+    ]);
+  });
+
+  test("task pages filter and sort by explicit requirement milestones", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    for (const [id, title] of [
+      ["task-z", "Z task"],
+      ["task-a", "A task"],
+      ["task-u", "U task"],
+    ] as const)
+      await context.tasks.save(
+        Task.create({ id, projectId: "project-1", title, now }),
+      );
+
+    const governance = new ManageGovernance(
+      context.projects,
+      context.governance,
+      context.ids,
+      context.clock,
+    );
+    const milestoneTwo = await governance.createMilestone({
+      projectId: "project-1",
+      title: "M2",
+    });
+    const milestoneOne = await governance.createMilestone({
+      projectId: "project-1",
+      title: "M1",
+    });
+    const requirementTwo = await governance.createRequirement({
+      projectId: "project-1",
+      key: "REQ-2",
+      title: "Second",
+      description: "Second requirement",
+      milestoneId: milestoneTwo,
+    });
+    const requirementOne = await governance.createRequirement({
+      projectId: "project-1",
+      key: "REQ-1",
+      title: "First",
+      description: "First requirement",
+      milestoneId: milestoneOne,
+    });
+    await context.taskRequirements.link({
+      projectId: "project-1",
+      taskId: "task-z",
+      requirementId: requirementTwo,
+      now,
+    });
+    await context.taskRequirements.link({
+      projectId: "project-1",
+      taskId: "task-a",
+      requirementId: requirementOne,
+      now,
+    });
+
+    const byMilestone = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { status: "all" },
+    });
+    expect(byMilestone.tasks.items.map((task) => task.title)).toEqual([
+      "A task",
+      "Z task",
+      "U task",
+    ]);
+    expect(byMilestone.tasks.items[0]?.milestones?.[0]?.title).toBe("M1");
+    expect(byMilestone.taskPage?.options.milestones).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ milestoneId: milestoneOne, title: "M1" }),
+        expect.objectContaining({ milestoneId: milestoneTwo, title: "M2" }),
+      ]),
+    );
+
+    const filtered = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { status: "all", milestoneId: milestoneOne },
+    });
+    expect(filtered.tasks.items.map((task) => task.title)).toEqual(["A task"]);
+
+    const byName = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { status: "all", sort: "short_name" },
+    });
+    expect(byName.tasks.items.map((task) => task.title)).toEqual([
+      "A task",
+      "U task",
+      "Z task",
     ]);
   });
 
