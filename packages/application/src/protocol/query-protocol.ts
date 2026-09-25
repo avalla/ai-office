@@ -149,7 +149,8 @@ export function parseTaskPageQuery(parameters: URLSearchParams): TaskPageQuery {
     result.search = search;
   }
   const status = parameters.get("status");
-  if (status) {
+  if (status === "active" || status === "all") result.status = status;
+  else if (status) {
     const value = taskOperationalStatuses.find(
       (candidate) => candidate === status,
     );

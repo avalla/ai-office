@@ -505,7 +505,7 @@ a:hover {
   gap: 10px 16px;
 }
 
-.section-nav button,
+.section-nav a.section-nav-link,
 .filter-actions button {
   font: inherit;
   color: var(--ink);
@@ -514,10 +514,11 @@ a:hover {
   border-radius: 6px;
   padding: 7px 16px;
   cursor: pointer;
+  text-decoration: none;
 }
 
-.section-nav button:hover,
-.section-nav button:active,
+.section-nav a.section-nav-link:hover,
+.section-nav a.section-nav-link.active,
 .filter-actions button:hover,
 .filter-actions button:active {
   border-color: var(--active);

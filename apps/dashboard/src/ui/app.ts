@@ -117,8 +117,7 @@ function mount(): DashboardElement {
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  // The session cookie is set by the dashboard host on first navigation; it is
-  // what lets this same-origin request through.
+  // The dashboard host keeps this request same-origin and forwards it to Runtime.
   const response = await fetch(path, {
     credentials: "same-origin",
     headers: { accept: "application/json" },
@@ -210,7 +209,13 @@ async function renderRoute(
       return;
     }
     if (route.kind === "project") {
-      const parameters = taskPageParameters(route.taskQuery ?? {});
+      const projectSection =
+        route.section ?? (route.taskQuery === undefined ? undefined : "tasks");
+      const taskQuery =
+        projectSection === "tasks" && route.taskQuery === undefined
+          ? { status: "active" as const }
+          : route.taskQuery;
+      const parameters = taskPageParameters(taskQuery ?? {});
       parameters.set("taskView", "paged");
       const body = await getJson<{ project: ProjectDetail }>(
         `/api/projects/${encodeURIComponent(route.projectId)}?${parameters}`,
@@ -219,49 +224,41 @@ async function renderRoute(
         !publishRoute(
           route,
           root,
-          renderProject(projectViewModel(body.project)),
+          renderProject(projectViewModel(body.project), projectSection),
         )
       )
         return;
-      bindMilestoneFilter();
-      bindRequirementFilters();
-      document
-        .getElementById("task-filters")
-        ?.addEventListener("submit", (event) => {
-          event.preventDefault();
-          try {
-            const value = (name: string) =>
-              document.getElementById(`task-filter-${name}`)?.value ?? "";
-            const taskQuery = taskFilterQuery({
-              search: value("search"),
-              status: value("status"),
-              priority: value("priority"),
-              agent: value("agent"),
-            });
-            const destination = routeHref({
-              kind: "project",
-              projectId: route.projectId,
-              taskQuery,
-            });
-            if (window.location.hash !== destination)
-              window.location.hash = destination;
-          } catch (error) {
-            const message = document.getElementById("task-filter-error");
-            if (message !== null)
-              message.textContent =
-                error instanceof Error ? error.message : "Invalid filters";
-          }
-        });
-      for (const section of ["tasks", "requirements", "agents", "pipelines"]) {
+      if (projectSection === "milestones") bindMilestoneFilter();
+      if (projectSection === "requirements") bindRequirementFilters();
+      if (projectSection === "tasks")
         document
-          .getElementById(`jump-${section}`)
-          ?.addEventListener("click", () => {
-            const target = document.getElementById(`project-${section}`);
-            target?.setAttribute("tabindex", "-1");
-            target?.focus({ preventScroll: true });
-            target?.scrollIntoView({ block: "start" });
+          .getElementById("task-filters")
+          ?.addEventListener("submit", (event) => {
+            event.preventDefault();
+            try {
+              const value = (name: string) =>
+                document.getElementById(`task-filter-${name}`)?.value ?? "";
+              const nextTaskQuery = taskFilterQuery({
+                search: value("search"),
+                status: value("status"),
+                priority: value("priority"),
+                agent: value("agent"),
+              });
+              const destination = routeHref({
+                kind: "project",
+                projectId: route.projectId,
+                section: "tasks",
+                taskQuery: nextTaskQuery,
+              });
+              if (window.location.hash !== destination)
+                window.location.hash = destination;
+            } catch (error) {
+              const message = document.getElementById("task-filter-error");
+              if (message !== null)
+                message.textContent =
+                  error instanceof Error ? error.message : "Invalid filters";
+            }
           });
-      }
       return;
     }
     if (route.kind === "run") {

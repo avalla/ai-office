@@ -41,10 +41,18 @@ import {
 /* Routing                                                                     */
 /* -------------------------------------------------------------------------- */
 
+export const projectSections = [
+  "tasks",
+  "milestones",
+  "requirements",
+  "agents",
+] as const;
+export type ProjectSection = (typeof projectSections)[number];
+
 export type DashboardRoute =
   | { kind: "overview" }
   | { kind: "memory" }
-  | { kind: "project"; projectId: string; taskQuery?: TaskPageQuery }
+  | { kind: "project"; projectId: string; section?: ProjectSection; taskQuery?: TaskPageQuery }
   | {
       kind: "task";
       projectId: string;
@@ -54,7 +62,7 @@ export type DashboardRoute =
   | { kind: "invalid"; message: string }
   | { kind: "run"; runId: string };
 
-/** Parses a location hash such as `#/projects/p-1`. Unknown routes fall back. */
+/** Parses a location hash such as `#/projects/p-1/tasks`. Unknown routes fall back. */
 export function parseRoute(hash: string): DashboardRoute {
   const [path = "", queryString = ""] = hash
     .replace(/^#/, "")
@@ -91,6 +99,17 @@ export function parseRoute(hash: string): DashboardRoute {
       taskId: decodeURIComponent(segments[3]!),
       ...query,
     };
+  if (segments.length === 3 && segments[0] === "projects") {
+    const section = decodeURIComponent(segments[2]!);
+    if ((projectSections as readonly string[]).includes(section))
+      return {
+        kind: "project",
+        projectId: decodeURIComponent(segments[1]!),
+        section: section as ProjectSection,
+        ...query,
+      };
+    return { kind: "overview" };
+  }
   if (segments.length === 2 && segments[0] === "projects")
     return {
       kind: "project",
@@ -115,7 +134,7 @@ export function routeHref(route: DashboardRoute): string {
   if (route.kind === "task")
     return `#/projects/${encodeURIComponent(route.projectId)}/tasks/${encodeURIComponent(route.taskId)}${suffix}`;
   if (route.kind === "project")
-    return `#/projects/${encodeURIComponent(route.projectId)}${suffix}`;
+    return `#/projects/${encodeURIComponent(route.projectId)}${route.section === undefined ? "" : `/${route.section}`}${suffix}`;
   if (route.kind === "run") return `#/runs/${encodeURIComponent(route.runId)}`;
   if (route.kind === "memory") return "#/memory";
   return "#/";

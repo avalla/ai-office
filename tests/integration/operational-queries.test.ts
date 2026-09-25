@@ -1008,6 +1008,43 @@ describe("bounded evidence never decides authoritative state", () => {
     if (input.lease ?? active) seedLease(context, input.taskId, input.runId);
   }
 
+  test("active task filters hide terminal work while explicit filters reveal it", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1", "One");
+    for (const taskId of ["active-task", "done-task", "cancelled-task"])
+      await context.tasks.save(
+        Task.create({
+          id: taskId,
+          projectId: "project-1",
+          title: taskId,
+          now,
+        }),
+      );
+    context.database
+      .prepare("UPDATE task SET status = ? WHERE id = ?")
+      .run("completed", "done-task");
+    context.database
+      .prepare("UPDATE task SET status = ? WHERE id = ?")
+      .run("cancelled", "cancelled-task");
+
+    const active = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { status: "active" },
+    });
+    expect(active.tasks.total).toBe(1);
+    expect(active.tasks.items[0]?.taskId).toBe("active-task");
+
+    const all = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { status: "all" },
+    });
+    expect(all.tasks.total).toBe(3);
+
+    const completed = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { status: "completed" },
+    });
+    expect(completed.tasks.total).toBe(1);
+    expect(completed.tasks.items[0]?.taskId).toBe("done-task");
+  });
+
   test("task filters search beyond presentation limits and match every current agent", async () => {
     const context = await fixture();
     await seedProject(context, "project-1", "One");

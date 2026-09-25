@@ -344,9 +344,21 @@ export const taskOperationalStatuses = [
 ] as const;
 export type TaskOperationalStatus = (typeof taskOperationalStatuses)[number];
 
+/** Operational statuses omitted by the dashboard's default active-task view. */
+export const terminalTaskOperationalStatuses: readonly TaskOperationalStatus[] = [
+  "failed",
+  "completed",
+  "cancelled",
+];
+
+export type TaskStatusFilter =
+  | TaskOperationalStatus
+  | "active"
+  | "all";
+
 export interface TaskFilters {
   search?: string;
-  status?: TaskOperationalStatus;
+  status?: TaskStatusFilter;
   priority?: number;
   agentId?: string;
   unassigned?: boolean;

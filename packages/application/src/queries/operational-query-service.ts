@@ -71,6 +71,7 @@ import {
   type ProjectSummary,
   type RequirementSummary,
   type ReviewState,
+  terminalTaskOperationalStatuses,
   type TaskOperationalState,
   type TaskDetail,
   type TaskPageInfo,
@@ -979,7 +980,14 @@ export class OperationalQueryService {
         )
           continue;
         if (
+          filters.status === "active" &&
+          terminalTaskOperationalStatuses.includes(task.operationalStatus)
+        )
+          continue;
+        if (
           filters.status !== undefined &&
+          filters.status !== "active" &&
+          filters.status !== "all" &&
           task.operationalStatus !== filters.status
         )
           continue;

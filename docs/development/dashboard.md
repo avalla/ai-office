@@ -145,7 +145,7 @@ audit event id; the SQLite `rowid` is deliberately not part of the contract.
 | `GET /api/dashboard`                  | Cross-project overview, attention, active runs                  |
 | `GET /api/memory`                     | Global roles, patterns, and lessons                             |
 | `GET /api/projects`                   | Project summaries                                               |
-| `GET /api/projects/:id`               | Project detail: tasks, pipelines, agents, runs                  |
+| `GET /api/projects/:id`               | Project detail data used by the section pages                   |
 | `GET /api/projects/:id/tasks`         | Task operational state                                          |
 | `GET /api/projects/:id/tasks/:taskId` | Task detail, active assignment, run history and scoped activity |
 | `GET /api/projects/:id/pipelines`     | Pipeline runs (`?active=true`)                                  |
@@ -165,10 +165,32 @@ or receive raw SQL access; their project integrations point to the derived
 `AI-OFFICE.md` guidance and repository-local skill, while Runtime-backed work
 can select reusable memory through the application boundary.
 
+### Project navigation and section pages
+
+The project UI keeps one native navigation bar under the project header and uses
+separate hash routes for the operational areas:
+
+- `#/projects/:id` — overview with exact aggregates, attention, pipelines,
+  reviews, and recent activity;
+- `#/projects/:id/tasks` — searchable, paged task table;
+- `#/projects/:id/milestones` — milestone progress and status filter;
+- `#/projects/:id/requirements` — requirement descriptions, status and
+  milestone filters, and linked tasks;
+- `#/projects/:id/agents` — every agent's projected activity state.
+
+The active section is marked with `aria-current="page"`, and task filter state
+remains in the URL so reloads, pagination, and task-detail round trips are
+stable. The overview remains the compact operational summary; it does not
+duplicate the full task, milestone, requirement, or agent tables.
+
 ### Task search, filters, and pages
 
 The project task table searches title, description, and task ID with literal,
-case-insensitive matching. Status means the application's operational status;
+case-insensitive matching. The default `active` view omits operational
+`failed`, `completed`, and `cancelled` tasks. The Status filter also offers
+`all` and each exact operational status, so terminal tasks remain available
+without occupying the default work queue. Status means the application's
+operational status;
 priority is the persisted integer, including zero and negative values. Agent
 matches any active run or current assignment in an active pipeline, and
 "No current agent" matches neither. Historical run agents are excluded.

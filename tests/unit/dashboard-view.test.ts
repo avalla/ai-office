@@ -441,6 +441,22 @@ describe("routing", () => {
       kind: "project",
       projectId: "project-1",
     });
+    expect(parseRoute("#/projects/project-1/tasks")).toEqual({
+      kind: "project",
+      projectId: "project-1",
+      section: "tasks",
+    });
+    expect(parseRoute("#/projects/project-1/requirements")).toEqual({
+      kind: "project",
+      projectId: "project-1",
+      section: "requirements",
+    });
+    expect(parseRoute("#/projects/project-1/tasks?status=active")).toEqual({
+      kind: "project",
+      projectId: "project-1",
+      section: "tasks",
+      taskQuery: { status: "active" },
+    });
     expect(parseRoute("#/runs/run-1")).toEqual({ kind: "run", runId: "run-1" });
     expect(parseRoute("#/nonsense/x/y/z")).toEqual({ kind: "overview" });
   });
@@ -449,6 +465,17 @@ describe("routing", () => {
     const href = routeHref({ kind: "project", projectId: "a b/c" });
     expect(href).toBe("#/projects/a%20b%2Fc");
     expect(parseRoute(href)).toEqual({ kind: "project", projectId: "a b/c" });
+    const sectionHref = routeHref({
+      kind: "project",
+      projectId: "a b/c",
+      section: "agents",
+    });
+    expect(sectionHref).toBe("#/projects/a%20b%2Fc/agents");
+    expect(parseRoute(sectionHref)).toEqual({
+      kind: "project",
+      projectId: "a b/c",
+      section: "agents",
+    });
   });
 });
 
@@ -556,7 +583,7 @@ describe("view models", () => {
 
   test("divergent tasks show the mismatch once in their task row", () => {
     const view = projectViewModel(projectDetail());
-    const html = renderProject(view);
+    const html = renderProject(view, "tasks");
     expect(html).not.toContain("Stored status differs from operational status");
     expect(html.match(/class="task-title"/g)).toHaveLength(1);
     expect(html).toContain("stored: pending");
@@ -585,6 +612,31 @@ describe("view models", () => {
 });
 
 describe("rendering", () => {
+  test("project sections render on separate navigable pages", () => {
+    const view = projectViewModel(
+      projectDetail({
+        taskPage: {
+          filters: {},
+          offset: 0,
+          limit: 20,
+          options: {
+            statuses: ["in_progress"],
+            priorities: [3],
+            agents: [task.assignedAgent!],
+            hasUnassigned: false,
+          },
+        },
+      }),
+    );
+    const overview = renderProject(view);
+    expect(overview).toContain('aria-current="page">Overview');
+    expect(overview).not.toContain('id="task-filters"');
+    expect(renderProject(view, "tasks")).toContain('id="task-filters"');
+    expect(renderProject(view, "milestones")).toContain("<h2>Milestones");
+    expect(renderProject(view, "requirements")).toContain("<h2>Requirements");
+    expect(renderProject(view, "agents")).toContain("Dev One");
+  });
+
   test("filters use runtime facets and counts, with no invented priority scale", () => {
     const detail = projectDetail({
       taskPage: {
@@ -600,7 +652,7 @@ describe("rendering", () => {
       },
       tasks: { total: 15, items: [task], truncated: true },
     });
-    const html = renderProject(projectViewModel(detail));
+    const html = renderProject(projectViewModel(detail), "tasks");
     expect(html).toContain('value="-7" selected');
     expect(html).toContain('value="42"');
     expect(html).not.toContain('value="high"');
@@ -631,6 +683,7 @@ describe("rendering", () => {
           milestones: [current, completed],
         }),
       ),
+      "milestones",
     );
     expect(html).toContain('id="milestone-status-filter"');
     expect(html).toContain('data-status="active"');
@@ -672,6 +725,7 @@ describe("rendering", () => {
           requirements: [requirement],
         }),
       ),
+      "requirements",
     );
     expect(html).toContain('id="requirement-status-filter"');
     expect(html).toContain('id="requirement-milestone-filter"');
@@ -742,7 +796,7 @@ describe("rendering", () => {
     expect(html).toContain("49 tasks · recorded status");
     expect(html).toContain('class="chart-value">37</span>');
     expect(html).toContain("Operational status in the table may differ");
-    expect(html).toContain("#/projects/project-1/tasks/task-1");
+    expect(html).toContain("#/projects/project-1/tasks");
     const agent = projectDetail().agents[0]!;
     const chart = renderAgentWorkload([
       {
@@ -949,6 +1003,7 @@ describe("html escaping", () => {
           },
         }),
       ),
+      "tasks",
     );
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");

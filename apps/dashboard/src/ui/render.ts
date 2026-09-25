@@ -43,6 +43,7 @@ import {
   type OverviewView,
   type SampleView,
   type ProjectView,
+  type ProjectSection,
   type RunView,
   type TaskView,
   type MemoryView,
@@ -435,7 +436,43 @@ function renderStats(view: OverviewView): string {
   </div>`;
 }
 
-export function renderProject(view: ProjectView): string {
+const projectSectionLabels: Record<ProjectSection | "overview", string> = {
+  overview: "Overview",
+  tasks: "Tasks",
+  milestones: "Milestones",
+  requirements: "Requirements",
+  agents: "Agents",
+};
+
+function projectNavigation(
+  projectId: string,
+  current: ProjectSection | undefined,
+): string {
+  const sections: readonly (ProjectSection | undefined)[] = [
+    undefined,
+    "tasks",
+    "milestones",
+    "requirements",
+    "agents",
+  ];
+  const links = sections
+    .map((sectionName) => {
+      const active = sectionName === current;
+      const route = {
+        kind: "project" as const,
+        projectId,
+        ...(sectionName === undefined ? {} : { section: sectionName }),
+      };
+      return `<a class="section-nav-link${active ? " active" : ""}" href="${routeHref(route)}"${active ? ` aria-current="page"` : ""}>${projectSectionLabels[sectionName ?? "overview"]}</a>`;
+    })
+    .join("");
+  return `<nav class="section-nav" aria-label="Project sections">${links}</nav>`;
+}
+
+export function renderProject(
+  view: ProjectView,
+  current: ProjectSection | undefined = undefined,
+): string {
   const summary = view.summary;
   const paths =
     summary.repository.localPaths.length === 0
@@ -445,7 +482,7 @@ export function renderProject(view: ProjectView): string {
     <h2>${escapeHtml(summary.name)}</h2>
     <p class="meta mono">${escapeHtml(paths)}</p>
     <p class="meta">${escapeHtml(summary.repository.remoteUrl ?? "no remote recorded")} · branch ${escapeHtml(summary.repository.defaultBranch ?? "unknown")}</p>
-  </div>`;
+  </div>${projectNavigation(summary.projectId, current)}`;
 
   const milestoneSection = renderMilestoneBoard(
     view.milestones,
@@ -455,7 +492,14 @@ export function renderProject(view: ProjectView): string {
     view.requirements,
     view.milestones,
   );
-
+  const taskSection = section(
+    "Tasks",
+    `${renderTaskFilters(view)}${view.tasks.items.length === 0 && view.taskPage !== undefined ? `<p class="calm">${view.tasks.total === 0 ? "No tasks match these filters." : "No tasks on this page. Return to the first page."}</p>` : taskRows(view.tasks.items, view.taskPage === undefined ? undefined : { ...view.taskPage.filters, offset: view.taskPage.offset })}${renderTaskPagination(view)}`,
+    view.taskPage === undefined
+      ? (view.tasks.note ?? `${view.tasks.total}`)
+      : `${view.tasks.total} matching`,
+  );
+  const overviewInsights = `<div class="insights">${section("Task distribution", renderTaskDistribution(summary.tasks))}${section("Agent workload", renderAgentWorkload(view.agents))}</div>`;
   const pipelines =
     view.pipelines.total === 0
       ? `<p class="calm">No pipeline runs recorded.</p>`
@@ -465,42 +509,30 @@ export function renderProject(view: ProjectView): string {
               `<div class="pipeline"><p class="pipeline-title">${escapeHtml(pipeline.pipelineName)} <span class="meta">${escapeHtml(pipeline.task?.title ?? pipeline.pipelineRunId)}</span> ${badge(pipeline.status, pipeline.status === "active" ? "active" : pipeline.status === "completed" ? "good" : "muted")}</p>${pipelineTrack(pipeline)}</div>`,
           )
           .join("");
-
-  return [
-    header,
-    `<nav class="section-nav" aria-label="Project sections"><button type="button" id="jump-tasks">Tasks</button>${summary.milestoneCount === 0 ? "" : `<button type="button" id="jump-milestones">Milestones</button>`}${summary.requirements.total === 0 ? "" : `<button type="button" id="jump-requirements">Requirements</button>`}<button type="button" id="jump-agents">Agents</button>${view.pipelines.total === 0 ? "" : `<button type="button" id="jump-pipelines">Pipelines</button>`}</nav>`,
-    `<div class="insights">${section("Task distribution", renderTaskDistribution(summary.tasks))}${section("Agent workload", renderAgentWorkload(view.agents))}</div>`,
-    summary.milestoneCount === 0
-      ? ""
-      : `<div id="project-milestones">${section("Milestones", milestoneSection, `${summary.activeMilestoneCount} active of ${summary.milestoneCount}`)}</div>`,
-    summary.requirements.total === 0
-      ? ""
-      : `<div id="project-requirements">${section("Requirements", requirementSection, `${summary.requirements.verified} verified of ${summary.requirements.total}`)}</div>`,
+  const overview = [
+    overviewInsights,
     view.attention.total === 0
       ? ""
-      : section(
-          "Needs attention",
-          attentionList(view.attention),
-          view.attention.note,
-        ),
-    `<div id="project-tasks">${section(
-      "Tasks",
-      `${renderTaskFilters(view)}${view.tasks.items.length === 0 && view.taskPage !== undefined ? `<p class="calm">${view.tasks.total === 0 ? "No tasks match these filters." : "No tasks on this page. Return to the first page."}</p>` : taskRows(view.tasks.items, view.taskPage === undefined ? undefined : { ...view.taskPage.filters, offset: view.taskPage.offset })}${renderTaskPagination(view)}`,
-      view.taskPage === undefined
-        ? (view.tasks.note ?? `${view.tasks.total}`)
-        : `${view.tasks.total} matching`,
-    )}</div>`,
+      : section("Needs attention", attentionList(view.attention), view.attention.note),
     view.pipelines.total === 0
       ? ""
-      : `<div id="project-pipelines">${section("Pipelines", pipelines, view.pipelines.note)}</div>`,
-    `<div id="project-agents">${section("Agents", agentRows(view.agents))}</div>`,
+      : section("Pipelines", pipelines, view.pipelines.note),
     view.reviews.total === 0
       ? ""
       : section("Reviews", reviewRows(view.reviews.items), view.reviews.note),
-    view.activity.length === 0
-      ? ""
-      : section("Recent activity", activityList(view.activity)),
+    view.activity.length === 0 ? "" : section("Recent activity", activityList(view.activity)),
   ].join("");
+  const body =
+    current === "tasks"
+      ? taskSection
+      : current === "milestones"
+        ? section("Milestones", milestoneSection, `${summary.activeMilestoneCount} active of ${summary.milestoneCount}`)
+        : current === "requirements"
+          ? section("Requirements", requirementSection, `${summary.requirements.verified} verified of ${summary.requirements.total}`)
+          : current === "agents"
+            ? section("Agents", agentRows(view.agents))
+            : overview;
+  return `${header}${body}`;
 }
 
 export function renderRun(view: RunView): string {
