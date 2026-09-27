@@ -368,6 +368,7 @@ describe.skipIf(connectionString === undefined)(
           "20260922000000_agent_runtime_audit_authority.sql",
           "20260922010000_agent_runtime_audit_hardening.sql",
           "20260922020000_office_manifest_pipeline_authority.sql",
+          "20260925000100_governance_milestone_title_event.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(
