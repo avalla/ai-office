@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  surrealdb-agent-knowledge:
-    name: SurrealDB knowledge graph integration
+  surrealdb-experiments:
+    name: SurrealDB storage and concurrency experiments
     runs-on: ubuntu-latest
     services:
       surrealdb:
@@ -49,3 +49,4 @@ jobs:
           bunx --bun vitest run
           tests/integration/agent-knowledge-surrealdb.test.ts
           tests/integration/storage-contracts-surrealdb.test.ts
+          tests/integration/surrealdb-concurrency-experiment.test.ts
