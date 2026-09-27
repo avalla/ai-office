@@ -1,0 +1,11 @@
+{
+  "name": "@ai-office/storage-surrealdb",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/connect-agent-knowledge-store.ts"
+  },
+  "dependencies": {
+    "surrealdb": "2.0.8"
+  }
+}
