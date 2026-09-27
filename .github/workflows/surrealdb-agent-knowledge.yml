@@ -1,4 +1,4 @@
-name: SurrealDB AgentKnowledgeStore experiment
+name: SurrealDB storage experiments
 
 on:
   pull_request:
@@ -42,7 +42,10 @@ jobs:
           echo "SurrealDB did not become healthy" >&2
           exit 1
 
-      - name: Run SurrealDB AgentKnowledgeStore integration tests
+      - name: Run SurrealDB experiment integration tests
         env:
           AI_OFFICE_TEST_SURREALDB_URL: ws://127.0.0.1:8000
-        run: bunx --bun vitest run tests/integration/agent-knowledge-surrealdb.test.ts
+        run: >-
+          bunx --bun vitest run
+          tests/integration/agent-knowledge-surrealdb.test.ts
+          tests/integration/storage-contracts-surrealdb.test.ts
