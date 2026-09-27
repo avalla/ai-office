@@ -37,11 +37,17 @@ This is adapter-level isolation only. It is NOT equivalent to PostgreSQL RLS: th
 
 Retrieval is deterministic, case-insensitive substring matching over stored knowledge text, scoped by tenant and project and optionally filtered by agent. Decision search omits superseded decisions. `findCurrentDecisions` traverses the `AFFECTS` relationship, and `listTaskDependencies` traverses `DEPENDS_ON`. Memory and decision provenance APIs recover source, run, task, and agent context. No embedding provider, vector index, semantic retrieval, RAG framework, or external service is used.
 
-Project cleanup removes the experiment's records and relationships for exactly one explicit tenant/project scope in one database transaction. `recordMemory` and `recordDecision` use deterministic scoped record IDs and upsert behavior so retrying the same input is idempotent. Reusing an ID with different content replaces its stored fields and can leave prior relationship edges behind when the source identity changes. Callers must choose stable IDs; immutable-record or relationship-replacement semantics need review before broader adoption.
+Project cleanup removes the experiment's records and relationships for exactly one explicit tenant/project scope in one database transaction. `recordMemory` and `recordDecision` use deterministic scoped record IDs and remain idempotent for an exact logical retry. Knowledge IDs are immutable: a retry must match scope, text/title, agent, run, task, source fields, and `createdAt`; changing any of them fails inside the write transaction. Source IDs are also immutable within a tenant/project, including source kind, label, locator, run, task, and agent context. A rejected write leaves the original node and graph edges intact. Text/title edits require a new knowledge ID.
+
+Decision supersession is allowed only when both decisions affect the same task. Self-supersession and direct or transitive cycles are rejected by recursive SurrealQL path checks before the edge write, within the same transaction. Task dependency writes use the same recursive graph check and reject self-links and direct or transitive cycles; the transaction leaves prior edges unchanged on rejection. SurrealQL recursion is capped at 256 hops, so the adapter also fails closed when a candidate path reaches that depth.
+
+The provenance trace uses one graph-native SurrealQL query to walk `Memory -> DERIVED_FROM -> SourceReference -> IN_CONTEXT_OF -> Run`, then `Run -> FOR_TASK -> Task` and `Agent -> EXECUTED -> Run`. The query filters every edge by tenant/project and the adapter verifies those values on every returned node plus the expected external identifiers and context. This removed the previous separate edge and node lookups and made this fixed provenance path materially simpler; it does not establish general graph query ergonomics.
 
 ## Schema and operations
 
-Schema version 1 is declared as `AGENT_KNOWLEDGE_SCHEMA_VERSION` in `packages/storage-surrealdb/src/schema.ts`, with schemafull records, enforced typed relation tables, and unique scoped knowledge IDs and relationship endpoints. Initialization uses repeatable `DEFINE ... IF NOT EXISTS` statements. The integration test runs against a local SurrealDB server and the isolated CI workflow pins `surrealdb/surrealdb:v3.3.0`. The server runs in memory for tests. No Surreal Cloud account is required; local tests use a test-only root credential. The application adapter depends on the official JavaScript SDK `surrealdb@2.0.8`, which documents support for SurrealDB 3.x.
+Schema version 1 is declared as `AGENT_KNOWLEDGE_SCHEMA_VERSION` in `packages/storage-surrealdb/src/schema.ts`, with schemafull records, enforced typed relation tables, unique indexes for scoped memory/decision IDs, and unique relationship endpoints. Record IDs encode tenant, project, record kind, and external ID; separate unique indexes for agent, run, task, or source identity would duplicate this keying and are not added. The schema does not enforce immutable field values, source/run context agreement, same-task supersession, acyclic edges, or tenant/project agreement across relation endpoints. Those invariants are enforced by adapter transactions and scoped record IDs. This remains adapter-level isolation, not database-enforced RLS.
+
+Initialization uses repeatable `DEFINE ... IF NOT EXISTS` statements. The integration test runs against a local SurrealDB server and the isolated CI workflow pins `surrealdb/surrealdb:v3.3.0`. The server runs in memory for tests. No Surreal Cloud account is required; local tests use a test-only root credential. The application adapter depends on the official JavaScript SDK `surrealdb@2.0.8`, which documents support for SurrealDB 3.x.
 
 For local tests, start the pinned image with Docker:
 
@@ -60,14 +66,13 @@ AI_OFFICE_TEST_SURREALDB_URL=ws://127.0.0.1:8000 \
 
 The adapter is currently an opt-in experimental package, with no daemon lifecycle, production credentials, deployment persistence, backup/restore, metrics, or migration compatibility contract. The in-memory CI/test server is ephemeral; production-like durability and operations have not been evaluated.
 
-## Known limitations and questions for hardening
+## Known limitations
 
 - Agent/run/task identifiers and their context are assertions supplied to this secondary adapter; it does not validate them against SQLite/PostgreSQL.
-- Tenant/project predicates are application adapter checks, not database row-level security or a same-credential security boundary.
+- Tenant/project predicates and cross-scope edge prevention are adapter checks, not database row-level security or a same-credential security boundary.
 - Text retrieval is lexical substring search only. Vector search was not tested and no embedding model or index is included.
-- Task dependency and decision supersession cycles are not rejected. Supersession does not validate that both decisions affect the same task.
-- Stable IDs are a caller responsibility; upserts can replace an existing knowledge record. Cross-process conflict and operational recovery behavior have not been characterized.
-- No PostgreSQL/SQLite comparison was performed. Findings here are preliminary observations for the later isolated storage and concurrency experiments.
+- Cycle validation runs transactionally against the graph observed by each write. Concurrent-writer isolation, fencing, and conflict behavior have not been evaluated.
+- No PostgreSQL/SQLite comparison or operational durability evaluation was performed. Findings here remain preliminary and do not make a storage recommendation.
 
 ## References
 

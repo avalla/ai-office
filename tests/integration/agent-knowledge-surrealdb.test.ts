@@ -66,6 +66,30 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     expect(hits[0]).toMatchObject({ id: input.id, kind: "memory", source: input.source, agentId: input.agentId });
   });
 
+  it("rejects a knowledge ID rewrite with conflicting provenance and keeps the original record", async () => {
+    const original = memory(scopeA, "memory-immutable");
+    await store.recordMemory(original);
+    await expect(store.recordMemory({ ...original, runId: "run-rewritten", taskId: "task-rewritten", agentId: "agent-rewritten", source: { ...original.source, id: "source-rewritten" } })).rejects.toThrow();
+    expect(await store.traceMemoryProvenance(scopeA, original.id)).toMatchObject({ runId: original.runId, taskId: original.taskId, agentId: original.agentId, source: original.source });
+  });
+
+  it("rejects a source ID reused with different provenance context and preserves its original context", async () => {
+    const original = memory(scopeA, "memory-source-original");
+    await store.recordMemory(original);
+    const conflicting = { ...memory(scopeA, "memory-source-conflict"), source: original.source, runId: "run-conflict", taskId: "task-conflict", agentId: "agent-conflict" };
+    await expect(store.recordMemory(conflicting)).rejects.toThrow();
+    expect(await store.traceMemoryProvenance(scopeA, original.id)).toMatchObject({ runId: original.runId, taskId: original.taskId, agentId: original.agentId });
+    expect(await store.traceMemoryProvenance(scopeA, conflicting.id)).toBeNull();
+  });
+
+  it("rejects decision ID rewrites, including text and title changes", async () => {
+    const original = decision(scopeA, "decision-immutable", "task-immutable");
+    await store.recordDecision(original);
+    await expect(store.recordDecision({ ...original, title: "Changed title" })).rejects.toThrow();
+    await expect(store.recordDecision({ ...original, text: "Changed text" })).rejects.toThrow();
+    expect((await store.findKnowledge(scopeA, { text: "staged deployment" }))[0]).toMatchObject({ id: original.id, title: original.title, text: original.text });
+  });
+
   it("rejects incomplete provenance before writing", async () => {
     const input = memory(scopeA, "memory-incomplete");
     await expect(store.recordMemory({ ...input, runId: " " })).rejects.toThrow(/provenance runId/);
@@ -106,12 +130,77 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     });
   });
 
+  it("rejects same-task violations and two-decision supersession cycles without changing edges", async () => {
+    const a = decision(scopeA, "decision-cycle-a", "task-cycle");
+    const b = decision(scopeA, "decision-cycle-b", "task-cycle");
+    const otherTask = decision(scopeA, "decision-cycle-other-task", "task-other");
+    await store.recordDecision(a);
+    await store.recordDecision(b);
+    await store.recordDecision(otherTask);
+    await store.supersedeDecision(scopeA, a.id, b.id);
+
+    await expect(store.supersedeDecision(scopeA, b.id, a.id)).rejects.toThrow();
+    await expect(store.supersedeDecision(scopeA, a.id, otherTask.id)).rejects.toThrow();
+    expect((await store.findCurrentDecisions(scopeA, a.taskId)).map((hit) => hit.id)).toEqual([a.id]);
+    expect((await store.findCurrentDecisions(scopeA, otherTask.taskId)).map((hit) => hit.id)).toEqual([otherTask.id]);
+  });
+
+  it("rejects transitive supersession cycles", async () => {
+    const a = decision(scopeA, "decision-chain-a", "task-chain");
+    const b = decision(scopeA, "decision-chain-b", "task-chain");
+    const c = decision(scopeA, "decision-chain-c", "task-chain");
+    await store.recordDecision(a);
+    await store.recordDecision(b);
+    await store.recordDecision(c);
+    await store.supersedeDecision(scopeA, a.id, b.id);
+    await store.supersedeDecision(scopeA, b.id, c.id);
+
+    await expect(store.supersedeDecision(scopeA, c.id, a.id)).rejects.toThrow();
+    expect((await store.findCurrentDecisions(scopeA, a.taskId)).map((hit) => hit.id)).toEqual([a.id]);
+  });
+
+  it("keeps supersession edges scoped to the supplied tenant and project", async () => {
+    const current = decision(scopeA, "cross-current", "cross-task");
+    await store.recordDecision(current);
+    await store.recordDecision(decision(scopeSameTenantOtherProject, "cross-prior", "cross-task"));
+    await store.recordDecision(decision(scopeB, "cross-prior", "cross-task"));
+
+    await expect(store.supersedeDecision(scopeA, current.id, "cross-prior")).rejects.toThrow();
+    expect((await store.findCurrentDecisions(scopeA, current.taskId)).map((hit) => hit.id)).toEqual([current.id]);
+    expect(await store.findCurrentDecisions(scopeSameTenantOtherProject, "cross-task")).toHaveLength(1);
+    expect(await store.findCurrentDecisions(scopeB, "cross-task")).toHaveLength(1);
+  });
+
   it("traverses task dependencies deterministically", async () => {
     await store.addTaskDependency(scopeA, "task-child", "task-parent");
     await store.addTaskDependency(scopeA, "task-child", "task-foundation");
     await store.addTaskDependency(scopeA, "task-child", "task-parent");
 
     expect(await store.listTaskDependencies(scopeA, "task-child")).toEqual(["task-foundation", "task-parent"]);
+  });
+
+  it("rejects two-task and transitive dependency cycles while preserving valid edges", async () => {
+    await store.addTaskDependency(scopeA, "cycle-a", "cycle-b");
+    await expect(store.addTaskDependency(scopeA, "cycle-b", "cycle-a")).rejects.toThrow();
+    expect(await store.listTaskDependencies(scopeA, "cycle-a")).toEqual(["cycle-b"]);
+    expect(await store.listTaskDependencies(scopeA, "cycle-b")).toEqual([]);
+
+    await store.addTaskDependency(scopeA, "chain-a", "chain-b");
+    await store.addTaskDependency(scopeA, "chain-b", "chain-c");
+    await expect(store.addTaskDependency(scopeA, "chain-c", "chain-a")).rejects.toThrow();
+    expect(await store.listTaskDependencies(scopeA, "chain-a")).toEqual(["chain-b"]);
+    expect(await store.listTaskDependencies(scopeA, "chain-b")).toEqual(["chain-c"]);
+    expect(await store.listTaskDependencies(scopeA, "chain-c")).toEqual([]);
+  });
+
+  it("keeps dependency edges scoped to the supplied tenant and project", async () => {
+    await store.addTaskDependency(scopeSameTenantOtherProject, "shared-child", "shared-parent");
+    await store.addTaskDependency(scopeB, "shared-child", "shared-parent");
+    await store.addTaskDependency(scopeA, "shared-child", "shared-parent");
+
+    expect(await store.listTaskDependencies(scopeA, "shared-child")).toEqual(["shared-parent"]);
+    expect(await store.listTaskDependencies(scopeSameTenantOtherProject, "shared-child")).toEqual(["shared-parent"]);
+    expect(await store.listTaskDependencies(scopeB, "shared-child")).toEqual(["shared-parent"]);
   });
 
   it("retrieves knowledge associated with the requested agent", async () => {
