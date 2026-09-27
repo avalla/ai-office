@@ -77,6 +77,7 @@ Current architecture and boundaries, including storage, the domain model, and co
 
 - [Experimental SurrealDB AgentKnowledgeStore](architecture/experiments/surrealdb-agent-knowledge.md): specialized knowledge graph/provenance evaluation; independent of the structured storage subset.
 - [Experimental SurrealDB ProjectStorage subset](architecture/experiments/surrealdb-project-storage-subset.md): partial projects/tasks/task-requirements contract evaluation; not a complete ProjectStorage or Runtime authority.
+- [Final SurrealDB evaluation](architecture/experiments/surrealdb-final-evaluation.md): combines the knowledge, structured subset, and concurrency/fencing evidence with the final recommendation.
 
 ### `development/`
 

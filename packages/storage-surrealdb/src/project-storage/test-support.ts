@@ -1,4 +1,7 @@
 import { RecordId, Surreal } from "surrealdb";
+
+// SDK fixtures for tests without adding a root/production dependency.
+export { isRetryableConflict, QueryError, Surreal } from "surrealdb";
 import { createSurrealProjectStorageSubsetExperiment } from "../project-storage-subset.ts";
 
 export interface SurrealProjectStorageSubsetHarness {

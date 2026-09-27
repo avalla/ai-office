@@ -164,7 +164,7 @@ Two operations currently use validation reads before their write:
 
 The relation unique endpoint index is the database backstop for duplicate links. The adapter pre-read provides the canonical boolean result for ordinary retries. This experiment does not establish whether transaction isolation prevents competing validations from both proceeding.
 
-The selected PostgreSQL project/task/task-requirement adapters do not use FOR UPDATE; their ownership checks are SQL predicates and unique/FK constraints. PostgreSQL row locks are present in excluded PostgresAgentRuntimeRepository for run/task/agent/role/lock/pipeline/stage state and in PostgresGovernanceRepository for governance transitions. Those are relevant PR 3 comparison points, but they are not implemented here.
+The selected PostgreSQL project/task/task-requirement adapters do not use FOR UPDATE; their ownership checks are SQL predicates and unique/FK constraints. PostgreSQL row locks are present in excluded PostgresAgentRuntimeRepository for run/task/agent/role/lock/pipeline/stage state and in PostgresGovernanceRepository for governance transitions. Those are relevant PR #66 comparison points, but they are not implemented here.
 
 ## Adapter ceremony measurements
 
