@@ -33,9 +33,9 @@ implements `projects`, `officeManifests`, `pipelines`, `tasks`,
 | `auditEvents` | AUTHORITY-SENSITIVE | Append-only provenance records for state-changing actions. |
 | `repositoryIdentities` | AUTHORITY-SENSITIVE | Maps repository identities to projects and informs local workspace ownership. |
 | `projectStates` | AUTHORITY-SENSITIVE | Stores project state revisions and heads used by import/export and reconciliation. |
-| `memoryReferences` | LOW-RISK | Stores and lists project-scoped references to reusable memory records. |
-| `projectMemoryProvenance` | LOW-RISK | Records and reads project-scoped retrieval provenance; it does not grant resource access. |
-| `operationalReads` | LOW-RISK | Read-only projections over existing project/runtime records; it has no write authority. |
+| `memoryReferences` | DEFERRED | Low-risk project-scoped references to reusable memory records; deferred because they do not exercise the selected write-bearing contracts. |
+| `projectMemoryProvenance` | DEFERRED | Low-risk project-scoped retrieval provenance that grants no resource access; deferred because it does not exercise the selected write-bearing contracts. |
+| `operationalReads` | DEFERRED | Read-only projections over project/runtime records with no write authority; deferred because they do not exercise the selected write-bearing contracts. |
 | `transactions` | TRANSACTIONAL | Defines the atomic boundary used by multi-repository operations. |
 | `jobOutbox` | CONCURRENT | Stores dispatchable jobs and conditional dispatched/failed transitions consumed by workers. |
 
@@ -47,15 +47,15 @@ also exercises the transaction runner as supporting infrastructure. Requirement
 storage itself is outside this subset; the harness seeds fixture requirement
 records directly, matching the current shared contract setup.
 
-The following potentially attractive capabilities are deferred: `profiles`
-and `officeManifests` because their data influences Runtime configuration or
-workspace resolution; `pipelines`, `runtime`, and `jobOutbox` because they
-contain version, lease, or worker ownership semantics; `costs`, `governance`,
-`capabilities`, `controlled`, `auditEvents`, `repositoryIdentities`, and
-`projectStates` because they carry authorization, accounting, lifecycle, or
-provenance authority; `memoryReferences`, `projectMemoryProvenance`, and
-`operationalReads` because they are less representative than the selected
-write-bearing contracts. No deferred capability is advertised as implemented.
+The low-risk capabilities `memoryReferences`, `projectMemoryProvenance`, and
+`operationalReads` are deferred because they are read/reference contracts rather
+than representative write-bearing contracts. `profiles` and `officeManifests`
+are deferred because their data influences Runtime configuration or workspace
+resolution; `pipelines`, `runtime`, and `jobOutbox` because they contain version,
+lease, or worker ownership semantics; `costs`, `governance`, `capabilities`,
+`controlled`, `auditEvents`, `repositoryIdentities`, and `projectStates` because
+they carry authorization, accounting, lifecycle, or provenance authority. No
+deferred capability is advertised as implemented.
 
 ## Canonical behavior matrix
 
