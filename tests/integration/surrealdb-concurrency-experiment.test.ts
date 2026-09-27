@@ -59,11 +59,18 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
       const expiry = addSeconds(fixedNow, 30);
       await pair.a.create({
         id,
-        owner: "worker-a",
-        leaseUntil: expiry,
-        fence: 1,
+        owner: "",
+        leaseUntil: new Date(0),
         runStatus: "running",
       });
+      expect(
+        await pair.a.claim({
+          id,
+          owner: "worker-a",
+          now: fixedNow,
+          leaseUntil: expiry,
+        }),
+      ).toBe(true);
       expect(
         await pair.a.renew({
           id,
