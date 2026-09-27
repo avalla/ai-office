@@ -221,7 +221,7 @@ abstraction was introduced.
 
 | Measurement | PR #3 result |
 | --- | ---: |
-| Experiment adapter LOC | 220 |
+| Experiment adapter LOC | 222 |
 | Schema LOC | 7 DDL statements inside the adapter file |
 | Explicit TypeScript business validation LOC | 0; the narrow conflict classifier is 8 lines |
 | SurrealQL statement/template count | 16: 7 schema DDL, 7 probe operations, 2 namespace/database definitions |
