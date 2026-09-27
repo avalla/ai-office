@@ -73,7 +73,9 @@ ai-office --help
 
 ### `architecture/`
 
-Current architecture and boundaries, including storage, the domain model, and cost accounting.
+Current architecture and boundaries, including storage, the domain model, and cost accounting. Experimental designs are marked explicitly and do not supersede accepted architecture.
+
+- [Experimental SurrealDB AgentKnowledgeStore](architecture/experiments/surrealdb-agent-knowledge.md): secondary knowledge graph evaluation only; not a transactional authority.
 
 ### `development/`
 
