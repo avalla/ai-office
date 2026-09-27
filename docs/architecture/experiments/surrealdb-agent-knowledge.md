@@ -74,6 +74,10 @@ The adapter is currently an opt-in experimental package, with no daemon lifecycl
 - Cycle validation runs transactionally against the graph observed by each write. Concurrent-writer isolation, fencing, and conflict behavior have not been evaluated.
 - No PostgreSQL/SQLite comparison or operational durability evaluation was performed. Findings here remain preliminary and do not make a storage recommendation.
 
+## ProjectStorage subset experiment
+
+The second evaluation stage is documented separately in [SurrealDB ProjectStorage subset experiment](surrealdb-project-storage-subset.md). It tests only projects, tasks, task requirements, and supporting ordinary transactions. Its schema has an independent version; it neither depends on nor extends the AgentKnowledgeStore schema. Both experiments remain opt-in, and SurrealDB is not a Runtime storage authority.
+
 ## References
 
 - [Official SurrealDB JavaScript SDK reference](https://surrealdb.com/docs/reference/javascript)

@@ -75,7 +75,8 @@ ai-office --help
 
 Current architecture and boundaries, including storage, the domain model, and cost accounting. Experimental designs are marked explicitly and do not supersede accepted architecture.
 
-- [Experimental SurrealDB AgentKnowledgeStore](architecture/experiments/surrealdb-agent-knowledge.md): secondary knowledge graph evaluation only; not a transactional authority.
+- [Experimental SurrealDB AgentKnowledgeStore](architecture/experiments/surrealdb-agent-knowledge.md): specialized knowledge graph/provenance evaluation; independent of the structured storage subset.
+- [Experimental SurrealDB ProjectStorage subset](architecture/experiments/surrealdb-project-storage-subset.md): partial projects/tasks/task-requirements contract evaluation; not a complete ProjectStorage or Runtime authority.
 
 ### `development/`
 

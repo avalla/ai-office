@@ -3,7 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/connect-agent-knowledge-store.ts"
+    ".": "./src/connect-agent-knowledge-store.ts",
+    "./project-storage-subset": "./src/project-storage-subset.ts",
+    "./connect-project-storage-subset-experiment": "./src/connect-project-storage-subset-experiment.ts",
+    "./project-storage-test-support": "./src/project-storage/test-support.ts"
   },
   "dependencies": {
     "surrealdb": "2.0.8"
