@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
 import {
@@ -8,6 +8,8 @@ import {
 } from "../../packages/storage-surrealdb/src/concurrency-experiment.ts";
 import { connectSurrealProjectStorageSubsetHarness } from "../../packages/storage-surrealdb/src/project-storage/test-support.ts";
 
+import * as transactionContext from "../../packages/storage-surrealdb/src/project-storage/transaction-context.ts";
+
 const endpoint = process.env.AI_OFFICE_TEST_SURREALDB_URL;
 const iterations = 40;
 const fixedNow = new Date("2026-09-27T12:00:00.000Z");
@@ -15,6 +17,7 @@ const closers: Array<() => Promise<void>> = [];
 
 describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () => {
   afterEach(async () => {
+    vi.restoreAllMocks();
     await Promise.all(closers.splice(0).map((close) => close()));
   });
 
@@ -42,12 +45,15 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
           }),
         ),
       ]);
-      const winners = attempts.filter((attempt) => attempt.status === "fulfilled" && attempt.value);
+      const winners = attempts.filter((attempt) => attempt.status === "fulfilled" && attempt.value === "applied");
       const errors = attempts.filter((attempt) => attempt.status === "rejected");
       expect(winners, JSON.stringify(attempts)).toHaveLength(1);
-      expect(errors, "a losing atomic update should return no row, not fail").toHaveLength(0);
+      expect(errors, "recognized conflicts remain explicit results; unexpected errors must fail").toHaveLength(0);
+      expect(attempts.filter((attempt) => attempt.status === "fulfilled" &&
+        ["predicate_miss", "conflict"].includes(attempt.value))).toHaveLength(1);
       const stored = await pair.a.read(id);
-      expect(["worker-a", "worker-b"]).toContain(stored?.owner);
+      const winnerIndex = attempts.findIndex((attempt) => attempt.status === "fulfilled" && attempt.value === "applied");
+      expect(stored?.owner).toBe(["worker-a", "worker-b"][winnerIndex]);
       expect(stored?.fence).toBe(1);
     }
   });
@@ -70,7 +76,7 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
           now: fixedNow,
           leaseUntil: expiry,
         }),
-      ).toBe(true);
+      ).toBe("applied");
       expect(
         await pair.a.renew({
           id,
@@ -79,7 +85,7 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
           now: fixedNow,
           leaseUntil: addSeconds(fixedNow, 60),
         }),
-      ).toBe(true);
+      ).toBe("applied");
       expect(
         await pair.b.renew({
           id,
@@ -88,7 +94,7 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
           now: fixedNow,
           leaseUntil: addSeconds(fixedNow, 90),
         }),
-      ).toBe(false);
+      ).toBe("predicate_miss");
       expect(
         await pair.b.claim({
           id,
@@ -96,7 +102,7 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
           now: fixedNow,
           leaseUntil: addSeconds(fixedNow, 30),
         }),
-      ).toBe(false);
+      ).toBe("predicate_miss");
       const expired = addSeconds(fixedNow, 61);
       expect(
         await pair.b.claim({
@@ -105,7 +111,7 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
           now: expired,
           leaseUntil: addSeconds(expired, 30),
         }),
-      ).toBe(true);
+      ).toBe("applied");
       expect(
         await pair.a.mutateWithFence({
           id,
@@ -114,7 +120,7 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
           now: expired,
           value: "stale-write",
         }),
-      ).toBe(false);
+      ).toBe("predicate_miss");
       expect(
         await pair.b.mutateWithFence({
           id,
@@ -123,7 +129,7 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
           now: expired,
           value: "worker-b-write",
         }),
-      ).toBe(true);
+      ).toBe("applied");
       expect(await pair.a.read(id)).toMatchObject({
         owner: "worker-b",
         fence: 2,
@@ -142,35 +148,35 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
         start().then(() => pair.a.compareAndSetVersion({ id, expectedVersion: 5 })),
         start().then(() => pair.b.compareAndSetVersion({ id, expectedVersion: 5 })),
       ]);
-      expect(attempts.filter(Boolean)).toHaveLength(1);
+      expect(attempts.filter((result) => result === "applied")).toHaveLength(1);
+      expect(attempts.filter((result) => result === "predicate_miss" || result === "conflict")).toHaveLength(1);
       expect((await pair.a.read(id))?.version).toBe(6);
     }
   });
 
-  test(`terminal agent-run state cannot be resurrected by a stale transition in ${iterations} races`, async () => {
+  test(`restricted status CAS and terminal non-resurrection in ${iterations} sequences`, async () => {
     const pair = await openPair();
     for (let index = 0; index < iterations; index += 1) {
       const id = `terminal-${index}`;
-      await pair.a.create({
-        id,
-        owner: "",
-        leaseUntil: new Date(0),
-        runStatus: "running",
-      });
-      expect(
-        await pair.a.transitionRun({
-          id,
-          expectedStatus: "running",
-          nextStatus: "completed",
-        }),
-      ).toBe(true);
-      expect(
-        await pair.b.transitionRun({
-          id,
-          expectedStatus: "running",
-          nextStatus: "queued",
-        }),
-      ).toBe(false);
+      await pair.a.create({ id, owner: "", leaseUntil: new Date(0), runStatus: "running" });
+      // An invalid regression is rejected even while the record is nonterminal.
+      await expect(pair.a.compareAndSetProbeStatus({
+        id, expectedStatus: "running", nextStatus: "queued",
+      })).rejects.toThrow("Unsupported experimental status transition");
+      expect((await pair.a.read(id))?.run_status).toBe("running");
+      expect(await pair.a.compareAndSetProbeStatus({
+        id, expectedStatus: "running", nextStatus: "reviewing",
+      })).toBe("applied");
+      expect(await pair.a.compareAndSetProbeStatus({
+        id, expectedStatus: "reviewing", nextStatus: "completed",
+      })).toBe("applied");
+      // A valid probe transition with a stale expectation cannot revive a terminal record.
+      expect(await pair.b.compareAndSetProbeStatus({
+        id, expectedStatus: "running", nextStatus: "reviewing",
+      })).toBe("predicate_miss");
+      await expect(pair.b.compareAndSetProbeStatus({
+        id, expectedStatus: "completed", nextStatus: "running",
+      })).rejects.toThrow("Unsupported experimental status transition");
       expect((await pair.a.read(id))?.run_status).toBe("completed");
     }
   });
@@ -258,7 +264,7 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
     }
   });
 
-  test(`PR #65 task saves expose concurrent ownership validation results in ${iterations} races`, async () => {
+  test(`PR #65 task creation from two absent snapshots preserves one owner in ${iterations} races`, async () => {
     const pair = await openPair();
     for (let index = 0; index < iterations; index += 1) {
       const projectA = `save-a-${index}`;
@@ -272,24 +278,68 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
       const taskId = `shared-task-${index}`;
       const taskA = Task.create({ id: taskId, projectId: projectA, title: "A", now: fixedNow });
       const taskB = Task.create({ id: taskId, projectId: projectB, title: "B", now: fixedNow });
+      const snapshots = synchronizeAbsentTaskSnapshots(taskId);
       const start = barrier(2);
       const writes = await Promise.allSettled([
         start().then(() => pair.projectA.experiment.tasks.save(taskA)),
         start().then(() => pair.projectB.experiment.tasks.save(taskB)),
       ]);
+      snapshots.mockRestore();
       const winners = writes.filter((write) => write.status === "fulfilled");
       expect(winners).toHaveLength(1);
       expect(writes.filter((write) => write.status === "rejected")).toHaveLength(1);
+      const loser = writes.find((write) => write.status === "rejected");
+      expect(loser?.status === "rejected" && isSurrealConcurrencyConflict(loser.reason)).toBe(true);
       const owners = await Promise.all(
         [projectA, projectB].map((projectId) =>
           pair.projectA.projectOwnsTask(projectId, taskId),
         ),
       );
       expect(owners.filter(Boolean)).toHaveLength(1);
+      const winner = writes[0]?.status === "fulfilled" ? taskA : taskB;
+      expect((await pair.projectA.experiment.tasks.findById(taskId))?.snapshot()).toEqual(winner.snapshot());
+      const [edges] = await pair.dbA.query<[Array<{ project_id: string }>]>(
+        "SELECT project_id FROM office_project_task WHERE out = type::record('office_task', $key)",
+        { key: encodeURIComponent(taskId) },
+      );
+      expect(edges).toEqual([{ project_id: winner.snapshot().projectId }]);
     }
   });
 
-  test(`PR #65 relation pre-reads race with the unique relation index across ${iterations} runs`, async () => {
+  test(`same-project creation with differing payloads keeps one complete task and owner in ${iterations} races`, async () => {
+    const pair = await openPair();
+    for (let index = 0; index < iterations; index += 1) {
+      const projectId = `same-project-${index}`;
+      const otherProjectId = `unrelated-project-${index}`;
+      const taskId = `same-task-${index}`;
+      for (const id of [projectId, otherProjectId]) {
+        await pair.projectA.experiment.projects.save(Project.create({ id, name: id, now: fixedNow }));
+      }
+      const tasks = ["A", "B"].map((label, priority) => Task.create({
+        id: taskId, projectId, title: label, description: `payload-${label}`, priority, now: fixedNow,
+      }));
+      const snapshots = synchronizeAbsentTaskSnapshots(taskId);
+      const writes = await Promise.allSettled([
+        pair.projectA.experiment.tasks.save(tasks[0]!),
+        pair.projectB.experiment.tasks.save(tasks[1]!),
+      ]);
+      snapshots.mockRestore();
+      expect(writes.filter((write) => write.status === "fulfilled")).toHaveLength(1);
+      const loser = writes.find((write) => write.status === "rejected");
+      expect(loser?.status === "rejected" && isSurrealConcurrencyConflict(loser.reason)).toBe(true);
+      const winner = tasks[writes.findIndex((write) => write.status === "fulfilled")]!;
+      expect((await pair.projectA.experiment.tasks.findById(taskId))?.snapshot()).toEqual(winner.snapshot());
+      const [owners] = await pair.dbA.query<[Array<{ project_id: string }>]>(
+        "SELECT project_id FROM office_project_task WHERE out = type::record('office_task', $key)",
+        { key: encodeURIComponent(taskId) },
+      );
+      expect(owners).toEqual([{ project_id: projectId }]);
+      expect(await pair.projectB.experiment.tasks.listByProject(otherProjectId)).toEqual([]);
+      expect(await pair.projectB.projectOwnsTask(otherProjectId, taskId)).toBe(false);
+    }
+  });
+
+  test(`PR #65 duplicate links after both validation reads lack boolean-result parity across ${iterations} runs`, async () => {
     const pair = await openPair();
     for (let index = 0; index < iterations; index += 1) {
       const projectId = `link-project-${index}`;
@@ -309,6 +359,7 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
         title: `Requirement ${index}`,
         status: "accepted",
       });
+      const boundary = synchronizeLinkWrites();
       const start = barrier(2);
       const links = await Promise.allSettled([
         start().then(() =>
@@ -328,11 +379,19 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
           }),
         ),
       ]);
+      boundary.mockRestore();
       expect(links.filter((link) => link.status === "fulfilled" && link.value)).toHaveLength(1);
       expect(links.filter((link) => link.status === "rejected")).toHaveLength(1);
+      const loser = links.find((link) => link.status === "rejected");
+      // A generic transaction conflict does not identify a unique relation pair.
+      // It must not be normalized into the shared contract's duplicate=false.
+      expect(loser?.status === "rejected" && isSurrealConcurrencyConflict(loser.reason)).toBe(true);
       expect(
         (await pair.projectA.experiment.taskRequirements.listForTask(projectId, taskId)),
       ).toHaveLength(1);
+      expect(await pair.projectA.experiment.taskRequirements.link({
+        projectId, taskId, requirementId, now: fixedNow,
+      })).toBe(false);
     }
   });
 });
@@ -340,12 +399,14 @@ describe.skipIf(endpoint === undefined)("SurrealDB concurrency evaluation", () =
 function barrier(parties: number): () => Promise<void> {
   let arrived = 0;
   let release: () => void = () => undefined;
-  const open = new Promise<void>((resolve) => {
+  let timeout: ReturnType<typeof setTimeout>;
+  const open = new Promise<void>((resolve, reject) => {
     release = resolve;
+    timeout = setTimeout(() => reject(new Error("Concurrency rendezvous did not complete")), 4000);
   });
   return async () => {
     arrived += 1;
-    if (arrived === parties) release();
+    if (arrived === parties) { clearTimeout(timeout); release(); }
     await open;
   };
 }
@@ -457,4 +518,42 @@ interface ExperimentTransaction {
   ): Promise<T>;
   commit(): Promise<void>;
   cancel(): Promise<void>;
+}
+
+// Test-only interception retains the actual repositories, query text, and SDK
+// transactions. No production port or adapter receives a synchronization hook.
+function synchronizeLinkWrites() {
+  const query = transactionContext.querySurreal;
+  const bothValidated = barrier(2);
+  let reached = 0;
+  const spy = vi.spyOn(transactionContext, "querySurreal").mockImplementation(async (db, statement, variables) => {
+    if (statement.startsWith("RELATE ONLY $task_record->office_task_requirement")) {
+      // The real link() has already read/validated both parents and absent edge.
+      reached += 1;
+      await bothValidated();
+    }
+    return query(db, statement, variables);
+  });
+  return { mockRestore() { spy.mockRestore(); expect(reached).toBe(2); } };
+}
+
+function synchronizeAbsentTaskSnapshots(taskId: string) {
+  const query = transactionContext.querySurreal;
+  const bothAbsent = barrier(2);
+  let reached = 0;
+  const spy = vi.spyOn(transactionContext, "querySurreal").mockImplementation(async (db, statement, variables) => {
+    if (statement.startsWith("LET $owner =")) {
+      const [rows] = await query<[unknown[]]>(db,
+        "SELECT id FROM type::record('office_task', $key)",
+        { key: encodeURIComponent(taskId) });
+      expect(rows).toEqual([]);
+      // The transaction context is already active. Both snapshots observe
+      // absence before either unmodified repository script can write. This does
+      // NOT place a barrier after the project validation inside that script.
+      reached += 1;
+      await bothAbsent();
+    }
+    return query(db, statement, variables);
+  });
+  return { mockRestore() { spy.mockRestore(); expect(reached).toBe(2); } };
 }

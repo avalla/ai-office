@@ -50,3 +50,4 @@ jobs:
           tests/integration/agent-knowledge-surrealdb.test.ts
           tests/integration/storage-contracts-surrealdb.test.ts
           tests/integration/surrealdb-concurrency-experiment.test.ts
+          tests/unit/surrealdb-concurrency-experiment.test.ts

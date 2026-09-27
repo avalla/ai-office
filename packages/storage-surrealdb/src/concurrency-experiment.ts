@@ -10,11 +10,18 @@ export interface ExperimentRecord {
   protected_value: string;
 }
 
+export type ConditionalUpdateResult = "applied" | "predicate_miss" | "conflict";
+
+// Exact unstructured response observed with the pinned v3.3.0 server.
+// This is version-sensitive fallback classification, not a portable API contract.
+const pinnedWriteConflict =
+  "There was a problem with the key-value store: Transaction conflict: Write conflict, retry the transaction. This transaction can be retried";
+
 export function isSurrealConcurrencyConflict(error: unknown): boolean {
   return (
     isRetryableConflict(error) ||
     (error instanceof Error &&
-      error.message.includes("Transaction conflict: Write conflict"))
+      error.message === pinnedWriteConflict)
   );
 }
 
@@ -65,7 +72,7 @@ export class SurrealConcurrencyExperiment {
     owner: string;
     now: Date;
     leaseUntil: Date;
-  }): Promise<boolean> {
+  }): Promise<ConditionalUpdateResult> {
     return this.conditionalUpdate(
       `UPDATE ONLY $id SET owner = $owner, lease_until = $lease_until,
          fence += 1
@@ -86,7 +93,7 @@ export class SurrealConcurrencyExperiment {
     fence: number;
     now: Date;
     leaseUntil: Date;
-  }): Promise<boolean> {
+  }): Promise<ConditionalUpdateResult> {
     return this.conditionalUpdate(
       `UPDATE ONLY $id SET lease_until = $lease_until
        WHERE owner = $owner AND fence = $fence
@@ -108,7 +115,7 @@ export class SurrealConcurrencyExperiment {
     fence: number;
     now: Date;
     value: string;
-  }): Promise<boolean> {
+  }): Promise<ConditionalUpdateResult> {
     return this.conditionalUpdate(
       `UPDATE ONLY $id SET protected_value = $value
        WHERE owner = $owner AND fence = $fence
@@ -127,7 +134,7 @@ export class SurrealConcurrencyExperiment {
   async compareAndSetVersion(input: {
     id: string;
     expectedVersion: number;
-  }): Promise<boolean> {
+  }): Promise<ConditionalUpdateResult> {
     return this.conditionalUpdate(
       `UPDATE ONLY $id SET version += 1
        WHERE version = $expected_version
@@ -139,15 +146,23 @@ export class SurrealConcurrencyExperiment {
     );
   }
 
-  async transitionRun(input: {
+  /** Only a status CAS probe; deliberately not the AgentRun lifecycle graph. */
+  async compareAndSetProbeStatus(input: {
     id: string;
     expectedStatus: string;
     nextStatus: string;
-  }): Promise<boolean> {
+  }): Promise<ConditionalUpdateResult> {
+    // A tiny allowlist also rejects invalid nonterminal regressions.
+    if (
+      !(
+        (input.expectedStatus === "running" && input.nextStatus === "reviewing") ||
+        (input.expectedStatus === "reviewing" && input.nextStatus === "completed")
+      )
+    ) throw new Error("Unsupported experimental status transition");
     return this.conditionalUpdate(
       `UPDATE ONLY $id SET run_status = $next_status
        WHERE run_status = $expected_status
-         AND run_status IN ['queued', 'preparing', 'running', 'reviewing']
+         AND run_status IN ['running', 'reviewing']
        RETURN AFTER`,
       {
         id: new RecordId("concurrency_probe", input.id),
@@ -160,12 +175,14 @@ export class SurrealConcurrencyExperiment {
   private async conditionalUpdate(
     statement: string,
     variables: Record<string, unknown>,
-  ): Promise<boolean> {
+  ): Promise<ConditionalUpdateResult> {
     try {
       const rows = await this.db.query<ExperimentRecord[]>(statement, variables);
-      return rows.some((row) => row !== undefined);
+      return rows.some((row) => row !== undefined && row !== null)
+        ? "applied"
+        : "predicate_miss";
     } catch (error) {
-      if (isSurrealConcurrencyConflict(error)) return false;
+      if (isSurrealConcurrencyConflict(error)) return "conflict";
       throw error;
     }
   }

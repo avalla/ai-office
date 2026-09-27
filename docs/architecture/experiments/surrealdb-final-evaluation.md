@@ -11,9 +11,9 @@ all 11 shared contracts unchanged, but its Project, Task, and
 TaskRequirement adapters were more ceremonial than the current relational
 implementations. The concurrency experiment showed that single-record claim,
 lease, expected-version, and stale-owner predicates can be expressed as atomic
-SurrealQL updates. Same-record concurrent transactions detect write conflicts;
-disjoint writes after shared reads can both commit, so cross-record invariants
-need explicit locking or a common coordination record.
+SurrealQL updates. The tested same-record transactions detected write conflicts;
+disjoint writes after shared reads both committed. Protecting this cross-record
+invariant required explicit named-record coordination in the experiment.
 
 The evidence supports **B — investigate/use SurrealDB as AgentKnowledgeStore
 only**. Graph provenance is a demonstrated fit. Broader structured authority
@@ -28,13 +28,15 @@ No production database, Runtime provider, data, or infrastructure was changed.
 | --- | --- | --- |
 | PR #64 | Experimental `AgentKnowledgeStore`, graph provenance, scoped retrieval, cycle checks, immutability | Runtime authority, vector/RAG, concurrent writes, production operations |
 | PR #65 | `projects`, `tasks`, `taskRequirements`, ordinary transaction behavior | Runtime, leases, fencing, queue/outbox, production parity |
-| PR #3 | Database primitives for atomic claim, leases, fencing, expected-version updates, terminal state, transaction anomalies, and PR #65 races | Complete `AgentRuntimeRepository`, `ProjectStorage`, multi-row admission authority, production migration |
+| PR #66 | Named-record claim, lease/fence predicates, expected-version/status CAS, terminal non-resurrection, transaction anomalies, and PR #65 contention | Complete `AgentRuntimeRepository`, `ProjectStorage`, multi-row admission authority, production migration |
 
 The experiments use the existing `surrealdb@2.0.8` SDK and the repository's
 pinned `surrealdb/surrealdb:v3.3.0` CI server. The concurrency test server used
-the in-memory engine. Each pair of competing operations used distinct Surreal
-client connections to the same database and a barrier immediately before the
-operations. No application mutex or serial test calls model the races.
+the in-memory engine. Competing operations use distinct Surreal client
+connections to the same database.
+Barriers control different boundaries, described below; the lease and status
+checks are sequential, controlled-state probes, not races. No application mutex
+serializes competing writes.
 
 ## Concurrency invariant matrix
 
@@ -42,9 +44,9 @@ This is the inspect-first comparison of the current SQLite and PostgreSQL
 implementations. The mechanisms below are from the current ports, adapters, and
 migrations.
 
-| Operation | Protected state | SQLite mechanism | PostgreSQL mechanism | Failure prevented | Required atomicity |
+| Operation | Protected state | SQLite mechanism | PostgreSQL mechanism | Intended invariant | Required atomicity |
 | --- | --- | --- | --- | --- | --- |
-| Acquire/reclaim task lock | One lease per task and run | One `INSERT ... ON CONFLICT(task_id) DO UPDATE ... WHERE expires_at <= acquired_at RETURNING`; task ID is the primary key and run ID unique | Same conditional upsert, plus tenant-scoped eligible-run predicate | Two active owners; lease reassignment before expiry | Claim or reclaim is one statement |
+| Acquire/reclaim task lock | One lease per task and run | One eligible-run `INSERT ... ON CONFLICT(task_id) DO UPDATE ... WHERE expires_at <= acquired_at RETURNING`; task ID is the primary key and run ID unique | Same conditional upsert and eligible-run check, plus tenant scope | Two active owners; lease reassignment before expiry | Claim or reclaim is one statement |
 | Admit queued run | Run status/event, task lease, task/agent/role/pipeline authority | Transaction reads queued run and all observed authority, then writes `preparing` or `cancelled`, event, and possibly deletes lock | Transaction locks task, agent, role, lease, pipeline rows ordered by ID, stage rows ordered by pipeline/index/ID, then locks/rechecks queued run, updates, appends event, and releases invalid lock | Duplicate admission; using changed or expired authority | Run, event, and invalid-lock release commit together |
 | Accept worker result | Running run, execution snapshot, task/agent/role state, task lease, pipeline/stage binding | Transaction checks composite snapshot and task-lock `run_id`, then conditionally updates run and appends event | Ordered row-lock boundary followed by one conditional `UPDATE ... FROM` rechecking the full authority fence; append event in transaction | Stale worker publishing result after lease/authority changes | State and event commit together |
 | Save run transition | Run lifecycle and event history | Transaction reads current status/time, validates transition in adapter, performs status/time CAS, appends event; append-only event triggers | Transaction `SELECT ... FOR UPDATE`, adapter validates, conditional status/time update, append event; append-only trigger | Lost update, regression, terminal resurrection, duplicate transition | Run update and event commit together |
@@ -55,9 +57,9 @@ migrations.
 | Active pipeline/stage uniqueness | One active pipeline per task and one active stage per pipeline | Partial unique indexes plus lifecycle triggers | Partial unique indexes and shape/identity triggers | Duplicate active runs/stages and invalid direct transitions | Constraint checked in each write transaction |
 
 There is no persisted monotonically increasing fencing counter in the current
-Runtime. `WorkerAuthorityFence` is a composite snapshot (run update time and
-execution provenance, task/agent/role snapshots, pipeline version/stage), and
-the task lease identifies its owner by `run_id` and expiry. PostgreSQL serializes
+Runtime. `WorkerAuthorityFence` carries execution provenance, task/agent/role snapshots,
+and pipeline version/stage. Acceptance also compares the supplied run update
+time. The task lease identifies its owner by `run_id` and expiry. PostgreSQL serializes
 those rows in a documented order; SQLite serializes writes in its transaction
 model and rechecks conditional state.
 
@@ -100,7 +102,8 @@ model and rechecks conditional state.
   typed relation endpoint tables, task ownership uniqueness, and unique
   task/requirement relation pairs. Adapter predicates enforce tenant/project
   scope and project agreement across existing records and edges. Domain
-  constructors enforce task lifecycle validity.
+  transition methods enforce task lifecycle validity; the subset does not
+  independently validate lifecycle transitions in direct storage writes.
 - Project updates preserve `createdAt`, and task updates preserve
   `projectId`/`createdAt`, through adapter write shape; the database does not
   reject direct-writer mutation of those historical values.
@@ -123,138 +126,181 @@ The PR #65 source measurements are preserved here:
 | Transaction runner/context | 59 combined | — | 0 | 0 raw statements; SDK begin/commit/cancel | 1 | 3 |
 
 The ProjectStorage subset schema has 37 repeatable DDL statements. These are
-counts from PR #65's report, not new measurements in PR #3.
+counts from PR #65's report, not new measurements in PR #66.
 
-## PR #3 — concurrency and fencing evidence
+## PR #66 — concurrency and fencing evidence
 
 The experiment is an explicitly experimental `SurrealConcurrencyExperiment`;
 it does not implement or claim `AgentRuntimeRepository` or `ProjectStorage`.
 It uses one record per protected resource and tests predicates on those named
 records.
 
-| Invariant | PostgreSQL mechanism | SurrealDB mechanism | Database atomic? | Adapter validation? | Observed result | Implementation complexity |
-| --- | --- | --- | --- | --- | --- | --- |
-| Atomic task claim | Conditional `INSERT ... ON CONFLICT ... WHERE expires_at <= acquired_at` plus unique task/run keys | One conditional `UPDATE ... WHERE owner is empty or lease expired`, incrementing the generation on that record | Yes; one SurrealQL statement, with same-record write conflict detection | Maps no returned row or recognized conflict to `false` | 40/40 two-client races had one winner, one loser, and stored owner/fence matched | One conditional statement plus conflict normalization |
-| Active lease and renewal | `UPDATE ... WHERE run_id = owner`, active status and `expires_at > now`; reclaim only after expiry | Conditional update checks owner, fence, unexpired timestamp; claim checks expiry; all timestamps injected | Yes; one update per transition | No read-before-write | Across 40 sequences owner renewal succeeded, non-owner renewal failed, active reclaim failed, expiry reclaim succeeded | Three conditional templates; controlled clock |
-| Stale-owner fencing | Result `UPDATE ... FROM` rechecks task-lock owner, lease, run snapshot, and authority rows under deterministic row locks | Mutation is one `UPDATE` checking owner, generation, lease time, and running state | Yes for the named resource record | No application lock; predicate values come from the caller | Across 40 sequences stale Worker A using fence N could not overwrite Worker B at N+1 | Five predicate terms in one update; generation is an experiment field, not a current Runtime column |
-| Expected version | `UPDATE ... WHERE version = expected` inside repository transaction | `UPDATE ... WHERE version = expected_version`, then `version += 1` | Yes; one record update | No pre-read | 40/40 competing pairs accepted one writer; stored version was 6 from 5 | One conditional statement |
-| Terminal state | Adapter lifecycle graph + `FOR UPDATE`/old-status-and-time conditional update; terminal status has no allowed outgoing transition | One update requires expected current status and a nonterminal current state | Yes; one record update | The test states encode current lifecycle and do not implement the complete domain graph | 40/40 stale `running → queued` transitions failed after `running → completed` | Lifecycle predicate remains explicit in the adapter query |
-| Same-record lost update | PostgreSQL row lock/CAS; repository transaction | Two independent SDK transactions read/update the same record; commit conflict detected and surfaced | Yes for same-key writes under snapshot isolation | Adapter must handle/propagate conflict | 40/40 pairs had one commit and one transaction-conflict rejection; stored value advanced once | SDK `isRetryableConflict` alone did not classify the v3.3.0 response in this run; a narrow message fallback was needed |
-| Write skew | PostgreSQL `SERIALIZABLE` or explicit locks on shared authority rows; current agent admission uses ordered row locks | Snapshot transaction plus `FOR UPDATE` on every named coordination record; ordinary reads do not protect a predicate | Not for disjoint writes after shared reads; explicit named-row locks create a conflict | Adapter/schema must identify and lock a common record set in deterministic order; no predicate lock is tested | 40/40 ordinary disjoint-write pairs both committed; 40/40 pairs locking both named rows had one conflict and retained one active record | Requires explicit coordination beyond a read predicate |
-| Concurrent Task save | SQL unique IDs/FKs and transaction boundary | Surreal unique external-ID and unique task-owner relation constraints | Yes for identity/ownership constraints; overall repository transaction | Pre-read still provides validation/result shape | 40/40 cross-project duplicate-ID pairs had one completed save, one rejected save, and one persisted owner | DB prevents dual ownership; loser surfaces a write error rather than a normalized conflict result |
-| Concurrent TaskRequirement link | Unique `(in, out)` index and `INSERT ... ON CONFLICT DO NOTHING` | Unique relation-pair index and transactional `RELATE` after reads | Yes for one relation pair | Three validation reads before relation write | 40/40 duplicate-link pairs produced one `true`, one rejected write, and one stored edge | Safe against duplicate persisted edges; not idempotent result parity under races |
+| Probe | Mechanism and boundary | Observed result on v3.3.0 memory | What it does not establish |
+| --- | --- | --- | --- |
+| Claim | One conditional `UPDATE` checks empty owner/expiry and increments fence on one named record | 40/40 invocation pairs returned one `applied`, one `predicate_miss` or `conflict`; stored owner matched the winner and fence was 1 | Runtime task-lock/admission parity; which failure kind every possible schedule produces |
+| Lease and fencing | Separate single-record updates check owner, fence, expiry, and (for mutation) running status; injected timestamps | 40 sequences: owner renewal applied; wrong owner and active reclaim missed predicates; expired reclaim applied; old owner mutation missed; new owner mutation applied | Concurrent renewal policy, composite Runtime worker authority, or result/event atomicity |
+| Expected version | One conditional update increments version from expected value | 40/40 invocation pairs had one `applied`; version became 6 from 5 | Multi-record pipeline updates or arbitrary competing writers |
+| Restricted status CAS | `compareAndSetProbeStatus` permits only `running → reviewing` and `reviewing → completed`, checks expected stored status | 40 sequences applied both permitted changes, rejected `running → queued` while nonterminal, and rejected terminal resurrection through stale or unsupported transitions | Complete AgentRun lifecycle enforcement, events, timestamps, admission, or worker acceptance |
+| Same-record lost update | Two SDK transactions both read the record before either increments it | 40/40 pairs had one commit, one recognized conflict, and one increment | Persistent-backend recovery or all transaction anomalies |
+| Write skew | Both transactions read the same two active records, then write different records | 40/40 pairs both committed, leaving neither active | Snapshot reads do not protect this cross-record invariant |
+| Named-record `FOR UPDATE` | Both transactions register the same two records in the same order and read both before disjoint writes | 40/40 pairs had one commit, one recognized conflict, and one active record remaining | Predicate/phantom protection or Runtime admission/acceptance parity |
+| Cross-project Task creation | Both real repository transactions first observe the task absent in their snapshots; then execute the unchanged save script | 40/40 pairs had one fulfilled save and one recognized conflict; one ownership edge and the successful caller's task snapshot persisted | Both project-validation reads finishing before either write, or a general promise that cross-project saves reject |
+| Same-project Task creation | Same absent-snapshot boundary; identical task ID/project, differing title, description, priority | 40/40 pairs had one fulfilled save and one recognized conflict; exactly one ownership edge; full successful payload persisted; unrelated project had no task or edge | Last-writer-wins, caller-order preference, merge semantics, or update concurrency for an existing task |
+| Duplicate TaskRequirement link | Both real `link()` calls complete parent and absent-edge reads before either `RELATE` is sent | 40/40 pairs had one `true`, one recognized transaction-conflict rejection, one edge; subsequent link returned `false` | Concurrent ProjectStorage boolean-result parity; the generic conflict does not identify the unique relation |
+
+Single-statement probes use database conditional updates rather than an
+application read followed by a write. The observed single-record outcomes are
+evidence for those predicates. They are not proof that a multi-record Runtime
+operation is database-atomic or behaviorally equivalent to either SQL adapter.
 
 ### Race strategy and counts
 
-Each resource race used two independent Surreal clients connected to the same
-namespace/database. The test barrier releases both attempts together. Test
-connections, schema setup, and data preparation happen before the barrier.
-Times are supplied directly; no sleeps or wall-clock lease expiry is used.
+All eight integration cases run their repeated work **40 times**. The combined
+transaction case includes 40 same-record lost-update races, 40 unlocked write-skew
+races, and 40 named-record `FOR UPDATE` races. Claim and version tests synchronize
+invocation only; they do not require both statements to read an old value.
+Lease and status tests are explicitly sequential sequences. Times are supplied
+directly; no sleep, retry loop, or wall-clock lease expiry selects an outcome.
+Barriers have a fail-only deadline to prevent an indefinitely hanging test.
 
-| Case | Repeated work |
-| --- | ---: |
-| Claim race | 40 two-client races |
-| Lease renewal/expiry/reclaim/stale mutation | 40 controlled-time sequences |
-| Expected-version CAS | 40 two-client races |
-| Terminal transition | 40 stale-transition sequences |
-| Lost update | 40 two-transaction same-record races |
-| Write skew without locks | 40 two-transaction disjoint-record races |
-| Write skew with `FOR UPDATE` on both coordination records | 40 two-transaction disjoint-record races |
-| PR #65 Task save | 40 two-client ownership races |
-| PR #65 TaskRequirement link | 40 two-client duplicate-link races |
+For PR #65 operations, test-local spies intercept `querySurreal` while retaining
+the actual repositories, query text, independent clients, and SDK transaction
+context. They assert that **both** participants reached the intended boundary:
 
-The claim uses one conditional SurrealQL update. A loser may receive the
-database's transaction conflict rather than an empty update result; the
-experiment maps the server conflict message or empty result to `false`, and
-rethrows other errors. The pinned 3.3.0 server response was not recognized by
-the SDK 2.0.8 `isRetryableConflict` predicate in this environment, so a narrow
-message match was required. This is adapter ceremony and a version-sensitive
-error-classification limitation. No conflict is silently retried.
+- `link()`: pause immediately before the actual `RELATE` call. Reaching this
+  point proves each call has completed the task, requirement, and absent-edge
+  reads. Neither write is sent before both arrive. This deterministically
+  demonstrates the validation-read/write window in this duplicate-link case.
+- Task save: its project validation, conditional update, and create/relate path
+  are one server query. Before that unchanged query, each already-active
+  transaction reads the task and asserts it absent, then waits for the other.
+  This forces competing creation from absent snapshots. It does **not** prove
+  both internal project-validation reads precede either write. Splitting that
+  query to claim such a boundary would change the operation being evaluated.
+
+These are test-only interceptors, not new production interfaces or repository
+hooks. Earlier invocation-only barriers established concurrent calls, not that
+both validation reads had finished; those earlier claims are superseded here.
+
+### Conflict results and classification
+
+Every conditional probe returns one of `applied`, `predicate_miss`, or `conflict`.
+A predicate miss is an empty update result; a recognized database conflict is
+reported separately. Unexpected database errors propagate unchanged. No probe
+silently retries. Claim/CAS callers might treat a conflict as a lost competition,
+but a renewal conflict alone is **not evidence of stale worker authority**.
+Even a renewal predicate miss can mean invalid requested expiry rather than
+ownership loss. Production Runtime integration would require an
+**operation-specific conflict/retry policy** with fresh authority checks.
+
+The classifier first uses SDK 2.0.8 `isRetryableConflict()`. It also retains an
+exact-message fallback for the pinned server's unstructured error rendering:
+
+```text
+There was a problem with the key-value store: Transaction conflict: Write conflict, retry the transaction. This transaction can be retried
+```
+
+The fallback previously used substring matching; it now accepts only this full
+message on an `Error`. A plain error carrying this response is not recognized
+by the SDK helper. Structured `QueryError` responses with
+`details.kind = TransactionConflict` are recognized by the SDK, including
+commit conflicts observed during hardening. This distinction is version-sensitive
+adapter ceremony, not a stable cross-version API contract.
+
+Ten classifier cases cover the structured SDK path, the exact unstructured
+response, a generic error, shortened/altered/prefixed/suffixed messages,
+`Transaction not found`, a lookalike non-Error object, and null. Five renewal
+unit cases distinguish applied/empty results/conflict/unexpected error and
+assert no automatic retry. Two cleanup cases prove a failed cancel cannot
+replace an original work or commit error.
 
 ### Transaction isolation characterization
 
-On the pinned server and in-memory engine, dirty/partial transaction effects
-were not observed; ordinary transaction rollback had already passed the PR #65
-contracts. Same-record transaction writes did not silently overwrite: the
-conflicting transaction failed. Disjoint writes after both transactions read
-the same two records both committed, demonstrating write skew when invariants
-depend on multiple records. A second experiment locked both named coordination
-records with `FOR UPDATE`: one transaction then conflicted and the other left one
-record active in all 40 races. This demonstrates a usable explicit coordination
-primitive for this fixed record set, not predicate locking or automatic
-protection. The test does not characterize every storage engine or deployment
-topology. SurrealDB describes its transaction model as snapshot isolation and
-specifies `FOR UPDATE` for named-record protection; the observations are
-consistent with that model.
+The shared contracts establish ordinary commit/rollback. There is no dedicated
+dirty-read or partial-visibility test, so this evaluation claims neither.
+Same-record tests synchronize after both reads; one write transaction commits
+and the other conflicts. Disjoint writes after shared reads both commit,
+demonstrating the tested write skew. Registering both named records with
+`FOR UPDATE` retained one active record in all 40 trials.
 
-### PR #65 read-before-write races
+The official [transaction documentation](https://surrealdb.com/docs/learn/querying/concepts-and-guides/transactions)
+describes snapshot isolation and `FOR UPDATE` as named-record commit-conflict
+registration, rather than PostgreSQL-style blocking row locks. These observations
+are consistent with that account. The experiment does not test predicate or
+phantom protection, other engines, or deployment topologies. Runtime authority
+spans a larger, evolving set of records; all participating writers would need a
+complete shared coordination set and deterministic order. The two-record probe
+does not establish Runtime admission or worker-result acceptance parity.
 
-`TaskRepository.save` is protected against dual task identity/ownership by the
-unique external-ID key and unique task-owner edge, but the losing concurrent
-save rejects rather than returning a normalized conflict result. The
-adapter's project check alone would have a time-of-check/time-of-use window;
-the database identity and relation constraints are the safety backstop.
+### PR #65 integrity versus caller semantics
 
-`TaskRequirementRepository.link` likewise has a unique pair index. The
-concurrent loser rejects after both calls pass validation reads and attempt
-`RELATE`; the edge table remains singular. This is a TOCTOU error-path
-limitation, not a duplicate-edge integrity failure. The ordinary duplicate
-contract still returns `false` when its pre-read sees the existing edge.
+Task identity and ownership constraints remain database backstops; both creation
+tests retain exactly one owner and one complete successful payload. The generic
+transaction error does not tell us which record/index caused the conflict, so
+we do not attribute rejection to one particular constraint. Save returns void;
+these forced creation races produce one fulfilled and one rejected promise.
+There is no assertion about which client wins and no last-writer-wins guarantee.
+The ordinary contract allows updating mutable fields while preserving the
+existing project ID, even when a caller supplies another project ID. A later
+save is therefore not evidence of dual ownership or guaranteed rejection.
+
+The shared link contract requires first `true`, existing `false`. The forced
+concurrent duplicate-link test demonstrates persisted uniqueness but **does not
+have concurrent boolean-result parity**: the loser rejects. Its observed generic
+transaction conflict has no relation/index identity, so there is no safe narrow
+unique-relation normalization here. Broadly returning `false` would hide
+unrelated conflicts. This is additional adapter ceremony before broader
+structured-storage adoption. Ordinary duplicate calls still return `false`.
+
+The transaction wrapper now preserves the original error when best-effort
+cancellation also fails: the server can already have aborted the transaction,
+and cleanup previously replaced the conflict with `Transaction not found`.
+No database error is converted to a successful repository result.
 
 ## Security and tenant isolation
 
 SurrealDB schema types and unique keys are database-enforced. PR #65's tenant
 and project filters are trusted adapter context, not database row-level
-security. Task/project/requirement agreement, current lifecycle validation,
-composite worker authority, and cross-record fence rules are adapter checks.
+security. Task/project/requirement agreement is checked by the subset adapter, while task
+lifecycle transitions belong to the domain. Composite worker authority and
+cross-record fences exist in the SQL adapters; they are not implemented by
+this SurrealDB subset.
 The connection credential can query outside a repository's tenant scope.
 Nothing in these experiments changes the current PostgreSQL tenant boundary or
 claims same-credential isolation.
 
 ## Implementation complexity
 
-PR #3 source counts use physical lines, including imports, comments, and blank
-lines. “Templates” counts literal SurrealQL templates including schema and
-namespace/database DDL. Conditional-write templates are statements with an
-owner, expiry, version, status, or fence predicate. No production persistence
-abstraction was introduced.
+PR #66 keeps five conditional-write templates: claim, renewal, fenced mutation,
+version CAS, and restricted status CAS. Each touches one probe record. Schema
+setup uses seven independent `DEFINE ... IF NOT EXISTS` statements; there is no
+production composition or migration. The status allowlist and tagged outcomes
+are explicit experimental adapter logic.
 
-| Measurement | PR #3 result |
-| --- | ---: |
-| Experiment adapter LOC | 222 |
-| Schema LOC | 7 DDL statements inside the adapter file |
-| Explicit TypeScript business validation LOC | 0; the narrow conflict classifier is 8 lines |
-| SurrealQL statement/template count | 16: 7 schema DDL, 7 probe operations, 2 namespace/database definitions |
-| Adapter transaction call sites | 0 |
-| Conditional-write templates | 5 |
-| Adapter read-before-write sequences | 0 |
-| Concurrency-specific integration tests | 7 cases |
-| Race/lifecycle repetitions | 40 per repeated case |
-
-The concurrency adapter is smaller than the PR #65 subset but deliberately
-does not perform multi-record admission/acceptance. The named-record lock primitive worked in this one fixed-set test, but all Runtime writers still need a shared lock set and order. PR #65's 326 LOC across the
-three selected repositories plus the 59-LOC transaction runner/context were
-measured independently. Counts are not a score; the SQL implementations remain
-the behavioral baseline.
+The PR #65 repository measurements above are historical, not recalculated scores
+for this hardening. Its transaction context now additionally preserves original
+errors during failed cleanup. Test-only orchestration and 17 unit cases are
+separate from those repository measurements. The SQL ports and shared contracts
+remain the behavioral baseline.
 
 ## Operational comparison
 
 The current AI Office authority remains SQLite on the local daemon, with a
-PostgreSQL/Supabase adapter and migration path. PR #64–#3 exercised neither a
+PostgreSQL/Supabase adapter and migration path. PR #64–#66 exercised neither a
 production-like deployment nor persistent SurrealDB data.
 
 | Area | SurrealDB evidence | Current PostgreSQL/Supabase architecture |
 | --- | --- | --- |
 | Local development | Pinned Docker service worked for the three integration suites; local tests need a running server and four separate clients for race tests | SQLite tests are file-local; PostgreSQL contract tests use the existing local Supabase/PostgreSQL test service |
-| Single node | Officially documented single-node RocksDB server is an available self-hosted model; this experiment used memory storage only | Current local daemon uses embedded SQLite; PostgreSQL is the server-backed alternative |
+| Single node | Officially documented single-node RocksDB server is an available self-hosted model; this experiment used memory storage only | Current local daemon uses embedded SQLite; PostgreSQL is the partial server-backed adapter, not complete Runtime authority |
 | Persistent storage | Not exercised. A persistent filesystem/backend and process recovery were not tested | SQLite and current PostgreSQL suites use persistent database engines; normal project DB migrations are already established |
 | Backup/restore | Not exercised. Official CLI supports logical `surreal export`/`surreal import`; a full restore and application verification remain unproven here | Existing Supabase/PostgreSQL backup and restore operations are outside this experiment; current SQLite project backup/restore is a product workflow |
 | Schema upgrades | PR #64/#65 use repeatable `DEFINE ... IF NOT EXISTS`; this stage added seven independent probe definitions. No Surreal version-to-version schema upgrade was tested | Versioned SQL migrations and upgrade tests are part of the existing PostgreSQL/SQLite architecture |
-| Server upgrades | No upgrade performed. Self-hosted operation requires backup, version review, restart/migration coordination, and smoke tests; v3.3.0 has server-side data migration behavior | Supabase manages its database service lifecycle; application migrations remain explicit and tested |
+| Server upgrades | No upgrade performed. Self-hosted operation requires backup, version review, restart/migration coordination, and smoke tests; this experiment did not exercise server-side data migration | Supabase manages its database service lifecycle; application migrations remain explicit and tested |
 | Health/readiness | CI already gates the service on `/health`; `/ready` can distinguish completed startup on v3.2+; not integrated into AI Office runtime health | PostgreSQL readiness is managed by local/Supabase infrastructure and current daemon/provider health paths |
 | Observability | Current docs provide `/metrics` and OTLP options; this experiment added no dashboards, alerting, or Runtime instrumentation | PostgreSQL/Supabase observability uses the existing provider and local service tooling; no apples-to-apples workload comparison was run |
 | Failure recovery | Transaction rollback and same-key conflict were tested; server crash recovery and disk recovery were not | SQLite/PostgreSQL have broader production migration/recovery tests in the current repository, though those tests do not establish a whole-system DR rehearsal |
-| CI ergonomics | Existing Surreal workflow runs the pinned in-memory service; concurrency adds about 3 seconds locally for all 7 cases/40 repetitions | SQLite contract suite runs without external services; PostgreSQL suites use the existing local service or CI job |
+| CI ergonomics | Existing Surreal workflow runs the pinned in-memory service; all eight concurrency cases retain 40 repetitions; the job also runs the 17 classifier/result/cleanup unit cases | SQLite contract suite runs without external services; PostgreSQL suites use the existing local service or CI job |
 | Resource footprint | No matched benchmark. The in-memory test container is not a meaningful production comparison | No matched benchmark |
 | Production maturity | A documented Community single-node RocksDB path exists; horizontal self-hosted HA requires the separately operated distributed-storage/Enterprise route, or a managed service. The project did not evaluate support, backup objectives, or incident response | PostgreSQL/Supabase is already an implemented and tested AI Office adapter, with tenant predicates/RLS and forward migrations |
 
@@ -285,14 +331,14 @@ behavior stated above was observed in this experiment.
   tenant predicates, parent checks, and read-before-write validation beyond
   the existing relational writes.
 - Concurrent duplicate operations can reject on database conflict even when
-  the persisted invariant is safe; the adapter must normalize this if callers
-  require a stable boolean contract.
+  the persisted invariant is safe; specific classification or another
+  deliberate strategy is needed if callers require a stable boolean contract.
 - Runtime admission and result acceptance depend on multiple authority rows.
-  Snapshot isolation does not protect a read predicate or disjoint record
-  writes by itself; every invariant needs named coordination rows and conflict
-  handling.
-- Error classification for the tested 3.3.0 conflict response required a
-  message fallback despite the SDK's conflict helper.
+  Ordinary snapshot reads allowed the tested disjoint-write anomaly; a
+  complete shared coordination set and operation-specific conflict handling
+  remain unproven for Runtime authority.
+- Unstructured conflict responses retain an exact-message fallback alongside
+  the SDK's structured classifier; this is version-sensitive.
 - Schema upgrade, persistent-storage recovery, backup restore, and production
   monitoring procedures were not exercised.
 
@@ -314,15 +360,26 @@ behavior stated above was observed in this experiment.
   delivery, and governance transitions have not been implemented or tested on
   SurrealDB.
 
-## Validation caveat
+## Validation
 
-The local `bun run check` passed skill validation, typecheck, and lint, then
-failed in seven daemon CLI e2e assertions about project binding and model-check
-output; the other 1,619 tests passed. The same four e2e files passed 14/14 in a
-clean detached worktree at the PR #65 merge commit, and PR #65's GitHub `validate`
-check was green. The local failure is therefore checkout/environment-sensitive;
-its cause was not changed or resolved in this experiment. The pre-existing
-`.ai-office/` directory was preserved and excluded from this PR.
+Against the pinned v3.3.0 in-memory server, the hardened suites pass:
+
+- AgentKnowledgeStore integration: **16/16**.
+- ProjectStorage subset: **18/18** (11 unchanged shared contracts + 7 specific cases).
+- Concurrency/fencing: **8/8**, with 40 repetitions per repeated case.
+- Classifier/result/cleanup unit tests: **17/17**.
+
+That is **42 server-backed cases plus 17 unit cases, 59 total**. The SurrealDB CI
+job supplies the endpoint and runs all four files unconditionally; failures fail
+the job. It has no path filter or continue-on-error exemption.
+Full `bun run check` passed in an isolated checkout of the same branch with
+these hardened files: skill validation, typecheck, lint, **1,643 tests passed,
+118 optional-service tests skipped**. The original checkout had **1,636 passed,
+7 failed, 118 skipped** in the previously recorded four daemon CLI files; its
+local state was preserved. The isolated full check plus the separate live
+SurrealDB suites are the local validation evidence. `git diff --check` passed.
+Hardened-HEAD GitHub job results are recorded in the PR description.
+The pre-existing `.ai-office/` directory is excluded from all changes.
 
 ## Final recommendation
 
@@ -330,12 +387,15 @@ its cause was not changed or resolved in this experiment. The pre-existing
 
 The native graph traversal produced concrete value for provenance, scoped
 relationships, and current-decision lookup. The structured subset passed its
-shared contracts but was more ceremonial than SQL, and its two validation-read
-operations showed rejected loser outcomes under concurrency. Atomic single-row
-claims, fences, and versions worked. Snapshot isolation allowed the tested
-cross-record write skew without explicit locks; `FOR UPDATE` prevented that
-fixed two-record anomaly, but current Runtime authority spans multiple records
-and its shared lock set remains unproven. These results justify keeping the
+shared contracts but was more ceremonial than SQL, and forced duplicate-link
+races lack boolean-result parity. Task creation from absent snapshots produced
+a rejected loser in both project arrangements. Named-record claim, fence, and
+version predicates worked in the tested cases. Snapshot reads allowed the
+tested cross-record write skew; `FOR UPDATE` retained the fixed two-record
+invariant in all 40 trials.
+Current Runtime authority spans a larger and evolving record set; its complete
+shared coordination set, deterministic order across writers, and predicate/phantom
+protection remain unproven. These results justify keeping the
 graph/knowledge investigation distinct from authoritative Runtime storage.
 
 This recommendation is not production authorization. Any SurrealDB production

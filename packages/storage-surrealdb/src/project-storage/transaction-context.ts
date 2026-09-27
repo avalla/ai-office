@@ -29,7 +29,9 @@ export async function withSurrealTransaction<T>(
     await transaction.commit();
     return value;
   } catch (error) {
-    await transaction.cancel();
+    // The server may already have aborted the transaction. Cleanup must not
+    // replace the original write/commit error with "Transaction not found".
+    await transaction.cancel().catch(() => undefined);
     throw error;
   }
 }
