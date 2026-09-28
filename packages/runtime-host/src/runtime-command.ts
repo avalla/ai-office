@@ -87,6 +87,7 @@ import {
   DisabledProjectMemoryProvider,
   type ProjectMemoryProvider,
 } from "@ai-office/application/ports/project-memory-provider.port.ts";
+import type { RuntimeAgentKnowledge } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import { handleProjectMemoryCommand } from "./commands/project-memory.ts";
 import { handleModelCommand } from "./commands/model.ts";
 import {
@@ -310,6 +311,8 @@ export interface RuntimeCommandOptions {
   projectArchives?: ProjectArchiveAdapter;
   /** Composition-supplied provider; absent means disabled. */
   projectMemory?: ProjectMemoryProvider;
+  /** Independently composed secondary knowledge; worker retrieval changes in AK-04. */
+  agentKnowledge?: RuntimeAgentKnowledge;
   /** Composition-supplied host model routing; absent means unconfigured. */
   modelRouting?: ModelRoutingState;
   /** Reads the current immutable routing snapshot for this command. */
@@ -583,6 +586,9 @@ export async function executeRuntimeCommand(
         options.defaultOfficeManifest ?? defaultOfficeManifest(),
       projectMemory:
         options.projectMemory ?? new DisabledProjectMemoryProvider(),
+      ...(options.agentKnowledge === undefined
+        ? {}
+        : { agentKnowledge: options.agentKnowledge }),
       modelRouting:
         options.modelRoutingProvider?.() ??
         options.modelRouting ??

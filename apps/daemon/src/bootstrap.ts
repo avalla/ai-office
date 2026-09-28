@@ -24,7 +24,18 @@ import type { AgentClientCatalog } from "@ai-office/application/ports/agent-clie
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
+import {
+  KnowledgeStoreError,
+  type RuntimeAgentKnowledge,
+} from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import type { DaemonHealthResponse } from "@ai-office/application/protocol/daemon-protocol.ts";
 import { createProjectMemoryProvider } from "@ai-office/cairnkeep-memory/create-project-memory-provider.ts";
+import {
+  isAgentKnowledgeTenantId,
+  resolveAgentKnowledgeConfiguration,
+  type AgentKnowledgeConfiguration,
+} from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
+import type { connectSurrealAgentKnowledgeStore } from "@ai-office/storage-surrealdb/connect-agent-knowledge-store.ts";
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import {
@@ -51,6 +62,43 @@ import {
 } from "@ai-office/runtime-paths/runtime-paths.ts";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
+type AgentKnowledgeConnector = typeof connectSurrealAgentKnowledgeStore;
+type AgentKnowledgeHandle = Awaited<ReturnType<AgentKnowledgeConnector>>;
+const knowledgeConnectTimeoutMs = 5_000;
+
+async function connectKnowledgeWithDeadline(
+  connector: AgentKnowledgeConnector,
+  configuration: Extract<AgentKnowledgeConfiguration, { kind: "surrealdb" }>,
+  deadlineMs: number,
+): Promise<AgentKnowledgeHandle> {
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
+  const pending = Promise.resolve().then(() =>
+    connector(configuration.connection, controller.signal),
+  );
+  void pending.then(
+    (handle) => {
+      if (timedOut)
+        void Promise.resolve()
+          .then(() => handle.close())
+          .catch(() => {});
+    },
+    () => {},
+  );
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(new Error("Agent knowledge connection timed out"));
+    }, deadlineMs);
+  });
+  try {
+    return await Promise.race([pending, deadline]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 export interface BootstrapOptions {
   agentExecutor?: AgentExecutor;
@@ -68,6 +116,12 @@ export interface BootstrapOptions {
    * environment once (`AI_OFFICE_PROJECT_MEMORY_PROVIDER`, disabled by default).
    */
   projectMemory?: ProjectMemoryProvider;
+  /** Host-only secondary knowledge configuration; independent of CairnKeep. */
+  agentKnowledgeConfiguration?: AgentKnowledgeConfiguration;
+  /** Internal seam for deterministic connection and cleanup tests. */
+  connectAgentKnowledge?: AgentKnowledgeConnector;
+  /** Internal seam for a bounded connection test. */
+  agentKnowledgeConnectTimeoutMs?: number;
   /**
    * Optional host model routing. When omitted, the host reads it once from
    * `<AI_OFFICE_HOME>/model-routing.yaml` or, in the foreground only, from
@@ -126,6 +180,28 @@ export async function bootstrap(
   const storageConfiguration = storageBootstrap.resolve(
     options.projectStorageConfig,
   );
+  const resolvedKnowledgeConfiguration =
+    options.agentKnowledgeConfiguration ??
+    resolveAgentKnowledgeConfiguration(
+      process.env,
+      storageConfiguration.provider === "postgres"
+        ? storageConfiguration.tenantId
+        : undefined,
+    );
+  // The test/composition seam must not override PostgreSQL's authoritative tenant.
+  const knowledgeConfiguration =
+    storageConfiguration.provider === "postgres" &&
+    resolvedKnowledgeConfiguration.kind === "surrealdb"
+      ? {
+          ...resolvedKnowledgeConfiguration,
+          tenantId: storageConfiguration.tenantId,
+        }
+      : resolvedKnowledgeConfiguration;
+  const validatedKnowledgeConfiguration =
+    knowledgeConfiguration.kind === "surrealdb" &&
+    !isAgentKnowledgeTenantId(knowledgeConfiguration.tenantId)
+      ? { kind: "misconfigured" as const, provider: "surrealdb" as const }
+      : knowledgeConfiguration;
   ensureRuntimeHome(runtimePaths);
   // Read once; a credential change takes effect on Runtime restart.
   const credentials =
@@ -138,6 +214,7 @@ export async function bootstrap(
     join(sourceDirectory, "..", "..", "..", "migrations", "project");
   let projectStorageHandle: ProjectStorageHandle | undefined;
   let globalDatabase: ReturnType<typeof openDatabase> | undefined;
+  let agentKnowledgeHandle: AgentKnowledgeHandle | undefined;
   let ownershipTransferred = false;
   try {
     projectStorageHandle = await storageBootstrap.open({
@@ -204,6 +281,47 @@ export async function bootstrap(
           debug: process.env.AI_OFFICE_DEBUG_LLM === "1",
         }),
     };
+    let agentKnowledge: RuntimeAgentKnowledge =
+      validatedKnowledgeConfiguration.kind === "disabled"
+        ? { state: "disabled" }
+        : validatedKnowledgeConfiguration.kind === "misconfigured"
+          ? {
+              state: "misconfigured",
+              error: new KnowledgeStoreError("KNOWLEDGE_MISCONFIGURED"),
+            }
+          : {
+              state: "unavailable",
+              error: new KnowledgeStoreError("KNOWLEDGE_UNAVAILABLE"),
+            };
+    let knowledgeStatus: NonNullable<DaemonHealthResponse["knowledge"]> =
+      validatedKnowledgeConfiguration.kind === "disabled"
+        ? { provider: "none", startup: "disabled" }
+        : validatedKnowledgeConfiguration.kind === "misconfigured"
+          ? {
+              provider: validatedKnowledgeConfiguration.provider,
+              startup: "misconfigured",
+            }
+          : { provider: "surrealdb", startup: "unavailable" };
+    if (validatedKnowledgeConfiguration.kind === "surrealdb") {
+      try {
+        agentKnowledgeHandle = await connectKnowledgeWithDeadline(
+          options.connectAgentKnowledge ??
+            (
+              await import("@ai-office/storage-surrealdb/connect-agent-knowledge-store.ts")
+            ).connectSurrealAgentKnowledgeStore,
+          validatedKnowledgeConfiguration,
+          options.agentKnowledgeConnectTimeoutMs ?? knowledgeConnectTimeoutMs,
+        );
+        agentKnowledge = {
+          state: "connected",
+          tenantId: validatedKnowledgeConfiguration.tenantId,
+          store: agentKnowledgeHandle.store,
+        };
+        knowledgeStatus = { provider: "surrealdb", startup: "connected" };
+      } catch {
+        // Knowledge is advisory. Keep the authoritative Runtime available.
+      }
+    }
     const runtime = new ApplicationRuntime(
       runtimePaths,
       commandRoot,
@@ -217,6 +335,7 @@ export async function bootstrap(
       options.projectMemory ?? createProjectMemoryProvider(process.env),
       routing,
       projectStorage,
+      agentKnowledge,
     );
 
     const queueConfiguration = readQueueConfiguration(process.env);
@@ -264,9 +383,19 @@ export async function bootstrap(
       events,
       onStarting: () => queueRuntime?.start() ?? Promise.resolve(),
       queueStatus,
+      knowledgeStatus,
       onStopped: async () => {
-        await projectStorageHandle?.close();
-        globalDatabase?.close();
+        try {
+          await agentKnowledgeHandle?.close();
+        } catch {
+          // Secondary storage cannot change the authoritative shutdown result.
+        } finally {
+          try {
+            await projectStorageHandle?.close();
+          } finally {
+            globalDatabase?.close();
+          }
+        }
       },
       onStopping: async () => {
         await queueRuntime?.stop();
@@ -278,9 +407,15 @@ export async function bootstrap(
   } finally {
     if (!ownershipTransferred) {
       try {
-        await projectStorageHandle?.close();
+        await agentKnowledgeHandle?.close();
+      } catch {
+        // Preserve the original bootstrap failure.
       } finally {
-        globalDatabase?.close();
+        try {
+          await projectStorageHandle?.close();
+        } finally {
+          globalDatabase?.close();
+        }
       }
     }
   }

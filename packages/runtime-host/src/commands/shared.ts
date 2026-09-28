@@ -13,6 +13,7 @@ import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts
 import type { OperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project-archive-adapter.port.ts";
 import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
+import type { RuntimeAgentKnowledge } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
@@ -35,6 +36,8 @@ export interface CommandContext extends ProjectStorage {
   memory?: GlobalMemoryRepository;
   /** Optional, non-authoritative project memory; disabled unless configured. */
   projectMemory: ProjectMemoryProvider;
+  /** Secondary store and trusted tenant scope, composed independently of project memory. */
+  agentKnowledge?: RuntimeAgentKnowledge;
   /** Host model routing snapshot used by this command. */
   modelRouting: ModelRoutingState;
   /** Loads routing with the daemon's effective source semantics. */

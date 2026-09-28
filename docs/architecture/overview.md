@@ -380,6 +380,11 @@ Workers receive excerpts, never a provider, tool, command, path or credential.
 Absence or failure degrades to no memory. See
 [ADR-0018](../adr/ADR-0018-optional-non-authoritative-project-memory-provider.md).
 
+Separately, the host may connect the secondary SurrealDB `AgentKnowledgeStore`
+when explicitly configured. It binds the trusted tenant, owns the connection,
+and reports only the startup result. The store has no operational authority and
+does not feed worker context until AK-04. See [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
+
 ## Operational read models
 
 Operational state is computed once, in the application layer, and published as

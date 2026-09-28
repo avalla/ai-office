@@ -37,6 +37,7 @@ export interface PersistentRuntimeHostOptions {
   /** Publishes invalidation hints after a command completes. */
   queryEvents?: OperationalEventBus;
   queueStatus?: () => Promise<NonNullable<DaemonHealthResponse["queue"]>>;
+  knowledgeStatus?: NonNullable<DaemonHealthResponse["knowledge"]>;
 }
 
 function json(value: unknown, status = 200): Response {
@@ -123,6 +124,9 @@ export class PersistentRuntimeHost {
         protocolVersion: daemonProtocolVersion,
         status: "ok",
         startedAt: this.startedAt?.toISOString() ?? this.now().toISOString(),
+        ...(this.options.knowledgeStatus === undefined
+          ? {}
+          : { knowledge: this.options.knowledgeStatus }),
         ...(this.options.queueStatus === undefined
           ? {}
           : { queue: await this.options.queueStatus() }),

@@ -612,6 +612,23 @@ shares it. Each worker run performs at most one bounded search, and `run:show`
 lists which references entered its context. An unavailable provider never
 blocks a run. See [project memory](docs/development/project-memory.md).
 
+### Native agent knowledge connection (AK-03)
+
+The Runtime can separately connect an opt-in SurrealDB `AgentKnowledgeStore`.
+Set `AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER=surrealdb` and supply
+`AI_OFFICE_SURREALDB_URL`, `AI_OFFICE_SURREALDB_NAMESPACE`,
+`AI_OFFICE_SURREALDB_DATABASE`, `AI_OFFICE_SURREALDB_USERNAME`, and
+`AI_OFFICE_SURREALDB_PASSWORD` in the foreground Runtime host environment.
+SQLite hosts also require a trusted `AI_OFFICE_AGENT_KNOWLEDGE_TENANT_ID`;
+PostgreSQL hosts use their authoritative storage tenant. An unset provider is
+disabled. The daemon `/health` response reports the connection result observed
+at startup without exposing configuration values. A failed connection leaves
+the authoritative Runtime available. Restart the host after changing this
+configuration or recovering SurrealDB.
+
+Worker context still uses the optional CairnKeep path above until AK-04. See
+[native agent knowledge](docs/development/agent-knowledge.md) for setup limits.
+
 ## Agent model routing
 
 Roles declare a semantic `model_policy` (`economical`, `balanced`,
