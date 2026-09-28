@@ -182,10 +182,23 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
         this.rows(`SELECT * FROM knowledge_memory WHERE tenant_id = $tenant AND project_id = $project${agentClause} AND string::contains(string::lowercase(text), $text) ORDER BY created_at DESC, external_id ASC LIMIT $limit`, params),
         this.rows(`SELECT * FROM knowledge_decision WHERE tenant_id = $tenant AND project_id = $project${agentClause} AND string::contains(string::lowercase(text), $text) AND id NOT IN (SELECT VALUE out FROM supersedes WHERE tenant_id = $tenant AND project_id = $project) ORDER BY created_at DESC, external_id ASC LIMIT $limit`, params),
       ]);
-      return [
+      if (memories.length > limit || decisions.length > limit) {
+        throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+      }
+      const hits = [
         ...memories.map((row) => this.hit(row, "memory", scope)),
         ...decisions.map((row) => this.hit(row, "decision", scope)),
-      ].sort(sortKnowledge).slice(0, limit);
+      ];
+      const seen = new Set<string>();
+      for (const hit of hits) {
+        const key = `${hit.kind}:${hit.id}`;
+        if (seen.has(key) || !hit.text.toLowerCase().includes(params.text) ||
+          (query.agentId !== undefined && hit.agentId !== query.agentId)) {
+          throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+        }
+        seen.add(key);
+      }
+      return hits.sort(sortKnowledge).slice(0, limit);
     } catch (error) {
       if (error instanceof KnowledgeStoreError) throw error;
       throw new KnowledgeStoreError("KNOWLEDGE_QUERY_FAILED");
@@ -328,9 +341,11 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
 
   private async rows<T = Row>(statement: string, params: Record<string, unknown>): Promise<T[]> {
     try {
-      const [rows] = await this.db.query<[T[]]>(statement, params);
-      if (!Array.isArray(rows)) throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
-      return rows;
+      const response: unknown = await this.db.query<[T[]]>(statement, params);
+      if (!Array.isArray(response) || response.length !== 1 || !Array.isArray(response[0])) {
+        throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+      }
+      return response[0] as T[];
     } catch (error) {
       if (error instanceof KnowledgeStoreError) throw error;
       throw new KnowledgeStoreError("KNOWLEDGE_QUERY_FAILED");
@@ -343,6 +358,7 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
       !this.inScope(row, scope) ||
       fields.some((field) => typeof row[field] !== "string" || !(row[field] as string).trim()) ||
       ["external_id", "agent_id", "run_id", "task_id", "source_id"].some((field) => !isKnowledgeIdentifier(row[field])) ||
+      !this.sameRecord(row.id, new RecordId(`knowledge_${kind}`, scopedId(scope, kind, String(row.external_id)))) ||
       !["requirement", "task", "decision", "run", "external"].includes(String(row.source_kind)) ||
       (kind === "decision" && (typeof row.title !== "string" || !row.title.trim())) ||
       (row.source_locator != null && typeof row.source_locator !== "string")

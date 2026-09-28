@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context/knowledge-search-term.ts";
+import { cairnKeepSearchTerm } from "../../packages/cairnkeep-memory/src/cairnkeep-memory-provider.ts";
 import {
   assertKnowledgeScope,
   assertKnowledgeIdentifier,
@@ -7,6 +9,30 @@ import {
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 
 describe("AgentKnowledgeStore application boundary", () => {
+  it("preserves the deployed CairnKeep literal-term choices", () => {
+    for (const [query, expected] of [
+      ["Fix the login flow for users", "login"],
+      ["Rotate database credentials", "credentials"],
+      ["Document the deploy flow", "deploy"],
+      ["Implement upload retries", "retries"],
+      ["Review API_auth failures", "api_auth"],
+      ["Alpha BETA", "alpha"],
+      ["Error, retry!", "error"],
+      ["foo-bar baz_qux", "foo-bar"],
+      ["v2a 2026", "2026"],
+      ["Fix the and", "Fix the and"],
+      ["Å β 𐐀𐐁", "Å β 𐐀𐐁"],
+      ["!!!", "!!!"],
+      ["RÉSUMÉ café", "résumé"],
+      ["𐐀𐐁𐐂 xy", "𐐨𐐩𐐪"],
+      ["X".repeat(knowledgeRetrievalLimits.queryCharacters), "x".repeat(knowledgeRetrievalLimits.queryCharacters)],
+      ["a b", "a b"],
+    ] as const) {
+      expect(knowledgeCompatibilitySearchTerm(query)).toBe(expected);
+      expect(cairnKeepSearchTerm(query)).toBe(expected);
+    }
+  });
+
   it("requires a trusted tenant and portable repository identity without fallback", () => {
     expect(() => assertKnowledgeScope({ tenantId: "tenant-a", repositoryId: "repo-a" })).not.toThrow();
     for (const scope of [
@@ -42,6 +68,9 @@ describe("AgentKnowledgeStore application boundary", () => {
       text: "deployment",
       limit: knowledgeRetrievalLimits.maxResults,
       agentId: "agent-a",
+    })).not.toThrow();
+    expect(() => assertKnowledgeSearchQuery({
+      text: "𐐀".repeat(knowledgeRetrievalLimits.queryCharacters),
     })).not.toThrow();
     for (const query of [
       { text: "" },

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { productVersion } from "@ai-office/command-support/version.ts";
+import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context/knowledge-search-term.ts";
 import {
   ProjectMemoryError,
   projectMemoryErrorMessage,
@@ -55,69 +56,6 @@ const inheritedEnvironment = [
   "LC_ALL",
 ] as const;
 
-/**
- * Function words plus generic task verbs. Task titles are usually imperative
- * ("Document the deploy flow"); the verb says what to do, the remaining words
- * name what memory is about.
- */
-const substringStopWords = new Set([
-  "about",
-  "after",
-  "and",
-  "before",
-  "for",
-  "from",
-  "into",
-  "that",
-  "the",
-  "then",
-  "this",
-  "use",
-  "when",
-  "with",
-  "without",
-  "add",
-  "adds",
-  "allow",
-  "analyse",
-  "analyze",
-  "build",
-  "change",
-  "check",
-  "clean",
-  "cleanup",
-  "create",
-  "delete",
-  "design",
-  "disable",
-  "document",
-  "enable",
-  "ensure",
-  "explain",
-  "fix",
-  "handle",
-  "implement",
-  "improve",
-  "introduce",
-  "investigate",
-  "make",
-  "migrate",
-  "move",
-  "prevent",
-  "refactor",
-  "remove",
-  "rename",
-  "review",
-  "support",
-  "test",
-  "tests",
-  "tune",
-  "update",
-  "upgrade",
-  "validate",
-  "write",
-]);
-
 function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -137,16 +75,7 @@ function invalid(): ProjectMemoryError {
  * unchanged. Still exactly one search; recall is deliberately modest.
  */
 export function cairnKeepSearchTerm(query: string): string {
-  let best = "";
-  for (const match of query
-    .toLocaleLowerCase()
-    .matchAll(/[\p{L}\p{N}][\p{L}\p{N}_-]*/gu)) {
-    const term = match[0];
-    const length = [...term].length;
-    if (length < 3 || substringStopWords.has(term)) continue;
-    if (length > [...best].length) best = term;
-  }
-  return best === "" ? query : best;
+  return knowledgeCompatibilitySearchTerm(query);
 }
 
 /**

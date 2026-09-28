@@ -1,4 +1,5 @@
 import type { DecisionInput, KnowledgeScope, MemoryInput } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context/knowledge-search-term.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { RecordId, Surreal } from "../../packages/storage-surrealdb/node_modules/surrealdb";
 import { connectSurrealAgentKnowledgeStore } from "../../packages/storage-surrealdb/src/connect-agent-knowledge-store.ts";
@@ -164,20 +165,80 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     expect(hits[0]).toMatchObject({ id: input.id, kind: "memory", source: input.source, agentId: input.agentId });
   });
 
-  it("bounds and orders scoped search with stable ties", async () => {
-    for (const id of ["z", "b", "a", "c", "d", "e"]) {
-      await store.recordMemory(memory(scopeA, `ordered-${id}`, "approval checkpoint"));
+  it("applies the global top-N order across memories and decisions despite reverse insertion", async () => {
+    const at = (hour: number) => new Date(`2026-09-27T${String(hour).padStart(2, "0")}:00:00.000Z`);
+    const candidates = [
+      { kind: "memory", id: "ordered-old", hour: 9 },
+      { kind: "decision", id: "ordered-lower", hour: 11 },
+      { kind: "memory", id: "memory-b", hour: 12 },
+      { kind: "memory", id: "memory-a", hour: 12 },
+      { kind: "decision", id: "decision-b", hour: 12 },
+      { kind: "decision", id: "decision-a", hour: 12 },
+      { kind: "decision", id: "ordered-newer", hour: 13 },
+      { kind: "memory", id: "ordered-newest", hour: 14 },
+    ] as const;
+    for (const candidate of candidates) {
+      if (candidate.kind === "memory") {
+        await store.recordMemory({ ...memory(scopeA, candidate.id, "approval checkpoint"), createdAt: at(candidate.hour) });
+      } else {
+        await store.recordDecision({ ...decision(scopeA, candidate.id, `task-${candidate.id}`, "approval checkpoint"), createdAt: at(candidate.hour) });
+      }
     }
-    await store.recordDecision(decision(scopeA, "decision-ordered", "task-ordered", "approval checkpoint"));
-    const hits = await store.findKnowledge(scopeA, { text: "approval", limit: 3 });
+    const hits = await store.findKnowledge(scopeA, { text: "approval", limit: 5 });
     expect(hits.map((hit) => [hit.kind, hit.id])).toEqual([
-      ["decision", "decision-ordered"],
-      ["memory", "ordered-a"],
-      ["memory", "ordered-b"],
+      ["memory", "ordered-newest"],
+      ["decision", "ordered-newer"],
+      ["decision", "decision-a"],
+      ["decision", "decision-b"],
+      ["memory", "memory-a"],
     ]);
     expect(hits.every((hit) => hit.tenantId === scopeA.tenantId && hit.repositoryId === scopeA.repositoryId)).toBe(true);
     expect(await store.findKnowledge(scopeSameTenantOtherProject, { text: "approval" })).toEqual([]);
     expect(await store.findKnowledge(scopeB, { text: "approval" })).toEqual([]);
+  });
+
+  it("retrieves the CairnKeep compatibility term as a case-insensitive literal", async () => {
+    const input = memory(scopeA, "term-memory", "The DePlOy requires approval");
+    await store.recordMemory(input);
+    await store.recordMemory(memory(scopeSameTenantOtherProject, "other-term", "deploy elsewhere"));
+    const term = knowledgeCompatibilitySearchTerm("Document the deploy flow");
+    expect(term).toBe("deploy");
+    expect((await store.findKnowledge(scopeA, { text: term, agentId: input.agentId })).map((hit) => hit.id))
+      .toEqual([input.id]);
+    expect(await store.findKnowledge(scopeA, { text: "document the deploy flow" })).toEqual([]);
+    expect(await store.findKnowledge(scopeA, { text: term, agentId: "other-agent" })).toEqual([]);
+    expect(await store.findKnowledge(scopeA, { text: term, agentId: "AGENT-1" })).toEqual([]);
+    expect(await store.findKnowledge(scopeB, { text: term })).toEqual([]);
+  });
+
+  it("agrees with SurrealDB Unicode lowercase for literal retrieval", async () => {
+    const examples = [
+      { id: "dotted-i", text: "İSTANBUL migration", query: "İSTANBUL" },
+      { id: "final-sigma", text: "ΟΣ", query: "ΟΣ" },
+      { id: "capital-sharp-s", text: "ẞtraße", query: "ẞtraße" },
+      { id: "kelvin", text: "Kelvin", query: "Kelvin" },
+      { id: "deseret", text: "𐐀𐐁𐐂", query: "𐐀𐐁𐐂" },
+      { id: "accent", text: "Résumé", query: "RÉSUMÉ" },
+    ] as const;
+    for (const example of examples) {
+      await store.recordMemory(memory(scopeA, `unicode-${example.id}`, example.text));
+      const term = knowledgeCompatibilitySearchTerm(example.query);
+      expect((await store.findKnowledge(scopeA, { text: term })).map((hit) => hit.id))
+        .toEqual([`unicode-${example.id}`]);
+    }
+    expect(await store.findKnowledge(scopeA, { text: "οσ" })).toEqual([]);
+    expect(await store.findKnowledge(scopeA, { text: "resume" })).toEqual([]);
+    expect(await store.findKnowledge(scopeA, { text: "sstrasse" })).toEqual([]);
+  });
+
+  it("rejects a search row whose persisted identity disagrees with its scoped record ID", async () => {
+    const input = memory(scopeA, "tampered-search", "approval checkpoint");
+    await store.recordMemory(input);
+    await db.query("UPDATE $record SET external_id = 'rewritten'", {
+      record: record(scopeA, "knowledge_memory", input.id),
+    });
+    await expect(store.findKnowledge(scopeA, { text: "approval" }))
+      .rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
   });
 
   it("rejects invalid search limits and blank queries instead of broadening the search", async () => {
@@ -237,6 +298,15 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     const current = decision(scopeA, "decision-current", "task-decision", "Use blue green deployment");
     await store.recordDecision(old);
     await store.recordDecision(current);
+    expect((await store.findKnowledge(scopeA, { text: "deployment" })).map((hit) => hit.id))
+      .toEqual([current.id, old.id]);
+    for (const foreignScope of [scopeSameTenantOtherProject, scopeB]) {
+      await store.recordDecision(decision(foreignScope, old.id, old.taskId));
+      await store.recordDecision(decision(foreignScope, current.id, old.taskId));
+      await store.supersedeDecision(foreignScope, current.id, old.id);
+    }
+    expect((await store.findKnowledge(scopeA, { text: "deployment" })).map((hit) => hit.id))
+      .toEqual([current.id, old.id]);
     await store.supersedeDecision(scopeA, current.id, old.id);
 
     expect((await store.findCurrentDecisions(scopeA, "task-decision")).map((hit) => hit.id)).toEqual([current.id]);

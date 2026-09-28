@@ -18,7 +18,7 @@ export const knowledgeRetrievalLimits = {
   maxGraphResults: 100,
 } as const;
 
-/** The literal search text is supplied by the application caller; only case folding is allowed in an adapter. */
+/** The literal search text is supplied by the application caller; the adapter may lowercase it. */
 export interface KnowledgeSearchQuery {
   readonly text: string;
   readonly limit?: number;
@@ -136,7 +136,8 @@ export interface KnowledgeProvenance {
 
 /**
  * Secondary knowledge persistence; this port does not confer Runtime authority.
- * Search uses one case-insensitive literal substring supplied by the caller,
+ * Search uses one caller-supplied literal substring with default Unicode
+ * lowercasing on both sides (not full Unicode case folding),
  * excludes superseded decisions, and returns at most `limit` hits ordered by
  * creation time descending, then kind and ID ascending. An omitted limit uses
  * the fixed maximum of five. No match returns `[]`;
