@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertKnowledgeScope,
+  assertKnowledgeIdentifier,
   assertKnowledgeSearchQuery,
   knowledgeRetrievalLimits,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
@@ -12,9 +13,26 @@ describe("AgentKnowledgeStore application boundary", () => {
       { tenantId: "", repositoryId: "repo-a" },
       { tenantId: "tenant-a", repositoryId: "" },
       { tenantId: "tenant-a", repositoryId: " " },
+      { tenantId: " tenant-a", repositoryId: "repo-a" },
+      { tenantId: "tenant-a ", repositoryId: "repo-a" },
+      { tenantId: "tenant-a", repositoryId: " repo-a" },
+      { tenantId: "tenant-a", repositoryId: "repo-a " },
+      { tenantId: "tenant-a", repositoryId: "repo-a".repeat(60) },
+      { tenantId: "tenant-a".repeat(60), repositoryId: "repo-a" },
+      { tenantId: 7, repositoryId: "repo-a" },
+      { tenantId: "tenant-a", repositoryId: 7 },
     ]) {
-      expect(() => assertKnowledgeScope(scope)).toThrow(
+      expect(() => assertKnowledgeScope(scope as never)).toThrow(
         expect.objectContaining({ code: "KNOWLEDGE_INVALID_SCOPE" }),
+      );
+    }
+  });
+
+  it("requires canonical bounded identifiers before query construction", () => {
+    expect(() => assertKnowledgeIdentifier("task-a")).not.toThrow();
+    for (const id of ["", " ", " task-a", "task-a ", "x".repeat(257), 42, null, {}]) {
+      expect(() => assertKnowledgeIdentifier(id)).toThrow(
+        expect.objectContaining({ code: "KNOWLEDGE_INVALID_QUERY" }),
       );
     }
   });

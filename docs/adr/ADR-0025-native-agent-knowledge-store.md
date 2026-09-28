@@ -22,9 +22,10 @@ l'adapter di persistenza quando la conoscenza è abilitata esplicitamente. Ogni
 operazione riceve dal Runtime una scope fidata con tenant e `repositoryId`
 portabile; né un modello né il percorso del checkout possono scegliere una
 scope alternativa. Le letture sono limitate, ordinate in modo deterministico e
-con provenienza verificabile. Assenza di risultati, backend non disponibile,
-configurazione invalida, errore di query e risultato malformato restano stati
-distinguibili.
+con provenienza verificabile. Assenza di risultati, errore di query e risultato
+malformato restano stati distinguibili. AK-01 classifica gli errori di query
+senza esporre dettagli del backend; le categorie dedicate a indisponibilità e
+configurazione invalida restano riservate alla futura composizione del Runtime.
 
 SQLite e PostgreSQL conservano l'autorità operativa per progetti, task, run,
 pipeline, approvazioni, governance, audit, lock, lease, fencing, coda e outbox.

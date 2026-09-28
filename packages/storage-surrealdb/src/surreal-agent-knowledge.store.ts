@@ -1,9 +1,11 @@
 import {
   KnowledgeStoreError,
+  assertKnowledgeIdentifier,
   assertKnowledgeLimit,
   assertKnowledgeScope,
   assertKnowledgeSearchQuery,
   knowledgeRetrievalLimits,
+  isKnowledgeIdentifier,
   type AgentKnowledgeStore,
   type DecisionInput,
   type KnowledgeHit,
@@ -144,6 +146,8 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
 
   async supersedeDecision(scope: KnowledgeScope, currentId: string, priorId: string): Promise<void> {
     assertKnowledgeScope(scope);
+    assertKnowledgeIdentifier(currentId);
+    assertKnowledgeIdentifier(priorId);
     if (currentId === priorId) throw new Error("A decision cannot supersede itself");
     const currentKey = scopedId(scope, "decision", currentId);
     const priorKey = scopedId(scope, "decision", priorId);
@@ -155,7 +159,9 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
 
   async addTaskDependency(scope: KnowledgeScope, taskId: string, dependencyId: string): Promise<void> {
     assertKnowledgeScope(scope);
-    if (!taskId.trim() || !dependencyId.trim() || taskId === dependencyId) throw new Error("Task dependency requires two different task IDs");
+    assertKnowledgeIdentifier(taskId);
+    assertKnowledgeIdentifier(dependencyId);
+    if (taskId === dependencyId) throw new Error("Task dependency requires two different task IDs");
     const taskKey = scopedId(scope, "task", taskId);
     const dependencyKey = scopedId(scope, "task", dependencyId);
     const edgeKey = scopedId(scope, "depends_on", `${taskId}:${dependencyId}`);
@@ -188,58 +194,19 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
 
   async traceMemoryProvenance(scope: KnowledgeScope, memoryId: string): Promise<KnowledgeProvenance | null> {
     assertKnowledgeScope(scope);
-    const memoryKey = scopedId(scope, "memory", memoryId);
-    const edgeScope = "WHERE tenant_id = $tenant AND project_id = $project";
-    const [rows] = await this.db.query<[Row[]]>(
-      `SELECT *,
-         ->(derived_from ${edgeScope})->knowledge_source.* AS source,
-         ->(derived_from ${edgeScope})->knowledge_source->(in_context_of ${edgeScope})->knowledge_run.* AS run,
-         ->(derived_from ${edgeScope})->knowledge_source->(in_context_of ${edgeScope})->knowledge_run->(for_task ${edgeScope})->knowledge_task.* AS task,
-         ->(derived_from ${edgeScope})->knowledge_source->(in_context_of ${edgeScope})->knowledge_run<-(executed ${edgeScope})<-knowledge_agent.* AS agent
-       FROM knowledge_memory
-       WHERE id = type::record('knowledge_memory', $memory_key) AND tenant_id = $tenant AND project_id = $project LIMIT 1`,
-      { memory_key: memoryKey, tenant: scope.tenantId, project: scope.repositoryId },
-    );
-    const row = rows?.[0];
-    if (!row) return null;
-    const source = this.pathNode(row.source, scope);
-    const run = this.pathNode(row.run, scope);
-    const task = this.pathNode(row.task, scope);
-    const agent = this.pathNode(row.agent, scope);
-    if (!source || !run || !task || !agent) return null;
-    if (source.external_id !== row.source_id || source.run_id !== row.run_id || source.task_id !== row.task_id || source.agent_id !== row.agent_id) return null;
-    if (run.external_id !== row.run_id || run.agent_id !== row.agent_id || run.task_id !== row.task_id || task.external_id !== row.task_id || agent.external_id !== row.agent_id) return null;
-    const hit = this.hit(row, "memory", scope);
-    return { knowledge: hit, source: hit.source, runId: hit.runId, taskId: hit.taskId, agentId: hit.agentId };
+    assertKnowledgeIdentifier(memoryId);
+    return this.traceProvenance(scope, "memory", memoryId);
   }
 
   async traceDecisionProvenance(scope: KnowledgeScope, decisionId: string): Promise<KnowledgeProvenance | null> {
     assertKnowledgeScope(scope);
-    const decisionKey = scopedId(scope, "decision", decisionId);
-    const [decisionRows] = await this.db.query<[Row[]]>("SELECT * FROM knowledge_decision WHERE id = type::record('knowledge_decision', $decision_key) AND tenant_id = $tenant AND project_id = $project LIMIT 1", { decision_key: decisionKey, tenant: scope.tenantId, project: scope.repositoryId });
-    const row = decisionRows?.[0];
-    if (!row) return null;
-    const sourceKey = scopedId(scope, "source", String(row.source_id));
-    const runKey = scopedId(scope, "run", String(row.run_id));
-    const taskKey = scopedId(scope, "task", String(row.task_id));
-    const agentKey = scopedId(scope, "agent", String(row.agent_id));
-    const edgeParams = { decision_key: decisionKey, source_key: sourceKey, run_key: runKey, task_key: taskKey, agent_key: agentKey, tenant: scope.tenantId, project: scope.repositoryId };
-    const edges = await Promise.all([
-      this.rows("SELECT id FROM based_on WHERE in = type::record('knowledge_decision', $decision_key) AND out = type::record('knowledge_source', $source_key) AND tenant_id = $tenant AND project_id = $project", edgeParams),
-      this.rows("SELECT id FROM in_context_of WHERE in = type::record('knowledge_source', $source_key) AND out = type::record('knowledge_run', $run_key) AND tenant_id = $tenant AND project_id = $project", edgeParams),
-      this.rows("SELECT id FROM for_task WHERE in = type::record('knowledge_run', $run_key) AND out = type::record('knowledge_task', $task_key) AND tenant_id = $tenant AND project_id = $project", edgeParams),
-      this.rows("SELECT id FROM executed WHERE in = type::record('knowledge_agent', $agent_key) AND out = type::record('knowledge_run', $run_key) AND tenant_id = $tenant AND project_id = $project", edgeParams),
-    ]);
-    if (edges.some((result) => result.length === 0)) return null;
-    const sources = await this.rows("SELECT * FROM knowledge_source WHERE id = type::record('knowledge_source', $source_key) AND tenant_id = $tenant AND project_id = $project LIMIT 1", edgeParams);
-    const source = sources[0];
-    if (!source || source.run_id !== row.run_id || source.task_id !== row.task_id || source.agent_id !== row.agent_id || !(await this.hasContextNodes(scope, row))) return null;
-    const hit = this.hit(row, "decision", scope);
-    return { knowledge: hit, source: hit.source, runId: hit.runId, taskId: hit.taskId, agentId: hit.agentId };
+    assertKnowledgeIdentifier(decisionId);
+    return this.traceProvenance(scope, "decision", decisionId);
   }
 
   async findCurrentDecisions(scope: KnowledgeScope, taskId: string, limit = knowledgeRetrievalLimits.maxGraphResults): Promise<KnowledgeHit[]> {
     assertKnowledgeScope(scope);
+    assertKnowledgeIdentifier(taskId);
     assertKnowledgeLimit(limit, knowledgeRetrievalLimits.maxGraphResults);
     const rows = await this.rows(
       "SELECT * FROM knowledge_decision WHERE tenant_id = $tenant AND project_id = $project AND id IN (SELECT VALUE in FROM affects WHERE out = type::record('knowledge_task', $task_key) AND tenant_id = $tenant AND project_id = $project) AND id NOT IN (SELECT VALUE out FROM supersedes WHERE tenant_id = $tenant AND project_id = $project) ORDER BY created_at DESC, external_id ASC LIMIT $limit",
@@ -250,21 +217,28 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
 
   async listTaskDependencies(scope: KnowledgeScope, taskId: string, limit = knowledgeRetrievalLimits.maxGraphResults): Promise<string[]> {
     assertKnowledgeScope(scope);
+    assertKnowledgeIdentifier(taskId);
     assertKnowledgeLimit(limit, knowledgeRetrievalLimits.maxGraphResults);
-    const rows = await this.rows<string>(
-      "SELECT VALUE out.external_id FROM depends_on WHERE in = type::record('knowledge_task', $task_key) AND tenant_id = $tenant AND project_id = $project ORDER BY out.external_id LIMIT $limit",
+    const rows = await this.rows(
+      "SELECT in, out, tenant_id, project_id, out.tenant_id AS target_tenant_id, out.project_id AS target_project_id, out.external_id AS target_id FROM depends_on WHERE in = type::record('knowledge_task', $task_key) AND tenant_id = $tenant AND project_id = $project ORDER BY out.external_id, out LIMIT $limit",
       { task_key: scopedId(scope, "task", taskId), tenant: scope.tenantId, project: scope.repositoryId, limit },
     );
-    if (!rows.every((id) => typeof id === "string")) {
-      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
-    }
-    return rows;
+    const taskRecord = new RecordId("knowledge_task", scopedId(scope, "task", taskId));
+    return rows.map((row) => {
+      if (!this.inScope(row, scope) || !isKnowledgeIdentifier(row.target_id) ||
+        row.target_tenant_id !== scope.tenantId || row.target_project_id !== scope.repositoryId ||
+        !this.sameRecord(row.in, taskRecord) ||
+        !this.sameRecord(row.out, new RecordId("knowledge_task", scopedId(scope, "task", row.target_id)))) {
+        throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+      }
+      return row.target_id;
+    });
   }
 
   async listAgentKnowledge(scope: KnowledgeScope, agentId: string, limit = knowledgeRetrievalLimits.maxGraphResults): Promise<KnowledgeHit[]> {
     assertKnowledgeScope(scope);
+    assertKnowledgeIdentifier(agentId);
     assertKnowledgeLimit(limit, knowledgeRetrievalLimits.maxGraphResults);
-    if (!agentId.trim()) throw new KnowledgeStoreError("KNOWLEDGE_INVALID_QUERY");
     const params = { tenant: scope.tenantId, project: scope.repositoryId, agent_id: agentId, limit };
     const [memories, decisions] = await Promise.all([
       this.rows("SELECT * FROM knowledge_memory WHERE tenant_id = $tenant AND project_id = $project AND agent_id = $agent_id ORDER BY created_at DESC, external_id ASC LIMIT $limit", params),
@@ -285,25 +259,71 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
     await this.db.query(statement, params);
   }
 
-  private pathNode(value: unknown, scope: KnowledgeScope): Row | null {
-    const nodes = Array.isArray(value) ? value : [value];
-    if (nodes.length !== 1) return null;
-    const node = nodes[0];
-    if (typeof node !== "object" || node === null || Array.isArray(node)) return null;
-    const row = node as Row;
-    return row.tenant_id === scope.tenantId && row.project_id === scope.repositoryId ? row : null;
+  private inScope(value: unknown, scope: KnowledgeScope): value is Row {
+    return typeof value === "object" && value !== null && !Array.isArray(value) &&
+      (value as Row).tenant_id === scope.tenantId && (value as Row).project_id === scope.repositoryId;
   }
 
-  private async hasContextNodes(scope: KnowledgeScope, row: Row): Promise<boolean> {
-    const agentId = String(row.agent_id);
-    const runId = String(row.run_id);
-    const taskId = String(row.task_id);
-    const [agents, runs, tasks] = await Promise.all([
-      this.rows("SELECT external_id FROM knowledge_agent WHERE id = type::record('knowledge_agent', $key) AND tenant_id = $tenant AND project_id = $project LIMIT 1", { key: scopedId(scope, "agent", agentId), tenant: scope.tenantId, project: scope.repositoryId }),
-      this.rows("SELECT external_id, agent_id, task_id FROM knowledge_run WHERE id = type::record('knowledge_run', $key) AND tenant_id = $tenant AND project_id = $project LIMIT 1", { key: scopedId(scope, "run", runId), tenant: scope.tenantId, project: scope.repositoryId }),
-      this.rows("SELECT external_id FROM knowledge_task WHERE id = type::record('knowledge_task', $key) AND tenant_id = $tenant AND project_id = $project LIMIT 1", { key: scopedId(scope, "task", taskId), tenant: scope.tenantId, project: scope.repositoryId }),
+  private sameRecord(value: unknown, expected: RecordId): boolean {
+    return value instanceof RecordId && value.toString() === expected.toString();
+  }
+
+  private async requireNode(scope: KnowledgeScope, kind: string, id: string, fields: Row = {}): Promise<Row> {
+    const record = new RecordId(`knowledge_${kind}`, scopedId(scope, kind, id));
+    const rows = await this.rows(`SELECT * FROM knowledge_${kind} WHERE id = $record LIMIT 2`, { record });
+    const row = rows[0];
+    if (rows.length !== 1 || !this.inScope(row, scope) || row.external_id !== id ||
+      !this.sameRecord(row.id, record) ||
+      Object.entries(fields).some(([field, value]) => row[field] !== value)) {
+      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    }
+    return row;
+  }
+
+  private async requireEdge(scope: KnowledgeScope, table: string, from: RecordId, to: RecordId, direction: "in" | "out" = "in"): Promise<void> {
+    const rows = await this.rows(`SELECT * FROM ${table} WHERE ${direction} = $record LIMIT 2`, { record: direction === "in" ? from : to });
+    const edge = rows[0];
+    if (rows.length !== 1 || !this.inScope(edge, scope) ||
+      !this.sameRecord(edge.in, from) || !this.sameRecord(edge.out, to)) {
+      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    }
+  }
+
+  private async traceProvenance(scope: KnowledgeScope, kind: KnowledgeHit["kind"], id: string): Promise<KnowledgeProvenance | null> {
+    const knowledgeRecord = new RecordId(`knowledge_${kind}`, scopedId(scope, kind, id));
+    const rows = await this.rows(`SELECT * FROM knowledge_${kind} WHERE id = $record LIMIT 2`, { record: knowledgeRecord });
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    if (rows.length !== 1 || !row) throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    const hit = this.hit(row, kind, scope);
+    if (hit.id !== id || !this.sameRecord(row.id, knowledgeRecord)) {
+      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    }
+
+    const sourceRecord = new RecordId("knowledge_source", scopedId(scope, "source", hit.source.id));
+    const runRecord = new RecordId("knowledge_run", scopedId(scope, "run", hit.runId));
+    const taskRecord = new RecordId("knowledge_task", scopedId(scope, "task", hit.taskId));
+    const agentRecord = new RecordId("knowledge_agent", scopedId(scope, "agent", hit.agentId));
+    const [source] = await Promise.all([
+      this.requireNode(scope, "source", hit.source.id, {
+        kind: hit.source.kind, label: hit.source.label,
+        run_id: hit.runId, task_id: hit.taskId, agent_id: hit.agentId,
+      }),
+      this.requireNode(scope, "run", hit.runId, { agent_id: hit.agentId, task_id: hit.taskId }),
+      this.requireNode(scope, "task", hit.taskId),
+      this.requireNode(scope, "agent", hit.agentId),
     ]);
-    return agents[0]?.external_id === agentId && runs[0]?.external_id === runId && runs[0]?.agent_id === agentId && runs[0]?.task_id === taskId && tasks[0]?.external_id === taskId;
+    if ((source.locator ?? "") !== (hit.source.locator ?? "")) {
+      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    }
+    await Promise.all([
+      this.requireEdge(scope, kind === "memory" ? "derived_from" : "based_on", knowledgeRecord, sourceRecord),
+      this.requireEdge(scope, "in_context_of", sourceRecord, runRecord),
+      this.requireEdge(scope, "for_task", runRecord, taskRecord),
+      this.requireEdge(scope, "executed", agentRecord, runRecord, "out"),
+      ...(kind === "decision" ? [this.requireEdge(scope, "affects", knowledgeRecord, taskRecord)] : []),
+    ]);
+    return { knowledge: hit, source: hit.source, runId: hit.runId, taskId: hit.taskId, agentId: hit.agentId };
   }
 
   private async rows<T = Row>(statement: string, params: Record<string, unknown>): Promise<T[]> {
@@ -320,9 +340,9 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
   private hit(row: Row, kind: KnowledgeHit["kind"], scope: KnowledgeScope): KnowledgeHit {
     const fields = ["external_id", "text", "agent_id", "run_id", "task_id", "source_id", "source_label"] as const;
     if (
-      row.tenant_id !== scope.tenantId ||
-      row.project_id !== scope.repositoryId ||
+      !this.inScope(row, scope) ||
       fields.some((field) => typeof row[field] !== "string" || !(row[field] as string).trim()) ||
+      ["external_id", "agent_id", "run_id", "task_id", "source_id"].some((field) => !isKnowledgeIdentifier(row[field])) ||
       !["requirement", "task", "decision", "run", "external"].includes(String(row.source_kind)) ||
       (kind === "decision" && (typeof row.title !== "string" || !row.title.trim())) ||
       (row.source_locator != null && typeof row.source_locator !== "string")

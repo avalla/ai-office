@@ -13,6 +13,7 @@ export interface KnowledgeScope {
 /** Fixed Runtime retrieval bounds; adapters may use smaller internal batches. */
 export const knowledgeRetrievalLimits = {
   queryCharacters: 200,
+  identifierCharacters: 256,
   maxResults: 5,
   maxGraphResults: 100,
 } as const;
@@ -46,12 +47,24 @@ export function assertKnowledgeScope(scope: KnowledgeScope): void {
     typeof scope.tenantId !== "string" ||
     scope.tenantId.trim() !== scope.tenantId ||
     scope.tenantId.length === 0 ||
-    scope.tenantId.length > 256 ||
+    scope.tenantId.length > knowledgeRetrievalLimits.identifierCharacters ||
     typeof scope.repositoryId !== "string" ||
-    scope.repositoryId.trim().length === 0 ||
-    scope.repositoryId.length > 256
+    scope.repositoryId.trim() !== scope.repositoryId ||
+    scope.repositoryId.length === 0 ||
+    scope.repositoryId.length > knowledgeRetrievalLimits.identifierCharacters
   ) {
     throw new KnowledgeStoreError("KNOWLEDGE_INVALID_SCOPE");
+  }
+}
+
+export function isKnowledgeIdentifier(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    value.length <= knowledgeRetrievalLimits.identifierCharacters && value.trim() === value;
+}
+
+export function assertKnowledgeIdentifier(value: unknown): asserts value is string {
+  if (!isKnowledgeIdentifier(value)) {
+    throw new KnowledgeStoreError("KNOWLEDGE_INVALID_QUERY");
   }
 }
 
@@ -66,11 +79,7 @@ export function assertKnowledgeSearchQuery(query: KnowledgeSearchQuery): void {
       (!Number.isInteger(query.limit) ||
         query.limit < 1 ||
         query.limit > knowledgeRetrievalLimits.maxResults)) ||
-    (query.agentId !== undefined &&
-      (typeof query.agentId !== "string" ||
-        query.agentId.trim() !== query.agentId ||
-        query.agentId.length === 0 ||
-        query.agentId.length > 256))
+    (query.agentId !== undefined && !isKnowledgeIdentifier(query.agentId))
   ) {
     throw new KnowledgeStoreError("KNOWLEDGE_INVALID_QUERY");
   }
@@ -143,6 +152,7 @@ export interface AgentKnowledgeStore {
     scope: KnowledgeScope,
     query: KnowledgeSearchQuery,
   ): Promise<KnowledgeHit[]>;
+  /** Null means the scoped record is absent; malformed persisted provenance throws KNOWLEDGE_INVALID_RESULT. */
   traceMemoryProvenance(scope: KnowledgeScope, memoryId: string): Promise<KnowledgeProvenance | null>;
   traceDecisionProvenance(scope: KnowledgeScope, decisionId: string): Promise<KnowledgeProvenance | null>;
   findCurrentDecisions(scope: KnowledgeScope, taskId: string, limit?: number): Promise<KnowledgeHit[]>;
