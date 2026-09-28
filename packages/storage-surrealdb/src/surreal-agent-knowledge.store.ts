@@ -341,9 +341,11 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
 
   private async rows<T = Row>(statement: string, params: Record<string, unknown>): Promise<T[]> {
     try {
-      const [rows] = await this.db.query<[T[]]>(statement, params);
-      if (!Array.isArray(rows)) throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
-      return rows;
+      const response: unknown = await this.db.query<[T[]]>(statement, params);
+      if (!Array.isArray(response) || response.length !== 1 || !Array.isArray(response[0])) {
+        throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+      }
+      return response[0] as T[];
     } catch (error) {
       if (error instanceof KnowledgeStoreError) throw error;
       throw new KnowledgeStoreError("KNOWLEDGE_QUERY_FAILED");
