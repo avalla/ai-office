@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { RunExecutionControl } from "@ai-office/application/runtime/run-execution-control.ts";
 import type { AgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
+import type { RuntimeAgentKnowledge } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
@@ -75,6 +76,7 @@ export class ApplicationRuntime implements AiOfficeRuntime {
       file?: string;
     },
     private readonly projectStorage?: ProjectStorage,
+    private readonly agentKnowledge?: RuntimeAgentKnowledge,
   ) {}
 
   private async executeCommand(
@@ -124,6 +126,9 @@ export class ApplicationRuntime implements AiOfficeRuntime {
         ...(this.projectMemory === undefined
           ? {}
           : { projectMemory: this.projectMemory }),
+        ...(this.agentKnowledge === undefined
+          ? {}
+          : { agentKnowledge: this.agentKnowledge }),
         ...(this.modelRouting === undefined
           ? {}
           : {

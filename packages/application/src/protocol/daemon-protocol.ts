@@ -31,6 +31,11 @@ export interface DaemonHealthResponse {
   protocolVersion: typeof daemonProtocolVersion;
   status: "ok";
   startedAt: string;
+  /** Connection result observed at Runtime startup; this is not a live probe. */
+  knowledge?: {
+    provider: "none" | "surrealdb" | "unknown";
+    startup: "disabled" | "misconfigured" | "connected" | "unavailable";
+  };
   queue?: {
     provider: "disabled" | "configured" | "misconfigured";
     redis: "reachable" | "unreachable" | "not_checked";

@@ -2,10 +2,35 @@
 
 AK-01 defines `AgentKnowledgeStore` as a secondary, non-authoritative
 application port. AK-02 implements its SurrealDB read behavior and the
-CairnKeep-compatible search term. The Runtime still uses the optional,
-read-only CairnKeep provider for worker context; AK-03 and AK-04 own composition
-and cutover. SurrealDB does not store project, task, run, approval, or audit
-authority.
+CairnKeep-compatible search term. AK-03 composes it independently into the
+Runtime when explicitly enabled. The Runtime still uses the optional,
+read-only CairnKeep provider for worker context; AK-04 owns that cutover.
+SurrealDB does not store project, task, run, approval, or audit authority.
+
+## Runtime composition (AK-03)
+
+The host reads `AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER` once at bootstrap. Unset,
+empty, or `none` disables native knowledge. `surrealdb` requires these host-only
+values: `AI_OFFICE_SURREALDB_URL` (`ws://` for loopback only or `wss://`),
+`AI_OFFICE_SURREALDB_NAMESPACE`, `AI_OFFICE_SURREALDB_DATABASE`,
+`AI_OFFICE_SURREALDB_USERNAME`, and `AI_OFFICE_SURREALDB_PASSWORD`. Namespace
+and database are simple identifiers. A SQLite Runtime additionally requires
+`AI_OFFICE_AGENT_KNOWLEDGE_TENANT_ID`; a PostgreSQL Runtime binds knowledge to
+its trusted storage tenant instead. The portable `repositoryId` will be added
+by the application caller in AK-04, never inferred from a checkout path.
+
+Configuration remains outside project state, snapshots, generated Markdown,
+and SQLite/PostgreSQL authority. The foreground host must receive these
+environment variables when it starts; generated managed-service definitions
+do not carry them. Credentials and endpoint values are never returned in
+health or errors. The host has a five-second connection deadline; invalid
+configuration or a failed connection leaves the authoritative Runtime running
+without a knowledge store. A late connection is closed. The connected store is
+closed when the host stops. `/health` reports `knowledge.provider` and
+`knowledge.startup` (`disabled`, `misconfigured`, `connected`, or `unavailable`)
+as the **startup observation**, not a live database probe. Restart to retry
+after a failure or configuration change. AK-03 does not read or write knowledge
+for workers, expose a mutation command, or change CairnKeep retrieval.
 
 ## Retrieval contract
 

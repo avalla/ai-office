@@ -644,7 +644,7 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: in progress, AK-02 retrieval slice. This is a separate, sequential
+Status: in progress, AK-03 Runtime composition slice pending review. This is a separate, sequential
 migration milestone; M7.11 remains the description of the currently deployed
 CairnKeep retrieval path until AK-04 cuts it over. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
@@ -668,8 +668,9 @@ dual-source layer is included.
 
 AK-02 shares the existing CairnKeep literal-term selector with the application
 boundary and verifies SurrealDB's bounded, scoped, deterministic search. The
-adapter remains uncomposed with the Runtime until AK-03, and worker retrieval
-continues through CairnKeep until AK-04. See
+AK-03 branch adds an explicitly configured SurrealDB connection to Runtime
+bootstrap with bounded startup, sanitized diagnostics, and owned shutdown.
+Worker retrieval continues through CairnKeep until AK-04. See
 [native agent knowledge retrieval](agent-knowledge.md).
 
 ## M7.12 — Agent model routing

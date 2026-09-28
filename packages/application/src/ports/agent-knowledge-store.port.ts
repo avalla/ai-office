@@ -161,3 +161,14 @@ export interface AgentKnowledgeStore {
   listAgentKnowledge(scope: KnowledgeScope, agentId: string, limit?: number): Promise<KnowledgeHit[]>;
   deleteProjectKnowledge(scope: KnowledgeScope): Promise<void>;
 }
+
+/** Trusted Runtime composition binds tenant identity before a use case supplies repositoryId. */
+export type RuntimeAgentKnowledge =
+  | { readonly state: "disabled" }
+  | { readonly state: "misconfigured"; readonly error: KnowledgeStoreError }
+  | { readonly state: "unavailable"; readonly error: KnowledgeStoreError }
+  | {
+      readonly state: "connected";
+      readonly tenantId: string;
+      readonly store: AgentKnowledgeStore;
+    };
