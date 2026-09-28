@@ -625,25 +625,11 @@ evaluation, trajectory or skill system. `global.sqlite` is unchanged. See
 
 ### Follow-up — Reviewed project memory promotion
 
-Status: future.
-
-Durable memory promotion must be explicit and review-gated:
-
-```text
-AgentRun outcome
-       ↓
-memory candidate (AI Office state, provenance-linked to the run)
-       ↓
-AI Office review / approval
-       ↓
-CairnKeep reviewed-memory proposal/apply
-```
-
-This needs its own write port, candidate model, approval semantics distinct from
-governance reviews, pipeline approvals and controlled-action approvals, and
-poisoning, retention and conflict policy. The read-only retrieval port is not
-widened for it. Later M8.5 context assembly may add semantic retrieval,
-dependency-aware selection and dashboard provenance on the same assembler seam.
+Status: superseded as a CairnKeep write plan by the Native Agent Knowledge
+milestone below. AK-05 will determine the admission and review policy for new
+knowledge through `AgentKnowledgeStore`; no CairnKeep write-back is planned.
+The current read-only CairnKeep path remains unchanged until the retrieval
+cutover. Semantic retrieval and dashboard provenance remain separate work.
 
 ### Separate follow-up — Project retention and removal
 
@@ -655,6 +641,30 @@ of runtime isolation. `runtime:purge` is still whole-runtime removal and project
 uninstall still preserves authority. The existing `governance_event` cascade
 and append-only delete guard must be reconciled with the chosen retention policy
 before supporting deletion; do not bypass the guard as a cleanup shortcut.
+
+## Native Agent Knowledge & CairnKeep Retirement
+
+Status: in progress, AK-01 contract slice. This is a separate, sequential
+migration milestone; M7.11 remains the description of the currently deployed
+CairnKeep retrieval path until AK-04 cuts it over. See
+[ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
+
+| Slice | Scope | Depends on |
+| --- | --- | --- |
+| AK-01 | Canonical, bounded `AgentKnowledgeStore` contract and trusted portable scope | SurrealDB evaluation PRs #64–#66 |
+| AK-02 | SurrealDB retrieval parity and compatibility term | AK-01 merged |
+| AK-03 | Explicit, independent Runtime knowledge composition | AK-02 merged |
+| AK-04 | `RunContextAssembler` cutover and run provenance | AK-03 merged |
+| AK-05 | Governed knowledge admission with immutable provenance | AK-04 merged |
+| AK-06 | Explicit, idempotent CairnKeep named-scope import | AK-05 merged |
+| AK-07 | CairnKeep deprecation in guidance and setup | AK-06 merged |
+| AK-08 | CairnKeep implementation removal and final docs | AK-07 merged |
+
+Each slice is one reviewed PR. Completion requires proven retrieval, writes,
+legacy-data disposition, failure behavior, documentation, and operational
+coherence. SQLite/PostgreSQL remain the only operational authority; SurrealDB
+is knowledge storage only. No vector search, RAG redesign, or permanent
+dual-source layer is included.
 
 ## M7.12 — Agent model routing
 

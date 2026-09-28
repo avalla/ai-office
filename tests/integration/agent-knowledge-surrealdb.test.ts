@@ -4,9 +4,9 @@ import { connectSurrealAgentKnowledgeStore } from "../../packages/storage-surrea
 
 const endpoint = process.env.AI_OFFICE_TEST_SURREALDB_URL;
 const enabled = Boolean(endpoint);
-const scopeA = { tenantId: "tenant-a", projectId: "project-a" } satisfies KnowledgeScope;
-const scopeSameTenantOtherProject = { tenantId: "tenant-a", projectId: "project-b" } satisfies KnowledgeScope;
-const scopeB = { tenantId: "tenant-b", projectId: "project-b" } satisfies KnowledgeScope;
+const scopeA = { tenantId: "tenant-a", repositoryId: "repo-a" } satisfies KnowledgeScope;
+const scopeSameTenantOtherProject = { tenantId: "tenant-a", repositoryId: "repo-b" } satisfies KnowledgeScope;
+const scopeB = { tenantId: "tenant-b", repositoryId: "repo-b" } satisfies KnowledgeScope;
 let closeStore: () => Promise<void>;
 let store: Awaited<ReturnType<typeof connectSurrealAgentKnowledgeStore>>["store"];
 
@@ -66,6 +66,28 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     expect(hits[0]).toMatchObject({ id: input.id, kind: "memory", source: input.source, agentId: input.agentId });
   });
 
+  it("bounds and orders scoped search with stable ties", async () => {
+    for (const id of ["z", "b", "a", "c", "d", "e"]) {
+      await store.recordMemory(memory(scopeA, `ordered-${id}`, "approval checkpoint"));
+    }
+    await store.recordDecision(decision(scopeA, "decision-ordered", "task-ordered", "approval checkpoint"));
+    const hits = await store.findKnowledge(scopeA, { text: "approval", limit: 3 });
+    expect(hits.map((hit) => [hit.kind, hit.id])).toEqual([
+      ["decision", "decision-ordered"],
+      ["memory", "ordered-a"],
+      ["memory", "ordered-b"],
+    ]);
+    expect(hits.every((hit) => hit.tenantId === scopeA.tenantId && hit.repositoryId === scopeA.repositoryId)).toBe(true);
+    expect(await store.findKnowledge(scopeSameTenantOtherProject, { text: "approval" })).toEqual([]);
+    expect(await store.findKnowledge(scopeB, { text: "approval" })).toEqual([]);
+  });
+
+  it("rejects invalid search limits and blank queries instead of broadening the search", async () => {
+    await expect(store.findKnowledge(scopeA, { text: "approval", limit: 6 })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+    await expect(store.findKnowledge(scopeA, { text: "" })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+    await expect(store.findKnowledge(scopeA, { text: "approval", agentId: " " })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+  });
+
   it("rejects a knowledge ID rewrite with conflicting provenance and keeps the original record", async () => {
     const original = memory(scopeA, "memory-immutable");
     await store.recordMemory(original);
@@ -93,8 +115,8 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
   it("rejects incomplete provenance before writing", async () => {
     const input = memory(scopeA, "memory-incomplete");
     await expect(store.recordMemory({ ...input, runId: " " })).rejects.toThrow(/provenance runId/);
-    await expect(store.recordMemory({ ...input, tenantId: " " })).rejects.toThrow(/explicit tenant and project/);
-    await expect(store.findKnowledge({ tenantId: " ", projectId: scopeA.projectId }, { text: "approval" })).rejects.toThrow(/explicit tenant and project/);
+    await expect(store.recordMemory({ ...input, tenantId: " " })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_SCOPE" });
+    await expect(store.findKnowledge({ tenantId: " ", repositoryId: scopeA.repositoryId }, { text: "approval" })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_SCOPE" });
     expect(await store.findKnowledge(scopeA, { text: "approval" })).toEqual([]);
   });
 
