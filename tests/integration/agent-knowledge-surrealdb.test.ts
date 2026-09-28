@@ -1,14 +1,24 @@
 import type { DecisionInput, KnowledgeScope, MemoryInput } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { RecordId, Surreal } from "../../packages/storage-surrealdb/node_modules/surrealdb";
 import { connectSurrealAgentKnowledgeStore } from "../../packages/storage-surrealdb/src/connect-agent-knowledge-store.ts";
 
 const endpoint = process.env.AI_OFFICE_TEST_SURREALDB_URL;
 const enabled = Boolean(endpoint);
-const scopeA = { tenantId: "tenant-a", projectId: "project-a" } satisfies KnowledgeScope;
-const scopeSameTenantOtherProject = { tenantId: "tenant-a", projectId: "project-b" } satisfies KnowledgeScope;
-const scopeB = { tenantId: "tenant-b", projectId: "project-b" } satisfies KnowledgeScope;
+const scopeA = { tenantId: "tenant-a", repositoryId: "repo-a" } satisfies KnowledgeScope;
+const scopeSameTenantOtherProject = { tenantId: "tenant-a", repositoryId: "repo-b" } satisfies KnowledgeScope;
+const scopeB = { tenantId: "tenant-b", repositoryId: "repo-b" } satisfies KnowledgeScope;
 let closeStore: () => Promise<void>;
 let store: Awaited<ReturnType<typeof connectSurrealAgentKnowledgeStore>>["store"];
+let db: Surreal;
+
+function record(scope: KnowledgeScope, kind: string, id: string): RecordId {
+  return new RecordId(kind, encodeURIComponent(JSON.stringify([scope.tenantId, scope.repositoryId, kind.replace(/^knowledge_/, ""), id])));
+}
+
+function provenanceEdge(scope: KnowledgeScope, edge: "derived_from" | "based_on", kind: "memory" | "decision", id: string): RecordId {
+  return new RecordId(edge, encodeURIComponent(JSON.stringify([scope.tenantId, scope.repositoryId, kind, id])));
+}
 
 function memory(scope: KnowledgeScope, id: string, text = "The deploy requires approval"): MemoryInput {
   return {
@@ -44,6 +54,10 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     closeStore = connection.close;
     const secondConnection = await connectSurrealAgentKnowledgeStore({ endpoint: endpoint!, namespace: "ai_office_test", database: "agent_knowledge", username: "root", password: "root" });
     await secondConnection.close();
+    db = new Surreal();
+    await db.connect(endpoint!);
+    await db.signin({ username: "root", password: "root" });
+    await db.use({ namespace: "ai_office_test", database: "agent_knowledge" });
   });
 
   afterEach(async () => {
@@ -54,6 +68,90 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
 
   afterAll(async () => {
     await closeStore?.();
+    await db?.close();
+  });
+
+  it("rejects blank, padded, oversized, and runtime-invalid retrieval IDs", async () => {
+    const calls = [
+      (id: string) => store.traceMemoryProvenance(scopeA, id),
+      (id: string) => store.traceDecisionProvenance(scopeA, id),
+      (id: string) => store.findCurrentDecisions(scopeA, id),
+      (id: string) => store.listTaskDependencies(scopeA, id),
+      (id: string) => store.listAgentKnowledge(scopeA, id),
+    ];
+    for (const call of calls) {
+      for (const id of ["", " ", " padded", "padded ", "x".repeat(257), 17, null]) {
+        await expect(call(id as string)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+      }
+    }
+    for (const id of ["", " padded", "x".repeat(257), 17]) {
+      await expect(store.supersedeDecision(scopeA, id as string, "prior")).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+      await expect(store.addTaskDependency(scopeA, "task", id as string)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+    }
+  });
+
+  it("distinguishes absent knowledge from malformed persisted base rows", async () => {
+    expect(await store.traceMemoryProvenance(scopeA, "missing-memory")).toBeNull();
+    expect(await store.traceDecisionProvenance(scopeA, "missing-decision")).toBeNull();
+    const m = memory(scopeA, "malformed-memory");
+    const d = decision(scopeA, "malformed-decision", "task-malformed");
+    await store.recordMemory(m);
+    await store.recordDecision(d);
+    await db.query("UPDATE $record SET source_id = 'wrong-source'", { record: record(scopeA, "knowledge_memory", m.id) });
+    await db.query("UPDATE $record SET source_id = 'wrong-source'", { record: record(scopeA, "knowledge_decision", d.id) });
+    await expect(store.traceMemoryProvenance(scopeA, m.id)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+    await expect(store.traceDecisionProvenance(scopeA, d.id)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+  });
+
+  it("rejects missing, cross-scope, and ambiguous provenance relations", async () => {
+    const m = memory(scopeA, "graph-memory");
+    const d = decision(scopeA, "graph-decision", "graph-task");
+    await store.recordMemory(m);
+    await store.recordDecision(d);
+    expect(await store.traceMemoryProvenance(scopeA, m.id)).toMatchObject({ runId: m.runId });
+    expect(await store.traceDecisionProvenance(scopeA, d.id)).toMatchObject({ runId: d.runId });
+
+    const memoryEdge = provenanceEdge(scopeA, "derived_from", "memory", m.id);
+    const decisionEdge = provenanceEdge(scopeA, "based_on", "decision", d.id);
+    await db.query("DELETE FROM derived_from WHERE id = $record", { record: memoryEdge });
+    await db.query("DELETE FROM based_on WHERE id = $record", { record: decisionEdge });
+    await expect(store.traceMemoryProvenance(scopeA, m.id)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+    await expect(store.traceDecisionProvenance(scopeA, d.id)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+
+    await store.recordMemory(m);
+    await store.recordDecision(d);
+    await db.query("UPDATE $record SET tenant_id = 'tenant-b'", { record: memoryEdge });
+    await db.query("UPDATE $record SET tenant_id = 'tenant-b'", { record: decisionEdge });
+    await expect(store.traceMemoryProvenance(scopeA, m.id)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+    await expect(store.traceDecisionProvenance(scopeA, d.id)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+    await db.query("UPDATE $record SET tenant_id = 'tenant-a'", { record: memoryEdge });
+    await db.query("UPDATE $record SET tenant_id = 'tenant-a'", { record: decisionEdge });
+
+    const other = memory(scopeA, "graph-other");
+    await store.recordMemory(other);
+    await db.query("RELATE $from->derived_from->$to SET tenant_id = $tenant, project_id = $project", {
+      from: record(scopeA, "knowledge_memory", m.id), to: record(scopeA, "knowledge_source", other.source.id),
+      tenant: scopeA.tenantId, project: scopeA.repositoryId,
+    });
+    await expect(store.traceMemoryProvenance(scopeA, m.id)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+  });
+
+  it("rejects cross-scope provenance nodes and dependency targets", async () => {
+    const m = memory(scopeA, "cross-node-memory");
+    await store.recordMemory(m);
+    const source = record(scopeA, "knowledge_source", m.source.id);
+    await db.query("UPDATE $record SET project_id = 'repo-b'", { record: source });
+    await expect(store.traceMemoryProvenance(scopeA, m.id)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+    await db.query("UPDATE $record SET project_id = 'repo-a'", { record: source });
+
+    await store.addTaskDependency(scopeA, "local-child", "local-parent");
+    await store.addTaskDependency(scopeB, "foreign-child", "foreign-parent");
+    await db.query("RELATE $from->depends_on->$to SET tenant_id = $tenant, project_id = $project", {
+      from: record(scopeA, "knowledge_task", "local-child"),
+      to: record(scopeB, "knowledge_task", "foreign-parent"),
+      tenant: scopeA.tenantId, project: scopeA.repositoryId,
+    });
+    await expect(store.listTaskDependencies(scopeA, "local-child")).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
   });
 
   it("initializes the versioned schema repeatedly and records idempotent provenance-backed memory", async () => {
@@ -64,6 +162,28 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     const hits = await store.findKnowledge(scopeA, { text: "approval" });
     expect(hits).toHaveLength(1);
     expect(hits[0]).toMatchObject({ id: input.id, kind: "memory", source: input.source, agentId: input.agentId });
+  });
+
+  it("bounds and orders scoped search with stable ties", async () => {
+    for (const id of ["z", "b", "a", "c", "d", "e"]) {
+      await store.recordMemory(memory(scopeA, `ordered-${id}`, "approval checkpoint"));
+    }
+    await store.recordDecision(decision(scopeA, "decision-ordered", "task-ordered", "approval checkpoint"));
+    const hits = await store.findKnowledge(scopeA, { text: "approval", limit: 3 });
+    expect(hits.map((hit) => [hit.kind, hit.id])).toEqual([
+      ["decision", "decision-ordered"],
+      ["memory", "ordered-a"],
+      ["memory", "ordered-b"],
+    ]);
+    expect(hits.every((hit) => hit.tenantId === scopeA.tenantId && hit.repositoryId === scopeA.repositoryId)).toBe(true);
+    expect(await store.findKnowledge(scopeSameTenantOtherProject, { text: "approval" })).toEqual([]);
+    expect(await store.findKnowledge(scopeB, { text: "approval" })).toEqual([]);
+  });
+
+  it("rejects invalid search limits and blank queries instead of broadening the search", async () => {
+    await expect(store.findKnowledge(scopeA, { text: "approval", limit: 6 })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+    await expect(store.findKnowledge(scopeA, { text: "" })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+    await expect(store.findKnowledge(scopeA, { text: "approval", agentId: " " })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
   });
 
   it("rejects a knowledge ID rewrite with conflicting provenance and keeps the original record", async () => {
@@ -93,8 +213,8 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
   it("rejects incomplete provenance before writing", async () => {
     const input = memory(scopeA, "memory-incomplete");
     await expect(store.recordMemory({ ...input, runId: " " })).rejects.toThrow(/provenance runId/);
-    await expect(store.recordMemory({ ...input, tenantId: " " })).rejects.toThrow(/explicit tenant and project/);
-    await expect(store.findKnowledge({ tenantId: " ", projectId: scopeA.projectId }, { text: "approval" })).rejects.toThrow(/explicit tenant and project/);
+    await expect(store.recordMemory({ ...input, tenantId: " " })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_SCOPE" });
+    await expect(store.findKnowledge({ tenantId: " ", repositoryId: scopeA.repositoryId }, { text: "approval" })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_SCOPE" });
     expect(await store.findKnowledge(scopeA, { text: "approval" })).toEqual([]);
   });
 
