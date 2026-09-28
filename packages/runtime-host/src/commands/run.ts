@@ -319,8 +319,8 @@ export async function handleRunCommand(
               ...(context.memory === undefined
                 ? {}
                 : { globalMemory: context.memory }),
-              projectMemory: {
-                provider: context.projectMemory,
+              agentKnowledge: {
+                state: context.agentKnowledge ?? { state: "disabled" },
                 identities: context.repositoryIdentities,
                 provenance: context.projectMemoryProvenance,
               },
@@ -542,7 +542,7 @@ export async function handleRunCommand(
     );
     if (retrieval !== null) {
       io.stdout(
-        `Project memory: ${retrieval.outcome}${retrieval.errorCode === null ? "" : ` (${retrieval.errorCode})`} via ${retrieval.provider}; ${retrieval.injectedCount}/${retrieval.resultCount} injected; advisory context, not authority`,
+        `${retrieval.provider === "surrealdb" ? "Agent knowledge" : "Project memory"}: ${retrieval.outcome}${retrieval.errorCode === null ? "" : ` (${retrieval.errorCode})`} via ${retrieval.provider}; ${retrieval.injectedCount}/${retrieval.resultCount} injected; advisory context, not authority`,
       );
       if (retrieval.contextQuerySha256 !== null)
         io.stdout(

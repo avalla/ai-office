@@ -1,9 +1,17 @@
 # Optional project memory (CairnKeep)
 
-AI Office can read durable, **non-authoritative** project memory from an
-external provider and give a worker bounded excerpts as advisory context. The
-first provider is [CairnKeep](https://github.com/cairnkeep/cairnkeep). The
-feature is disabled by default and read-only. See
+This page describes the historical CairnKeep worker retrieval path and the
+still available `project-memory:status` diagnostic. Since AK-04, worker runs
+retrieve from a connected native `AgentKnowledgeStore` instead. See
+[native agent knowledge](agent-knowledge.md). Existing CairnKeep retrieval
+records remain readable; the import of named-scope data is planned for AK-06.
+The diagnostic's last retrieval includes its actual provider, which may be
+`surrealdb` after the cutover even when CairnKeep remains configured for probes.
+
+Before AK-04, AI Office read durable, **non-authoritative** project memory from
+an external provider and gave a worker bounded excerpts as advisory context.
+That provider was [CairnKeep](https://github.com/cairnkeep/cairnkeep). The
+legacy integration is disabled by default and read-only. See
 [ADR-0018](../adr/ADR-0018-optional-non-authoritative-project-memory-provider.md).
 
 > CairnKeep remembers. AI Office decides.

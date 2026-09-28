@@ -1,0 +1,241 @@
+import { createHash } from "node:crypto";
+import { describe, expect, test, vi } from "vitest";
+import { RunContextAssembler } from "@ai-office/application/context/run-context-assembler.ts";
+import {
+  KnowledgeStoreError,
+  type AgentKnowledgeStore,
+  type KnowledgeHit,
+  type RuntimeAgentKnowledge,
+} from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import type { ProjectMemoryRetrievalRecord } from "@ai-office/application/ports/project-memory-provenance-repository.port.ts";
+
+const input = {
+  runId: "run-1",
+  projectId: "project-1",
+  taskTitle: "Refactor the authentication middleware",
+  taskDescription: null,
+  roleKey: "developer",
+  stageObjective: null,
+};
+const digest = (value: string) =>
+  createHash("sha256").update(value, "utf8").digest("hex");
+const hit: KnowledgeHit = {
+  tenantId: "tenant-a",
+  repositoryId: "repo-1",
+  id: "decision-1",
+  kind: "decision",
+  text: "Authentication middleware should verify every request.",
+  title: "Authentication policy",
+  agentId: "agent-1",
+  runId: "source-run",
+  taskId: "source-task",
+  source: { id: "source-task", kind: "task", label: "Original task" },
+  createdAt: new Date("2026-09-28T00:00:00.000Z"),
+};
+
+function fixture(state: RuntimeAgentKnowledge) {
+  const records: ProjectMemoryRetrievalRecord[] = [];
+  const findRepositoryId = vi.fn<() => Promise<string | null>>(
+    async () => "repo-1",
+  );
+  const recordRetrieval = vi.fn(
+    async (record: ProjectMemoryRetrievalRecord) => {
+      records.push(record);
+    },
+  );
+  const findRetrieval = vi.fn(
+    async (): Promise<ProjectMemoryRetrievalRecord | null> => null,
+  );
+  const assembler = new RunContextAssembler({
+    clock: { now: () => new Date("2026-09-28T01:00:00.000Z") },
+    agentKnowledge: {
+      state,
+      identities: {
+        findRepositoryId,
+        findProjectId: async () => null,
+        associate: async () => "created",
+      },
+      provenance: {
+        recordRetrieval,
+        findRetrieval,
+        findLatestRetrieval: async () => null,
+      },
+    },
+  });
+  return {
+    assembler,
+    records,
+    findRepositoryId,
+    recordRetrieval,
+    findRetrieval,
+  };
+}
+
+function connected(
+  findKnowledge: AgentKnowledgeStore["findKnowledge"],
+): RuntimeAgentKnowledge {
+  return {
+    state: "connected",
+    tenantId: "tenant-a",
+    store: { findKnowledge } as AgentKnowledgeStore,
+  };
+}
+
+describe("native knowledge run context", () => {
+  test("disabled knowledge does not search or record provenance", async () => {
+    const f = fixture({ state: "disabled" });
+    expect(await f.assembler.assemble(input)).toEqual({ memory: [] });
+    expect(f.findRepositoryId).not.toHaveBeenCalled();
+    expect(f.recordRetrieval).not.toHaveBeenCalled();
+  });
+
+  test("uses trusted tenant and portable repository scope, then records exact query and bounded references", async () => {
+    const findKnowledge = vi.fn(async () => [hit]);
+    const f = fixture(connected(findKnowledge));
+    const result = await f.assembler.assemble(input);
+    expect(findKnowledge).toHaveBeenCalledWith(
+      { tenantId: "tenant-a", repositoryId: "repo-1" },
+      { text: "authentication", limit: 5 },
+    );
+    expect(result.projectMemory).toMatchObject({
+      provider: "surrealdb",
+      results: [
+        { referenceId: "decision-1", scope: "decision", excerpt: hit.text },
+      ],
+    });
+    expect(f.records).toEqual([
+      expect.objectContaining({
+        provider: "surrealdb",
+        outcome: "retrieved",
+        resultCount: 1,
+        injectedCount: 1,
+        contextQuerySha256: digest(input.taskTitle),
+        providerQuerySha256: digest("authentication"),
+        references: [
+          expect.objectContaining({
+            referenceId: "decision-1",
+            scope: "decision",
+            injected: true,
+            contentDigest: `sha256:${digest(JSON.stringify([hit.title, hit.text]))}`,
+          }),
+        ],
+      }),
+    ]);
+    expect(JSON.stringify(f.records)).not.toContain(hit.text);
+    expect(JSON.stringify(f.records)).not.toContain("authentication");
+  });
+
+  test("missing portable identity skips the search", async () => {
+    const findKnowledge = vi.fn(async () => [hit]);
+    const f = fixture(connected(findKnowledge));
+    f.findRepositoryId.mockResolvedValueOnce(null);
+    expect(await f.assembler.assemble(input)).toEqual({ memory: [] });
+    expect(findKnowledge).not.toHaveBeenCalled();
+    expect(f.records[0]).toMatchObject({
+      outcome: "skipped",
+      errorCode: "REPOSITORY_IDENTITY_UNAVAILABLE",
+    });
+  });
+
+  test.each([
+    ["empty", async () => [] as KnowledgeHit[], "empty", null],
+    [
+      "unavailable",
+      async () => {
+        throw new KnowledgeStoreError("KNOWLEDGE_QUERY_FAILED");
+      },
+      "failed",
+      "KNOWLEDGE_QUERY_FAILED",
+    ],
+    [
+      "wrong scope",
+      async () => [{ ...hit, repositoryId: "other" }],
+      "failed",
+      "KNOWLEDGE_INVALID_RESULT",
+    ],
+    ["duplicate", async () => [hit, hit], "failed", "KNOWLEDGE_INVALID_RESULT"],
+    [
+      "control in ID",
+      async () => [{ ...hit, id: "bad\nidentifier" }],
+      "failed",
+      "KNOWLEDGE_INVALID_RESULT",
+    ],
+  ])(
+    "%s retrieval leaves no injected context and records its outcome",
+    async (_label, findKnowledge, outcome, errorCode) => {
+      const f = fixture(connected(findKnowledge));
+      expect(await f.assembler.assemble(input)).toEqual({ memory: [] });
+      expect(f.records[0]).toMatchObject({
+        outcome,
+        errorCode,
+        resultCount: 0,
+        injectedCount: 0,
+      });
+    },
+  );
+
+  test("startup failure is recorded without consulting a store", async () => {
+    const f = fixture({
+      state: "unavailable",
+      error: new KnowledgeStoreError("KNOWLEDGE_UNAVAILABLE"),
+    });
+    expect(await f.assembler.assemble(input)).toEqual({ memory: [] });
+    expect(f.records[0]).toMatchObject({
+      outcome: "failed",
+      errorCode: "KNOWLEDGE_UNAVAILABLE",
+    });
+    expect(f.findRepositoryId).not.toHaveBeenCalled();
+  });
+
+  test("a provenance write failure suppresses knowledge injection", async () => {
+    const f = fixture(connected(async () => [hit]));
+    f.recordRetrieval.mockRejectedValueOnce(new Error("SQLITE_BUSY"));
+    expect(await f.assembler.assemble(input)).toEqual({ memory: [] });
+  });
+
+  test("a competing provenance write refuses preparation", async () => {
+    const f = fixture(connected(async () => [hit]));
+    f.findRetrieval
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({} as ProjectMemoryRetrievalRecord);
+    f.recordRetrieval.mockRejectedValueOnce(
+      new Error("UNIQUE constraint failed"),
+    );
+    await expect(f.assembler.assemble(input)).rejects.toMatchObject({
+      code: "WORKER_CONTEXT_INVALID",
+    });
+  });
+
+  test("a stalled knowledge search times out without blocking the run", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fixture(connected(() => new Promise<KnowledgeHit[]>(() => {})));
+      const pending = f.assembler.assemble(input);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await pending).toEqual({ memory: [] });
+      expect(f.records[0]).toMatchObject({
+        outcome: "failed",
+        errorCode: "KNOWLEDGE_TIMEOUT",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("cancellation records the failure and aborts preparation", async () => {
+    const controller = new AbortController();
+    const f = fixture(
+      connected(async () => {
+        controller.abort();
+        return [hit];
+      }),
+    );
+    await expect(
+      f.assembler.assemble({ ...input, signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(f.records[0]).toMatchObject({
+      outcome: "failed",
+      errorCode: "KNOWLEDGE_CANCELLED",
+    });
+  });
+});
