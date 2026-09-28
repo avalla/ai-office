@@ -13,19 +13,55 @@ export interface SurrealAgentKnowledgeConfig {
 /** Connects and scopes the experimental adapter without leaking its client type. */
 export async function connectSurrealAgentKnowledgeStore(
   config: SurrealAgentKnowledgeConfig,
+  signal?: AbortSignal,
 ): Promise<{ store: AgentKnowledgeStore; close: () => Promise<void> }> {
   const db = new Surreal();
+  let closing: Promise<void> | undefined;
+  const close = () =>
+    (closing ??= db.close().then(
+      () => undefined,
+      (error: unknown) => {
+        closing = undefined;
+        throw error;
+      },
+    ));
+  const abort = () => {
+    void close().catch(() => {});
+  };
+  signal?.addEventListener("abort", abort, { once: true });
+  const requireActive = () => {
+    if (signal?.aborted)
+      throw new Error("Agent knowledge connection cancelled");
+  };
   try {
-    await db.connect(config.endpoint);
+    requireActive();
+    await db.connect(config.endpoint, { reconnect: false });
+    requireActive();
     await db.signin({ username: config.username, password: config.password });
-    await db.query("DEFINE NAMESPACE IF NOT EXISTS $namespace", { namespace: config.namespace });
+    requireActive();
+    await db.query("DEFINE NAMESPACE IF NOT EXISTS $namespace", {
+      namespace: config.namespace,
+    });
+    requireActive();
     await db.use({ namespace: config.namespace });
-    await db.query("DEFINE DATABASE IF NOT EXISTS $database", { database: config.database });
+    requireActive();
+    await db.query("DEFINE DATABASE IF NOT EXISTS $database", {
+      database: config.database,
+    });
+    requireActive();
     await db.use({ namespace: config.namespace, database: config.database });
+    requireActive();
     const store = await SurrealAgentKnowledgeStoreImpl.create(db);
-    return { store, close: async () => { await db.close(); } };
+    requireActive();
+    return { store, close };
   } catch (error) {
-    await db.close();
+    try {
+      await close();
+    } catch {
+      /* Preserve the connection failure. */
+    }
     throw error;
+  } finally {
+    signal?.removeEventListener("abort", abort);
   }
 }

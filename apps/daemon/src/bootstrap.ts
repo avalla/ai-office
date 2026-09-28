@@ -31,6 +31,7 @@ import {
 import type { DaemonHealthResponse } from "@ai-office/application/protocol/daemon-protocol.ts";
 import { createProjectMemoryProvider } from "@ai-office/cairnkeep-memory/create-project-memory-provider.ts";
 import {
+  isAgentKnowledgeTenantId,
   resolveAgentKnowledgeConfiguration,
   type AgentKnowledgeConfiguration,
 } from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
@@ -72,8 +73,9 @@ async function connectKnowledgeWithDeadline(
 ): Promise<AgentKnowledgeHandle> {
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
   const pending = Promise.resolve().then(() =>
-    connector(configuration.connection),
+    connector(configuration.connection, controller.signal),
   );
   void pending.then(
     (handle) => {
@@ -87,6 +89,7 @@ async function connectKnowledgeWithDeadline(
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       timedOut = true;
+      controller.abort();
       reject(new Error("Agent knowledge connection timed out"));
     }, deadlineMs);
   });
@@ -177,7 +180,7 @@ export async function bootstrap(
   const storageConfiguration = storageBootstrap.resolve(
     options.projectStorageConfig,
   );
-  const knowledgeConfiguration =
+  const resolvedKnowledgeConfiguration =
     options.agentKnowledgeConfiguration ??
     resolveAgentKnowledgeConfiguration(
       process.env,
@@ -185,6 +188,20 @@ export async function bootstrap(
         ? storageConfiguration.tenantId
         : undefined,
     );
+  // The test/composition seam must not override PostgreSQL's authoritative tenant.
+  const knowledgeConfiguration =
+    storageConfiguration.provider === "postgres" &&
+    resolvedKnowledgeConfiguration.kind === "surrealdb"
+      ? {
+          ...resolvedKnowledgeConfiguration,
+          tenantId: storageConfiguration.tenantId,
+        }
+      : resolvedKnowledgeConfiguration;
+  const validatedKnowledgeConfiguration =
+    knowledgeConfiguration.kind === "surrealdb" &&
+    !isAgentKnowledgeTenantId(knowledgeConfiguration.tenantId)
+      ? { kind: "misconfigured" as const, provider: "surrealdb" as const }
+      : knowledgeConfiguration;
   ensureRuntimeHome(runtimePaths);
   // Read once; a credential change takes effect on Runtime restart.
   const credentials =
@@ -265,9 +282,9 @@ export async function bootstrap(
         }),
     };
     let agentKnowledge: RuntimeAgentKnowledge =
-      knowledgeConfiguration.kind === "disabled"
+      validatedKnowledgeConfiguration.kind === "disabled"
         ? { state: "disabled" }
-        : knowledgeConfiguration.kind === "misconfigured"
+        : validatedKnowledgeConfiguration.kind === "misconfigured"
           ? {
               state: "misconfigured",
               error: new KnowledgeStoreError("KNOWLEDGE_MISCONFIGURED"),
@@ -277,27 +294,27 @@ export async function bootstrap(
               error: new KnowledgeStoreError("KNOWLEDGE_UNAVAILABLE"),
             };
     let knowledgeStatus: NonNullable<DaemonHealthResponse["knowledge"]> =
-      knowledgeConfiguration.kind === "disabled"
+      validatedKnowledgeConfiguration.kind === "disabled"
         ? { provider: "none", startup: "disabled" }
-        : knowledgeConfiguration.kind === "misconfigured"
+        : validatedKnowledgeConfiguration.kind === "misconfigured"
           ? {
-              provider: knowledgeConfiguration.provider,
+              provider: validatedKnowledgeConfiguration.provider,
               startup: "misconfigured",
             }
           : { provider: "surrealdb", startup: "unavailable" };
-    if (knowledgeConfiguration.kind === "surrealdb") {
+    if (validatedKnowledgeConfiguration.kind === "surrealdb") {
       try {
         agentKnowledgeHandle = await connectKnowledgeWithDeadline(
           options.connectAgentKnowledge ??
             (
               await import("@ai-office/storage-surrealdb/connect-agent-knowledge-store.ts")
             ).connectSurrealAgentKnowledgeStore,
-          knowledgeConfiguration,
+          validatedKnowledgeConfiguration,
           options.agentKnowledgeConnectTimeoutMs ?? knowledgeConnectTimeoutMs,
         );
         agentKnowledge = {
           state: "connected",
-          tenantId: knowledgeConfiguration.tenantId,
+          tenantId: validatedKnowledgeConfiguration.tenantId,
           store: agentKnowledgeHandle.store,
         };
         knowledgeStatus = { provider: "surrealdb", startup: "connected" };

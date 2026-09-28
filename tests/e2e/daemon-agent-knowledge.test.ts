@@ -78,14 +78,20 @@ describe("Runtime agent knowledge composition", () => {
         connectAgentKnowledge: connect,
       },
       async (client) => {
-        expect((await client.health()).knowledge).toEqual({
+        const health = await client.health();
+        expect(health.knowledge).toEqual({
           provider: "surrealdb",
           startup: "connected",
         });
+        expect(JSON.stringify(health)).not.toContain("secret");
+        const memoryStatus = await client.execute(["project-memory:status", "--json"]);
+        expect(memoryStatus.exitCode).toBe(0);
+        expect(JSON.stringify(memoryStatus)).not.toContain("secret");
         expect(connect).toHaveBeenCalledWith(
           configuration.kind === "surrealdb"
             ? configuration.connection
             : undefined,
+          expect.any(AbortSignal),
         );
         expect(close).not.toHaveBeenCalled();
       },
@@ -101,6 +107,10 @@ describe("Runtime agent knowledge composition", () => {
     {
       configuration: { kind: "misconfigured", provider: "surrealdb" },
       expected: { provider: "surrealdb", startup: "misconfigured" },
+    },
+    {
+      configuration: { kind: "misconfigured", provider: "unknown" },
+      expected: { provider: "unknown", startup: "misconfigured" },
     },
   ] satisfies Array<{
     configuration: AgentKnowledgeConfiguration;
@@ -158,10 +168,11 @@ describe("Runtime agent knowledge composition", () => {
     }) => void;
     const close = vi.fn(async () => {});
     const connect = vi.fn(
-      () =>
+      (_connection: unknown, signal?: AbortSignal) =>
         new Promise<{ store: AgentKnowledgeStore; close: () => Promise<void> }>(
           (resolve) => {
             finish = resolve;
+            expect(signal).toBeDefined();
           },
         ),
     );
@@ -177,5 +188,60 @@ describe("Runtime agent knowledge composition", () => {
         await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
       },
     );
+  });
+
+  it("consumes a late connection rejection after host shutdown", async () => {
+    let fail!: (reason: Error) => void;
+    let signal: AbortSignal | undefined;
+    const connect = vi.fn(
+      (_connection: unknown, receivedSignal?: AbortSignal) => {
+        signal = receivedSignal;
+        return new Promise<{
+          store: AgentKnowledgeStore;
+          close: () => Promise<void>;
+        }>((_, reject) => {
+          fail = reject;
+        });
+      },
+    );
+    await withHost(
+      {
+        agentKnowledgeConfiguration: configuration,
+        connectAgentKnowledge: connect,
+        agentKnowledgeConnectTimeoutMs: 10,
+      },
+      async (client) => {
+        expect((await client.health()).knowledge).toEqual({
+          provider: "surrealdb",
+          startup: "unavailable",
+        });
+        expect(signal?.aborted).toBe(true);
+      },
+    );
+    fail(new Error("late secret connection failure"));
+    await Promise.resolve();
+  });
+
+  it("closes a late success once after host shutdown", async () => {
+    let finish!: (value: {
+      store: AgentKnowledgeStore;
+      close: () => Promise<void>;
+    }) => void;
+    const close = vi.fn(async () => {});
+    await withHost(
+      {
+        agentKnowledgeConfiguration: configuration,
+        connectAgentKnowledge: () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+        agentKnowledgeConnectTimeoutMs: 10,
+      },
+      async (client) => {
+        expect((await client.health()).knowledge?.startup).toBe("unavailable");
+      },
+    );
+    finish({ store: {} as AgentKnowledgeStore, close });
+    await vi.waitFor(() => expect(close).toHaveBeenCalledTimes(1));
   });
 });

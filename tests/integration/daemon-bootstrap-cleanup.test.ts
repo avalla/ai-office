@@ -6,6 +6,8 @@ import { ProjectStorageBootstrap } from "@ai-office/storage-bootstrap/project-st
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { createTestUnixSocket } from "../helpers/unix-socket.ts";
+import type { AgentKnowledgeStore } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
 
 const roots: string[] = [];
 
@@ -103,5 +105,46 @@ describe("daemon bootstrap resource ownership", () => {
     await running;
 
     expect(tracker.closeCalls()).toBe(1);
+  });
+
+  test("preserves a later bootstrap failure when secondary knowledge cleanup fails", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-bootstrap-cleanup-"));
+    roots.push(root);
+    const tracker = trackedProjectStorageBootstrap(root);
+    const globalDatabase = openDatabase(join(root, "global.sqlite"));
+    const globalClose = vi.spyOn(globalDatabase, "close");
+    const knowledgeClose = vi.fn(async () => {
+      throw new Error("secret cleanup failure");
+    });
+
+    await expect(
+      bootstrap({
+        projectRoot: root,
+        projectStorageBootstrap: tracker.projectStorageBootstrap,
+        openGlobalDatabase: () => globalDatabase,
+        agentKnowledgeConfiguration: {
+          kind: "surrealdb",
+          tenantId: "trusted-tenant",
+          connection: {
+            endpoint: "ws://localhost:8000",
+            namespace: "ai_office",
+            database: "knowledge",
+            username: "operator",
+            password: "secret",
+          },
+        },
+        connectAgentKnowledge: async () => ({
+          store: {} as AgentKnowledgeStore,
+          close: knowledgeClose,
+        }),
+        get projectMemory(): ProjectMemoryProvider {
+          throw new Error("later bootstrap failure");
+        },
+      }),
+    ).rejects.toThrow("later bootstrap failure");
+
+    expect(knowledgeClose).toHaveBeenCalledTimes(1);
+    expect(tracker.closeCalls()).toBe(1);
+    expect(globalClose).toHaveBeenCalledTimes(1);
   });
 });

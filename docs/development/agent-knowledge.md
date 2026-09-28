@@ -23,10 +23,15 @@ Configuration remains outside project state, snapshots, generated Markdown,
 and SQLite/PostgreSQL authority. The foreground host must receive these
 environment variables when it starts; generated managed-service definitions
 do not carry them. Credentials and endpoint values are never returned in
-health or errors. The host has a five-second connection deadline; invalid
-configuration or a failed connection leaves the authoritative Runtime running
-without a knowledge store. A late connection is closed. The connected store is
-closed when the host stops. `/health` reports `knowledge.provider` and
+health or errors. The five-second deadline bounds how long Runtime bootstrap
+waits for the connection. The SurrealDB client has no abort-signal API: on
+timeout the host requests a disconnect, disables reconnects, and closes any
+handle that arrives later. A client operation that never settles cannot be
+guaranteed to finish. Invalid configuration or a failed connection leaves the
+authoritative Runtime running without a knowledge store. The connected store
+is closed when the host stops. Connection setup may initialize the existing
+AK-02 schema, but AK-03 does not create or change knowledge records.
+`/health` reports `knowledge.provider` and
 `knowledge.startup` (`disabled`, `misconfigured`, `connected`, or `unavailable`)
 as the **startup observation**, not a live database probe. Restart to retry
 after a failure or configuration change. AK-03 does not read or write knowledge

@@ -19,6 +19,15 @@ export type AgentKnowledgeConfiguration =
       tenantId: string;
     };
 
+export function isAgentKnowledgeTenantId(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 256 &&
+    value.trim() === value &&
+    !/\p{Cc}/u.test(value)
+  );
+}
+
 /** Host-only configuration; never include supplied values in diagnostics. */
 export function resolveAgentKnowledgeConfiguration(
   environment: Readonly<Record<string, string | undefined>>,
@@ -44,9 +53,7 @@ export function resolveAgentKnowledgeConfiguration(
     username === undefined ||
     password === undefined ||
     tenantId === undefined ||
-    tenantId.length === 0 ||
-    tenantId.length > 256 ||
-    tenantId.trim() !== tenantId ||
+    !isAgentKnowledgeTenantId(tenantId) ||
     username.length === 0 ||
     password.length === 0 ||
     !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(namespace) ||
@@ -55,7 +62,10 @@ export function resolveAgentKnowledgeConfiguration(
     return { kind: "misconfigured", provider: "surrealdb" };
 
   try {
+    if (endpoint.length > 2048 || /[\p{Cc}?#]/u.test(endpoint))
+      return { kind: "misconfigured", provider: "surrealdb" };
     const url = new URL(endpoint);
+    const authority = /^wss?:\/\/([^/?#]*)/u.exec(endpoint)?.[1];
     if (
       !["ws:", "wss:"].includes(url.protocol) ||
       url.hostname.length === 0 ||
@@ -63,10 +73,10 @@ export function resolveAgentKnowledgeConfiguration(
       url.password !== "" ||
       url.search !== "" ||
       url.hash !== "" ||
-      endpoint.length > 2048 ||
-      /\p{Cc}/u.test(endpoint) ||
+      authority === undefined ||
+      authority.includes("@") ||
       (url.protocol === "ws:" &&
-        !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+        !/^(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/iu.test(authority))
     )
       return { kind: "misconfigured", provider: "surrealdb" };
   } catch {
