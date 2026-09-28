@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context/knowledge-search-term.ts";
+import { cairnKeepSearchTerm } from "../../packages/cairnkeep-memory/src/cairnkeep-memory-provider.ts";
 import {
   assertKnowledgeScope,
   assertKnowledgeIdentifier,
@@ -7,6 +9,20 @@ import {
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 
 describe("AgentKnowledgeStore application boundary", () => {
+  it("selects exactly the legacy CairnKeep literal term for future knowledge retrieval", () => {
+    for (const [query, expected] of [
+      ["Fix the login flow for users", "login"],
+      ["Rotate database credentials", "credentials"],
+      ["Document the deploy flow", "deploy"],
+      ["Implement upload retries", "retries"],
+      ["Review API_auth failures", "api_auth"],
+      ["a b", "a b"],
+    ] as const) {
+      expect(knowledgeCompatibilitySearchTerm(query)).toBe(expected);
+      expect(cairnKeepSearchTerm(query)).toBe(expected);
+    }
+  });
+
   it("requires a trusted tenant and portable repository identity without fallback", () => {
     expect(() => assertKnowledgeScope({ tenantId: "tenant-a", repositoryId: "repo-a" })).not.toThrow();
     for (const scope of [

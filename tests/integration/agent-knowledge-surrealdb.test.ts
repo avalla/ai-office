@@ -1,4 +1,5 @@
 import type { DecisionInput, KnowledgeScope, MemoryInput } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context/knowledge-search-term.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { RecordId, Surreal } from "../../packages/storage-surrealdb/node_modules/surrealdb";
 import { connectSurrealAgentKnowledgeStore } from "../../packages/storage-surrealdb/src/connect-agent-knowledge-store.ts";
@@ -178,6 +179,29 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     expect(hits.every((hit) => hit.tenantId === scopeA.tenantId && hit.repositoryId === scopeA.repositoryId)).toBe(true);
     expect(await store.findKnowledge(scopeSameTenantOtherProject, { text: "approval" })).toEqual([]);
     expect(await store.findKnowledge(scopeB, { text: "approval" })).toEqual([]);
+  });
+
+  it("retrieves the CairnKeep compatibility term as a case-insensitive literal", async () => {
+    const input = memory(scopeA, "term-memory", "The DePlOy requires approval");
+    await store.recordMemory(input);
+    await store.recordMemory(memory(scopeSameTenantOtherProject, "other-term", "deploy elsewhere"));
+    const term = knowledgeCompatibilitySearchTerm("Document the deploy flow");
+    expect(term).toBe("deploy");
+    expect((await store.findKnowledge(scopeA, { text: term, agentId: input.agentId })).map((hit) => hit.id))
+      .toEqual([input.id]);
+    expect(await store.findKnowledge(scopeA, { text: "document the deploy flow" })).toEqual([]);
+    expect(await store.findKnowledge(scopeA, { text: term, agentId: "other-agent" })).toEqual([]);
+    expect(await store.findKnowledge(scopeB, { text: term })).toEqual([]);
+  });
+
+  it("rejects a search row whose persisted identity disagrees with its scoped record ID", async () => {
+    const input = memory(scopeA, "tampered-search", "approval checkpoint");
+    await store.recordMemory(input);
+    await db.query("UPDATE $record SET external_id = 'rewritten'", {
+      record: record(scopeA, "knowledge_memory", input.id),
+    });
+    await expect(store.findKnowledge(scopeA, { text: "approval" }))
+      .rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
   });
 
   it("rejects invalid search limits and blank queries instead of broadening the search", async () => {
