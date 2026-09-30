@@ -98,3 +98,36 @@ no query text, body, endpoint or credential. A
 provenance write failure suppresses injection; a competing write for the same
 run refuses preparation. `run:show` reports the retrieval. Historical
 CairnKeep rows remain readable.
+
+## Governed admission (AK-05)
+
+New memories and decisions are written only through the authoritative Runtime's
+`knowledge:plan` and `knowledge:admit` commands while native knowledge is
+connected. The operator supplies a project, a completed real worker run, and
+the exact text (plus a title for a decision). The application checks the
+project, portable repository binding, task, agent, run ownership, completion,
+worker execution provenance, and persisted result. Simulation and controlled
+action runs cannot be used as knowledge sources.
+
+`knowledge:plan` returns a bounded, reviewable JSON plan with the full proposed
+text, source run, deterministic knowledge ID, a digest of the canonical run
+result, and an SHA-256 plan hash. It does not write knowledge or audit state.
+The operator reviews that output, then passes the exact hash and a reviewer
+identity to `knowledge:admit` with the same content. The Runtime recomputes the
+plan against current authority; any change invalidates the hash. The current
+trusted-local operator model records the supplied reviewer identity but cannot
+authenticate human presence from another same-UID process.
+
+Admission first appends an audit event containing the reviewer, plan hash,
+scope and run references, never the body. It then writes an immutable scoped
+record and graph provenance to SurrealDB, traces the graph, and appends a
+success or failure event. An uncertain result requires a new explicit admit
+call with the same reviewed hash; deterministic IDs and the adapter's immutable
+record guards make exact retries idempotent. A conflicting rewrite fails.
+`knowledge:trace` reads the scoped record and verified provenance graph.
+
+The limit is 4,000 Unicode code points and 16 KiB of text, with a 200 code
+point decision title. Knowledge remains advisory; approval does not grant a
+capability or change task, run, or project authority. This slice admits new
+run-sourced records only. Legacy import and its distinct provenance policy
+belong to AK-06.
