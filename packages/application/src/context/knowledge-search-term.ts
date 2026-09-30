@@ -17,7 +17,7 @@ const substringStopWords = new Set([
 export function knowledgeCompatibilitySearchTerm(query: string): string {
   let best = "";
   for (const match of query
-    .toLocaleLowerCase()
+    .toLowerCase()
     .matchAll(/[\p{L}\p{N}][\p{L}\p{N}_-]*/gu)) {
     const term = match[0];
     const length = [...term].length;

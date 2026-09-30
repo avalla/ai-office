@@ -47,7 +47,7 @@ export async function handleProjectMemoryCommand(
     context.io.stdout(
       last === null
         ? "Last retrieval: none recorded"
-        : `Last retrieval: ${last.outcome}${last.errorCode === null ? "" : ` (${last.errorCode})`}, ${last.injectedCount}/${last.resultCount} injected, run ${last.runId} at ${last.createdAt}`,
+        : `Last retrieval: ${last.outcome}${last.errorCode === null ? "" : ` (${last.errorCode})`} via ${last.provider}, ${last.injectedCount}/${last.resultCount} injected, run ${last.runId} at ${last.createdAt}`,
     );
   }
   context.io.stdout(

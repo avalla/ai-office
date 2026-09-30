@@ -42,9 +42,9 @@ AI Office keeps different kinds of documentation separate so current product tru
   compatibility boundaries, changelog, and release gates.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
 - [Bounded external worker](adr/ADR-0017-bounded-external-worker.md): explicit executor selection, input/output provenance, client limits and resource boundaries.
-- [Project memory](development/project-memory.md): optional read-only CairnKeep provider, repositoryId-bound identity, retrieval limits, provenance and diagnostics.
-- [Native agent knowledge](development/agent-knowledge.md): AK-01/AK-02 retrieval contract, AK-03 opt-in Runtime composition, and CairnKeep compatibility before worker cutover.
-- [Optional project memory provider](adr/ADR-0018-optional-non-authoritative-project-memory-provider.md): current CairnKeep retrieval boundary until the native cutover.
+- [Project memory](development/project-memory.md): historical CairnKeep retrieval contract and retained diagnostics.
+- [Native agent knowledge](development/agent-knowledge.md): retrieval contract, opt-in Runtime composition, worker context and provenance.
+- [Optional project memory provider](adr/ADR-0018-optional-non-authoritative-project-memory-provider.md): historical CairnKeep retrieval boundary.
 - [Native AgentKnowledgeStore decision](adr/ADR-0025-native-agent-knowledge-store.md): staged knowledge migration with SurrealDB kept outside operational authority.
 - [LLM gateway, cost control and model routing](development/llm-cost-control.md): provider registry, metering, budgets, host model profiles, precedence and diagnostics.
 - [Agent model routing](adr/ADR-0019-agent-model-routing.md): policy vs profile vs resolved model, precedence, immutable run selection, cost and portability boundaries.

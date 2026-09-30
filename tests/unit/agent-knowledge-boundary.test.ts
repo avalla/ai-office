@@ -33,6 +33,17 @@ describe("AgentKnowledgeStore application boundary", () => {
     }
   });
 
+  it("selects Unicode literals with host-independent default lowercase", () => {
+    for (const [query, expected] of [
+      ["İSTANBUL", "stanbul"],
+      ["ΟΣΟΣ", "οσος"],
+      ["ẞtraße", "ßtraße"],
+      ["Kelvin", "kelvin"],
+    ] as const) {
+      expect(knowledgeCompatibilitySearchTerm(query)).toBe(expected);
+    }
+  });
+
   it("requires a trusted tenant and portable repository identity without fallback", () => {
     expect(() => assertKnowledgeScope({ tenantId: "tenant-a", repositoryId: "repo-a" })).not.toThrow();
     for (const scope of [

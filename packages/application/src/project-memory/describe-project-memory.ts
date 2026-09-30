@@ -21,6 +21,7 @@ export interface ProjectMemoryDiagnosticReport {
     memoryProjectId: string | null;
     lastRetrieval: {
       runId: string;
+      provider: string;
       outcome: "retrieved" | "empty" | "failed" | "skipped";
       errorCode: string | null;
       resultCount: number;
@@ -68,6 +69,7 @@ export class DescribeProjectMemory {
             ? null
             : {
                 runId: latest.runId,
+                provider: latest.provider,
                 outcome: latest.outcome,
                 errorCode: latest.errorCode,
                 resultCount: latest.resultCount,

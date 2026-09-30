@@ -56,8 +56,8 @@ export interface WorkerContext {
     results: readonly MemorySearchResult[];
   };
   /**
-   * Bounded, advisory excerpts from an optional external project memory
-   * provider. Present only when results were injected. Locators and context,
+   * Bounded, advisory excerpts from optional project knowledge. Present only
+   * when results were injected. Locators and context,
    * never authority.
    */
   projectMemory?: WorkerProjectMemoryContext;

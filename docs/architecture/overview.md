@@ -352,38 +352,32 @@ implemented; see [ADR-0021](../adr/ADR-0021-artifact-review-and-approval-workflo
 
 Governance stores milestones, requirements, ADRs, reviews, and approval decisions as structured project state. This M5 governance approval model is separate from M6C-lite `ActionApproval`, which binds a controlled filesystem mutation to its authorization and simulation artifact.
 
-## Optional project memory
+## Optional agent knowledge
 
-An optional external provider may supply durable, non-authoritative project
-memory. It is not a fourth database and not authority: CairnKeep remembers; AI
-Office decides.
+An optional SurrealDB `AgentKnowledgeStore` supplies durable,
+non-authoritative worker context when explicitly connected. It does not hold
+operational authority; SQLite or PostgreSQL still owns project and run state.
 
 ```text
 WorkerAgentExecutor.prepare
           |
    RunContextAssembler ---- global reusable memory (global.sqlite)
           |
-          +-- ProjectMemoryProvider (application port, read-only)
-          |        |- DisabledProjectMemoryProvider (default)
-          |        `- CairnKeepMemoryProvider (packages/cairnkeep-memory)
-          |                 `- short `cairn memory-server` stdio session,
-          |                    single `memory_search` tool
+           +-- AgentKnowledgeStore (application port)
+           |        `- SurrealDB adapter (bounded, scoped search)
           +-- retrieval provenance (project.sqlite, append-only)
           |
     bounded advisory WorkerContext.projectMemory -> pinned input digest
 ```
 
-The application owns query derivation, the single-search rule, total budgets and
-provenance. The adapter owns MCP, process lifecycle, CairnKeep configuration and
-response validation. Identity derives only from the portable `repositoryId`.
-Workers receive excerpts, never a provider, tool, command, path or credential.
-Absence or failure degrades to no memory. See
-[ADR-0018](../adr/ADR-0018-optional-non-authoritative-project-memory-provider.md).
-
-Separately, the host may connect the secondary SurrealDB `AgentKnowledgeStore`
-when explicitly configured. It binds the trusted tenant, owns the connection,
-and reports only the startup result. The store has no operational authority and
-does not feed worker context until AK-04. See [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
+The application owns query derivation, the single-search rule, budgets and
+provenance. The adapter validates scoped results. The host binds the trusted
+tenant and owns the connection; the application supplies only the portable
+`repositoryId` from authoritative project binding. Workers receive excerpts,
+never a store, tool, path or credential. Absence or failure degrades to no
+knowledge. The earlier CairnKeep provider and diagnostic command remain during
+migration, but do not feed worker context. See
+[ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
 
 ## Operational read models
 
@@ -454,9 +448,10 @@ The architecture distinguishes three databases by authority and rebuildability:
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
 
-An optional external project memory provider (CairnKeep) is a separate,
-non-authoritative category outside these databases. AI Office stores only its
-per-run retrieval provenance in `project.sqlite`.
+The optional external SurrealDB knowledge store is a separate,
+non-authoritative category outside these databases. AI Office stores its
+per-run retrieval provenance in `project.sqlite`. The older CairnKeep provider
+remains available for legacy diagnostics and history during migration.
 
 `project.sqlite` also stores immutable portable snapshot revisions and one
 local head/base record per backed-up or restored project. A revision identifies

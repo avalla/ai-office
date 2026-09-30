@@ -361,7 +361,16 @@ describe("bounded Claude worker", () => {
         control.abort();
         try {
           await expect(execution).rejects.toMatchObject({ name: "AbortError" });
-          // Rejection is only allowed once the whole group is gone.
+          // The group is gone before rejection, but macOS may briefly retain
+          // the grandchild PID while it is being reaped.
+          for (let attempt = 0; attempt < 50; attempt += 1) {
+            try {
+              process.kill(pid, 0);
+              await new Promise((resolve) => setTimeout(resolve, 20));
+            } catch {
+              break;
+            }
+          }
           expect(() => process.kill(pid, 0)).toThrow();
         } catch (error) {
           // Do not leak the surviving grandchild when the assertion fails.

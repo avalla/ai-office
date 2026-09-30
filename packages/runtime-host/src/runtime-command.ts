@@ -311,7 +311,7 @@ export interface RuntimeCommandOptions {
   projectArchives?: ProjectArchiveAdapter;
   /** Composition-supplied provider; absent means disabled. */
   projectMemory?: ProjectMemoryProvider;
-  /** Independently composed secondary knowledge; worker retrieval changes in AK-04. */
+  /** Independently composed secondary knowledge for worker retrieval. */
   agentKnowledge?: RuntimeAgentKnowledge;
   /** Composition-supplied host model routing; absent means unconfigured. */
   modelRouting?: ModelRoutingState;
