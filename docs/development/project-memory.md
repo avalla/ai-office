@@ -4,7 +4,8 @@ This page describes the historical CairnKeep worker retrieval path and the
 still available `project-memory:status` diagnostic. Since AK-04, worker runs
 retrieve from a connected native `AgentKnowledgeStore` instead. See
 [native agent knowledge](agent-knowledge.md). Existing CairnKeep retrieval
-records remain readable; the import of named-scope data is planned for AK-06.
+records remain readable; AK-06 provides an explicit, reviewed import for bounded
+named-scope data.
 The diagnostic's last retrieval includes its actual provider, which may be
 `surrealdb` after the cutover even when CairnKeep remains configured for probes.
 

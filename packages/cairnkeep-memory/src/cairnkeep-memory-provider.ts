@@ -12,6 +12,11 @@ import {
   type ProjectMemorySearch,
 } from "@ai-office/application/ports/project-memory-provider.port.ts";
 import { McpStdioSession } from "./mcp-stdio-session.ts";
+import type {
+  LegacyMemoryEntry,
+  LegacyMemoryReader,
+} from "@ai-office/application/ports/legacy-memory-reader.port.ts";
+import { projectMemoryIdentityPattern } from "@ai-office/application/project-memory/project-memory-identity.ts";
 
 /**
  * CairnKeep adapter: one bounded `cairn memory-server` stdio session per
@@ -36,6 +41,7 @@ import { McpStdioSession } from "./mcp-stdio-session.ts";
 export const cairnKeepProviderId = "cairnkeep";
 export const cairnKeepServerName = "cairn-memory";
 export const cairnKeepSearchTool = "memory_search";
+const legacyReadTools = ["memory_list", "memory_read"] as const;
 /**
  * MCP protocol revisions this hand-written client implements, preferred first.
  * The first is requested; a server answering with anything outside this list
@@ -86,6 +92,7 @@ export function cairnKeepSearchTerm(query: string): string {
 export function cairnKeepChildEnvironment(
   environment: Readonly<Record<string, string | undefined>>,
   baseDirectory: string | null = null,
+  allowedTools: string = cairnKeepSearchTool,
 ): Record<string, string> {
   const child: Record<string, string> = {};
   for (const name of inheritedEnvironment) {
@@ -95,7 +102,7 @@ export function cairnKeepChildEnvironment(
   if (baseDirectory !== null) child.CAIRN_AGENTFS_BASE_DIR = baseDirectory;
   // Enforced by the server: tools outside the profile are never registered.
   child.CAIRN_MCP_TOOL_PROFILE = "custom";
-  child.CAIRN_MCP_ALLOWED_TOOLS = cairnKeepSearchTool;
+  child.CAIRN_MCP_ALLOWED_TOOLS = allowedTools;
   return child;
 }
 
@@ -214,14 +221,20 @@ function parseInitialize(result: unknown): string {
   return serverInfo.version;
 }
 
-function assertReadOnlyToolSurface(result: unknown): void {
+function assertReadOnlyToolSurface(
+  result: unknown,
+  expected: readonly string[],
+): void {
   const value = record(result);
   const tools = value?.tools;
   if (!Array.isArray(tools)) throw invalid();
   const names = tools.map((tool) => record(tool)?.name);
   // Exactly one tool: an annotation is not an authorization boundary, so a
   // server that exposes anything else did not honor the profile.
-  if (names.length !== 1 || names[0] !== cairnKeepSearchTool)
+  if (
+    names.length !== expected.length ||
+    expected.some((name) => !names.includes(name))
+  )
     throw new ProjectMemoryError("PROJECT_MEMORY_INCOMPATIBLE");
 }
 
@@ -269,7 +282,9 @@ export interface CairnKeepMemoryProviderOptions {
   environment: Readonly<Record<string, string | undefined>>;
 }
 
-export class CairnKeepMemoryProvider implements ProjectMemoryProvider {
+export class CairnKeepMemoryProvider
+  implements ProjectMemoryProvider, LegacyMemoryReader
+{
   readonly id = cairnKeepProviderId;
   private readonly sessions = new Semaphore(maxConcurrentSessions);
 
@@ -346,7 +361,96 @@ export class CairnKeepMemoryProvider implements ProjectMemoryProvider {
     });
   }
 
-  private async handshake(session: McpStdioSession): Promise<string> {
+  async readNamedScope(scope: string): Promise<readonly LegacyMemoryEntry[]> {
+    if (!projectMemoryIdentityPattern.test(scope))
+      throw new ProjectMemoryError("PROJECT_MEMORY_MISCONFIGURED");
+    return this.withSession(
+      undefined,
+      async (session) => {
+        await this.handshake(session, legacyReadTools);
+        const list = this.toolPayload(
+          await session.request("tools/call", {
+            name: "memory_list",
+            arguments: { scope },
+          }),
+        );
+        // Typed-node metadata is known provenance; refuse a lossy conversion.
+        if ("nodes" in list) throw invalid();
+        if (
+          !Array.isArray(list.keys) ||
+          list.keys.length > 32 ||
+          list.keys.some(
+            (key) =>
+              typeof key !== "string" ||
+              !key.trim() ||
+              key.length > projectMemoryLimits.referenceCharacters ||
+              /\p{Cc}/u.test(key),
+          ) ||
+          new Set(list.keys).size !== list.keys.length
+        )
+          throw invalid();
+        const entries: LegacyMemoryEntry[] = [];
+        let bytes = 0;
+        for (const key of [...list.keys].sort() as string[]) {
+          const payload = this.toolPayload(
+            await session.request("tools/call", {
+              name: "memory_read",
+              arguments: { scope, key },
+            }),
+          );
+          if (!Array.isArray(payload.results) || payload.results.length !== 1)
+            throw invalid();
+          const entry = record(payload.results[0]);
+          if (
+            entry?.scope !== scope ||
+            entry.key !== key ||
+            Object.keys(entry).some(
+              (field) => !["scope", "key", "value"].includes(field),
+            ) ||
+            typeof entry.value !== "string" ||
+            !entry.value.trim() ||
+            [...entry.value].length > 4_000 ||
+            Buffer.byteLength(entry.value, "utf8") > 16_384
+          )
+            throw invalid();
+          bytes +=
+            Buffer.byteLength(entry.value, "utf8") +
+            Buffer.byteLength(key, "utf8");
+          if (bytes > 16_384)
+            throw new ProjectMemoryError("PROJECT_MEMORY_RESPONSE_TOO_LARGE");
+          entries.push({ key, value: entry.value });
+        }
+        return entries;
+      },
+      legacyReadTools,
+    );
+  }
+
+  private toolPayload(result: unknown): Record<string, unknown> {
+    const envelope = record(result);
+    if (envelope?.isError === true)
+      throw new ProjectMemoryError("PROJECT_MEMORY_FAILED");
+    let payload = record(envelope?.structuredContent);
+    if (payload === null) {
+      const first = Array.isArray(envelope?.content)
+        ? record(envelope.content[0])
+        : null;
+      if (first?.type !== "text" || typeof first.text !== "string")
+        throw invalid();
+      try {
+        payload = record(JSON.parse(first.text));
+      } catch {
+        throw invalid();
+      }
+    }
+    if (payload === null) throw invalid();
+    return payload;
+  }
+
+  private async handshake(
+    session: McpStdioSession,
+    expected: readonly string[] = [cairnKeepSearchTool],
+  ): Promise<string> {
     const version = parseInitialize(
       await session.request("initialize", {
         protocolVersion: supportedMcpProtocolVersions[0],
@@ -356,13 +460,17 @@ export class CairnKeepMemoryProvider implements ProjectMemoryProvider {
     );
     session.markInitialized();
     session.notify("notifications/initialized");
-    assertReadOnlyToolSurface(await session.request("tools/list", {}));
+    assertReadOnlyToolSurface(
+      await session.request("tools/list", {}),
+      expected,
+    );
     return version;
   }
 
   private async withSession<T>(
     signal: AbortSignal | undefined,
     work: (session: McpStdioSession) => Promise<T>,
+    allowedTools: readonly string[] = [cairnKeepSearchTool],
   ): Promise<T> {
     // One deadline bounds queueing, process start, handshake and the search.
     const control = new AbortController();
@@ -384,6 +492,7 @@ export class CairnKeepMemoryProvider implements ProjectMemoryProvider {
         environment: cairnKeepChildEnvironment(
           this.options.environment,
           this.options.baseDirectory ?? null,
+          allowedTools.join(","),
         ),
         deadlineMs: this.options.timeoutMs,
         maxMessageBytes: projectMemoryLimits.responseBytes,

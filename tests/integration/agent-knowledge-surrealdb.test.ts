@@ -10,6 +10,8 @@ import type { AgentRuntimeRepository } from "../../packages/application/src/port
 import type { RepositoryIdentityRepository } from "../../packages/application/src/ports/repository-identity-repository.port.ts";
 import type { RecordAuditEvent } from "../../packages/application/src/commands/record-audit-event.ts";
 import type { Clock } from "../../packages/application/src/ports/clock.port.ts";
+import { createHash, randomUUID } from "node:crypto";
+import { SurrealAgentKnowledgeStoreImpl } from "../../packages/storage-surrealdb/src/surreal-agent-knowledge.store.ts";
 
 const endpoint = process.env.AI_OFFICE_TEST_SURREALDB_URL;
 const enabled = Boolean(endpoint);
@@ -19,6 +21,27 @@ const scopeB = { tenantId: "tenant-b", repositoryId: "repo-b" } satisfies Knowle
 let closeStore: () => Promise<void>;
 let store: Awaited<ReturnType<typeof connectSurrealAgentKnowledgeStore>>["store"];
 let db: Surreal;
+
+it.skipIf(!enabled)("adds legacy storage to an existing v1 database without losing records", async () => {
+  const upgradeDb = new Surreal();
+  try {
+    await upgradeDb.connect(endpoint!);
+    await upgradeDb.signin({ username: "root", password: "root" });
+    await upgradeDb.use({ namespace: "ai_office_test", database: `ak06_upgrade_${randomUUID().replaceAll("-", "")}` });
+    await upgradeDb.query("DEFINE TABLE knowledge_agent SCHEMAFULL TYPE NORMAL; DEFINE FIELD tenant_id ON knowledge_agent TYPE string; DEFINE FIELD project_id ON knowledge_agent TYPE string; DEFINE FIELD external_id ON knowledge_agent TYPE string;");
+    await upgradeDb.query("CREATE knowledge_agent:existing CONTENT { tenant_id: 'tenant-a', project_id: 'repo-a', external_id: 'agent-existing' };");
+    const upgraded = await SurrealAgentKnowledgeStoreImpl.create(upgradeDb);
+    await upgraded.recordLegacyMemory({ ...scopeA, id: "ak_legacy_upgrade", text: "Retained legacy note",
+      sourceScope: "aio-0123456789abcdef0123456789abcdef", sourceKey: "notes/old",
+      sourceSha256: `sha256:${createHash("sha256").update("Retained legacy note").digest("hex")}`,
+      importedAt: new Date("2026-09-30T12:00:00.000Z") });
+    expect((await upgradeDb.query("SELECT external_id FROM knowledge_agent WHERE external_id = 'agent-existing'"))[0])
+      .toEqual([{ external_id: "agent-existing" }]);
+    expect((await upgraded.traceLegacyMemory(scopeA, "ak_legacy_upgrade"))?.text).toBe("Retained legacy note");
+  } finally {
+    await upgradeDb.close();
+  }
+});
 
 function record(scope: KnowledgeScope, kind: string, id: string): RecordId {
   return new RecordId(kind, encodeURIComponent(JSON.stringify([scope.tenantId, scope.repositoryId, kind.replace(/^knowledge_/, ""), id])));
@@ -565,6 +588,27 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     expect(await store.traceMemoryProvenance(scopeA, "memory-isolated-b")).toBeNull();
     expect(await store.traceMemoryProvenance(scopeA, "memory-isolated-c")).toBeNull();
     expect(await store.listAgentKnowledge(scopeA, "agent-1")).toHaveLength(1);
+  });
+
+  it("imports immutable legacy memory without inventing run provenance and isolates its scope", async () => {
+    const input = { ...scopeA, id: "ak_legacy_one", text: "Legacy deployment note",
+      sourceScope: "aio-0123456789abcdef0123456789abcdef", sourceKey: "notes/deploy",
+      sourceSha256: `sha256:${createHash("sha256").update("Legacy deployment note").digest("hex")}`,
+      importedAt: new Date("2026-09-30T12:00:00.000Z") };
+    await store.recordLegacyMemory(input);
+    await store.recordLegacyMemory({ ...input, importedAt: new Date("2026-10-01T12:00:00.000Z") });
+    expect(await store.traceLegacyMemory(scopeA, input.id)).toMatchObject({
+      text: input.text, runId: null, taskId: null, agentId: null,
+      legacy: { sourceScope: input.sourceScope, sourceKey: input.sourceKey,
+        sourceSha256: input.sourceSha256 },
+    });
+    expect((await store.findKnowledge(scopeA, { text: "deployment" })).map((hit) => hit.id)).toEqual([input.id]);
+    expect(await store.findKnowledge(scopeA, { text: "deployment", agentId: "agent-1" })).toEqual([]);
+    expect(await store.traceLegacyMemory(scopeSameTenantOtherProject, input.id)).toBeNull();
+    await expect(store.recordLegacyMemory({ ...input, text: "Rewritten" })).rejects.toThrow();
+    expect((await store.traceLegacyMemory(scopeA, input.id))?.text).toBe(input.text);
+    await store.deleteProjectKnowledge(scopeA);
+    expect(await store.traceLegacyMemory(scopeA, input.id)).toBeNull();
   });
 
   it("deletes one project deterministically without deleting another project", async () => {

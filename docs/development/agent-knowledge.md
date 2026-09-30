@@ -141,3 +141,44 @@ point decision title. Knowledge remains advisory; approval does not grant a
 capability or change task, run, or project authority. This slice admits new
 run-sourced records only. Legacy import and its distinct provenance policy
 belong to AK-06.
+
+## Explicit CairnKeep named-scope import (AK-06)
+
+The Runtime must start with both `AI_OFFICE_PROJECT_MEMORY_PROVIDER=cairnkeep`
+and a connected native knowledge store. `knowledge:legacy-plan --project <id>
+--scope <aio-scope>` derives the expected named scope from the authoritative
+portable repository ID and refuses any other scope, including CairnKeep's
+cwd-bound `project` and virtual `all`. The command uses the read-only CairnKeep
+`memory_list` and `memory_read` tools in one bounded stdio session. It returns
+the complete proposed text, original keys, SHA-256 content digests, immutable
+target IDs and one plan hash. No import happens during planning. Review this
+output as sensitive data; it contains the legacy memory bodies.
+
+`knowledge:legacy-import` requires the same project and scope, exact plan hash,
+and a reviewer identity. The Runtime rereads the source and rejects any change
+before auditing approval. It then writes absent records to a separate native
+legacy-memory table, verifies each write, and audits the final counts. Exact
+retries reconcile records without updating their import timestamps. A
+conflicting record fails closed. An uncertain secondary write or failed final
+audit requires another explicit same-hash call; no automatic replay occurs.
+Partial imports can be reconciled one record at a time by that same call.
+
+The import is limited to 32 visible keys and 16 KiB total source content per
+scope; each value must fit the native 4,000 code point and 16 KiB limits. A
+larger scope or malformed entry is refused as a whole. CairnKeep's hidden
+history and review metadata are outside the visible `memory_list` contract and
+are not converted. Typed-node metadata, when returned, causes refusal instead
+of a conversion that would drop known provenance. If those records matter,
+retain the CairnKeep store and
+review them separately before deprecation. No source database is deleted or
+rewritten. The source scope, key and raw value digest are preserved; source
+creation time and AI Office run/task/agent provenance are unknown and remain
+absent. The native record's timestamp is its import time. Imported entries are
+advisory and join native bounded retrieval; an agent filter excludes entries
+with no known agent. `knowledge:trace` shows their legacy origin.
+
+The source format and named-scope storage behavior follow CairnKeep's
+[memory storage documentation](https://github.com/cairnkeep/cairnkeep/blob/main/docs/storage.md)
+and read-only MCP tool contract. The local development host used for this slice
+had no `~/.cairnkeep` store; transport, Unix-socket and SurrealDB integration
+tests use isolated source fixtures.

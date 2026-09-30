@@ -15,6 +15,7 @@ export type FakeCairnKeepMode =
   | "wrong-server"
   | "stdout-noise"
   | "malformed-result"
+  | "typed-metadata"
   | "oversized"
   | "hang"
   | "hang-with-grandchild"
@@ -104,7 +105,8 @@ lines.on("line", (line) => {
     return;
   }
   if (message.method === "tools/list") {
-    const tools = [{ name: "memory_search", inputSchema: { type: "object" } }];
+    const tools = (process.env.CAIRN_MCP_ALLOWED_TOOLS ?? "memory_search").split(",")
+      .map((name) => ({ name, inputSchema: { type: "object" } }));
     if (config.mode === "extra-tools") tools.push({ name: "memory_write", inputSchema: { type: "object" } });
     send({ jsonrpc: "2.0", id: message.id, result: { tools } });
     return;
@@ -122,6 +124,17 @@ lines.on("line", (line) => {
     }
     const scope = message.params.arguments.scope;
     const results = config.results.map((item) => ({ scope: item.scope ?? scope, key: item.key, value: item.value, score: item.score }));
+    if (message.params.name === "memory_list") {
+      const payload = { keys: results.map((item) => item.key),
+        ...(config.mode === "typed-metadata" ? { nodes: results.map((item) => ({ key: item.key, node_type: "decision" })) } : {}) };
+      send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload } });
+      return;
+    }
+    if (message.params.name === "memory_read") {
+      const payload = { results: results.filter((item) => item.key === message.params.arguments.key).map(({ scope, key, value }) => ({ scope, key, value })) };
+      send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload } });
+      return;
+    }
     const payload = config.mode === "malformed-result"
       ? { mode: "substring", count: 1, results: [{ scope, key: 42, value: null }] }
       : { mode: "substring", count: results.length, results };

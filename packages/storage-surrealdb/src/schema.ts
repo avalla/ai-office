@@ -1,8 +1,10 @@
 import type { Surreal } from "surrealdb";
 
 /** Versioned, repeatable schema for the experimental knowledge graph. */
-export const AGENT_KNOWLEDGE_SCHEMA_VERSION = 1;
-export async function initializeAgentKnowledgeSchema(db: Surreal): Promise<void> {
+export const AGENT_KNOWLEDGE_SCHEMA_VERSION = 2;
+export async function initializeAgentKnowledgeSchema(
+  db: Surreal,
+): Promise<void> {
   const statements = [
     "DEFINE TABLE IF NOT EXISTS knowledge_agent SCHEMAFULL TYPE NORMAL;",
     "DEFINE FIELD IF NOT EXISTS tenant_id ON knowledge_agent TYPE string; DEFINE FIELD IF NOT EXISTS project_id ON knowledge_agent TYPE string; DEFINE FIELD IF NOT EXISTS external_id ON knowledge_agent TYPE string;",
@@ -15,6 +17,9 @@ export async function initializeAgentKnowledgeSchema(db: Surreal): Promise<void>
     "DEFINE TABLE IF NOT EXISTS knowledge_memory SCHEMAFULL TYPE NORMAL;",
     "DEFINE FIELD IF NOT EXISTS tenant_id ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS project_id ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS external_id ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS text ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS agent_id ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS run_id ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS task_id ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS source_id ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS source_kind ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS source_label ON knowledge_memory TYPE string; DEFINE FIELD IF NOT EXISTS source_locator ON knowledge_memory TYPE option<string>; DEFINE FIELD IF NOT EXISTS created_at ON knowledge_memory TYPE datetime;",
     "DEFINE INDEX IF NOT EXISTS memory_scope_external ON knowledge_memory FIELDS tenant_id, project_id, external_id UNIQUE;",
+    "DEFINE TABLE IF NOT EXISTS knowledge_legacy_memory SCHEMAFULL TYPE NORMAL;",
+    "DEFINE FIELD IF NOT EXISTS tenant_id ON knowledge_legacy_memory TYPE string; DEFINE FIELD IF NOT EXISTS project_id ON knowledge_legacy_memory TYPE string; DEFINE FIELD IF NOT EXISTS external_id ON knowledge_legacy_memory TYPE string; DEFINE FIELD IF NOT EXISTS text ON knowledge_legacy_memory TYPE string; DEFINE FIELD IF NOT EXISTS source_scope ON knowledge_legacy_memory TYPE string; DEFINE FIELD IF NOT EXISTS source_key ON knowledge_legacy_memory TYPE string; DEFINE FIELD IF NOT EXISTS source_sha256 ON knowledge_legacy_memory TYPE string; DEFINE FIELD IF NOT EXISTS imported_at ON knowledge_legacy_memory TYPE datetime;",
+    "DEFINE INDEX IF NOT EXISTS legacy_memory_scope_external ON knowledge_legacy_memory FIELDS tenant_id, project_id, external_id UNIQUE;",
     "DEFINE TABLE IF NOT EXISTS knowledge_decision SCHEMAFULL TYPE NORMAL;",
     "DEFINE FIELD IF NOT EXISTS tenant_id ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS project_id ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS external_id ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS title ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS text ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS agent_id ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS run_id ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS task_id ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS source_id ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS source_kind ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS source_label ON knowledge_decision TYPE string; DEFINE FIELD IF NOT EXISTS source_locator ON knowledge_decision TYPE option<string>; DEFINE FIELD IF NOT EXISTS created_at ON knowledge_decision TYPE datetime;",
     "DEFINE INDEX IF NOT EXISTS decision_scope_external ON knowledge_decision FIELDS tenant_id, project_id, external_id UNIQUE;",

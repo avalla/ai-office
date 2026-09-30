@@ -24,7 +24,7 @@ import {
   KnowledgeStoreError,
   isKnowledgeIdentifier,
   knowledgeRetrievalLimits,
-  type KnowledgeHit,
+  type SearchKnowledgeHit,
   type RuntimeAgentKnowledge,
 } from "../ports/agent-knowledge-store.port.ts";
 import {
@@ -224,7 +224,7 @@ function validHit(hit: ProjectMemoryHit): boolean {
 }
 
 function validKnowledgeHit(
-  hit: KnowledgeHit,
+  hit: SearchKnowledgeHit,
   tenantId: string,
   repositoryId: string,
 ): boolean {
@@ -418,7 +418,7 @@ export class RunContextAssembler {
     const providerQuerySha256 = createHash("sha256")
       .update(term, "utf8")
       .digest("hex");
-    let hits: KnowledgeHit[];
+    let hits: SearchKnowledgeHit[];
     let searchAttempted = false;
     try {
       input.signal?.throwIfAborted();

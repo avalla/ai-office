@@ -644,21 +644,21 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: in progress, AK-04 merged and AK-05 governed admission in review.
+Status: in progress, AK-05 merged and AK-06 named-scope import in review.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
 
-| Slice | Scope | Depends on |
-| --- | --- | --- |
+| Slice | Scope                                                                        | Depends on                       |
+| ----- | ---------------------------------------------------------------------------- | -------------------------------- |
 | AK-01 | Canonical, bounded `AgentKnowledgeStore` contract and trusted portable scope | SurrealDB evaluation PRs #64–#66 |
-| AK-02 | SurrealDB retrieval parity and compatibility term | AK-01 merged |
-| AK-03 | Explicit, independent Runtime knowledge composition | AK-02 merged |
-| AK-04 | `RunContextAssembler` cutover and run provenance | AK-03 merged |
-| AK-05 | Governed knowledge admission with immutable provenance | AK-04 merged |
-| AK-06 | Explicit, idempotent CairnKeep named-scope import | AK-05 merged |
-| AK-07 | CairnKeep deprecation in guidance and setup | AK-06 merged |
-| AK-08 | CairnKeep implementation removal and final docs | AK-07 merged |
+| AK-02 | SurrealDB retrieval parity and compatibility term                            | AK-01 merged                     |
+| AK-03 | Explicit, independent Runtime knowledge composition                          | AK-02 merged                     |
+| AK-04 | `RunContextAssembler` cutover and run provenance                             | AK-03 merged                     |
+| AK-05 | Governed knowledge admission with immutable provenance                       | AK-04 merged                     |
+| AK-06 | Explicit, idempotent CairnKeep named-scope import                            | AK-05 merged                     |
+| AK-07 | CairnKeep deprecation in guidance and setup                                  | AK-06 merged                     |
+| AK-08 | CairnKeep implementation removal and final docs                              | AK-07 merged                     |
 
 Each slice is one reviewed PR. Completion requires proven retrieval, writes,
 legacy-data disposition, failure behavior, documentation, and operational
@@ -673,6 +673,9 @@ with bounded startup, sanitized diagnostics, and owned shutdown. AK-04 routes
 worker retrieval through this store and preserves bounded context and run
 provenance; CairnKeep remains available only for legacy diagnostics. See
 [native agent knowledge retrieval](agent-knowledge.md).
+AK-05 governs new run-sourced writes. AK-06 adds an operator-reviewed,
+idempotent import of one bounded CairnKeep named scope, preserving its scope,
+key and content digest without inventing run provenance. See the same guide.
 
 ## M7.12 — Agent model routing
 

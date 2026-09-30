@@ -22,6 +22,8 @@ import type {
   MemoryInput,
   KnowledgeScope,
   KnowledgeSearchQuery,
+  LegacyKnowledgeInput,
+  LegacyKnowledgeHit,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import { CairnKeepMemoryProvider } from "@ai-office/cairnkeep-memory/cairnkeep-memory-provider.ts";
 import { MisconfiguredProjectMemoryProvider } from "@ai-office/cairnkeep-memory/cairnkeep-memory-provider.ts";
@@ -417,6 +419,157 @@ test("knowledge admission requires an exact reviewed plan through the Unix socke
     JSON.parse(traced.stdout[0]!) as { provenance: { runId: string } },
   ).toMatchObject({ provenance: { runId } });
   expect(JSON.stringify({ admitted, traced })).not.toContain("secret");
+});
+
+test("legacy named-scope import uses an exact reviewed plan through the Unix socket", async () => {
+  const cairn = createFakeCairnKeep({
+    results: [{ key: "notes/deploy", value: "Use staged rollout", score: 1 }],
+  });
+  cleanup.push(cairn.cleanup);
+  const provider = new CairnKeepMemoryProvider({
+    command: cairn.command,
+    timeoutMs: 5_000,
+    environment: { PATH: process.env.PATH, HOME: tmpdir() },
+  });
+  const saved = new Map<string, LegacyKnowledgeHit>();
+  const recordLegacyMemory = vi.fn(async (input: LegacyKnowledgeInput) => {
+    saved.set(input.id, {
+      tenantId: input.tenantId,
+      repositoryId: input.repositoryId,
+      id: input.id,
+      kind: "memory",
+      text: input.text,
+      title: null,
+      agentId: null,
+      runId: null,
+      taskId: null,
+      source: {
+        kind: "external",
+        id: input.sourceKey,
+        label: "CairnKeep named scope",
+        locator: input.sourceSha256,
+      },
+      createdAt: input.importedAt,
+      legacy: {
+        sourceScope: input.sourceScope,
+        sourceKey: input.sourceKey,
+        sourceSha256: input.sourceSha256,
+      },
+    });
+  });
+  const store = {
+    recordLegacyMemory,
+    traceMemoryProvenance: async () => null,
+    traceLegacyMemory: async (_scope: KnowledgeScope, id: string) =>
+      saved.get(id) ?? null,
+  } as unknown as AgentKnowledgeStore;
+  const o = await office(provider, {
+    agentKnowledgeConfiguration: {
+      kind: "surrealdb",
+      tenantId: "tenant-a",
+      connection: {
+        endpoint: "ws://127.0.0.1:8000",
+        namespace: "office",
+        database: "knowledge",
+        username: "user",
+        password: "secret",
+      },
+    },
+    connectAgentKnowledge: async () => ({ store, close: async () => {} }),
+  });
+  const main = o.checkout("legacy-import");
+  const installed = await o.command(["install", ".", "--json"], main);
+  expect(installed.exitCode, installed.stderr.join("\n")).not.toBe(1);
+  const projectId = (
+    JSON.parse((await o.command(["status", "--json"], main)).stdout[0]!) as {
+      project: { id: string };
+    }
+  ).project.id;
+  const repositoryId = (
+    JSON.parse(
+      readFileSync(join(main, ".ai-office", "project.json"), "utf8"),
+    ) as {
+      repositoryId: string;
+    }
+  ).repositoryId;
+  const sourceScope = deriveProjectMemoryIdentity(repositoryId).memoryProjectId;
+  const args = ["--project", projectId, "--scope", sourceScope];
+  const planned = await o.command(["knowledge:legacy-plan", ...args], main);
+  expect(planned.exitCode, planned.stderr.join("\n")).toBe(0);
+  const plan = JSON.parse(planned.stdout[0]!) as {
+    planHash: string;
+    entries: { id: string }[];
+  };
+  expect(plan.entries).toHaveLength(1);
+  const rejected = await o.command(
+    [
+      "knowledge:legacy-import",
+      ...args,
+      "--approve",
+      "wrong",
+      "--actor",
+      "reviewer",
+    ],
+    main,
+  );
+  expect(rejected.exitCode).toBe(1);
+  expect(recordLegacyMemory).not.toHaveBeenCalled();
+  const imported = await o.command(
+    [
+      "knowledge:legacy-import",
+      ...args,
+      "--approve",
+      plan.planHash,
+      "--actor",
+      "reviewer",
+    ],
+    main,
+  );
+  expect(imported.exitCode, imported.stderr.join("\n")).toBe(0);
+  expect(JSON.parse(imported.stdout[0]!)).toMatchObject({
+    imported: 1,
+    reconciled: 0,
+  });
+  const retried = await o.command(
+    [
+      "knowledge:legacy-import",
+      ...args,
+      "--approve",
+      plan.planHash,
+      "--actor",
+      "reviewer",
+    ],
+    main,
+  );
+  expect(retried.exitCode, retried.stderr.join("\n")).toBe(0);
+  expect(JSON.parse(retried.stdout[0]!)).toMatchObject({
+    imported: 0,
+    reconciled: 1,
+  });
+  expect(recordLegacyMemory).toHaveBeenCalledOnce();
+  expect(saved.get(plan.entries[0]!.id)).toMatchObject({
+    runId: null,
+    legacy: { sourceScope, sourceKey: "notes/deploy" },
+  });
+  const traced = await o.command(
+    [
+      "knowledge:trace",
+      "--project",
+      projectId,
+      "--kind",
+      "memory",
+      "--id",
+      plan.entries[0]!.id,
+    ],
+    main,
+  );
+  expect(traced.exitCode, traced.stderr.join("\n")).toBe(0);
+  expect(JSON.parse(traced.stdout[0]!)).toMatchObject({
+    provenance: {
+      runId: null,
+      legacy: { sourceScope, sourceKey: "notes/deploy" },
+    },
+  });
 });
 
 function fakeClaude(binRoot: string, capturePath: string): void {

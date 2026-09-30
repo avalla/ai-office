@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   KnowledgeStoreError,
   assertKnowledgeIdentifier,
@@ -13,13 +14,16 @@ import {
   type KnowledgeSearchQuery,
   type MemoryInput,
   type KnowledgeProvenance,
+  type LegacyKnowledgeHit,
+  type LegacyKnowledgeInput,
+  type SearchKnowledgeHit,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import { DateTime, RecordId, type Surreal } from "surrealdb";
 import { initializeAgentKnowledgeSchema } from "./schema.ts";
 
 type Row = Record<string, unknown>;
 
-function sortKnowledge(left: KnowledgeHit, right: KnowledgeHit): number {
+function sortKnowledge(left: SearchKnowledgeHit, right: SearchKnowledgeHit): number {
   return right.createdAt.getTime() - left.createdAt.getTime()
     || (left.kind < right.kind ? -1 : left.kind > right.kind ? 1 : 0)
     || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
@@ -117,6 +121,50 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
     );
   }
 
+  async recordLegacyMemory(input: LegacyKnowledgeInput): Promise<void> {
+    assertKnowledgeScope(input);
+    assertKnowledgeIdentifier(input.id);
+    if (!input.text.trim() || [...input.text].length > 4_000 ||
+      Buffer.byteLength(input.text, "utf8") > 16_384 ||
+      !/^aio-[0-9a-f]{32}$/u.test(input.sourceScope) ||
+      !input.sourceKey.trim() || input.sourceKey.length > 256 || /\p{Cc}/u.test(input.sourceKey) ||
+      input.sourceSha256 !== `sha256:${createHash("sha256").update(input.text, "utf8").digest("hex")}` ||
+      !(input.importedAt instanceof Date) || Number.isNaN(input.importedAt.getTime())) {
+      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_QUERY");
+    }
+    const record = new RecordId("knowledge_legacy_memory", scopedId(input, "legacy_memory", input.id));
+    await this.execute(
+      `BEGIN TRANSACTION;
+       ${immutableRecordGuard("legacy", "knowledge_legacy_memory", "$record", {
+         tenant_id: "tenant", project_id: "project", external_id: "external_id",
+         text: "text", source_scope: "source_scope", source_key: "source_key",
+         source_sha256: "source_sha256",
+       }, "Legacy knowledge identity conflict")}
+       IF array::len($existing_legacy) = 0 {
+         CREATE $record CONTENT {
+           tenant_id: $tenant, project_id: $project, external_id: $external_id,
+           text: $text, source_scope: $source_scope, source_key: $source_key,
+           source_sha256: $source_sha256, imported_at: $imported_at
+         };
+       };
+       COMMIT TRANSACTION;`,
+      { record, tenant: input.tenantId, project: input.repositoryId,
+        external_id: input.id, text: input.text, source_scope: input.sourceScope,
+        source_key: input.sourceKey, source_sha256: input.sourceSha256,
+        imported_at: input.importedAt },
+    );
+  }
+
+  async traceLegacyMemory(scope: KnowledgeScope, id: string): Promise<LegacyKnowledgeHit | null> {
+    assertKnowledgeScope(scope);
+    assertKnowledgeIdentifier(id);
+    const record = new RecordId("knowledge_legacy_memory", scopedId(scope, "legacy_memory", id));
+    const rows = await this.rows("SELECT * FROM knowledge_legacy_memory WHERE id = $record LIMIT 2", { record });
+    if (rows.length === 0) return null;
+    if (rows.length !== 1 || !rows[0]) throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    return this.legacyHit(rows[0], scope, id);
+  }
+
   async recordDecision(input: DecisionInput): Promise<void> {
     assertKnowledge(input);
     const sourceKey = scopedId(input, "source", input.source.id);
@@ -171,23 +219,27 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
     );
   }
 
-  async findKnowledge(scope: KnowledgeScope, query: KnowledgeSearchQuery): Promise<KnowledgeHit[]> {
+  async findKnowledge(scope: KnowledgeScope, query: KnowledgeSearchQuery): Promise<SearchKnowledgeHit[]> {
     assertKnowledgeScope(scope);
     assertKnowledgeSearchQuery(query);
     const limit = query.limit ?? knowledgeRetrievalLimits.maxResults;
     const agentClause = query.agentId === undefined ? "" : " AND agent_id = $agent_id";
     const params = { tenant: scope.tenantId, project: scope.repositoryId, text: query.text.toLowerCase(), agent_id: query.agentId ?? "", limit };
     try {
-      const [memories, decisions] = await Promise.all([
+      const [memories, decisions, legacy] = await Promise.all([
         this.rows(`SELECT * FROM knowledge_memory WHERE tenant_id = $tenant AND project_id = $project${agentClause} AND string::contains(string::lowercase(text), $text) ORDER BY created_at DESC, external_id ASC LIMIT $limit`, params),
         this.rows(`SELECT * FROM knowledge_decision WHERE tenant_id = $tenant AND project_id = $project${agentClause} AND string::contains(string::lowercase(text), $text) AND id NOT IN (SELECT VALUE out FROM supersedes WHERE tenant_id = $tenant AND project_id = $project) ORDER BY created_at DESC, external_id ASC LIMIT $limit`, params),
+        query.agentId === undefined
+          ? this.rows("SELECT * FROM knowledge_legacy_memory WHERE tenant_id = $tenant AND project_id = $project AND string::contains(string::lowercase(text), $text) ORDER BY imported_at DESC, external_id ASC LIMIT $limit", params)
+          : Promise.resolve([] as Row[]),
       ]);
-      if (memories.length > limit || decisions.length > limit) {
+      if (memories.length > limit || decisions.length > limit || legacy.length > limit) {
         throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
       }
       const hits = [
         ...memories.map((row) => this.hit(row, "memory", scope)),
         ...decisions.map((row) => this.hit(row, "decision", scope)),
+        ...legacy.map((row) => this.legacyHit(row, scope)),
       ];
       const seen = new Set<string>();
       for (const hit of hits) {
@@ -263,7 +315,7 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
 
   async deleteProjectKnowledge(scope: KnowledgeScope): Promise<void> {
     assertKnowledgeScope(scope);
-    const tables = ["executed", "for_task", "derived_from", "in_context_of", "based_on", "affects", "supersedes", "depends_on", "knowledge_memory", "knowledge_decision", "knowledge_source", "knowledge_run", "knowledge_task", "knowledge_agent"];
+    const tables = ["executed", "for_task", "derived_from", "in_context_of", "based_on", "affects", "supersedes", "depends_on", "knowledge_legacy_memory", "knowledge_memory", "knowledge_decision", "knowledge_source", "knowledge_run", "knowledge_task", "knowledge_agent"];
     const statement = [`BEGIN TRANSACTION`, ...tables.map((table) => `DELETE FROM ${table} WHERE tenant_id = $tenant AND project_id = $project`), `COMMIT TRANSACTION`].join("; ");
     await this.execute(statement, { tenant: scope.tenantId, project: scope.repositoryId });
   }
@@ -394,6 +446,36 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
           : {}),
       },
       createdAt,
+    };
+  }
+
+  private legacyHit(row: Row, scope: KnowledgeScope, expectedId?: string): LegacyKnowledgeHit {
+    const id = row.external_id;
+    const sourceScope = row.source_scope;
+    const sourceKey = row.source_key;
+    const sourceSha256 = row.source_sha256;
+    const importedAt = row.imported_at instanceof DateTime
+      ? row.imported_at.toDate()
+      : row.imported_at instanceof Date ? row.imported_at
+        : typeof row.imported_at === "string" ? new Date(row.imported_at) : new Date(Number.NaN);
+    if (!this.inScope(row, scope) || !isKnowledgeIdentifier(id) ||
+      (expectedId !== undefined && id !== expectedId) ||
+      !this.sameRecord(row.id, new RecordId("knowledge_legacy_memory", scopedId(scope, "legacy_memory", id))) ||
+      typeof row.text !== "string" || !row.text.trim() ||
+      typeof sourceScope !== "string" || !/^aio-[0-9a-f]{32}$/u.test(sourceScope) ||
+      typeof sourceKey !== "string" || !sourceKey.trim() || sourceKey.length > 256 || /\p{Cc}/u.test(sourceKey) ||
+      typeof sourceSha256 !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(sourceSha256) ||
+      sourceSha256 !== `sha256:${createHash("sha256").update(row.text as string, "utf8").digest("hex")}` ||
+      Number.isNaN(importedAt.getTime())) {
+      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    }
+    return {
+      tenantId: scope.tenantId, repositoryId: scope.repositoryId, id,
+      kind: "memory", text: row.text, title: null,
+      agentId: null, runId: null, taskId: null,
+      source: { kind: "external", id: sourceKey, label: "CairnKeep named scope", locator: sourceSha256 },
+      createdAt: importedAt,
+      legacy: { sourceScope, sourceKey, sourceSha256 },
     };
   }
 }
