@@ -87,8 +87,10 @@ import {
   DisabledProjectMemoryProvider,
   type ProjectMemoryProvider,
 } from "@ai-office/application/ports/project-memory-provider.port.ts";
-import type { RuntimeAgentKnowledge } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import { KnowledgeStoreError, type RuntimeAgentKnowledge } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import { KnowledgeAdmissionError } from "@ai-office/application/agent-knowledge/manage-knowledge-admission.ts";
 import { handleProjectMemoryCommand } from "./commands/project-memory.ts";
+import { handleKnowledgeCommand } from "./commands/knowledge.ts";
 import { handleModelCommand } from "./commands/model.ts";
 import {
   ModelRoutingError,
@@ -272,6 +274,9 @@ const commands = [
   "memory:references",
   "memory:deprecate",
   "project-memory:status",
+  "knowledge:plan",
+  "knowledge:admit",
+  "knowledge:trace",
   "resource:create",
   "resource:list",
   "resource:disable",
@@ -376,6 +381,7 @@ const handlers = [
   handleRequirementCommand,
   handleMemoryCommand,
   handleProjectMemoryCommand,
+  handleKnowledgeCommand,
   handleModelCommand,
   handleCapabilityCommand,
 ] as const;
@@ -387,6 +393,8 @@ function isCommand(value: string): value is Command {
 function formatKnownError(error: unknown): string | null {
   if (
     error instanceof CliUsageError ||
+    error instanceof KnowledgeAdmissionError ||
+    error instanceof KnowledgeStoreError ||
     error instanceof DomainValidationError ||
     error instanceof ProjectNotFoundError ||
     error instanceof ProjectQuestionNotFoundError ||

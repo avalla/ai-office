@@ -644,7 +644,7 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: in progress, AK-03 merged and AK-04 worker retrieval cutover in review.
+Status: in progress, AK-04 merged and AK-05 governed admission in review.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).

@@ -19,6 +19,7 @@ import {
 import { deriveProjectMemoryIdentity } from "@ai-office/application/project-memory/project-memory-identity.ts";
 import type {
   AgentKnowledgeStore,
+  MemoryInput,
   KnowledgeScope,
   KnowledgeSearchQuery,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
@@ -249,6 +250,173 @@ test("native knowledge enters the pinned worker context through the Unix socket 
     if (oldPath === undefined) delete process.env.PATH;
     else process.env.PATH = oldPath;
   }
+});
+
+test("knowledge admission requires an exact reviewed plan through the Unix socket", async () => {
+  let saved: MemoryInput | null = null;
+  const recordMemory = vi.fn(async (input: MemoryInput) => {
+    saved = input;
+  });
+  const store = {
+    findKnowledge: async () => [],
+    recordMemory,
+    traceMemoryProvenance: async (_scope: KnowledgeScope, id: string) => {
+      const value = saved;
+      if (value === null || value.id !== id) return null;
+      const knowledge = { ...value, kind: "memory" as const, title: null };
+      return {
+        knowledge,
+        source: value.source,
+        runId: value.runId,
+        taskId: value.taskId,
+        agentId: value.agentId,
+      };
+    },
+  } as unknown as AgentKnowledgeStore;
+  const o = await office(new DisabledProjectMemoryProvider(), {
+    agentKnowledgeConfiguration: {
+      kind: "surrealdb",
+      tenantId: "tenant-a",
+      connection: {
+        endpoint: "ws://127.0.0.1:8000",
+        namespace: "office",
+        database: "knowledge",
+        username: "user",
+        password: "secret",
+      },
+    },
+    connectAgentKnowledge: async () => ({ store, close: async () => {} }),
+  });
+  const main = o.checkout("admission");
+  const installed = await o.command(["install", ".", "--json"], main);
+  expect(installed.exitCode, installed.stderr.join("\n")).not.toBe(1);
+  const projectId = (
+    JSON.parse((await o.command(["status", "--json"], main)).stdout[0]!) as {
+      project: { id: string };
+    }
+  ).project.id;
+  fakeClaude(o.binRoot, join(o.workspace, "admission-worker-input.json"));
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${o.binRoot}:${oldPath ?? ""}`;
+  cleanup.push(() => {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+  });
+  const sync = await o.command(
+    ["agent:sync", "--project", projectId, "--directory", resolve("agents")],
+    main,
+  );
+  expect(sync.exitCode, sync.stderr.join("\n")).toBe(0);
+  const agentId = (
+    await o.command(["agent:list", "--project", projectId], main)
+  ).stdout[1]!.split("\t")[0]!;
+  const taskId = (
+    await o.command(
+      ["task:create", "--project", projectId, "--title", "Document rollout"],
+      main,
+    )
+  ).stdout[0]!.replace("Task created: ", "");
+  const runId = (
+    await o.command(
+      [
+        "run:schedule",
+        "--project",
+        projectId,
+        "--task",
+        taskId,
+        "--agent",
+        agentId,
+      ],
+      main,
+    )
+  ).stdout[0]!.replace("Agent run scheduled: ", "");
+  const tick = await o.command(
+    ["run:tick", "--project", projectId, "--worker", "claude"],
+    main,
+  );
+  expect(tick.exitCode, tick.stderr.join("\n")).toBe(0);
+
+  const arguments_ = [
+    "--project",
+    projectId,
+    "--run",
+    runId,
+    "--kind",
+    "memory",
+    "--text",
+    "Use staged rollout",
+  ];
+  const planned = await o.command(["knowledge:plan", ...arguments_], main);
+  expect(planned.exitCode, planned.stderr.join("\n")).toBe(0);
+  const plan = JSON.parse(planned.stdout[0]!) as {
+    id: string;
+    planHash: string;
+  };
+  expect(recordMemory).not.toHaveBeenCalled();
+  const mismatch = await o.command(
+    [
+      "knowledge:admit",
+      ...arguments_,
+      "--approve",
+      "wrong",
+      "--actor",
+      "reviewer",
+    ],
+    main,
+  );
+  expect(mismatch.exitCode).toBe(1);
+  expect(recordMemory).not.toHaveBeenCalled();
+  const admitted = await o.command(
+    [
+      "knowledge:admit",
+      ...arguments_,
+      "--approve",
+      plan.planHash,
+      "--actor",
+      "reviewer",
+    ],
+    main,
+  );
+  expect(admitted.exitCode, admitted.stderr.join("\n")).toBe(0);
+  expect(JSON.parse(admitted.stdout[0]!)).toMatchObject({
+    id: plan.id,
+    outcome: "recorded",
+  });
+  expect(recordMemory).toHaveBeenCalledOnce();
+  const retried = await o.command(
+    [
+      "knowledge:admit",
+      ...arguments_,
+      "--approve",
+      plan.planHash,
+      "--actor",
+      "reviewer",
+    ],
+    main,
+  );
+  expect(retried.exitCode, retried.stderr.join("\n")).toBe(0);
+  expect(JSON.parse(retried.stdout[0]!)).toMatchObject({
+    id: plan.id,
+    outcome: "reconciled",
+  });
+  expect(recordMemory).toHaveBeenCalledOnce();
+  const traced = await o.command(
+    [
+      "knowledge:trace",
+      "--project",
+      projectId,
+      "--kind",
+      "memory",
+      "--id",
+      plan.id,
+    ],
+    main,
+  );
+  expect(traced.exitCode, traced.stderr.join("\n")).toBe(0);
+  expect(
+    JSON.parse(traced.stdout[0]!) as { provenance: { runId: string } },
+  ).toMatchObject({ provenance: { runId } });
+  expect(JSON.stringify({ admitted, traced })).not.toContain("secret");
 });
 
 function fakeClaude(binRoot: string, capturePath: string): void {

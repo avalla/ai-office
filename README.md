@@ -634,6 +634,13 @@ portable repository ID from its authoritative project binding and binds the
 tenant from host configuration. Empty, failed, or unavailable retrieval leaves
 the worker context unchanged and records the outcome for the run.
 
+To admit new knowledge from a completed worker run, inspect
+`ai-office knowledge:plan --project <id> --run <id> --kind memory --text <text>`.
+The JSON output includes a `planHash`. After reviewing the exact content, run
+the same arguments with `knowledge:admit --approve <planHash> --actor <reviewer>`.
+Use `knowledge:trace --project <id> --kind memory --id <knowledgeId>` to inspect
+the stored provenance. A decision also requires `--title <title>`.
+
 ## Agent model routing
 
 Roles declare a semantic `model_policy` (`economical`, `balanced`,

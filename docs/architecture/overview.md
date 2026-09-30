@@ -379,6 +379,12 @@ knowledge. The earlier CairnKeep provider and diagnostic command remain during
 migration, but do not feed worker context. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
 
+New knowledge admission runs through an application use case. It validates an
+authoritative completed worker run and project binding, requires an operator
+review of an exact content hash, records an audit attempt before the SurrealDB
+write, and verifies the stored provenance graph afterward. The knowledge store
+remains secondary; no SurrealDB transaction holds operational authority.
+
 ## Operational read models
 
 Operational state is computed once, in the application layer, and published as
