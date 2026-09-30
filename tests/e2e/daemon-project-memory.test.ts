@@ -378,14 +378,27 @@ test("knowledge admission requires an exact reviewed plan through the Unix socke
     main,
   );
   expect(admitted.exitCode, admitted.stderr.join("\n")).toBe(0);
-  expect(JSON.parse(admitted.stdout[0]!)).toMatchObject({ id: plan.id, outcome: "recorded" });
+  expect(JSON.parse(admitted.stdout[0]!)).toMatchObject({
+    id: plan.id,
+    outcome: "recorded",
+  });
   expect(recordMemory).toHaveBeenCalledOnce();
   const retried = await o.command(
-    ["knowledge:admit", ...arguments_, "--approve", plan.planHash, "--actor", "reviewer"],
+    [
+      "knowledge:admit",
+      ...arguments_,
+      "--approve",
+      plan.planHash,
+      "--actor",
+      "reviewer",
+    ],
     main,
   );
   expect(retried.exitCode, retried.stderr.join("\n")).toBe(0);
-  expect(JSON.parse(retried.stdout[0]!)).toMatchObject({ id: plan.id, outcome: "reconciled" });
+  expect(JSON.parse(retried.stdout[0]!)).toMatchObject({
+    id: plan.id,
+    outcome: "reconciled",
+  });
   expect(recordMemory).toHaveBeenCalledOnce();
   const traced = await o.command(
     [

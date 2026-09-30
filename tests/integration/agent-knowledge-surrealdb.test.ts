@@ -111,7 +111,10 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
       {
         execute: async (event: Parameters<RecordAuditEvent["execute"]>[0]) => {
           events.push(event);
-          if (failNextRecorded && event.eventType === "knowledge.admission.recorded") {
+          if (
+            failNextRecorded &&
+            event.eventType === "knowledge.admission.recorded"
+          ) {
             failNextRecorded = false;
             throw new Error("audit backend secret");
           }
@@ -179,15 +182,36 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     const uncertainInput = { ...input, text: "Verified but unaudited rollout" };
     const uncertainPlan = await service.plan(uncertainInput);
     failNextRecorded = true;
-    await expect(service.admit({ ...uncertainInput, approval: uncertainPlan.planHash, reviewedBy: "operator" }))
-      .rejects.toMatchObject({ code: "KNOWLEDGE_ADMISSION_RECONCILIATION_REQUIRED" });
-    expect(await store.traceMemoryProvenance(scopeA, uncertainPlan.id)).toMatchObject({
-      knowledge: { id: uncertainPlan.id, text: uncertainPlan.text }, source: uncertainPlan.source,
+    await expect(
+      service.admit({
+        ...uncertainInput,
+        approval: uncertainPlan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toMatchObject({
+      code: "KNOWLEDGE_ADMISSION_RECONCILIATION_REQUIRED",
     });
-    expect(await service.admit({ ...uncertainInput, approval: uncertainPlan.planHash, reviewedBy: "operator" }))
-      .toEqual({ ...uncertainPlan, outcome: "reconciled" });
-    await expect(service.admit({ ...uncertainInput, text: "Changed again", approval: uncertainPlan.planHash, reviewedBy: "operator" }))
-      .rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
+    expect(
+      await store.traceMemoryProvenance(scopeA, uncertainPlan.id),
+    ).toMatchObject({
+      knowledge: { id: uncertainPlan.id, text: uncertainPlan.text },
+      source: uncertainPlan.source,
+    });
+    expect(
+      await service.admit({
+        ...uncertainInput,
+        approval: uncertainPlan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).toEqual({ ...uncertainPlan, outcome: "reconciled" });
+    await expect(
+      service.admit({
+        ...uncertainInput,
+        text: "Changed again",
+        approval: uncertainPlan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
     expect(events.map((event) => event.eventType)).toEqual([
       "knowledge.admission.approved",
       "knowledge.admission.recorded",
