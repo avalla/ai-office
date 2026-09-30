@@ -29,10 +29,10 @@ export interface ProjectMemoryRetrievalRecord {
    */
   readonly contextQuerySha256: string | null;
   /**
-   * Lowercase SHA-256 hex of the exact query string the adapter sent across
-   * the provider boundary after provider-specific transformation, as reported
-   * by the adapter. Null when retrieval was skipped or failed before a
-   * validated report existed, and for rows recorded before it was captured.
+   * Lowercase SHA-256 hex of the exact literal term supplied to native
+   * findKnowledge once it was invoked, including failed and timed-out calls.
+   * Legacy providers report their own outbound-query digest. Null when no
+   * search was attempted or the legacy adapter could not report one.
    * Neither query text is ever kept.
    */
   readonly providerQuerySha256: string | null;

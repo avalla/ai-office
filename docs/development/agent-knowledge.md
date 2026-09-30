@@ -50,7 +50,8 @@ after a failure or configuration change. No knowledge mutation command exists.
   `knowledgeCompatibilitySearchTerm`. It uses CairnKeep's existing rule: the
   longest word of at least three Unicode code points after excluding function
   words and generic task verbs, earliest on ties. The helper retains
-  CairnKeep's existing JavaScript locale-aware lowercase step. If no term
+  deterministic JavaScript default lowercase, matching the SurrealDB adapter.
+  If no term
   qualifies, it keeps the whole query. This preserves the current modest
   recall; it does not make multiword, semantic, or vector search equivalent.
 - Results are ordered by creation time descending, then kind and ID ascending.
@@ -89,8 +90,11 @@ Before any excerpt is injected, the assembler appends one run-local retrieval
 record and its references atomically. The record contains outcome, typed error,
 SHA-256 of both the bounded context query and the exact literal term, the
 derived portable memory identity, counts, and each result's kind, ID, injection
-and truncation flags. `sha256:` of the original title/text pair identifies the
-content version. It stores no query text, body, endpoint or credential. A
+and transformation flags. The provider query digest is null before a search
+attempt and is retained for failed, cancelled and timed-out attempts. A true
+`truncated` flag also marks content sanitized before injection. `sha256:` of
+the original title/text pair identifies the stored content version. It stores
+no query text, body, endpoint or credential. A
 provenance write failure suppresses injection; a competing write for the same
 run refuses preparation. `run:show` reports the retrieval. Historical
 CairnKeep rows remain readable.

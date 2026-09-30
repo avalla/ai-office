@@ -448,9 +448,10 @@ The architecture distinguishes three databases by authority and rebuildability:
 
 `project.sqlite` is authoritative and must be preserved and upgraded. The code index is derived data that may be rebuilt from source and project metadata. Global memory is durable reusable knowledge but is not project authority.
 
-An optional external project memory provider (CairnKeep) is a separate,
-non-authoritative category outside these databases. AI Office stores only its
-per-run retrieval provenance in `project.sqlite`.
+The optional external SurrealDB knowledge store is a separate,
+non-authoritative category outside these databases. AI Office stores its
+per-run retrieval provenance in `project.sqlite`. The older CairnKeep provider
+remains available for legacy diagnostics and history during migration.
 
 `project.sqlite` also stores immutable portable snapshot revisions and one
 local head/base record per backed-up or restored project. A revision identifies

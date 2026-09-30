@@ -131,15 +131,20 @@ The first real worker produces **analysis and drafted content**. It receives
 task title/description, synchronized agent/role identity and version, and the
 active pinned stage's objective/checks when present. That data is sent to the
 selected external client; operators must choose task content accordingly.
-When an optional project memory provider is configured, one
-`RunContextAssembler` adds at most one bounded, advisory `projectMemory` block
-from a single task-derived search and records retrieval provenance for the run,
-including separate digests of the task-derived query and of the exact query the
-provider adapter sent. The block is omitted when nothing was injected, and
-provider failures never fail the run. Preparation honors the run's AbortSignal,
-including direct `WorkerAgentExecutor.execute`, so cancellation during retrieval
-cancels the run before any worker starts. A run that already has retrieval
-provenance is never prepared again; see [project memory](project-memory.md).
+When the optional native `AgentKnowledgeStore` is connected, the Runtime-composed
+tenant and authoritative portable repository identity scope one bounded,
+task-derived search. The current adapter is SurrealDB. `RunContextAssembler`
+adds advisory excerpts through the compatibility field
+`WorkerContext.projectMemory` and records run-local retrieval provenance before
+injection. It records separate digests of the bounded context query and the
+exact literal term supplied to the store when a search was attempted. The
+block is omitted when nothing was injected, and retrieval failures never fail
+the run. Preparation honors the run's AbortSignal, including direct
+`WorkerAgentExecutor.execute`, so cancellation during retrieval cancels the run
+before any worker starts. A run that already has retrieval provenance is never
+prepared again. CairnKeep no longer feeds worker context; it remains available
+for legacy diagnostics and historical retrieval rows. See
+[native agent knowledge](agent-knowledge.md).
 It receives no repository path, resource tools, role source files, or skills.
 The trusted, pinned role guidance is injected separately from the generic Runtime
 system constraints; task text remains data in the user/task context. Tool
@@ -149,8 +154,9 @@ part of this worker contract.
 The application pins adapter/version and the SHA-256 of this bounded context
 before dispatch, renews the task lease and checks authority while running.
 The final bounded result, session/model identifiers when reported, and usage
-are persisted in the run; `run:show` also lists project memory references that
-entered the context. The CLI and dashboard run detail show the result.
+are persisted in the run; `run:show` also displays native knowledge retrieval
+provenance and the references that entered the context. The CLI and dashboard
+run detail show the result.
 The dashboard identifies simulation, controlled action, real worker and unknown
 historical execution separately. Task history links to each run's events/output.
 Historical provenance is never guessed from a result's prose.

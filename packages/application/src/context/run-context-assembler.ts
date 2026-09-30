@@ -366,6 +366,7 @@ export class RunContextAssembler {
       errorCode: ProjectMemoryRetrievalRecord["errorCode"],
       memoryProjectId: string | null,
       contextQuerySha256: string | null,
+      providerQuerySha256: string | null = null,
     ) => {
       await record({
         ...nothing,
@@ -374,7 +375,7 @@ export class RunContextAssembler {
         outcome: "failed",
         errorCode,
         contextQuerySha256,
-        providerQuerySha256: null,
+        providerQuerySha256,
       });
     };
     if (state.state !== "connected") {
@@ -418,8 +419,10 @@ export class RunContextAssembler {
       .update(term, "utf8")
       .digest("hex");
     let hits: KnowledgeHit[];
+    let searchAttempted = false;
     try {
       input.signal?.throwIfAborted();
+      searchAttempted = true;
       hits = await this.boundedKnowledgeSearch(
         state.store.findKnowledge(
           { tenantId: state.tenantId, repositoryId },
@@ -446,7 +449,12 @@ export class RunContextAssembler {
             : error instanceof KnowledgeRetrievalTimeout
               ? "KNOWLEDGE_TIMEOUT"
               : "KNOWLEDGE_QUERY_FAILED";
-      await failed(errorCode, memoryProjectId, contextQuerySha256);
+      await failed(
+        errorCode,
+        memoryProjectId,
+        contextQuerySha256,
+        searchAttempted ? providerQuerySha256 : null,
+      );
       if (input.signal?.aborted === true)
         throw new DOMException("Execution cancelled", "AbortError");
       return undefined;
@@ -456,21 +464,21 @@ export class RunContextAssembler {
         hit.text,
         projectMemoryLimits.excerptCharacters,
       );
+      const title =
+        hit.title === null
+          ? null
+          : truncateCharacters(hit.title, projectMemoryLimits.titleCharacters);
+      const safeTitle = title?.replace(/[\p{Cc}\p{Cf}]/gu, " ") ?? null;
+      const safeExcerpt = excerpt.replace(/[\p{Cc}\p{Cf}]/gu, " ");
       return {
         referenceId: hit.id,
         scope: hit.kind,
-        title:
-          hit.title === null
-            ? null
-            : truncateCharacters(
-                hit.title,
-                projectMemoryLimits.titleCharacters,
-              ).replace(/[\p{Cc}\p{Cf}]/gu, " "),
-        excerpt: excerpt.replace(/[\p{Cc}\p{Cf}]/gu, " "),
+        title: safeTitle,
+        excerpt: safeExcerpt,
         contentDigest: `sha256:${createHash("sha256")
           .update(JSON.stringify([hit.title, hit.text]), "utf8")
           .digest("hex")}`,
-        truncated: excerpt !== hit.text,
+        truncated: safeExcerpt !== hit.text || safeTitle !== hit.title,
       };
     });
     const budget = applyProjectMemoryBudget(normalized, "surrealdb", maxBytes);

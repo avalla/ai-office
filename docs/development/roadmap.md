@@ -628,7 +628,7 @@ evaluation, trajectory or skill system. `global.sqlite` is unchanged. See
 Status: superseded as a CairnKeep write plan by the Native Agent Knowledge
 milestone below. AK-05 will determine the admission and review policy for new
 knowledge through `AgentKnowledgeStore`; no CairnKeep write-back is planned.
-The current read-only CairnKeep path remains unchanged until the retrieval
+The read-only CairnKeep path remains for diagnostics after the AK-04 retrieval
 cutover. Semantic retrieval and dashboard provenance remain separate work.
 
 ### Separate follow-up — Project retention and removal

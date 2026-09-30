@@ -170,6 +170,8 @@ describe("native knowledge run context", () => {
         errorCode,
         resultCount: 0,
         injectedCount: 0,
+        contextQuerySha256: digest(input.taskTitle),
+        providerQuerySha256: digest("authentication"),
       });
     },
   );
@@ -185,6 +187,71 @@ describe("native knowledge run context", () => {
       errorCode: "KNOWLEDGE_UNAVAILABLE",
     });
     expect(f.findRepositoryId).not.toHaveBeenCalled();
+    expect(f.records[0]?.providerQuerySha256).toBeNull();
+  });
+
+  test("a synchronous store failure still records the attempted literal term", async () => {
+    const f = fixture(connected(() => {
+      throw new KnowledgeStoreError("KNOWLEDGE_QUERY_FAILED");
+    }));
+    expect(await f.assembler.assemble(input)).toEqual({ memory: [] });
+    expect(f.records[0]).toMatchObject({
+      outcome: "failed",
+      errorCode: "KNOWLEDGE_QUERY_FAILED",
+      contextQuerySha256: digest(input.taskTitle),
+      providerQuerySha256: digest("authentication"),
+    });
+  });
+
+  test("sanitized title and excerpt are marked transformed while digest identifies the original", async () => {
+    const altered = {
+      ...hit,
+      title: "Auth\u200bentication\npolicy",
+      text: "Verify\u0000 every\u200b request.",
+    };
+    const f = fixture(connected(async () => [altered]));
+    const result = await f.assembler.assemble(input);
+    expect(result.projectMemory?.results).toEqual([
+      expect.objectContaining({
+        title: "Auth entication policy",
+        excerpt: "Verify  every  request.",
+        truncated: true,
+      }),
+    ]);
+    expect(f.records[0]?.references).toEqual([
+      expect.objectContaining({
+        truncated: true,
+        injected: true,
+        contentDigest: `sha256:${digest(JSON.stringify([altered.title, altered.text]))}`,
+      }),
+    ]);
+    expect(JSON.stringify(result)).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+  });
+
+  test("sanitizing only the title still marks the injected reference transformed", async () => {
+    const altered = { ...hit, title: "Auth\u200bentication policy" };
+    const f = fixture(connected(async () => [altered]));
+    const result = await f.assembler.assemble(input);
+    expect(result.projectMemory?.results[0]).toMatchObject({
+      title: "Auth entication policy",
+      excerpt: hit.text,
+      truncated: true,
+    });
+    expect(f.records[0]?.references[0]).toMatchObject({
+      injected: true,
+      truncated: true,
+      contentDigest: `sha256:${digest(JSON.stringify([altered.title, altered.text]))}`,
+    });
+  });
+
+  test("an existing retrieval row refuses another preparation", async () => {
+    const findKnowledge = vi.fn(async () => [hit]);
+    const f = fixture(connected(findKnowledge));
+    f.findRetrieval.mockResolvedValueOnce({} as ProjectMemoryRetrievalRecord);
+    await expect(f.assembler.assemble(input)).rejects.toMatchObject({
+      code: "WORKER_CONTEXT_INVALID",
+    });
+    expect(findKnowledge).not.toHaveBeenCalled();
   });
 
   test("a provenance write failure suppresses knowledge injection", async () => {
@@ -209,14 +276,21 @@ describe("native knowledge run context", () => {
   test("a stalled knowledge search times out without blocking the run", async () => {
     vi.useFakeTimers();
     try {
-      const f = fixture(connected(() => new Promise<KnowledgeHit[]>(() => {})));
+      let resolveSearch: (hits: KnowledgeHit[]) => void = () => {};
+      const f = fixture(connected(() => new Promise<KnowledgeHit[]>((resolve) => {
+        resolveSearch = resolve;
+      })));
       const pending = f.assembler.assemble(input);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(await pending).toEqual({ memory: [] });
       expect(f.records[0]).toMatchObject({
         outcome: "failed",
         errorCode: "KNOWLEDGE_TIMEOUT",
+        providerQuerySha256: digest("authentication"),
       });
+      resolveSearch([hit]);
+      await Promise.resolve();
+      expect(f.records).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }
@@ -236,6 +310,24 @@ describe("native knowledge run context", () => {
     expect(f.records[0]).toMatchObject({
       outcome: "failed",
       errorCode: "KNOWLEDGE_CANCELLED",
+      providerQuerySha256: digest("authentication"),
+    });
+  });
+
+  test("cancellation before store invocation records no provider query", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const findKnowledge = vi.fn(async () => [hit]);
+    const f = fixture(connected(findKnowledge));
+    await expect(
+      f.assembler.assemble({ ...input, signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(findKnowledge).not.toHaveBeenCalled();
+    expect(f.records[0]).toMatchObject({
+      outcome: "failed",
+      errorCode: "KNOWLEDGE_CANCELLED",
+      contextQuerySha256: digest(input.taskTitle),
+      providerQuerySha256: null,
     });
   });
 });
