@@ -22,6 +22,10 @@ function fixture(
     runStatus?: string;
     executionKind?: string;
     taskProjectId?: string;
+    repositoryId?: string;
+    resultSummary?: string;
+    runTaskId?: string;
+    runAgentId?: string;
     knowledge?: RuntimeAgentKnowledge;
   } = {},
 ) {
@@ -59,18 +63,18 @@ function fixture(
         snapshot: () => ({
           id: "run-1",
           projectId: "project-1",
-          taskId: "task-1",
-          agentId: "agent-1",
+          taskId: overrides.runTaskId ?? "task-1",
+          agentId: overrides.runAgentId ?? "agent-1",
           status: overrides.runStatus ?? "completed",
           completedAt,
           execution: { kind: overrides.executionKind ?? "worker" },
-          result: { summary: "Analysis" },
+          result: { summary: overrides.resultSummary ?? "Analysis" },
         }),
       })),
-      findAgent: vi.fn(async () => ({ id: "agent-1", projectId: "project-1" })),
+      findAgent: vi.fn(async (id: string) => ({ id, projectId: "project-1" })),
     } as unknown as AgentRuntimeRepository,
     {
-      findRepositoryId: vi.fn(async () => "repo-1"),
+      findRepositoryId: vi.fn(async () => overrides.repositoryId ?? "repo-1"),
     } as unknown as RepositoryIdentityRepository,
     knowledge,
     { execute: append } as unknown as RecordAuditEvent,
@@ -142,14 +146,16 @@ describe("governed knowledge admission", () => {
     expect(f.recordMemory).not.toHaveBeenCalled();
     expect(f.append).not.toHaveBeenCalled();
 
-    f.traceMemoryProvenance.mockResolvedValue(trace(plan));
+    f.traceMemoryProvenance
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(trace(plan));
     await expect(
       f.service.admit({
         ...input,
         approval: plan.planHash,
         reviewedBy: "operator",
       }),
-    ).resolves.toEqual(plan);
+    ).resolves.toEqual({ ...plan, outcome: "recorded" });
     expect(f.recordMemory).toHaveBeenCalledWith(
       expect.objectContaining({
         id: plan.id,
@@ -165,6 +171,17 @@ describe("governed knowledge admission", () => {
     ]);
     expect(f.append.mock.calls[0]?.[0].actorId).toBe("operator");
     expect(JSON.stringify(f.append.mock.calls)).not.toContain(input.text);
+    await expect(
+      f.service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).resolves.toEqual({ ...plan, outcome: "reconciled" });
+    expect(f.recordMemory).toHaveBeenCalledTimes(1);
+    expect(f.append.mock.calls.at(-1)?.[0].payload).toMatchObject({
+      outcome: "reconciled",
+    });
   });
 
   it("requires completed and same-project provenance", async () => {
@@ -179,6 +196,9 @@ describe("governed knowledge admission", () => {
     ).rejects.toMatchObject({ code: "KNOWLEDGE_RUN_NOT_COMPLETED" });
     await expect(
       fixture({ executionKind: "simulation" }).service.plan(input),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_RUN_NOT_COMPLETED" });
+    await expect(
+      fixture({ executionKind: "controlled_action" }).service.plan(input),
     ).rejects.toMatchObject({ code: "KNOWLEDGE_RUN_NOT_COMPLETED" });
     await expect(
       fixture({ taskProjectId: "other" }).service.plan(input),
@@ -208,13 +228,14 @@ describe("governed knowledge admission", () => {
         reviewedBy: "operator",
       }),
     ).rejects.toEqual(
-      new KnowledgeAdmissionError("KNOWLEDGE_ADMISSION_FAILED"),
+      new KnowledgeAdmissionError("KNOWLEDGE_ADMISSION_OUTCOME_UNKNOWN"),
     );
     expect(f.append.mock.calls.map(([event]) => event.eventType)).toEqual([
       "knowledge.admission.approved",
       "knowledge.admission.failed",
     ]);
     expect(JSON.stringify(f.append.mock.calls)).not.toContain(input.text);
+    expect(JSON.stringify(f.append.mock.calls)).not.toContain(input.title);
   });
 
   it("refuses a malformed provenance graph after the write", async () => {
@@ -226,7 +247,7 @@ describe("governed knowledge admission", () => {
       text: "A memory",
     };
     const plan = await f.service.plan(input);
-    f.traceMemoryProvenance.mockResolvedValue({
+    f.traceMemoryProvenance.mockResolvedValueOnce(null).mockResolvedValue({
       ...trace(plan),
       taskId: "other-task",
     });
@@ -236,7 +257,7 @@ describe("governed knowledge admission", () => {
         approval: plan.planHash,
         reviewedBy: "operator",
       }),
-    ).rejects.toMatchObject({ code: "KNOWLEDGE_ADMISSION_FAILED" });
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_ADMISSION_CONFLICT" });
     expect(f.append.mock.calls.at(-1)?.[0].eventType).toBe(
       "knowledge.admission.failed",
     );
@@ -258,7 +279,161 @@ describe("governed knowledge admission", () => {
         approval: plan.planHash,
         reviewedBy: "operator",
       }),
-    ).rejects.toThrow("audit unavailable");
+    ).rejects.toEqual(
+      new KnowledgeAdmissionError("KNOWLEDGE_APPROVAL_AUDIT_FAILED"),
+    );
     expect(f.recordMemory).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit reconciliation after the final audit fails without rewriting knowledge", async () => {
+    const f = fixture();
+    const input = {
+      projectId: "project-1",
+      runId: "run-1",
+      kind: "memory" as const,
+      text: "Audited memory",
+    };
+    const plan = await f.service.plan(input);
+    f.traceMemoryProvenance
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(trace(plan));
+    f.append
+      .mockResolvedValueOnce("approved")
+      .mockRejectedValueOnce(new Error("audit secret"));
+    await expect(
+      f.service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toEqual(
+      new KnowledgeAdmissionError(
+        "KNOWLEDGE_ADMISSION_RECONCILIATION_REQUIRED",
+      ),
+    );
+    expect(f.recordMemory).toHaveBeenCalledTimes(1);
+    await expect(
+      f.service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).resolves.toEqual({ ...plan, outcome: "reconciled" });
+    expect(f.recordMemory).toHaveBeenCalledTimes(1);
+    await expect(
+      f.service.admit({
+        ...input,
+        text: "Changed",
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
+    expect(f.recordMemory).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a bounded error if the secondary write and failure audit both fail", async () => {
+    const f = fixture();
+    const input = {
+      projectId: "project-1",
+      runId: "run-1",
+      kind: "decision" as const,
+      title: "Decision",
+      text: "Secret body",
+    };
+    const plan = await f.service.plan(input);
+    f.recordDecision.mockRejectedValue(new Error("backend password"));
+    f.append
+      .mockResolvedValueOnce("approved")
+      .mockRejectedValueOnce(new Error("audit password"));
+    await expect(
+      f.service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toEqual(
+      new KnowledgeAdmissionError("KNOWLEDGE_ADMISSION_OUTCOME_UNKNOWN"),
+    );
+    expect(JSON.stringify(f.append.mock.calls)).not.toContain(input.text);
+  });
+
+  it("rejects a stale reviewed hash when authoritative run result or repository binding changes", async () => {
+    const state: {
+      resultSummary?: string;
+      repositoryId?: string;
+      runTaskId?: string;
+      runAgentId?: string;
+    } = {};
+    const f = fixture(state);
+    const input = {
+      projectId: "project-1",
+      runId: "run-1",
+      kind: "memory" as const,
+      text: "A memory",
+    };
+    const plan = await f.service.plan(input);
+    state.resultSummary = "Revised result";
+    await expect(
+      f.service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
+    delete state.resultSummary;
+    state.repositoryId = "repo-other";
+    await expect(
+      f.service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
+    delete state.repositoryId;
+    state.runTaskId = "task-other";
+    await expect(
+      f.service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
+    delete state.runTaskId;
+    state.runAgentId = "agent-other";
+    await expect(
+      f.service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
+    expect(f.recordMemory).not.toHaveBeenCalled();
+    expect(f.append).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale decision title and text with the original approval hash", async () => {
+    const f = fixture();
+    const input = {
+      projectId: "project-1",
+      runId: "run-1",
+      kind: "decision" as const,
+      title: "Original title",
+      text: "Original text",
+    };
+    const plan = await f.service.plan(input);
+    for (const changed of [
+      { ...input, title: "Changed title" },
+      { ...input, text: "Changed text" },
+    ]) {
+      await expect(
+        f.service.admit({
+          ...changed,
+          approval: plan.planHash,
+          reviewedBy: "operator",
+        }),
+      ).rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
+    }
+    expect(f.recordDecision).not.toHaveBeenCalled();
+    expect(f.append).not.toHaveBeenCalled();
   });
 });

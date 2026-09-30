@@ -3,6 +3,13 @@ import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { RecordId, Surreal } from "../../packages/storage-surrealdb/node_modules/surrealdb";
 import { connectSurrealAgentKnowledgeStore } from "../../packages/storage-surrealdb/src/connect-agent-knowledge-store.ts";
+import { ManageKnowledgeAdmission } from "../../packages/application/src/agent-knowledge/manage-knowledge-admission.ts";
+import type { ProjectRepository } from "../../packages/application/src/ports/project-repository.port.ts";
+import type { TaskRepository } from "../../packages/application/src/ports/task-repository.port.ts";
+import type { AgentRuntimeRepository } from "../../packages/application/src/ports/agent-runtime-repository.port.ts";
+import type { RepositoryIdentityRepository } from "../../packages/application/src/ports/repository-identity-repository.port.ts";
+import type { RecordAuditEvent } from "../../packages/application/src/commands/record-audit-event.ts";
+import type { Clock } from "../../packages/application/src/ports/clock.port.ts";
 
 const endpoint = process.env.AI_OFFICE_TEST_SURREALDB_URL;
 const enabled = Boolean(endpoint);
@@ -70,6 +77,129 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
   afterAll(async () => {
     await closeStore?.();
     await db?.close();
+  });
+
+  it("admits a completed worker result through the application, traces it, and reconciles an exact retry", async () => {
+    const events: Array<Parameters<RecordAuditEvent["execute"]>[0]> = [];
+    let failNextRecorded = false;
+    const service = new ManageKnowledgeAdmission(
+      { findById: async () => ({}) } as unknown as ProjectRepository,
+      {
+        findById: async () => ({
+          snapshot: () => ({ projectId: "project-1" }),
+        }),
+      } as unknown as TaskRepository,
+      {
+        findRun: async () => ({
+          snapshot: () => ({
+            id: "run-ak05",
+            projectId: "project-1",
+            taskId: "task-ak05",
+            agentId: "agent-ak05",
+            status: "completed",
+            completedAt: new Date("2026-09-30T10:00:00.000Z"),
+            execution: { kind: "worker" },
+            result: { summary: "Verified result" },
+          }),
+        }),
+        findAgent: async () => ({ id: "agent-ak05", projectId: "project-1" }),
+      } as unknown as AgentRuntimeRepository,
+      {
+        findRepositoryId: async () => scopeA.repositoryId,
+      } as unknown as RepositoryIdentityRepository,
+      { state: "connected", tenantId: scopeA.tenantId, store },
+      {
+        execute: async (event: Parameters<RecordAuditEvent["execute"]>[0]) => {
+          events.push(event);
+          if (failNextRecorded && event.eventType === "knowledge.admission.recorded") {
+            failNextRecorded = false;
+            throw new Error("audit backend secret");
+          }
+          return "audit-ak05";
+        },
+      } as unknown as RecordAuditEvent,
+      { now: () => new Date("2026-09-30T11:00:00.000Z") } as Clock,
+    );
+    const input = {
+      projectId: "project-1",
+      runId: "run-ak05",
+      kind: "memory" as const,
+      text: "Use the verified rollout",
+    };
+    const plan = await service.plan(input);
+    expect(plan.id).toBe(`ak_${plan.planHash}`);
+    expect(plan.source.locator).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(await store.traceMemoryProvenance(scopeA, plan.id)).toBeNull();
+    expect(
+      await service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).toEqual({ ...plan, outcome: "recorded" });
+    expect(
+      await service.trace(input.projectId, "memory", plan.id),
+    ).toMatchObject({
+      runId: plan.runId,
+      taskId: plan.taskId,
+      agentId: plan.agentId,
+      source: plan.source,
+      knowledge: { id: plan.id, text: plan.text, source: plan.source },
+    });
+    expect(
+      await service.admit({
+        ...input,
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).toEqual({ ...plan, outcome: "reconciled" });
+    expect(
+      await db.select(record(scopeA, "knowledge_memory", plan.id)),
+    ).not.toBeNull();
+    await expect(
+      service.admit({
+        ...input,
+        text: "Changed",
+        approval: plan.planHash,
+        reviewedBy: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
+    await expect(
+      store.recordMemory({
+        ...scopeA,
+        id: plan.id,
+        text: "Changed",
+        runId: plan.runId,
+        taskId: plan.taskId,
+        agentId: plan.agentId,
+        source: plan.source,
+        createdAt: new Date(plan.createdAt),
+      }),
+    ).rejects.toThrow();
+    const uncertainInput = { ...input, text: "Verified but unaudited rollout" };
+    const uncertainPlan = await service.plan(uncertainInput);
+    failNextRecorded = true;
+    await expect(service.admit({ ...uncertainInput, approval: uncertainPlan.planHash, reviewedBy: "operator" }))
+      .rejects.toMatchObject({ code: "KNOWLEDGE_ADMISSION_RECONCILIATION_REQUIRED" });
+    expect(await store.traceMemoryProvenance(scopeA, uncertainPlan.id)).toMatchObject({
+      knowledge: { id: uncertainPlan.id, text: uncertainPlan.text }, source: uncertainPlan.source,
+    });
+    expect(await service.admit({ ...uncertainInput, approval: uncertainPlan.planHash, reviewedBy: "operator" }))
+      .toEqual({ ...uncertainPlan, outcome: "reconciled" });
+    await expect(service.admit({ ...uncertainInput, text: "Changed again", approval: uncertainPlan.planHash, reviewedBy: "operator" }))
+      .rejects.toMatchObject({ code: "KNOWLEDGE_APPROVAL_MISMATCH" });
+    expect(events.map((event) => event.eventType)).toEqual([
+      "knowledge.admission.approved",
+      "knowledge.admission.recorded",
+      "knowledge.admission.approved",
+      "knowledge.admission.recorded",
+      "knowledge.admission.approved",
+      "knowledge.admission.recorded",
+      "knowledge.admission.approved",
+      "knowledge.admission.recorded",
+    ]);
+    expect(JSON.stringify(events)).not.toContain(input.text);
+    expect(JSON.stringify(events)).not.toContain(uncertainInput.text);
   });
 
   it("rejects blank, padded, oversized, and runtime-invalid retrieval IDs", async () => {

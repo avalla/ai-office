@@ -73,6 +73,7 @@ export async function handleKnowledgeCommand(
         id: plan.id,
         kind: plan.kind,
         planHash: plan.planHash,
+        outcome: plan.outcome,
       }),
     );
     return 0;

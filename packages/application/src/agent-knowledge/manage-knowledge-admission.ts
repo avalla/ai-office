@@ -27,6 +27,10 @@ export type KnowledgeAdmissionErrorCode =
   | "KNOWLEDGE_RUN_NOT_COMPLETED"
   | "KNOWLEDGE_APPROVAL_MISMATCH"
   | "KNOWLEDGE_ADMISSION_FAILED"
+  | "KNOWLEDGE_APPROVAL_AUDIT_FAILED"
+  | "KNOWLEDGE_ADMISSION_OUTCOME_UNKNOWN"
+  | "KNOWLEDGE_ADMISSION_RECONCILIATION_REQUIRED"
+  | "KNOWLEDGE_ADMISSION_CONFLICT"
   | "KNOWLEDGE_INVALID_PROVENANCE"
   | "KNOWLEDGE_PROJECT_NOT_FOUND"
   | "KNOWLEDGE_STORE_NOT_CONNECTED";
@@ -57,6 +61,10 @@ export interface KnowledgeAdmissionPlan {
   };
   readonly createdAt: string;
   readonly planHash: string;
+}
+
+export interface KnowledgeAdmissionResult extends KnowledgeAdmissionPlan {
+  readonly outcome: "recorded" | "reconciled";
 }
 
 /** New knowledge is admitted only from a completed, authoritative run and an exact operator-reviewed plan. */
@@ -180,7 +188,7 @@ export class ManageKnowledgeAdmission {
     text: string;
     approval: string;
     reviewedBy: string;
-  }): Promise<KnowledgeAdmissionPlan> {
+  }): Promise<KnowledgeAdmissionResult> {
     const plan = await this.plan(input);
     assertKnowledgeIdentifier(input.reviewedBy);
     if (input.approval !== plan.planHash) {
@@ -214,36 +222,89 @@ export class ManageKnowledgeAdmission {
         repositoryId: plan.repositoryId,
       },
     };
-    // Record authority before the external side effect. Retries require another explicit approval.
-    await this.audit.execute({
-      ...auditBase,
-      eventType: "knowledge.admission.approved",
-    });
+    const fail = async (code: KnowledgeAdmissionErrorCode): Promise<never> => {
+      try {
+        await this.audit.execute({
+          ...auditBase,
+          eventType: "knowledge.admission.failed",
+          payload: { ...auditBase.payload, errorCode: code },
+        });
+      } catch {
+        // Preserve the bounded admission outcome even when failure auditing is unavailable.
+      }
+      throw new KnowledgeAdmissionError(code);
+    };
+    const trace = () =>
+      plan.kind === "decision"
+        ? state.store.traceDecisionProvenance(scope, plan.id)
+        : state.store.traceMemoryProvenance(scope, plan.id);
+    const recordOutcome = async (
+      outcome: KnowledgeAdmissionResult["outcome"],
+    ): Promise<KnowledgeAdmissionResult> => {
+      try {
+        await this.audit.execute({
+          ...auditBase,
+          eventType: "knowledge.admission.recorded",
+          payload: {
+            ...auditBase.payload,
+            outcome,
+            admittedAt: this.clock.now().toISOString(),
+          },
+        });
+      } catch {
+        // The exact record was verified, but its authoritative final audit is uncertain.
+        throw new KnowledgeAdmissionError(
+          "KNOWLEDGE_ADMISSION_RECONCILIATION_REQUIRED",
+        );
+      }
+      return { ...plan, outcome };
+    };
+    // Persist approval before any secondary-store mutation. A failed append stops here.
+    try {
+      await this.audit.execute({
+        ...auditBase,
+        eventType: "knowledge.admission.approved",
+      });
+    } catch {
+      throw new KnowledgeAdmissionError("KNOWLEDGE_APPROVAL_AUDIT_FAILED");
+    }
+
+    let existing: KnowledgeProvenance | null;
+    try {
+      existing = await trace();
+    } catch {
+      return fail("KNOWLEDGE_ADMISSION_FAILED");
+    }
+    if (existing !== null) {
+      try {
+        this.assertTrace(existing, plan);
+      } catch {
+        return fail("KNOWLEDGE_ADMISSION_CONFLICT");
+      }
+      return recordOutcome("reconciled");
+    }
+
     try {
       if (plan.kind === "decision")
         await state.store.recordDecision(record as DecisionInput);
       else await state.store.recordMemory(record);
-      const trace =
-        plan.kind === "decision"
-          ? await state.store.traceDecisionProvenance(scope, plan.id)
-          : await state.store.traceMemoryProvenance(scope, plan.id);
-      this.assertTrace(trace, plan);
     } catch {
-      await this.audit.execute({
-        ...auditBase,
-        eventType: "knowledge.admission.failed",
-      });
-      throw new KnowledgeAdmissionError("KNOWLEDGE_ADMISSION_FAILED");
+      // A rejected call can follow a committed remote write. Only an explicit retry reconciles it.
+      return fail("KNOWLEDGE_ADMISSION_OUTCOME_UNKNOWN");
     }
-    await this.audit.execute({
-      ...auditBase,
-      eventType: "knowledge.admission.recorded",
-      payload: {
-        ...auditBase.payload,
-        admittedAt: this.clock.now().toISOString(),
-      },
-    });
-    return plan;
+    let persisted: KnowledgeProvenance | null;
+    try {
+      persisted = await trace();
+    } catch {
+      return fail("KNOWLEDGE_ADMISSION_OUTCOME_UNKNOWN");
+    }
+    if (persisted === null) return fail("KNOWLEDGE_ADMISSION_OUTCOME_UNKNOWN");
+    try {
+      this.assertTrace(persisted, plan);
+    } catch {
+      return fail("KNOWLEDGE_ADMISSION_CONFLICT");
+    }
+    return recordOutcome("recorded");
   }
 
   async trace(
@@ -283,6 +344,9 @@ export class ManageKnowledgeAdmission {
       trace.knowledge.kind !== plan.kind ||
       trace.knowledge.text !== plan.text ||
       trace.knowledge.title !== plan.title ||
+      trace.knowledge.runId !== plan.runId ||
+      trace.knowledge.taskId !== plan.taskId ||
+      trace.knowledge.agentId !== plan.agentId ||
       trace.runId !== plan.runId ||
       trace.taskId !== plan.taskId ||
       trace.agentId !== plan.agentId ||
@@ -292,6 +356,10 @@ export class ManageKnowledgeAdmission {
       trace.source.label !== plan.source.label ||
       trace.source.locator !== plan.source.locator ||
       trace.source.id !== plan.runId ||
+      trace.knowledge.source.kind !== plan.source.kind ||
+      trace.knowledge.source.id !== plan.source.id ||
+      trace.knowledge.source.label !== plan.source.label ||
+      trace.knowledge.source.locator !== plan.source.locator ||
       trace.knowledge.createdAt.toISOString() !== plan.createdAt
     ) {
       throw new KnowledgeAdmissionError("KNOWLEDGE_INVALID_PROVENANCE");

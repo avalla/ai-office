@@ -119,11 +119,21 @@ trusted-local operator model records the supplied reviewer identity but cannot
 authenticate human presence from another same-UID process.
 
 Admission first appends an audit event containing the reviewer, plan hash,
-scope and run references, never the body. It then writes an immutable scoped
-record and graph provenance to SurrealDB, traces the graph, and appends a
-success or failure event. An uncertain result requires a new explicit admit
-call with the same reviewed hash; deterministic IDs and the adapter's immutable
-record guards make exact retries idempotent. A conflicting rewrite fails.
+scope and run references, never the body. Failure of this approval append
+stops before SurrealDB mutation with a bounded error. The service checks the
+deterministic ID for an existing, exactly matching record and graph, then
+writes an immutable scoped record only when absent. It verifies the graph and
+appends a final recorded event. The response reports `recorded` or
+`reconciled`; the latter means an explicit same-hash call found the exact
+record and skipped a second write.
+
+A failed write may have committed remotely. A failed final audit leaves an
+otherwise verified record without a confirmed final audit. Both return typed,
+sanitized uncertainty and require an explicit same-hash `knowledge:admit` call
+to reconcile. Failure-audit errors cannot replace those typed outcomes or
+expose backend details. A mismatched existing record fails closed; changed
+content or authority invalidates the reviewed hash. The current trusted-local
+reviewer identity is supplied by the caller and is not proof of human presence.
 `knowledge:trace` reads the scoped record and verified provenance graph.
 
 The limit is 4,000 Unicode code points and 16 KiB of text, with a 200 code
