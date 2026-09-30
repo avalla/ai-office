@@ -433,6 +433,7 @@ test("legacy named-scope import uses an exact reviewed plan through the Unix soc
   });
   const saved = new Map<string, LegacyKnowledgeHit>();
   const recordLegacyMemory = vi.fn(async (input: LegacyKnowledgeInput) => {
+    if (saved.has(input.id)) return "existing" as const;
     saved.set(input.id, {
       tenantId: input.tenantId,
       repositoryId: input.repositoryId,
@@ -456,6 +457,7 @@ test("legacy named-scope import uses an exact reviewed plan through the Unix soc
         sourceSha256: input.sourceSha256,
       },
     });
+    return "recorded" as const;
   });
   const store = {
     recordLegacyMemory,

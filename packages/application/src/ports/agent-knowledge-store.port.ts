@@ -180,7 +180,8 @@ export interface KnowledgeProvenance {
 export interface AgentKnowledgeStore {
   recordMemory(input: MemoryInput): Promise<void>;
   recordDecision(input: DecisionInput): Promise<void>;
-  recordLegacyMemory(input: LegacyKnowledgeInput): Promise<void>;
+  /** Atomic result: an exact existing record retains its original import timestamp. */
+  recordLegacyMemory(input: LegacyKnowledgeInput): Promise<"recorded" | "existing">;
   traceLegacyMemory(
     scope: KnowledgeScope,
     id: string,

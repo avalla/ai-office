@@ -16,13 +16,19 @@ import type {
   LegacyMemoryEntry,
   LegacyMemoryReader,
 } from "@ai-office/application/ports/legacy-memory-reader.port.ts";
+import {
+  isLegacyMemoryKey,
+  isLegacyMemoryValue,
+  legacyMemoryLimits,
+} from "@ai-office/application/ports/legacy-memory-reader.port.ts";
 import { projectMemoryIdentityPattern } from "@ai-office/application/project-memory/project-memory-identity.ts";
 
 /**
  * CairnKeep adapter: one bounded `cairn memory-server` stdio session per
  * retrieval, restricted server-side to the single read-only tool it needs.
  *
- * Contract used (CairnKeep 2.17.x, documented MCP tool surface):
+ * Contract checked against CairnKeep v2.19.0 (commit 68682a4e70aef72104ef366d504a63147b4bfaa6):
+ * https://github.com/cairnkeep/cairnkeep/tree/68682a4e70aef72104ef366d504a63147b4bfaa6/mcp-memory-server/src
  * - `initialize` must answer with a protocol version in
  *   {@link supportedMcpProtocolVersions}, `serverInfo.name === "cairn-memory"`
  *   and tools. This client implements exactly those protocol revisions, so
@@ -368,58 +374,48 @@ export class CairnKeepMemoryProvider
       undefined,
       async (session) => {
         await this.handshake(session, legacyReadTools);
-        const list = this.toolPayload(
-          await session.request("tools/call", {
-            name: "memory_list",
-            arguments: { scope },
-          }),
-        );
-        // Typed-node metadata is known provenance; refuse a lossy conversion.
-        if ("nodes" in list) throw invalid();
-        if (
-          !Array.isArray(list.keys) ||
-          list.keys.length > 32 ||
-          list.keys.some(
-            (key) =>
-              typeof key !== "string" ||
-              !key.trim() ||
-              key.length > projectMemoryLimits.referenceCharacters ||
-              /\p{Cc}/u.test(key),
-          ) ||
-          new Set(list.keys).size !== list.keys.length
-        )
-          throw invalid();
-        const entries: LegacyMemoryEntry[] = [];
-        let bytes = 0;
-        for (const key of [...list.keys].sort() as string[]) {
-          const payload = this.toolPayload(
-            await session.request("tools/call", {
-              name: "memory_read",
-              arguments: { scope, key },
-            }),
-          );
+        const listKeys = async (): Promise<string[]> => {
+          const list = this.toolPayload(await session.request("tools/call", {
+            name: "memory_list", arguments: { scope },
+          }));
+          // Typed-node metadata is known provenance; refuse a lossy conversion.
+          if ("nodes" in list || !Array.isArray(list.keys) ||
+            list.keys.length > legacyMemoryLimits.entries ||
+            list.keys.some((key) => !isLegacyMemoryKey(key)) ||
+            new Set(list.keys).size !== list.keys.length) throw invalid();
+          return [...list.keys].sort() as string[];
+        };
+        const readValue = async (key: string): Promise<string> => {
+          const payload = this.toolPayload(await session.request("tools/call", {
+            name: "memory_read", arguments: { scope, key },
+          }));
           if (!Array.isArray(payload.results) || payload.results.length !== 1)
             throw invalid();
           const entry = record(payload.results[0]);
-          if (
-            entry?.scope !== scope ||
-            entry.key !== key ||
-            Object.keys(entry).some(
-              (field) => !["scope", "key", "value"].includes(field),
-            ) ||
-            typeof entry.value !== "string" ||
-            !entry.value.trim() ||
-            [...entry.value].length > 4_000 ||
-            Buffer.byteLength(entry.value, "utf8") > 16_384
-          )
-            throw invalid();
+          if (entry?.scope !== scope || entry.key !== key ||
+            Object.keys(entry).some((field) => !["scope", "key", "value"].includes(field)) ||
+            !isLegacyMemoryValue(entry.value)) throw invalid();
+          return entry.value;
+        };
+        const sameKeys = (left: readonly string[], right: readonly string[]): boolean =>
+          left.length === right.length && left.every((key, index) => key === right[index]);
+        const keys = await listKeys();
+        const entries: LegacyMemoryEntry[] = [];
+        let bytes = 0;
+        for (const key of keys) {
+          const value = await readValue(key);
           bytes +=
-            Buffer.byteLength(entry.value, "utf8") +
+            Buffer.byteLength(value, "utf8") +
             Buffer.byteLength(key, "utf8");
-          if (bytes > 16_384)
+          if (bytes > legacyMemoryLimits.sourceBytes)
             throw new ProjectMemoryError("PROJECT_MEMORY_RESPONSE_TOO_LARGE");
-          entries.push({ key, value: entry.value });
+          entries.push({ key, value });
         }
+        // Bounded stability check, not an atomic snapshot: 3 lists and 2 reads per key.
+        if (!sameKeys(keys, await listKeys())) throw invalid();
+        for (const entry of entries)
+          if (await readValue(entry.key) !== entry.value) throw invalid();
+        if (!sameKeys(keys, await listKeys())) throw invalid();
         return entries;
       },
       legacyReadTools,

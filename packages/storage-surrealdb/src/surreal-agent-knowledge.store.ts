@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isLegacyMemoryKey, isLegacyMemoryValue } from "@ai-office/application/ports/legacy-memory-reader.port.ts";
 import {
   KnowledgeStoreError,
   assertKnowledgeIdentifier,
@@ -121,38 +122,42 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
     );
   }
 
-  async recordLegacyMemory(input: LegacyKnowledgeInput): Promise<void> {
+  async recordLegacyMemory(input: LegacyKnowledgeInput): Promise<"recorded" | "existing"> {
     assertKnowledgeScope(input);
     assertKnowledgeIdentifier(input.id);
-    if (!input.text.trim() || [...input.text].length > 4_000 ||
-      Buffer.byteLength(input.text, "utf8") > 16_384 ||
+    if (!isLegacyMemoryValue(input.text) ||
       !/^aio-[0-9a-f]{32}$/u.test(input.sourceScope) ||
-      !input.sourceKey.trim() || input.sourceKey.length > 256 || /\p{Cc}/u.test(input.sourceKey) ||
+      !isLegacyMemoryKey(input.sourceKey) ||
       input.sourceSha256 !== `sha256:${createHash("sha256").update(input.text, "utf8").digest("hex")}` ||
       !(input.importedAt instanceof Date) || Number.isNaN(input.importedAt.getTime())) {
       throw new KnowledgeStoreError("KNOWLEDGE_INVALID_QUERY");
     }
     const record = new RecordId("knowledge_legacy_memory", scopedId(input, "legacy_memory", input.id));
-    await this.execute(
+    const response: unknown = await this.db.query(
       `BEGIN TRANSACTION;
        ${immutableRecordGuard("legacy", "knowledge_legacy_memory", "$record", {
          tenant_id: "tenant", project_id: "project", external_id: "external_id",
          text: "text", source_scope: "source_scope", source_key: "source_key",
          source_sha256: "source_sha256",
        }, "Legacy knowledge identity conflict")}
-       IF array::len($existing_legacy) = 0 {
+       LET $created_legacy = array::len($existing_legacy) = 0;
+       IF $created_legacy {
          CREATE $record CONTENT {
            tenant_id: $tenant, project_id: $project, external_id: $external_id,
            text: $text, source_scope: $source_scope, source_key: $source_key,
            source_sha256: $source_sha256, imported_at: $imported_at
          };
        };
+       RETURN $created_legacy;
        COMMIT TRANSACTION;`,
       { record, tenant: input.tenantId, project: input.repositoryId,
         external_id: input.id, text: input.text, source_scope: input.sourceScope,
         source_key: input.sourceKey, source_sha256: input.sourceSha256,
         imported_at: input.importedAt },
     );
+    if (!Array.isArray(response) || typeof response.at(-2) !== "boolean")
+      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    return response.at(-2) ? "recorded" : "existing";
   }
 
   async traceLegacyMemory(scope: KnowledgeScope, id: string): Promise<LegacyKnowledgeHit | null> {
@@ -461,9 +466,9 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
     if (!this.inScope(row, scope) || !isKnowledgeIdentifier(id) ||
       (expectedId !== undefined && id !== expectedId) ||
       !this.sameRecord(row.id, new RecordId("knowledge_legacy_memory", scopedId(scope, "legacy_memory", id))) ||
-      typeof row.text !== "string" || !row.text.trim() ||
+      !isLegacyMemoryValue(row.text) ||
       typeof sourceScope !== "string" || !/^aio-[0-9a-f]{32}$/u.test(sourceScope) ||
-      typeof sourceKey !== "string" || !sourceKey.trim() || sourceKey.length > 256 || /\p{Cc}/u.test(sourceKey) ||
+      !isLegacyMemoryKey(sourceKey) ||
       typeof sourceSha256 !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(sourceSha256) ||
       sourceSha256 !== `sha256:${createHash("sha256").update(row.text as string, "utf8").digest("hex")}` ||
       Number.isNaN(importedAt.getTime())) {

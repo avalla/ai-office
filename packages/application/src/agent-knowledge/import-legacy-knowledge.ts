@@ -6,7 +6,11 @@ import {
   type LegacyKnowledgeHit,
   type RuntimeAgentKnowledge,
 } from "../ports/agent-knowledge-store.port.ts";
-import type { LegacyMemoryReader } from "../ports/legacy-memory-reader.port.ts";
+import {
+  parseCompleteLegacyMemorySource,
+  legacyMemoryLimits,
+  type LegacyMemoryReader,
+} from "../ports/legacy-memory-reader.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { RepositoryIdentityRepository } from "../ports/repository-identity-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
@@ -18,6 +22,33 @@ import {
 
 const digest = (value: string) =>
   createHash("sha256").update(value, "utf8").digest("hex");
+
+const legacySourceLabel = "CairnKeep named scope";
+
+function isExactLegacyHit(
+  value: unknown,
+  scope: { tenantId: string; repositoryId: string },
+  sourceScope: string,
+  entry: LegacyImportPlan["entries"][number],
+): value is LegacyKnowledgeHit {
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+    const hit = value as LegacyKnowledgeHit;
+    return hit.tenantId === scope.tenantId &&
+      hit.repositoryId === scope.repositoryId && hit.id === entry.id &&
+      hit.kind === "memory" && hit.text === entry.text && hit.title === null &&
+      hit.agentId === null && hit.runId === null && hit.taskId === null &&
+      hit.legacy?.sourceScope === sourceScope &&
+      hit.legacy.sourceKey === entry.key &&
+      hit.legacy.sourceSha256 === entry.sourceSha256 &&
+      hit.source?.kind === "external" && hit.source.id === entry.key &&
+      hit.source.label === legacySourceLabel &&
+      hit.source.locator === entry.sourceSha256 &&
+      hit.createdAt instanceof Date && Number.isFinite(hit.createdAt.getTime());
+  } catch {
+    return false;
+  }
+}
 
 export interface LegacyImportPlan {
   readonly schemaVersion: 1;
@@ -71,26 +102,11 @@ export class ImportLegacyKnowledge {
     } catch {
       throw new KnowledgeAdmissionError("KNOWLEDGE_LEGACY_SOURCE_UNAVAILABLE");
     }
-    if (
-      !Array.isArray(source) ||
-      source.length > 32 ||
-      new Set(source.map((entry) => entry.key)).size !== source.length
-    )
+    const complete = parseCompleteLegacyMemorySource(source);
+    if (complete === null)
       throw new KnowledgeAdmissionError("KNOWLEDGE_LEGACY_SOURCE_UNAVAILABLE");
-    const entries = source
+    const entries = complete
       .map((entry) => {
-        if (
-          typeof entry.key !== "string" ||
-          !entry.key.trim() ||
-          entry.key.length > 256 ||
-          typeof entry.value !== "string" ||
-          !entry.value.trim() ||
-          [...entry.value].length > 4_000 ||
-          Buffer.byteLength(entry.value, "utf8") > 16_384
-        )
-          throw new KnowledgeAdmissionError(
-            "KNOWLEDGE_LEGACY_SOURCE_UNAVAILABLE",
-          );
         const id = `ak_legacy_${digest(
           canonicalStringify([
             state.tenantId,
@@ -109,7 +125,8 @@ export class ImportLegacyKnowledge {
       .sort((left, right) =>
         left.key < right.key ? -1 : left.key > right.key ? 1 : 0,
       );
-    if (Buffer.byteLength(JSON.stringify(entries), "utf8") > 32_768)
+    // Separate bound on the review surface, after the complete source byte check.
+    if (Buffer.byteLength(JSON.stringify(entries), "utf8") > legacyMemoryLimits.serializedPlanBytes)
       throw new KnowledgeAdmissionError("KNOWLEDGE_LEGACY_SOURCE_UNAVAILABLE");
     const proposal = {
       schemaVersion: 1 as const,
@@ -188,18 +205,14 @@ export class ImportLegacyKnowledge {
         return fail("KNOWLEDGE_LEGACY_IMPORT_OUTCOME_UNKNOWN");
       }
       if (found !== null) {
-        if (
-          found.text !== entry.text ||
-          found.legacy.sourceScope !== plan.sourceScope ||
-          found.legacy.sourceKey !== entry.key ||
-          found.legacy.sourceSha256 !== entry.sourceSha256
-        )
+        if (!isExactLegacyHit(found, scope, plan.sourceScope, entry))
           return fail("KNOWLEDGE_LEGACY_IMPORT_CONFLICT");
         reconciled++;
         continue;
       }
+      let writeOutcome: "recorded" | "existing";
       try {
-        await this.knowledge.store.recordLegacyMemory({
+        writeOutcome = await this.knowledge.store.recordLegacyMemory({
           ...scope,
           id: entry.id,
           text: entry.text,
@@ -212,15 +225,11 @@ export class ImportLegacyKnowledge {
       } catch {
         return fail("KNOWLEDGE_LEGACY_IMPORT_OUTCOME_UNKNOWN");
       }
-      if (
-        found === null ||
-        found.text !== entry.text ||
-        found.legacy.sourceScope !== plan.sourceScope ||
-        found.legacy.sourceKey !== entry.key ||
-        found.legacy.sourceSha256 !== entry.sourceSha256
-      )
+      if (!isExactLegacyHit(found, scope, plan.sourceScope, entry))
         return fail("KNOWLEDGE_LEGACY_IMPORT_OUTCOME_UNKNOWN");
-      imported++;
+      if (writeOutcome === "recorded") imported++;
+      else if (writeOutcome === "existing") reconciled++;
+      else return fail("KNOWLEDGE_LEGACY_IMPORT_OUTCOME_UNKNOWN");
     }
     try {
       await this.audit.execute({

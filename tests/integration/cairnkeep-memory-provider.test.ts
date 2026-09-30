@@ -121,7 +121,7 @@ test("one bounded project-scoped search over the real stdio transport returns no
   });
 });
 
-test("a named-scope import snapshot lists and reads exact keys through a read-only MCP profile", async () => {
+test("a named-scope import verifies two complete passes through a read-only MCP profile", async () => {
   const { fake, provider: cairn } = provider({
     results: [
       { key: "b", value: "second", score: 1 },
@@ -138,9 +138,25 @@ test("a named-scope import snapshot lists and reads exact keys through a read-on
   );
   const calls = fake.log().filter((entry) => entry.method === "tools/call");
   expect(calls.map((entry) => (entry.params as { name: string }).name)).toEqual(
-    ["memory_list", "memory_read", "memory_read"],
+    ["memory_list", "memory_read", "memory_read", "memory_list", "memory_read", "memory_read", "memory_list"],
   );
 });
+
+test.each(["add-key", "remove-key", "change-value"] as const)(
+  "named-scope import rejects %s during bounded verification",
+  async (scanMutation) => {
+    const { provider: cairn } = provider({
+      scanMutation,
+      results: [
+        { key: "a", value: "first", score: 1 },
+        { key: "b", value: "second", score: 1 },
+      ],
+    });
+    await expect(cairn.readNamedScope(identity.memoryProjectId)).rejects.toMatchObject({
+      code: "PROJECT_MEMORY_INVALID_RESPONSE",
+    });
+  },
+);
 
 test("named-scope snapshot rejects ambiguous and oversized source data", async () => {
   const { provider: cairn } = provider({
