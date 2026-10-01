@@ -480,6 +480,37 @@ test("retired CairnKeep adapter is absent from production composition", () => {
   );
 });
 
+test("active code, manifests, help, and generated guidance cannot advertise retired memory entry points", () => {
+  const forbidden = [
+    "@ai-office/cairnkeep-memory",
+    "project-memory-provider.port",
+    "legacy-memory-reader.port",
+    "AI_OFFICE_PROJECT_MEMORY_PROVIDER",
+    "project-memory:status",
+    "knowledge:legacy-plan",
+    "knowledge:legacy-import",
+  ];
+  const activeFiles = [
+    ...["packages", "apps"].flatMap((directory) =>
+      typescriptFiles(join(repositoryRoot, directory)),
+    ),
+    join(repositoryRoot, "package.json"),
+    join(repositoryRoot, "bun.lock"),
+    ...["packages", "apps"].flatMap((directory) =>
+      readdirSync(join(repositoryRoot, directory))
+        .map((name) => join(repositoryRoot, directory, name, "package.json"))
+        .filter(existsSync),
+    ),
+    join(repositoryRoot, ".agents/skills/ai-office/SKILL.md"),
+  ];
+  for (const file of activeFiles) {
+    const source = readFileSync(file, "utf8");
+    for (const retired of forbidden)
+      expect(source, `${relative(repositoryRoot, file)} still contains ${retired}`)
+        .not.toContain(retired);
+  }
+});
+
 test("raw provider credential values are reachable only at the gateway provider construction boundary", () => {
   const productionFiles = ["packages", "apps"].flatMap((directory) =>
     typescriptFiles(join(repositoryRoot, directory))

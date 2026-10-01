@@ -25,6 +25,7 @@ const configuration: AgentKnowledgeConfiguration = {
 };
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const root of roots.splice(0))
     rmSync(root, { recursive: true, force: true });
 });
@@ -66,6 +67,52 @@ async function withHost(
 }
 
 describe("Runtime agent knowledge composition", () => {
+  it("ignores stale CairnKeep environment while native knowledge follows its own configuration", async () => {
+    vi.stubEnv("AI_OFFICE_PROJECT_MEMORY_PROVIDER", "cairnkeep");
+    vi.stubEnv("AI_OFFICE_CAIRNKEEP_COMMAND", "/never-run/legacy-secret-command");
+    vi.stubEnv("AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS", "31337");
+    vi.stubEnv("CAIRN_AGENTFS_BASE_DIR", "legacy-secret-directory");
+    vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER", "none");
+    const connect = vi.fn(async () => ({
+      store: {} as AgentKnowledgeStore,
+      close: async () => {},
+    }));
+    await withHost({ connectAgentKnowledge: connect }, async (client) => {
+      const health = await client.health();
+      expect(health.knowledge).toEqual({ provider: "none", startup: "disabled" });
+      expect(health).not.toHaveProperty("projectMemory");
+      expect(JSON.stringify(health)).not.toMatch(/cairnkeep|legacy-secret/iu);
+      const detection = await client.execute(["client:detect"]);
+      expect(detection.exitCode).toBe(0);
+      expect(JSON.stringify(detection)).not.toMatch(/cairnkeep|legacy-secret/iu);
+      const retired = await client.execute(["project-memory:status", "--probe"]);
+      expect(retired.stderr.join("\n")).toContain("Unknown command: project-memory:status");
+    });
+    expect(connect).not.toHaveBeenCalled();
+
+    vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER", "surrealdb");
+    vi.stubEnv("AI_OFFICE_SURREALDB_URL", configuration.kind === "surrealdb" ? configuration.connection.endpoint : "");
+    vi.stubEnv("AI_OFFICE_SURREALDB_NAMESPACE", "ai_office");
+    vi.stubEnv("AI_OFFICE_SURREALDB_DATABASE", "knowledge");
+    vi.stubEnv("AI_OFFICE_SURREALDB_USERNAME", "operator");
+    vi.stubEnv("AI_OFFICE_SURREALDB_PASSWORD", "native-secret-password");
+    vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_TENANT_ID", "tenant-a");
+    await withHost({ connectAgentKnowledge: connect }, async (client) => {
+      const health = await client.health();
+      expect(health.knowledge).toEqual({ provider: "surrealdb", startup: "connected" });
+      expect(health).not.toHaveProperty("projectMemory");
+      expect(JSON.stringify(health)).not.toMatch(/cairnkeep|legacy-secret|native-secret/iu);
+      const detection = await client.execute(["client:detect"]);
+      expect(detection.exitCode).toBe(0);
+      expect(JSON.stringify(detection)).not.toMatch(/cairnkeep|legacy-secret|native-secret/iu);
+    });
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(connect).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: "ws://127.0.0.1:8000", password: "native-secret-password" }),
+      expect.any(AbortSignal),
+    );
+  });
+
   it("rejects retired CairnKeep commands over the Runtime socket", async () => {
     await withHost(
       { agentKnowledgeConfiguration: { kind: "disabled" } },

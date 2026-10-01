@@ -603,15 +603,32 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     const id = "ak_legacy_one";
     const text = "Legacy deployment note";
     await seedLegacy(db, scopeA, id, text, "notes/deploy");
-    expect(await store.traceLegacyMemory(scopeA, id)).toMatchObject({
+    await seedLegacy(db, scopeSameTenantOtherProject, id, "Other project deployment note", "notes/other-project");
+    await seedLegacy(db, scopeB, id, "Other tenant deployment note", "notes/other-tenant");
+    const imported = await store.traceLegacyMemory(scopeA, id);
+    expect(imported).toMatchObject({
       text, runId: null, taskId: null, agentId: null,
+      source: { kind: "external", id: "notes/deploy" },
       legacy: { sourceKey: "notes/deploy" },
     });
-    expect((await store.findKnowledge(scopeA, { text: "deployment" })).map((hit) => hit.id)).toEqual([id]);
+    expect(await store.findKnowledge(scopeA, { text: "deployment" })).toEqual([imported]);
     expect(await store.findKnowledge(scopeA, { text: "deployment", agentId: "agent-1" })).toEqual([]);
-    expect(await store.traceLegacyMemory(scopeSameTenantOtherProject, id)).toBeNull();
+    expect(await store.listAgentKnowledge(scopeA, "agent-1")).toEqual([]);
+    expect((await store.findKnowledge(scopeSameTenantOtherProject, { text: "deployment" }))[0]?.text)
+      .toBe("Other project deployment note");
+    expect((await store.findKnowledge(scopeB, { text: "deployment" }))[0]?.text)
+      .toBe("Other tenant deployment note");
+    expect((await store.traceLegacyMemory(scopeSameTenantOtherProject, id))?.legacy.sourceKey)
+      .toBe("notes/other-project");
+    expect((await store.traceLegacyMemory(scopeB, id))?.legacy.sourceKey)
+      .toBe("notes/other-tenant");
+    // A current native write cannot assign invented run provenance to the older row.
+    await store.recordMemory(memory(scopeA, "native-after-import", "Native deployment note"));
+    expect(await store.traceLegacyMemory(scopeA, id)).toEqual(imported);
     await store.deleteProjectKnowledge(scopeA);
     expect(await store.traceLegacyMemory(scopeA, id)).toBeNull();
+    expect(await store.traceLegacyMemory(scopeSameTenantOtherProject, id)).not.toBeNull();
+    expect(await store.traceLegacyMemory(scopeB, id)).not.toBeNull();
   });
 
   it.each([

@@ -6,9 +6,10 @@ CairnKeep-compatible search term. AK-03 composes it independently into the
 Runtime when explicitly enabled. AK-04 uses the connected store for worker
 context and run retrieval provenance.
 SurrealDB does not store project, task, run, approval, or audit authority.
-CairnKeep integration was removed in AK-08. Existing imported records and
-historical run retrieval provenance remain readable; new knowledge is admitted
-only through `AgentKnowledgeStore`.
+CairnKeep integration was removed in AK-08; no current command reads its
+external database. Existing imported records and historical run retrieval
+provenance remain readable; new knowledge is admitted only through
+`AgentKnowledgeStore`.
 
 ## Runtime composition (AK-03)
 
@@ -141,8 +142,8 @@ reviewer identity is supplied by the caller and is not proof of human presence.
 The limit is 4,000 Unicode code points and 16 KiB of text, with a 200 code
 point decision title. Knowledge remains advisory; approval does not grant a
 capability or change task, run, or project authority. This slice admits new
-run-sourced records only. Legacy import and its distinct provenance policy
-belong to AK-06.
+run-sourced records only. The historical AK-06 import used a distinct
+provenance policy.
 
 ## Historical CairnKeep import (AK-06)
 

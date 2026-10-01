@@ -381,7 +381,7 @@ knowledge. CairnKeep integration was removed in AK-08. See
 Previously imported legacy records remain in a separate SurrealDB table with
 source scope, key and content digest; no run, task or agent link is inferred.
 They join bounded retrieval as advisory context and remain traceable. No current
-Runtime command imports new CairnKeep data.
+Runtime command reads the external CairnKeep database.
 
 New knowledge admission runs through an application use case. It validates an
 authoritative completed worker run and project binding, requires an operator
