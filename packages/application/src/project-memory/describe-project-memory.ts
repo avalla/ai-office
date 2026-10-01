@@ -9,6 +9,8 @@ import { deriveProjectMemoryIdentity } from "./project-memory-identity.ts";
 export interface ProjectMemoryDiagnosticReport {
   schemaVersion: 1;
   provider: ProjectMemoryProviderDiagnostic["provider"];
+  /** CairnKeep remains only for read-only diagnostics and explicit import. */
+  deprecated: boolean;
   state: ProjectMemoryProviderDiagnostic["state"];
   /** True only when this report performed a live provider probe. */
   probed: boolean;
@@ -34,8 +36,8 @@ export interface ProjectMemoryDiagnosticReport {
 /**
  * Read-only diagnostics for the optional project memory provider. Without
  * `probe` it inspects configuration and recorded evidence only and starts no
- * process; a probe is an explicit operator action. Provider state never
- * changes project health, authority, or run eligibility.
+ * process; a probe is an explicit operator action. The legacy provider never
+ * changes authority or run eligibility.
  */
 export class DescribeProjectMemory {
   constructor(
@@ -81,6 +83,7 @@ export class DescribeProjectMemory {
     return {
       schemaVersion: 1,
       provider: diagnostic.provider,
+      deprecated: diagnostic.provider === "cairnkeep",
       state: diagnostic.state,
       probed:
         input.probe &&

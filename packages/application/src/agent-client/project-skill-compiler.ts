@@ -48,6 +48,14 @@ Onboarding is the office-configuration part of the handover above. Run install, 
 
 Classify tasks as feature, bugfix, maintenance, research, or release and resolve \`ai-office office:pipeline --project <projectId> --task-kind <kind>\` before operating them. Guidance-only definitions describe expected work. For an enforced definition, use \`pipeline:start\`, inspect \`pipeline:status\`, bind only the assigned registered agent, and use explicit runtime transitions. Runtime authorization is authoritative: never bypass assignments, stage capabilities, approvals, separation rules, \`action:*\` requests, or controlled execution. Use \`task:*\` and \`run:*\` for work, \`client:*\` only for manual integration recovery, and \`memory:*\` for reusable memory. Never launch Codex or Claude implicitly.
 
+For new agent knowledge, use a connected AgentKnowledgeStore through
+\`knowledge:plan\` and \`knowledge:admit\` after reviewing the exact plan hash;
+inspect provenance with \`knowledge:trace\`. CairnKeep is deprecated and
+read-only. Use \`project-memory:status\` only for legacy diagnostics and
+\`knowledge:legacy-plan\` / \`knowledge:legacy-import\` only for explicit import
+of an existing named scope. Do not recommend CairnKeep for new knowledge or
+write to its scope.
+
 ## Browse and follow up
 
 Use ai-office office:workspace --project <projectId> --status active --json as

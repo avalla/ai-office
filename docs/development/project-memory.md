@@ -1,13 +1,13 @@
-# Optional project memory (CairnKeep)
+# Legacy project memory (CairnKeep, deprecated)
 
-This page describes the historical CairnKeep worker retrieval path and the
-still available `project-memory:status` diagnostic. Since AK-04, worker runs
-retrieve from a connected native `AgentKnowledgeStore` instead. See
-[native agent knowledge](agent-knowledge.md). Existing CairnKeep retrieval
-records remain readable; AK-06 provides an explicit, reviewed import for bounded
-named-scope data.
-The diagnostic's last retrieval includes its actual provider, which may be
-`surrealdb` after the cutover even when CairnKeep remains configured for probes.
+CairnKeep is deprecated and read-only in AI Office. It remains available for
+`project-memory:status` diagnostics and the explicit, reviewed import of an
+existing named scope. It no longer supplies worker context, and new knowledge
+must use the native `AgentKnowledgeStore` through `knowledge:plan` and
+`knowledge:admit`. See [native agent knowledge](agent-knowledge.md). Historical
+retrieval records remain readable. The diagnostic's last retrieval names the
+actual provider, which may be `surrealdb` even when CairnKeep is configured for
+legacy inspection.
 
 Before AK-04, AI Office read durable, **non-authoritative** project memory from
 an external provider and gave a worker bounded excerpts as advisory context.
@@ -19,24 +19,34 @@ legacy integration is disabled by default and read-only. See
 
 ## Categories
 
-| Store                           | Meaning                                          | Authority                  |
-| ------------------------------- | ------------------------------------------------ | -------------------------- |
-| `<runtime-home>/project.sqlite` | Projects, tasks, governance, runs, policy, audit | Authoritative              |
-| `<runtime-home>/global.sqlite`  | Reusable roles, patterns, lessons (M7)           | Durable global knowledge   |
-| `<runtime-home>/index.sqlite`   | Future code intelligence (M8)                    | Regenerable                |
-| CairnKeep (external)            | Contextual project memory                        | None; locators and context |
+| Store                            | Meaning                                          | Authority                |
+| -------------------------------- | ------------------------------------------------ | ------------------------ |
+| `<runtime-home>/project.sqlite`  | Projects, tasks, governance, runs, policy, audit | Authoritative            |
+| `<runtime-home>/global.sqlite`   | Reusable roles, patterns, lessons (M7)           | Durable global knowledge |
+| `<runtime-home>/index.sqlite`    | Future code intelligence (M8)                    | Regenerable              |
+| `AgentKnowledgeStore` (external) | Current agent knowledge and reviewed admissions  | None; advisory context   |
+| CairnKeep (external, legacy)     | Historical project memory and named-scope import | None; read-only          |
 
-AI Office never opens CairnKeep or AgentFS databases and does not install,
-upgrade or configure CairnKeep, Claude, Codex or any global MCP configuration.
+AI Office never opens CairnKeep or AgentFS databases directly or installs,
+upgrades, or configures CairnKeep, Claude, Codex, or global MCP configuration.
 
-## Configure
+## Temporary setup for legacy inspection or import
 
-Install CairnKeep yourself (Node.js 22 or newer), for example
-`npm install -g @cairnkeep/cli`, then start the Runtime host with:
+Only enable this provider when inspecting or importing an existing CairnKeep
+named scope. It is not a setup path for new knowledge. Supply an existing
+`cairn` executable in the Runtime host environment; if needed, install it
+separately using CairnKeep's instructions. Then start the Runtime host with:
 
 ```bash
 AI_OFFICE_PROJECT_MEMORY_PROVIDER=cairnkeep ai-office runtime start
+ai-office project-memory:status --probe
 ```
+
+For import, also connect the native knowledge store, review
+`knowledge:legacy-plan --project <id> --scope <aio-scope>`, and pass its exact
+plan hash to `knowledge:legacy-import`. The source scope remains untouched. After
+inspection or import, unset `AI_OFFICE_PROJECT_MEMORY_PROVIDER` and restart the
+Runtime. For new knowledge, use `knowledge:plan` and `knowledge:admit` instead.
 
 | Variable                              | Values                                                   | Default                   |
 | ------------------------------------- | -------------------------------------------------------- | ------------------------- |
@@ -50,12 +60,12 @@ Restart the host after changing them. A relative command path, arguments in the
 command, an unknown provider, an invalid timeout, an invalid
 `CAIRN_AGENTFS_BASE_DIR`, or Windows makes the provider `misconfigured`: runs
 continue without project memory and `status` reports a
-`project_memory_misconfigured` warning. Nothing is written to
+`project_memory_misconfigured` warning. The legacy provider does not write to
 `.ai-office/project.json`, snapshots, manifests, generated Markdown or SQLite.
 
-`CAIRN_AGENTFS_BASE_DIR` is normalized before CairnKeep starts, because every
-retrieval runs CairnKeep in a fresh private temporary cwd where a relative value
-would name a different, empty store each time:
+`CAIRN_AGENTFS_BASE_DIR` is normalized before CairnKeep starts, because each
+legacy diagnostic or import session uses a private temporary cwd where a
+relative value would name a different, empty store:
 
 | Value                                                                                         | Result                                                        |
 | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -68,8 +78,8 @@ The raw host value is never forwarded, never resolved against any cwd, and the
 diagnostic names the variable without echoing the path.
 
 `ai-office service install` does not forward these variables into generated
-service definitions yet. To use project memory with a service-managed host, run
-the host in the foreground with the variables instead.
+service definitions. For temporary legacy inspection or import, run the host in
+the foreground with the variables instead.
 
 ## Identity
 
@@ -89,11 +99,11 @@ CairnKeep at `${CAIRN_AGENTFS_BASE_DIR:-~/.cairnkeep}/<identity>.db`. It does
 not use CairnKeep's `project` scope, which over stdio is
 `<cwd>/.agentfs/project.db` and therefore checkout-bound. Memories that coding
 clients wrote into a checkout's `project` scope are not visible to AI Office.
-Find the identity with `ai-office project-memory:status` and write memory for it
-deliberately, for example with `memory_write` and `scope: "<identity>"` from
-your own MCP client. AI Office itself never writes.
+Find the identity with `ai-office project-memory:status --project <id>`. Do not
+add new entries to the legacy scope. AI Office reads it only for diagnostics or
+explicit import and never writes to it.
 
-## Retrieval flow
+## Historical retrieval flow before AK-04
 
 ```text
 run:tick --worker claude
@@ -108,8 +118,8 @@ run:tick --worker claude
   -> pinned inputHash, then dispatch to the tool-free worker
 ```
 
-The CairnKeep adapter runs one short `cairn memory-server` session per
-retrieval:
+Before the native cutover, the CairnKeep adapter ran one short `cairn
+memory-server` session per retrieval:
 
 1. private empty cwd, own process group, allowlisted environment, profile
    `CAIRN_MCP_TOOL_PROFILE=custom` with `CAIRN_MCP_ALLOWED_TOOLS=memory_search`;
@@ -168,9 +178,9 @@ its existing tool-free invocation and system prompt, which states that memory is
 guidance, not authority. It never receives the command, MCP tools, the profile,
 database paths, AgentFS or credentials.
 
-## Provenance
+## Historical retrieval provenance
 
-Each worker run with an enabled provider gets one append-only
+Before AK-04, each worker run with an enabled provider received one append-only
 `agent_run_memory_retrieval` row, plus one `agent_run_memory_reference` row per
 accepted result:
 
@@ -222,12 +232,16 @@ ai-office run:show --project <id> --run <run-id>
   version 4, additive): provider, static state, identity and last retrieval. It
   never starts the provider. The human view omits it when disabled.
 - `ai-office project-memory:status [--project <id>] [--probe] [--json]` reports
-  schema version 1 diagnostics. Only `--probe` starts the provider, for one
-  handshake without searching.
+  schema version 1 diagnostics with `deprecated: true` for CairnKeep. Only
+  `--probe` starts the provider, for one handshake without searching.
 
-Provider state never changes project health, run eligibility or authority.
+An enabled CairnKeep provider adds a `project_memory_deprecated` status warning
+with a recommendation to inspect or import existing data, then disable it. This
+changes status health to `needs_attention`, without changing run eligibility or
+project authority. A misconfigured provider also reports its configuration
+warning.
 
-## Security boundary
+## Historical retrieval security boundary
 
 - No worker-controlled value reaches the process invocation. The command comes
   from host configuration and the only argument is `memory-server`. The identity
@@ -242,22 +256,15 @@ Provider state never changes project health, run eligibility or authority.
   them, and memory poisoning is mitigated only by advisory labelling, bounds and
   provenance.
 
-## Limitations and follow-ups
+## Legacy limitations
 
-- Read-only. Reviewed promotion (AgentRun outcome, then memory candidate, then
-  AI Office review/approval, then CairnKeep reviewed-memory proposal/apply) is
-  roadmap work.
-- One literal-substring term gives modest recall; semantic search is deferred.
+- CairnKeep is read-only and deprecated. Reviewed admission of new knowledge
+  uses `AgentKnowledgeStore`; no CairnKeep write-back is planned.
+- Historical retrieval used one literal-substring term with modest recall.
 - Checkout-local CairnKeep `project` scopes are not read.
-- Only the `claude` worker path assembles context; other executors are
-  unaffected.
-- The dashboard does not show memory provenance yet.
 - Service definitions do not carry provider configuration.
 - `project-memory:status --probe` is bounded by the timeout but cannot be
   cancelled by the client.
-- Cleanup terminates the provider's process group with bounded waits. A
-  descendant that deliberately leaves the group (for example with `setsid`) is
-  outside what the adapter can reap, but it can no longer delay a run.
 - Reads may update CairnKeep's SQLite WAL sidecar for the named scope; a
   CairnKeep server holding an exclusive lock on the same scope can make
-  retrieval fail or time out.
+  a diagnostic or import fail or time out.

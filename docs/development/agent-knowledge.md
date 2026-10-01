@@ -6,6 +6,9 @@ CairnKeep-compatible search term. AK-03 composes it independently into the
 Runtime when explicitly enabled. AK-04 uses the connected store for worker
 context and run retrieval provenance.
 SurrealDB does not store project, task, run, approval, or audit authority.
+CairnKeep is deprecated and read-only in AI Office. It remains temporarily for
+legacy diagnostics and the explicit AK-06 named-scope import; new knowledge is
+admitted only through `AgentKnowledgeStore`.
 
 ## Runtime composition (AK-03)
 

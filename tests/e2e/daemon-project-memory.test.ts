@@ -637,6 +637,7 @@ test("legacy CairnKeep configuration stays diagnostic after the worker retrieval
         project: { id: string };
         projectMemory: unknown;
         health: string;
+        issues: { code: string; recovery?: string }[];
       };
     }),
   );
@@ -648,6 +649,15 @@ test("legacy CairnKeep configuration stays diagnostic after the worker retrieval
       memoryProjectId: identity,
       lastRetrieval: null,
     });
+  for (const status of statuses)
+    expect(status.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "project_memory_deprecated",
+          recovery: expect.stringContaining("knowledge:legacy-import"),
+        }),
+      ]),
+    );
   // Status never starts the provider.
   expect(cairn.log()).toEqual([]);
   const projectId = statuses[0]!.project.id;
@@ -729,6 +739,7 @@ test("legacy CairnKeep configuration stays diagnostic after the worker retrieval
     expect(JSON.parse(diagnostics.stdout[0]!)).toEqual({
       schemaVersion: 1,
       provider: "cairnkeep",
+      deprecated: true,
       state: "configured",
       probed: false,
       version: null,
@@ -740,6 +751,10 @@ test("legacy CairnKeep configuration stays diagnostic after the worker retrieval
         lastRetrieval: null,
       },
     });
+    const humanDiagnostic = await o.command(["project-memory:status"], main);
+    expect(humanDiagnostic.stdout.join("\n")).toContain(
+      "CairnKeep is deprecated and read-only",
+    );
     const probe = await o.command(
       ["project-memory:status", "--probe", "--json"],
       main,
@@ -772,6 +787,9 @@ test("an unavailable legacy provider remains diagnostic and does not affect work
   ) as { project: { id: string }; health: string; issues: { code: string }[] };
   expect(status.issues.map((issue) => issue.code)).not.toContain(
     "project_memory_misconfigured",
+  );
+  expect(status.issues.map((issue) => issue.code)).toContain(
+    "project_memory_deprecated",
   );
   const projectId = status.project.id;
   const capture = join(o.workspace, "claude-input.json");

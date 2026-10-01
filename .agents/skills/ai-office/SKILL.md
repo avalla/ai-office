@@ -236,6 +236,14 @@ only through the matching `memory:*` commands shown by `ai-office --help`.
 Global memory is separate from project state: never delete or rewrite it as a
 side effect of install, uninstall, or runtime purge.
 
+For new agent knowledge, use the connected `AgentKnowledgeStore` through
+`knowledge:plan` and `knowledge:admit` after reviewing the exact plan hash;
+inspect provenance with `knowledge:trace`. CairnKeep is deprecated and
+read-only. Use `project-memory:status` only for legacy diagnostics and
+`knowledge:legacy-plan` / `knowledge:legacy-import` only for explicit import of
+an existing named scope. Do not recommend CairnKeep for new knowledge, write to
+its scope, or treat a status probe as migration.
+
 ## Uninstall safely
 
 For normal repository removal, run `ai-office uninstall <root> --json`,

@@ -269,15 +269,18 @@ hardening work rather than guarantees of the current storage boundary.
 
 Provider pricing currently remains in `project.sqlite`. Moving any catalog data to global storage requires an explicit future design and compatibility plan.
 
-## External project memory — optional, not authoritative
+## Agent knowledge — optional, not authoritative
 
-An optional provider such as CairnKeep keeps durable contextual memory outside
-AI Office. AI Office does not open, migrate, back up, purge or uninstall that
-store, and it is never read back as project state. The memory identity derives
-from the portable `repositoryId`, not a path, and is used as a CairnKeep named
-scope. `global.sqlite` keeps its M7 meaning. `runtime:purge` and repository
-uninstall do not touch provider stores; purge removes the retrieval provenance
-with `project.sqlite`. See [project memory](../development/project-memory.md).
+New agent knowledge uses the optional SurrealDB `AgentKnowledgeStore`, scoped by
+tenant and portable `repositoryId`. It supplies advisory worker context and
+stores reviewed admissions, not project or run authority. The deprecated
+CairnKeep adapter is read-only and retained for diagnostics and explicit import
+of an existing named scope derived from `repositoryId`; it no longer supplies
+worker context. AI Office never opens its database directly or deletes it.
+`global.sqlite` keeps its M7 meaning. `runtime:purge` and repository uninstall
+do not touch either external store; purge removes run-local retrieval provenance
+with `project.sqlite`. See [native agent knowledge](../development/agent-knowledge.md)
+and [legacy project memory](../development/project-memory.md).
 
 ## `index.sqlite` — initial schema, not connected
 
