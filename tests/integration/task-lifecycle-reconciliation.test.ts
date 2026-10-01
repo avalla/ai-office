@@ -494,6 +494,9 @@ describe("task lifecycle commands", () => {
       actorId: "operator",
     };
     await context.dependencyCommands.link(edge);
+    const prerequisite = (await context.tasks.findById("prerequisite"))!;
+    prerequisite.recordHistoricalCompletion(now);
+    await context.tasks.save(prerequisite);
     await context.runtime.saveRole(
       Role.create({
         id: "edit-role",

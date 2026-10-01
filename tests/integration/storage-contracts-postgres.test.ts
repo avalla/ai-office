@@ -298,6 +298,269 @@ describe.skipIf(connectionString === undefined)(
 describe.skipIf(connectionString === undefined)(
   "PostgreSQL migration concurrency",
   () => {
+    test("upgrades execution history from local authority and keeps it monotonic across concurrent entries", async () => {
+      const databaseName = `ai_office_history_${randomUUID().replaceAll("-", "")}`;
+      const partialRoot = mkdtempSync(
+        join(tmpdir(), "ai-office-postgres-history-upgrade-"),
+      );
+      const partial = join(partialRoot, "migrations");
+      mkdirSync(partial);
+      for (const file of readdirSync(migrationDirectory).filter(
+        (name) =>
+          name.endsWith(".sql") &&
+          name < "20261001000400_task_execution_history.sql",
+      ))
+        copyFileSync(join(migrationDirectory, file), join(partial, file));
+      const admin = new PostgresClient(connectionString!);
+      await admin.query(`CREATE DATABASE "${databaseName}"`);
+      await admin.close();
+      const isolated = new URL(connectionString!);
+      isolated.pathname = `/${databaseName}`;
+      const database = new PostgresClient(isolated.toString());
+      const first = new PostgresClient(isolated.toString());
+      const second = new PostgresClient(isolated.toString());
+      const at = new Date("2026-09-30T10:00:00.000Z");
+      try {
+        await migratePostgres(database, partial);
+        await database.query(
+          "INSERT INTO core.tenant(id,name,created_at,updated_at) VALUES ('history-tenant','Tenant',$1,$1)",
+          [at],
+        );
+        await database.query(
+          "INSERT INTO core.project(id,tenant_id,name,created_at,updated_at) VALUES ('history-project','history-tenant','Project',$1,$1)",
+          [at],
+        );
+        for (const id of [
+          "pristine",
+          "start",
+          "run",
+          "pipeline",
+          "returned",
+          "status-only",
+          "concurrent",
+          "crash",
+          "prerequisite",
+        ])
+          await database.query(
+            `INSERT INTO core.task(id,project_id,title,status,priority,created_at,updated_at)
+            VALUES ($1,'history-project',$1,'pending',0,$2,$2)`,
+            [id, at],
+          );
+        for (const id of ["start", "returned"])
+          await database.query(
+            `INSERT INTO core.audit_event(id,project_id,event_type,actor_type,
+            aggregate_type,aggregate_id,payload_json,occurred_at)
+            VALUES ($1,'history-project','task.status_changed','system','task',$2,
+              '{"operation":"start"}'::jsonb,$3)`,
+            [`audit-${id}`, id, at],
+          );
+        await database.query(
+          "UPDATE core.task SET status='running' WHERE id='returned'",
+        );
+        await database.query(
+          "UPDATE core.task SET status='pending' WHERE id='returned'",
+        );
+        await database.query(
+          "UPDATE core.task SET status='waiting_review' WHERE id='status-only'",
+        );
+        await database.query(
+          `INSERT INTO core.role(id,project_id,role_key,name,version,
+          capabilities_json,tools_json,model_policy,limits_json,source_path,created_at,updated_at)
+          VALUES ('history-role','history-project','role','Role',1,'[]'::jsonb,'[]'::jsonb,
+            'default','{"maxIterations":1,"maxCostMicros":"0","timeoutSeconds":60}'::jsonb,
+            'fixture',$1,$1)`,
+          [at],
+        );
+        await database.query(
+          `INSERT INTO core.agent(id,project_id,role_id,name,enabled,created_at,updated_at)
+          VALUES ('history-agent','history-project','history-role','Agent',true,$1,$1)`,
+          [at],
+        );
+        await database.query(
+          `INSERT INTO core.agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at)
+          VALUES ('history-run','history-project','run','history-agent','cancelled',$1,$1)`,
+          [at],
+        );
+        await database.query(
+          `INSERT INTO core.pipeline_run(id,project_id,task_id,status,current_stage_index,
+          version,created_at,updated_at) VALUES ('history-pipeline','history-project','pipeline',
+          'cancelled',0,1,$1,$1)`,
+          [at],
+        );
+        expect(await migratePostgres(database, migrationDirectory)).toEqual([
+          "20261001000400_task_execution_history.sql",
+        ]);
+        expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
+        const rows = await database.query<{
+          task_id: string;
+          state: string;
+          first_known_at: Date | null;
+        }>(
+          "SELECT task_id,state,first_known_at FROM core.task_execution_history ORDER BY task_id",
+        );
+        expect(
+          rows.map((row) => [
+            row.task_id,
+            row.state,
+            row.first_known_at?.toISOString() ?? null,
+          ]),
+        ).toEqual([
+          ...["pipeline", "returned", "run", "start"].map((id) => [
+            id,
+            "executed",
+            at.toISOString(),
+          ]),
+          ["status-only", "executed", null],
+        ]);
+        const repository = new PostgresTaskDependencyRepository(
+          database,
+          "history-tenant",
+        );
+        expect(
+          await repository.hasExecutionHistory("history-project", "pristine"),
+        ).toBe(false);
+        expect(
+          await repository.hasExecutionHistory("history-project", "returned"),
+        ).toBe(true);
+        expect(
+          await new PostgresTaskDependencyRepository(
+            database,
+            "other-tenant",
+          ).hasExecutionHistory("history-project", "returned"),
+        ).toBe(false);
+        expect(
+          await database.query<{ relrowsecurity: boolean }>(
+            "SELECT relrowsecurity FROM pg_class WHERE oid='core.task_execution_history'::regclass",
+          ),
+        ).toEqual([{ relrowsecurity: true }]);
+        await expect(
+          database.query(
+            "DELETE FROM core.task_execution_history WHERE task_id='start'",
+          ),
+        ).rejects.toThrow("append-only");
+        await expect(
+          database.query(
+            "UPDATE core.task_execution_history SET state='unknown' WHERE task_id='start'",
+          ),
+        ).rejects.toThrow("monotonic");
+        await expect(
+          database.query(
+            `INSERT INTO core.task_dependency(project_id,task_id,depends_on_task_id,created_at)
+          VALUES ('history-project','returned','prerequisite',$1)`,
+            [at],
+          ),
+        ).rejects.toThrow("execution history");
+        await expect(
+          database.transaction(async () => {
+            await database.query(
+              "UPDATE core.task SET status='running' WHERE id='crash'",
+            );
+            expect(
+              await repository.hasExecutionHistory("history-project", "crash"),
+            ).toBe(true);
+            throw new Error("abort");
+          }),
+        ).rejects.toThrow("abort");
+        expect(
+          await repository.hasExecutionHistory("history-project", "crash"),
+        ).toBe(false);
+        await Promise.all([
+          first.transaction(async () => {
+            await first.query(
+              "UPDATE core.task SET status='running' WHERE id='concurrent'",
+            );
+          }),
+          second.transaction(async () => {
+            await second.query(
+              `INSERT INTO core.agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at)
+              VALUES ('concurrent-run','history-project','concurrent','history-agent','queued',$1,$1)`,
+              [at],
+            );
+          }),
+        ]);
+        expect(
+          await database.query<{ count: string }>(
+            "SELECT count(*) FROM core.task_execution_history WHERE task_id='concurrent'",
+          ),
+        ).toEqual([{ count: "1" }]);
+        for (const id of ["race-task", "race-prerequisite"])
+          await database.query(
+            `INSERT INTO core.task(id,project_id,title,status,priority,created_at,updated_at)
+            VALUES ($1,'history-project',$1,'pending',0,$2,$2)`,
+            [id, at],
+          );
+        let edgeInserted!: () => void;
+        const edgeReady = new Promise<void>((resolve) => {
+          edgeInserted = resolve;
+        });
+        let releaseEdge!: () => void;
+        const holdEdge = new Promise<void>((resolve) => {
+          releaseEdge = resolve;
+        });
+        const edgeWrite = first.transaction(async () => {
+          await first.query(
+            `INSERT INTO core.task_dependency(project_id,task_id,depends_on_task_id,created_at)
+            VALUES ('history-project','race-task','race-prerequisite',$1)`,
+            [at],
+          );
+          edgeInserted();
+          await holdEdge;
+        });
+        await edgeReady;
+        const startWrite = second.query(
+          "UPDATE core.task SET status='running' WHERE id='race-task'",
+        );
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        releaseEdge();
+        await edgeWrite;
+        await expect(startWrite).rejects.toThrow("incomplete prerequisites");
+        expect(
+          await database.query<{ status: string }>(
+            "SELECT status FROM core.task WHERE id='race-task'",
+          ),
+        ).toEqual([{ status: "pending" }]);
+        expect(
+          await database.query(
+            "SELECT task_id FROM core.task_execution_history WHERE task_id='race-task'",
+          ),
+        ).toEqual([]);
+        await database.query(
+          `INSERT INTO core.project(id,tenant_id,name,created_at,updated_at)
+          VALUES ('cascade-project','history-tenant','Cascade',$1,$1)`,
+          [at],
+        );
+        await database.query(
+          `INSERT INTO core.task(id,project_id,title,status,priority,created_at,updated_at)
+          VALUES ('cascade-task','cascade-project','Cascade','pending',0,$1,$1)`,
+          [at],
+        );
+        await database.query(
+          "UPDATE core.task SET status='running' WHERE id='cascade-task'",
+        );
+        await database.query(
+          "DELETE FROM core.project WHERE id='cascade-project'",
+        );
+        expect(
+          await database.query(
+            "SELECT task_id FROM core.task_execution_history WHERE task_id='cascade-task'",
+          ),
+        ).toEqual([]);
+      } finally {
+        await Promise.allSettled([
+          database.close(),
+          first.close(),
+          second.close(),
+        ]);
+        const cleanup = new PostgresClient(connectionString!);
+        try {
+          await cleanup.query(`DROP DATABASE "${databaseName}"`);
+        } finally {
+          await cleanup.close();
+          rmSync(partialRoot, { recursive: true, force: true });
+        }
+      }
+    });
+
     test("applies a fresh migration set exactly once under concurrent bootstrap", async () => {
       const databaseName = `ai_office_migration_${randomUUID().replaceAll("-", "")}`;
       const admin = new PostgresClient(connectionString!);
@@ -459,6 +722,7 @@ describe.skipIf(connectionString === undefined)(
           "20261001000100_task_dependencies.sql",
           "20261001000200_milestone_description_changed_event.sql",
           "20261001000300_task_dependency_immutable_edges.sql",
+          "20261001000400_task_execution_history.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

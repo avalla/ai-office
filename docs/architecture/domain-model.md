@@ -182,15 +182,27 @@ source's `defaultBranch` is recorded only when the checkout has an explicit
 `refs/remotes/origin/HEAD` symbolic reference; it is otherwise unknown.
 Refreshing detected facts preserves human-confirmed profile entries.
 
-Task dependency edits are refused after a persisted task start, AgentRun, or
-pipeline run. Portable project archives omit direct task-start audit history
-and pipeline-run history. A restored task that previously started but returned
-to `pending` or `blocked` without a portable AgentRun can therefore appear
-editable. Backup refuses live runs, and every new execution admission checks
-current prerequisites, but lifetime edit immutability across restore requires
-portable execution-history evidence or a conservative restore lock. That
-boundary must be resolved before relying on dependency editing for restored
-historical tasks.
+Task dependency editability is a lifetime property, separate from current task
+status. A task start, AgentRun creation, or pipeline-run creation establishes
+one monotonic, project-scoped execution-history fact in the same database
+transaction as the authority write. Returning to `blocked` or `pending` never
+removes it. A dependency may be linked or unlinked only while the dependent
+task is currently `pending` or `blocked` and is known never to have executed.
+The database also refuses history reversal and edits to a marked graph. New
+task starts, nonterminal AgentRuns, and active pipelines recheck prerequisites
+when the execution fact is written; PostgreSQL serializes that check with
+project graph edits.
+
+Portable project format v4 records an explicit `never`, `executed`, or `unknown`
+answer for every task. Backup and restore preserve that answer without exporting
+the full audit log, live AgentRuns, or pipeline history. Older v1–v3 archives
+remain readable, but absent lifetime evidence is unknown rather than proof of
+never having executed. Restore marks such tasks unknown and locks only their
+dependency edits; task execution and readiness continue under the normal rules.
+An upgraded live project with a pre-v4 portable import follows the same rule
+when its local execution evidence cannot prove more.
+Authoritative run evidence within an older archive can upgrade unknown to
+executed, but never to pristine.
 
 The latest office manifest is the approved current office configuration for
 mission, goals, constraints, preferences, permission preferences, roles, and

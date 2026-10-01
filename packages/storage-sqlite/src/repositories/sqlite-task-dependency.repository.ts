@@ -21,14 +21,8 @@ export class SqliteTaskDependencyRepository implements TaskDependencyRepository 
     return (
       this.database
         .query<{ present: number }, [string, string]>(
-          `SELECT (
-        EXISTS (SELECT 1 FROM agent_run WHERE project_id = ?1 AND task_id = ?2)
-        OR EXISTS (SELECT 1 FROM pipeline_run WHERE project_id = ?1 AND task_id = ?2)
-        OR EXISTS (SELECT 1 FROM audit_event WHERE project_id = ?1
-          AND aggregate_type = 'task' AND aggregate_id = ?2
-          AND event_type = 'task.status_changed'
-          AND json_extract(payload_json, '$.operation') = 'start')
-      ) AS present`,
+          `SELECT EXISTS (SELECT 1 FROM task_execution_history
+            WHERE project_id = ?1 AND task_id = ?2) AS present`,
         )
         .get(projectId, taskId)?.present === 1
     );

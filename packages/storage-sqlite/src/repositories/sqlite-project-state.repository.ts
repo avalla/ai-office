@@ -6,6 +6,7 @@ import type {
   ProjectStateRevision,
 } from "@ai-office/application/ports/project-state-repository.port.ts";
 import {
+  portableStateAtFormatVersion,
   portableProjectStateSchema,
   type PortableProjectState,
 } from "@ai-office/application/project-portability/project-snapshot.ts";
@@ -371,6 +372,32 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
         dependsOnTaskId: row.depends_on_task_id,
         createdAt: row.created_at,
       }));
+    const executionRows = new Map(
+      this.database
+        .query<
+          {
+            task_id: string;
+            state: "unknown" | "executed";
+            first_known_at: string | null;
+          },
+          [string]
+        >(
+          `SELECT task_id, state, first_known_at FROM task_execution_history
+         WHERE project_id = ? ORDER BY task_id`,
+        )
+        .all(projectId)
+        .map((row) => [row.task_id, row] as const),
+    );
+    const taskExecutionHistory = tasks.map((task) => {
+      const row = executionRows.get(task.id);
+      return row === undefined
+        ? { taskId: task.id, state: "never" as const }
+        : {
+            taskId: task.id,
+            state: row.state,
+            ...optional("firstKnownAt", row.first_known_at),
+          };
+    });
     const adrs = this.database
       .query<AdrRow, [string]>(
         `SELECT id, title, context, decision, consequences, status,
@@ -521,18 +548,15 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
         updatedAt: project.updated_at,
       },
       tasks,
-      ...(taskDependencyRows.length === 0
-        ? {}
-        : { taskDependencies: taskDependencyRows }),
+      taskDependencies: taskDependencyRows,
+      taskExecutionHistory,
       profileEntries,
       officeManifests,
       governance: {
         milestones,
         requirements,
         adrs,
-        ...(taskRequirementRows.length === 0 && taskDependencyRows.length === 0
-          ? {}
-          : { taskRequirements: taskRequirementRows }),
+        taskRequirements: taskRequirementRows,
         reviews,
         approvals,
       },
@@ -569,6 +593,26 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
          VALUES (?, ?, ?, ?)`,
         )
         .run(projectId, item.taskId, item.dependsOnTaskId, item.createdAt);
+    for (const item of value.taskExecutionHistory ??
+      value.tasks.map((task) => ({
+        taskId: task.id,
+        state: (["running", "waiting_review"].includes(task.status)
+          ? "executed"
+          : "unknown") as "executed" | "unknown",
+      }))) {
+      if (item.state === "never") continue;
+      this.database
+        .prepare(
+          `INSERT INTO task_execution_history(task_id, project_id, state, first_known_at)
+         VALUES (?, ?, ?, ?)`,
+        )
+        .run(
+          item.taskId,
+          projectId,
+          item.state,
+          "firstKnownAt" in item ? (item.firstKnownAt ?? null) : null,
+        );
+    }
     for (const item of value.profileEntries)
       this.database
         .prepare(
@@ -791,7 +835,16 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
         throw new Error(`Review ${item.id} was not reconstructed correctly`);
     }
     const restored = await this.loadPortableState(projectId);
-    if (canonicalStringify(restored) !== canonicalStringify(value))
+    const version =
+      value.taskExecutionHistory !== undefined
+        ? 4
+        : value.taskDependencies !== undefined
+          ? 3
+          : value.governance.taskRequirements !== undefined
+            ? 2
+            : 1;
+    const comparable = portableStateAtFormatVersion(restored, version);
+    if (canonicalStringify(comparable) !== canonicalStringify(value))
       throw new Error("Restored portable project state does not match archive");
   }
 

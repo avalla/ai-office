@@ -415,6 +415,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
       "0039_task_dependency_immutable_edges.sql",
+      "0040_task_execution_history.sql",
     ]);
     expect(
       database

@@ -186,7 +186,7 @@ export class ManageTaskDependencies {
       );
     if (await this.dependencies.hasExecutionHistory(projectId, taskId))
       throw new TaskDependencyError(
-        "Prerequisites cannot change after task execution begins",
+        "Prerequisites cannot change after task execution begins or when lifetime history is unknown",
       );
   }
 }

@@ -33,7 +33,7 @@ When no committed binding exists, matching Git provenance may corroborate the
 target; when a matching binding exists, the remote remains diagnostic and is
 not promoted to project identity.
 
-## Portable snapshot v1
+## Portable snapshots
 
 `project:backup` writes one UTF-8 JSON file with the `.aioffice` extension. The
 root is a strict envelope:
@@ -41,7 +41,7 @@ root is a strict envelope:
 ```text
 manifest
   format = ai-office-project
-  formatVersion = 1
+  formatVersion = 4 (current writer; readers also accept 1, 2, and 3)
   projectIdentity
   createdAt
   revision { id, parentRevisionId?, stateChecksum }
@@ -79,9 +79,13 @@ revalidate the archive checksums after download.
   generated descriptions proven by a matching local source binding;
 - task lifecycle state, including assigned, running, blocked, or review-waiting
   semantics when no live execution authority remains;
-- project-scoped hard task dependencies. Projects without dependencies retain
-  their prior version 1 or 2 archive shape; a graph uses format version 3 and
-  restores only when all task references and the acyclic graph are valid;
+- project-scoped hard task dependencies, restored only when all task references
+  and the acyclic graph are valid;
+- one explicit lifetime execution-history answer per task in format version 4:
+  `never`, `executed`, or `unknown`. New backups use v4 even for a project with
+  no dependency edges. Versions 1–3 remain readable; their absent history is
+  unknown on restore, so dependency edits fail closed while execution remains
+  governed by current readiness rules;
 - active profile knowledge except detected checkout root paths, raw remote URL
   entries, and source references; sanitized remote provenance lives only in the
   manifest;
@@ -127,6 +131,8 @@ secret there.
   PIDs, processes, caches, drafts, projections, and client executable/config
   state;
 - active agent or pipeline execution and task locks;
+- full task-start audit history and pipeline-run history (the durable lifetime
+  execution fact above is portable);
 - run action intents, results, errors, and event payloads;
 - resources, credential references, capability grants, action requests,
   simulations, local approvals, executions, and audit events;
@@ -141,7 +147,7 @@ because another machine exported it.
 
 ### Snapshot consistency and referential closure
 
-Snapshot v1 is referentially closed. Requirements may reference only exported
+Portable snapshots are referentially closed. Requirements may reference only exported
 milestones; superseding ADR references resolve within the exported ADR set;
 agents reference exported roles; and terminal run summaries reference exported
 tasks and agents. Review subjects must resolve to an exported task,
@@ -157,7 +163,7 @@ closure deterministically.
 
 ### Execution-authority quiescence
 
-Snapshot v1 has no resumable execution model. Backup therefore rejects before
+Portable snapshots have no resumable execution model. Backup therefore rejects before
 advancing the project-state head when any of these are present:
 
 - an agent run in `queued`, `preparing`, `running`, or `reviewing`;

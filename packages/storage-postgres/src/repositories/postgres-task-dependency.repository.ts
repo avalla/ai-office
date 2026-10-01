@@ -27,15 +27,10 @@ export class PostgresTaskDependencyRepository implements TaskDependencyRepositor
     taskId: string,
   ): Promise<boolean> {
     const rows = await this.database.query<{ present: boolean }>(
-      `SELECT (
-        EXISTS (SELECT 1 FROM core.agent_run r JOIN core.project p ON p.id = r.project_id
-          WHERE r.project_id = $1 AND r.task_id = $2 AND p.tenant_id = $3)
-        OR EXISTS (SELECT 1 FROM core.pipeline_run r JOIN core.project p ON p.id = r.project_id
-          WHERE r.project_id = $1 AND r.task_id = $2 AND p.tenant_id = $3)
-        OR EXISTS (SELECT 1 FROM core.audit_event e JOIN core.project p ON p.id = e.project_id
-          WHERE e.project_id = $1 AND e.aggregate_type = 'task' AND e.aggregate_id = $2
-          AND e.event_type = 'task.status_changed' AND e.payload_json->>'operation' = 'start'
-          AND p.tenant_id = $3)
+      `SELECT EXISTS (
+        SELECT 1 FROM core.task_execution_history h
+        JOIN core.project p ON p.id = h.project_id
+        WHERE h.project_id = $1 AND h.task_id = $2 AND p.tenant_id = $3
       ) AS present`,
       [projectId, taskId, this.tenantId],
     );

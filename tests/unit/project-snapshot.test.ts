@@ -57,9 +57,7 @@ function state(value: unknown = ["TypeScript"]): PortableProjectState {
 }
 
 /**
- * The manifest a writer would produce for this state: version 1 while it has no
- * Task/Requirement links, version 2 once it does. A test that wants the wrong
- * pairing asks for it explicitly.
+ * The manifest matching a test state, including historical v1-v3 fixtures.
  */
 function manifest(
   value: PortableProjectState,
@@ -79,6 +77,62 @@ function manifest(
 }
 
 describe("portable project snapshot", () => {
+  test("v4 requires one explicit, non-contradictory execution answer per task", () => {
+    const value: PortableProjectState = {
+      ...state(),
+      taskDependencies: [],
+      taskExecutionHistory: [{ taskId: "task-1", state: "never" }],
+      governance: { ...state().governance, taskRequirements: [] },
+    };
+    expect(portableProjectFormatVersionFor(value)).toBe(4);
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    expect(
+      parsePortableProjectArchive(serializePortableProjectArchive(archive)),
+    ).toEqual(archive);
+    expect(() =>
+      createPortableProjectArchive({
+        state: value,
+        manifest: manifest(value, 3),
+      }),
+    ).toThrow("cannot carry lifetime task execution history");
+    for (const invalid of [
+      { ...value, taskExecutionHistory: [] },
+      {
+        ...value,
+        taskExecutionHistory: [
+          { taskId: "task-1", state: "never" as const },
+          { taskId: "task-1", state: "unknown" as const },
+        ],
+      },
+      {
+        ...value,
+        taskExecutionHistory: [
+          { taskId: "elsewhere", state: "never" as const },
+        ],
+      },
+      {
+        ...value,
+        taskExecutionHistory: [
+          {
+            taskId: "task-1",
+            state: "never" as const,
+            firstKnownAt: timestamp,
+          },
+        ],
+      },
+      { ...value, tasks: [{ ...value.tasks[0]!, status: "running" as const }] },
+    ])
+      expect(() =>
+        createPortableProjectArchive({
+          state: invalid,
+          manifest: manifest(invalid),
+        }),
+      ).toThrow();
+  });
+
   test("version 3 round-trips hard task dependencies and keeps older link-free formats", () => {
     const value: PortableProjectState = {
       ...state(),
@@ -241,7 +295,7 @@ describe("portable project snapshot", () => {
       parsePortableProjectArchive(
         JSON.stringify({
           ...archive,
-          manifest: { ...archive.manifest, formatVersion: 4 },
+          manifest: { ...archive.manifest, formatVersion: 5 },
         }),
       ),
     ).toThrow("does not declare a supported format version");

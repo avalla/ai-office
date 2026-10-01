@@ -25,18 +25,19 @@ export const portableProjectFormat = "ai-office-project" as const;
  * old binary legitimately believes it understands, whose strict schema it then
  * rejects.
  *
- * A project with no links still writes v1, so archives that were byte-identical
- * before this version existed stay byte-identical. Readers accept both.
+ * Historical v1-v3 readers and their exact wire contracts remain supported.
+ * New backups use v4 because lifetime execution knowledge is always explicit.
  */
-export const portableProjectFormatVersions = [1, 2, 3] as const;
+export const portableProjectFormatVersions = [1, 2, 3, 4] as const;
 export type PortableProjectFormatVersion =
   (typeof portableProjectFormatVersions)[number];
 
-/** The version written for a project with no Task <-> Requirement links. */
+/** Historical base format for a project with no Task <-> Requirement links. */
 export const portableProjectBaseFormatVersion = 1 as const;
-/** The version written for a project that has them. */
+/** Historical linked-task format. */
 export const portableProjectLinkedFormatVersion = 2 as const;
 export const portableProjectDependencyFormatVersion = 3 as const;
+export const portableProjectExecutionHistoryFormatVersion = 4 as const;
 export const portableProjectExtension = ".aioffice" as const;
 export const maximumPortableProjectBytes = 32 * 1024 * 1024;
 
@@ -126,7 +127,7 @@ const portableProjectCommonShape = {
 } as const;
 
 /**
- * Explicit Task <-> Requirement links. Present only in format version 2.
+ * Explicit Task <-> Requirement links, introduced in format version 2.
  *
  * It lives under `governance` rather than at the top level because the link is
  * the requirement-side association the existing `governance` content entry
@@ -152,6 +153,16 @@ const taskDependencies = z
     }),
   )
   .max(1_000_000);
+
+const taskExecutionHistory = z
+  .array(
+    z.strictObject({
+      taskId: id,
+      state: z.enum(["never", "unknown", "executed"]),
+      firstKnownAt: timestamp.optional(),
+    }),
+  )
+  .max(100_000);
 
 /** Governance exactly as format version 1 froze it. */
 const portableGovernanceShape = z.strictObject({
@@ -300,8 +311,18 @@ const portableProjectStateShapeV3 = z.strictObject({
   agents: portableAgentsShape,
 });
 
+const portableProjectStateShapeV4 = z.strictObject({
+  ...portableProjectCommonShape,
+  taskDependencies,
+  taskExecutionHistory,
+  governance: portableGovernanceShape.extend({
+    taskRequirements: taskRequirementLinks,
+  }),
+  agents: portableAgentsShape,
+});
+
 /**
- * The producer-side shape, where the linkage is optional.
+ * The producer/reader union. Fields added in later versions are optional here.
  *
  * This is the type the runtime builds and restores; which of the two wire
  * contracts it serializes into is decided by whether the links are there. It is
@@ -311,6 +332,7 @@ const portableProjectStateShapeV3 = z.strictObject({
 const portableProjectStateShape = z.strictObject({
   ...portableProjectCommonShape,
   taskDependencies: taskDependencies.optional(),
+  taskExecutionHistory: taskExecutionHistory.optional(),
   governance: portableGovernanceShape.extend({
     taskRequirements: taskRequirementLinks.optional(),
   }),
@@ -329,6 +351,57 @@ const referentialClosure = (
   );
   const adrs = new Set(state.governance.adrs.map((item) => item.id));
   const tasks = new Set(state.tasks.map((item) => item.id));
+  const taskStatuses = new Map(
+    state.tasks.map((item) => [item.id, item.status] as const),
+  );
+  const runTasks = new Set(
+    state.agents.terminalRuns.map((item) => item.taskId),
+  );
+  const missing = (path: (string | number)[], message: string): void => {
+    context.addIssue({ code: "custom", path, message });
+  };
+  if (state.taskExecutionHistory !== undefined) {
+    const histories = new Set<string>();
+    for (const [index, item] of state.taskExecutionHistory.entries()) {
+      if (!tasks.has(item.taskId))
+        missing(
+          ["taskExecutionHistory", index, "taskId"],
+          `Referenced task ${item.taskId} is not portable`,
+        );
+      if (histories.has(item.taskId))
+        missing(
+          ["taskExecutionHistory", index, "taskId"],
+          `Task ${item.taskId} has duplicate execution knowledge`,
+        );
+      histories.add(item.taskId);
+      if (item.state !== "executed" && item.firstKnownAt !== undefined)
+        missing(
+          ["taskExecutionHistory", index, "firstKnownAt"],
+          "Only executed history may have a known timestamp",
+        );
+      if (
+        item.state !== "executed" &&
+        ["running", "waiting_review"].includes(
+          taskStatuses.get(item.taskId) ?? "",
+        )
+      )
+        missing(
+          ["taskExecutionHistory", index, "state"],
+          "Active execution proves execution history",
+        );
+      if (item.state !== "executed" && runTasks.has(item.taskId))
+        missing(
+          ["taskExecutionHistory", index, "state"],
+          "An AgentRun proves execution history",
+        );
+    }
+    for (const taskId of tasks)
+      if (!histories.has(taskId))
+        missing(
+          ["taskExecutionHistory"],
+          `Task ${taskId} lacks explicit execution knowledge`,
+        );
+  }
   const roles = new Set(state.agents.roles.map((item) => item.id));
   const agents = new Set(state.agents.definitions.map((item) => item.id));
   const runs = new Set(state.agents.terminalRuns.map((item) => item.id));
@@ -340,9 +413,6 @@ const referentialClosure = (
     (typeof state.governance.approvals)[number]
   >();
 
-  const missing = (path: (string | number)[], message: string): void => {
-    context.addIssue({ code: "custom", path, message });
-  };
   for (const [index, item] of state.governance.requirements.entries())
     if (item.milestoneId !== undefined && !milestones.has(item.milestoneId))
       missing(
@@ -505,6 +575,8 @@ export const portableProjectStateSchemaV2 =
   portableProjectStateShapeV2.superRefine(referentialClosure);
 export const portableProjectStateSchemaV3 =
   portableProjectStateShapeV3.superRefine(referentialClosure);
+export const portableProjectStateSchemaV4 =
+  portableProjectStateShapeV4.superRefine(referentialClosure);
 
 export type PortableProjectState = z.infer<typeof portableProjectStateSchema>;
 
@@ -517,16 +589,37 @@ export function portableTaskRequirementLinks(
 
 /**
  * The lowest format version that can express this state without losing
- * anything. A project with no links keeps writing version 1.
+ * anything. Current SQLite state always has execution knowledge and writes v4.
  */
 export function portableProjectFormatVersionFor(
   state: PortableProjectState,
 ): PortableProjectFormatVersion {
+  if (state.taskExecutionHistory !== undefined)
+    return portableProjectExecutionHistoryFormatVersion;
   if ((state.taskDependencies ?? []).length > 0)
     return portableProjectDependencyFormatVersion;
   return portableTaskRequirementLinks(state).length > 0
     ? portableProjectLinkedFormatVersion
     : portableProjectBaseFormatVersion;
+}
+
+/** Compare an upgraded local state against an archive's frozen wire contract. */
+export function portableStateAtFormatVersion(
+  state: PortableProjectState,
+  version: PortableProjectFormatVersion,
+): PortableProjectState {
+  if (version === 4) return state;
+  const {
+    taskExecutionHistory: _history,
+    taskDependencies,
+    governance,
+    ...common
+  } = state;
+  if (version === 3) return { ...common, taskDependencies, governance };
+  const { taskRequirements, ...oldGovernance } = governance;
+  if (version === 2)
+    return { ...common, governance: { ...oldGovernance, taskRequirements } };
+  return { ...common, governance: oldGovernance };
 }
 
 const manifestContentsV1 = [
@@ -570,6 +663,18 @@ export const portableProjectContents = {
     "terminal_run_summaries",
     "task_requirements",
     "task_dependencies",
+  ],
+  4: [
+    "project",
+    "tasks",
+    "profile",
+    "office_manifests",
+    "governance",
+    "agent_definitions",
+    "terminal_run_summaries",
+    "task_requirements",
+    "task_dependencies",
+    "task_execution_history",
   ],
 } as const;
 
@@ -617,12 +722,23 @@ export const portableProjectManifestSchemaV3 = z.strictObject({
     z.literal("task_dependencies"),
   ]),
 });
+export const portableProjectManifestSchemaV4 = z.strictObject({
+  ...portableProjectManifestBase,
+  formatVersion: z.literal(portableProjectExecutionHistoryFormatVersion),
+  contents: z.tuple([
+    ...manifestContentsV1,
+    z.literal("task_requirements"),
+    z.literal("task_dependencies"),
+    z.literal("task_execution_history"),
+  ]),
+});
 
 /** Accepts either version. Which one is decided before the state is parsed. */
 export const portableProjectManifestSchema = z.union([
   portableProjectManifestSchemaV1,
   portableProjectManifestSchemaV2,
   portableProjectManifestSchemaV3,
+  portableProjectManifestSchemaV4,
 ]);
 
 export type PortableProjectManifest = z.infer<
@@ -647,23 +763,29 @@ export function portableProjectManifestFor(input: {
     revision: input.revision,
     ...(input.source === undefined ? {} : { source: input.source }),
   };
-  return input.formatVersion === portableProjectDependencyFormatVersion
+  return input.formatVersion === portableProjectExecutionHistoryFormatVersion
     ? {
         ...envelope,
-        formatVersion: portableProjectDependencyFormatVersion,
-        contents: [...portableProjectContents[3]],
+        formatVersion: portableProjectExecutionHistoryFormatVersion,
+        contents: [...portableProjectContents[4]],
       }
-    : input.formatVersion === portableProjectLinkedFormatVersion
+    : input.formatVersion === portableProjectDependencyFormatVersion
       ? {
           ...envelope,
-          formatVersion: portableProjectLinkedFormatVersion,
-          contents: [...portableProjectContents[2]],
+          formatVersion: portableProjectDependencyFormatVersion,
+          contents: [...portableProjectContents[3]],
         }
-      : {
-          ...envelope,
-          formatVersion: portableProjectBaseFormatVersion,
-          contents: [...portableProjectContents[1]],
-        };
+      : input.formatVersion === portableProjectLinkedFormatVersion
+        ? {
+            ...envelope,
+            formatVersion: portableProjectLinkedFormatVersion,
+            contents: [...portableProjectContents[2]],
+          }
+        : {
+            ...envelope,
+            formatVersion: portableProjectBaseFormatVersion,
+            contents: [...portableProjectContents[1]],
+          };
 }
 
 const integrityShape = z.strictObject({
@@ -685,6 +807,11 @@ export const portableProjectArchiveSchemaV2 = z.strictObject({
 export const portableProjectArchiveSchemaV3 = z.strictObject({
   manifest: portableProjectManifestSchemaV3,
   state: portableProjectStateSchemaV3,
+  integrity: integrityShape,
+});
+export const portableProjectArchiveSchemaV4 = z.strictObject({
+  manifest: portableProjectManifestSchemaV4,
+  state: portableProjectStateSchemaV4,
   integrity: integrityShape,
 });
 
@@ -770,14 +897,16 @@ export function createPortableProjectArchive(input: {
   const required = portableProjectFormatVersionFor(input.state);
   if (declared < required)
     throw new PortableProjectArchiveError(
-      `Portable project archive format version ${declared} cannot carry Task/Requirement links; write format version ${required}`,
+      `Portable project archive format version ${declared} cannot carry ${required === 4 ? "lifetime task execution history" : "Task/Requirement links"}; write format version ${required}`,
     );
   const state =
-    declared === portableProjectDependencyFormatVersion
-      ? portableProjectStateSchemaV3.parse(input.state)
-      : declared === portableProjectLinkedFormatVersion
-        ? portableProjectStateSchemaV2.parse(input.state)
-        : portableProjectStateSchemaV1.parse(input.state);
+    declared === portableProjectExecutionHistoryFormatVersion
+      ? portableProjectStateSchemaV4.parse(input.state)
+      : declared === portableProjectDependencyFormatVersion
+        ? portableProjectStateSchemaV3.parse(input.state)
+        : declared === portableProjectLinkedFormatVersion
+          ? portableProjectStateSchemaV2.parse(input.state)
+          : portableProjectStateSchemaV1.parse(input.state);
   assertPortableProjectStateSafe(state);
   const stateChecksum = portableStateChecksum(state);
   if (input.manifest.revision.stateChecksum !== stateChecksum)
@@ -785,11 +914,13 @@ export function createPortableProjectArchive(input: {
       "Snapshot revision checksum does not match portable state",
     );
   const manifest =
-    declared === portableProjectDependencyFormatVersion
-      ? portableProjectManifestSchemaV3.parse(input.manifest)
-      : declared === portableProjectLinkedFormatVersion
-        ? portableProjectManifestSchemaV2.parse(input.manifest)
-        : portableProjectManifestSchemaV1.parse(input.manifest);
+    declared === portableProjectExecutionHistoryFormatVersion
+      ? portableProjectManifestSchemaV4.parse(input.manifest)
+      : declared === portableProjectDependencyFormatVersion
+        ? portableProjectManifestSchemaV3.parse(input.manifest)
+        : declared === portableProjectLinkedFormatVersion
+          ? portableProjectManifestSchemaV2.parse(input.manifest)
+          : portableProjectManifestSchemaV1.parse(input.manifest);
   const basis = { manifest, state };
   return {
     ...basis,
@@ -838,11 +969,13 @@ export function parsePortableProjectArchive(
       `Portable project archive does not declare a supported format version (supported: ${portableProjectFormatVersions.join(", ")})`,
     );
   const parsed = (
-    version === portableProjectDependencyFormatVersion
-      ? portableProjectArchiveSchemaV3
-      : version === portableProjectLinkedFormatVersion
-        ? portableProjectArchiveSchemaV2
-        : portableProjectArchiveSchemaV1
+    version === portableProjectExecutionHistoryFormatVersion
+      ? portableProjectArchiveSchemaV4
+      : version === portableProjectDependencyFormatVersion
+        ? portableProjectArchiveSchemaV3
+        : version === portableProjectLinkedFormatVersion
+          ? portableProjectArchiveSchemaV2
+          : portableProjectArchiveSchemaV1
   ).safeParse(value);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
