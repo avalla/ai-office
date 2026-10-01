@@ -87,8 +87,12 @@ import {
   DisabledProjectMemoryProvider,
   type ProjectMemoryProvider,
 } from "@ai-office/application/ports/project-memory-provider.port.ts";
-import { KnowledgeStoreError, type RuntimeAgentKnowledge } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import {
+  KnowledgeStoreError,
+  type RuntimeAgentKnowledge,
+} from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import { KnowledgeAdmissionError } from "@ai-office/application/agent-knowledge/manage-knowledge-admission.ts";
+import type { LegacyMemoryReader } from "@ai-office/application/ports/legacy-memory-reader.port.ts";
 import { handleProjectMemoryCommand } from "./commands/project-memory.ts";
 import { handleKnowledgeCommand } from "./commands/knowledge.ts";
 import { handleModelCommand } from "./commands/model.ts";
@@ -276,6 +280,8 @@ const commands = [
   "project-memory:status",
   "knowledge:plan",
   "knowledge:admit",
+  "knowledge:legacy-plan",
+  "knowledge:legacy-import",
   "knowledge:trace",
   "resource:create",
   "resource:list",
@@ -316,6 +322,7 @@ export interface RuntimeCommandOptions {
   projectArchives?: ProjectArchiveAdapter;
   /** Composition-supplied provider; absent means disabled. */
   projectMemory?: ProjectMemoryProvider;
+  legacyMemory?: LegacyMemoryReader;
   /** Independently composed secondary knowledge for worker retrieval. */
   agentKnowledge?: RuntimeAgentKnowledge;
   /** Composition-supplied host model routing; absent means unconfigured. */
@@ -594,6 +601,9 @@ export async function executeRuntimeCommand(
         options.defaultOfficeManifest ?? defaultOfficeManifest(),
       projectMemory:
         options.projectMemory ?? new DisabledProjectMemoryProvider(),
+      ...(options.legacyMemory === undefined
+        ? {}
+        : { legacyMemory: options.legacyMemory }),
       ...(options.agentKnowledge === undefined
         ? {}
         : { agentKnowledge: options.agentKnowledge }),

@@ -121,6 +121,81 @@ test("one bounded project-scoped search over the real stdio transport returns no
   });
 });
 
+test("a named-scope import verifies two complete passes through a read-only MCP profile", async () => {
+  const { fake, provider: cairn } = provider({
+    results: [
+      { key: "b", value: "second", score: 1 },
+      { key: "a", value: "first", score: 1 },
+    ],
+  });
+  expect(await cairn.readNamedScope(identity.memoryProjectId)).toEqual([
+    { key: "a", value: "first" },
+    { key: "b", value: "second" },
+  ]);
+  const starts = fake.log().filter((entry) => entry.kind === "start");
+  expect(starts[0]?.environment?.CAIRN_MCP_ALLOWED_TOOLS).toBe(
+    "memory_list,memory_read",
+  );
+  const calls = fake.log().filter((entry) => entry.method === "tools/call");
+  expect(calls.map((entry) => (entry.params as { name: string }).name)).toEqual(
+    ["memory_list", "memory_read", "memory_read", "memory_list", "memory_read", "memory_read", "memory_list"],
+  );
+});
+
+test.each(["add-key", "remove-key", "change-value"] as const)(
+  "named-scope import rejects %s during bounded verification",
+  async (scanMutation) => {
+    const { provider: cairn } = provider({
+      scanMutation,
+      results: [
+        { key: "a", value: "first", score: 1 },
+        { key: "b", value: "second", score: 1 },
+      ],
+    });
+    await expect(cairn.readNamedScope(identity.memoryProjectId)).rejects.toMatchObject({
+      code: "PROJECT_MEMORY_INVALID_RESPONSE",
+    });
+  },
+);
+
+test("named-scope snapshot rejects ambiguous and oversized source data", async () => {
+  const { provider: cairn } = provider({
+    results: [
+      { key: "same", value: "first", score: 1 },
+      { key: "same", value: "second", score: 1 },
+    ],
+  });
+  await expect(
+    cairn.readNamedScope(identity.memoryProjectId),
+  ).rejects.toMatchObject({
+    code: "PROJECT_MEMORY_INVALID_RESPONSE",
+  });
+  await expect(cairn.readNamedScope("project")).rejects.toMatchObject({
+    code: "PROJECT_MEMORY_MISCONFIGURED",
+  });
+});
+
+test("named-scope import refuses typed metadata it cannot preserve", async () => {
+  const { provider: cairn } = provider({
+    mode: "typed-metadata",
+    results: [{ key: "decision", value: "Keep provenance", score: 1 }],
+  });
+  await expect(
+    cairn.readNamedScope(identity.memoryProjectId),
+  ).rejects.toMatchObject({
+    code: "PROJECT_MEMORY_INVALID_RESPONSE",
+  });
+});
+
+test("named-scope import rejects a value returned from another scope", async () => {
+  const { provider: cairn } = provider({ results: [
+    { key: "entry", value: "wrong scope", score: 1, scope: "identity" },
+  ] });
+  await expect(cairn.readNamedScope(identity.memoryProjectId)).rejects.toMatchObject({
+    code: "PROJECT_MEMORY_INVALID_RESPONSE",
+  });
+});
+
 test("the client supports exactly the MCP protocol revision it implements", () => {
   expect(supportedMcpProtocolVersions).toEqual(["2025-06-18"]);
 });

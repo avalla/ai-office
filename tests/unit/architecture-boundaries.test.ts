@@ -496,7 +496,7 @@ test("project memory stays behind its application port and the CairnKeep adapter
         adapterReachers.push(relative(repositoryRoot, file));
   expect(adapterReachers).toEqual([]);
 
-  // The adapter names exactly one CairnKeep tool; no mutation tool is ever
+  // The adapter uses only read-only CairnKeep tools; no mutation tool is ever
   // referenced by production code.
   const adapterSources = typescriptFiles(
     join(repositoryRoot, "packages/cairnkeep-memory"),
@@ -509,7 +509,11 @@ test("project memory stays behind its application port and the CairnKeep adapter
         ) ?? [],
     ),
   );
-  expect([...toolNames]).toEqual(["memory_search"]);
+  expect([...toolNames]).toEqual([
+    "memory_search",
+    "memory_list",
+    "memory_read",
+  ]);
 });
 
 test("raw provider credential values are reachable only at the gateway provider construction boundary", () => {

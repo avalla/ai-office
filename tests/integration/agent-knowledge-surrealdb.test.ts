@@ -1,15 +1,19 @@
-import type { DecisionInput, KnowledgeScope, MemoryInput } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import type { AgentKnowledgeStore, DecisionInput, KnowledgeScope, LegacyKnowledgeInput, MemoryInput } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context/knowledge-search-term.ts";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { deriveProjectMemoryIdentity } from "@ai-office/application/project-memory/project-memory-identity.ts";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { RecordId, Surreal } from "../../packages/storage-surrealdb/node_modules/surrealdb";
 import { connectSurrealAgentKnowledgeStore } from "../../packages/storage-surrealdb/src/connect-agent-knowledge-store.ts";
 import { ManageKnowledgeAdmission } from "../../packages/application/src/agent-knowledge/manage-knowledge-admission.ts";
+import { ImportLegacyKnowledge } from "../../packages/application/src/agent-knowledge/import-legacy-knowledge.ts";
 import type { ProjectRepository } from "../../packages/application/src/ports/project-repository.port.ts";
 import type { TaskRepository } from "../../packages/application/src/ports/task-repository.port.ts";
 import type { AgentRuntimeRepository } from "../../packages/application/src/ports/agent-runtime-repository.port.ts";
 import type { RepositoryIdentityRepository } from "../../packages/application/src/ports/repository-identity-repository.port.ts";
 import type { RecordAuditEvent } from "../../packages/application/src/commands/record-audit-event.ts";
 import type { Clock } from "../../packages/application/src/ports/clock.port.ts";
+import { createHash, randomUUID } from "node:crypto";
+import { SurrealAgentKnowledgeStoreImpl } from "../../packages/storage-surrealdb/src/surreal-agent-knowledge.store.ts";
 
 const endpoint = process.env.AI_OFFICE_TEST_SURREALDB_URL;
 const enabled = Boolean(endpoint);
@@ -19,6 +23,27 @@ const scopeB = { tenantId: "tenant-b", repositoryId: "repo-b" } satisfies Knowle
 let closeStore: () => Promise<void>;
 let store: Awaited<ReturnType<typeof connectSurrealAgentKnowledgeStore>>["store"];
 let db: Surreal;
+
+it.skipIf(!enabled)("adds legacy storage to an existing v1 database without losing records", async () => {
+  const upgradeDb = new Surreal();
+  try {
+    await upgradeDb.connect(endpoint!);
+    await upgradeDb.signin({ username: "root", password: "root" });
+    await upgradeDb.use({ namespace: "ai_office_test", database: `ak06_upgrade_${randomUUID().replaceAll("-", "")}` });
+    await upgradeDb.query("DEFINE TABLE knowledge_agent SCHEMAFULL TYPE NORMAL; DEFINE FIELD tenant_id ON knowledge_agent TYPE string; DEFINE FIELD project_id ON knowledge_agent TYPE string; DEFINE FIELD external_id ON knowledge_agent TYPE string;");
+    await upgradeDb.query("CREATE knowledge_agent:existing CONTENT { tenant_id: 'tenant-a', project_id: 'repo-a', external_id: 'agent-existing' };");
+    const upgraded = await SurrealAgentKnowledgeStoreImpl.create(upgradeDb);
+    await upgraded.recordLegacyMemory({ ...scopeA, id: "ak_legacy_upgrade", text: "Retained legacy note",
+      sourceScope: "aio-0123456789abcdef0123456789abcdef", sourceKey: "notes/old",
+      sourceSha256: `sha256:${createHash("sha256").update("Retained legacy note").digest("hex")}`,
+      importedAt: new Date("2026-09-30T12:00:00.000Z") });
+    expect((await upgradeDb.query("SELECT external_id FROM knowledge_agent WHERE external_id = 'agent-existing'"))[0])
+      .toEqual([{ external_id: "agent-existing" }]);
+    expect((await upgraded.traceLegacyMemory(scopeA, "ak_legacy_upgrade"))?.text).toBe("Retained legacy note");
+  } finally {
+    await upgradeDb.close();
+  }
+});
 
 function record(scope: KnowledgeScope, kind: string, id: string): RecordId {
   return new RecordId(kind, encodeURIComponent(JSON.stringify([scope.tenantId, scope.repositoryId, kind.replace(/^knowledge_/, ""), id])));
@@ -565,6 +590,92 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     expect(await store.traceMemoryProvenance(scopeA, "memory-isolated-b")).toBeNull();
     expect(await store.traceMemoryProvenance(scopeA, "memory-isolated-c")).toBeNull();
     expect(await store.listAgentKnowledge(scopeA, "agent-1")).toHaveLength(1);
+  });
+
+  it("imports immutable legacy memory without inventing run provenance and isolates its scope", async () => {
+    const input = { ...scopeA, id: "ak_legacy_one", text: "Legacy deployment note",
+      sourceScope: "aio-0123456789abcdef0123456789abcdef", sourceKey: "notes/deploy",
+      sourceSha256: `sha256:${createHash("sha256").update("Legacy deployment note").digest("hex")}`,
+      importedAt: new Date("2026-09-30T12:00:00.000Z") };
+    expect(await store.recordLegacyMemory(input)).toBe("recorded");
+    expect(await store.recordLegacyMemory({ ...input, importedAt: new Date("2026-10-01T12:00:00.000Z") })).toBe("existing");
+    expect(await store.traceLegacyMemory(scopeA, input.id)).toMatchObject({
+      text: input.text, runId: null, taskId: null, agentId: null,
+      legacy: { sourceScope: input.sourceScope, sourceKey: input.sourceKey,
+        sourceSha256: input.sourceSha256 },
+    });
+    expect((await store.findKnowledge(scopeA, { text: "deployment" })).map((hit) => hit.id)).toEqual([input.id]);
+    expect(await store.findKnowledge(scopeA, { text: "deployment", agentId: "agent-1" })).toEqual([]);
+    expect(await store.traceLegacyMemory(scopeSameTenantOtherProject, input.id)).toBeNull();
+    await expect(store.recordLegacyMemory({ ...input, text: "Rewritten" })).rejects.toThrow();
+    expect((await store.traceLegacyMemory(scopeA, input.id))?.text).toBe(input.text);
+    await store.deleteProjectKnowledge(scopeA);
+    expect(await store.traceLegacyMemory(scopeA, input.id)).toBeNull();
+  });
+
+  it("reports concurrent exact imports honestly and reconciles the one immutable record on explicit retry", async () => {
+    const expectedScope = deriveProjectMemoryIdentity(scopeA.repositoryId).memoryProjectId;
+    const events: string[] = [];
+    let prechecks = 0;
+    const recordLegacyMemory = vi.fn((input: LegacyKnowledgeInput) => store.recordLegacyMemory(input));
+    const raceStore = {
+      recordLegacyMemory,
+      traceLegacyMemory: (scope: KnowledgeScope, id: string) =>
+        ++prechecks <= 2 ? Promise.resolve(null) : store.traceLegacyMemory(scope, id),
+    } as unknown as AgentKnowledgeStore;
+    const makeService = (importedAt: Date) => new ImportLegacyKnowledge(
+      { findById: async () => ({ id: "project-1" }) } as unknown as ProjectRepository,
+      { findRepositoryId: async () => scopeA.repositoryId } as unknown as RepositoryIdentityRepository,
+      { readNamedScope: async () => [{ key: "parallel", value: "Concurrent legacy record" }] },
+      { state: "connected", tenantId: scopeA.tenantId, store: raceStore },
+      { execute: async (event: Parameters<RecordAuditEvent["execute"]>[0]) => {
+        events.push(event.eventType); return "audit-ak06";
+      } } as unknown as RecordAuditEvent,
+      { now: () => importedAt } as Clock,
+    );
+    const first = makeService(new Date("2026-09-30T12:00:00.000Z"));
+    const second = makeService(new Date("2026-10-01T12:00:00.000Z"));
+    const plan = await first.plan("project-1", expectedScope);
+    const request = { projectId: "project-1", sourceScope: expectedScope, approval: plan.planHash, reviewedBy: "operator" };
+    const outcomes = await Promise.allSettled([first.import(request), second.import(request)]);
+    const successful = outcomes.filter((outcome) => outcome.status === "fulfilled").map((outcome) => outcome.value);
+    const failed = outcomes.filter((outcome) => outcome.status === "rejected").map((outcome) => outcome.reason);
+    expect(failed.every((error: unknown) => typeof error === "object" && error !== null &&
+      "code" in error && error.code === "KNOWLEDGE_LEGACY_IMPORT_OUTCOME_UNKNOWN")).toBe(true);
+    expect(successful.reduce((sum, outcome) => sum + outcome.imported, 0)).toBeLessThanOrEqual(1);
+    expect(successful.every((outcome) => outcome.imported + outcome.reconciled === 1)).toBe(true);
+    expect(recordLegacyMemory).toHaveBeenCalledTimes(2);
+    const hit = await store.traceLegacyMemory(scopeA, plan.entries[0]!.id);
+    expect(hit?.text).toBe("Concurrent legacy record");
+    const originalTimestamp = hit?.createdAt.getTime();
+    const rows = await db.query<[Array<{ id: RecordId }>]>(
+      "SELECT id FROM knowledge_legacy_memory WHERE tenant_id = $tenant AND project_id = $project AND external_id = $id",
+      { tenant: scopeA.tenantId, project: scopeA.repositoryId, id: plan.entries[0]!.id },
+    );
+    expect(rows[0]).toHaveLength(1);
+    expect(await first.import(request)).toMatchObject({ imported: 0, reconciled: 1 });
+    expect(recordLegacyMemory).toHaveBeenCalledTimes(2);
+    expect((await store.traceLegacyMemory(scopeA, plan.entries[0]!.id))?.createdAt.getTime()).toBe(originalTimestamp);
+    expect(events.filter((event) => event === "knowledge.legacy_import.approved")).toHaveLength(3);
+  });
+
+  it.each([
+    ["oversized matching digest", "oversize " + "😀".repeat(4_001), true],
+    ["malformed digest", "oversize malformed", false],
+  ])("rejects directly seeded legacy %s through trace and bounded retrieval", async (_case, text, matchingDigest) => {
+    const id = `ak_legacy_malformed_${matchingDigest ? "size" : "digest"}`;
+    await db.query("CREATE $record CONTENT $content", { record: record(scopeA, "knowledge_legacy_memory", id), content: {
+      tenant_id: scopeA.tenantId, project_id: scopeA.repositoryId, external_id: id,
+      text, source_scope: "aio-0123456789abcdef0123456789abcdef", source_key: "notes/bad",
+      source_sha256: `sha256:${matchingDigest ? createHash("sha256").update(text).digest("hex") : "0".repeat(64)}`,
+      imported_at: new Date("2026-09-30T12:00:00.000Z"),
+    } });
+    await expect(store.traceLegacyMemory(scopeA, id)).rejects.toMatchObject({
+      code: "KNOWLEDGE_INVALID_RESULT", message: "KNOWLEDGE_INVALID_RESULT",
+    });
+    await expect(store.findKnowledge(scopeA, { text: "oversize", limit: 1 })).rejects.toMatchObject({
+      code: "KNOWLEDGE_INVALID_RESULT", message: "KNOWLEDGE_INVALID_RESULT",
+    });
   });
 
   it("deletes one project deterministically without deleting another project", async () => {

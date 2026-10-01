@@ -641,6 +641,15 @@ the same arguments with `knowledge:admit --approve <planHash> --actor <reviewer>
 Use `knowledge:trace --project <id> --kind memory --id <knowledgeId>` to inspect
 the stored provenance. A decision also requires `--title <title>`.
 
+To import historical CairnKeep named-scope entries, enable both CairnKeep and
+native knowledge on the Runtime host. Use `project-memory:status --project <id>`
+to obtain the derived `aio-...` scope, then review
+`knowledge:legacy-plan --project <id> --scope <aio-scope>`. Import the same
+snapshot with `knowledge:legacy-import --project <id> --scope <aio-scope>
+--approve <planHash> --actor <reviewer>`. Repeating the exact import reconciles
+matching records without rewriting them. `knowledge:trace` shows each imported
+memory's source scope, key and digest, with no claimed run provenance.
+
 ## Agent model routing
 
 Roles declare a semantic `model_policy` (`economical`, `balanced`,
@@ -1136,8 +1145,8 @@ moving or reinstalling the AI Office program does not relocate or replace it.
 | `<runtime-home>/global.sqlite`           | User-level roles, patterns, and lessons                    | Active; migrated lazily by memory commands | **Durable global knowledge.** Preserved by `runtime:purge`; deleting it explicitly removes reusable definitions. |
 | `<runtime-home>/index.sqlite`            | Future derived code intelligence                           | Initial migration only; M8 is future       | Intended to be regenerable; there is no populated index to preserve today.                                       |
 | `<project-root>/.ai-office/project.json` | Portable repository identity                               | Active; created by `install`               | **Not authoritative.** Safe to commit and preserved by local uninstall.                                          |
-| External SurrealDB store (optional)      | Agent knowledge by tenant and repository ID              | Opt-in; worker read path                 | **Not authoritative.** Separate from project and run state.                                                     |
-| External CairnKeep store (legacy)        | Historical project memory keyed by `repositoryId`        | Diagnostics only                        | **Not authoritative.** Owned by CairnKeep; never opened, purged or uninstalled by AI Office.                     |
+| External SurrealDB store (optional)      | Agent knowledge by tenant and repository ID                | Opt-in; worker read path                   | **Not authoritative.** Separate from project and run state.                                                      |
+| External CairnKeep store (legacy)        | Historical project memory keyed by `repositoryId`          | Diagnostics only                           | **Not authoritative.** Owned by CairnKeep; never opened, purged or uninstalled by AI Office.                     |
 | `<chosen-path>/*.aioffice`               | User-owned portable project snapshot                       | Created only by `project:backup`           | **Backup artifact.** Never removed by uninstall or runtime purge; keep it outside the runtime being purged.      |
 
 Project migrations are versioned under `migrations/project/`, applied

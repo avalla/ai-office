@@ -7,6 +7,7 @@ import {
   assertKnowledgeIdentifier,
   type DecisionInput,
   type KnowledgeProvenance,
+  type LegacyKnowledgeHit,
   type MemoryInput,
   type RuntimeAgentKnowledge,
 } from "../ports/agent-knowledge-store.port.ts";
@@ -33,7 +34,11 @@ export type KnowledgeAdmissionErrorCode =
   | "KNOWLEDGE_ADMISSION_CONFLICT"
   | "KNOWLEDGE_INVALID_PROVENANCE"
   | "KNOWLEDGE_PROJECT_NOT_FOUND"
-  | "KNOWLEDGE_STORE_NOT_CONNECTED";
+  | "KNOWLEDGE_STORE_NOT_CONNECTED"
+  | "KNOWLEDGE_LEGACY_SCOPE_MISMATCH"
+  | "KNOWLEDGE_LEGACY_SOURCE_UNAVAILABLE"
+  | "KNOWLEDGE_LEGACY_IMPORT_CONFLICT"
+  | "KNOWLEDGE_LEGACY_IMPORT_OUTCOME_UNKNOWN";
 
 export class KnowledgeAdmissionError extends Error {
   constructor(readonly code: KnowledgeAdmissionErrorCode) {
@@ -311,7 +316,7 @@ export class ManageKnowledgeAdmission {
     projectId: string,
     kind: KnowledgeAdmissionKind,
     id: string,
-  ): Promise<KnowledgeProvenance | null> {
+  ): Promise<KnowledgeProvenance | LegacyKnowledgeHit | null> {
     const state = this.connected();
     assertKnowledgeIdentifier(projectId);
     assertKnowledgeIdentifier(id);
@@ -323,9 +328,12 @@ export class ManageKnowledgeAdmission {
     if (repositoryId === null)
       throw new KnowledgeAdmissionError("KNOWLEDGE_PROVENANCE_UNAVAILABLE");
     const scope = { tenantId: state.tenantId, repositoryId };
-    return kind === "decision"
-      ? state.store.traceDecisionProvenance(scope, id)
-      : state.store.traceMemoryProvenance(scope, id);
+    if (kind === "decision")
+      return state.store.traceDecisionProvenance(scope, id);
+    return (
+      (await state.store.traceMemoryProvenance(scope, id)) ??
+      state.store.traceLegacyMemory(scope, id)
+    );
   }
 
   private connected(): Extract<RuntimeAgentKnowledge, { state: "connected" }> {

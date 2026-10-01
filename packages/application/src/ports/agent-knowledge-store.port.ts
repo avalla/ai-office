@@ -43,7 +43,8 @@ export class KnowledgeStoreError extends Error {
 
 export function assertKnowledgeScope(scope: KnowledgeScope): void {
   if (
-    typeof scope !== "object" || scope === null ||
+    typeof scope !== "object" ||
+    scope === null ||
     typeof scope.tenantId !== "string" ||
     scope.tenantId.trim() !== scope.tenantId ||
     scope.tenantId.length === 0 ||
@@ -58,11 +59,17 @@ export function assertKnowledgeScope(scope: KnowledgeScope): void {
 }
 
 export function isKnowledgeIdentifier(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 &&
-    value.length <= knowledgeRetrievalLimits.identifierCharacters && value.trim() === value;
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= knowledgeRetrievalLimits.identifierCharacters &&
+    value.trim() === value
+  );
 }
 
-export function assertKnowledgeIdentifier(value: unknown): asserts value is string {
+export function assertKnowledgeIdentifier(
+  value: unknown,
+): asserts value is string {
   if (!isKnowledgeIdentifier(value)) {
     throw new KnowledgeStoreError("KNOWLEDGE_INVALID_QUERY");
   }
@@ -70,7 +77,8 @@ export function assertKnowledgeIdentifier(value: unknown): asserts value is stri
 
 export function assertKnowledgeSearchQuery(query: KnowledgeSearchQuery): void {
   if (
-    typeof query !== "object" || query === null ||
+    typeof query !== "object" ||
+    query === null ||
     typeof query.text !== "string" ||
     query.text.trim() !== query.text ||
     query.text.length === 0 ||
@@ -126,6 +134,31 @@ export interface KnowledgeHit extends KnowledgeScope {
   createdAt: Date;
 }
 
+/** A CairnKeep entry has no verified AI Office run, task, or agent provenance. */
+export interface LegacyKnowledgeInput extends KnowledgeScope {
+  id: string;
+  text: string;
+  sourceScope: string;
+  sourceKey: string;
+  sourceSha256: string;
+  importedAt: Date;
+}
+
+export interface LegacyKnowledgeHit extends KnowledgeScope {
+  id: string;
+  kind: "memory";
+  text: string;
+  title: null;
+  agentId: null;
+  runId: null;
+  taskId: null;
+  source: KnowledgeSourceReference;
+  createdAt: Date;
+  legacy: { sourceScope: string; sourceKey: string; sourceSha256: string };
+}
+
+export type SearchKnowledgeHit = KnowledgeHit | LegacyKnowledgeHit;
+
 export interface KnowledgeProvenance {
   knowledge: KnowledgeHit;
   source: KnowledgeSourceReference;
@@ -147,18 +180,50 @@ export interface KnowledgeProvenance {
 export interface AgentKnowledgeStore {
   recordMemory(input: MemoryInput): Promise<void>;
   recordDecision(input: DecisionInput): Promise<void>;
-  supersedeDecision(scope: KnowledgeScope, currentId: string, priorId: string): Promise<void>;
-  addTaskDependency(scope: KnowledgeScope, taskId: string, dependencyId: string): Promise<void>;
+  /** Atomic result: an exact existing record retains its original import timestamp. */
+  recordLegacyMemory(input: LegacyKnowledgeInput): Promise<"recorded" | "existing">;
+  traceLegacyMemory(
+    scope: KnowledgeScope,
+    id: string,
+  ): Promise<LegacyKnowledgeHit | null>;
+  supersedeDecision(
+    scope: KnowledgeScope,
+    currentId: string,
+    priorId: string,
+  ): Promise<void>;
+  addTaskDependency(
+    scope: KnowledgeScope,
+    taskId: string,
+    dependencyId: string,
+  ): Promise<void>;
   findKnowledge(
     scope: KnowledgeScope,
     query: KnowledgeSearchQuery,
-  ): Promise<KnowledgeHit[]>;
+  ): Promise<SearchKnowledgeHit[]>;
   /** Null means the scoped record is absent; malformed persisted provenance throws KNOWLEDGE_INVALID_RESULT. */
-  traceMemoryProvenance(scope: KnowledgeScope, memoryId: string): Promise<KnowledgeProvenance | null>;
-  traceDecisionProvenance(scope: KnowledgeScope, decisionId: string): Promise<KnowledgeProvenance | null>;
-  findCurrentDecisions(scope: KnowledgeScope, taskId: string, limit?: number): Promise<KnowledgeHit[]>;
-  listTaskDependencies(scope: KnowledgeScope, taskId: string, limit?: number): Promise<string[]>;
-  listAgentKnowledge(scope: KnowledgeScope, agentId: string, limit?: number): Promise<KnowledgeHit[]>;
+  traceMemoryProvenance(
+    scope: KnowledgeScope,
+    memoryId: string,
+  ): Promise<KnowledgeProvenance | null>;
+  traceDecisionProvenance(
+    scope: KnowledgeScope,
+    decisionId: string,
+  ): Promise<KnowledgeProvenance | null>;
+  findCurrentDecisions(
+    scope: KnowledgeScope,
+    taskId: string,
+    limit?: number,
+  ): Promise<KnowledgeHit[]>;
+  listTaskDependencies(
+    scope: KnowledgeScope,
+    taskId: string,
+    limit?: number,
+  ): Promise<string[]>;
+  listAgentKnowledge(
+    scope: KnowledgeScope,
+    agentId: string,
+    limit?: number,
+  ): Promise<KnowledgeHit[]>;
   deleteProjectKnowledge(scope: KnowledgeScope): Promise<void>;
 }
 

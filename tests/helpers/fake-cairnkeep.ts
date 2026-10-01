@@ -15,6 +15,7 @@ export type FakeCairnKeepMode =
   | "wrong-server"
   | "stdout-noise"
   | "malformed-result"
+  | "typed-metadata"
   | "oversized"
   | "hang"
   | "hang-with-grandchild"
@@ -24,6 +25,7 @@ export type FakeCairnKeepMode =
 
 export interface FakeCairnKeepOptions {
   mode?: FakeCairnKeepMode;
+  scanMutation?: "add-key" | "remove-key" | "change-value";
   /**
    * `protocolVersion` answered to `initialize`; defaults to the revision the
    * adapter requests. `null` omits the field entirely.
@@ -52,6 +54,8 @@ export interface FakeCairnKeepLogEntry {
  * speaks newline-delimited JSON-RPC over stdio. It never touches CairnKeep, a
  * provider, or the developer's memory stores. Every start and request is
  * appended to a log so tests can assert the exact protocol traffic.
+ * MCP name/version and memory_list/memory_read response shapes match tagged
+ * CairnKeep v2.19.0, commit 68682a4e70aef72104ef366d504a63147b4bfaa6.
  */
 export function createFakeCairnKeep(options: FakeCairnKeepOptions = {}) {
   const root = mkdtempSync(join(tmpdir(), "ao-fake-cairn-"));
@@ -59,6 +63,7 @@ export function createFakeCairnKeep(options: FakeCairnKeepOptions = {}) {
   const command = join(root, "cairn");
   const configuration = JSON.stringify({
     mode: options.mode ?? "normal",
+    scanMutation: options.scanMutation ?? null,
     protocolVersion:
       options.protocolVersion === undefined
         ? "2025-06-18"
@@ -89,6 +94,8 @@ if (config.mode === "hang-with-grandchild") {
 }
 const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
 const lines = createInterface({ input: process.stdin });
+let listCalls = 0;
+let readCalls = 0;
 lines.on("line", (line) => {
   const message = JSON.parse(line);
   log({ kind: "request", method: message.method, params: message.params });
@@ -104,7 +111,8 @@ lines.on("line", (line) => {
     return;
   }
   if (message.method === "tools/list") {
-    const tools = [{ name: "memory_search", inputSchema: { type: "object" } }];
+    const tools = (process.env.CAIRN_MCP_ALLOWED_TOOLS ?? "memory_search").split(",")
+      .map((name) => ({ name, inputSchema: { type: "object" } }));
     if (config.mode === "extra-tools") tools.push({ name: "memory_write", inputSchema: { type: "object" } });
     send({ jsonrpc: "2.0", id: message.id, result: { tools } });
     return;
@@ -122,6 +130,22 @@ lines.on("line", (line) => {
     }
     const scope = message.params.arguments.scope;
     const results = config.results.map((item) => ({ scope: item.scope ?? scope, key: item.key, value: item.value, score: item.score }));
+    if (message.params.name === "memory_list") {
+      listCalls++;
+      const keys = results.map((item) => item.key);
+      if (listCalls > 1 && config.scanMutation === "add-key") keys.push("new-key");
+      if (listCalls > 1 && config.scanMutation === "remove-key") keys.pop();
+      const payload = { keys,
+        ...(config.mode === "typed-metadata" ? { nodes: results.map((item) => ({ key: item.key, node_type: "decision" })) } : {}) };
+      send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload } });
+      return;
+    }
+    if (message.params.name === "memory_read") {
+      readCalls++;
+      const payload = { results: results.filter((item) => item.key === message.params.arguments.key).map(({ scope, key, value }) => ({ scope, key, value: config.scanMutation === "change-value" && readCalls > results.length ? value + " changed" : value })) };
+      send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: JSON.stringify(payload) }], structuredContent: payload } });
+      return;
+    }
     const payload = config.mode === "malformed-result"
       ? { mode: "substring", count: 1, results: [{ scope, key: 42, value: null }] }
       : { mode: "substring", count: results.length, results };

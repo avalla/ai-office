@@ -128,6 +128,8 @@ Commands:
     without --probe no provider process is started
   knowledge:plan --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>]
   knowledge:admit --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>] --approve <plan-hash> --actor <reviewer>
+  knowledge:legacy-plan --project <id> --scope <aio-named-scope>
+  knowledge:legacy-import --project <id> --scope <aio-named-scope> --approve <plan-hash> --actor <reviewer>
   knowledge:trace --project <id> --kind <memory|decision> --id <knowledge-id>
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>
