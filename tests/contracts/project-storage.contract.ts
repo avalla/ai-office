@@ -6,6 +6,7 @@ import type {
   TaskRequirementRepository,
 } from "@ai-office/application/ports/task-requirement-repository.port.ts";
 import type { TaskRepository } from "@ai-office/application/ports/task-repository.port.ts";
+import type { TaskDependencyRepository } from "@ai-office/application/ports/task-dependency-repository.port.ts";
 import {
   TransactionAlreadyActiveError,
   type TransactionRunner,
@@ -18,6 +19,7 @@ export interface RepositoryContractHarness {
   projects: ProjectRepository;
   tasks: TaskRepository;
   taskRequirements: TaskRequirementRepository;
+  taskDependencies?: TaskDependencyRepository;
   transactions: TransactionRunner;
   seedRequirement(input: {
     id: string;
@@ -201,6 +203,76 @@ export function defineProjectStorageContracts(
           (task) => task.snapshot().id,
         ),
       ).toEqual([`${prefix}-high-a`, `${prefix}-high-b`, `${prefix}-low`]);
+    });
+  });
+
+  describe("TaskDependencyRepository", () => {
+    test("round-trips project-scoped hard prerequisites without duplicates", async () => {
+      const dependencies = harness.taskDependencies;
+      if (dependencies === undefined) return; // Experimental partial storage has no planning graph.
+      const project = await createProject(
+        harness,
+        `${prefix}-dependency-project`,
+      );
+      const other = await createProject(harness, `${prefix}-other-project`);
+      const now = new Date("2026-02-02T03:04:05.000Z");
+      const first = Task.create({
+        id: `${prefix}-first`,
+        projectId: project.snapshot().id,
+        title: "First",
+        now,
+      });
+      const second = Task.create({
+        id: `${prefix}-second`,
+        projectId: project.snapshot().id,
+        title: "Second",
+        now,
+      });
+      const foreign = Task.create({
+        id: `${prefix}-foreign`,
+        projectId: other.snapshot().id,
+        title: "Foreign",
+        now,
+      });
+      for (const task of [first, second, foreign])
+        await harness.tasks.save(task);
+      const edge = {
+        projectId: project.snapshot().id,
+        taskId: second.snapshot().id,
+        dependsOnTaskId: first.snapshot().id,
+        createdAt: now,
+      };
+      expect(await dependencies.link(edge)).toBe(true);
+      expect(await dependencies.link(edge)).toBe(false);
+      expect(await dependencies.listByProject(edge.projectId)).toEqual([edge]);
+      await expect(
+        dependencies.link({
+          ...edge,
+          taskId: first.snapshot().id,
+          dependsOnTaskId: second.snapshot().id,
+        }),
+      ).rejects.toThrow("cycle");
+      expect(
+        await dependencies.link({
+          ...edge,
+          dependsOnTaskId: foreign.snapshot().id,
+        }),
+      ).toBe(false);
+      expect(await dependencies.listByProject(other.snapshot().id)).toEqual([]);
+      expect(
+        await dependencies.unlink(
+          edge.projectId,
+          edge.taskId,
+          edge.dependsOnTaskId,
+        ),
+      ).toBe(true);
+      expect(
+        await dependencies.unlink(
+          edge.projectId,
+          edge.taskId,
+          edge.dependsOnTaskId,
+        ),
+      ).toBe(false);
     });
   });
 

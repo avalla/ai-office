@@ -1660,7 +1660,83 @@ Exit direction:
 
 See [Professional-work verticals](professional-work-verticals.md).
 
-## M11-M15 dependency summary and open design questions
+## M16 — Generic Core & Domain Packs
+
+Status: planned; architecture and project planning only. No pack runtime or
+storage migration is implemented by this roadmap entry.
+
+AI Office is transitioning from a software-development-oriented implementation
+into a domain-neutral operational core. Domain-specific semantics are supplied
+by Domain Packs built on stable core contracts. M15 assesses the reusable work
+container, artifact/evidence, approval, provenance, tenant, and deployment
+boundaries; M16 specifies pack installation and progressively extracts the
+development vertical. M16 depends on the relevant M11/M11.6 orchestration and
+artifact contracts, M14's software workflows as extraction input, M15's
+cross-domain architecture decision, and the existing AgentKnowledgeStore and
+ProjectStorage authority boundaries. M9's broad plugin SDK and a package
+marketplace are not prerequisites.
+
+The core keeps project authority, tasks, AgentRuns, pipeline execution,
+governance, approval enforcement, controlled actions, audit, storage and
+knowledge ports. Packs contribute versioned defaults and templates for domain
+roles, agent archetypes, task and artifact types, pipeline templates, stronger
+policies, evidence/approval requirements, terminology, prompts, knowledge
+guidance, and capability needs. The project owns its instantiated definitions:
+it can replace, extend, disable, or override pack contributions and define a
+complete office with no official pack. A deterministic resolved project
+configuration combines pinned pack versions, project definitions and overrides
+before the existing Runtime consumes it. Pack definitions never grant capability
+or replace core lifecycle engines. Runtime composition may load trusted packs;
+domain and application core packages must not import a pack implementation.
+
+The first reference pack is `development`; final package naming follows the
+package-boundary ADR. It receives the current software roles, repository and
+GitHub concepts, code review, CI evidence, and software pipeline defaults in
+compatibility stages. Minimal `legal` and `manufacturing` reference packs test
+the same runtime, task, agent, pipeline, review, approval, storage, knowledge,
+audit, and provenance contracts without claiming legal-product or MES readiness.
+Pack selection is project-owned and authoritative where explicitly set. The
+transition is additive: (1) add contracts without behavior change; (2) add
+deterministic resolution of packs, project definitions and overrides; (3) map
+existing projects through a visible implicit development compatibility profile
+without rewriting their office, roles, agents or pipelines; (4) extract
+development defaults incrementally and prove semantic parity; (5) offer an
+explicit, reviewed development-pack adoption path; (6) consider requiring
+explicit pack selection for *new* projects only after empty/custom projects are
+supported. Existing projects continue operating at every stage. Missing or
+incompatible explicitly selected packs fail closed; legacy compatibility is
+versioned and auditable, never a silent replacement. A future multi-pack
+project uses explicit namespace, conflict, and policy composition rules rather
+than import order. Pack upgrades do not overwrite project-owned modifications.
+
+Delivery tasks GP-01–GP-21 (with GP-10A/B/C extraction slices) and their
+dependency graph, acceptance criteria, extraction inventory, migration stages,
+and non-goals are in the
+[Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
+[proposed core/pack boundary ADR](../adr/ADR-0026-core-domain-pack-boundary.md)
+is the GP-02 decision gate, not an accepted current-runtime contract. The AI
+Office project record has a distinct planned M16 milestone with one requirement
+linked to each task. Hard task prerequisites are stored as typed task dependency
+edges; descriptions retain rationale and external milestone context. GP-10A/B/C
+remain separately tracked extraction slices.
+
+Exit: development, legal, manufacturing, and empty/custom fixtures run the same
+core lifecycles without changes to core for each domain. Legacy development
+fixtures still load, resolve roles and agents, run pipelines, create tasks,
+complete approvals, retrieve knowledge, persist state, and retain audit and
+provenance. Project-owned roles, agents, prompts, validators, capabilities,
+artifacts, knowledge settings and pipelines can be customized or replaced
+without pack forks; upgrades preserve these choices. Package import and
+cross-domain scenario tests prevent development semantics from returning to
+core. Domain-specific adapters remain behind public ports and controlled
+actions.
+
+Non-goals: complete legal software or MES; ERP integration; third-party
+marketplace or remote registry; dynamic downloads or untrusted executable
+plugins; runtime-generated packs; replacement of the pipeline engine,
+governance, ProjectStorage, AgentKnowledgeStore, model routing, or worker queue.
+
+## M11-M16 dependency summary and open design questions
 
 ```text
 M6E office definitions + M6 policy/actions + M8.5 context
@@ -1678,7 +1754,10 @@ M6E office definitions + M6 policy/actions + M8.5 context
               M14 Software development pipelines
                          |
                          v
-          M15 Domain-neutral vertical profiles
+           M15 Domain-neutral work and vertical assessment
+                          |
+                          v
+           M16 Generic Core & Domain Packs
 ```
 
 These milestones intentionally defer:
@@ -1710,5 +1789,7 @@ These milestones intentionally defer:
   engines.
 
 These questions require milestone-specific assessments and, where a durable
-architectural choice is ready, an ADR. This roadmap direction does not itself
-select an implementation or authorize work on M11-M15.
+architectural choice is ready, an ADR. The proposed M16 ADR records a decision
+candidate for the pack boundary; GP-02 must accept or revise it before
+implementation. This roadmap direction does not itself select an
+implementation or authorize work on M11-M16.

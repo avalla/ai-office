@@ -357,6 +357,20 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
         requirementId: row.requirement_id,
         createdAt: row.created_at,
       }));
+    const taskDependencyRows = this.database
+      .query<
+        { task_id: string; depends_on_task_id: string; created_at: string },
+        [string]
+      >(
+        `SELECT task_id, depends_on_task_id, created_at FROM task_dependency
+        WHERE project_id = ? ORDER BY task_id, depends_on_task_id`,
+      )
+      .all(projectId)
+      .map((row) => ({
+        taskId: row.task_id,
+        dependsOnTaskId: row.depends_on_task_id,
+        createdAt: row.created_at,
+      }));
     const adrs = this.database
       .query<AdrRow, [string]>(
         `SELECT id, title, context, decision, consequences, status,
@@ -507,13 +521,16 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
         updatedAt: project.updated_at,
       },
       tasks,
+      ...(taskDependencyRows.length === 0
+        ? {}
+        : { taskDependencies: taskDependencyRows }),
       profileEntries,
       officeManifests,
       governance: {
         milestones,
         requirements,
         adrs,
-        ...(taskRequirementRows.length === 0
+        ...(taskRequirementRows.length === 0 && taskDependencyRows.length === 0
           ? {}
           : { taskRequirements: taskRequirementRows }),
         reviews,
@@ -545,6 +562,13 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
           item.createdAt,
           item.updatedAt,
         );
+    for (const item of value.taskDependencies ?? [])
+      this.database
+        .prepare(
+          `INSERT INTO task_dependency(project_id, task_id, depends_on_task_id, created_at)
+         VALUES (?, ?, ?, ?)`,
+        )
+        .run(projectId, item.taskId, item.dependsOnTaskId, item.createdAt);
     for (const item of value.profileEntries)
       this.database
         .prepare(

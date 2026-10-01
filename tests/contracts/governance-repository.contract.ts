@@ -102,9 +102,9 @@ export function defineGovernanceRepositoryContracts(
       ),
     ).resolves.toBe(false);
 
-    expect((await harness.governance.getSnapshot(project.id)).milestones).toEqual(
-      [{ ...milestone, title: "After", updatedAt: changedAt }],
-    );
+    expect(
+      (await harness.governance.getSnapshot(project.id)).milestones,
+    ).toEqual([{ ...milestone, title: "After", updatedAt: changedAt }]);
     expect(
       (await harness.governance.listEvents(project.id)).map((event) => ({
         eventType: event.eventType,
@@ -123,6 +123,55 @@ export function defineGovernanceRepositoryContracts(
         metadata: { from: "Before", to: "After" },
       },
     ]);
+  });
+
+  test("updates a milestone description without losing the old record or exposing prose in event metadata", async () => {
+    const project = await createProject(
+      harness,
+      `${prefix}-description-project`,
+    );
+    const createdAt = date("2026-01-01T00:00:00.000Z");
+    const milestone: MilestoneRecord = {
+      id: `${prefix}-description-milestone`,
+      projectId: project.id,
+      title: "Milestone",
+      description: "Old count",
+      status: "completed",
+      createdAt,
+      updatedAt: createdAt,
+    };
+    await harness.governance.saveMilestone(milestone);
+    const changedAt = date("2026-01-02T00:00:00.000Z");
+    expect(
+      await harness.governance.updateMilestoneDescription(
+        milestone.id,
+        project.id,
+        "Old count",
+        "Nine slices",
+        changedAt,
+        `${prefix}-description-changed`,
+      ),
+    ).toBe(true);
+    expect(
+      await harness.governance.updateMilestoneDescription(
+        milestone.id,
+        project.id,
+        "Old count",
+        "Stale",
+        changedAt,
+        `${prefix}-stale-description`,
+      ),
+    ).toBe(false);
+    expect(
+      (await harness.governance.getSnapshot(project.id)).milestones,
+    ).toEqual([
+      { ...milestone, description: "Nine slices", updatedAt: changedAt },
+    ]);
+    const events = await harness.governance.listEvents(project.id);
+    expect(events.at(-1)).toMatchObject({
+      eventType: "milestone.description_changed",
+      metadata: { descriptionUpdated: "true" },
+    });
   });
 
   test("rejects duplicate requirement keys within a project", async () => {

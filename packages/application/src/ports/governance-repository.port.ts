@@ -23,6 +23,7 @@ export interface GovernanceEventRecord {
   eventType:
     | "milestone.created"
     | "milestone.title_changed"
+    | "milestone.description_changed"
     | "milestone.status_changed"
     | "requirement.created"
     | "requirement.status_changed"
@@ -45,6 +46,14 @@ export interface GovernanceRepository {
     projectId: string,
     expectedTitle: string,
     title: string,
+    now: Date,
+    eventId: string,
+  ): Promise<boolean>;
+  updateMilestoneDescription(
+    id: string,
+    projectId: string,
+    expectedDescription: string | undefined,
+    description: string,
     now: Date,
     eventId: string,
   ): Promise<boolean>;

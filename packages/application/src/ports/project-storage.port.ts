@@ -15,6 +15,7 @@ import type { ProjectRepository } from "./project-repository.port.ts";
 import type { ProjectStateRepository } from "./project-state-repository.port.ts";
 import type { RepositoryIdentityRepository } from "./repository-identity-repository.port.ts";
 import type { TaskRepository } from "./task-repository.port.ts";
+import type { TaskDependencyRepository } from "./task-dependency-repository.port.ts";
 import type { TaskRequirementRepository } from "./task-requirement-repository.port.ts";
 import type { TransactionRunner } from "./transaction-runner.port.ts";
 
@@ -30,6 +31,7 @@ export interface ProjectStorage {
   officeManifests: OfficeManifestRepository;
   pipelines: PipelineRunRepository;
   tasks: TaskRepository;
+  taskDependencies: TaskDependencyRepository;
   taskRequirements: TaskRequirementRepository;
   runtime: AgentRuntimeRepository;
   costs: CostRepository;

@@ -41,6 +41,7 @@ import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/reposi
 import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
 import { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import { SqliteTaskDependencyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-dependency.repository.ts";
 import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
 import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
@@ -286,13 +287,20 @@ describe("project portability", () => {
     const targetRuntime = temporaryRoot("ai-office-legacy-description-target-");
     const source = temporaryRoot("ai-office-legacy-description-checkout-a-");
     const target = temporaryRoot("ai-office-legacy-description-checkout-b-");
-    writeFileSync(join(source, "package.json"), '{"name":"legacy-description"}\n');
-    writeFileSync(join(target, "package.json"), '{"name":"legacy-description"}\n');
+    writeFileSync(
+      join(source, "package.json"),
+      '{"name":"legacy-description"}\n',
+    );
+    writeFileSync(
+      join(target, "package.json"),
+      '{"name":"legacy-description"}\n',
+    );
 
     const origin = openRuntime(sourceRuntime);
     const imported = await importProject(origin, source);
-    const knownSource = (await origin.profiles.listSources(imported.projectId))[0]!
-      .localPath;
+    const knownSource = (
+      await origin.profiles.listSources(imported.projectId)
+    )[0]!.localPath;
     origin.database
       .prepare("UPDATE project SET description = ? WHERE id = ?")
       .run(`Imported from ${knownSource}`, imported.projectId);
@@ -337,7 +345,10 @@ describe("project portability", () => {
     async (key) => {
       const runtimeRoot = temporaryRoot("ai-office-sensitive-profile-");
       const source = temporaryRoot("ai-office-sensitive-profile-source-");
-      writeFileSync(join(source, "package.json"), '{"name":"sensitive-profile"}\n');
+      writeFileSync(
+        join(source, "package.json"),
+        '{"name":"sensitive-profile"}\n',
+      );
       const runtime = openRuntime(runtimeRoot);
       const imported = await importProject(runtime, source);
       const initial = await runtime.service.backup(imported.projectId);
@@ -371,7 +382,10 @@ describe("project portability", () => {
   test("rejects a nested sensitive profile field while preserving ordinary profile data", async () => {
     const runtimeRoot = temporaryRoot("ai-office-nested-sensitive-profile-");
     const source = temporaryRoot("ai-office-nested-sensitive-source-");
-    writeFileSync(join(source, "package.json"), '{"name":"nested-sensitive"}\n');
+    writeFileSync(
+      join(source, "package.json"),
+      '{"name":"nested-sensitive"}\n',
+    );
     const runtime = openRuntime(runtimeRoot);
     const imported = await importProject(runtime, source);
     const createdAt = runtime.clock.now().toISOString();
@@ -1294,8 +1308,16 @@ describe("project portability", () => {
     );
     const links = new SqliteTaskRequirementRepository(origin.database);
 
-    const taskA = await createTask(origin, imported.projectId, "Deliver AUC-03");
-    const taskB = await createTask(origin, imported.projectId, "Document AUC-03");
+    const taskA = await createTask(
+      origin,
+      imported.projectId,
+      "Deliver AUC-03",
+    );
+    const taskB = await createTask(
+      origin,
+      imported.projectId,
+      "Document AUC-03",
+    );
     const requirement = await governanceService.createRequirement({
       projectId: imported.projectId,
       key: "AUC-03-R1",
@@ -1348,6 +1370,50 @@ describe("project portability", () => {
         ).listForTask(restored.projectId, taskA)
       ).map((value) => value.key),
     ).toEqual(["AUC-03-R1"]);
+    destination.database.close();
+  });
+
+  test("exports and restores a version 3 dependency graph without semantic drift", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-portable-deps-a-");
+    const targetRuntime = temporaryRoot("ai-office-portable-deps-b-");
+    const source = temporaryRoot("ai-office-portable-deps-source-");
+    const target = temporaryRoot("ai-office-portable-deps-target-");
+    writeFileSync(join(source, "package.json"), '{"name":"dependencies"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"dependencies"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const prerequisite = await createTask(
+      origin,
+      imported.projectId,
+      "Prerequisite",
+    );
+    const dependent = await createTask(origin, imported.projectId, "Dependent");
+    const dependencies = new SqliteTaskDependencyRepository(origin.database);
+    expect(
+      await dependencies.link({
+        projectId: imported.projectId,
+        taskId: dependent,
+        dependsOnTaskId: prerequisite,
+        createdAt: origin.clock.now(),
+      }),
+    ).toBe(true);
+    const first = await origin.service.backup(imported.projectId);
+    expect(first.archive.manifest.formatVersion).toBe(3);
+    expect(first.archive.state.taskDependencies).toHaveLength(1);
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: first.archive,
+      rootPath: target,
+    });
+    expect(
+      await destination.states.loadPortableState(restored.projectId),
+    ).toEqual(first.archive.state);
+    const second = await destination.service.backup(restored.projectId);
+    expect(serializePortableProjectArchive(second.archive)).toBe(
+      serializePortableProjectArchive(first.archive),
+    );
     destination.database.close();
   });
 

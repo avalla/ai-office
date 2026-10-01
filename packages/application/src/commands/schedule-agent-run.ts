@@ -12,6 +12,8 @@ import type { Clock } from "../ports/clock.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
+import type { TaskDependencyRepository } from "../ports/task-dependency-repository.port.ts";
+import { assertTaskPrerequisitesComplete } from "./manage-task-dependencies.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import type { JobOutboxRepository } from "../ports/job-outbox-repository.port.ts";
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
@@ -60,6 +62,7 @@ export class ScheduleAgentRun {
     private readonly modelRouting: ModelRoutingState = unconfiguredModelRouting,
     /** Durable delivery intent; omitted by legacy/manual compositions. */
     private readonly outbox?: JobOutboxRepository,
+    private readonly taskDependencies?: TaskDependencyRepository,
   ) {}
   async execute(input: {
     projectId: string;
@@ -74,6 +77,13 @@ export class ScheduleAgentRun {
       throw new TaskNotFoundError(input.taskId);
     if (!isTaskRunnable(task.snapshot().status))
       throw new TaskNotRunnableError();
+    if (this.taskDependencies !== undefined)
+      await assertTaskPrerequisitesComplete(
+        input.projectId,
+        input.taskId,
+        this.tasks,
+        this.taskDependencies,
+      );
     if (
       (await this.runtime.listRuns(input.projectId)).some(
         (value) =>
@@ -90,6 +100,13 @@ export class ScheduleAgentRun {
     const now = this.clock.now();
     const id = this.ids.generate();
     await this.transactions.run(async () => {
+      if (this.taskDependencies !== undefined)
+        await assertTaskPrerequisitesComplete(
+          input.projectId,
+          input.taskId,
+          this.tasks,
+          this.taskDependencies,
+        );
       // Resolve from the agent and role read inside the write transaction, so
       // the persisted model matches the authority the run was admitted with.
       const current = await this.runtime.findAgent(input.agentId);

@@ -79,6 +79,9 @@ revalidate the archive checksums after download.
   generated descriptions proven by a matching local source binding;
 - task lifecycle state, including assigned, running, blocked, or review-waiting
   semantics when no live execution authority remains;
+- project-scoped hard task dependencies. Projects without dependencies retain
+  their prior version 1 or 2 archive shape; a graph uses format version 3 and
+  restores only when all task references and the acyclic graph are valid;
 - active profile knowledge except detected checkout root paths, raw remote URL
   entries, and source references; sanitized remote provenance lives only in the
   manifest;

@@ -76,16 +76,47 @@ export class ManageGovernance {
   }): Promise<void> {
     await this.project(input.projectId);
     const title = required(input.title, "Milestone title");
-    const milestone = (await this.governance.getSnapshot(input.projectId))
-      .milestones.find((value) => value.id === input.milestoneId);
+    const milestone = (
+      await this.governance.getSnapshot(input.projectId)
+    ).milestones.find((value) => value.id === input.milestoneId);
     if (milestone === undefined)
-      throw new DomainValidationError(`milestone ${input.milestoneId} not found`);
+      throw new DomainValidationError(
+        `milestone ${input.milestoneId} not found`,
+      );
     if (milestone.title === title) return;
     const updated = await this.governance.updateMilestoneTitle(
       input.milestoneId,
       input.projectId,
       milestone.title,
       title,
+      this.clock.now(),
+      this.ids.generate(),
+    );
+    if (!updated)
+      throw new DomainValidationError(
+        `milestone ${input.milestoneId} was modified concurrently`,
+      );
+  }
+  async updateMilestoneDescription(input: {
+    projectId: string;
+    milestoneId: string;
+    description: string;
+  }): Promise<void> {
+    await this.project(input.projectId);
+    const description = required(input.description, "Milestone description");
+    const milestone = (
+      await this.governance.getSnapshot(input.projectId)
+    ).milestones.find((value) => value.id === input.milestoneId);
+    if (milestone === undefined)
+      throw new DomainValidationError(
+        `milestone ${input.milestoneId} not found`,
+      );
+    if (milestone.description === description) return;
+    const updated = await this.governance.updateMilestoneDescription(
+      input.milestoneId,
+      input.projectId,
+      milestone.description,
+      description,
       this.clock.now(),
       this.ids.generate(),
     );

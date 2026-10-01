@@ -857,6 +857,11 @@ ai-office project:profile --project <project-id>
 ai-office office:context --project <project-id>
 ```
 
+Run `project:import /path/to/repository --json` again to refresh detected
+repository facts such as file counts. The scan replaces only entries with
+`origin: detected`; confirmed user preferences and the approved office manifest
+remain separate. `project:profile` shows the refreshed values.
+
 For a new project without an import scan:
 
 ```bash
@@ -883,6 +888,20 @@ them is flagged rather than hidden:
 ai-office task:link-requirement --project <id> --task <id> --requirement <id>
 ai-office task:reconcile --project <id>   # read-only; reports stale state
 ```
+
+Hard task prerequisites are explicit project-scoped planning records. Only a
+completed prerequisite permits the dependent task to start or schedule a run;
+`task:readiness` reports the blockers without parsing task descriptions:
+
+```bash
+ai-office task:dependency:add --project <id> --task <id> --depends-on <prerequisite-id>
+ai-office task:readiness --project <id> --task <id> --json
+ai-office task:dependency:remove --project <id> --task <id> --depends-on <prerequisite-id>
+```
+
+Linking checks project ownership and cycles. `task:reconcile` also reports
+completed milestones with active linked work and likely duplicate tasks for a
+verified requirement; it never changes their history automatically.
 
 Reconciliation reports contradictions and refuses to guess: verified
 requirements are acceptance state and do not prove that operational work

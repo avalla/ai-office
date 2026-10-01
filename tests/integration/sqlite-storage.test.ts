@@ -74,6 +74,8 @@ describe("project database migrations", () => {
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
       "0036_milestone_title_changed_event.sql",
+      "0037_task_dependencies.sql",
+      "0038_milestone_description_changed_event.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -120,6 +122,8 @@ describe("project database migrations", () => {
       { version: "0034_exact_pipeline_stage_bindings.sql" },
       { version: "0035_pipeline_manifest_revision_tuple.sql" },
       { version: "0036_milestone_title_changed_event.sql" },
+      { version: "0037_task_dependencies.sql" },
+      { version: "0038_milestone_description_changed_event.sql" },
     ]);
     database.close();
   });

@@ -75,6 +75,9 @@ Commands:
   task:update --project <id> --task <id> --description <description>
   task:list --project <id>
   task:transitions --project <id> --task <id> [--json]   # read-only preflight
+  task:dependency:add --project <id> --task <id> --depends-on <task-id> [--json]
+  task:dependency:remove --project <id> --task <id> --depends-on <task-id> [--json]
+  task:readiness --project <id> --task <id> [--json]  # incomplete hard prerequisites block admission
   task:start --project <id> --task <id>
   task:submit-review --project <id> --task <id>
   task:complete --project <id> --task <id>
@@ -104,7 +107,7 @@ Commands:
   budget:set --project <id> --limit <micros> [--currency <USD|EUR>]
   cost:list --project <id> [--group-by <project|task|agent|agent_run>]
   milestone:create --project <id> --title <title> [--description <description>]
-  milestone:update --project <id> --milestone <id> --title <title>
+  milestone:update --project <id> --milestone <id> (--title <title> | --description <text>)
   milestone:set-status --project <id> --milestone <id> --status <status>
   requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]
   requirement:list --project <id> [--json]  # lists exact requirement IDs for linking

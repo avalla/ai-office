@@ -20,6 +20,7 @@ import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-po
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
+import { PostgresTaskDependencyRepository } from "@ai-office/storage-postgres/repositories/postgres-task-dependency.repository.ts";
 import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
 import { defineProjectStorageContracts } from "../contracts/project-storage.contract.ts";
 
@@ -79,6 +80,10 @@ describe.skipIf(connectionString === undefined)(
     defineProjectStorageContracts(async () => ({
       projects: new PostgresProjectRepository(database, tenantId),
       tasks: new PostgresTaskRepository(database, tenantId),
+      taskDependencies: new PostgresTaskDependencyRepository(
+        database,
+        tenantId,
+      ),
       taskRequirements: new PostgresTaskRequirementRepository(
         database,
         tenantId,
@@ -369,6 +374,8 @@ describe.skipIf(connectionString === undefined)(
           "20260922010000_agent_runtime_audit_hardening.sql",
           "20260922020000_office_manifest_pipeline_authority.sql",
           "20260925000100_governance_milestone_title_event.sql",
+          "20261001000100_task_dependencies.sql",
+          "20261001000200_milestone_description_changed_event.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

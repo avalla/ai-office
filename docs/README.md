@@ -30,6 +30,8 @@ AI Office keeps different kinds of documentation separate so current product tru
   accepted ownership, discovery, migration, and uninstall contract for
   `AI-OFFICE.md` and Codex/Claude project skills.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
+- [M16 Generic Core & Domain Packs plan](development/generic-core-domain-packs.md): proposed boundary audit, compatibility fixtures, and GP delivery sequence; no pack runtime is implemented yet.
+- [Proposed core/pack boundary](adr/ADR-0026-core-domain-pack-boundary.md): GP-02 decision candidate, pending review.
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and

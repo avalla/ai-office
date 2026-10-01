@@ -35,14 +35,27 @@ export async function handleGovernanceCommand(
   if (command === "milestone:update") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "milestone", "title"]),
+      new Set(["project", "milestone", "title", "description"]),
     );
-    await service.updateMilestoneTitle({
-      projectId: requiredOption(parsed, "project"),
-      milestoneId: requiredOption(parsed, "milestone"),
-      title: requiredOption(parsed, "title"),
-    });
-    io.stdout("Milestone title updated.");
+    const projectId = requiredOption(parsed, "project");
+    const milestoneId = requiredOption(parsed, "milestone");
+    const title = parsed.options.get("title");
+    const description = parsed.options.get("description");
+    if ((title === undefined) === (description === undefined))
+      throw new CliUsageError(
+        "milestone:update requires exactly one of --title or --description",
+      );
+    if (title !== undefined) {
+      await service.updateMilestoneTitle({ projectId, milestoneId, title });
+      io.stdout("Milestone title updated.");
+    } else {
+      await service.updateMilestoneDescription({
+        projectId,
+        milestoneId,
+        description: description!,
+      });
+      io.stdout("Milestone description updated.");
+    }
     return 0;
   }
   if (command === "requirement:create") {

@@ -30,6 +30,8 @@ import { TaskNotFoundError } from "./schedule-agent-run.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
+import type { TaskDependencyRepository } from "../ports/task-dependency-repository.port.ts";
+import { assertTaskPrerequisitesComplete } from "./manage-task-dependencies.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import type { RecordAuditEvent } from "./record-audit-event.ts";
 
@@ -133,6 +135,7 @@ export class ManageTaskLifecycle {
         reason: string;
       }): Promise<void>;
     },
+    private readonly taskDependencies?: TaskDependencyRepository,
   ) {}
 
   /**
@@ -253,6 +256,13 @@ export class ManageTaskLifecycle {
     const { operation } = request;
     const reason = this.resolveReason(operation, request.reason);
     const task = await this.requireTask(request.projectId, request.taskId);
+    if (operation === "start" && this.taskDependencies !== undefined)
+      await assertTaskPrerequisitesComplete(
+        request.projectId,
+        request.taskId,
+        this.tasks,
+        this.taskDependencies,
+      );
     const from = task.snapshot().status;
     const now = this.clock.now();
     lifecycleMutations[operation](task, now);

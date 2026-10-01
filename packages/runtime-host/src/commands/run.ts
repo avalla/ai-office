@@ -180,6 +180,7 @@ export async function handleRunCommand(
       context.pipelines,
       context.modelRouting,
       context.jobOutbox,
+      context.taskDependencies,
     ).execute({
       projectId: requiredOption(parsed, "project"),
       taskId: requiredOption(parsed, "task"),
@@ -344,6 +345,7 @@ export async function handleRunCommand(
       context.pipelines,
       clock,
       context.executionControl.ownerId,
+      context.taskDependencies,
     );
     const pipelineManager = new ManagePipelineRuns(
       context.officeManifests,

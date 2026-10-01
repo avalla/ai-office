@@ -176,6 +176,44 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
     });
   }
 
+  async updateMilestoneDescription(
+    id: string,
+    projectId: string,
+    expectedDescription: string | undefined,
+    description: string,
+    now: Date,
+    eventId: string,
+  ): Promise<boolean> {
+    return this.database.transaction(async () => {
+      await this.assertProjectTenant(projectId);
+      const rows = await this.database.query<{ id: string }>(
+        `UPDATE core.milestone SET description = $1, updated_at = $2
+         WHERE id = $3 AND project_id = $4
+           AND description IS NOT DISTINCT FROM $5
+           AND EXISTS (SELECT 1 FROM core.project WHERE id = $4 AND tenant_id = $6)
+         RETURNING id`,
+        [
+          description,
+          now,
+          id,
+          projectId,
+          expectedDescription ?? null,
+          this.tenantId,
+        ],
+      );
+      if (rows.length !== 1) return false;
+      await this.appendEvent({
+        id: eventId,
+        projectId,
+        eventType: "milestone.description_changed",
+        aggregateId: id,
+        metadata: { descriptionUpdated: "true" },
+        occurredAt: now,
+      });
+      return true;
+    });
+  }
+
   async saveRequirement(value: RequirementRecord): Promise<void> {
     try {
       await this.database.transaction(async () => {
@@ -451,7 +489,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
               )
             ORDER BY item.created_at, item.id
           `,
-          [projectId, this.tenantId]
+          [projectId, this.tenantId],
         ),
         this.database.query<RequirementRow>(
           `
@@ -465,7 +503,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
               )
             ORDER BY item.requirement_key, item.id
           `,
-          [projectId, this.tenantId]
+          [projectId, this.tenantId],
         ),
         this.database.query<AdrRow>(
           `
@@ -479,7 +517,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
               )
             ORDER BY item.created_at, item.id
           `,
-          [projectId, this.tenantId]
+          [projectId, this.tenantId],
         ),
         this.database.query<ReviewRow>(
           `
@@ -495,7 +533,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
               )
             ORDER BY item.created_at, item.id
           `,
-          [projectId, this.tenantId]
+          [projectId, this.tenantId],
         ),
         this.database.query<ApprovalRow>(
           `
@@ -509,7 +547,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
               )
             ORDER BY item.created_at, item.id
           `,
-          [projectId, this.tenantId]
+          [projectId, this.tenantId],
         ),
       ]);
 
@@ -535,7 +573,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
           )
         ORDER BY event.sequence
       `,
-      [projectId, this.tenantId]
+      [projectId, this.tenantId],
     );
     return rows.map((row) => ({
       id: row.id,

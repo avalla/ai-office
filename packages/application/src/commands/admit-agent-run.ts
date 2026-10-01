@@ -4,6 +4,11 @@ import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.p
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
+import type { TaskDependencyRepository } from "../ports/task-dependency-repository.port.ts";
+import {
+  assertTaskPrerequisitesComplete,
+  TaskPrerequisiteIncompleteError,
+} from "./manage-task-dependencies.ts";
 
 export class AdmitAgentRun {
   constructor(
@@ -12,6 +17,7 @@ export class AdmitAgentRun {
     private readonly pipelines: PipelineRunRepository,
     private readonly clock: Clock,
     private readonly ownerId?: string,
+    private readonly taskDependencies?: TaskDependencyRepository,
   ) {}
 
   async execute(run: AgentRun): Promise<AgentRun | null> {
@@ -27,10 +33,25 @@ export class AdmitAgentRun {
       agent === null
         ? null
         : await this.runs.findRole(agent.roleId, r.projectId);
+    let prerequisitesComplete = true;
+    if (this.taskDependencies !== undefined) {
+      try {
+        await assertTaskPrerequisitesComplete(
+          r.projectId,
+          r.taskId,
+          this.tasks,
+          this.taskDependencies,
+        );
+      } catch (error) {
+        if (!(error instanceof TaskPrerequisiteIncompleteError)) throw error;
+        prerequisitesComplete = false;
+      }
+    }
     const valid =
       task !== undefined &&
       task.projectId === r.projectId &&
       isTaskRunnable(task.status) &&
+      prerequisitesComplete &&
       agent !== null &&
       agent.projectId === r.projectId &&
       agent.enabled &&

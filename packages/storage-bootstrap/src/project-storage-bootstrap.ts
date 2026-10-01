@@ -11,6 +11,7 @@ import { PostgresOfficeManifestRepository } from "@ai-office/storage-postgres/re
 import { PostgresPipelineRunRepository } from "@ai-office/storage-postgres/repositories/postgres-pipeline-run.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
+import { PostgresTaskDependencyRepository } from "@ai-office/storage-postgres/repositories/postgres-task-dependency.repository.ts";
 import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -51,6 +52,7 @@ export const projectStorageCapabilityNames = [
   "officeManifests",
   "pipelines",
   "tasks",
+  "taskDependencies",
   "taskRequirements",
   "runtime",
   "costs",
@@ -235,6 +237,10 @@ export class ProjectStorageBootstrap {
           configuration.tenantId,
         ),
         tasks: new PostgresTaskRepository(database, configuration.tenantId),
+        taskDependencies: new PostgresTaskDependencyRepository(
+          database,
+          configuration.tenantId,
+        ),
         taskRequirements: new PostgresTaskRequirementRepository(
           database,
           configuration.tenantId,
@@ -264,6 +270,7 @@ export class ProjectStorageBootstrap {
         ProjectStorage,
         | "projects"
         | "tasks"
+        | "taskDependencies"
         | "taskRequirements"
         | "governance"
         | "officeManifests"
@@ -339,6 +346,7 @@ function postgresCapabilities(): ProjectStorageCapabilities {
     "officeManifests",
     "pipelines",
     "tasks",
+    "taskDependencies",
     "taskRequirements",
     "governance",
     "runtime",
