@@ -15,7 +15,8 @@ Use a dedicated, owner-only data directory and bind to `127.0.0.1:8000`.
 documents `surrealkv://data` as a path relative to the process working
 directory. Do not switch storage backends in the same directory.
 
-The following Bash/Zsh setup creates the server's protected password file.
+Run the following setup in Bash (`bash` on macOS) to create the server's
+protected password file.
 Use a unique password; the input is neither an argument nor written into a
 service definition. Do not run these commands with shell tracing enabled.
 
