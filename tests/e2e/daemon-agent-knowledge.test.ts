@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentKnowledgeStore } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
@@ -68,10 +68,15 @@ async function withHost(
 
 describe("Runtime agent knowledge composition", () => {
   it("ignores stale CairnKeep environment while native knowledge follows its own configuration", async () => {
+    const legacyRoot = mkdtempSync(join(tmpdir(), "ai-office-retired-memory-"));
+    roots.push(legacyRoot);
+    const marker = join(legacyRoot, "spawned");
+    const command = join(legacyRoot, "retired-memory");
+    writeFileSync(command, `#!/bin/sh\nprintf spawned > '${marker}'\n`, { mode: 0o700 });
     vi.stubEnv("AI_OFFICE_PROJECT_MEMORY_PROVIDER", "cairnkeep");
-    vi.stubEnv("AI_OFFICE_CAIRNKEEP_COMMAND", "/never-run/legacy-secret-command");
-    vi.stubEnv("AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS", "31337");
-    vi.stubEnv("CAIRN_AGENTFS_BASE_DIR", "legacy-secret-directory");
+    vi.stubEnv("AI_OFFICE_CAIRNKEEP_COMMAND", command);
+    vi.stubEnv("AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS", "500");
+    vi.stubEnv("CAIRN_AGENTFS_BASE_DIR", join(legacyRoot, "legacy-secret-directory"));
     vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER", "none");
     const connect = vi.fn(async () => ({
       store: {} as AgentKnowledgeStore,
@@ -111,6 +116,7 @@ describe("Runtime agent knowledge composition", () => {
       expect.objectContaining({ endpoint: "ws://127.0.0.1:8000", password: "native-secret-password" }),
       expect.any(AbortSignal),
     );
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("rejects retired CairnKeep commands over the Runtime socket", async () => {
