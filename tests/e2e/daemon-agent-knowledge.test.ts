@@ -40,6 +40,7 @@ function configureManagedHome(home: string, password: string): void {
       database: "knowledge",
       tenantId: "tenant-a",
     }),
+    { mode: 0o600 },
   );
   writeRuntimeHomeCredential(
     home,

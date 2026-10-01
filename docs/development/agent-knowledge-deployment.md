@@ -102,8 +102,9 @@ export AI_OFFICE_HOME="${AI_OFFICE_HOME:-$HOME/.ai-office}"
 mkdir -p "$AI_OFFICE_HOME"
 ```
 
-The file is JSON with exactly these
-fields; it contains no username or password:
+The file is JSON with exactly these fields. It contains no username or password,
+but its integrity is security-sensitive: it selects the endpoint that receives
+the protected SurrealDB credentials.
 
 ```json
 {
@@ -115,15 +116,21 @@ fields; it contains no username or password:
 }
 ```
 
-Write it to `<AI_OFFICE_HOME>/agent-knowledge.json` and set mode `0600`.
+Write it to `<AI_OFFICE_HOME>/agent-knowledge.json` as the Runtime user and set
+mode `0600`. At startup the Runtime requires a regular, non-symlink file owned
+by its Runtime user UID, with no group or other write bits, and no larger than
+8 KiB. Group or other read bits do not cause rejection, but `0600` keeps the
+endpoint and scope private as well. Ownership and mode are checked on the
+opened file descriptor before reading it or loading credentials.
 `tenantId` is mandatory
 for SQLite and must be a trusted, stable identifier; do not derive it from a
 model or repository path. **Omit `tenantId` for PostgreSQL**: the Runtime uses
 its authoritative storage tenant and rejects a duplicate managed value. The
 endpoint accepts loopback `ws://` or authenticated `wss://` without URL userinfo.
 An absent file disables knowledge; invalid JSON, extra keys, wrong types and
-invalid values are `misconfigured`. The file must be a regular file, not a
-symlink, and no larger than 8 KiB.
+invalid values are `misconfigured`. Insecure ownership or permissions also
+report `misconfigured`; rejected managed documents never cause the Runtime to
+load protected SurrealDB credentials or fall back to ambient values.
 
 Create two protected credential files. This reuses the owner-only loader and
 its byte validation from the provider credential store, while leaving the

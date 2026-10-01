@@ -611,7 +611,7 @@ external CairnKeep data. See the [historical migration record](docs/development/
 ### Native agent knowledge connection
 
 The Runtime can separately connect an opt-in SurrealDB `AgentKnowledgeStore`.
-For a managed service, configure the non-secret
+For a managed service, configure the non-secret but integrity-sensitive
 `<AI_OFFICE_HOME>/agent-knowledge.json` and owner-only SurrealDB credential files,
 then run `ai-office service install`; see the
 [persistent deployment guide](docs/development/agent-knowledge-deployment.md).

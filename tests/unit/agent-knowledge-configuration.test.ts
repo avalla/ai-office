@@ -1,4 +1,12 @@
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -144,12 +152,30 @@ describe("managed Agent Knowledge source", () => {
   const credentials = (name: string) =>
     name === "AI_OFFICE_SURREALDB_USERNAME" ? "operator" : "secret";
 
+  function writeManagedDocument(home: string, content: string | Buffer): void {
+    const file = runtimeHomeAgentKnowledgePath(home);
+    writeFileSync(file, content, { mode: 0o600 });
+    chmodSync(file, 0o600);
+  }
+
+  function expectRejectedWithoutCredentials(
+    home: string,
+    environment: Record<string, string> = managed,
+  ): void {
+    const canary = "ak09-protected-credential-canary";
+    const loadCredential = vi.fn((_name: string) => canary);
+    const result = loadAgentKnowledgeConfiguration(
+      { ...configured, ...environment },
+      { runtimeHome: home, loadCredential },
+    );
+    expect(result.kind).toBe("misconfigured");
+    expect(loadCredential).not.toHaveBeenCalled();
+    expect(JSON.stringify(result).includes(canary)).toBe(false);
+  }
+
   it("loads only the Runtime-home file and protected credentials", () =>
     withHome((home) => {
-      writeFileSync(
-        runtimeHomeAgentKnowledgePath(home),
-        JSON.stringify(document),
-      );
+      writeManagedDocument(home, JSON.stringify(document));
       const loadCredential = vi.fn(credentials);
       const result = loadAgentKnowledgeConfiguration(
         {
@@ -179,7 +205,7 @@ describe("managed Agent Knowledge source", () => {
           },
         ),
       ).toEqual({ kind: "disabled" });
-      writeFileSync(runtimeHomeAgentKnowledgePath(home), "{invalid");
+      writeManagedDocument(home, "{invalid");
       expect(
         loadAgentKnowledgeConfiguration(
           { ...configured, ...managed },
@@ -196,21 +222,84 @@ describe("managed Agent Knowledge source", () => {
       const target = join(home, "target.json");
       writeFileSync(target, JSON.stringify(document));
       symlinkSync(target, runtimeHomeAgentKnowledgePath(home));
-      const loadCredential = vi.fn(credentials);
-      expect(
-        loadAgentKnowledgeConfiguration(managed, {
-          runtimeHome: home,
-          loadCredential,
-        }),
-      ).toEqual({ kind: "misconfigured", provider: "unknown" });
-      expect(loadCredential).not.toHaveBeenCalled();
+      expectRejectedWithoutCredentials(home);
     }));
+
+  it.each([
+    ["group-writable", 0o620],
+    ["world-writable", 0o602],
+  ])("rejects a %s remote endpoint before loading credentials", (_name, mode) =>
+    withHome((home) => {
+      const file = runtimeHomeAgentKnowledgePath(home);
+      writeManagedDocument(
+        home,
+        JSON.stringify({ ...document, endpoint: "wss://redirect.example" }),
+      );
+      chmodSync(file, mode);
+      expectRejectedWithoutCredentials(home);
+    }),
+  );
+
+  it("rejects a non-regular managed file before loading credentials", () =>
+    withHome((home) => {
+      mkdirSync(runtimeHomeAgentKnowledgePath(home), { mode: 0o700 });
+      expectRejectedWithoutCredentials(home);
+    }));
+
+  it("rejects a managed file larger than 8 KiB before loading credentials", () =>
+    withHome((home) => {
+      writeManagedDocument(home, " ".repeat(8193));
+      expectRejectedWithoutCredentials(home);
+    }));
+
+  it.each([
+    ["malformed JSON", "{invalid"],
+    ["extra field", { ...document, unexpected: "value" }],
+    ["credential field", { ...document, password: "not-a-credential" }],
+    ["invalid provider", { ...document, provider: "other" }],
+    ["invalid endpoint", { ...document, endpoint: "ws://redirect.example" }],
+    ["invalid namespace", { ...document, namespace: "bad name" }],
+    ["invalid database", { ...document, database: "bad.name" }],
+    ["missing SQLite tenant", { ...document, tenantId: undefined }],
+    ["invalid SQLite tenant", { ...document, tenantId: " bad " }],
+  ])("rejects %s before loading credentials", (_name, content) =>
+    withHome((home) => {
+      writeManagedDocument(
+        home,
+        typeof content === "string" ? content : JSON.stringify(content),
+      );
+      expectRejectedWithoutCredentials(home);
+    }),
+  );
+
+  it("rejects malformed UTF-8 before loading credentials", () =>
+    withHome((home) => {
+      writeManagedDocument(home, Buffer.from([0xc3, 0x28]));
+      expectRejectedWithoutCredentials(home);
+    }));
+
+  it.skipIf(typeof process.getuid !== "function")(
+    "rejects a file not owned by the Runtime UID without requiring root",
+    () =>
+      withHome((home) => {
+        const file = runtimeHomeAgentKnowledgePath(home);
+        writeManagedDocument(home, JSON.stringify(document));
+        const currentOwner = statSync(file).uid;
+        const getuid = vi
+          .spyOn(process, "getuid")
+          .mockReturnValue(currentOwner + 1);
+        try {
+          expectRejectedWithoutCredentials(home);
+        } finally {
+          getuid.mockRestore();
+        }
+      }),
+  );
 
   it("rejects credential fields, missing credentials and invalid tenant without echoing them", () =>
     withHome((home) => {
-      const file = runtimeHomeAgentKnowledgePath(home);
-      writeFileSync(
-        file,
+      writeManagedDocument(
+        home,
         JSON.stringify({ ...document, password: "leaked-secret" }),
       );
       expect(
@@ -219,14 +308,17 @@ describe("managed Agent Knowledge source", () => {
           loadCredential: credentials,
         }),
       ).toEqual({ kind: "misconfigured", provider: "unknown" });
-      writeFileSync(file, JSON.stringify(document));
+      writeManagedDocument(home, JSON.stringify(document));
       expect(
         loadAgentKnowledgeConfiguration(managed, {
           runtimeHome: home,
           loadCredential: () => undefined,
         }),
       ).toEqual({ kind: "misconfigured", provider: "surrealdb" });
-      writeFileSync(file, JSON.stringify({ ...document, tenantId: " bad " }));
+      writeManagedDocument(
+        home,
+        JSON.stringify({ ...document, tenantId: " bad " }),
+      );
       expect(
         loadAgentKnowledgeConfiguration(managed, {
           runtimeHome: home,
@@ -237,16 +329,19 @@ describe("managed Agent Knowledge source", () => {
 
   it("uses the authoritative PostgreSQL tenant and rejects a duplicate configured tenant", () =>
     withHome((home) => {
-      const file = runtimeHomeAgentKnowledgePath(home);
-      writeFileSync(file, JSON.stringify(document));
-      expect(
-        loadAgentKnowledgeConfiguration(managed, {
-          runtimeHome: home,
-          authoritativeTenantId: "postgres-tenant",
-          loadCredential: credentials,
-        }),
-      ).toEqual({ kind: "misconfigured", provider: "surrealdb" });
-      writeFileSync(file, JSON.stringify({ ...document, tenantId: undefined }));
+      writeManagedDocument(home, JSON.stringify(document));
+      const loadCredential = vi.fn(credentials);
+      const conflict = loadAgentKnowledgeConfiguration(managed, {
+        runtimeHome: home,
+        authoritativeTenantId: "postgres-tenant",
+        loadCredential,
+      });
+      expect(conflict.kind).toBe("misconfigured");
+      expect(loadCredential).not.toHaveBeenCalled();
+      writeManagedDocument(
+        home,
+        JSON.stringify({ ...document, tenantId: undefined }),
+      );
       expect(
         loadAgentKnowledgeConfiguration(managed, {
           runtimeHome: home,
@@ -258,24 +353,28 @@ describe("managed Agent Knowledge source", () => {
 
   it("preserves the foreground environment source and rejects unknown source markers", () =>
     withHome((home) => {
-      writeFileSync(runtimeHomeAgentKnowledgePath(home), "{invalid");
+      writeManagedDocument(home, "{invalid");
+      const loadCredential = vi.fn(credentials);
       expect(
         loadAgentKnowledgeConfiguration(configured, {
           runtimeHome: home,
-          loadCredential: () => undefined,
+          loadCredential,
         }),
       ).toMatchObject({ kind: "surrealdb", tenantId: "tenant-a" });
+      expect(loadCredential).not.toHaveBeenCalled();
       expect(
         loadAgentKnowledgeConfiguration(
           { ...configured, AI_OFFICE_AGENT_KNOWLEDGE_SOURCE: "other" },
-          { runtimeHome: home, loadCredential: credentials },
+          { runtimeHome: home, loadCredential },
         ),
       ).toEqual({ kind: "misconfigured", provider: "unknown" });
+      expect(loadCredential).not.toHaveBeenCalled();
       expect(
         loadAgentKnowledgeConfiguration(
           { ...configured, AI_OFFICE_AGENT_KNOWLEDGE_SOURCE: "" },
-          { runtimeHome: home, loadCredential: credentials },
+          { runtimeHome: home, loadCredential },
         ),
       ).toEqual({ kind: "misconfigured", provider: "unknown" });
+      expect(loadCredential).not.toHaveBeenCalled();
     }));
 });

@@ -235,7 +235,7 @@ describe("ai-office service install", () => {
         "AI_OFFICE_SURREALDB_PASSWORD",
       );
       mkdirSync(protectedDirectory, { mode: 0o700 });
-      writeFileSync(configuration, '{"provider":"none"}');
+      writeFileSync(configuration, '{"provider":"none"}', { mode: 0o600 });
       writeFileSync(protectedPassword, "stored-surreal-secret", {
         mode: 0o600,
       });

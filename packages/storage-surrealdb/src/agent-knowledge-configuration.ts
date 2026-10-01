@@ -34,6 +34,52 @@ const managedFields = new Set([
   "tenantId",
 ]);
 
+interface NonSecretSurrealFields {
+  endpoint: string;
+  namespace: string;
+  database: string;
+  tenantId: string;
+}
+
+function validNonSecretSurrealFields(fields: {
+  endpoint: unknown;
+  namespace: unknown;
+  database: unknown;
+  tenantId: unknown;
+}): fields is NonSecretSurrealFields {
+  const { endpoint, namespace, database, tenantId } = fields;
+  if (
+    typeof endpoint !== "string" ||
+    typeof namespace !== "string" ||
+    typeof database !== "string" ||
+    typeof tenantId !== "string" ||
+    !isAgentKnowledgeTenantId(tenantId) ||
+    !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(namespace) ||
+    !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(database)
+  )
+    return false;
+
+  try {
+    if (endpoint.length > 2048 || /[\p{Cc}?#]/u.test(endpoint)) return false;
+    const url = new URL(endpoint);
+    const authority = /^wss?:\/\/([^/?#]*)/u.exec(endpoint)?.[1];
+    return (
+      ["ws:", "wss:"].includes(url.protocol) &&
+      url.hostname.length > 0 &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      authority !== undefined &&
+      !authority.includes("@") &&
+      (url.protocol !== "ws:" ||
+        /^(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/iu.test(authority))
+    );
+  } catch {
+    return false;
+  }
+}
+
 function managedDocument(
   runtimeHome: string,
 ):
@@ -52,8 +98,16 @@ function managedDocument(
       : { state: "invalid" };
   }
   try {
+    // Both integrity checks and bounded reads use this opened descriptor. A
+    // pathname replacement after open cannot substitute another document.
     const status = fstatSync(descriptor);
-    if (!status.isFile() || status.size > maximumConfigurationBytes)
+    if (
+      !status.isFile() ||
+      typeof process.getuid !== "function" ||
+      status.uid !== process.getuid() ||
+      (status.mode & 0o022) !== 0 ||
+      status.size > maximumConfigurationBytes
+    )
       return { state: "invalid" };
     const buffer = Buffer.alloc(maximumConfigurationBytes + 1);
     let length = 0;
@@ -124,13 +178,16 @@ export function loadAgentKnowledgeConfiguration(
       : { kind: "misconfigured", provider: "unknown" };
   if (fields.provider !== "surrealdb")
     return { kind: "misconfigured", provider: "unknown" };
+  const nonSecretFields = {
+    endpoint: fields.endpoint,
+    namespace: fields.namespace,
+    database: fields.database,
+    tenantId: options.authoritativeTenantId ?? fields.tenantId,
+  };
   if (
-    typeof fields.endpoint !== "string" ||
-    typeof fields.namespace !== "string" ||
-    typeof fields.database !== "string" ||
-    (fields.tenantId !== undefined && typeof fields.tenantId !== "string") ||
     (options.authoritativeTenantId !== undefined &&
-      fields.tenantId !== undefined)
+      fields.tenantId !== undefined) ||
+    !validNonSecretSurrealFields(nonSecretFields)
   )
     return { kind: "misconfigured", provider: "surrealdb" };
   const username = options.loadCredential(agentKnowledgeEnvironment.username);
@@ -138,11 +195,10 @@ export function loadAgentKnowledgeConfiguration(
   return resolveAgentKnowledgeConfiguration(
     {
       [agentKnowledgeEnvironment.provider]: "surrealdb",
-      [agentKnowledgeEnvironment.endpoint]: fields.endpoint,
-      [agentKnowledgeEnvironment.namespace]: fields.namespace,
-      [agentKnowledgeEnvironment.database]: fields.database,
-      [agentKnowledgeEnvironment.tenantId]: fields.tenantId as
-        string | undefined,
+      [agentKnowledgeEnvironment.endpoint]: nonSecretFields.endpoint,
+      [agentKnowledgeEnvironment.namespace]: nonSecretFields.namespace,
+      [agentKnowledgeEnvironment.database]: nonSecretFields.database,
+      [agentKnowledgeEnvironment.tenantId]: nonSecretFields.tenantId,
       [agentKnowledgeEnvironment.username]: username,
       [agentKnowledgeEnvironment.password]: password,
     },
@@ -175,47 +231,31 @@ export function resolveAgentKnowledgeConfiguration(
   const database = environment[agentKnowledgeEnvironment.database];
   const username = environment[agentKnowledgeEnvironment.username];
   const password = environment[agentKnowledgeEnvironment.password];
-  const tenantId =
-    authoritativeTenantId ?? environment[agentKnowledgeEnvironment.tenantId];
+  const nonSecretFields = {
+    endpoint,
+    namespace,
+    database,
+    tenantId:
+      authoritativeTenantId ?? environment[agentKnowledgeEnvironment.tenantId],
+  };
   if (
-    endpoint === undefined ||
-    namespace === undefined ||
-    database === undefined ||
+    !validNonSecretSurrealFields(nonSecretFields) ||
     username === undefined ||
     password === undefined ||
-    tenantId === undefined ||
-    !isAgentKnowledgeTenantId(tenantId) ||
     username.length === 0 ||
-    password.length === 0 ||
-    !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(namespace) ||
-    !/^[A-Za-z_][A-Za-z0-9_]{0,63}$/u.test(database)
+    password.length === 0
   )
     return { kind: "misconfigured", provider: "surrealdb" };
 
-  try {
-    if (endpoint.length > 2048 || /[\p{Cc}?#]/u.test(endpoint))
-      return { kind: "misconfigured", provider: "surrealdb" };
-    const url = new URL(endpoint);
-    const authority = /^wss?:\/\/([^/?#]*)/u.exec(endpoint)?.[1];
-    if (
-      !["ws:", "wss:"].includes(url.protocol) ||
-      url.hostname.length === 0 ||
-      url.username !== "" ||
-      url.password !== "" ||
-      url.search !== "" ||
-      url.hash !== "" ||
-      authority === undefined ||
-      authority.includes("@") ||
-      (url.protocol === "ws:" &&
-        !/^(?:localhost|127\.0\.0\.1|\[::1\])(?::[0-9]+)?$/iu.test(authority))
-    )
-      return { kind: "misconfigured", provider: "surrealdb" };
-  } catch {
-    return { kind: "misconfigured", provider: "surrealdb" };
-  }
   return {
     kind: "surrealdb",
-    connection: { endpoint, namespace, database, username, password },
-    tenantId,
+    connection: {
+      endpoint: nonSecretFields.endpoint,
+      namespace: nonSecretFields.namespace,
+      database: nonSecretFields.database,
+      username,
+      password,
+    },
+    tenantId: nonSecretFields.tenantId,
   };
 }
