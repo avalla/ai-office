@@ -1,4 +1,10 @@
 import type { SurrealAgentKnowledgeConfig } from "./connect-agent-knowledge-store.ts";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
+import {
+  agentKnowledgeSourceEnvironmentVariable,
+  runtimeHomeAgentKnowledgePath,
+  runtimeHomeAgentKnowledgeSource,
+} from "@ai-office/runtime-paths/agent-knowledge-location.ts";
 
 export const agentKnowledgeEnvironment = {
   provider: "AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER",
@@ -18,6 +24,131 @@ export type AgentKnowledgeConfiguration =
       connection: SurrealAgentKnowledgeConfig;
       tenantId: string;
     };
+
+const maximumConfigurationBytes = 8 * 1024;
+const managedFields = new Set([
+  "provider",
+  "endpoint",
+  "namespace",
+  "database",
+  "tenantId",
+]);
+
+function managedDocument(
+  runtimeHome: string,
+):
+  | { state: "missing" }
+  | { state: "invalid" }
+  | { state: "parsed"; value: unknown } {
+  let descriptor: number;
+  try {
+    descriptor = openSync(
+      runtimeHomeAgentKnowledgePath(runtimeHome),
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT"
+      ? { state: "missing" }
+      : { state: "invalid" };
+  }
+  try {
+    const status = fstatSync(descriptor);
+    if (!status.isFile() || status.size > maximumConfigurationBytes)
+      return { state: "invalid" };
+    const buffer = Buffer.alloc(maximumConfigurationBytes + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const count = readSync(
+        descriptor,
+        buffer,
+        length,
+        buffer.length - length,
+        null,
+      );
+      if (count === 0) break;
+      length += count;
+    }
+    if (length > maximumConfigurationBytes) return { state: "invalid" };
+    return {
+      state: "parsed",
+      value: JSON.parse(
+        new TextDecoder("utf-8", { fatal: true }).decode(
+          buffer.subarray(0, length),
+        ),
+      ) as unknown,
+    };
+  } catch {
+    return { state: "invalid" };
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/**
+ * Selects exactly one host source. A managed service never consults ambient
+ * knowledge values, and a foreground host never opens the Runtime-home file.
+ */
+export function loadAgentKnowledgeConfiguration(
+  environment: Readonly<Record<string, string | undefined>>,
+  options: {
+    readonly runtimeHome: string;
+    readonly authoritativeTenantId?: string;
+    readonly loadCredential: (name: string) => string | undefined;
+  },
+): AgentKnowledgeConfiguration {
+  const source = environment[agentKnowledgeSourceEnvironmentVariable];
+  if (source === undefined)
+    return resolveAgentKnowledgeConfiguration(
+      environment,
+      options.authoritativeTenantId,
+    );
+  if (source !== runtimeHomeAgentKnowledgeSource)
+    return { kind: "misconfigured", provider: "unknown" };
+
+  const document = managedDocument(options.runtimeHome);
+  if (document.state === "missing") return { kind: "disabled" };
+  if (document.state === "invalid")
+    return { kind: "misconfigured", provider: "unknown" };
+  if (
+    typeof document.value !== "object" ||
+    document.value === null ||
+    Array.isArray(document.value)
+  )
+    return { kind: "misconfigured", provider: "unknown" };
+  const fields = document.value as Record<string, unknown>;
+  if (Object.keys(fields).some((key) => !managedFields.has(key)))
+    return { kind: "misconfigured", provider: "unknown" };
+  if (fields.provider === "none")
+    return Object.keys(fields).length === 1
+      ? { kind: "disabled" }
+      : { kind: "misconfigured", provider: "unknown" };
+  if (fields.provider !== "surrealdb")
+    return { kind: "misconfigured", provider: "unknown" };
+  if (
+    typeof fields.endpoint !== "string" ||
+    typeof fields.namespace !== "string" ||
+    typeof fields.database !== "string" ||
+    (fields.tenantId !== undefined && typeof fields.tenantId !== "string") ||
+    (options.authoritativeTenantId !== undefined &&
+      fields.tenantId !== undefined)
+  )
+    return { kind: "misconfigured", provider: "surrealdb" };
+  const username = options.loadCredential(agentKnowledgeEnvironment.username);
+  const password = options.loadCredential(agentKnowledgeEnvironment.password);
+  return resolveAgentKnowledgeConfiguration(
+    {
+      [agentKnowledgeEnvironment.provider]: "surrealdb",
+      [agentKnowledgeEnvironment.endpoint]: fields.endpoint,
+      [agentKnowledgeEnvironment.namespace]: fields.namespace,
+      [agentKnowledgeEnvironment.database]: fields.database,
+      [agentKnowledgeEnvironment.tenantId]: fields.tenantId as
+        string | undefined,
+      [agentKnowledgeEnvironment.username]: username,
+      [agentKnowledgeEnvironment.password]: password,
+    },
+    options.authoritativeTenantId,
+  );
+}
 
 export function isAgentKnowledgeTenantId(value: string): boolean {
   return (

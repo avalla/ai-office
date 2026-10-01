@@ -207,13 +207,38 @@ describe("ai-office service install", () => {
       "AI_OFFICE_MODEL_ROUTING_FILE",
       "AI_OFFICE_LLM_MODEL",
       "OPENAI_API_KEY",
+      "AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER",
+      "AI_OFFICE_SURREALDB_URL",
+      "AI_OFFICE_SURREALDB_USERNAME",
+      "AI_OFFICE_SURREALDB_PASSWORD",
     ] as const;
     const saved = names.map((name) => [name, process.env[name]] as const);
     process.env.AI_OFFICE_MODEL_ROUTING_FILE = "/shell-only/routing.yaml";
     process.env.AI_OFFICE_LLM_MODEL = "openai:shell-model";
     process.env.OPENAI_API_KEY = credential;
+    process.env.AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER = "surrealdb";
+    process.env.AI_OFFICE_SURREALDB_URL = "ws://shell-only.example:8000";
+    process.env.AI_OFFICE_SURREALDB_USERNAME = "shell-user";
+    process.env.AI_OFFICE_SURREALDB_PASSWORD = "shell-surreal-secret";
     try {
       const context = harness();
+      const configuration = join(
+        context.runtimePaths.runtimeHome,
+        "agent-knowledge.json",
+      );
+      const protectedDirectory = join(
+        context.runtimePaths.runtimeHome,
+        "credentials",
+      );
+      const protectedPassword = join(
+        protectedDirectory,
+        "AI_OFFICE_SURREALDB_PASSWORD",
+      );
+      mkdirSync(protectedDirectory, { mode: 0o700 });
+      writeFileSync(configuration, '{"provider":"none"}');
+      writeFileSync(protectedPassword, "stored-surreal-secret", {
+        mode: 0o600,
+      });
       expect(await context.run(["service", "install"])).toBe(0);
       const runtime = readFileSync(
         join(context.unitDirectory, systemdUnitNames.runtime),
@@ -229,14 +254,22 @@ describe("ai-office service install", () => {
       expect(runtime).toContain(
         'Environment="AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home"',
       );
+      expect(runtime).toContain(
+        'Environment="AI_OFFICE_AGENT_KNOWLEDGE_SOURCE=runtime_home"',
+      );
       expect(dashboard).not.toContain("AI_OFFICE_MODEL_ROUTING_SOURCE");
       expect(dashboard).not.toContain("AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE");
+      expect(dashboard).not.toContain("AI_OFFICE_AGENT_KNOWLEDGE_SOURCE");
       for (const definition of [runtime, dashboard])
         for (const value of [
           credential,
           "OPENAI_API_KEY",
           "/shell-only/routing.yaml",
           "shell-model",
+          "shell-only.example",
+          "shell-user",
+          "shell-surreal-secret",
+          "stored-surreal-secret",
         ])
           expect(definition).not.toContain(value);
       const output = context.io.stdout.join("\n");
@@ -252,6 +285,10 @@ describe("ai-office service install", () => {
       context.io.stdout.length = 0;
       expect(await context.run(["service", "install"])).toBe(0);
       expect(context.io.stdout.join("\n")).toContain("(unchanged)");
+      expect(readFileSync(configuration, "utf8")).toBe('{"provider":"none"}');
+      expect(readFileSync(protectedPassword, "utf8")).toBe(
+        "stored-surreal-secret",
+      );
     } finally {
       for (const [name, value] of saved)
         if (value === undefined) delete process.env[name];
@@ -262,6 +299,7 @@ describe("ai-office service install", () => {
   test.each([
     "AI_OFFICE_MODEL_ROUTING_SOURCE",
     "AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE",
+    "AI_OFFICE_AGENT_KNOWLEDGE_SOURCE",
   ])(
     "a Runtime unit rendered before the %s marker is outdated and replaced",
     async (marker) => {

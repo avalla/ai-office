@@ -178,6 +178,7 @@ describe.each(["systemd", "launchd"] as const)(
         AI_OFFICE_HOME: home,
         AI_OFFICE_MODEL_ROUTING_SOURCE: "runtime_home",
         AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE: "runtime_home",
+        AI_OFFICE_AGENT_KNOWLEDGE_SOURCE: "runtime_home",
       });
       expect(dashboard.environment).toEqual({ AI_OFFICE_HOME: home });
       for (const { definition } of [runtime, dashboard]) {

@@ -150,4 +150,11 @@ Model routing (Runtime host; loaded at host start; operator reload/override appl
 
 Provider credentials (Runtime host; read once at host start; restart after changes):
   <AI_OFFICE_HOME>/credentials/<NAME>  owner-only files written by credential set; the only source of a managed service
-  OPENAI_API_KEY                foreground gateway worker credential; the only foreground source (the credentials directory is never read); never in routing files`;
+  OPENAI_API_KEY                foreground gateway worker credential; the only foreground source (the credentials directory is never read); never in routing files
+
+Agent Knowledge (Runtime host; read once at start; restart after changes):
+  <AI_OFFICE_HOME>/agent-knowledge.json  non-secret configuration; the only source of a managed service
+  <AI_OFFICE_HOME>/credentials/AI_OFFICE_SURREALDB_USERNAME and AI_OFFICE_SURREALDB_PASSWORD
+    owner-only managed credential files; not accepted by the provider credential command
+  AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER and AI_OFFICE_SURREALDB_*  foreground environment only
+  See docs/development/agent-knowledge-deployment.md for persistent setup`;

@@ -11,9 +11,9 @@ external database. Existing imported records and historical run retrieval
 provenance remain readable; new knowledge is admitted only through
 `AgentKnowledgeStore`.
 
-## Runtime composition (AK-03)
+## Runtime composition (AK-03, AK-09)
 
-The host reads `AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER` once at bootstrap. Unset,
+Foreground hosts read `AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER` once at bootstrap. Unset,
 empty, or `none` disables native knowledge. `surrealdb` requires these host-only
 values: `AI_OFFICE_SURREALDB_URL` (`ws://` for loopback only or `wss://`),
 `AI_OFFICE_SURREALDB_NAMESPACE`, `AI_OFFICE_SURREALDB_DATABASE`,
@@ -23,10 +23,17 @@ and database are simple identifiers. A SQLite Runtime additionally requires
 its trusted storage tenant instead. The portable `repositoryId` will be added
 by the application caller in AK-04, never inferred from a checkout path.
 
+Managed services instead select `<AI_OFFICE_HOME>/agent-knowledge.json` and
+owner-only `credentials/AI_OFFICE_SURREALDB_USERNAME` and
+`credentials/AI_OFFICE_SURREALDB_PASSWORD` through a non-secret service marker.
+They ignore all foreground Agent Knowledge variables. An absent file disables
+knowledge; an invalid selected file or missing/insecure credential is
+`misconfigured`, without environment fallback. PostgreSQL takes its tenant from
+authoritative storage and rejects a tenant in the managed file. See the
+[persistent deployment guide](agent-knowledge-deployment.md).
+
 Configuration remains outside project state, snapshots, generated Markdown,
-and SQLite/PostgreSQL authority. The foreground host must receive these
-environment variables when it starts; generated managed-service definitions
-do not carry them. Credentials and endpoint values are never returned in
+and SQLite/PostgreSQL authority. Credentials and endpoint values are never returned in
 health or errors. The five-second deadline bounds how long Runtime bootstrap
 waits for the connection. The SurrealDB client has no abort-signal API: on
 timeout the host requests a disconnect, disables reconnects, and closes any

@@ -86,14 +86,15 @@ Environment="AI_OFFICE_HOME=/home/operator/.ai-office"
 Because the value is written into the definition, a service starts against the
 same authoritative home whatever environment the supervisor happens to give it.
 
-## Model routing and credentials
+## Model routing, credentials and Agent Knowledge
 
-The Runtime definition (not the dashboard's) also carries two non-secret source
+The Runtime definition (not the dashboard's) also carries three non-secret source
 markers, identically in the systemd unit and the launchd plist:
 
 ```ini
 Environment="AI_OFFICE_MODEL_ROUTING_SOURCE=runtime_home"
 Environment="AI_OFFICE_PROVIDER_CREDENTIAL_SOURCE=runtime_home"
+Environment="AI_OFFICE_AGENT_KNOWLEDGE_SOURCE=runtime_home"
 ```
 
 With it, the managed Runtime reads [model routing](llm-cost-control.md#agent-model-routing)
@@ -109,10 +110,18 @@ systemctl --user restart ai-office-runtime.service          # Linux
 launchctl kickstart -k gui/$(id -u)/com.ai-office.runtime   # macOS
 ```
 
-A Runtime definition generated before either marker existed reports
+A Runtime definition generated before any marker existed reports
 `managed_outdated`; `ai-office service install` replaces it. The routing file's
 and credentials' content is not part of the definition, so editing them never
 makes a definition outdated.
+
+The Agent Knowledge marker selects only `<AI_OFFICE_HOME>/agent-knowledge.json`
+and its separate owner-only SurrealDB credentials. The managed Runtime ignores
+ambient knowledge environment variables, including passwords; a foreground
+Runtime still uses only its explicit environment. An absent file disables
+knowledge, while an invalid selected file or credential reports
+`misconfigured` without fallback. `service install` never reads or rewrites the
+file or credentials. See [the deployment guide](agent-knowledge-deployment.md).
 
 ### Provider credentials
 

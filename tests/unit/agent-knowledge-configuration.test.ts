@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { resolveAgentKnowledgeConfiguration } from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import {
+  loadAgentKnowledgeConfiguration,
+  resolveAgentKnowledgeConfiguration,
+} from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
+import { runtimeHomeAgentKnowledgePath } from "@ai-office/runtime-paths/agent-knowledge-location.ts";
 
 const configured = {
   AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER: "surrealdb",
@@ -114,4 +121,161 @@ describe("agent knowledge host configuration", () => {
       });
     },
   );
+});
+
+describe("managed Agent Knowledge source", () => {
+  function withHome(check: (home: string) => void): void {
+    const home = mkdtempSync(join(tmpdir(), "ai-office-knowledge-config-"));
+    try {
+      check(home);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+
+  const managed = { AI_OFFICE_AGENT_KNOWLEDGE_SOURCE: "runtime_home" };
+  const document = {
+    provider: "surrealdb",
+    endpoint: "ws://127.0.0.1:8000",
+    namespace: "ai_office",
+    database: "knowledge",
+    tenantId: "tenant-a",
+  };
+  const credentials = (name: string) =>
+    name === "AI_OFFICE_SURREALDB_USERNAME" ? "operator" : "secret";
+
+  it("loads only the Runtime-home file and protected credentials", () =>
+    withHome((home) => {
+      writeFileSync(
+        runtimeHomeAgentKnowledgePath(home),
+        JSON.stringify(document),
+      );
+      const loadCredential = vi.fn(credentials);
+      const result = loadAgentKnowledgeConfiguration(
+        {
+          ...configured,
+          ...managed,
+          AI_OFFICE_SURREALDB_PASSWORD: "ambient-secret",
+        },
+        { runtimeHome: home, loadCredential },
+      );
+      expect(result).toMatchObject({
+        kind: "surrealdb",
+        tenantId: "tenant-a",
+        connection: { password: "secret", username: "operator" },
+      });
+      expect(loadCredential).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(result)).not.toContain("ambient-secret");
+    }));
+
+  it("keeps absent provider disabled and never falls back to ambient values", () =>
+    withHome((home) => {
+      expect(
+        loadAgentKnowledgeConfiguration(
+          { ...configured, ...managed },
+          {
+            runtimeHome: home,
+            loadCredential: credentials,
+          },
+        ),
+      ).toEqual({ kind: "disabled" });
+      writeFileSync(runtimeHomeAgentKnowledgePath(home), "{invalid");
+      expect(
+        loadAgentKnowledgeConfiguration(
+          { ...configured, ...managed },
+          {
+            runtimeHome: home,
+            loadCredential: credentials,
+          },
+        ),
+      ).toEqual({ kind: "misconfigured", provider: "unknown" });
+    }));
+
+  it("refuses a symlinked managed file without reading its target", () =>
+    withHome((home) => {
+      const target = join(home, "target.json");
+      writeFileSync(target, JSON.stringify(document));
+      symlinkSync(target, runtimeHomeAgentKnowledgePath(home));
+      const loadCredential = vi.fn(credentials);
+      expect(
+        loadAgentKnowledgeConfiguration(managed, {
+          runtimeHome: home,
+          loadCredential,
+        }),
+      ).toEqual({ kind: "misconfigured", provider: "unknown" });
+      expect(loadCredential).not.toHaveBeenCalled();
+    }));
+
+  it("rejects credential fields, missing credentials and invalid tenant without echoing them", () =>
+    withHome((home) => {
+      const file = runtimeHomeAgentKnowledgePath(home);
+      writeFileSync(
+        file,
+        JSON.stringify({ ...document, password: "leaked-secret" }),
+      );
+      expect(
+        loadAgentKnowledgeConfiguration(managed, {
+          runtimeHome: home,
+          loadCredential: credentials,
+        }),
+      ).toEqual({ kind: "misconfigured", provider: "unknown" });
+      writeFileSync(file, JSON.stringify(document));
+      expect(
+        loadAgentKnowledgeConfiguration(managed, {
+          runtimeHome: home,
+          loadCredential: () => undefined,
+        }),
+      ).toEqual({ kind: "misconfigured", provider: "surrealdb" });
+      writeFileSync(file, JSON.stringify({ ...document, tenantId: " bad " }));
+      expect(
+        loadAgentKnowledgeConfiguration(managed, {
+          runtimeHome: home,
+          loadCredential: credentials,
+        }),
+      ).toEqual({ kind: "misconfigured", provider: "surrealdb" });
+    }));
+
+  it("uses the authoritative PostgreSQL tenant and rejects a duplicate configured tenant", () =>
+    withHome((home) => {
+      const file = runtimeHomeAgentKnowledgePath(home);
+      writeFileSync(file, JSON.stringify(document));
+      expect(
+        loadAgentKnowledgeConfiguration(managed, {
+          runtimeHome: home,
+          authoritativeTenantId: "postgres-tenant",
+          loadCredential: credentials,
+        }),
+      ).toEqual({ kind: "misconfigured", provider: "surrealdb" });
+      writeFileSync(file, JSON.stringify({ ...document, tenantId: undefined }));
+      expect(
+        loadAgentKnowledgeConfiguration(managed, {
+          runtimeHome: home,
+          authoritativeTenantId: "postgres-tenant",
+          loadCredential: credentials,
+        }),
+      ).toMatchObject({ kind: "surrealdb", tenantId: "postgres-tenant" });
+    }));
+
+  it("preserves the foreground environment source and rejects unknown source markers", () =>
+    withHome((home) => {
+      writeFileSync(runtimeHomeAgentKnowledgePath(home), "{invalid");
+      expect(
+        loadAgentKnowledgeConfiguration(configured, {
+          runtimeHome: home,
+          loadCredential: () => undefined,
+        }),
+      ).toMatchObject({ kind: "surrealdb", tenantId: "tenant-a" });
+      expect(
+        loadAgentKnowledgeConfiguration(
+          { ...configured, AI_OFFICE_AGENT_KNOWLEDGE_SOURCE: "other" },
+          { runtimeHome: home, loadCredential: credentials },
+        ),
+      ).toEqual({ kind: "misconfigured", provider: "unknown" });
+      expect(
+        loadAgentKnowledgeConfiguration(
+          { ...configured, AI_OFFICE_AGENT_KNOWLEDGE_SOURCE: "" },
+          { runtimeHome: home, loadCredential: credentials },
+        ),
+      ).toEqual({ kind: "misconfigured", provider: "unknown" });
+    }));
 });

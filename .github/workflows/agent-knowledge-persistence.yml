@@ -1,0 +1,61 @@
+name: Agent Knowledge persistence
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  persistent-surrealdb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.6"
+      - run: bun install --frozen-lockfile
+      - name: Start persistent SurrealDB
+        run: |
+          docker volume create ai-office-ak09-persistence
+          docker run --rm -d --name ai-office-ak09-surrealdb --user 0:0 \
+            -p 127.0.0.1:8001:8000 \
+            -v ai-office-ak09-persistence:/data \
+            -e SURREAL_USER=root -e SURREAL_PASS=root \
+            surrealdb/surrealdb:v3.3.0 start --bind 0.0.0.0:8000 surrealkv:///data/knowledge
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8001/health; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Write scoped knowledge
+        env:
+          AI_OFFICE_TEST_SURREALDB_PERSISTENCE_URL: ws://127.0.0.1:8001
+          AI_OFFICE_TEST_SURREALDB_PERSISTENCE_PHASE: seed
+        run: bunx --bun vitest run tests/integration/agent-knowledge-persistence.test.ts
+      - name: Stop and restart from the same on-disk volume
+        run: |
+          docker stop ai-office-ak09-surrealdb
+          docker run --rm -d --name ai-office-ak09-surrealdb --user 0:0 \
+            -p 127.0.0.1:8001:8000 \
+            -v ai-office-ak09-persistence:/data \
+            -e SURREAL_USER=root -e SURREAL_PASS=root \
+            surrealdb/surrealdb:v3.3.0 start --bind 0.0.0.0:8000 surrealkv:///data/knowledge
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8001/health; then exit 0; fi
+            sleep 2
+          done
+          exit 1
+      - name: Verify recovered records and provenance
+        env:
+          AI_OFFICE_TEST_SURREALDB_PERSISTENCE_URL: ws://127.0.0.1:8001
+          AI_OFFICE_TEST_SURREALDB_PERSISTENCE_PHASE: verify
+        run: bunx --bun vitest run tests/integration/agent-knowledge-persistence.test.ts
+      - name: Remove test container and volume
+        if: always()
+        run: |
+          docker stop ai-office-ak09-surrealdb || true
+          docker volume rm ai-office-ak09-persistence || true

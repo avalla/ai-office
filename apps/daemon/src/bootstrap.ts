@@ -29,8 +29,9 @@ import {
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { DaemonHealthResponse } from "@ai-office/application/protocol/daemon-protocol.ts";
 import {
+  agentKnowledgeEnvironment,
   isAgentKnowledgeTenantId,
-  resolveAgentKnowledgeConfiguration,
+  loadAgentKnowledgeConfiguration,
   type AgentKnowledgeConfiguration,
 } from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
 import type { connectSurrealAgentKnowledgeStore } from "@ai-office/storage-surrealdb/connect-agent-knowledge-store.ts";
@@ -52,6 +53,7 @@ import {
   loadProviderCredentials,
   type ProviderCredentials,
 } from "@ai-office/llm-gateway/provider-credentials.ts";
+import { loadRuntimeHomeCredentialValue } from "@ai-office/llm-gateway/runtime-home-credential-store.ts";
 import {
   ensureRuntimeHome,
   resolveRuntimePaths,
@@ -175,12 +177,24 @@ export async function bootstrap(
   );
   const resolvedKnowledgeConfiguration =
     options.agentKnowledgeConfiguration ??
-    resolveAgentKnowledgeConfiguration(
-      process.env,
-      storageConfiguration.provider === "postgres"
-        ? storageConfiguration.tenantId
-        : undefined,
-    );
+    loadAgentKnowledgeConfiguration(process.env, {
+      runtimeHome: runtimePaths.runtimeHome,
+      ...(storageConfiguration.provider === "postgres"
+        ? { authoritativeTenantId: storageConfiguration.tenantId }
+        : {}),
+      loadCredential: (name) => {
+        if (
+          name !== agentKnowledgeEnvironment.username &&
+          name !== agentKnowledgeEnvironment.password
+        )
+          return undefined;
+        const credential = loadRuntimeHomeCredentialValue(
+          runtimePaths.runtimeHome,
+          name,
+        );
+        return credential.state === "present" ? credential.value : undefined;
+      },
+    });
   // The test/composition seam must not override PostgreSQL's authoritative tenant.
   const knowledgeConfiguration =
     storageConfiguration.provider === "postgres" &&
