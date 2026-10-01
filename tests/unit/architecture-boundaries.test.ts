@@ -455,65 +455,29 @@ test("distribution update orchestration stays behind ports without platform mech
   expect(mechanics).toEqual([]);
 });
 
-test("project memory stays behind its application port and the CairnKeep adapter", () => {
-  // Application and domain know a provider-neutral port only: no MCP, no
-  // CairnKeep, no AgentFS, no subprocesses, no configuration lookups.
-  for (const directory of ["packages/domain/src", "packages/application/src"])
+test("retired CairnKeep adapter is absent from production composition", () => {
+  expect(
+    existsSync(join(repositoryRoot, "packages/cairnkeep-memory/package.json")),
+  ).toBe(false);
+  for (const directory of ["packages", "apps"])
     for (const file of typescriptFiles(join(repositoryRoot, directory))) {
       const source = readFileSync(file, "utf8");
-      const forbidden = importedSpecifiers(source).filter((specifier) =>
-        /cairnkeep|modelcontextprotocol|agentfs|node:child_process|bun:/iu.test(
-          specifier,
+      expect(
+        importedSpecifiers(source).filter(
+          (specifier) =>
+            specifier.includes("cairnkeep-memory") ||
+            specifier.includes("project-memory-provider.port") ||
+            specifier.includes("legacy-memory-reader.port"),
         ),
-      );
-      expect(forbidden, relative(repositoryRoot, file)).toEqual([]);
+        relative(repositoryRoot, file),
+      ).toEqual([]);
     }
-  for (const relativePath of [
+  assertNoPlatformMechanics(
     "packages/application/src/context/run-context-assembler.ts",
-    "packages/application/src/ports/project-memory-provider.port.ts",
-    "packages/application/src/project-memory/project-memory-identity.ts",
-    "packages/application/src/project-memory/describe-project-memory.ts",
-  ])
-    assertNoPlatformMechanics(relativePath);
-
-  // Worker adapters, executors and the pipeline never reach the adapter.
-  const adapterReachers: string[] = [];
-  for (const directory of [
-    "packages/agent-runtime",
-    "packages/application",
-    "packages/domain",
-    "packages/storage-sqlite",
-    "packages/orchestration",
-    "apps/cli",
-    "apps/dashboard",
-  ])
-    for (const file of typescriptFiles(join(repositoryRoot, directory)))
-      if (
-        importedSpecifiers(readFileSync(file, "utf8")).some((specifier) =>
-          specifier.includes("cairnkeep-memory"),
-        )
-      )
-        adapterReachers.push(relative(repositoryRoot, file));
-  expect(adapterReachers).toEqual([]);
-
-  // The adapter uses only read-only CairnKeep tools; no mutation tool is ever
-  // referenced by production code.
-  const adapterSources = typescriptFiles(
-    join(repositoryRoot, "packages/cairnkeep-memory"),
-  ).map((file) => readFileSync(file, "utf8"));
-  const toolNames = new Set(
-    adapterSources.flatMap(
-      (source) =>
-        source.match(
-          /\b(?:memory|artifact|context|domain_knowledge|route|work_evidence)_[a-z_]+\b/gu,
-        ) ?? [],
-    ),
   );
-  expect([...toolNames]).toEqual([
-    "memory_search",
-    "memory_list",
-    "memory_read",
-  ]);
+  assertNoPlatformMechanics(
+    "packages/application/src/project-memory/project-memory-identity.ts",
+  );
 });
 
 test("raw provider credential values are reachable only at the gateway provider construction boundary", () => {

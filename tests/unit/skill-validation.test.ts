@@ -71,7 +71,7 @@ describe("AI Office skill validation", () => {
     );
   });
 
-  test("rejects stale CairnKeep advice in checked-in and projected guidance", () => {
+  test("rejects stale CairnKeep commands in checked-in and projected guidance", () => {
     const directory = mkdtempSync(join(tmpdir(), "ai-office-skill-legacy-"));
     temporaryDirectories.push(directory);
     const skillRoot = join(directory, "ai-office");
@@ -80,35 +80,37 @@ describe("AI Office skill validation", () => {
     });
     const skillPath = join(skillRoot, "SKILL.md");
     const staleAdvice =
-      "\nUse CairnKeep for new project memory. Run memory_write.\n";
+      "\nUse CairnKeep for new project memory. Run memory_write and knowledge:legacy-import.\n";
     writeFileSync(
       skillPath,
       readFileSync(skillPath, "utf8")
         .replace(
-          "unset AI_OFFICE_PROJECT_MEMORY_PROVIDER",
-          "keep the provider enabled",
+          /CairnKeep integration has been\s+removed/u,
+          "CairnKeep is available",
         )
         .concat(staleAdvice),
     );
     expect(validateAiOfficeSkill(skillRoot)).toEqual(
       expect.arrayContaining([
-        "SKILL.md is missing legacy guidance: unset AI_OFFICE_PROJECT_MEMORY_PROVIDER",
+        "SKILL.md is missing knowledge guidance: CairnKeep integration has been removed",
         "SKILL.md recommends writing new knowledge to CairnKeep",
+        "SKILL.md references removed command: knowledge:legacy-import",
       ]),
     );
     expect(
       validateProjectedAiOfficeSkill(
         compileProjectSkill()
           .replace(
-            /unset\s+AI_OFFICE_PROJECT_MEMORY_PROVIDER/u,
-            "keep the provider enabled",
+            /CairnKeep integration has been\s+removed/u,
+            "CairnKeep is available",
           )
           .concat(staleAdvice),
       ),
     ).toEqual(
       expect.arrayContaining([
-        "Projected SKILL.md is missing legacy guidance: unset AI_OFFICE_PROJECT_MEMORY_PROVIDER",
+        "Projected SKILL.md is missing knowledge guidance: CairnKeep integration has been removed",
         "Projected SKILL.md recommends writing new knowledge to CairnKeep",
+        "Projected SKILL.md references removed command: knowledge:legacy-import",
       ]),
     );
   });

@@ -375,15 +375,13 @@ provenance. The adapter validates scoped results. The host binds the trusted
 tenant and owns the connection; the application supplies only the portable
 `repositoryId` from authoritative project binding. Workers receive excerpts,
 never a store, tool, path or credential. Absence or failure degrades to no
-knowledge. The deprecated, read-only CairnKeep adapter remains for diagnostics
-and explicit legacy import; it does not feed worker context. See
+knowledge. CairnKeep integration was removed in AK-08. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
 
-The explicit legacy importer reads only the named CairnKeep scope derived from
-the authoritative portable repository ID. It stores legacy records in a
-separate SurrealDB table with source scope, key and content digest; no run,
-task or agent link is inferred. Imported memories join bounded retrieval as
-advisory context. Approval is audited before the secondary write.
+Previously imported legacy records remain in a separate SurrealDB table with
+source scope, key and content digest; no run, task or agent link is inferred.
+They join bounded retrieval as advisory context and remain traceable. No current
+Runtime command imports new CairnKeep data.
 
 New knowledge admission runs through an application use case. It validates an
 authoritative completed worker run and project binding, requires an operator
@@ -462,8 +460,8 @@ The architecture distinguishes three databases by authority and rebuildability:
 
 The optional external SurrealDB knowledge store is a separate,
 non-authoritative category outside these databases. AI Office stores its
-per-run retrieval provenance in `project.sqlite`. The deprecated CairnKeep
-provider remains read-only for legacy diagnostics and explicit import.
+per-run retrieval provenance in `project.sqlite`. Historical CairnKeep
+retrieval rows and native imported records remain readable after adapter removal.
 
 `project.sqlite` also stores immutable portable snapshot revisions and one
 local head/base record per backed-up or restored project. A revision identifies

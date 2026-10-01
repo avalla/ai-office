@@ -41,9 +41,6 @@
         "bullmq": "^5.58.0",
       },
     },
-    "packages/cairnkeep-memory": {
-      "name": "@ai-office/cairnkeep-memory",
-    },
     "packages/command-support": {
       "name": "@ai-office/command-support",
     },
@@ -106,8 +103,6 @@
     "@ai-office/application": ["@ai-office/application@workspace:packages/application"],
 
     "@ai-office/bullmq-job-queue": ["@ai-office/bullmq-job-queue@workspace:packages/bullmq-job-queue"],
-
-    "@ai-office/cairnkeep-memory": ["@ai-office/cairnkeep-memory@workspace:packages/cairnkeep-memory"],
 
     "@ai-office/cli": ["@ai-office/cli@workspace:apps/cli"],
 

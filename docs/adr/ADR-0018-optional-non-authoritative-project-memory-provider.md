@@ -1,6 +1,11 @@
 # ADR-0018: Optional, non-authoritative project memory provider
 
-Status: accepted, 2026-09-13.
+Status: superseded by ADR-0025 after AK-08, 2026-10-01.
+
+This ADR records the former CairnKeep retrieval boundary. Its adapter,
+diagnostic command, and import commands have been removed. Existing run
+provenance and imported native records remain readable; no external CairnKeep
+database was deleted.
 
 ## Context
 

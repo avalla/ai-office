@@ -158,7 +158,7 @@ is not tenant authority, and authenticated identity is not membership authority.
 
 The following are intentionally outside this first project-storage boundary:
 `GlobalMemoryRepository` backed by `global.sqlite`, the optional external
-`ProjectMemoryProvider`, and the future regenerable code index backed by
+`AgentKnowledgeStore`, and the future regenerable code index backed by
 `index.sqlite`. They must not be merged into the first PostgreSQL project
 authority implementation.
 
@@ -273,10 +273,9 @@ Provider pricing currently remains in `project.sqlite`. Moving any catalog data 
 
 New agent knowledge uses the optional SurrealDB `AgentKnowledgeStore`, scoped by
 tenant and portable `repositoryId`. It supplies advisory worker context and
-stores reviewed admissions, not project or run authority. The deprecated
-CairnKeep adapter is read-only and retained for diagnostics and explicit import
-of an existing named scope derived from `repositoryId`; it no longer supplies
-worker context. AI Office never opens its database directly or deletes it.
+stores reviewed admissions, not project or run authority. Previously imported
+CairnKeep records remain readable with their legacy origin. AI Office no longer
+opens CairnKeep scopes and never deletes its external database.
 `global.sqlite` keeps its M7 meaning. `runtime:purge` and repository uninstall
 do not touch either external store; purge removes run-local retrieval provenance
 with `project.sqlite`. See [native agent knowledge](../development/agent-knowledge.md)

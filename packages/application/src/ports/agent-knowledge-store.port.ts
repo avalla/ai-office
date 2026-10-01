@@ -134,16 +134,7 @@ export interface KnowledgeHit extends KnowledgeScope {
   createdAt: Date;
 }
 
-/** A CairnKeep entry has no verified AI Office run, task, or agent provenance. */
-export interface LegacyKnowledgeInput extends KnowledgeScope {
-  id: string;
-  text: string;
-  sourceScope: string;
-  sourceKey: string;
-  sourceSha256: string;
-  importedAt: Date;
-}
-
+/** Imported records have no verified AI Office run, task, or agent provenance. */
 export interface LegacyKnowledgeHit extends KnowledgeScope {
   id: string;
   kind: "memory";
@@ -180,8 +171,6 @@ export interface KnowledgeProvenance {
 export interface AgentKnowledgeStore {
   recordMemory(input: MemoryInput): Promise<void>;
   recordDecision(input: DecisionInput): Promise<void>;
-  /** Atomic result: an exact existing record retains its original import timestamp. */
-  recordLegacyMemory(input: LegacyKnowledgeInput): Promise<"recorded" | "existing">;
   traceLegacyMemory(
     scope: KnowledgeScope,
     id: string,

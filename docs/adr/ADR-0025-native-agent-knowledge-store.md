@@ -50,8 +50,9 @@ legacy e non ricevono provenienza di run inventata.
 - La ricerca e l'ordinamento di CairnKeep non possono essere assunti identici:
   la compatibilità del termine letterale e le differenze di ranking devono
   essere verificate e documentate prima del passaggio.
-- ADR-0018 descrive il comportamento storico di CairnKeep e sarà marcato
-  superato solo quando la rimozione finale sarà completata.
+- ADR-0018 descrive il comportamento storico di CairnKeep ed è superato
+  dalla rimozione finale in AK-08. I dati già importati e la provenienza dei run
+  restano leggibili; i database esterni CairnKeep non sono eliminati.
 
 Questa decisione **non autorizza** SurrealDB come `ProjectStorage`,
 `AgentRuntimeRepository` o fonte di autorità per alcuno stato operativo.

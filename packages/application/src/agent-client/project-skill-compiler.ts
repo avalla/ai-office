@@ -50,15 +50,9 @@ Classify tasks as feature, bugfix, maintenance, research, or release and resolve
 
 For new agent knowledge, use a connected AgentKnowledgeStore through
 \`knowledge:plan\` and \`knowledge:admit\` after reviewing the exact plan hash;
-inspect provenance with \`knowledge:trace\`. CairnKeep is deprecated and
-read-only. Use \`project-memory:status\` only for legacy diagnostics and
-\`knowledge:legacy-plan\` / \`knowledge:legacy-import\` only for explicit import
-of an existing named scope. Do not recommend CairnKeep for new knowledge or
-write to its scope. For a temporary import, inspect the derived scope, review
-\`knowledge:legacy-plan\`, run \`knowledge:legacy-import\` with the exact
-reviewed hash, verify provenance with \`knowledge:trace\`, then unset
-AI_OFFICE_PROJECT_MEMORY_PROVIDER and restart the Runtime. Use
-\`AgentKnowledgeStore\` for all future knowledge.
+inspect provenance with \`knowledge:trace\`. CairnKeep integration has been
+removed. Existing imported records remain readable through native knowledge
+retrieval and \`knowledge:trace\`; use \`AgentKnowledgeStore\` for new knowledge.
 
 ## Browse and follow up
 

@@ -7,7 +7,6 @@ import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.t
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import type { AgentKnowledgeStore } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
-import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
 
 const roots: string[] = [];
 
@@ -137,7 +136,7 @@ describe("daemon bootstrap resource ownership", () => {
           store: {} as AgentKnowledgeStore,
           close: knowledgeClose,
         }),
-        get projectMemory(): ProjectMemoryProvider {
+        get agentExecutor(): never {
           throw new Error("later bootstrap failure");
         },
       }),

@@ -12,8 +12,6 @@ import type { ProjectBindingAdapter } from "@ai-office/application/ports/project
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import type { OperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project-archive-adapter.port.ts";
-import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
-import type { LegacyMemoryReader } from "@ai-office/application/ports/legacy-memory-reader.port.ts";
 import type { RuntimeAgentKnowledge } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
@@ -35,10 +33,7 @@ export interface CommandContext extends ProjectStorage {
   projectArchives: ProjectArchiveAdapter;
   defaultOfficeManifest: OfficeManifest;
   memory?: GlobalMemoryRepository;
-  /** Optional, non-authoritative project memory; disabled unless configured. */
-  projectMemory: ProjectMemoryProvider;
-  legacyMemory?: LegacyMemoryReader;
-  /** Secondary store and trusted tenant scope, composed independently of project memory. */
+  /** Secondary store and trusted tenant scope. */
   agentKnowledge?: RuntimeAgentKnowledge;
   /** Host model routing snapshot used by this command. */
   modelRouting: ModelRoutingState;

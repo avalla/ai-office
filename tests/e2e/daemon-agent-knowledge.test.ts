@@ -66,6 +66,25 @@ async function withHost(
 }
 
 describe("Runtime agent knowledge composition", () => {
+  it("rejects retired CairnKeep commands over the Runtime socket", async () => {
+    await withHost(
+      { agentKnowledgeConfiguration: { kind: "disabled" } },
+      async (client) => {
+        for (const command of [
+          "project-memory:status",
+          "knowledge:legacy-plan",
+          "knowledge:legacy-import",
+        ]) {
+          const result = await client.execute([command]);
+          expect(result.exitCode).toBe(1);
+          expect(result.stderr.join("\n")).toContain(
+            `Unknown command: ${command}`,
+          );
+        }
+      },
+    );
+  });
+
   it("composes an explicit secondary store and closes it with the host", async () => {
     const close = vi.fn(async () => {});
     const connect = vi.fn(async () => ({
@@ -84,9 +103,6 @@ describe("Runtime agent knowledge composition", () => {
           startup: "connected",
         });
         expect(JSON.stringify(health)).not.toContain("secret");
-        const memoryStatus = await client.execute(["project-memory:status", "--json"]);
-        expect(memoryStatus.exitCode).toBe(0);
-        expect(JSON.stringify(memoryStatus)).not.toContain("secret");
         expect(connect).toHaveBeenCalledWith(
           configuration.kind === "surrealdb"
             ? configuration.connection
@@ -128,10 +144,7 @@ describe("Runtime agent knowledge composition", () => {
         },
         async (client) => {
           expect((await client.health()).knowledge).toEqual(expected);
-          expect(
-            (await client.execute(["project-memory:status", "--json"]))
-              .exitCode,
-          ).toBe(0);
+          expect((await client.execute(["client:detect"])).exitCode).toBe(0);
         },
       );
       expect(connect).not.toHaveBeenCalled();
@@ -154,9 +167,7 @@ describe("Runtime agent knowledge composition", () => {
           startup: "unavailable",
         });
         expect(JSON.stringify(health)).not.toContain("secret");
-        expect(
-          (await client.execute(["project-memory:status", "--json"])).exitCode,
-        ).toBe(0);
+        expect((await client.execute(["client:detect"])).exitCode).toBe(0);
       },
     );
   });

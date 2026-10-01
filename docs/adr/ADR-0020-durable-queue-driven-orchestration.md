@@ -65,7 +65,8 @@ worker no-op. Queue health is reported as sanitized reachability/configuration,
 pending outbox count, and consumer status. Credentials never enter SQLite,
 audit, portable state, logs, dashboard output, or jobs.
 
-CairnKeep remains read-only. This ADR does not introduce autonomous memory
+CairnKeep was read-only at the time of this decision; AK-08 later removed its
+integration. This ADR does not introduce autonomous memory
 writes, a role-specific queue, distributed scheduling, or a new AgentRun state
 machine.
 
