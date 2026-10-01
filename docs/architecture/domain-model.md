@@ -182,6 +182,16 @@ source's `defaultBranch` is recorded only when the checkout has an explicit
 `refs/remotes/origin/HEAD` symbolic reference; it is otherwise unknown.
 Refreshing detected facts preserves human-confirmed profile entries.
 
+Task dependency edits are refused after a persisted task start, AgentRun, or
+pipeline run. Portable project archives omit direct task-start audit history
+and pipeline-run history. A restored task that previously started but returned
+to `pending` or `blocked` without a portable AgentRun can therefore appear
+editable. Backup refuses live runs, and every new execution admission checks
+current prerequisites, but lifetime edit immutability across restore requires
+portable execution-history evidence or a conservative restore lock. That
+boundary must be resolved before relying on dependency editing for restored
+historical tasks.
+
 The latest office manifest is the approved current office configuration for
 mission, goals, constraints, preferences, permission preferences, roles, and
 pipelines. Applying a manifest creates a new immutable revision without copying,
