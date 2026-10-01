@@ -644,7 +644,7 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: AK-01–AK-08 merged; AK-09 implementation in progress.
+Status: AK-01–AK-09 merged.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
@@ -661,9 +661,9 @@ historical CairnKeep retrieval path. See
 | AK-08 | CairnKeep implementation removal and final docs                              | AK-07 merged                      |
 | AK-09 | Managed Agent Knowledge configuration and SurrealDB deployment support       | AK-03–AK-05; AK-08 for final docs |
 
-AK-01–AK-08 each map to one reviewed PR. AK-09 is one operational task with
-four delivery slices below; each may be a separately reviewed PR, with one
-requirement and task tracking completion of the whole. Completion requires proven retrieval, writes,
+AK-01–AK-09 each map to one reviewed PR. AK-09 was delivered as one operational
+task with four delivery slices below, tracked by one requirement and task.
+Completion required proven retrieval, writes,
 legacy-data disposition, failure behavior, documentation, and operational
 coherence. SQLite/PostgreSQL remain the only operational authority; SurrealDB
 is knowledge storage only. No vector search, RAG redesign, or permanent
@@ -685,11 +685,11 @@ never deleted by AI Office. See the same guide.
 
 ### AK-09 — Managed Agent Knowledge configuration and SurrealDB deployment support
 
-**Status:** implementation in progress. This closes the operational gap left by AK-03: foreground
-Runtime environment configuration works, but before AK-09 `service install` emitted
-no durable Agent Knowledge configuration source. Hand editing the generated
-systemd unit or launchd plist is neither a supported nor a secret-safe product
-workflow. AK-09 does not change the secondary/advisory status of SurrealDB.
+**Status:** implemented on `main` via PR #75. AK-09 closes the operational gap
+left by AK-03: managed services now load Agent Knowledge configuration and
+protected credentials from the Runtime home without editing generated systemd
+units or launchd plists. Foreground environment configuration remains supported.
+SurrealDB remains a secondary, advisory knowledge store.
 
 **Requirements**
 
