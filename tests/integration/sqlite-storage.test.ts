@@ -76,6 +76,7 @@ describe("project database migrations", () => {
       "0036_milestone_title_changed_event.sql",
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -124,6 +125,7 @@ describe("project database migrations", () => {
       { version: "0036_milestone_title_changed_event.sql" },
       { version: "0037_task_dependencies.sql" },
       { version: "0038_milestone_description_changed_event.sql" },
+      { version: "0039_task_dependency_immutable_edges.sql" },
     ]);
     database.close();
   });

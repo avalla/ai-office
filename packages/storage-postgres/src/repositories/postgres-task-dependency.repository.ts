@@ -22,6 +22,26 @@ export class PostgresTaskDependencyRepository implements TaskDependencyRepositor
     this.tenantId = requirePostgresTenantId(tenantId);
   }
 
+  async hasExecutionHistory(
+    projectId: string,
+    taskId: string,
+  ): Promise<boolean> {
+    const rows = await this.database.query<{ present: boolean }>(
+      `SELECT (
+        EXISTS (SELECT 1 FROM core.agent_run r JOIN core.project p ON p.id = r.project_id
+          WHERE r.project_id = $1 AND r.task_id = $2 AND p.tenant_id = $3)
+        OR EXISTS (SELECT 1 FROM core.pipeline_run r JOIN core.project p ON p.id = r.project_id
+          WHERE r.project_id = $1 AND r.task_id = $2 AND p.tenant_id = $3)
+        OR EXISTS (SELECT 1 FROM core.audit_event e JOIN core.project p ON p.id = e.project_id
+          WHERE e.project_id = $1 AND e.aggregate_type = 'task' AND e.aggregate_id = $2
+          AND e.event_type = 'task.status_changed' AND e.payload_json->>'operation' = 'start'
+          AND p.tenant_id = $3)
+      ) AS present`,
+      [projectId, taskId, this.tenantId],
+    );
+    return rows[0]?.present === true;
+  }
+
   async listByProject(projectId: string): Promise<TaskDependency[]> {
     const rows = await this.database.query<Row>(
       `SELECT d.project_id, d.task_id, d.depends_on_task_id, d.created_at

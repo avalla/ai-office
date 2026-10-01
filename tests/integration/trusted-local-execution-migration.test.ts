@@ -191,7 +191,7 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "fresh.sqlite"));
     expect(migrate(database, migrationSource).applied.at(-1)).toBe(
-      "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     );
     expect(
       database
@@ -260,6 +260,7 @@ describe("M6C-lite migration", () => {
       "0036_milestone_title_changed_event.sql",
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     ]);
     expect(
       database

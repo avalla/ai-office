@@ -25,7 +25,8 @@ test("forward migration preserves existing tasks and starts with an empty depend
     (name) =>
       name.endsWith(".sql") &&
       name !== "0037_task_dependencies.sql" &&
-      name !== "0038_milestone_description_changed_event.sql",
+      name !== "0038_milestone_description_changed_event.sql" &&
+      name !== "0039_task_dependency_immutable_edges.sql",
   ))
     copyFileSync(join(migrations, file), join(prior, file));
   const database = openDatabase(join(root, "project.sqlite"));
@@ -46,6 +47,7 @@ test("forward migration preserves existing tasks and starts with an empty depend
     expect(migrate(database, migrations).applied).toEqual([
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     ]);
     expect(migrate(database, migrations).applied).toEqual([]);
     expect(
@@ -57,6 +59,23 @@ test("forward migration preserves existing tasks and starts with an empty depend
         "project",
       ),
     ).toEqual([]);
+    await new SqliteTaskRepository(database).save(
+      Task.create({ id: "other", projectId: "project", title: "Other", now }),
+    );
+    const dependencies = new SqliteTaskDependencyRepository(database);
+    expect(
+      await dependencies.link({
+        projectId: "project",
+        taskId: "task",
+        dependsOnTaskId: "other",
+        createdAt: now,
+      }),
+    ).toBe(true);
+    expect(() =>
+      database
+        .prepare("UPDATE task_dependency SET task_id = ? WHERE task_id = ?")
+        .run("other", "task"),
+    ).toThrow("immutable");
   } finally {
     database.close();
     rmSync(root, { recursive: true, force: true });

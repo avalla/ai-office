@@ -175,6 +175,13 @@ answers, inferences, provenance, and historical atomic user knowledge.
 `GetProjectProfile` exposes that evidence; it is not necessarily the current
 organizational configuration.
 
+The detected `repository/current_branch` fact is the branch of the checkout
+scanned by `project:import` (`.git/HEAD`). It can be an incidental managed
+Runtime worktree branch and is not the project's canonical branch. A local
+source's `defaultBranch` is recorded only when the checkout has an explicit
+`refs/remotes/origin/HEAD` symbolic reference; it is otherwise unknown.
+Refreshing detected facts preserves human-confirmed profile entries.
+
 The latest office manifest is the approved current office configuration for
 mission, goals, constraints, preferences, permission preferences, roles, and
 pipelines. Applying a manifest creates a new immutable revision without copying,

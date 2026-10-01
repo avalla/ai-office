@@ -87,17 +87,22 @@ function detectRemoteUrl(config: string | undefined): string | undefined {
   return remotes.get("origin") ?? [...remotes.values()][0];
 }
 
-function detectGit(layout: GitLayout | undefined): { remoteUrl?: string; currentBranch?: string } {
+function detectGit(layout: GitLayout | undefined): { remoteUrl?: string; currentBranch?: string; defaultBranch?: string } {
   if (layout === undefined) return {};
   const head = readText(join(layout.worktreeGitDir, "HEAD"))?.trim();
   const remoteUrl = detectRemoteUrl(readText(join(layout.commonGitDir, "config")));
   const currentBranch = head?.startsWith("ref: refs/heads/")
     ? head.slice("ref: refs/heads/".length)
     : undefined;
+  const originHead = readText(join(layout.commonGitDir, "refs", "remotes", "origin", "HEAD"))?.trim();
+  const defaultBranch = originHead?.startsWith("ref: refs/remotes/origin/")
+    ? originHead.slice("ref: refs/remotes/origin/".length)
+    : undefined;
 
   return {
     ...(remoteUrl === undefined ? {} : { remoteUrl }),
-    ...(currentBranch === undefined ? {} : { currentBranch })
+    ...(currentBranch === undefined ? {} : { currentBranch }),
+    ...(defaultBranch === undefined ? {} : { defaultBranch })
   };
 }
 

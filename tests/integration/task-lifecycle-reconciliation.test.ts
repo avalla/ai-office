@@ -421,6 +421,130 @@ describe("task lifecycle commands", () => {
     ).toBe("running");
   });
 
+  test("dependency edits are symmetric before execution and immutable afterward", async () => {
+    const context = await fixture();
+    await seedProject(context, "edit-project");
+    await seedTask(context, "edit-project", "prerequisite");
+    await seedTask(context, "edit-project", "dependent");
+    const edge = {
+      projectId: "edit-project",
+      taskId: "dependent",
+      dependsOnTaskId: "prerequisite",
+      actorId: "operator",
+    };
+    expect(await context.dependencyCommands.link(edge)).toEqual({
+      created: true,
+    });
+    expect(await context.dependencyCommands.unlink(edge)).toEqual({
+      removed: true,
+    });
+    await context.lifecycle.start({
+      projectId: edge.projectId,
+      taskId: edge.taskId,
+      actorId: edge.actorId,
+    });
+    const before =
+      auditEvents(context, "task.dependency_linked").length +
+      auditEvents(context, "task.dependency_unlinked").length;
+    await expect(context.dependencyCommands.link(edge)).rejects.toThrow(
+      "before task execution",
+    );
+    await expect(context.dependencyCommands.unlink(edge)).rejects.toThrow(
+      "before task execution",
+    );
+    await context.lifecycle.block({
+      projectId: edge.projectId,
+      taskId: edge.taskId,
+      actorId: edge.actorId,
+      reason: "Waiting for external input",
+    });
+    await expect(context.dependencyCommands.link(edge)).rejects.toThrow(
+      "after task execution",
+    );
+    await expect(context.dependencyCommands.unlink(edge)).rejects.toThrow(
+      "after task execution",
+    );
+    await context.lifecycle.cancel({
+      projectId: edge.projectId,
+      taskId: edge.taskId,
+      actorId: edge.actorId,
+      reason: "Superseded",
+    });
+    await expect(context.dependencyCommands.link(edge)).rejects.toThrow(
+      "before task execution",
+    );
+    await expect(context.dependencyCommands.unlink(edge)).rejects.toThrow(
+      "before task execution",
+    );
+    expect(
+      auditEvents(context, "task.dependency_linked").length +
+        auditEvents(context, "task.dependency_unlinked").length,
+    ).toBe(before);
+  });
+
+  test("active AgentRun prevents both dependency edits even while the task is pending", async () => {
+    const context = await fixture();
+    await seedProject(context, "edit-project");
+    await seedTask(context, "edit-project", "prerequisite");
+    await seedTask(context, "edit-project", "dependent");
+    const edge = {
+      projectId: "edit-project",
+      taskId: "dependent",
+      dependsOnTaskId: "prerequisite",
+      actorId: "operator",
+    };
+    await context.dependencyCommands.link(edge);
+    await context.runtime.saveRole(
+      Role.create({
+        id: "edit-role",
+        projectId: "edit-project",
+        key: "developer",
+        name: "Developer",
+        version: 1,
+        capabilities: [],
+        tools: [],
+        modelPolicy: "default",
+        limits: { maxIterations: 1, maxCostMicros: 1000n, timeoutSeconds: 10 },
+        sourcePath: "roles.yaml",
+        now,
+      }),
+    );
+    await context.runtime.saveAgent({
+      id: "edit-agent",
+      projectId: "edit-project",
+      name: "developer-agent",
+      roleId: "edit-role",
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await context.runtime.saveRun(
+      (await import("@ai-office/domain/agent/agent-run.ts")).AgentRun.create({
+        id: "edit-run",
+        projectId: "edit-project",
+        taskId: "dependent",
+        agentId: "edit-agent",
+        now,
+      }),
+    );
+    const before =
+      auditEvents(context, "task.dependency_linked").length +
+      auditEvents(context, "task.dependency_unlinked").length;
+    await expect(
+      context.dependencyCommands.link({
+        ...edge,
+        dependsOnTaskId: "dependent",
+      }),
+    ).rejects.toThrow("after task execution");
+    await expect(context.dependencyCommands.unlink(edge)).rejects.toThrow(
+      "after task execution",
+    );
+    expect(
+      auditEvents(context, "task.dependency_linked").length +
+        auditEvents(context, "task.dependency_unlinked").length,
+    ).toBe(before);
+  });
+
   test("reports a completed milestone with a competing verified implementation task", async () => {
     const context = await fixture();
     const projectId = "completed-milestone-project";
@@ -511,11 +635,36 @@ describe("task lifecycle commands", () => {
       taskId: "original",
       actorId: "operator",
     });
+    const terminalReport = await context.reconcile.inspect(projectId);
+    expect(terminalReport.issues.map((issue) => issue.finding)).toContain(
+      "verified_requirement_duplicate_tasks",
+    );
     expect(
-      (await context.reconcile.inspect(projectId)).issues.map(
-        (issue) => issue.finding,
-      ),
-    ).toContain("verified_requirement_duplicate_tasks");
+      terminalReport.issues
+        .filter(
+          (issue) => issue.finding === "verified_requirement_duplicate_tasks",
+        )
+        .every(
+          (issue) =>
+            issue.severity === "warning" &&
+            !issue.repairable &&
+            issue.repairOperation === null,
+        ),
+    ).toBe(true);
+    expect(terminalReport.planHash).toBeNull();
+    await expect(
+      context.reconcile.repair({
+        projectId,
+        approvedPlanHash: "arbitrary",
+        actorId: "operator",
+      }),
+    ).rejects.toBeInstanceOf(TaskReconciliationApprovalError);
+    expect((await context.tasks.findById("original"))?.snapshot().status).toBe(
+      "completed",
+    );
+    expect((await context.tasks.findById("duplicate"))?.snapshot().status).toBe(
+      "completed",
+    );
   });
   test("starts, submits, and completes a task with an audit trail", async () => {
     const context = await fixture();

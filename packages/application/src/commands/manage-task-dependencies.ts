@@ -12,7 +12,6 @@ import type { TaskDependencyRepository } from "../ports/task-dependency-reposito
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import type { RecordAuditEvent } from "./record-audit-event.ts";
-import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
 
 export class TaskPrerequisiteIncompleteError extends TaskDependencyError {
   constructor(
@@ -67,7 +66,6 @@ export class ManageTaskDependencies {
     private readonly audit: RecordAuditEvent,
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
-    private readonly runtime?: AgentRuntimeRepository,
   ) {}
 
   async link(input: {
@@ -77,26 +75,7 @@ export class ManageTaskDependencies {
     actorId: string;
   }): Promise<{ created: boolean }> {
     return this.transactions.run(async () => {
-      const task = await this.requireTask(input.projectId, input.taskId);
-      if (
-        task.snapshot().status !== "pending" &&
-        task.snapshot().status !== "blocked"
-      )
-        throw new TaskDependencyError(
-          "Prerequisites can be added only before work starts or while it is blocked",
-        );
-      if (
-        (await this.runtime?.listRuns(input.projectId))?.some(
-          (run) =>
-            run.snapshot().taskId === input.taskId &&
-            !["completed", "failed", "cancelled"].includes(
-              run.snapshot().status,
-            ),
-        )
-      )
-        throw new TaskDependencyError(
-          "Prerequisites cannot be added while an agent run is active",
-        );
+      await this.assertEditable(input.projectId, input.taskId);
       await this.requireTask(input.projectId, input.dependsOnTaskId);
       const edges = await this.dependencies.listByProject(input.projectId);
       if (
@@ -134,7 +113,7 @@ export class ManageTaskDependencies {
     actorId: string;
   }): Promise<{ removed: boolean }> {
     return this.transactions.run(async () => {
-      await this.requireTask(input.projectId, input.taskId);
+      await this.assertEditable(input.projectId, input.taskId);
       await this.requireTask(input.projectId, input.dependsOnTaskId);
       const removed = await this.dependencies.unlink(
         input.projectId,
@@ -194,5 +173,20 @@ export class ManageTaskDependencies {
         `Task ${taskId} does not exist in project ${projectId}`,
       );
     return task;
+  }
+
+  private async assertEditable(
+    projectId: string,
+    taskId: string,
+  ): Promise<void> {
+    const task = await this.requireTask(projectId, taskId);
+    if (!["pending", "blocked"].includes(task.snapshot().status))
+      throw new TaskDependencyError(
+        "Prerequisites can change only before task execution begins",
+      );
+    if (await this.dependencies.hasExecutionHistory(projectId, taskId))
+      throw new TaskDependencyError(
+        "Prerequisites cannot change after task execution begins",
+      );
   }
 }

@@ -149,7 +149,6 @@ export async function handleTaskCommand(
     audit,
     clock,
     transactions,
-    runtime,
   );
 
   if (

@@ -1341,6 +1341,9 @@ describe("project portability", () => {
     // says so: one version number, one schema contract.
     expect(backup.archive.manifest.formatVersion).toBe(2);
     expect(backup.archive.manifest.contents).toContain("task_requirements");
+    expect(serializePortableProjectArchive(backup.archive)).not.toContain(
+      "taskDependencies",
+    );
     expect(
       backup.archive.state.governance.taskRequirements?.map((value) => ({
         taskId: value.taskId,
@@ -1387,19 +1390,75 @@ describe("project portability", () => {
       imported.projectId,
       "Prerequisite",
     );
+    const otherPrerequisite = await createTask(
+      origin,
+      imported.projectId,
+      "Another prerequisite",
+    );
     const dependent = await createTask(origin, imported.projectId, "Dependent");
     const dependencies = new SqliteTaskDependencyRepository(origin.database);
+    const firstEdge = {
+      projectId: imported.projectId,
+      taskId: dependent,
+      dependsOnTaskId: prerequisite,
+      createdAt: origin.clock.now(),
+    };
+    const otherEdge = { ...firstEdge, dependsOnTaskId: otherPrerequisite };
+    expect(await dependencies.link(firstEdge)).toBe(true);
+    expect(await dependencies.link(otherEdge)).toBe(true);
+    const beforeReorder = portableStateChecksum(
+      await origin.states.loadPortableState(imported.projectId),
+    );
     expect(
-      await dependencies.link({
-        projectId: imported.projectId,
-        taskId: dependent,
-        dependsOnTaskId: prerequisite,
-        createdAt: origin.clock.now(),
-      }),
+      await dependencies.unlink(imported.projectId, dependent, prerequisite),
     ).toBe(true);
+    expect(await dependencies.link(firstEdge)).toBe(true);
+    expect(
+      portableStateChecksum(
+        await origin.states.loadPortableState(imported.projectId),
+      ),
+    ).toBe(beforeReorder);
     const first = await origin.service.backup(imported.projectId);
     expect(first.archive.manifest.formatVersion).toBe(3);
-    expect(first.archive.state.taskDependencies).toHaveLength(1);
+    expect(first.archive.state.taskDependencies).toHaveLength(2);
+    for (const invalidDependencies of [
+      [
+        {
+          taskId: dependent,
+          dependsOnTaskId: "other-project-task",
+          createdAt: origin.clock.now().toISOString(),
+        },
+      ],
+      [
+        {
+          taskId: dependent,
+          dependsOnTaskId: prerequisite,
+          createdAt: origin.clock.now().toISOString(),
+        },
+        {
+          taskId: prerequisite,
+          dependsOnTaskId: dependent,
+          createdAt: origin.clock.now().toISOString(),
+        },
+      ],
+    ]) {
+      const invalidState = {
+        ...first.archive.state,
+        taskDependencies: invalidDependencies,
+      };
+      expect(() =>
+        createPortableProjectArchive({
+          manifest: {
+            ...first.archive.manifest,
+            revision: {
+              ...first.archive.manifest.revision,
+              stateChecksum: portableStateChecksum(invalidState),
+            },
+          },
+          state: invalidState,
+        }),
+      ).toThrow();
+    }
     origin.database.close();
 
     const destination = openRuntime(targetRuntime);
@@ -1435,6 +1494,7 @@ describe("project portability", () => {
     // is absent, so the state checksum is the one those archives carried.
     const serialized = serializePortableProjectArchive(backup.archive);
     expect(serialized).not.toContain("taskRequirements");
+    expect(serialized).not.toContain("taskDependencies");
     expect(parsePortableProjectArchive(serialized)).toEqual(backup.archive);
     origin.database.close();
 
@@ -1563,6 +1623,13 @@ describe("project portability", () => {
         `[remote "origin"]\n  url = ${remote}\n`,
       );
       writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+      mkdirSync(join(root, ".git", "refs", "remotes", "origin"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(root, ".git", "refs", "remotes", "origin", "HEAD"),
+        "ref: refs/remotes/origin/main\n",
+      );
     }
     const origin = openRuntime(sourceRuntime);
     const imported = await new ImportProject(

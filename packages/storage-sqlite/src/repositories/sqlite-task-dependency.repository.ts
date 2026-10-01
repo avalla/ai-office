@@ -14,6 +14,26 @@ interface Row {
 export class SqliteTaskDependencyRepository implements TaskDependencyRepository {
   constructor(private readonly database: Database) {}
 
+  async hasExecutionHistory(
+    projectId: string,
+    taskId: string,
+  ): Promise<boolean> {
+    return (
+      this.database
+        .query<{ present: number }, [string, string]>(
+          `SELECT (
+        EXISTS (SELECT 1 FROM agent_run WHERE project_id = ?1 AND task_id = ?2)
+        OR EXISTS (SELECT 1 FROM pipeline_run WHERE project_id = ?1 AND task_id = ?2)
+        OR EXISTS (SELECT 1 FROM audit_event WHERE project_id = ?1
+          AND aggregate_type = 'task' AND aggregate_id = ?2
+          AND event_type = 'task.status_changed'
+          AND json_extract(payload_json, '$.operation') = 'start')
+      ) AS present`,
+        )
+        .get(projectId, taskId)?.present === 1
+    );
+  }
+
   async listByProject(projectId: string): Promise<TaskDependency[]> {
     return this.database
       .query<Row, [string]>(

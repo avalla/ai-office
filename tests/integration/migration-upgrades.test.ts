@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0038_milestone_description_changed_event.sql",
+        "0039_task_dependency_immutable_edges.sql",
       );
       expect(
         database
@@ -188,6 +188,7 @@ describe("migration upgrades", () => {
       "0036_milestone_title_changed_event.sql",
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     ]);
     expect(
       database
@@ -262,6 +263,7 @@ describe("migration upgrades", () => {
       "0036_milestone_title_changed_event.sql",
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     ]);
     expect(
       database
@@ -416,6 +418,7 @@ describe("migration upgrades", () => {
       "0036_milestone_title_changed_event.sql",
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     ]);
     expect(
       database
@@ -474,6 +477,7 @@ describe("migration upgrades", () => {
       "0036_milestone_title_changed_event.sql",
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     ]);
     database
       .prepare(
@@ -806,6 +810,7 @@ describe("migration upgrades", () => {
       "0036_milestone_title_changed_event.sql",
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     ]);
     expect(
       upgraded
@@ -866,6 +871,7 @@ describe("migration upgrades", () => {
       "0036_milestone_title_changed_event.sql",
       "0037_task_dependencies.sql",
       "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
     ]);
     expect(
       database

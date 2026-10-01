@@ -115,6 +115,88 @@ describe.skipIf(connectionString === undefined)(
       async close(): Promise<void> {},
     }));
 
+    test("serializes concurrent inverse dependency edges so no cycle commits", async () => {
+      const first = new PostgresClient(connectionString!);
+      const second = new PostgresClient(connectionString!);
+      const observer = new PostgresClient(connectionString!);
+      const projectId = `cycle-${randomUUID()}`;
+      const taskA = `cycle-a-${randomUUID()}`;
+      const taskB = `cycle-b-${randomUUID()}`;
+      const now = new Date("2026-10-01T00:00:00.000Z");
+      try {
+        const projects = new PostgresProjectRepository(observer, tenantId);
+        const tasks = new PostgresTaskRepository(observer, tenantId);
+        await projects.save(
+          Project.create({ id: projectId, name: "Concurrent cycle", now }),
+        );
+        for (const id of [taskA, taskB])
+          await tasks.save(Task.create({ id, projectId, title: id, now }));
+
+        let releaseFirst!: () => void;
+        const firstMayCommit = new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+        let firstInserted!: () => void;
+        const firstInsertDone = new Promise<void>((resolve) => {
+          firstInserted = resolve;
+        });
+        const firstWrite = first.transaction(async () => {
+          expect(
+            await new PostgresTaskDependencyRepository(first, tenantId).link({
+              projectId,
+              taskId: taskA,
+              dependsOnTaskId: taskB,
+              createdAt: now,
+            }),
+          ).toBe(true);
+          firstInserted();
+          await firstMayCommit;
+        });
+        await firstInsertDone;
+        let secondAttempting!: () => void;
+        const secondAttemptStarted = new Promise<void>((resolve) => {
+          secondAttempting = resolve;
+        });
+        const secondWrite = second.transaction(async () => {
+          secondAttempting();
+          return new PostgresTaskDependencyRepository(second, tenantId).link({
+            projectId,
+            taskId: taskB,
+            dependsOnTaskId: taskA,
+            createdAt: now,
+          });
+        });
+        await secondAttemptStarted;
+        // The second transaction must wait for the project graph lock while the first is open.
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(
+          await new PostgresTaskDependencyRepository(
+            observer,
+            tenantId,
+          ).listByProject(projectId),
+        ).toEqual([]);
+        releaseFirst();
+        await firstWrite;
+        await expect(secondWrite).rejects.toThrow("cycle");
+        expect(
+          await new PostgresTaskDependencyRepository(
+            observer,
+            tenantId,
+          ).listByProject(projectId),
+        ).toEqual([
+          { projectId, taskId: taskA, dependsOnTaskId: taskB, createdAt: now },
+        ]);
+        await expect(
+          observer.query(
+            "UPDATE core.task_dependency SET created_at = $1 WHERE task_id = $2",
+            [new Date("2026-10-02T00:00:00.000Z"), taskA],
+          ),
+        ).rejects.toThrow("immutable");
+      } finally {
+        await Promise.all([first.close(), second.close(), observer.close()]);
+      }
+    }, 15000);
+
     test("keeps repository writes on one transaction-bound session", async () => {
       const subject = new PostgresClient(connectionString!);
       const observer = new PostgresClient(connectionString!);
@@ -376,6 +458,7 @@ describe.skipIf(connectionString === undefined)(
           "20260925000100_governance_milestone_title_event.sql",
           "20261001000100_task_dependencies.sql",
           "20261001000200_milestone_description_changed_event.sql",
+          "20261001000300_task_dependency_immutable_edges.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

@@ -154,9 +154,7 @@ export class ManageProjectPortability {
           : {
               id: `rev_${this.dependencies.ids.generate()}`,
               projectId,
-              ...(head === null
-                ? {}
-                : { parentRevisionId: head.revision.id }),
+              ...(head === null ? {} : { parentRevisionId: head.revision.id }),
               stateChecksum,
               origin: "local_snapshot" as const,
               createdAt: now,
@@ -352,9 +350,9 @@ export class ManageProjectPortability {
           ...(scan.remoteUrl === undefined
             ? {}
             : { remoteUrl: scan.remoteUrl }),
-          ...(scan.currentBranch === undefined
+          ...(scan.defaultBranch === undefined
             ? {}
-            : { defaultBranch: scan.currentBranch }),
+            : { defaultBranch: scan.defaultBranch }),
           createdAt: now,
         });
         if (shouldRecordImportedRevision)

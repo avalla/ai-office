@@ -92,6 +92,7 @@ describe.skipIf(connectionString === undefined)(
           "officeManifests",
           "pipelines",
           "tasks",
+          "taskDependencies",
           "taskRequirements",
           "runtime",
           "governance",
