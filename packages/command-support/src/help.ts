@@ -124,7 +124,7 @@ Commands:
   memory:references --project <id> [--json]
   memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]  # version required for roles and patterns
   project-memory:status [--project <id>] [--probe] [--json]
-    optional non-authoritative project memory provider; read-only diagnostics
+    deprecated CairnKeep provider; read-only legacy diagnostics
     without --probe no provider process is started
   knowledge:plan --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>]
   knowledge:admit --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>] --approve <plan-hash> --actor <reviewer>
@@ -148,9 +148,9 @@ Commands:
 Environment (linkable ai-office entry point):
   AI_OFFICE_HOME  runtime data home; defaults to ~/.ai-office
 
-Environment (Runtime host; optional project memory, disabled by default):
-  AI_OFFICE_PROJECT_MEMORY_PROVIDER    none (default) | cairnkeep
-  AI_OFFICE_CAIRNKEEP_COMMAND          executable name or absolute path; defaults to cairn
+Environment (Runtime host; deprecated CairnKeep diagnostics/import only):
+  AI_OFFICE_PROJECT_MEMORY_PROVIDER    none (default) | cairnkeep (legacy, read-only)
+  AI_OFFICE_CAIRNKEEP_COMMAND          legacy executable name or absolute path; defaults to cairn
   AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS  100..30000; defaults to 5000
 
 Model routing (Runtime host; loaded at host start; operator reload/override applies between schedules):

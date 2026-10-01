@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context/knowledge-search-term.ts";
 import { cairnKeepSearchTerm } from "../../packages/cairnkeep-memory/src/cairnkeep-memory-provider.ts";
 import {
@@ -9,6 +10,26 @@ import {
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 
 describe("AgentKnowledgeStore application boundary", () => {
+  it("keeps the retained CairnKeep adapter and port read-only", () => {
+    const adapter = readFileSync(
+      new URL(
+        "../../packages/cairnkeep-memory/src/cairnkeep-memory-provider.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const port = readFileSync(
+      new URL(
+        "../../packages/application/src/ports/project-memory-provider.port.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(adapter).not.toContain("memory_write");
+    expect(adapter).not.toContain("writeNamedScope");
+    expect(port).not.toMatch(/\b(?:write|save|record)\s*\(/u);
+  });
+
   it("preserves the deployed CairnKeep literal-term choices", () => {
     for (const [query, expected] of [
       ["Fix the login flow for users", "login"],

@@ -142,11 +142,13 @@ export interface ProjectLifecycleStatus {
    * version 4. Status never probes the provider or starts a process, so the
    * state is `disabled`, `configured`, or `misconfigured`; use
    * `project-memory:status --probe` for live availability. An unavailable
-   * provider never affects health.
+   * provider availability itself never affects health; configured legacy
+   * CairnKeep does produce a deprecation warning.
    */
   projectMemory?: {
     provider: string;
-    state: "disabled" | "configured" | "misconfigured" | "available" | "unavailable";
+    state:
+      "disabled" | "configured" | "misconfigured" | "available" | "unavailable";
     memoryProjectId: string | null;
     lastRetrieval: {
       runId: string;
@@ -603,7 +605,9 @@ export class ManageProjectLifecycle {
       }> = [];
       const sharedChanges = sharedPlan.operations
         .filter(
-          (operation): operation is typeof operation & {
+          (
+            operation,
+          ): operation is typeof operation & {
             kind: "create" | "update";
           } => operation.kind !== "delete",
         )
@@ -889,7 +893,8 @@ export class ManageProjectLifecycle {
           severity: "warning",
           code: "shared_project_artifacts_drifted",
           message: "AI Office shared project guidance or skill has drifted",
-          recovery: "Run ai-office install . to reconcile shared AI Office artifacts",
+          recovery:
+            "Run ai-office install . to reconcile shared AI Office artifacts",
         });
     }
     const tasks =
@@ -958,6 +963,15 @@ export class ManageProjectLifecycle {
         message: `Project memory provider is misconfigured: ${projectMemory.message}`,
         recovery:
           "Correct or unset AI_OFFICE_PROJECT_MEMORY_PROVIDER in the Runtime host environment and restart it; runs continue without project memory",
+      });
+    if (projectMemory?.provider === "cairnkeep")
+      issues.push({
+        severity: "warning",
+        code: "project_memory_deprecated",
+        message:
+          "CairnKeep is deprecated and read-only; it no longer supplies worker context",
+        recovery:
+          "Use AgentKnowledgeStore for new knowledge. If needed, review and import the legacy named scope with knowledge:legacy-plan and knowledge:legacy-import, then unset AI_OFFICE_PROJECT_MEMORY_PROVIDER and restart the Runtime",
       });
     if (pipelineState === "drifted")
       issues.push({

@@ -89,7 +89,11 @@ export function printProjectLifecycleStatus(
     result.projectMemory.state !== "disabled"
   ) {
     context.io.stdout("");
-    context.io.stdout("Project memory (advisory, non-authoritative)");
+    context.io.stdout(
+      result.projectMemory.provider === "cairnkeep"
+        ? "Legacy project memory (CairnKeep, read-only, deprecated)"
+        : "Project memory (advisory, non-authoritative)",
+    );
     context.io.stdout(
       `  provider: ${result.projectMemory.provider} (${result.projectMemory.state})`,
     );

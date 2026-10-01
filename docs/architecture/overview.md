@@ -375,8 +375,8 @@ provenance. The adapter validates scoped results. The host binds the trusted
 tenant and owns the connection; the application supplies only the portable
 `repositoryId` from authoritative project binding. Workers receive excerpts,
 never a store, tool, path or credential. Absence or failure degrades to no
-knowledge. The earlier CairnKeep provider and diagnostic command remain during
-migration, but do not feed worker context. See
+knowledge. The deprecated, read-only CairnKeep adapter remains for diagnostics
+and explicit legacy import; it does not feed worker context. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
 
 The explicit legacy importer reads only the named CairnKeep scope derived from
@@ -462,8 +462,8 @@ The architecture distinguishes three databases by authority and rebuildability:
 
 The optional external SurrealDB knowledge store is a separate,
 non-authoritative category outside these databases. AI Office stores its
-per-run retrieval provenance in `project.sqlite`. The older CairnKeep provider
-remains available for legacy diagnostics and history during migration.
+per-run retrieval provenance in `project.sqlite`. The deprecated CairnKeep
+provider remains read-only for legacy diagnostics and explicit import.
 
 `project.sqlite` also stores immutable portable snapshot revisions and one
 local head/base record per backed-up or restored project. A revision identifies

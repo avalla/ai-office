@@ -32,6 +32,10 @@ export async function handleProjectMemoryCommand(
     return 0;
   }
   context.io.stdout(`Project memory provider: ${report.provider}`);
+  if (report.provider === "cairnkeep")
+    context.io.stdout(
+      "CairnKeep is deprecated and read-only. New knowledge uses AgentKnowledgeStore; this provider remains for diagnostics and explicit legacy import.",
+    );
   context.io.stdout(
     `State: ${report.state}${report.probed ? " (probed)" : ""}`,
   );
