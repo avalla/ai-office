@@ -506,8 +506,10 @@ test("active code, manifests, help, and generated guidance cannot advertise reti
   for (const file of activeFiles) {
     const source = readFileSync(file, "utf8");
     for (const retired of forbidden)
-      expect(source, `${relative(repositoryRoot, file)} still contains ${retired}`)
-        .not.toContain(retired);
+      expect(
+        source,
+        `${relative(repositoryRoot, file)} still contains ${retired}`,
+      ).not.toContain(retired);
   }
 });
 
@@ -531,8 +533,10 @@ test("raw provider credential values are reachable only at the gateway provider 
     "packages/llm-gateway/src/gateway-worker-runtime.ts",
     "packages/llm-gateway/src/provider-credentials.ts",
   ]);
-  // The only function that turns a Runtime home credential into a string.
+  // Gateway providers and the trusted Runtime composition for the two fixed
+  // SurrealDB names are the only consumers of credential file values.
   expect(referencing("loadRuntimeHomeCredentialValue")).toEqual([
+    "apps/daemon/src/bootstrap.ts",
     "packages/llm-gateway/src/provider-credentials.ts",
     "packages/llm-gateway/src/runtime-home-credential-store.ts",
   ]);

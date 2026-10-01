@@ -611,12 +611,16 @@ external CairnKeep data. See the [historical migration record](docs/development/
 ### Native agent knowledge connection
 
 The Runtime can separately connect an opt-in SurrealDB `AgentKnowledgeStore`.
-Set `AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER=surrealdb` and supply
+For a managed service, configure the non-secret but integrity-sensitive
+`<AI_OFFICE_HOME>/agent-knowledge.json` and owner-only SurrealDB credential files,
+then run `ai-office service install`; see the
+[persistent deployment guide](docs/development/agent-knowledge-deployment.md).
+For a foreground Runtime, set `AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER=surrealdb` and supply
 `AI_OFFICE_SURREALDB_URL`, `AI_OFFICE_SURREALDB_NAMESPACE`,
 `AI_OFFICE_SURREALDB_DATABASE`, `AI_OFFICE_SURREALDB_USERNAME`, and
 `AI_OFFICE_SURREALDB_PASSWORD` in the foreground Runtime host environment.
 SQLite hosts also require a trusted `AI_OFFICE_AGENT_KNOWLEDGE_TENANT_ID`;
-PostgreSQL hosts use their authoritative storage tenant. An unset provider is
+PostgreSQL hosts use their authoritative storage tenant. An unset foreground provider or absent managed file is
 disabled. The daemon `/health` response reports the connection result observed
 at startup without exposing configuration values. A failed connection leaves
 the authoritative Runtime available. Restart the host after changing this

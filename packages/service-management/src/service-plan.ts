@@ -1,5 +1,9 @@
 import { isAbsolute } from "node:path";
 import {
+  agentKnowledgeSourceEnvironmentVariable,
+  runtimeHomeAgentKnowledgeSource,
+} from "@ai-office/runtime-paths/agent-knowledge-location.ts";
+import {
   OfficeServicePreconditionError,
   type OfficeServiceName,
 } from "@ai-office/application/ports/office-service-manager.port.ts";
@@ -120,6 +124,10 @@ export function officeServiceEnvironment(
   if (service === "runtime")
     entries.push(
       [modelRoutingSourceEnvironmentVariable, runtimeHomeModelRoutingSource],
+      [
+        agentKnowledgeSourceEnvironmentVariable,
+        runtimeHomeAgentKnowledgeSource,
+      ],
       [
         providerCredentialSourceEnvironmentVariable,
         runtimeHomeProviderCredentialSource,

@@ -3,6 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentKnowledgeStore } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { AgentKnowledgeConfiguration } from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
+import { runtimeHomeAgentKnowledgePath } from "@ai-office/runtime-paths/agent-knowledge-location.ts";
+import {
+  ensureRuntimeHome,
+  resolveRuntimePaths,
+} from "@ai-office/runtime-paths/runtime-paths.ts";
+import { writeRuntimeHomeCredential } from "@ai-office/llm-gateway/runtime-home-credential-store.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IpcRuntimeClient } from "../../apps/cli/src/daemon-client.ts";
 import {
@@ -24,6 +30,30 @@ const configuration: AgentKnowledgeConfiguration = {
   },
 };
 
+function configureManagedHome(home: string, password: string): void {
+  writeFileSync(
+    runtimeHomeAgentKnowledgePath(home),
+    JSON.stringify({
+      provider: "surrealdb",
+      endpoint: "ws://127.0.0.1:8000",
+      namespace: "ai_office",
+      database: "knowledge",
+      tenantId: "tenant-a",
+    }),
+    { mode: 0o600 },
+  );
+  writeRuntimeHomeCredential(
+    home,
+    "AI_OFFICE_SURREALDB_USERNAME",
+    Buffer.from("operator"),
+  );
+  writeRuntimeHomeCredential(
+    home,
+    "AI_OFFICE_SURREALDB_PASSWORD",
+    Buffer.from(password),
+  );
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
   for (const root of roots.splice(0))
@@ -38,12 +68,22 @@ async function withHost(
     | "agentKnowledgeConnectTimeoutMs"
   >,
   check: (client: IpcRuntimeClient) => Promise<void>,
+  configureRuntimeHome?: (home: string) => void,
 ): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), "ai-office-knowledge-host-"));
   const socket = createTestUnixSocket();
   roots.push(root, socket.root);
+  const paths = resolveRuntimePaths({
+    mode: "development",
+    developmentRoot: root,
+  });
+  if (configureRuntimeHome !== undefined) {
+    ensureRuntimeHome(paths);
+    configureRuntimeHome(paths.runtimeHome);
+  }
   const host = await bootstrap({
     projectRoot: root,
+    runtimePaths: paths,
     socketPath: socket.socketPath,
     ...options,
   });
@@ -67,16 +107,79 @@ async function withHost(
 }
 
 describe("Runtime agent knowledge composition", () => {
+  it("reconstructs managed knowledge from Runtime-home sources without ambient secrets", async () => {
+    vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_SOURCE", "runtime_home");
+    vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER", "none");
+    vi.stubEnv("AI_OFFICE_SURREALDB_PASSWORD", "ambient-secret");
+    const connect = vi.fn(async () => ({
+      store: {} as AgentKnowledgeStore,
+      close: async () => {},
+    }));
+    await withHost(
+      { connectAgentKnowledge: connect },
+      async (client) => {
+        expect((await client.health()).knowledge).toEqual({
+          provider: "surrealdb",
+          startup: "connected",
+        });
+        expect(JSON.stringify(await client.health())).not.toMatch(
+          /stored-secret|ambient-secret/u,
+        );
+        expect(connect).toHaveBeenCalledWith(
+          expect.objectContaining({
+            username: "operator",
+            password: "stored-secret",
+          }),
+          expect.any(AbortSignal),
+        );
+      },
+      (home) => configureManagedHome(home, "stored-secret"),
+    );
+  });
+
+  it("reports a rejected managed password as unavailable without exposing it", async () => {
+    vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_SOURCE", "runtime_home");
+    const connect = vi.fn(async () => {
+      throw new Error(
+        "Authentication failed for rejected-secret at ws://127.0.0.1:8000",
+      );
+    });
+    await withHost(
+      { connectAgentKnowledge: connect },
+      async (client) => {
+        const health = await client.health();
+        expect(health.knowledge).toEqual({
+          provider: "surrealdb",
+          startup: "unavailable",
+        });
+        expect(JSON.stringify(health)).not.toMatch(
+          /rejected-secret|127\.0\.0\.1/u,
+        );
+        expect((await client.execute(["client:detect"])).exitCode).toBe(0);
+      },
+      (home) => configureManagedHome(home, "rejected-secret"),
+    );
+    expect(connect).toHaveBeenCalledWith(
+      expect.objectContaining({ password: "rejected-secret" }),
+      expect.any(AbortSignal),
+    );
+  });
+
   it("ignores stale CairnKeep environment while native knowledge follows its own configuration", async () => {
     const legacyRoot = mkdtempSync(join(tmpdir(), "ai-office-retired-memory-"));
     roots.push(legacyRoot);
     const marker = join(legacyRoot, "spawned");
     const command = join(legacyRoot, "retired-memory");
-    writeFileSync(command, `#!/bin/sh\nprintf spawned > '${marker}'\n`, { mode: 0o700 });
+    writeFileSync(command, `#!/bin/sh\nprintf spawned > '${marker}'\n`, {
+      mode: 0o700,
+    });
     vi.stubEnv("AI_OFFICE_PROJECT_MEMORY_PROVIDER", "cairnkeep");
     vi.stubEnv("AI_OFFICE_CAIRNKEEP_COMMAND", command);
     vi.stubEnv("AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS", "500");
-    vi.stubEnv("CAIRN_AGENTFS_BASE_DIR", join(legacyRoot, "legacy-secret-directory"));
+    vi.stubEnv(
+      "CAIRN_AGENTFS_BASE_DIR",
+      join(legacyRoot, "legacy-secret-directory"),
+    );
     vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER", "none");
     const connect = vi.fn(async () => ({
       store: {} as AgentKnowledgeStore,
@@ -84,19 +187,34 @@ describe("Runtime agent knowledge composition", () => {
     }));
     await withHost({ connectAgentKnowledge: connect }, async (client) => {
       const health = await client.health();
-      expect(health.knowledge).toEqual({ provider: "none", startup: "disabled" });
+      expect(health.knowledge).toEqual({
+        provider: "none",
+        startup: "disabled",
+      });
       expect(health).not.toHaveProperty("projectMemory");
       expect(JSON.stringify(health)).not.toMatch(/cairnkeep|legacy-secret/iu);
       const detection = await client.execute(["client:detect"]);
       expect(detection.exitCode).toBe(0);
-      expect(JSON.stringify(detection)).not.toMatch(/cairnkeep|legacy-secret/iu);
-      const retired = await client.execute(["project-memory:status", "--probe"]);
-      expect(retired.stderr.join("\n")).toContain("Unknown command: project-memory:status");
+      expect(JSON.stringify(detection)).not.toMatch(
+        /cairnkeep|legacy-secret/iu,
+      );
+      const retired = await client.execute([
+        "project-memory:status",
+        "--probe",
+      ]);
+      expect(retired.stderr.join("\n")).toContain(
+        "Unknown command: project-memory:status",
+      );
     });
     expect(connect).not.toHaveBeenCalled();
 
     vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_PROVIDER", "surrealdb");
-    vi.stubEnv("AI_OFFICE_SURREALDB_URL", configuration.kind === "surrealdb" ? configuration.connection.endpoint : "");
+    vi.stubEnv(
+      "AI_OFFICE_SURREALDB_URL",
+      configuration.kind === "surrealdb"
+        ? configuration.connection.endpoint
+        : "",
+    );
     vi.stubEnv("AI_OFFICE_SURREALDB_NAMESPACE", "ai_office");
     vi.stubEnv("AI_OFFICE_SURREALDB_DATABASE", "knowledge");
     vi.stubEnv("AI_OFFICE_SURREALDB_USERNAME", "operator");
@@ -104,16 +222,26 @@ describe("Runtime agent knowledge composition", () => {
     vi.stubEnv("AI_OFFICE_AGENT_KNOWLEDGE_TENANT_ID", "tenant-a");
     await withHost({ connectAgentKnowledge: connect }, async (client) => {
       const health = await client.health();
-      expect(health.knowledge).toEqual({ provider: "surrealdb", startup: "connected" });
+      expect(health.knowledge).toEqual({
+        provider: "surrealdb",
+        startup: "connected",
+      });
       expect(health).not.toHaveProperty("projectMemory");
-      expect(JSON.stringify(health)).not.toMatch(/cairnkeep|legacy-secret|native-secret/iu);
+      expect(JSON.stringify(health)).not.toMatch(
+        /cairnkeep|legacy-secret|native-secret/iu,
+      );
       const detection = await client.execute(["client:detect"]);
       expect(detection.exitCode).toBe(0);
-      expect(JSON.stringify(detection)).not.toMatch(/cairnkeep|legacy-secret|native-secret/iu);
+      expect(JSON.stringify(detection)).not.toMatch(
+        /cairnkeep|legacy-secret|native-secret/iu,
+      );
     });
     expect(connect).toHaveBeenCalledTimes(1);
     expect(connect).toHaveBeenCalledWith(
-      expect.objectContaining({ endpoint: "ws://127.0.0.1:8000", password: "native-secret-password" }),
+      expect.objectContaining({
+        endpoint: "ws://127.0.0.1:8000",
+        password: "native-secret-password",
+      }),
       expect.any(AbortSignal),
     );
     expect(existsSync(marker)).toBe(false);

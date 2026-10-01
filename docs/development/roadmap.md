@@ -644,23 +644,26 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: AK-01–AK-07 merged; AK-08 implementation in review.
+Status: AK-01–AK-08 merged; AK-09 implementation in progress.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
 
-| Slice | Scope                                                                        | Depends on                       |
-| ----- | ---------------------------------------------------------------------------- | -------------------------------- |
-| AK-01 | Canonical, bounded `AgentKnowledgeStore` contract and trusted portable scope | SurrealDB evaluation PRs #64–#66 |
-| AK-02 | SurrealDB retrieval parity and compatibility term                            | AK-01 merged                     |
-| AK-03 | Explicit, independent Runtime knowledge composition                          | AK-02 merged                     |
-| AK-04 | `RunContextAssembler` cutover and run provenance                             | AK-03 merged                     |
-| AK-05 | Governed knowledge admission with immutable provenance                       | AK-04 merged                     |
-| AK-06 | Explicit, idempotent CairnKeep named-scope import                            | AK-05 merged                     |
-| AK-07 | CairnKeep deprecation in guidance and setup                                  | AK-06 merged                     |
-| AK-08 | CairnKeep implementation removal and final docs                              | AK-07 merged                     |
+| Slice | Scope                                                                        | Depends on                        |
+| ----- | ---------------------------------------------------------------------------- | --------------------------------- |
+| AK-01 | Canonical, bounded `AgentKnowledgeStore` contract and trusted portable scope | SurrealDB evaluation PRs #64–#66  |
+| AK-02 | SurrealDB retrieval parity and compatibility term                            | AK-01 merged                      |
+| AK-03 | Explicit, independent Runtime knowledge composition                          | AK-02 merged                      |
+| AK-04 | `RunContextAssembler` cutover and run provenance                             | AK-03 merged                      |
+| AK-05 | Governed knowledge admission with immutable provenance                       | AK-04 merged                      |
+| AK-06 | Explicit, idempotent CairnKeep named-scope import                            | AK-05 merged                      |
+| AK-07 | CairnKeep deprecation in guidance and setup                                  | AK-06 merged                      |
+| AK-08 | CairnKeep implementation removal and final docs                              | AK-07 merged                      |
+| AK-09 | Managed Agent Knowledge configuration and SurrealDB deployment support       | AK-03–AK-05; AK-08 for final docs |
 
-Each slice is one reviewed PR. Completion requires proven retrieval, writes,
+AK-01–AK-08 each map to one reviewed PR. AK-09 is one operational task with
+four delivery slices below; each may be a separately reviewed PR, with one
+requirement and task tracking completion of the whole. Completion requires proven retrieval, writes,
 legacy-data disposition, failure behavior, documentation, and operational
 coherence. SQLite/PostgreSQL remain the only operational authority; SurrealDB
 is knowledge storage only. No vector search, RAG redesign, or permanent
@@ -679,6 +682,109 @@ idempotent import of one bounded CairnKeep named scope, preserving its scope,
 key and content digest without inventing run provenance. Imported records and
 historical run retrieval evidence remain readable; external CairnKeep data is
 never deleted by AI Office. See the same guide.
+
+### AK-09 — Managed Agent Knowledge configuration and SurrealDB deployment support
+
+**Status:** implementation in progress. This closes the operational gap left by AK-03: foreground
+Runtime environment configuration works, but before AK-09 `service install` emitted
+no durable Agent Knowledge configuration source. Hand editing the generated
+systemd unit or launchd plist is neither a supported nor a secret-safe product
+workflow. AK-09 does not change the secondary/advisory status of SurrealDB.
+
+**Requirements**
+
+1. Define a canonical, validated Agent Knowledge configuration source under
+   `AI_OFFICE_HOME`, separate from project authority, snapshots and generated
+   Markdown. It holds non-secret provider, endpoint, namespace, database and,
+   for SQLite, trusted tenant configuration. Select a protected host credential
+   source for the SurrealDB password and any sensitive username or future token.
+   First assess whether the owner-only `credentials/` pattern from ADR-0020 can
+   be reused without weakening its provider-name allowlist or value validation;
+   use a narrowly equivalent infrastructure credential source only if reuse is
+   unsuitable. Do not introduce a general secrets manager by default.
+2. Define explicit source selection and precedence. A managed Runtime uses
+   only its canonical Runtime-home configuration and credentials, regardless
+   of the installing shell or service-manager environment. Foreground
+   `ai-office runtime start` retains the existing explicit environment form;
+   absent provider remains disabled. Invalid selected sources are
+   `misconfigured`, never silently replaced by values from another source.
+   Do not migrate ambient secrets into persistent files automatically.
+3. Make `service install` render only `AI_OFFICE_HOME` and non-secret source
+   markers needed by the Runtime, with equivalent systemd --user and launchd
+   behavior. Restart, logout/login, reboot and repeated installation must
+   reconstruct the same configuration without embedding credentials, copying
+   the invoking environment, or deleting Runtime-home configuration. Keep the
+   existing managed-definition/outdated inspection behavior coherent.
+4. Preserve tenant semantics: SQLite requires a trusted configured
+   `AI_OFFICE_AGENT_KNOWLEDGE_TENANT_ID`; PostgreSQL uses its authoritative
+   storage tenant. Missing or malformed managed values produce a sanitized
+   `misconfigured` startup observation. Keep bounded connection startup and
+   failure isolation: an unreachable or rejected SurrealDB connection reports
+   `unavailable` and leaves the authoritative Runtime available.
+5. Retain `/health`'s `knowledge.provider` and startup-only
+   `knowledge.startup` states (`disabled`, `misconfigured`, `connected`,
+   `unavailable`). Review whether an existing command exposes enough
+   sanitized operator diagnostics before proposing `knowledge:status`; any
+   added command must report state and safe issue codes only. Never expose
+   endpoint, username, password or secret-derived values in health, service
+   status, logs, errors, snapshots or generated views.
+6. Publish a supported persistent SurrealDB deployment guide: installation
+   and tested version; same-machine service bound to `127.0.0.1`; persistent
+   storage rather than `memory`; account, namespace, database and tenant;
+   systemd and macOS service operation where applicable; start/restart and
+   health verification; `misconfigured` versus `unavailable`; outage behavior;
+   backup, restore, upgrade and troubleshooting. State clearly that
+   SQLite/PostgreSQL remain authoritative for project, task, run, approval and
+   audit state. The guide must work without hand editing AI Office service
+   definitions.
+7. Add a dedicated persistent-storage integration or CI test that starts
+   SurrealDB on disk, writes scoped knowledge with provenance, stops and
+   restarts the server, and verifies the same records, tenant/repository
+   isolation and provenance. The existing `memory` service tests do not prove
+   restart durability. A dedicated suite is acceptable if this is too costly
+   for the fast checks.
+
+**Acceptance criteria**
+
+- On a clean Linux or macOS machine, an operator can configure the managed
+  Runtime through documented supported commands/files, install its service,
+  and obtain `knowledge.startup: connected` after login or reboot without
+  relying on the shell used for installation. Workers retrieve scoped knowledge.
+- Re-running `ai-office service install` may regenerate definitions but retains
+  the canonical configuration and credentials; restart still connects.
+- Unit, plist, `service status`, `/health`, logs, sanitized errors, snapshots
+  and generated Markdown contain no SurrealDB password. They expose no
+  endpoint or username through diagnostics. Tests cover both platforms and
+  secret-bearing failure paths, including a wrong password.
+- Missing/invalid provider, endpoint, namespace, database, credential or
+  SQLite tenant is `misconfigured` with no cross-source fallback. Wrong
+  credentials or an unreachable server produce sanitized `unavailable`; neither
+  prevents the authoritative Runtime from starting. PostgreSQL always derives
+  the knowledge tenant from its authoritative storage configuration.
+- Foreground environment configuration continues to work as documented;
+  unset provider remains disabled and does not require SurrealDB.
+- Automated restart evidence proves knowledge records, tenant/repository
+  scope and provenance survive a persistent SurrealDB stop/start. The operator
+  guide covers backup/restore and upgrade verification.
+
+**Delivery slices:** A — configuration schema, validation, precedence, tenant
+and credential boundary; B — Runtime bootstrap, systemd/launchd markers and
+service reinstall regression; C — persistent SurrealDB deployment test,
+restart/recovery and health behavior; D — operator guide, diagnostics decision
+and end-to-end acceptance. These are delivery checkpoints within AK-09, not
+new Runtime task or requirement aggregates.
+
+**Dependencies:** AK-03 composition, AK-04 worker retrieval/provenance,
+AK-05 admission, ADR-0009 Runtime home, ADR-0014 managed host, ADR-0020
+credential boundary, ADR-0025 knowledge authority. AK-08 is needed only to
+align final current documentation after CairnKeep removal; AK-09 must not
+reopen that decision.
+
+**Non-goals:** replacing SQLite/PostgreSQL authority; moving project, task,
+run, approval or audit state into SurrealDB; SurrealDB clustering or Cloud;
+vector/semantic search; changing `AgentKnowledgeStore` without demonstrated
+need; reintroducing CairnKeep; a generic secrets manager; or requiring
+SurrealDB when knowledge is disabled.
 
 ## M7.12 — Agent model routing
 
