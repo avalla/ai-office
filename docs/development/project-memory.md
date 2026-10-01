@@ -42,11 +42,15 @@ AI_OFFICE_PROJECT_MEMORY_PROVIDER=cairnkeep ai-office runtime start
 ai-office project-memory:status --probe
 ```
 
-For import, also connect the native knowledge store, review
-`knowledge:legacy-plan --project <id> --scope <aio-scope>`, and pass its exact
-plan hash to `knowledge:legacy-import`. The source scope remains untouched. After
-inspection or import, unset `AI_OFFICE_PROJECT_MEMORY_PROVIDER` and restart the
-Runtime. For new knowledge, use `knowledge:plan` and `knowledge:admit` instead.
+For import, also connect the native knowledge store. Inspect the derived named
+scope with `project-memory:status --project <id>`, review
+`knowledge:legacy-plan --project <id> --scope <aio-scope>`, then run
+`knowledge:legacy-import` with the exact reviewed `planHash` and reviewer.
+Verify each imported record's source scope, key and digest with
+`knowledge:trace`. The source scope remains untouched. After inspection or
+import, unset `AI_OFFICE_PROJECT_MEMORY_PROVIDER` and restart the Runtime.
+Use `AgentKnowledgeStore` via `knowledge:plan` and `knowledge:admit` for all
+future knowledge.
 
 | Variable                              | Values                                                   | Default                   |
 | ------------------------------------- | -------------------------------------------------------- | ------------------------- |
@@ -232,8 +236,11 @@ ai-office run:show --project <id> --run <run-id>
   version 4, additive): provider, static state, identity and last retrieval. It
   never starts the provider. The human view omits it when disabled.
 - `ai-office project-memory:status [--project <id>] [--probe] [--json]` reports
-  schema version 1 diagnostics with `deprecated: true` for CairnKeep. Only
-  `--probe` starts the provider, for one handshake without searching.
+  schema version 2 diagnostics. Version 2 adds `deprecated: true` only for
+  CairnKeep; every version 1 field retains its meaning. This follows the
+  repository's versioned machine-readable output convention: a changed report
+  shape receives a new schema version. Only `--probe` starts the provider, for
+  one handshake without searching.
 
 An enabled CairnKeep provider adds a `project_memory_deprecated` status warning
 with a recommendation to inspect or import existing data, then disable it. This

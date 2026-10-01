@@ -242,7 +242,11 @@ inspect provenance with `knowledge:trace`. CairnKeep is deprecated and
 read-only. Use `project-memory:status` only for legacy diagnostics and
 `knowledge:legacy-plan` / `knowledge:legacy-import` only for explicit import of
 an existing named scope. Do not recommend CairnKeep for new knowledge, write to
-its scope, or treat a status probe as migration.
+its scope, or treat a status probe as migration. For a temporary import, inspect
+the derived scope, review `knowledge:legacy-plan`, run `knowledge:legacy-import`
+with the exact reviewed hash, verify provenance with `knowledge:trace`, then
+unset AI_OFFICE_PROJECT_MEMORY_PROVIDER and restart the Runtime. Use
+`AgentKnowledgeStore` for all future knowledge.
 
 ## Uninstall safely
 

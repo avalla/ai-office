@@ -27,6 +27,7 @@ import type {
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import { CairnKeepMemoryProvider } from "@ai-office/cairnkeep-memory/cairnkeep-memory-provider.ts";
 import { MisconfiguredProjectMemoryProvider } from "@ai-office/cairnkeep-memory/cairnkeep-memory-provider.ts";
+import { createProjectMemoryProvider } from "@ai-office/cairnkeep-memory/create-project-memory-provider.ts";
 import {
   bootstrap,
   type BootstrapOptions,
@@ -606,6 +607,7 @@ test("legacy CairnKeep configuration stays diagnostic after the worker retrieval
   const provider = new CairnKeepMemoryProvider({
     command: cairn.command,
     timeoutMs: 5_000,
+    baseDirectory: join(tmpdir(), "ak07-private-cairn-store"),
     environment: { PATH: process.env.PATH, HOME: tmpdir() },
   });
   const o = await office(provider);
@@ -658,7 +660,43 @@ test("legacy CairnKeep configuration stays diagnostic after the worker retrieval
         }),
       ]),
     );
-  // Status never starts the provider.
+  for (const status of statuses) {
+    const warnings = status.issues.filter(
+      (issue) => issue.code === "project_memory_deprecated",
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.recovery).toContain("AgentKnowledgeStore");
+    expect(warnings[0]?.recovery).toContain("knowledge:legacy-plan");
+    expect(warnings[0]?.recovery).toContain("knowledge:legacy-import");
+    expect(warnings[0]?.recovery).toContain(
+      "unset AI_OFFICE_PROJECT_MEMORY_PROVIDER and restart the Runtime",
+    );
+    expect(status.issues.map((issue) => issue.code)).not.toContain(
+      "project_memory_misconfigured",
+    );
+    expect(status.health).toBe("needs_attention");
+  }
+  const quietDiagnostic = await o.command(
+    ["project-memory:status", "--json"],
+    main,
+  );
+  expect(quietDiagnostic.exitCode).toBe(0);
+  expect(JSON.parse(quietDiagnostic.stdout[0]!)).toMatchObject({
+    schemaVersion: 2,
+    provider: "cairnkeep",
+    deprecated: true,
+    state: "configured",
+    probed: false,
+  });
+  expect((await o.command(["status"], main)).exitCode).toBe(1);
+  expect((await o.command(["project-memory:status"], main)).exitCode).toBe(0);
+  for (const output of [
+    ...statuses.map((status) => JSON.stringify(status)),
+    quietDiagnostic.stdout[0]!,
+  ])
+    for (const forbidden of [cairn.command, "ak07-private-cairn-store"])
+      expect(output).not.toContain(forbidden);
+  // Neither status command, in either output mode, starts the provider.
   expect(cairn.log()).toEqual([]);
   const projectId = statuses[0]!.project.id;
 
@@ -737,7 +775,7 @@ test("legacy CairnKeep configuration stays diagnostic after the worker retrieval
       worktree,
     );
     expect(JSON.parse(diagnostics.stdout[0]!)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       provider: "cairnkeep",
       deprecated: true,
       state: "configured",
@@ -863,22 +901,128 @@ test("a misconfigured provider is reported as a status warning and a disabled on
   await misconfigured.command(["install", ".", "--json"], root);
   const status = JSON.parse(
     (await misconfigured.command(["status", "--json"], root)).stdout[0]!,
-  ) as { projectMemory: { state: string }; issues: { code: string }[] };
+  ) as {
+    projectMemory: { state: string };
+    health: string;
+    issues: { code: string }[];
+  };
   expect(status.projectMemory.state).toBe("misconfigured");
-  expect(status.issues.map((issue) => issue.code)).toContain(
-    "project_memory_misconfigured",
+  expect(
+    status.issues.filter(
+      (issue) => issue.code === "project_memory_misconfigured",
+    ),
+  ).toHaveLength(1);
+  expect(status.issues.map((issue) => issue.code)).not.toContain(
+    "project_memory_deprecated",
   );
+  expect(status.health).toBe("needs_attention");
+  expect(
+    JSON.parse(
+      (await misconfigured.command(["project-memory:status", "--json"], root))
+        .stdout[0]!,
+    ),
+  ).toMatchObject({
+    schemaVersion: 2,
+    provider: "unknown",
+    deprecated: false,
+    state: "misconfigured",
+    probed: false,
+  });
 
   const disabled = await office(new DisabledProjectMemoryProvider());
   const other = disabled.checkout("main");
   await disabled.command(["install", ".", "--json"], other);
   const human = await disabled.command(["status"], other);
   expect(human.stdout.join("\n")).not.toContain("Project memory");
+  const disabledStatus = JSON.parse(
+    (await disabled.command(["status", "--json"], other)).stdout[0]!,
+  ) as {
+    projectMemory: { state: string };
+    health: string;
+    issues: { code: string }[];
+  };
+  expect(disabledStatus.projectMemory.state).toBe("disabled");
+  expect(disabledStatus.health).toBe("healthy");
+  expect(disabledStatus.issues.map((issue) => issue.code)).not.toContain(
+    "project_memory_misconfigured",
+  );
+  expect(disabledStatus.issues.map((issue) => issue.code)).not.toContain(
+    "project_memory_deprecated",
+  );
   expect(
-    (
-      JSON.parse(
-        (await disabled.command(["status", "--json"], other)).stdout[0]!,
-      ) as { projectMemory: { state: string } }
-    ).projectMemory.state,
-  ).toBe("disabled");
+    JSON.parse(
+      (await disabled.command(["project-memory:status", "--json"], other))
+        .stdout[0]!,
+    ),
+  ).toMatchObject({
+    schemaVersion: 2,
+    provider: "none",
+    deprecated: false,
+    state: "disabled",
+    probed: false,
+    version: null,
+    code: null,
+    message: "Project memory is disabled.",
+    project: {
+      id: expect.any(String),
+      memoryProjectId: expect.any(String),
+      lastRetrieval: null,
+    },
+  });
+});
+
+test("misconfigured CairnKeep remains a deterministic warning without provider I/O or host configuration disclosure", async () => {
+  const cairn = createFakeCairnKeep();
+  cleanup.push(cairn.cleanup);
+  const secret = "AK07_PRIVATE_ENV_VALUE";
+  const storePath = "ak07-private-relative-store";
+  const provider = createProjectMemoryProvider({
+    PATH: process.env.PATH,
+    HOME: tmpdir(),
+    AI_OFFICE_PROJECT_MEMORY_PROVIDER: "cairnkeep",
+    AI_OFFICE_CAIRNKEEP_COMMAND: cairn.command,
+    CAIRN_AGENTFS_BASE_DIR: storePath,
+    AI_OFFICE_SURREALDB_PASSWORD: secret,
+  });
+  const o = await office(provider);
+  const root = o.checkout("misconfigured");
+  await o.command(["install", ".", "--json"], root);
+  const first = await o.command(["status", "--json"], root);
+  const second = await o.command(["status", "--json"], root);
+  const diagnostic = await o.command(["project-memory:status", "--json"], root);
+  expect(first.exitCode).toBe(1);
+  expect(second.exitCode).toBe(1);
+  expect(diagnostic.exitCode).toBe(0);
+  const firstStatus = JSON.parse(first.stdout[0]!) as {
+    health: string;
+    issues: { code: string }[];
+  };
+  const secondStatus = JSON.parse(second.stdout[0]!) as typeof firstStatus;
+  expect(firstStatus.health).toBe("needs_attention");
+  expect(secondStatus.issues).toEqual(firstStatus.issues);
+  expect(
+    firstStatus.issues.filter(
+      (issue) => issue.code === "project_memory_misconfigured",
+    ),
+  ).toHaveLength(1);
+  expect(
+    firstStatus.issues.filter(
+      (issue) => issue.code === "project_memory_deprecated",
+    ),
+  ).toHaveLength(1);
+  expect(JSON.parse(diagnostic.stdout[0]!)).toMatchObject({
+    schemaVersion: 2,
+    provider: "cairnkeep",
+    deprecated: true,
+    state: "misconfigured",
+    probed: false,
+  });
+  expect(cairn.log()).toEqual([]);
+  for (const output of [
+    first.stdout[0]!,
+    second.stdout[0]!,
+    diagnostic.stdout[0]!,
+  ])
+    for (const forbidden of [secret, storePath, cairn.command])
+      expect(output).not.toContain(forbidden);
 });

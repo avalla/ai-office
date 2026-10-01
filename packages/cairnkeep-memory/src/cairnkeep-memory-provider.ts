@@ -303,7 +303,7 @@ export class CairnKeepMemoryProvider
       version: null,
       code: null,
       message:
-        "CairnKeep project memory is configured; availability is checked only by an explicit probe or a run.",
+        "CairnKeep legacy memory is configured; availability is checked only by an explicit probe or legacy import.",
     };
   }
 

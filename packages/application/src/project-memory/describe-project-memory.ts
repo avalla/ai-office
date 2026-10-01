@@ -7,7 +7,8 @@ import type { RepositoryIdentityRepository } from "../ports/repository-identity-
 import { deriveProjectMemoryIdentity } from "./project-memory-identity.ts";
 
 export interface ProjectMemoryDiagnosticReport {
-  schemaVersion: 1;
+  /** Version 2 adds `deprecated`; every version 1 field keeps its meaning. */
+  schemaVersion: 2;
   provider: ProjectMemoryProviderDiagnostic["provider"];
   /** CairnKeep remains only for read-only diagnostics and explicit import. */
   deprecated: boolean;
@@ -81,7 +82,7 @@ export class DescribeProjectMemory {
       };
     }
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       provider: diagnostic.provider,
       deprecated: diagnostic.provider === "cairnkeep",
       state: diagnostic.state,

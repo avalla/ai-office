@@ -147,8 +147,10 @@ belong to AK-06.
 
 ## Explicit CairnKeep named-scope import (AK-06)
 
-The Runtime must start with both `AI_OFFICE_PROJECT_MEMORY_PROVIDER=cairnkeep`
-and a connected native knowledge store. `knowledge:legacy-plan --project <id>
+Temporarily start the Runtime with both
+`AI_OFFICE_PROJECT_MEMORY_PROVIDER=cairnkeep` and a connected native knowledge
+store. Inspect the derived named scope with `project-memory:status --project
+<id>`. `knowledge:legacy-plan --project <id>
 --scope <aio-scope>` derives the expected named scope from the authoritative
 portable repository ID and refuses any other scope, including CairnKeep's
 cwd-bound `project` and virtual `all`. The command uses the read-only CairnKeep
@@ -187,6 +189,8 @@ creation time and AI Office run/task/agent provenance are unknown and remain
 absent. The native record's timestamp is its import time. Imported entries are
 advisory and join native bounded retrieval; an agent filter excludes entries
 with no known agent. `knowledge:trace` shows their legacy origin.
+After verifying imported provenance, unset `AI_OFFICE_PROJECT_MEMORY_PROVIDER`
+and restart the Runtime. Use `AgentKnowledgeStore` for all future knowledge.
 
 The fixtures follow CairnKeep
 [v2.19.0's MCP implementation](https://github.com/cairnkeep/cairnkeep/tree/68682a4e70aef72104ef366d504a63147b4bfaa6/mcp-memory-server/src)
