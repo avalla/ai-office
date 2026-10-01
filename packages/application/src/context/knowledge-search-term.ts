@@ -1,5 +1,5 @@
 /**
- * Compatibility term for the current CairnKeep literal-substring search.
+ * Compatibility term retained from the former CairnKeep literal-substring search.
  * The caller selects this term before calling AgentKnowledgeStore.findKnowledge;
  * the store itself searches exactly the supplied literal text.
  */

@@ -2,7 +2,6 @@ import {
   ManageKnowledgeAdmission,
   type KnowledgeAdmissionKind,
 } from "@ai-office/application/agent-knowledge/manage-knowledge-admission.ts";
-import { ImportLegacyKnowledge } from "@ai-office/application/agent-knowledge/import-legacy-knowledge.ts";
 import {
   CliUsageError,
   parseArguments,
@@ -31,46 +30,6 @@ export async function handleKnowledgeCommand(
     context.audit,
     context.clock,
   );
-  if (
-    command === "knowledge:legacy-plan" ||
-    command === "knowledge:legacy-import"
-  ) {
-    const parsed = parseArguments(
-      args,
-      new Set(["project", "scope", "approve", "actor"]),
-    );
-    const importer = new ImportLegacyKnowledge(
-      context.projects,
-      context.repositoryIdentities,
-      context.legacyMemory,
-      context.agentKnowledge ?? { state: "disabled" },
-      context.audit,
-      context.clock,
-    );
-    const projectId = requiredOption(parsed, "project");
-    const sourceScope = requiredOption(parsed, "scope");
-    if (command === "knowledge:legacy-plan") {
-      if (parsed.options.has("approve") || parsed.options.has("actor"))
-        throw new CliUsageError(
-          "Approval options are only accepted by knowledge:legacy-import",
-        );
-      context.io.stdout(
-        JSON.stringify(await importer.plan(projectId, sourceScope)),
-      );
-    } else {
-      context.io.stdout(
-        JSON.stringify(
-          await importer.import({
-            projectId,
-            sourceScope,
-            approval: requiredOption(parsed, "approve"),
-            reviewedBy: requiredOption(parsed, "actor"),
-          }),
-        ),
-      );
-    }
-    return 0;
-  }
   if (command === "knowledge:trace") {
     const parsed = parseArguments(args, new Set(["project", "kind", "id"]));
     const trace = await service.trace(

@@ -123,13 +123,8 @@ Commands:
   memory:pattern:adopt --project <id> --pattern <id> --version <n> [--query <text>]
   memory:references --project <id> [--json]
   memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]  # version required for roles and patterns
-  project-memory:status [--project <id>] [--probe] [--json]
-    deprecated CairnKeep provider; read-only legacy diagnostics
-    without --probe no provider process is started
   knowledge:plan --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>]
   knowledge:admit --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>] --approve <plan-hash> --actor <reviewer>
-  knowledge:legacy-plan --project <id> --scope <aio-named-scope>
-  knowledge:legacy-import --project <id> --scope <aio-named-scope> --approve <plan-hash> --actor <reviewer>
   knowledge:trace --project <id> --kind <memory|decision> --id <knowledge-id>
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>
@@ -147,11 +142,6 @@ Commands:
 
 Environment (linkable ai-office entry point):
   AI_OFFICE_HOME  runtime data home; defaults to ~/.ai-office
-
-Environment (Runtime host; deprecated CairnKeep diagnostics/import only):
-  AI_OFFICE_PROJECT_MEMORY_PROVIDER    none (default) | cairnkeep (legacy, read-only)
-  AI_OFFICE_CAIRNKEEP_COMMAND          legacy executable name or absolute path; defaults to cairn
-  AI_OFFICE_PROJECT_MEMORY_TIMEOUT_MS  100..30000; defaults to 5000
 
 Model routing (Runtime host; loaded at host start; operator reload/override applies between schedules):
   <AI_OFFICE_HOME>/model-routing.yaml  canonical profile file; the only source of a managed service

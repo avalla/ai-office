@@ -1,5 +1,4 @@
 import { clientIssues } from "./client-attention.ts";
-import type { DescribeProjectMemory } from "../project-memory/describe-project-memory.ts";
 import { createHash } from "node:crypto";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
@@ -136,26 +135,6 @@ export interface ProjectLifecycleStatus {
     configured: readonly { id: string; mode: "guidance" | "enforced" }[];
     activeRuns: number;
     currentStages: readonly string[];
-  };
-  /**
-   * Optional, non-authoritative project memory provider. Additive in schema
-   * version 4. Status never probes the provider or starts a process, so the
-   * state is `disabled`, `configured`, or `misconfigured`; use
-   * `project-memory:status --probe` for live availability. An unavailable
-   * provider availability itself never affects health; configured legacy
-   * CairnKeep does produce a deprecation warning.
-   */
-  projectMemory?: {
-    provider: string;
-    state:
-      "disabled" | "configured" | "misconfigured" | "available" | "unavailable";
-    memoryProjectId: string | null;
-    lastRetrieval: {
-      runId: string;
-      outcome: "retrieved" | "empty" | "failed" | "skipped";
-      errorCode: string | null;
-      createdAt: string;
-    } | null;
   };
   issues: readonly LifecycleIssue[];
 }
@@ -298,7 +277,6 @@ interface ProjectLifecycleDependencies {
   clock: Clock;
   runtimeHome: string;
   defaultManifest: OfficeManifest;
-  projectMemory?: DescribeProjectMemory;
 }
 
 function lifecycleHash(value: Readonly<object>): string {
@@ -949,30 +927,6 @@ export class ManageProjectLifecycle {
                     )
                   ? "assignment_missing"
                   : "active";
-    const projectMemory =
-      this.dependencies.projectMemory === undefined
-        ? undefined
-        : await this.dependencies.projectMemory.execute({
-            projectId: associationState === "valid" ? projectId : null,
-            probe: false,
-          });
-    if (projectMemory?.state === "misconfigured")
-      issues.push({
-        severity: "warning",
-        code: "project_memory_misconfigured",
-        message: `Project memory provider is misconfigured: ${projectMemory.message}`,
-        recovery:
-          "Correct or unset AI_OFFICE_PROJECT_MEMORY_PROVIDER in the Runtime host environment and restart it; runs continue without project memory",
-      });
-    if (projectMemory?.provider === "cairnkeep")
-      issues.push({
-        severity: "warning",
-        code: "project_memory_deprecated",
-        message:
-          "CairnKeep is deprecated and read-only; it no longer supplies worker context",
-        recovery:
-          "Use AgentKnowledgeStore for new knowledge. If needed, review and import the legacy named scope with knowledge:legacy-plan and knowledge:legacy-import, then unset AI_OFFICE_PROJECT_MEMORY_PROVIDER and restart the Runtime",
-      });
     if (pipelineState === "drifted")
       issues.push({
         severity: "warning",
@@ -1049,25 +1003,6 @@ export class ManageProjectLifecycle {
         activeRuns: activePipelineRuns.length,
         currentStages: currentPipelineStages.map((stage) => stage.stageId),
       },
-      ...(projectMemory === undefined
-        ? {}
-        : {
-            projectMemory: {
-              provider: projectMemory.provider,
-              state: projectMemory.state,
-              memoryProjectId: projectMemory.project?.memoryProjectId ?? null,
-              lastRetrieval:
-                projectMemory.project?.lastRetrieval === null ||
-                projectMemory.project?.lastRetrieval === undefined
-                  ? null
-                  : {
-                      runId: projectMemory.project.lastRetrieval.runId,
-                      outcome: projectMemory.project.lastRetrieval.outcome,
-                      errorCode: projectMemory.project.lastRetrieval.errorCode,
-                      createdAt: projectMemory.project.lastRetrieval.createdAt,
-                    },
-            },
-          }),
       issues,
     };
   }

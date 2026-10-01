@@ -5,14 +5,6 @@ import type {
 } from "../ports/global-memory-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type { RepositoryIdentityRepository } from "../ports/repository-identity-repository.port.ts";
-import {
-  isQuerySha256,
-  ProjectMemoryError,
-  projectMemoryLimits,
-  type ProjectMemoryHit,
-  type ProjectMemoryProvider,
-  type ProjectMemorySearch,
-} from "../ports/project-memory-provider.port.ts";
 import type {
   ProjectMemoryProvenanceRepository,
   ProjectMemoryReferenceRecord,
@@ -65,17 +57,31 @@ export interface AssembledRunContext {
 export interface RunContextAssemblerDependencies {
   clock: Clock;
   globalMemory?: GlobalMemoryRepository;
-  projectMemory?: {
-    provider: ProjectMemoryProvider;
-    identities: RepositoryIdentityRepository;
-    provenance: ProjectMemoryProvenanceRepository;
-  };
-  /** Native knowledge replaces the legacy provider in Runtime composition. */
   agentKnowledge?: {
     state: RuntimeAgentKnowledge;
     identities: RepositoryIdentityRepository;
     provenance: ProjectMemoryProvenanceRepository;
   };
+}
+
+/** Stable bounds for the worker's existing projectMemory context field. */
+export const projectMemoryLimits = {
+  queryCharacters: 200,
+  maxResults: 5,
+  excerptCharacters: 1_200,
+  titleCharacters: 200,
+  totalExcerptCharacters: 4_000,
+  contextBytes: 16 * 1024,
+  minimumContextBytes: 1024,
+} as const;
+
+interface ProjectMemoryHit {
+  referenceId: string;
+  contentDigest: string | null;
+  scope: string;
+  title: string | null;
+  excerpt: string;
+  truncated: boolean;
 }
 
 const globalStopWords = new Set([
@@ -211,18 +217,6 @@ function serializedBytes(value: WorkerProjectMemoryContext): number {
   return new TextEncoder().encode(JSON.stringify(value)).byteLength;
 }
 
-function validHit(hit: ProjectMemoryHit): boolean {
-  return (
-    hit.referenceId.length > 0 &&
-    hit.referenceId.length <= projectMemoryLimits.referenceCharacters &&
-    (hit.contentDigest === null ||
-      (hit.contentDigest.length > 0 &&
-        hit.contentDigest.length <= projectMemoryLimits.referenceCharacters)) &&
-    hit.scope.length > 0 &&
-    hit.scope.length <= 64
-  );
-}
-
 function validKnowledgeHit(
   hit: SearchKnowledgeHit,
   tenantId: string,
@@ -267,9 +261,7 @@ export class RunContextAssembler {
       input.projectMemoryBytesAvailable?.(memory) ??
         projectMemoryLimits.contextBytes,
     );
-    const projectMemory = await (this.dependencies.agentKnowledge === undefined
-      ? this.retrieveProjectMemory(input, maxBytes)
-      : this.retrieveAgentKnowledge(input, maxBytes));
+    const projectMemory = await this.retrieveAgentKnowledge(input, maxBytes);
     return {
       memory,
       ...(projectMemory === undefined ? {} : { projectMemory }),
@@ -528,169 +520,5 @@ export class RunContextAssembler {
       if (timeout !== undefined) clearTimeout(timeout);
       if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
     }
-  }
-
-  private async retrieveProjectMemory(
-    input: RunContextInput,
-    maxBytes: number,
-  ): Promise<WorkerProjectMemoryContext | undefined> {
-    const configured = this.dependencies.projectMemory;
-    if (configured === undefined) return undefined;
-    const { provider, identities, provenance } = configured;
-    // A run's project memory context is assembled at most once. Provenance is
-    // append-only and keyed by run, so a second preparation could only
-    // dispatch a context the recorded retrieval does not describe. Admission
-    // already prepares only runs claimed from `queued` and recovery never
-    // replays an interrupted run; this refuses the state outright instead of
-    // relying on those callers.
-    if ((await provenance.findRetrieval(input.runId)) !== null)
-      throw new WorkerRuntimeError("WORKER_CONTEXT_INVALID");
-    const description = provider.describe();
-    // A disabled provider is never invoked and leaves no trace: runs are unchanged.
-    if (description.state === "disabled") return undefined;
-    const base = {
-      runId: input.runId,
-      projectId: input.projectId,
-      provider: provider.id,
-      scope: "project" as const,
-    };
-    // Provenance precedes injection. If it cannot be written, the run
-    // continues without project memory rather than with unattributed context,
-    // unless another preparation recorded this run first: then this context
-    // is not the one its provenance describes and preparation is refused.
-    const record = async (
-      value: Omit<
-        ProjectMemoryRetrievalRecord,
-        "runId" | "projectId" | "provider" | "scope" | "createdAt"
-      >,
-    ): Promise<boolean> => {
-      try {
-        await provenance.recordRetrieval({
-          ...base,
-          ...value,
-          createdAt: this.dependencies.clock.now(),
-        });
-        return true;
-      } catch {
-        if ((await provenance.findRetrieval(input.runId)) !== null)
-          throw new WorkerRuntimeError("WORKER_CONTEXT_INVALID");
-        return false;
-      }
-    };
-    const nothing = {
-      resultCount: 0,
-      injectedCount: 0,
-      injectedCharacters: 0,
-      references: [],
-    };
-
-    // Only the portable repository ID can name project memory. A project
-    // without one (for example `project:create` without install) is skipped
-    // rather than falling back to a runtime-local ID or a path.
-    const repositoryId = await identities.findRepositoryId(input.projectId);
-    if (repositoryId === null) {
-      await record({
-        ...nothing,
-        providerVersion: null,
-        memoryProjectId: null,
-        outcome: "skipped",
-        errorCode: "REPOSITORY_IDENTITY_UNAVAILABLE",
-        contextQuerySha256: null,
-        providerQuerySha256: null,
-      });
-      return undefined;
-    }
-    const identity = deriveProjectMemoryIdentity(repositoryId);
-    const query = deriveProjectMemoryQuery(input);
-    if (query === null) {
-      await record({
-        ...nothing,
-        providerVersion: null,
-        memoryProjectId: identity.memoryProjectId,
-        outcome: "skipped",
-        errorCode: "QUERY_UNAVAILABLE",
-        contextQuerySha256: null,
-        providerQuerySha256: null,
-      });
-      return undefined;
-    }
-    if (maxBytes < projectMemoryLimits.minimumContextBytes) {
-      await record({
-        ...nothing,
-        providerVersion: null,
-        memoryProjectId: identity.memoryProjectId,
-        outcome: "skipped",
-        errorCode: "CONTEXT_BUDGET_EXHAUSTED",
-        contextQuerySha256: null,
-        providerQuerySha256: null,
-      });
-      return undefined;
-    }
-    // The query AI Office derived. The adapter may transform it before it
-    // crosses the provider boundary and reports that exact query's digest.
-    const contextQuerySha256 = createHash("sha256")
-      .update(query, "utf8")
-      .digest("hex");
-
-    let search: ProjectMemorySearch;
-    try {
-      search = await provider.search({
-        identity,
-        text: query,
-        limit: projectMemoryLimits.maxResults,
-        ...(input.signal === undefined ? {} : { signal: input.signal }),
-      });
-      if (
-        !isQuerySha256(search.providerQuerySha256) ||
-        search.hits.length > projectMemoryLimits.maxResults ||
-        !search.hits.every(validHit) ||
-        (search.provider.version !== null &&
-          (search.provider.version.length === 0 ||
-            search.provider.version.length > 64))
-      )
-        throw new ProjectMemoryError("PROJECT_MEMORY_INVALID_RESPONSE");
-    } catch (error) {
-      // Memory is optional: every provider failure degrades to "no memory",
-      // is recorded honestly, and never pretends a retrieval succeeded.
-      const code =
-        error instanceof ProjectMemoryError
-          ? error.code
-          : input.signal?.aborted === true
-            ? "PROJECT_MEMORY_CANCELLED"
-            : "PROJECT_MEMORY_FAILED";
-      await record({
-        ...nothing,
-        providerVersion: null,
-        memoryProjectId: identity.memoryProjectId,
-        outcome: "failed",
-        errorCode: code,
-        contextQuerySha256,
-        // Unknown: a failed search has no validated outbound-query report.
-        providerQuerySha256: null,
-      });
-      if (input.signal?.aborted === true)
-        throw new DOMException("Execution cancelled", "AbortError");
-      return undefined;
-    }
-
-    const budget = applyProjectMemoryBudget(search.hits, provider.id, maxBytes);
-    const recorded = await record({
-      providerVersion: search.provider.version,
-      memoryProjectId: identity.memoryProjectId,
-      outcome: budget.injected.length === 0 ? "empty" : "retrieved",
-      errorCode: null,
-      contextQuerySha256,
-      providerQuerySha256: search.providerQuerySha256,
-      resultCount: budget.references.length,
-      injectedCount: budget.injected.length,
-      injectedCharacters: budget.injectedCharacters,
-      references: budget.references,
-    });
-    if (!recorded || budget.injected.length === 0) return undefined;
-    return {
-      provider: provider.id,
-      notice: projectMemoryNotice,
-      results: budget.injected,
-    };
   }
 }

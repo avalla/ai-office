@@ -238,15 +238,11 @@ side effect of install, uninstall, or runtime purge.
 
 For new agent knowledge, use the connected `AgentKnowledgeStore` through
 `knowledge:plan` and `knowledge:admit` after reviewing the exact plan hash;
-inspect provenance with `knowledge:trace`. CairnKeep is deprecated and
-read-only. Use `project-memory:status` only for legacy diagnostics and
-`knowledge:legacy-plan` / `knowledge:legacy-import` only for explicit import of
-an existing named scope. Do not recommend CairnKeep for new knowledge, write to
-its scope, or treat a status probe as migration. For a temporary import, inspect
-the derived scope, review `knowledge:legacy-plan`, run `knowledge:legacy-import`
-with the exact reviewed hash, verify provenance with `knowledge:trace`, then
-unset AI_OFFICE_PROJECT_MEMORY_PROVIDER and restart the Runtime. Use
-`AgentKnowledgeStore` for all future knowledge.
+inspect provenance with `knowledge:trace`. CairnKeep integration has been
+removed from AI Office. Existing imported records remain readable through
+native knowledge retrieval and `knowledge:trace`. Use `AgentKnowledgeStore`
+for all new knowledge. Retain any unimported CairnKeep data outside AI Office
+if it still needs separate review; this release does not delete external data.
 
 ## Uninstall safely
 

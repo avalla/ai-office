@@ -142,8 +142,8 @@ block is omitted when nothing was injected, and retrieval failures never fail
 the run. Preparation honors the run's AbortSignal, including direct
 `WorkerAgentExecutor.execute`, so cancellation during retrieval cancels the run
 before any worker starts. A run that already has retrieval provenance is never
-prepared again. The deprecated, read-only CairnKeep adapter no longer feeds
-worker context; it remains for legacy diagnostics and explicit import. See
+prepared again. CairnKeep integration has been removed; previously imported
+records can still enter context through native retrieval. See
 [native agent knowledge](agent-knowledge.md).
 It receives no repository path, resource tools, role source files, or skills.
 The trusted, pinned role guidance is injected separately from the generic Runtime

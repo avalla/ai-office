@@ -299,9 +299,14 @@ test("query provenance stores two exact digests, never query text, and they must
 test("upgrading 0028 provenance keeps its context digest and leaves the unreported outbound digest null", async () => {
   const db = database("0029");
   seed(db, "p", "legacy");
+  seed(db, "p", "legacy-failed");
   db.exec(
     `INSERT INTO agent_run_memory_retrieval(run_id,project_id,provider,provider_version,memory_project_id,scope,outcome,error_code,query_sha256,result_count,injected_count,injected_characters,created_at)
-     VALUES ('legacy','p','cairnkeep',NULL,'aio-00000000000000000000000000000001','project','empty',NULL,'${"d".repeat(64)}',0,0,0,'${at}')`,
+     VALUES ('legacy','p','cairnkeep','0.1.0','aio-00000000000000000000000000000001','project','retrieved',NULL,'${"d".repeat(64)}',1,1,23,'${at}');
+     INSERT INTO agent_run_memory_reference(run_id,rank,reference_id,content_digest,scope,injected,truncated)
+     VALUES ('legacy',1,'decisions/storage','sha256:${"b".repeat(64)}','aio-00000000000000000000000000000001',1,0);
+     INSERT INTO agent_run_memory_retrieval(run_id,project_id,provider,provider_version,memory_project_id,scope,outcome,error_code,query_sha256,result_count,injected_count,injected_characters,created_at)
+     VALUES ('legacy-failed','p','cairnkeep',NULL,'aio-00000000000000000000000000000001','project','failed','PROJECT_MEMORY_TIMEOUT','${"e".repeat(64)}',0,0,0,'${at}')`,
   );
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([
     "0029_agent_run_memory_query_digests.sql",
@@ -316,9 +321,25 @@ test("upgrading 0028 provenance keeps its context digest and leaves the unreport
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   const repository = new SqliteProjectMemoryProvenanceRepository(db);
   expect(await repository.findRetrieval("legacy")).toMatchObject({
-    outcome: "empty",
+    provider: "cairnkeep",
+    providerVersion: "0.1.0",
+    outcome: "retrieved",
     contextQuerySha256: "d".repeat(64),
     providerQuerySha256: null,
+    references: [{
+      rank: 1,
+      referenceId: "decisions/storage",
+      contentDigest: `sha256:${"b".repeat(64)}`,
+      injected: true,
+    }],
+  });
+  expect(await repository.findRetrieval("legacy-failed")).toMatchObject({
+    provider: "cairnkeep",
+    outcome: "failed",
+    errorCode: "PROJECT_MEMORY_TIMEOUT",
+    contextQuerySha256: "e".repeat(64),
+    providerQuerySha256: null,
+    references: [],
   });
   // Still append-only after the column rename.
   expect(() =>

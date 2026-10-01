@@ -23,15 +23,11 @@ import { QueryApi } from "./query-api.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
-import type { ProjectMemoryProvider } from "@ai-office/application/ports/project-memory-provider.port.ts";
-import type { LegacyMemoryReader } from "@ai-office/application/ports/legacy-memory-reader.port.ts";
 import {
   KnowledgeStoreError,
   type RuntimeAgentKnowledge,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { DaemonHealthResponse } from "@ai-office/application/protocol/daemon-protocol.ts";
-import { createProjectMemoryProvider } from "@ai-office/cairnkeep-memory/create-project-memory-provider.ts";
-import { CairnKeepMemoryProvider } from "@ai-office/cairnkeep-memory/cairnkeep-memory-provider.ts";
 import {
   isAgentKnowledgeTenantId,
   resolveAgentKnowledgeConfiguration,
@@ -113,13 +109,7 @@ export interface BootstrapOptions {
   agentClients?: AgentClientCatalog;
   projectBindings?: ProjectBindingAdapter;
   defaultOfficeManifest?: OfficeManifest;
-  /**
-   * Optional project memory provider. When omitted, the host reads its own
-   * environment once (`AI_OFFICE_PROJECT_MEMORY_PROVIDER`, disabled by default).
-   */
-  projectMemory?: ProjectMemoryProvider;
-  legacyMemory?: LegacyMemoryReader;
-  /** Host-only secondary knowledge configuration; independent of CairnKeep. */
+  /** Host-only secondary knowledge configuration. */
   agentKnowledgeConfiguration?: AgentKnowledgeConfiguration;
   /** Internal seam for deterministic connection and cleanup tests. */
   connectAgentKnowledge?: AgentKnowledgeConnector;
@@ -325,8 +315,6 @@ export async function bootstrap(
         // Knowledge is advisory. Keep the authoritative Runtime available.
       }
     }
-    const projectMemory =
-      options.projectMemory ?? createProjectMemoryProvider(process.env);
     const runtime = new ApplicationRuntime(
       runtimePaths,
       commandRoot,
@@ -337,14 +325,9 @@ export async function bootstrap(
       options.defaultOfficeManifest,
       options.agentExecutor,
       () => queryEvents.publish(["run.updated", "task.updated"]),
-      projectMemory,
       routing,
       projectStorage,
       agentKnowledge,
-      options.legacyMemory ??
-        (projectMemory instanceof CairnKeepMemoryProvider
-          ? projectMemory
-          : undefined),
     );
 
     const queueConfiguration = readQueueConfiguration(process.env);

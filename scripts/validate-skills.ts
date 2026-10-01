@@ -66,34 +66,34 @@ const requiredProjectedSkillSnippets = [
   "ai-office next",
 ] as const;
 
-const requiredLegacyGuidanceSnippets = [
-  "CairnKeep is deprecated and",
-  "Do not recommend CairnKeep for new knowledge",
-  "knowledge:legacy-plan",
-  "knowledge:legacy-import",
-  "exact reviewed hash",
+const requiredKnowledgeGuidanceSnippets = [
+  "CairnKeep integration has been removed",
+  "knowledge:plan",
+  "knowledge:admit",
   "knowledge:trace",
-  "unset AI_OFFICE_PROJECT_MEMORY_PROVIDER",
   "AgentKnowledgeStore",
 ] as const;
 
-function validateLegacyGuidance(source: string, label: string): string[] {
+function validateKnowledgeGuidance(source: string, label: string): string[] {
   const errors: string[] = [];
   const normalized = source.replace(/\s+/gu, " ");
-  const actionable = normalized.replaceAll(
-    "Do not recommend CairnKeep for new knowledge",
-    "",
-  );
-  for (const snippet of requiredLegacyGuidanceSnippets)
+  for (const snippet of requiredKnowledgeGuidanceSnippets)
     if (!normalized.includes(snippet))
-      errors.push(`${label} is missing legacy guidance: ${snippet}`);
+      errors.push(`${label} is missing knowledge guidance: ${snippet}`);
   if (
-    /\b(?:use|run|recommend)\s+memory_write\b/iu.test(actionable) ||
+    /\b(?:use|run|recommend)\s+memory_write\b/iu.test(normalized) ||
     /\b(?:use|recommend)\s+CairnKeep\s+for\s+new\s+(?:project\s+)?(?:memory|knowledge)\b/iu.test(
-      actionable,
+      normalized,
     )
   )
     errors.push(`${label} recommends writing new knowledge to CairnKeep`);
+  for (const command of [
+    "project-memory:status",
+    "knowledge:legacy-plan",
+    "knowledge:legacy-import",
+  ])
+    if (normalized.includes(command))
+      errors.push(`${label} references removed command: ${command}`);
   return errors;
 }
 
@@ -175,7 +175,7 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
         `SKILL.md references removed provider onboarding: ${snippet}`,
       );
   }
-  errors.push(...validateLegacyGuidance(source, "SKILL.md"));
+  errors.push(...validateKnowledgeGuidance(source, "SKILL.md"));
   // The handover workflow has one canonical definition in the application
   // layer. Both skill surfaces must carry it verbatim so no client drifts.
   if (!source.includes(compileProjectHandoverSection()))
@@ -263,7 +263,7 @@ export function validateProjectedAiOfficeSkill(source: string): string[] {
         `Projected SKILL.md references removed provider onboarding: ${snippet}`,
       );
   }
-  errors.push(...validateLegacyGuidance(source, "Projected SKILL.md"));
+  errors.push(...validateKnowledgeGuidance(source, "Projected SKILL.md"));
   if (!source.includes(compileProjectHandoverSection()))
     errors.push(
       "Projected SKILL.md does not embed the canonical project handover workflow verbatim",

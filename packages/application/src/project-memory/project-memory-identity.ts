@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import type { ProjectMemoryIdentity } from "../ports/project-memory-provider.port.ts";
 
 /**
  * Domain separator for the derivation. Changing it would silently move every
@@ -23,9 +22,9 @@ export const projectMemoryIdentityPattern = /^aio-[0-9a-f]{32}$/;
  * one logical repository, on any machine, reaches the same memory and nothing
  * local or secret is disclosed to the provider.
  */
-export function deriveProjectMemoryIdentity(
-  repositoryId: string,
-): ProjectMemoryIdentity {
+export function deriveProjectMemoryIdentity(repositoryId: string): {
+  readonly memoryProjectId: string;
+} {
   if (repositoryId.trim() === "" || repositoryId.length > 256)
     throw new TypeError("A portable repository ID is required");
   const digest = createHash("sha256")

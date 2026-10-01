@@ -586,7 +586,7 @@ and retains its lock for inspection. See [run recovery](run-recovery.md) and the
 
 ## M7.11 — Durable project memory provider
 
-Status: implemented (initial read-only slice).
+Status: historical initial slice; superseded by Native Agent Knowledge.
 
 Focus: give workers durable, repository-scoped context from an optional
 external memory provider without creating a second authority. CairnKeep
@@ -626,10 +626,10 @@ evaluation, trajectory or skill system. `global.sqlite` is unchanged. See
 ### Follow-up — Reviewed project memory promotion
 
 Status: superseded as a CairnKeep write plan by the Native Agent Knowledge
-milestone below. AK-05 will determine the admission and review policy for new
-knowledge through `AgentKnowledgeStore`; no CairnKeep write-back is planned.
-The read-only CairnKeep path remains for diagnostics after the AK-04 retrieval
-cutover. Semantic retrieval and dashboard provenance remain separate work.
+milestone below. AK-05 established the admission and review policy for new
+knowledge through `AgentKnowledgeStore`; no CairnKeep write-back was added.
+AK-08 removed the remaining read-only CairnKeep diagnostics and import path.
+Semantic retrieval and dashboard provenance remain separate work.
 
 ### Separate follow-up — Project retention and removal
 
@@ -644,7 +644,7 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: in progress, AK-06 merged and AK-07 CairnKeep deprecation in review.
+Status: AK-01–AK-07 merged; AK-08 implementation in review.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
@@ -671,11 +671,14 @@ boundary and verifies SurrealDB's bounded, scoped, deterministic search.
 AK-03 adds an explicitly configured SurrealDB connection to Runtime bootstrap
 with bounded startup, sanitized diagnostics, and owned shutdown. AK-04 routes
 worker retrieval through this store and preserves bounded context and run
-provenance; CairnKeep remains available only for legacy diagnostics. See
+provenance; AK-08 removes the remaining CairnKeep diagnostics and import
+implementation. See
 [native agent knowledge retrieval](agent-knowledge.md).
 AK-05 governs new run-sourced writes. AK-06 adds an operator-reviewed,
 idempotent import of one bounded CairnKeep named scope, preserving its scope,
-key and content digest without inventing run provenance. See the same guide.
+key and content digest without inventing run provenance. Imported records and
+historical run retrieval evidence remain readable; external CairnKeep data is
+never deleted by AI Office. See the same guide.
 
 ## M7.12 — Agent model routing
 
@@ -939,7 +942,7 @@ Implemented:
 BullMQ is delivery only: it is not a workflow engine, authority store, approval
 store, model router, capability grant, memory store, or audit log. Retry policy
 is application-owned and excludes ambiguous effects, stale fences, validation
-failures, and approval decisions. CairnKeep remains read-only.
+failures, and approval decisions. CairnKeep integration has been retired.
 
 Redis/Valkey is an external operator prerequisite and is never installed by AI
 Office. Redis data loss is recoverable for pending SQLite outbox intent; a

@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
 import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context/knowledge-search-term.ts";
-import { cairnKeepSearchTerm } from "../../packages/cairnkeep-memory/src/cairnkeep-memory-provider.ts";
 import {
   assertKnowledgeScope,
   assertKnowledgeIdentifier,
@@ -10,27 +8,7 @@ import {
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 
 describe("AgentKnowledgeStore application boundary", () => {
-  it("keeps the retained CairnKeep adapter and port read-only", () => {
-    const adapter = readFileSync(
-      new URL(
-        "../../packages/cairnkeep-memory/src/cairnkeep-memory-provider.ts",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    const port = readFileSync(
-      new URL(
-        "../../packages/application/src/ports/project-memory-provider.port.ts",
-        import.meta.url,
-      ),
-      "utf8",
-    );
-    expect(adapter).not.toContain("memory_write");
-    expect(adapter).not.toContain("writeNamedScope");
-    expect(port).not.toMatch(/\b(?:write|save|record)\s*\(/u);
-  });
-
-  it("preserves the deployed CairnKeep literal-term choices", () => {
+  it("preserves the deployed literal-term choices for native retrieval", () => {
     for (const [query, expected] of [
       ["Fix the login flow for users", "login"],
       ["Rotate database credentials", "credentials"],
@@ -46,11 +24,13 @@ describe("AgentKnowledgeStore application boundary", () => {
       ["!!!", "!!!"],
       ["RÉSUMÉ café", "résumé"],
       ["𐐀𐐁𐐂 xy", "𐐨𐐩𐐪"],
-      ["X".repeat(knowledgeRetrievalLimits.queryCharacters), "x".repeat(knowledgeRetrievalLimits.queryCharacters)],
+      [
+        "X".repeat(knowledgeRetrievalLimits.queryCharacters),
+        "x".repeat(knowledgeRetrievalLimits.queryCharacters),
+      ],
       ["a b", "a b"],
     ] as const) {
       expect(knowledgeCompatibilitySearchTerm(query)).toBe(expected);
-      expect(cairnKeepSearchTerm(query)).toBe(expected);
     }
   });
 
@@ -66,7 +46,9 @@ describe("AgentKnowledgeStore application boundary", () => {
   });
 
   it("requires a trusted tenant and portable repository identity without fallback", () => {
-    expect(() => assertKnowledgeScope({ tenantId: "tenant-a", repositoryId: "repo-a" })).not.toThrow();
+    expect(() =>
+      assertKnowledgeScope({ tenantId: "tenant-a", repositoryId: "repo-a" }),
+    ).not.toThrow();
     for (const scope of [
       { tenantId: "", repositoryId: "repo-a" },
       { tenantId: "tenant-a", repositoryId: "" },
@@ -88,7 +70,16 @@ describe("AgentKnowledgeStore application boundary", () => {
 
   it("requires canonical bounded identifiers before query construction", () => {
     expect(() => assertKnowledgeIdentifier("task-a")).not.toThrow();
-    for (const id of ["", " ", " task-a", "task-a ", "x".repeat(257), 42, null, {}]) {
+    for (const id of [
+      "",
+      " ",
+      " task-a",
+      "task-a ",
+      "x".repeat(257),
+      42,
+      null,
+      {},
+    ]) {
       expect(() => assertKnowledgeIdentifier(id)).toThrow(
         expect.objectContaining({ code: "KNOWLEDGE_INVALID_QUERY" }),
       );
@@ -96,14 +87,18 @@ describe("AgentKnowledgeStore application boundary", () => {
   });
 
   it("accepts only a bounded literal query and a bounded result count", () => {
-    expect(() => assertKnowledgeSearchQuery({
-      text: "deployment",
-      limit: knowledgeRetrievalLimits.maxResults,
-      agentId: "agent-a",
-    })).not.toThrow();
-    expect(() => assertKnowledgeSearchQuery({
-      text: "𐐀".repeat(knowledgeRetrievalLimits.queryCharacters),
-    })).not.toThrow();
+    expect(() =>
+      assertKnowledgeSearchQuery({
+        text: "deployment",
+        limit: knowledgeRetrievalLimits.maxResults,
+        agentId: "agent-a",
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertKnowledgeSearchQuery({
+        text: "𐐀".repeat(knowledgeRetrievalLimits.queryCharacters),
+      }),
+    ).not.toThrow();
     for (const query of [
       { text: "" },
       { text: " deployment" },

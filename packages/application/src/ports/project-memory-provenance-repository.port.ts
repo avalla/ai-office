@@ -1,4 +1,3 @@
-import type { ProjectMemoryErrorCode } from "./project-memory-provider.port.ts";
 import type { KnowledgeStoreErrorCode } from "./agent-knowledge-store.port.ts";
 
 /**
@@ -18,7 +17,7 @@ export interface ProjectMemoryRetrievalRecord {
   readonly scope: "project";
   readonly outcome: "retrieved" | "empty" | "failed" | "skipped";
   readonly errorCode:
-    | ProjectMemoryErrorCode
+    | LegacyProjectMemoryErrorCode
     | KnowledgeStoreErrorCode
     | KnowledgeRetrievalErrorCode
     | ProjectMemorySkipCode
@@ -50,6 +49,17 @@ export type ProjectMemorySkipCode =
 
 export type KnowledgeRetrievalErrorCode =
   "KNOWLEDGE_TIMEOUT" | "KNOWLEDGE_CANCELLED";
+
+/** Historical error values remain readable in persisted run provenance. */
+export type LegacyProjectMemoryErrorCode =
+  | "PROJECT_MEMORY_UNAVAILABLE"
+  | "PROJECT_MEMORY_MISCONFIGURED"
+  | "PROJECT_MEMORY_INCOMPATIBLE"
+  | "PROJECT_MEMORY_TIMEOUT"
+  | "PROJECT_MEMORY_INVALID_RESPONSE"
+  | "PROJECT_MEMORY_RESPONSE_TOO_LARGE"
+  | "PROJECT_MEMORY_FAILED"
+  | "PROJECT_MEMORY_CANCELLED";
 
 export interface ProjectMemoryReferenceRecord {
   readonly rank: number;

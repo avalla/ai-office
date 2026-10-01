@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Retire the CairnKeep adapter, configuration, diagnostics and legacy import
+  commands after the AK-06 import window. Native agent knowledge remains the
+  only worker retrieval and reviewed admission path. Imported legacy records
+  and historical run provenance remain readable; external CairnKeep data is
+  untouched.
 - Report the running source checkout's `HEAD` revision. `ai-office --version` and `-V` now print
   SemVer build metadata for a source-linked checkout, for example
   `0.1.0+git.6fe106c41945` (12-character revision), and still print the plain
