@@ -34,6 +34,12 @@ AI Office keeps different kinds of documentation separate so current product tru
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
   audit constraints.
+- [M15 shared professional model](development/m15-shared-professional-model.md):
+  compatibility boundary assessment for Project, portable identity, evidence,
+  approvals, and controlled actions.
+- [M15 legal design probe](development/m15-legal-design-probe.md) and
+  [manufacturing exception-management probe](development/m15-manufacturing-exception-management-probe.md):
+  synthetic cross-domain scenarios and fail-closed checks; not current features.
 - [Artifact Review & Approval Workflow](adr/ADR-0021-artifact-review-and-approval-workflow.md):
   accepted cross-domain artifact identity, review binding, stale-review,
   approval, and authoritative-execution decision.

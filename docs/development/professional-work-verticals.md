@@ -7,6 +7,10 @@ not current implementation truth and does not redefine the existing `Project`
 aggregate, repository lifecycle, software governance model, or supported
 integrations.
 
+The M15 design work is recorded in the [shared-model boundary assessment](m15-shared-professional-model.md),
+[legal probe](m15-legal-design-probe.md), and
+[manufacturing exception-management probe](m15-manufacturing-exception-management-probe.md).
+
 AI Office is software-development-first today. The purpose of the vertical model
 is to preserve that investment while testing whether the orchestration,
 capability, approval, provenance, artifact, and audit foundations can become a

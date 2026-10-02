@@ -1377,7 +1377,7 @@ Exit direction:
 
 ## M15 — Domain-neutral professional work and vertical profiles
 
-Status: future.
+Status: design assessment in progress; no M15 runtime implementation.
 
 Goal: prove that the orchestration, policy, provenance, approval, artifact, and
 audit foundations can support professional work beyond software development
@@ -1390,6 +1390,13 @@ boundary between that implemented model and any more general professional-work
 concepts. Candidate conceptual terms such as `Workspace`, `Matter`, or
 `WorkUnit` are design vocabulary only until a milestone assessment and, where
 necessary, an ADR select concrete domain and storage changes.
+
+M15-1 records the [shared-model boundary assessment](m15-shared-professional-model.md).
+M15-2 and M15-3 exercise it with a [legal design probe](m15-legal-design-probe.md)
+and a [manufacturing exception-management design probe](m15-manufacturing-exception-management-probe.md).
+These are design artifacts; their target contracts are not implemented Runtime
+capabilities. A focused ADR and implementation slices must resolve the
+remaining identity, evidence, storage, and policy choices before production work.
 
 Core capabilities to assess:
 
