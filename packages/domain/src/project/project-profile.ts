@@ -99,6 +99,8 @@ export interface ProjectScanSummary {
   projectName: string;
   remoteUrl?: string;
   currentBranch?: string;
+  /** Remote default branch, only when the local origin/HEAD symbolic ref exists. */
+  defaultBranch?: string;
   /**
    * Whether the checkout carries at least one commit. A checked-out branch
    * pointer is not history: `git init` produces one before any commit exists.

@@ -412,6 +412,10 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
       "0036_milestone_title_changed_event.sql",
+      "0037_task_dependencies.sql",
+      "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
+      "0040_task_execution_history.sql",
     ]);
     expect(
       database

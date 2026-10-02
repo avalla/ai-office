@@ -21,6 +21,7 @@ import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/reposi
 import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import { SqliteTaskDependencyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-dependency.repository.ts";
 import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
@@ -33,6 +34,10 @@ import {
   InvalidTaskTransitionError,
 } from "@ai-office/domain/errors.ts";
 import { ManageTaskLifecycle } from "@ai-office/application/commands/manage-task-lifecycle.ts";
+import {
+  ManageTaskDependencies,
+  TaskPrerequisiteIncompleteError,
+} from "@ai-office/application/commands/manage-task-dependencies.ts";
 import {
   ManageTaskRequirements,
   RequirementNotFoundError,
@@ -195,6 +200,7 @@ async function fixture() {
   const tasks = new FailableTasks(new SqliteTaskRepository(database));
   const governance = new SqliteGovernanceRepository(database);
   const links = new SqliteTaskRequirementRepository(database);
+  const dependencies = new SqliteTaskDependencyRepository(database);
   const pipelines = new SqlitePipelineRunRepository(database);
   const runtime = new SqliteAgentRuntimeRepository(database);
   const manifests = new SqliteOfficeManifestRepository(database);
@@ -209,6 +215,8 @@ async function fixture() {
     audit,
     clock,
     transactions,
+    undefined,
+    dependencies,
   );
   return {
     root,
@@ -220,12 +228,21 @@ async function fixture() {
     tasks,
     governance,
     links,
+    dependencies,
     pipelines,
     runtime,
     manifests,
     transactions,
     audit,
     lifecycle,
+    dependencyCommands: new ManageTaskDependencies(
+      projects,
+      tasks,
+      dependencies,
+      audit,
+      clock,
+      transactions,
+    ),
     requirements: new ManageTaskRequirements(
       projects,
       tasks,
@@ -245,6 +262,8 @@ async function fixture() {
       ids,
       clock,
       transactions,
+      undefined,
+      dependencies,
     ),
     agentRuns: new ScheduleAgentRun(
       projects,
@@ -254,6 +273,9 @@ async function fixture() {
       clock,
       transactions,
       pipelines,
+      undefined,
+      undefined,
+      dependencies,
     ),
     completion: new RecordTaskCompletion(
       projects,
@@ -272,6 +294,8 @@ async function fixture() {
       lifecycle,
       clock,
       transactions,
+      governance,
+      dependencies,
     ),
   };
 }
@@ -292,9 +316,7 @@ async function seedTask(
   id: string,
   title = "Work",
 ): Promise<void> {
-  await context.tasks.save(
-    Task.create({ id, projectId, title, now }),
-  );
+  await context.tasks.save(Task.create({ id, projectId, title, now }));
 }
 
 async function seedRequirement(
@@ -322,10 +344,331 @@ function auditEvents(
 }
 
 afterEach(() => {
-  while (roots.length > 0) rmSync(roots.pop()!, { recursive: true, force: true });
+  while (roots.length > 0)
+    rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
 describe("task lifecycle commands", () => {
+  test("hard prerequisites block readiness, start, and scheduling until completed", async () => {
+    const context = await fixture();
+    await seedProject(context, "dependency-project");
+    await seedTask(context, "dependency-project", "foundation", "Foundation");
+    await seedTask(context, "dependency-project", "dependent", "Dependent");
+    const input = {
+      projectId: "dependency-project",
+      taskId: "dependent",
+      dependsOnTaskId: "foundation",
+      actorId: "operator",
+    };
+    expect(await context.dependencyCommands.link(input)).toEqual({
+      created: true,
+    });
+    expect(await context.dependencyCommands.link(input)).toEqual({
+      created: false,
+    });
+    expect(
+      await context.dependencyCommands.readiness(
+        "dependency-project",
+        "dependent",
+      ),
+    ).toMatchObject({
+      runnable: false,
+      blockedBy: [{ taskId: "foundation", status: "pending" }],
+    });
+    await expect(
+      context.lifecycle.start({
+        projectId: input.projectId,
+        taskId: input.taskId,
+        actorId: input.actorId,
+      }),
+    ).rejects.toBeInstanceOf(TaskPrerequisiteIncompleteError);
+    await expect(
+      context.agentRuns.execute({
+        projectId: input.projectId,
+        taskId: input.taskId,
+        agentId: "absent",
+      }),
+    ).rejects.toBeInstanceOf(TaskPrerequisiteIncompleteError);
+    await expect(
+      context.dependencyCommands.link({
+        ...input,
+        taskId: "foundation",
+        dependsOnTaskId: "dependent",
+      }),
+    ).rejects.toThrow("cycle");
+    await context.lifecycle.start({
+      projectId: input.projectId,
+      taskId: "foundation",
+      actorId: input.actorId,
+    });
+    await context.lifecycle.complete({
+      projectId: input.projectId,
+      taskId: "foundation",
+      actorId: input.actorId,
+    });
+    expect(
+      await context.dependencyCommands.readiness(
+        "dependency-project",
+        "dependent",
+      ),
+    ).toMatchObject({ runnable: true, blockedBy: [] });
+    expect(
+      await context.lifecycle.start({
+        projectId: input.projectId,
+        taskId: input.taskId,
+        actorId: input.actorId,
+      }),
+    ).toBe("running");
+  });
+
+  test("dependency edits are symmetric before execution and immutable afterward", async () => {
+    const context = await fixture();
+    await seedProject(context, "edit-project");
+    await seedTask(context, "edit-project", "prerequisite");
+    await seedTask(context, "edit-project", "dependent");
+    const edge = {
+      projectId: "edit-project",
+      taskId: "dependent",
+      dependsOnTaskId: "prerequisite",
+      actorId: "operator",
+    };
+    expect(await context.dependencyCommands.link(edge)).toEqual({
+      created: true,
+    });
+    expect(await context.dependencyCommands.unlink(edge)).toEqual({
+      removed: true,
+    });
+    await context.lifecycle.start({
+      projectId: edge.projectId,
+      taskId: edge.taskId,
+      actorId: edge.actorId,
+    });
+    const before =
+      auditEvents(context, "task.dependency_linked").length +
+      auditEvents(context, "task.dependency_unlinked").length;
+    await expect(context.dependencyCommands.link(edge)).rejects.toThrow(
+      "before task execution",
+    );
+    await expect(context.dependencyCommands.unlink(edge)).rejects.toThrow(
+      "before task execution",
+    );
+    await context.lifecycle.block({
+      projectId: edge.projectId,
+      taskId: edge.taskId,
+      actorId: edge.actorId,
+      reason: "Waiting for external input",
+    });
+    await expect(context.dependencyCommands.link(edge)).rejects.toThrow(
+      "after task execution",
+    );
+    await expect(context.dependencyCommands.unlink(edge)).rejects.toThrow(
+      "after task execution",
+    );
+    await context.lifecycle.cancel({
+      projectId: edge.projectId,
+      taskId: edge.taskId,
+      actorId: edge.actorId,
+      reason: "Superseded",
+    });
+    await expect(context.dependencyCommands.link(edge)).rejects.toThrow(
+      "before task execution",
+    );
+    await expect(context.dependencyCommands.unlink(edge)).rejects.toThrow(
+      "before task execution",
+    );
+    expect(
+      auditEvents(context, "task.dependency_linked").length +
+        auditEvents(context, "task.dependency_unlinked").length,
+    ).toBe(before);
+  });
+
+  test("active AgentRun prevents both dependency edits even while the task is pending", async () => {
+    const context = await fixture();
+    await seedProject(context, "edit-project");
+    await seedTask(context, "edit-project", "prerequisite");
+    await seedTask(context, "edit-project", "dependent");
+    const edge = {
+      projectId: "edit-project",
+      taskId: "dependent",
+      dependsOnTaskId: "prerequisite",
+      actorId: "operator",
+    };
+    await context.dependencyCommands.link(edge);
+    const prerequisite = (await context.tasks.findById("prerequisite"))!;
+    prerequisite.recordHistoricalCompletion(now);
+    await context.tasks.save(prerequisite);
+    await context.runtime.saveRole(
+      Role.create({
+        id: "edit-role",
+        projectId: "edit-project",
+        key: "developer",
+        name: "Developer",
+        version: 1,
+        capabilities: [],
+        tools: [],
+        modelPolicy: "default",
+        limits: { maxIterations: 1, maxCostMicros: 1000n, timeoutSeconds: 10 },
+        sourcePath: "roles.yaml",
+        now,
+      }),
+    );
+    await context.runtime.saveAgent({
+      id: "edit-agent",
+      projectId: "edit-project",
+      name: "developer-agent",
+      roleId: "edit-role",
+      enabled: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await context.runtime.saveRun(
+      (await import("@ai-office/domain/agent/agent-run.ts")).AgentRun.create({
+        id: "edit-run",
+        projectId: "edit-project",
+        taskId: "dependent",
+        agentId: "edit-agent",
+        now,
+      }),
+    );
+    const before =
+      auditEvents(context, "task.dependency_linked").length +
+      auditEvents(context, "task.dependency_unlinked").length;
+    await expect(
+      context.dependencyCommands.link({
+        ...edge,
+        dependsOnTaskId: "dependent",
+      }),
+    ).rejects.toThrow("after task execution");
+    await expect(context.dependencyCommands.unlink(edge)).rejects.toThrow(
+      "after task execution",
+    );
+    expect(
+      auditEvents(context, "task.dependency_linked").length +
+        auditEvents(context, "task.dependency_unlinked").length,
+    ).toBe(before);
+  });
+
+  test("reports a completed milestone with a competing verified implementation task", async () => {
+    const context = await fixture();
+    const projectId = "completed-milestone-project";
+    await seedProject(context, projectId);
+    await seedTask(
+      context,
+      projectId,
+      "original",
+      "AK-09: managed Agent Knowledge configuration",
+    );
+    await seedTask(
+      context,
+      projectId,
+      "duplicate",
+      "AK-09: managed Agent Knowledge configuration support",
+    );
+    context.database
+      .prepare(
+        `INSERT INTO milestone(id, project_id, title, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "milestone",
+        projectId,
+        "Completed milestone",
+        "completed",
+        now.toISOString(),
+        now.toISOString(),
+      );
+    context.database
+      .prepare(
+        `INSERT INTO requirement(id, project_id, milestone_id, requirement_key, title, description, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "requirement",
+        projectId,
+        "milestone",
+        "AK-09",
+        "Work",
+        "Work",
+        "verified",
+        now.toISOString(),
+        now.toISOString(),
+      );
+    for (const taskId of ["original", "duplicate"])
+      await context.requirements.link({
+        projectId,
+        taskId,
+        requirementId: "requirement",
+        actorId: "operator",
+      });
+    await context.lifecycle.start({
+      projectId,
+      taskId: "original",
+      actorId: "operator",
+    });
+    await context.lifecycle.submitForReview({
+      projectId,
+      taskId: "original",
+      actorId: "operator",
+    });
+    await context.lifecycle.start({
+      projectId,
+      taskId: "duplicate",
+      actorId: "operator",
+    });
+    await context.lifecycle.complete({
+      projectId,
+      taskId: "duplicate",
+      actorId: "operator",
+    });
+    const report = await context.reconcile.inspect(projectId);
+    const findings = report.issues
+      .filter((issue) => issue.taskId === "original")
+      .map((issue) => issue.finding);
+    expect(findings).toContain("completed_milestone_active_task");
+    expect(findings).toContain("verified_requirement_competing_tasks");
+    expect(
+      report.issues
+        .filter(
+          (issue) => issue.finding === "verified_requirement_competing_tasks",
+        )
+        .every((issue) => !issue.repairable),
+    ).toBe(true);
+    await context.lifecycle.complete({
+      projectId,
+      taskId: "original",
+      actorId: "operator",
+    });
+    const terminalReport = await context.reconcile.inspect(projectId);
+    expect(terminalReport.issues.map((issue) => issue.finding)).toContain(
+      "verified_requirement_duplicate_tasks",
+    );
+    expect(
+      terminalReport.issues
+        .filter(
+          (issue) => issue.finding === "verified_requirement_duplicate_tasks",
+        )
+        .every(
+          (issue) =>
+            issue.severity === "warning" &&
+            !issue.repairable &&
+            issue.repairOperation === null,
+        ),
+    ).toBe(true);
+    expect(terminalReport.planHash).toBeNull();
+    await expect(
+      context.reconcile.repair({
+        projectId,
+        approvedPlanHash: "arbitrary",
+        actorId: "operator",
+      }),
+    ).rejects.toBeInstanceOf(TaskReconciliationApprovalError);
+    expect((await context.tasks.findById("original"))?.snapshot().status).toBe(
+      "completed",
+    );
+    expect((await context.tasks.findById("duplicate"))?.snapshot().status).toBe(
+      "completed",
+    );
+  });
   test("starts, submits, and completes a task with an audit trail", async () => {
     const context = await fixture();
     await seedProject(context, "project-1");
@@ -1418,9 +1761,7 @@ describe("historical completion record", () => {
       }),
     ).rejects.toBeInstanceOf(TaskCompletionApprovalError);
     expect(auditEvents(context, "task.completion_recorded")).toHaveLength(1);
-    expect(
-      (await context.completion.plan(attestation)).kind,
-    ).toBe("none");
+    expect((await context.completion.plan(attestation)).kind).toBe("none");
   });
 });
 

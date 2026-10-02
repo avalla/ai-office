@@ -61,7 +61,9 @@ afterEach(() => {
 });
 
 function temporaryRoot(): string {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "ai-office-git-layout-")));
+  const root = realpathSync(
+    mkdtempSync(join(tmpdir(), "ai-office-git-layout-")),
+  );
   temporaryDirectories.push(root);
   return root;
 }
@@ -154,7 +156,13 @@ describeGit("LocalProjectScanner Git layout resolution", () => {
   test("prefers the origin remote when several remotes are configured", async () => {
     const root = committedRepository(5);
     git(root, "remote", "rename", "origin", "temporary");
-    git(root, "remote", "add", "upstream", "https://example.test/other/app.git");
+    git(
+      root,
+      "remote",
+      "add",
+      "upstream",
+      "https://example.test/other/app.git",
+    );
     git(root, "remote", "rename", "temporary", "origin");
 
     const scan = await new LocalProjectScanner().scan(root);
@@ -171,6 +179,57 @@ describeGit("LocalProjectScanner Git layout resolution", () => {
     expect(scan.currentBranch).toBe("feature");
     expect(scan.remoteUrl).toBe(remoteUrl);
     expect(scan.hasCommitHistory).toBe(true);
+  });
+
+  test("import records a non-default checkout branch without treating it as the repository default", async () => {
+    const mainCheckout = committedRepository(3);
+    git(
+      mainCheckout,
+      "symbolic-ref",
+      "refs/remotes/origin/HEAD",
+      "refs/remotes/origin/main",
+    );
+    const worktree = linkedWorktree(mainCheckout, "feature");
+    const { database, profiles, importer } = importHarness();
+    try {
+      const imported = await importer.execute({ rootPath: worktree });
+      expect(imported.scan.currentBranch).toBe("feature");
+      expect(imported.scan.defaultBranch).toBe("main");
+      expect(
+        (await profiles.listSources(imported.projectId))[0]?.defaultBranch,
+      ).toBe("main");
+      expect(
+        (await profiles.listActiveProfileEntries(imported.projectId)).find(
+          (entry) =>
+            entry.category === "repository" && entry.key === "current_branch",
+        )?.value,
+      ).toBe("feature");
+      const confirmedAt = new Date("2026-10-01T00:00:00.000Z");
+      await profiles.saveProfileEntry({
+        id: "confirmed-branch",
+        projectId: imported.projectId,
+        category: "repository",
+        key: "current_branch",
+        value: "human-confirmed-value",
+        origin: "user",
+        confidence: 1,
+        confirmedAt,
+        createdAt: confirmedAt,
+      });
+      await importer.execute({ rootPath: worktree });
+      expect(
+        (await profiles.listActiveProfileEntries(imported.projectId))
+          .filter((entry) => entry.key === "current_branch")
+          .map((entry) => [entry.origin, entry.value]),
+      ).toEqual(
+        expect.arrayContaining([
+          ["detected", "feature"],
+          ["user", "human-confirmed-value"],
+        ]),
+      );
+    } finally {
+      database.close();
+    }
   });
 
   test("detects history from packed refs in the main checkout and a worktree", async () => {
@@ -193,7 +252,10 @@ describeGit("LocalProjectScanner Git layout resolution", () => {
     git(module, "commit", "-m", "Initial commit");
     git(module, "remote", "add", "origin", remoteUrl);
     mkdirSync(join(superProject, ".git", "modules"), { recursive: true });
-    renameSync(join(module, ".git"), join(superProject, ".git", "modules", "lib"));
+    renameSync(
+      join(module, ".git"),
+      join(superProject, ".git", "modules", "lib"),
+    );
     writeFileSync(join(module, ".git"), "gitdir: ../.git/modules/lib\n");
 
     const scan = await new LocalProjectScanner().scan(module);
@@ -237,7 +299,14 @@ describeGit("repository evidence with nested linked worktrees", () => {
 
     nestedWorktree(mainCheckout, "first");
     nestedWorktree(mainCheckout, "second");
-    git(mainCheckout, "worktree", "add", "-b", "third", join(mainCheckout, "review"));
+    git(
+      mainCheckout,
+      "worktree",
+      "add",
+      "-b",
+      "third",
+      join(mainCheckout, "review"),
+    );
     const after = await scanner.scan(mainCheckout);
 
     expect(after.detectedFiles).toEqual(before.detectedFiles);
@@ -259,14 +328,19 @@ describeGit("repository evidence with nested linked worktrees", () => {
     const root = temporaryRoot();
     writeSources(root, 10);
     mkdirSync(join(root, ".worktrees", "notes"), { recursive: true });
-    writeFileSync(join(root, ".worktrees", "notes", "draft.ts"), "export const a = 1;\n");
+    writeFileSync(
+      join(root, ".worktrees", "notes", "draft.ts"),
+      "export const a = 1;\n",
+    );
     git(root, "init", "-b", "main");
     git(root, "add", ".");
     git(root, "commit", "-m", "Initial commit");
 
     const scan = await new LocalProjectScanner().scan(root);
 
-    expect(scan.detectedFiles).toContain(join(".worktrees", "notes", "draft.ts"));
+    expect(scan.detectedFiles).toContain(
+      join(".worktrees", "notes", "draft.ts"),
+    );
   });
 });
 
@@ -322,7 +396,10 @@ describeGit("handover facts across equivalent Git checkouts", () => {
 
     // A real structural change must still move the fingerprint.
     for (let index = 0; index < 300; index += 1)
-      writeFileSync(join(mainCheckout, "src", `service-${index}.py`), `VALUE = ${index}\n`);
+      writeFileSync(
+        join(mainCheckout, "src", `service-${index}.py`),
+        `VALUE = ${index}\n`,
+      );
     await importer.execute({ rootPath: mainCheckout });
     const changed = await facts(imported.projectId);
 

@@ -27,6 +27,7 @@ function service(context: CommandContext): ManagePipelineRuns {
     context.clock,
     context.transactions,
     context.jobOutbox,
+    context.taskDependencies,
   );
 }
 
@@ -96,6 +97,7 @@ export async function handlePipelineCommand(
       context.pipelines,
       context.modelRouting,
       context.jobOutbox,
+      context.taskDependencies,
     );
     const result = await new OrchestratePipelineStage(
       context.pipelines,

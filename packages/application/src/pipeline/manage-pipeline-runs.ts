@@ -18,6 +18,8 @@ import type { PipelineRunRepository } from "../ports/pipeline-run-repository.por
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import type { JobOutboxRepository } from "../ports/job-outbox-repository.port.ts";
+import type { TaskDependencyRepository } from "../ports/task-dependency-repository.port.ts";
+import { assertTaskPrerequisitesComplete } from "../commands/manage-task-dependencies.ts";
 import type {
   AgentExecutionPrincipal,
   OperatorPrincipal,
@@ -44,6 +46,7 @@ export class ManagePipelineRuns {
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
     private readonly outbox?: JobOutboxRepository,
+    private readonly taskDependencies?: TaskDependencyRepository,
   ) {}
 
   async start(input: {
@@ -57,6 +60,13 @@ export class ManagePipelineRuns {
     const task = await this.tasks.findById(input.taskId);
     if (task === null || task.snapshot().projectId !== input.projectId)
       throw new TaskNotFoundError(input.taskId);
+    if (this.taskDependencies !== undefined)
+      await assertTaskPrerequisitesComplete(
+        input.projectId,
+        input.taskId,
+        this.tasks,
+        this.taskDependencies,
+      );
     if (
       (await this.pipelines.findActiveByTask(input.taskId, input.projectId)) !==
       null
@@ -86,6 +96,13 @@ export class ManagePipelineRuns {
     });
     task.start(now);
     await this.transactions.run(async () => {
+      if (this.taskDependencies !== undefined)
+        await assertTaskPrerequisitesComplete(
+          input.projectId,
+          input.taskId,
+          this.tasks,
+          this.taskDependencies,
+        );
       await this.tasks.save(task);
       await this.pipelines.insert(run);
       await this.event(run, "pipeline.started", input.principal, {

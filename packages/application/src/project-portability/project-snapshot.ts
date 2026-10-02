@@ -8,6 +8,7 @@ import {
 } from "@ai-office/domain/capability/sensitive-fields.ts";
 import { officeManifestSchema } from "../office/office-manifest-schema.ts";
 import { portableGitRemote } from "./project-git-provenance.ts";
+import { assertAcyclicDependency } from "@ai-office/domain/task/task-dependency.ts";
 
 export const portableProjectFormat = "ai-office-project" as const;
 
@@ -24,17 +25,19 @@ export const portableProjectFormat = "ai-office-project" as const;
  * old binary legitimately believes it understands, whose strict schema it then
  * rejects.
  *
- * A project with no links still writes v1, so archives that were byte-identical
- * before this version existed stay byte-identical. Readers accept both.
+ * Historical v1-v3 readers and their exact wire contracts remain supported.
+ * New backups use v4 because lifetime execution knowledge is always explicit.
  */
-export const portableProjectFormatVersions = [1, 2] as const;
+export const portableProjectFormatVersions = [1, 2, 3, 4] as const;
 export type PortableProjectFormatVersion =
   (typeof portableProjectFormatVersions)[number];
 
-/** The version written for a project with no Task <-> Requirement links. */
+/** Historical base format for a project with no Task <-> Requirement links. */
 export const portableProjectBaseFormatVersion = 1 as const;
-/** The version written for a project that has them. */
+/** Historical linked-task format. */
 export const portableProjectLinkedFormatVersion = 2 as const;
+export const portableProjectDependencyFormatVersion = 3 as const;
+export const portableProjectExecutionHistoryFormatVersion = 4 as const;
 export const portableProjectExtension = ".aioffice" as const;
 export const maximumPortableProjectBytes = 32 * 1024 * 1024;
 
@@ -124,7 +127,7 @@ const portableProjectCommonShape = {
 } as const;
 
 /**
- * Explicit Task <-> Requirement links. Present only in format version 2.
+ * Explicit Task <-> Requirement links, introduced in format version 2.
  *
  * It lives under `governance` rather than at the top level because the link is
  * the requirement-side association the existing `governance` content entry
@@ -141,126 +144,146 @@ const taskRequirementLinks = z
   )
   .max(1_000_000);
 
+const taskDependencies = z
+  .array(
+    z.strictObject({
+      taskId: id,
+      dependsOnTaskId: id,
+      createdAt: timestamp,
+    }),
+  )
+  .max(1_000_000);
+
+const taskExecutionHistory = z
+  .array(
+    z.strictObject({
+      taskId: id,
+      state: z.enum(["never", "unknown", "executed"]),
+      firstKnownAt: timestamp.optional(),
+    }),
+  )
+  .max(100_000);
+
 /** Governance exactly as format version 1 froze it. */
 const portableGovernanceShape = z.strictObject({
-    milestones: z.array(
-      z.strictObject({
-        id,
-        title: shortText,
-        description: longText.optional(),
-        status: z.enum(["planned", "active", "completed", "cancelled"]),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }),
-    ),
-    requirements: z.array(
-      z.strictObject({
-        id,
-        milestoneId: id.optional(),
-        key: shortText,
-        title: shortText,
-        description: longText,
-        status: z.enum([
-          "proposed",
-          "accepted",
-          "implemented",
-          "verified",
-          "rejected",
-        ]),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }),
-    ),
-    adrs: z.array(
-      z.strictObject({
-        id,
-        title: shortText,
-        context: longText,
-        decision: longText,
-        consequences: longText,
-        status: z.enum([
-          "proposed",
-          "accepted",
-          "rejected",
-          "deprecated",
-          "superseded",
-        ]),
-        supersededById: id.optional(),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }),
-    ),
-    reviews: z.array(
-      z.strictObject({
-        id,
-        subjectType: z.enum([
-          "task",
-          "agent_run",
-          "requirement",
-          "adr",
-          "milestone",
-        ]),
-        subjectId: id,
-        reviewer: actor,
-        status: z.enum(["pending", "approved", "rejected"]),
-        summary: longText.optional(),
-        createdAt: timestamp,
-        completedAt: timestamp.optional(),
-      }),
-    ),
-    approvals: z.array(
-      z.strictObject({
-        id,
-        reviewId: id,
-        decision: z.enum(["approved", "rejected"]),
-        actor,
-        rationale: longText.optional(),
-        createdAt: timestamp,
-      }),
-    ),
+  milestones: z.array(
+    z.strictObject({
+      id,
+      title: shortText,
+      description: longText.optional(),
+      status: z.enum(["planned", "active", "completed", "cancelled"]),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }),
+  ),
+  requirements: z.array(
+    z.strictObject({
+      id,
+      milestoneId: id.optional(),
+      key: shortText,
+      title: shortText,
+      description: longText,
+      status: z.enum([
+        "proposed",
+        "accepted",
+        "implemented",
+        "verified",
+        "rejected",
+      ]),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }),
+  ),
+  adrs: z.array(
+    z.strictObject({
+      id,
+      title: shortText,
+      context: longText,
+      decision: longText,
+      consequences: longText,
+      status: z.enum([
+        "proposed",
+        "accepted",
+        "rejected",
+        "deprecated",
+        "superseded",
+      ]),
+      supersededById: id.optional(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }),
+  ),
+  reviews: z.array(
+    z.strictObject({
+      id,
+      subjectType: z.enum([
+        "task",
+        "agent_run",
+        "requirement",
+        "adr",
+        "milestone",
+      ]),
+      subjectId: id,
+      reviewer: actor,
+      status: z.enum(["pending", "approved", "rejected"]),
+      summary: longText.optional(),
+      createdAt: timestamp,
+      completedAt: timestamp.optional(),
+    }),
+  ),
+  approvals: z.array(
+    z.strictObject({
+      id,
+      reviewId: id,
+      decision: z.enum(["approved", "rejected"]),
+      actor,
+      rationale: longText.optional(),
+      createdAt: timestamp,
+    }),
+  ),
 });
 
 const portableAgentsShape = z.strictObject({
-    roles: z.array(
-      z.strictObject({
-        id,
-        key: shortText,
-        name: shortText,
-        version: z.number().int().positive(),
-        capabilities: z.array(shortText).max(1_000),
-        tools: z.array(shortText).max(1_000),
-        modelPolicy: shortText,
-        limits: z.strictObject({
-          maxIterations: z.number().int().positive(),
-          maxCostMicros: z.string().regex(/^\d+$/u),
-          timeoutSeconds: z.number().int().positive(),
-        }),
-        createdAt: timestamp,
-        updatedAt: timestamp,
+  roles: z.array(
+    z.strictObject({
+      id,
+      key: shortText,
+      name: shortText,
+      version: z.number().int().positive(),
+      capabilities: z.array(shortText).max(1_000),
+      tools: z.array(shortText).max(1_000),
+      modelPolicy: shortText,
+      limits: z.strictObject({
+        maxIterations: z.number().int().positive(),
+        maxCostMicros: z.string().regex(/^\d+$/u),
+        timeoutSeconds: z.number().int().positive(),
       }),
-    ),
-    definitions: z.array(
-      z.strictObject({
-        id,
-        roleId: id,
-        name: shortText,
-        enabled: z.boolean(),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      }),
-    ),
-    terminalRuns: z.array(
-      z.strictObject({
-        id,
-        taskId: id,
-        agentId: id,
-        status: z.enum(["completed", "failed", "cancelled"]),
-        createdAt: timestamp,
-        startedAt: timestamp.optional(),
-        completedAt: timestamp,
-        updatedAt: timestamp,
-      }),
-    ),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }),
+  ),
+  definitions: z.array(
+    z.strictObject({
+      id,
+      roleId: id,
+      name: shortText,
+      enabled: z.boolean(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    }),
+  ),
+  terminalRuns: z.array(
+    z.strictObject({
+      id,
+      taskId: id,
+      agentId: id,
+      status: z.enum(["completed", "failed", "cancelled"]),
+      createdAt: timestamp,
+      startedAt: timestamp.optional(),
+      completedAt: timestamp,
+      updatedAt: timestamp,
+    }),
+  ),
 });
 
 /** The wire schema of a format version 1 archive's state. */
@@ -279,8 +302,27 @@ const portableProjectStateShapeV2 = z.strictObject({
   agents: portableAgentsShape,
 });
 
+const portableProjectStateShapeV3 = z.strictObject({
+  ...portableProjectCommonShape,
+  taskDependencies,
+  governance: portableGovernanceShape.extend({
+    taskRequirements: taskRequirementLinks,
+  }),
+  agents: portableAgentsShape,
+});
+
+const portableProjectStateShapeV4 = z.strictObject({
+  ...portableProjectCommonShape,
+  taskDependencies,
+  taskExecutionHistory,
+  governance: portableGovernanceShape.extend({
+    taskRequirements: taskRequirementLinks,
+  }),
+  agents: portableAgentsShape,
+});
+
 /**
- * The producer-side shape, where the linkage is optional.
+ * The producer/reader union. Fields added in later versions are optional here.
  *
  * This is the type the runtime builds and restores; which of the two wire
  * contracts it serializes into is decided by whether the links are there. It is
@@ -289,6 +331,8 @@ const portableProjectStateShapeV2 = z.strictObject({
  */
 const portableProjectStateShape = z.strictObject({
   ...portableProjectCommonShape,
+  taskDependencies: taskDependencies.optional(),
+  taskExecutionHistory: taskExecutionHistory.optional(),
   governance: portableGovernanceShape.extend({
     taskRequirements: taskRequirementLinks.optional(),
   }),
@@ -296,147 +340,227 @@ const portableProjectStateShape = z.strictObject({
 });
 
 const referentialClosure = (
-    state: z.infer<typeof portableProjectStateShape>,
-    context: z.RefinementCtx,
-  ) => {
-    const milestones = new Set(
-      state.governance.milestones.map((item) => item.id),
-    );
-    const requirements = new Set(
-      state.governance.requirements.map((item) => item.id),
-    );
-    const adrs = new Set(state.governance.adrs.map((item) => item.id));
-    const tasks = new Set(state.tasks.map((item) => item.id));
-    const roles = new Set(state.agents.roles.map((item) => item.id));
-    const agents = new Set(state.agents.definitions.map((item) => item.id));
-    const runs = new Set(state.agents.terminalRuns.map((item) => item.id));
-    const reviews = new Map(
-      state.governance.reviews.map((item) => [item.id, item] as const),
-    );
-    const approvals = new Map<
-      string,
-      (typeof state.governance.approvals)[number]
-    >();
+  state: z.infer<typeof portableProjectStateShape>,
+  context: z.RefinementCtx,
+) => {
+  const milestones = new Set(
+    state.governance.milestones.map((item) => item.id),
+  );
+  const requirements = new Set(
+    state.governance.requirements.map((item) => item.id),
+  );
+  const adrs = new Set(state.governance.adrs.map((item) => item.id));
+  const tasks = new Set(state.tasks.map((item) => item.id));
+  const taskStatuses = new Map(
+    state.tasks.map((item) => [item.id, item.status] as const),
+  );
+  const runTasks = new Set(
+    state.agents.terminalRuns.map((item) => item.taskId),
+  );
+  const missing = (path: (string | number)[], message: string): void => {
+    context.addIssue({ code: "custom", path, message });
+  };
+  if (state.taskExecutionHistory !== undefined) {
+    const histories = new Set<string>();
+    for (const [index, item] of state.taskExecutionHistory.entries()) {
+      if (!tasks.has(item.taskId))
+        missing(
+          ["taskExecutionHistory", index, "taskId"],
+          `Referenced task ${item.taskId} is not portable`,
+        );
+      if (histories.has(item.taskId))
+        missing(
+          ["taskExecutionHistory", index, "taskId"],
+          `Task ${item.taskId} has duplicate execution knowledge`,
+        );
+      histories.add(item.taskId);
+      if (item.state !== "executed" && item.firstKnownAt !== undefined)
+        missing(
+          ["taskExecutionHistory", index, "firstKnownAt"],
+          "Only executed history may have a known timestamp",
+        );
+      if (
+        item.state !== "executed" &&
+        ["running", "waiting_review"].includes(
+          taskStatuses.get(item.taskId) ?? "",
+        )
+      )
+        missing(
+          ["taskExecutionHistory", index, "state"],
+          "Active execution proves execution history",
+        );
+      if (item.state !== "executed" && runTasks.has(item.taskId))
+        missing(
+          ["taskExecutionHistory", index, "state"],
+          "An AgentRun proves execution history",
+        );
+    }
+    for (const taskId of tasks)
+      if (!histories.has(taskId))
+        missing(
+          ["taskExecutionHistory"],
+          `Task ${taskId} lacks explicit execution knowledge`,
+        );
+  }
+  const roles = new Set(state.agents.roles.map((item) => item.id));
+  const agents = new Set(state.agents.definitions.map((item) => item.id));
+  const runs = new Set(state.agents.terminalRuns.map((item) => item.id));
+  const reviews = new Map(
+    state.governance.reviews.map((item) => [item.id, item] as const),
+  );
+  const approvals = new Map<
+    string,
+    (typeof state.governance.approvals)[number]
+  >();
 
-    const missing = (path: (string | number)[], message: string): void => {
-      context.addIssue({ code: "custom", path, message });
-    };
-    for (const [index, item] of state.governance.requirements.entries())
-      if (item.milestoneId !== undefined && !milestones.has(item.milestoneId))
+  for (const [index, item] of state.governance.requirements.entries())
+    if (item.milestoneId !== undefined && !milestones.has(item.milestoneId))
+      missing(
+        ["governance", "requirements", index, "milestoneId"],
+        `Referenced milestone ${item.milestoneId} is not portable`,
+      );
+  for (const [index, item] of state.governance.adrs.entries())
+    if (item.supersededById !== undefined && !adrs.has(item.supersededById))
+      missing(
+        ["governance", "adrs", index, "supersededById"],
+        `Referenced ADR ${item.supersededById} is not portable`,
+      );
+  const subjects = {
+    task: tasks,
+    agent_run: runs,
+    requirement: requirements,
+    adr: adrs,
+    milestone: milestones,
+  };
+  for (const [index, item] of state.governance.reviews.entries()) {
+    if (!subjects[item.subjectType].has(item.subjectId))
+      missing(
+        ["governance", "reviews", index, "subjectId"],
+        `Referenced ${item.subjectType} ${item.subjectId} is not portable`,
+      );
+  }
+  for (const [index, item] of state.governance.approvals.entries()) {
+    const review = reviews.get(item.reviewId);
+    if (review === undefined) {
+      missing(
+        ["governance", "approvals", index, "reviewId"],
+        `Referenced review ${item.reviewId} is not portable`,
+      );
+      continue;
+    }
+    if (approvals.has(item.reviewId))
+      missing(
+        ["governance", "approvals", index, "reviewId"],
+        `Review ${item.reviewId} has more than one approval`,
+      );
+    approvals.set(item.reviewId, item);
+    if (review.status !== item.decision)
+      missing(
+        ["governance", "approvals", index, "decision"],
+        `Approval decision does not match review ${item.reviewId}`,
+      );
+  }
+  for (const [index, item] of state.governance.reviews.entries()) {
+    const approval = approvals.get(item.id);
+    if (item.status === "pending") {
+      if (approval !== undefined)
         missing(
-          ["governance", "requirements", index, "milestoneId"],
-          `Referenced milestone ${item.milestoneId} is not portable`,
+          ["governance", "reviews", index, "status"],
+          `Pending review ${item.id} cannot have an approval`,
         );
-    for (const [index, item] of state.governance.adrs.entries())
-      if (item.supersededById !== undefined && !adrs.has(item.supersededById))
+      if (item.completedAt !== undefined)
         missing(
-          ["governance", "adrs", index, "supersededById"],
-          `Referenced ADR ${item.supersededById} is not portable`,
+          ["governance", "reviews", index, "completedAt"],
+          `Pending review ${item.id} cannot be completed`,
         );
-    const subjects = {
-      task: tasks,
-      agent_run: runs,
-      requirement: requirements,
-      adr: adrs,
-      milestone: milestones,
-    };
-    for (const [index, item] of state.governance.reviews.entries()) {
-      if (!subjects[item.subjectType].has(item.subjectId))
+    } else {
+      if (approval === undefined)
         missing(
-          ["governance", "reviews", index, "subjectId"],
-          `Referenced ${item.subjectType} ${item.subjectId} is not portable`,
+          ["governance", "reviews", index, "status"],
+          `Decided review ${item.id} requires a portable approval`,
+        );
+      if (item.completedAt === undefined)
+        missing(
+          ["governance", "reviews", index, "completedAt"],
+          `Decided review ${item.id} requires a completion timestamp`,
         );
     }
-    for (const [index, item] of state.governance.approvals.entries()) {
-      const review = reviews.get(item.reviewId);
-      if (review === undefined) {
-        missing(
-          ["governance", "approvals", index, "reviewId"],
-          `Referenced review ${item.reviewId} is not portable`,
-        );
-        continue;
-      }
-      if (approvals.has(item.reviewId))
-        missing(
-          ["governance", "approvals", index, "reviewId"],
-          `Review ${item.reviewId} has more than one approval`,
-        );
-      approvals.set(item.reviewId, item);
-      if (review.status !== item.decision)
-        missing(
-          ["governance", "approvals", index, "decision"],
-          `Approval decision does not match review ${item.reviewId}`,
-        );
+  }
+  for (const [index, item] of state.agents.definitions.entries())
+    if (!roles.has(item.roleId))
+      missing(
+        ["agents", "definitions", index, "roleId"],
+        `Referenced role ${item.roleId} is not portable`,
+      );
+  const links = new Set<string>();
+  for (const [index, item] of (
+    state.governance.taskRequirements ?? []
+  ).entries()) {
+    const path = ["governance", "taskRequirements", index] as const;
+    // A link is meaningless without both ends inside the snapshot, so
+    // referential closure is enforced here rather than discovered at restore.
+    if (!tasks.has(item.taskId))
+      missing(
+        [...path, "taskId"],
+        `Referenced task ${item.taskId} is not portable`,
+      );
+    if (!requirements.has(item.requirementId))
+      missing(
+        [...path, "requirementId"],
+        `Referenced requirement ${item.requirementId} is not portable`,
+      );
+    const key = `${item.taskId}\u0000${item.requirementId}`;
+    if (links.has(key))
+      missing(
+        [...path],
+        `Task ${item.taskId} is linked to requirement ${item.requirementId} more than once`,
+      );
+    links.add(key);
+  }
+  const dependencies = new Set<string>();
+  const validatedEdges: { taskId: string; dependsOnTaskId: string }[] = [];
+  for (const [index, item] of (state.taskDependencies ?? []).entries()) {
+    const path = ["taskDependencies", index] as const;
+    if (!tasks.has(item.taskId))
+      missing(
+        [...path, "taskId"],
+        `Referenced task ${item.taskId} is not portable`,
+      );
+    if (!tasks.has(item.dependsOnTaskId))
+      missing(
+        [...path, "dependsOnTaskId"],
+        `Referenced task ${item.dependsOnTaskId} is not portable`,
+      );
+    const key = `${item.taskId}\u0000${item.dependsOnTaskId}`;
+    if (dependencies.has(key))
+      missing(
+        [...path],
+        `Task dependency ${item.taskId} -> ${item.dependsOnTaskId} appears more than once`,
+      );
+    dependencies.add(key);
+    try {
+      assertAcyclicDependency(
+        item.taskId,
+        item.dependsOnTaskId,
+        validatedEdges,
+      );
+    } catch {
+      missing([...path], "Task dependencies contain a cycle");
     }
-    for (const [index, item] of state.governance.reviews.entries()) {
-      const approval = approvals.get(item.id);
-      if (item.status === "pending") {
-        if (approval !== undefined)
-          missing(
-            ["governance", "reviews", index, "status"],
-            `Pending review ${item.id} cannot have an approval`,
-          );
-        if (item.completedAt !== undefined)
-          missing(
-            ["governance", "reviews", index, "completedAt"],
-            `Pending review ${item.id} cannot be completed`,
-          );
-      } else {
-        if (approval === undefined)
-          missing(
-            ["governance", "reviews", index, "status"],
-            `Decided review ${item.id} requires a portable approval`,
-          );
-        if (item.completedAt === undefined)
-          missing(
-            ["governance", "reviews", index, "completedAt"],
-            `Decided review ${item.id} requires a completion timestamp`,
-          );
-      }
-    }
-    for (const [index, item] of state.agents.definitions.entries())
-      if (!roles.has(item.roleId))
-        missing(
-          ["agents", "definitions", index, "roleId"],
-          `Referenced role ${item.roleId} is not portable`,
-        );
-    const links = new Set<string>();
-    for (const [index, item] of (
-      state.governance.taskRequirements ?? []
-    ).entries()) {
-      const path = ["governance", "taskRequirements", index] as const;
-      // A link is meaningless without both ends inside the snapshot, so
-      // referential closure is enforced here rather than discovered at restore.
-      if (!tasks.has(item.taskId))
-        missing(
-          [...path, "taskId"],
-          `Referenced task ${item.taskId} is not portable`,
-        );
-      if (!requirements.has(item.requirementId))
-        missing(
-          [...path, "requirementId"],
-          `Referenced requirement ${item.requirementId} is not portable`,
-        );
-      const key = `${item.taskId}\u0000${item.requirementId}`;
-      if (links.has(key))
-        missing(
-          [...path],
-          `Task ${item.taskId} is linked to requirement ${item.requirementId} more than once`,
-        );
-      links.add(key);
-    }
-    for (const [index, item] of state.agents.terminalRuns.entries()) {
-      if (!tasks.has(item.taskId))
-        missing(
-          ["agents", "terminalRuns", index, "taskId"],
-          `Referenced task ${item.taskId} is not portable`,
-        );
-      if (!agents.has(item.agentId))
-        missing(
-          ["agents", "terminalRuns", index, "agentId"],
-          `Referenced agent ${item.agentId} is not portable`,
-        );
-    }
+    validatedEdges.push(item);
+  }
+  for (const [index, item] of state.agents.terminalRuns.entries()) {
+    if (!tasks.has(item.taskId))
+      missing(
+        ["agents", "terminalRuns", index, "taskId"],
+        `Referenced task ${item.taskId} is not portable`,
+      );
+    if (!agents.has(item.agentId))
+      missing(
+        ["agents", "terminalRuns", index, "agentId"],
+        `Referenced agent ${item.agentId} is not portable`,
+      );
+  }
 };
 
 /**
@@ -449,6 +573,10 @@ export const portableProjectStateSchemaV1 =
   portableProjectStateShapeV1.superRefine(referentialClosure);
 export const portableProjectStateSchemaV2 =
   portableProjectStateShapeV2.superRefine(referentialClosure);
+export const portableProjectStateSchemaV3 =
+  portableProjectStateShapeV3.superRefine(referentialClosure);
+export const portableProjectStateSchemaV4 =
+  portableProjectStateShapeV4.superRefine(referentialClosure);
 
 export type PortableProjectState = z.infer<typeof portableProjectStateSchema>;
 
@@ -461,14 +589,37 @@ export function portableTaskRequirementLinks(
 
 /**
  * The lowest format version that can express this state without losing
- * anything. A project with no links keeps writing version 1.
+ * anything. Current SQLite state always has execution knowledge and writes v4.
  */
 export function portableProjectFormatVersionFor(
   state: PortableProjectState,
 ): PortableProjectFormatVersion {
+  if (state.taskExecutionHistory !== undefined)
+    return portableProjectExecutionHistoryFormatVersion;
+  if ((state.taskDependencies ?? []).length > 0)
+    return portableProjectDependencyFormatVersion;
   return portableTaskRequirementLinks(state).length > 0
     ? portableProjectLinkedFormatVersion
     : portableProjectBaseFormatVersion;
+}
+
+/** Compare an upgraded local state against an archive's frozen wire contract. */
+export function portableStateAtFormatVersion(
+  state: PortableProjectState,
+  version: PortableProjectFormatVersion,
+): PortableProjectState {
+  if (version === 4) return state;
+  const {
+    taskExecutionHistory: _history,
+    taskDependencies,
+    governance,
+    ...common
+  } = state;
+  if (version === 3) return { ...common, taskDependencies, governance };
+  const { taskRequirements, ...oldGovernance } = governance;
+  if (version === 2)
+    return { ...common, governance: { ...oldGovernance, taskRequirements } };
+  return { ...common, governance: oldGovernance };
 }
 
 const manifestContentsV1 = [
@@ -501,6 +652,29 @@ export const portableProjectContents = {
     "agent_definitions",
     "terminal_run_summaries",
     "task_requirements",
+  ],
+  3: [
+    "project",
+    "tasks",
+    "profile",
+    "office_manifests",
+    "governance",
+    "agent_definitions",
+    "terminal_run_summaries",
+    "task_requirements",
+    "task_dependencies",
+  ],
+  4: [
+    "project",
+    "tasks",
+    "profile",
+    "office_manifests",
+    "governance",
+    "agent_definitions",
+    "terminal_run_summaries",
+    "task_requirements",
+    "task_dependencies",
+    "task_execution_history",
   ],
 } as const;
 
@@ -539,11 +713,32 @@ export const portableProjectManifestSchemaV2 = z.strictObject({
   formatVersion: z.literal(portableProjectLinkedFormatVersion),
   contents: z.tuple([...manifestContentsV1, z.literal("task_requirements")]),
 });
+export const portableProjectManifestSchemaV3 = z.strictObject({
+  ...portableProjectManifestBase,
+  formatVersion: z.literal(portableProjectDependencyFormatVersion),
+  contents: z.tuple([
+    ...manifestContentsV1,
+    z.literal("task_requirements"),
+    z.literal("task_dependencies"),
+  ]),
+});
+export const portableProjectManifestSchemaV4 = z.strictObject({
+  ...portableProjectManifestBase,
+  formatVersion: z.literal(portableProjectExecutionHistoryFormatVersion),
+  contents: z.tuple([
+    ...manifestContentsV1,
+    z.literal("task_requirements"),
+    z.literal("task_dependencies"),
+    z.literal("task_execution_history"),
+  ]),
+});
 
 /** Accepts either version. Which one is decided before the state is parsed. */
 export const portableProjectManifestSchema = z.union([
   portableProjectManifestSchemaV1,
   portableProjectManifestSchemaV2,
+  portableProjectManifestSchemaV3,
+  portableProjectManifestSchemaV4,
 ]);
 
 export type PortableProjectManifest = z.infer<
@@ -568,17 +763,29 @@ export function portableProjectManifestFor(input: {
     revision: input.revision,
     ...(input.source === undefined ? {} : { source: input.source }),
   };
-  return input.formatVersion === portableProjectLinkedFormatVersion
+  return input.formatVersion === portableProjectExecutionHistoryFormatVersion
     ? {
         ...envelope,
-        formatVersion: portableProjectLinkedFormatVersion,
-        contents: [...portableProjectContents[2]],
+        formatVersion: portableProjectExecutionHistoryFormatVersion,
+        contents: [...portableProjectContents[4]],
       }
-    : {
-        ...envelope,
-        formatVersion: portableProjectBaseFormatVersion,
-        contents: [...portableProjectContents[1]],
-      };
+    : input.formatVersion === portableProjectDependencyFormatVersion
+      ? {
+          ...envelope,
+          formatVersion: portableProjectDependencyFormatVersion,
+          contents: [...portableProjectContents[3]],
+        }
+      : input.formatVersion === portableProjectLinkedFormatVersion
+        ? {
+            ...envelope,
+            formatVersion: portableProjectLinkedFormatVersion,
+            contents: [...portableProjectContents[2]],
+          }
+        : {
+            ...envelope,
+            formatVersion: portableProjectBaseFormatVersion,
+            contents: [...portableProjectContents[1]],
+          };
 }
 
 const integrityShape = z.strictObject({
@@ -595,6 +802,16 @@ export const portableProjectArchiveSchemaV1 = z.strictObject({
 export const portableProjectArchiveSchemaV2 = z.strictObject({
   manifest: portableProjectManifestSchemaV2,
   state: portableProjectStateSchemaV2,
+  integrity: integrityShape,
+});
+export const portableProjectArchiveSchemaV3 = z.strictObject({
+  manifest: portableProjectManifestSchemaV3,
+  state: portableProjectStateSchemaV3,
+  integrity: integrityShape,
+});
+export const portableProjectArchiveSchemaV4 = z.strictObject({
+  manifest: portableProjectManifestSchemaV4,
+  state: portableProjectStateSchemaV4,
   integrity: integrityShape,
 });
 
@@ -627,7 +844,8 @@ function sensitiveProfileLabel(value: string): boolean {
   if (isSensitiveFieldKey(value)) return true;
   const normalized = normalizeSensitiveFieldKey(value);
   return sensitiveProfileLabelSuffixes.some(
-    (suffix) => normalized.length > suffix.length && normalized.endsWith(suffix),
+    (suffix) =>
+      normalized.length > suffix.length && normalized.endsWith(suffix),
   );
 }
 
@@ -679,12 +897,16 @@ export function createPortableProjectArchive(input: {
   const required = portableProjectFormatVersionFor(input.state);
   if (declared < required)
     throw new PortableProjectArchiveError(
-      `Portable project archive format version ${declared} cannot carry Task/Requirement links; write format version ${required}`,
+      `Portable project archive format version ${declared} cannot carry ${required === 4 ? "lifetime task execution history" : "Task/Requirement links"}; write format version ${required}`,
     );
   const state =
-    declared === portableProjectLinkedFormatVersion
-      ? portableProjectStateSchemaV2.parse(input.state)
-      : portableProjectStateSchemaV1.parse(input.state);
+    declared === portableProjectExecutionHistoryFormatVersion
+      ? portableProjectStateSchemaV4.parse(input.state)
+      : declared === portableProjectDependencyFormatVersion
+        ? portableProjectStateSchemaV3.parse(input.state)
+        : declared === portableProjectLinkedFormatVersion
+          ? portableProjectStateSchemaV2.parse(input.state)
+          : portableProjectStateSchemaV1.parse(input.state);
   assertPortableProjectStateSafe(state);
   const stateChecksum = portableStateChecksum(state);
   if (input.manifest.revision.stateChecksum !== stateChecksum)
@@ -692,9 +914,13 @@ export function createPortableProjectArchive(input: {
       "Snapshot revision checksum does not match portable state",
     );
   const manifest =
-    declared === portableProjectLinkedFormatVersion
-      ? portableProjectManifestSchemaV2.parse(input.manifest)
-      : portableProjectManifestSchemaV1.parse(input.manifest);
+    declared === portableProjectExecutionHistoryFormatVersion
+      ? portableProjectManifestSchemaV4.parse(input.manifest)
+      : declared === portableProjectDependencyFormatVersion
+        ? portableProjectManifestSchemaV3.parse(input.manifest)
+        : declared === portableProjectLinkedFormatVersion
+          ? portableProjectManifestSchemaV2.parse(input.manifest)
+          : portableProjectManifestSchemaV1.parse(input.manifest);
   const basis = { manifest, state };
   return {
     ...basis,
@@ -721,7 +947,9 @@ function declaredFormatVersion(
   const manifest = (value as { manifest?: unknown }).manifest;
   if (typeof manifest !== "object" || manifest === null) return null;
   const version = (manifest as { formatVersion?: unknown }).formatVersion;
-  return portableProjectFormatVersions.find((known) => known === version) ?? null;
+  return (
+    portableProjectFormatVersions.find((known) => known === version) ?? null
+  );
 }
 
 export function parsePortableProjectArchive(
@@ -741,9 +969,13 @@ export function parsePortableProjectArchive(
       `Portable project archive does not declare a supported format version (supported: ${portableProjectFormatVersions.join(", ")})`,
     );
   const parsed = (
-    version === portableProjectLinkedFormatVersion
-      ? portableProjectArchiveSchemaV2
-      : portableProjectArchiveSchemaV1
+    version === portableProjectExecutionHistoryFormatVersion
+      ? portableProjectArchiveSchemaV4
+      : version === portableProjectDependencyFormatVersion
+        ? portableProjectArchiveSchemaV3
+        : version === portableProjectLinkedFormatVersion
+          ? portableProjectArchiveSchemaV2
+          : portableProjectArchiveSchemaV1
   ).safeParse(value);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];

@@ -24,6 +24,7 @@ import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipel
 import {
   createPortableProjectArchive,
   portableProjectManifestFor,
+  portableStateAtFormatVersion,
   portableStateChecksum,
   parsePortableProjectArchive,
   serializePortableProjectArchive,
@@ -41,6 +42,7 @@ import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/reposi
 import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
 import { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import { SqliteTaskDependencyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-dependency.repository.ts";
 import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
 import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
 import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/repositories/sqlite-agent-runtime.repository.ts";
@@ -286,13 +288,20 @@ describe("project portability", () => {
     const targetRuntime = temporaryRoot("ai-office-legacy-description-target-");
     const source = temporaryRoot("ai-office-legacy-description-checkout-a-");
     const target = temporaryRoot("ai-office-legacy-description-checkout-b-");
-    writeFileSync(join(source, "package.json"), '{"name":"legacy-description"}\n');
-    writeFileSync(join(target, "package.json"), '{"name":"legacy-description"}\n');
+    writeFileSync(
+      join(source, "package.json"),
+      '{"name":"legacy-description"}\n',
+    );
+    writeFileSync(
+      join(target, "package.json"),
+      '{"name":"legacy-description"}\n',
+    );
 
     const origin = openRuntime(sourceRuntime);
     const imported = await importProject(origin, source);
-    const knownSource = (await origin.profiles.listSources(imported.projectId))[0]!
-      .localPath;
+    const knownSource = (
+      await origin.profiles.listSources(imported.projectId)
+    )[0]!.localPath;
     origin.database
       .prepare("UPDATE project SET description = ? WHERE id = ?")
       .run(`Imported from ${knownSource}`, imported.projectId);
@@ -337,7 +346,10 @@ describe("project portability", () => {
     async (key) => {
       const runtimeRoot = temporaryRoot("ai-office-sensitive-profile-");
       const source = temporaryRoot("ai-office-sensitive-profile-source-");
-      writeFileSync(join(source, "package.json"), '{"name":"sensitive-profile"}\n');
+      writeFileSync(
+        join(source, "package.json"),
+        '{"name":"sensitive-profile"}\n',
+      );
       const runtime = openRuntime(runtimeRoot);
       const imported = await importProject(runtime, source);
       const initial = await runtime.service.backup(imported.projectId);
@@ -371,7 +383,10 @@ describe("project portability", () => {
   test("rejects a nested sensitive profile field while preserving ordinary profile data", async () => {
     const runtimeRoot = temporaryRoot("ai-office-nested-sensitive-profile-");
     const source = temporaryRoot("ai-office-nested-sensitive-source-");
-    writeFileSync(join(source, "package.json"), '{"name":"nested-sensitive"}\n');
+    writeFileSync(
+      join(source, "package.json"),
+      '{"name":"nested-sensitive"}\n',
+    );
     const runtime = openRuntime(runtimeRoot);
     const imported = await importProject(runtime, source);
     const createdAt = runtime.clock.now().toISOString();
@@ -1294,8 +1309,16 @@ describe("project portability", () => {
     );
     const links = new SqliteTaskRequirementRepository(origin.database);
 
-    const taskA = await createTask(origin, imported.projectId, "Deliver AUC-03");
-    const taskB = await createTask(origin, imported.projectId, "Document AUC-03");
+    const taskA = await createTask(
+      origin,
+      imported.projectId,
+      "Deliver AUC-03",
+    );
+    const taskB = await createTask(
+      origin,
+      imported.projectId,
+      "Document AUC-03",
+    );
     const requirement = await governanceService.createRequirement({
       projectId: imported.projectId,
       key: "AUC-03-R1",
@@ -1315,10 +1338,10 @@ describe("project portability", () => {
       ).toBe(true);
 
     const backup = await origin.service.backup(imported.projectId);
-    // A project that carries links exports format version 2, and the manifest
-    // says so: one version number, one schema contract.
-    expect(backup.archive.manifest.formatVersion).toBe(2);
+    // New backups carry explicit lifetime execution knowledge in version 4.
+    expect(backup.archive.manifest.formatVersion).toBe(4);
     expect(backup.archive.manifest.contents).toContain("task_requirements");
+    expect(backup.archive.state.taskDependencies).toEqual([]);
     expect(
       backup.archive.state.governance.taskRequirements?.map((value) => ({
         taskId: value.taskId,
@@ -1351,7 +1374,107 @@ describe("project portability", () => {
     destination.database.close();
   });
 
-  test("keeps exporting format version 1 while a project has no links", async () => {
+  test("exports and restores a version 4 dependency graph without semantic drift", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-portable-deps-a-");
+    const targetRuntime = temporaryRoot("ai-office-portable-deps-b-");
+    const source = temporaryRoot("ai-office-portable-deps-source-");
+    const target = temporaryRoot("ai-office-portable-deps-target-");
+    writeFileSync(join(source, "package.json"), '{"name":"dependencies"}\n');
+    writeFileSync(join(target, "package.json"), '{"name":"dependencies"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const prerequisite = await createTask(
+      origin,
+      imported.projectId,
+      "Prerequisite",
+    );
+    const otherPrerequisite = await createTask(
+      origin,
+      imported.projectId,
+      "Another prerequisite",
+    );
+    const dependent = await createTask(origin, imported.projectId, "Dependent");
+    const dependencies = new SqliteTaskDependencyRepository(origin.database);
+    const firstEdge = {
+      projectId: imported.projectId,
+      taskId: dependent,
+      dependsOnTaskId: prerequisite,
+      createdAt: origin.clock.now(),
+    };
+    const otherEdge = { ...firstEdge, dependsOnTaskId: otherPrerequisite };
+    expect(await dependencies.link(firstEdge)).toBe(true);
+    expect(await dependencies.link(otherEdge)).toBe(true);
+    const beforeReorder = portableStateChecksum(
+      await origin.states.loadPortableState(imported.projectId),
+    );
+    expect(
+      await dependencies.unlink(imported.projectId, dependent, prerequisite),
+    ).toBe(true);
+    expect(await dependencies.link(firstEdge)).toBe(true);
+    expect(
+      portableStateChecksum(
+        await origin.states.loadPortableState(imported.projectId),
+      ),
+    ).toBe(beforeReorder);
+    const first = await origin.service.backup(imported.projectId);
+    expect(first.archive.manifest.formatVersion).toBe(4);
+    expect(first.archive.state.taskDependencies).toHaveLength(2);
+    for (const invalidDependencies of [
+      [
+        {
+          taskId: dependent,
+          dependsOnTaskId: "other-project-task",
+          createdAt: origin.clock.now().toISOString(),
+        },
+      ],
+      [
+        {
+          taskId: dependent,
+          dependsOnTaskId: prerequisite,
+          createdAt: origin.clock.now().toISOString(),
+        },
+        {
+          taskId: prerequisite,
+          dependsOnTaskId: dependent,
+          createdAt: origin.clock.now().toISOString(),
+        },
+      ],
+    ]) {
+      const invalidState = {
+        ...first.archive.state,
+        taskDependencies: invalidDependencies,
+      };
+      expect(() =>
+        createPortableProjectArchive({
+          manifest: {
+            ...first.archive.manifest,
+            revision: {
+              ...first.archive.manifest.revision,
+              stateChecksum: portableStateChecksum(invalidState),
+            },
+          },
+          state: invalidState,
+        }),
+      ).toThrow();
+    }
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: first.archive,
+      rootPath: target,
+    });
+    expect(
+      await destination.states.loadPortableState(restored.projectId),
+    ).toEqual(first.archive.state);
+    const second = await destination.service.backup(restored.projectId);
+    expect(serializePortableProjectArchive(second.archive)).toBe(
+      serializePortableProjectArchive(first.archive),
+    );
+    destination.database.close();
+  });
+
+  test("exports explicit pristine history even when a project has no links", async () => {
     const sourceRuntime = temporaryRoot("ai-office-portable-v1-");
     const targetRuntime = temporaryRoot("ai-office-portable-v1-target-");
     const source = temporaryRoot("ai-office-portable-v1-source-");
@@ -1363,16 +1486,16 @@ describe("project portability", () => {
     await createTask(origin, imported.projectId, "Unlinked work");
 
     const backup = await origin.service.backup(imported.projectId);
-    expect(backup.archive.manifest.formatVersion).toBe(1);
-    expect(backup.archive.manifest.contents).not.toContain("task_requirements");
-    // Byte-compatible with archives written before version 2 existed: the key
-    // is absent, so the state checksum is the one those archives carried.
+    expect(backup.archive.manifest.formatVersion).toBe(4);
+    expect(backup.archive.manifest.contents).toContain(
+      "task_execution_history",
+    );
     const serialized = serializePortableProjectArchive(backup.archive);
-    expect(serialized).not.toContain("taskRequirements");
+    expect(serialized).toContain("taskExecutionHistory");
     expect(parsePortableProjectArchive(serialized)).toEqual(backup.archive);
     origin.database.close();
 
-    // And a version 1 archive restores to a project with no links.
+    // A pristine version 4 archive restores to a project with no links.
     const destination = openRuntime(targetRuntime);
     const restored = await destination.service.restore({
       archive: backup.archive,
@@ -1383,8 +1506,317 @@ describe("project portability", () => {
         destination.database,
       ).listByProject(restored.projectId),
     ).toEqual([]);
+    const [task] = backup.archive.state.tasks;
+    const other = await createTask(
+      destination,
+      restored.projectId,
+      "Prerequisite",
+    );
+    const edges = new SqliteTaskDependencyRepository(destination.database);
+    expect(
+      await edges.link({
+        projectId: restored.projectId,
+        taskId: task!.id,
+        dependsOnTaskId: other,
+        createdAt: destination.clock.now(),
+      }),
+    ).toBe(true);
+    expect(await edges.unlink(restored.projectId, task!.id, other)).toBe(true);
     destination.database.close();
   });
+
+  test("v4 preserves lifetime execution after a legal return to pending", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-v4-history-a-");
+    const targetRuntime = temporaryRoot("ai-office-v4-history-b-");
+    const source = temporaryRoot("ai-office-v4-history-source-");
+    const target = temporaryRoot("ai-office-v4-history-target-");
+    for (const path of [source, target])
+      writeFileSync(join(path, "package.json"), '{"name":"history"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const prerequisite = await createTask(origin, imported.projectId, "First");
+    const alternative = await createTask(
+      origin,
+      imported.projectId,
+      "Alternative",
+    );
+    const dependent = await createTask(origin, imported.projectId, "Dependent");
+    const edges = new SqliteTaskDependencyRepository(origin.database);
+    expect(
+      await edges.link({
+        projectId: imported.projectId,
+        taskId: dependent,
+        dependsOnTaskId: prerequisite,
+        createdAt: origin.clock.now(),
+      }),
+    ).toBe(true);
+    const tasks = new SqliteTaskRepository(origin.database);
+    const completedPrerequisite = (await tasks.findById(prerequisite))!;
+    completedPrerequisite.recordHistoricalCompletion(origin.clock.now());
+    await tasks.save(completedPrerequisite);
+    const task = (await tasks.findById(dependent))!;
+    task.start(origin.clock.now());
+    await tasks.save(task);
+    task.block(origin.clock.now());
+    await tasks.save(task);
+    task.unblock(origin.clock.now());
+    await tasks.save(task);
+    const backup = await origin.service.backup(imported.projectId);
+    expect(backup.archive.manifest.formatVersion).toBe(4);
+    expect(backup.archive.state.taskExecutionHistory).toContainEqual(
+      expect.objectContaining({ taskId: dependent, state: "executed" }),
+    );
+    origin.database.close();
+
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: backup.archive,
+      rootPath: target,
+    });
+    const restoredEdges = new SqliteTaskDependencyRepository(
+      destination.database,
+    );
+    expect(
+      (
+        await new SqliteTaskRepository(destination.database).findById(dependent)
+      )?.snapshot().status,
+    ).toBe("pending");
+    await expect(
+      restoredEdges.unlink(restored.projectId, dependent, prerequisite),
+    ).rejects.toThrow("execution history");
+    await expect(
+      restoredEdges.link({
+        projectId: restored.projectId,
+        taskId: dependent,
+        dependsOnTaskId: alternative,
+        createdAt: destination.clock.now(),
+      }),
+    ).rejects.toThrow("execution history");
+    const roundTrip = await destination.service.backup(restored.projectId);
+    expect(roundTrip.archive.state).toEqual(backup.archive.state);
+    expect(roundTrip.archive.manifest.revision.stateChecksum).toBe(
+      backup.archive.manifest.revision.stateChecksum,
+    );
+    destination.database.close();
+  });
+
+  test("v4 preserves AgentRun and pipeline execution history without portable pipeline runs", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-v4-run-a-");
+    const targetRuntime = temporaryRoot("ai-office-v4-run-b-");
+    const source = temporaryRoot("ai-office-v4-run-source-");
+    const target = temporaryRoot("ai-office-v4-run-target-");
+    for (const path of [source, target])
+      writeFileSync(join(path, "package.json"), '{"name":"run-history"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const prerequisite = await createTask(
+      origin,
+      imported.projectId,
+      "Prerequisite",
+    );
+    const runTask = await createTask(origin, imported.projectId, "Run task");
+    const pipelineTask = await createTask(
+      origin,
+      imported.projectId,
+      "Pipeline task",
+    );
+    const edges = new SqliteTaskDependencyRepository(origin.database);
+    for (const taskId of [runTask, pipelineTask])
+      expect(
+        await edges.link({
+          projectId: imported.projectId,
+          taskId,
+          dependsOnTaskId: prerequisite,
+          createdAt: origin.clock.now(),
+        }),
+      ).toBe(true);
+    const tasks = new SqliteTaskRepository(origin.database);
+    const completedPrerequisite = (await tasks.findById(prerequisite))!;
+    completedPrerequisite.recordHistoricalCompletion(origin.clock.now());
+    await tasks.save(completedPrerequisite);
+    const { agentId } = await createAgent(
+      origin,
+      imported.projectId,
+      "history",
+    );
+    const run = AgentRun.create({
+      id: "history-run",
+      projectId: imported.projectId,
+      taskId: runTask,
+      agentId,
+      now: origin.clock.now(),
+    });
+    run.transition("cancelled", origin.clock.now(), {
+      error: { code: "cancelled" },
+    });
+    await origin.agentRuntime.saveRun(run);
+    const now = origin.clock.now().toISOString();
+    const definition = {
+      id: "delivery",
+      name: "Delivery",
+      description: "Fixture",
+      defaultFor: ["feature"],
+      enforcement: "enforced",
+      stages: [
+        {
+          id: "work",
+          name: "Work",
+          roleId: "worker",
+          objective: "Work",
+          checks: [],
+          requiresApproval: false,
+          capabilities: [],
+        },
+      ],
+    };
+    const manifest = {
+      schemaVersion: 1,
+      provenance: { host: "codex", skill: "ai-office", skillVersion: "1" },
+      project: {
+        mission: "Fixture",
+        goals: ["Preserve history"],
+        constraints: [],
+        preferences: [],
+        permissionPreferences: [],
+      },
+      office: {
+        name: "Fixture",
+        roles: [
+          {
+            id: "worker",
+            title: "Worker",
+            purpose: "Work",
+            responsibilities: ["Work"],
+          },
+        ],
+      },
+      pipelines: [definition],
+    };
+    origin.database
+      .prepare(
+        `INSERT INTO office_manifest_revision(id,project_id,revision,schema_version,manifest_json,
+      source_host,source_skill,source_skill_version,applied_at) VALUES ('history-manifest',?,1,1,?,'codex','ai-office','1',?)`,
+      )
+      .run(imported.projectId, JSON.stringify(manifest), now);
+    origin.database
+      .prepare(
+        `INSERT INTO pipeline_run(id,project_id,task_id,manifest_revision_id,manifest_revision,
+      definition_json,status,current_stage_index,started_by,version,created_at,updated_at,cancelled_at)
+      VALUES ('history-pipeline',?,?,'history-manifest',1,?,'cancelled',0,'operator',1,?,?,?)`,
+      )
+      .run(
+        imported.projectId,
+        pipelineTask,
+        JSON.stringify(definition),
+        now,
+        now,
+        now,
+      );
+    const backup = await origin.service.backup(imported.projectId);
+    for (const taskId of [runTask, pipelineTask])
+      expect(backup.archive.state.taskExecutionHistory).toContainEqual(
+        expect.objectContaining({ taskId, state: "executed" }),
+      );
+    origin.database.close();
+    const destination = openRuntime(targetRuntime);
+    const restored = await destination.service.restore({
+      archive: backup.archive,
+      rootPath: target,
+    });
+    for (const taskId of [runTask, pipelineTask]) {
+      const restoredEdges = new SqliteTaskDependencyRepository(
+        destination.database,
+      );
+      await expect(
+        restoredEdges.unlink(restored.projectId, taskId, prerequisite),
+      ).rejects.toThrow("execution history");
+    }
+    expect(
+      destination.database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM pipeline_run",
+        )
+        .get()?.count,
+    ).toBe(0);
+    destination.database.close();
+  });
+
+  test.each([1, 2, 3] as const)(
+    "legacy v%d archives restore with unknown dependency editability",
+    async (version) => {
+      const sourceRuntime = temporaryRoot(`ai-office-v${version}-legacy-a-`);
+      const targetRuntime = temporaryRoot(`ai-office-v${version}-legacy-b-`);
+      const source = temporaryRoot(`ai-office-v${version}-legacy-source-`);
+      const target = temporaryRoot(`ai-office-v${version}-legacy-target-`);
+      for (const path of [source, target])
+        writeFileSync(
+          join(path, "package.json"),
+          '{"name":"legacy-history"}\n',
+        );
+      const origin = openRuntime(sourceRuntime);
+      const imported = await importProject(origin, source);
+      const dependent = await createTask(
+        origin,
+        imported.projectId,
+        "Legacy task",
+      );
+      const prerequisite = await createTask(
+        origin,
+        imported.projectId,
+        "Prerequisite",
+      );
+      const tasks = new SqliteTaskRepository(origin.database);
+      const task = (await tasks.findById(dependent))!;
+      task.start(origin.clock.now());
+      await tasks.save(task);
+      task.block(origin.clock.now());
+      await tasks.save(task);
+      task.unblock(origin.clock.now());
+      await tasks.save(task);
+      const fresh = await origin.service.backup(imported.projectId);
+      const legacyState = portableStateAtFormatVersion(
+        fresh.archive.state,
+        version,
+      );
+      const legacy = createPortableProjectArchive({
+        state: legacyState,
+        manifest: portableProjectManifestFor({
+          formatVersion: version,
+          projectIdentity: fresh.archive.manifest.projectIdentity,
+          createdAt: fresh.archive.manifest.createdAt,
+          revision: {
+            ...fresh.archive.manifest.revision,
+            stateChecksum: portableStateChecksum(legacyState),
+          },
+        }),
+      });
+      origin.database.close();
+      const destination = openRuntime(targetRuntime);
+      const restored = await destination.service.restore({
+        archive: legacy,
+        rootPath: target,
+      });
+      expect(
+        (await destination.states.loadPortableState(restored.projectId))
+          .taskExecutionHistory,
+      ).toContainEqual({ taskId: dependent, state: "unknown" });
+      await expect(
+        new SqliteTaskDependencyRepository(destination.database).link({
+          projectId: restored.projectId,
+          taskId: dependent,
+          dependsOnTaskId: prerequisite,
+          createdAt: destination.clock.now(),
+        }),
+      ).rejects.toThrow("execution history");
+      const upgraded = await destination.service.backup(restored.projectId);
+      expect(upgraded.archive.manifest.formatVersion).toBe(4);
+      expect(upgraded.archive.state.taskExecutionHistory).toContainEqual({
+        taskId: dependent,
+        state: "unknown",
+      });
+      destination.database.close();
+    },
+  );
 
   test("refuses an archive whose link references an absent requirement", async () => {
     const sourceRuntime = temporaryRoot("ai-office-portable-links-c-");
@@ -1399,10 +1831,9 @@ describe("project portability", () => {
     // A snapshot must never carry a link it cannot resolve inside itself.
     expect(() =>
       createPortableProjectArchive({
-        // The state now carries a link, so it is a version 2 archive; the
-        // referential check is what must reject it, not the version guard.
+        // The v4 referential check must reject it, not the version guard.
         manifest: portableProjectManifestFor({
-          formatVersion: 2,
+          formatVersion: 4,
           projectIdentity: backup.archive.manifest.projectIdentity,
           createdAt: backup.archive.manifest.createdAt,
           revision: {
@@ -1497,6 +1928,13 @@ describe("project portability", () => {
         `[remote "origin"]\n  url = ${remote}\n`,
       );
       writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+      mkdirSync(join(root, ".git", "refs", "remotes", "origin"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(root, ".git", "refs", "remotes", "origin", "HEAD"),
+        "ref: refs/remotes/origin/main\n",
+      );
     }
     const origin = openRuntime(sourceRuntime);
     const imported = await new ImportProject(

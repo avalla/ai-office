@@ -57,9 +57,7 @@ function state(value: unknown = ["TypeScript"]): PortableProjectState {
 }
 
 /**
- * The manifest a writer would produce for this state: version 1 while it has no
- * Task/Requirement links, version 2 once it does. A test that wants the wrong
- * pairing asks for it explicitly.
+ * The manifest matching a test state, including historical v1-v3 fixtures.
  */
 function manifest(
   value: PortableProjectState,
@@ -79,6 +77,108 @@ function manifest(
 }
 
 describe("portable project snapshot", () => {
+  test("v4 requires one explicit, non-contradictory execution answer per task", () => {
+    const value: PortableProjectState = {
+      ...state(),
+      taskDependencies: [],
+      taskExecutionHistory: [{ taskId: "task-1", state: "never" }],
+      governance: { ...state().governance, taskRequirements: [] },
+    };
+    expect(portableProjectFormatVersionFor(value)).toBe(4);
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    expect(
+      parsePortableProjectArchive(serializePortableProjectArchive(archive)),
+    ).toEqual(archive);
+    expect(() =>
+      createPortableProjectArchive({
+        state: value,
+        manifest: manifest(value, 3),
+      }),
+    ).toThrow("cannot carry lifetime task execution history");
+    for (const invalid of [
+      { ...value, taskExecutionHistory: [] },
+      {
+        ...value,
+        taskExecutionHistory: [
+          { taskId: "task-1", state: "never" as const },
+          { taskId: "task-1", state: "unknown" as const },
+        ],
+      },
+      {
+        ...value,
+        taskExecutionHistory: [
+          { taskId: "elsewhere", state: "never" as const },
+        ],
+      },
+      {
+        ...value,
+        taskExecutionHistory: [
+          {
+            taskId: "task-1",
+            state: "never" as const,
+            firstKnownAt: timestamp,
+          },
+        ],
+      },
+      { ...value, tasks: [{ ...value.tasks[0]!, status: "running" as const }] },
+    ])
+      expect(() =>
+        createPortableProjectArchive({
+          state: invalid,
+          manifest: manifest(invalid),
+        }),
+      ).toThrow();
+  });
+
+  test("version 3 round-trips hard task dependencies and keeps older link-free formats", () => {
+    const value: PortableProjectState = {
+      ...state(),
+      tasks: [
+        ...state().tasks,
+        {
+          id: "task-2",
+          title: "Dependent",
+          status: "pending",
+          priority: 0,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        },
+      ],
+      taskDependencies: [
+        { taskId: "task-2", dependsOnTaskId: "task-1", createdAt: timestamp },
+      ],
+      governance: { ...state().governance, taskRequirements: [] },
+    };
+    expect(portableProjectFormatVersionFor(state())).toBe(1);
+    expect(portableProjectFormatVersionFor(value)).toBe(3);
+    const archive = createPortableProjectArchive({
+      state: value,
+      manifest: manifest(value),
+    });
+    expect(archive.manifest.contents).toContain("task_dependencies");
+    expect(
+      parsePortableProjectArchive(serializePortableProjectArchive(archive)),
+    ).toEqual(archive);
+    expect(() =>
+      createPortableProjectArchive({
+        state: value,
+        manifest: manifest(value, 2),
+      }),
+    ).toThrow();
+    const cycle: PortableProjectState = {
+      ...value,
+      taskDependencies: [
+        ...value.taskDependencies!,
+        { taskId: "task-1", dependsOnTaskId: "task-2", createdAt: timestamp },
+      ],
+    };
+    expect(() =>
+      createPortableProjectArchive({ state: cycle, manifest: manifest(cycle) }),
+    ).toThrow();
+  });
   test("round-trips a strict versioned envelope with canonical integrity", () => {
     const value = state();
     const archive = createPortableProjectArchive({
@@ -150,7 +250,9 @@ describe("portable project snapshot", () => {
           state: value,
           manifest: manifest(value),
         }),
-      ).toThrow(`profile entry profile-1 is labelled as sensitive credential data (${key})`);
+      ).toThrow(
+        `profile entry profile-1 is labelled as sensitive credential data (${key})`,
+      );
     },
   );
 
@@ -193,7 +295,7 @@ describe("portable project snapshot", () => {
       parsePortableProjectArchive(
         JSON.stringify({
           ...archive,
-          manifest: { ...archive.manifest, formatVersion: 3 },
+          manifest: { ...archive.manifest, formatVersion: 5 },
         }),
       ),
     ).toThrow("does not declare a supported format version");
@@ -489,7 +591,11 @@ describe("portable task/requirement linkage", () => {
           governance: {
             ...value.governance,
             taskRequirements: [
-              { taskId: "task-9", requirementId: "req-1", createdAt: timestamp },
+              {
+                taskId: "task-9",
+                requirementId: "req-1",
+                createdAt: timestamp,
+              },
             ],
           },
         },
@@ -504,7 +610,11 @@ describe("portable task/requirement linkage", () => {
           governance: {
             ...value.governance,
             taskRequirements: [
-              { taskId: "task-1", requirementId: "req-9", createdAt: timestamp },
+              {
+                taskId: "task-1",
+                requirementId: "req-9",
+                createdAt: timestamp,
+              },
             ],
           },
         },
@@ -640,7 +750,10 @@ describe("portable archive format versions", () => {
     // Byte-compatible: the current writer reproduces it exactly.
     expect(
       serializePortableProjectArchive(
-        createPortableProjectArchive({ state: value, manifest: manifest(value) }),
+        createPortableProjectArchive({
+          state: value,
+          manifest: manifest(value),
+        }),
       ),
     ).toBe(serialized);
   });
@@ -663,7 +776,10 @@ describe("portable archive format versions", () => {
   test("refuses to write linkage into a version 1 archive", () => {
     const value = linkedState();
     expect(() =>
-      createPortableProjectArchive({ state: value, manifest: manifest(value, 1) }),
+      createPortableProjectArchive({
+        state: value,
+        manifest: manifest(value, 1),
+      }),
     ).toThrow(
       "format version 1 cannot carry Task/Requirement links; write format version 2",
     );
@@ -803,14 +919,14 @@ describe("portable Git provenance", () => {
     ).toThrow("must be normalized network-safe Git provenance");
   });
 
-  test.each([
-    "git@example.test:team/repo.git",
-    "example.test:team/repo.git",
-  ])("normalizes SCP provenance idempotently for %s", (remote) => {
-    const normalized = portableGitRemote(remote);
-    expect(normalized).toBe("ssh://example.test/team/repo.git");
-    expect(portableGitRemote(normalized)).toBe(normalized);
-  });
+  test.each(["git@example.test:team/repo.git", "example.test:team/repo.git"])(
+    "normalizes SCP provenance idempotently for %s",
+    (remote) => {
+      const normalized = portableGitRemote(remote);
+      expect(normalized).toBe("ssh://example.test/team/repo.git");
+      expect(portableGitRemote(normalized)).toBe(normalized);
+    },
+  );
 
   test("selects agreed provenance independently of source insertion order", () => {
     const sources = [

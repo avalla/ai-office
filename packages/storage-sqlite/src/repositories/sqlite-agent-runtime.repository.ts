@@ -508,12 +508,14 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
             ]
           : []),
       ];
+      // RETURNING identifies this insert reliably even when the execution
+      // history trigger also writes inside the same statement.
       const inserted = this.database
         .prepare(
-          `INSERT INTO agent_run(${this.runColumns}) VALUES (${values.map(() => "?").join(", ")}) ON CONFLICT(id) DO NOTHING`,
+          `INSERT INTO agent_run(${this.runColumns}) VALUES (${values.map(() => "?").join(", ")}) ON CONFLICT(id) DO NOTHING RETURNING id`,
         )
-        .run(...values).changes;
-      if (inserted === 1) {
+        .get(...values);
+      if (inserted !== null) {
         this.appendRunEvent(v, undefined);
         return;
       }

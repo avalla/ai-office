@@ -19,6 +19,7 @@ import {
   createPortableProjectArchive,
   portableProjectFormatVersionFor,
   portableProjectManifestFor,
+  portableStateAtFormatVersion,
   portableStateChecksum,
   type PortableProjectArchive,
   type PortableProjectManifest,
@@ -146,6 +147,10 @@ export class ManageProjectPortability {
       );
       if (blockers.length > 0) throw portabilityBlocked(blockers);
       const state = await this.dependencies.states.loadPortableState(projectId);
+      if (state.taskExecutionHistory === undefined)
+        throw new ProjectPortabilityError(
+          "Portable backup requires explicit lifetime task execution knowledge",
+        );
       const stateChecksum = portableStateChecksum(state);
       const head = await this.dependencies.states.findHead(projectId);
       const revision =
@@ -154,17 +159,12 @@ export class ManageProjectPortability {
           : {
               id: `rev_${this.dependencies.ids.generate()}`,
               projectId,
-              ...(head === null
-                ? {}
-                : { parentRevisionId: head.revision.id }),
+              ...(head === null ? {} : { parentRevisionId: head.revision.id }),
               stateChecksum,
               origin: "local_snapshot" as const,
               createdAt: now,
             };
-      // The lowest version that can carry this project's state without
-      // losing anything: version 1 while it has no Task/Requirement links,
-      // version 2 once it does. A link-free archive therefore stays
-      // byte-identical to one written before version 2 existed.
+      // New snapshots carry explicit lifetime execution knowledge (v4).
       const manifest: PortableProjectManifest = portableProjectManifestFor({
         formatVersion: portableProjectFormatVersionFor(state),
         projectIdentity,
@@ -316,8 +316,12 @@ export class ManageProjectPortability {
           const local =
             await this.dependencies.states.loadPortableState(projectId);
           if (
-            portableStateChecksum(local) !==
-            archive.manifest.revision.stateChecksum
+            portableStateChecksum(
+              portableStateAtFormatVersion(
+                local,
+                archive.manifest.formatVersion,
+              ),
+            ) !== archive.manifest.revision.stateChecksum
           )
             throw new ProjectPortabilityError(
               `Restore conflict: local authoritative state differs from archive revision ${archive.manifest.revision.id}; restore will not overwrite it`,
@@ -352,9 +356,9 @@ export class ManageProjectPortability {
           ...(scan.remoteUrl === undefined
             ? {}
             : { remoteUrl: scan.remoteUrl }),
-          ...(scan.currentBranch === undefined
+          ...(scan.defaultBranch === undefined
             ? {}
-            : { defaultBranch: scan.currentBranch }),
+            : { defaultBranch: scan.defaultBranch }),
           createdAt: now,
         });
         if (shouldRecordImportedRevision)

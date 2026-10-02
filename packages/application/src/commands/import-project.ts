@@ -168,9 +168,9 @@ export class ImportProject {
         sourceType: "local",
         localPath: scan.rootPath,
         ...(scan.remoteUrl === undefined ? {} : { remoteUrl: scan.remoteUrl }),
-        ...(scan.currentBranch === undefined
+        ...(scan.defaultBranch === undefined
           ? {}
-          : { defaultBranch: scan.currentBranch }),
+          : { defaultBranch: scan.defaultBranch }),
         createdAt: completedAt,
       });
 

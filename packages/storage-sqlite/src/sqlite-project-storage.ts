@@ -18,6 +18,7 @@ import { SqliteProjectStateRepository } from "./repositories/sqlite-project-stat
 import { SqliteRepositoryIdentityRepository } from "./repositories/sqlite-repository-identity.repository.ts";
 import { SqliteTaskRequirementRepository } from "./repositories/sqlite-task-requirement.repository.ts";
 import { SqliteTaskRepository } from "./repositories/sqlite-task.repository.ts";
+import { SqliteTaskDependencyRepository } from "./repositories/sqlite-task-dependency.repository.ts";
 import { SqliteTransactionRunner } from "./database/sqlite-transaction-runner.ts";
 
 /** Compose the existing SQLite adapters for one project authority. */
@@ -28,6 +29,7 @@ export function createSqliteProjectStorage(database: Database): ProjectStorage {
     officeManifests: new SqliteOfficeManifestRepository(database),
     pipelines: new SqlitePipelineRunRepository(database),
     tasks: new SqliteTaskRepository(database),
+    taskDependencies: new SqliteTaskDependencyRepository(database),
     taskRequirements: new SqliteTaskRequirementRepository(database),
     runtime: new SqliteAgentRuntimeRepository(database),
     costs: new SqliteCostRepository(database),

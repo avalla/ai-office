@@ -8,6 +8,7 @@ import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.t
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
+import { SqliteTaskDependencyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-dependency.repository.ts";
 import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
 import { defineProjectStorageContracts } from "../contracts/project-storage.contract.ts";
 
@@ -22,6 +23,7 @@ describe("SQLite project storage contracts", () => {
     return {
       projects: new SqliteProjectRepository(database),
       tasks: new SqliteTaskRepository(database),
+      taskDependencies: new SqliteTaskDependencyRepository(database),
       taskRequirements: new SqliteTaskRequirementRepository(database),
       transactions: new SqliteTransactionRunner(database),
       async seedRequirement(input: {

@@ -59,7 +59,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0036_milestone_title_changed_event.sql",
+        "0040_task_execution_history.sql",
       );
       expect(
         database
@@ -74,7 +74,9 @@ describe("migration upgrades", () => {
   );
 
   test("upgrades governance events to accept milestone title changes and preserves history", () => {
-    const root = mkdtempSync(join(tmpdir(), "ai-office-governance-event-upgrade-"));
+    const root = mkdtempSync(
+      join(tmpdir(), "ai-office-governance-event-upgrade-"),
+    );
     roots.push(root);
     const partial = join(root, "partial-migrations");
     mkdirSync(partial);
@@ -115,7 +117,10 @@ describe("migration upgrades", () => {
            id,project_id,event_type,aggregate_id,metadata_json,occurred_at
          ) VALUES ('title-changed','project','milestone.title_changed','milestone',?,?)`,
       )
-      .run(JSON.stringify({ from: "Before", to: "After" }), "2026-08-06T00:00:00.000Z");
+      .run(
+        JSON.stringify({ from: "Before", to: "After" }),
+        "2026-08-06T00:00:00.000Z",
+      );
 
     expect(
       database
@@ -181,6 +186,10 @@ describe("migration upgrades", () => {
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
       "0036_milestone_title_changed_event.sql",
+      "0037_task_dependencies.sql",
+      "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
+      "0040_task_execution_history.sql",
     ]);
     expect(
       database
@@ -253,6 +262,10 @@ describe("migration upgrades", () => {
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
       "0036_milestone_title_changed_event.sql",
+      "0037_task_dependencies.sql",
+      "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
+      "0040_task_execution_history.sql",
     ]);
     expect(
       database
@@ -405,6 +418,10 @@ describe("migration upgrades", () => {
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
       "0036_milestone_title_changed_event.sql",
+      "0037_task_dependencies.sql",
+      "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
+      "0040_task_execution_history.sql",
     ]);
     expect(
       database
@@ -461,6 +478,10 @@ describe("migration upgrades", () => {
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
       "0036_milestone_title_changed_event.sql",
+      "0037_task_dependencies.sql",
+      "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
+      "0040_task_execution_history.sql",
     ]);
     database
       .prepare(
@@ -791,6 +812,10 @@ describe("migration upgrades", () => {
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
       "0036_milestone_title_changed_event.sql",
+      "0037_task_dependencies.sql",
+      "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
+      "0040_task_execution_history.sql",
     ]);
     expect(
       upgraded
@@ -849,6 +874,10 @@ describe("migration upgrades", () => {
       "0034_exact_pipeline_stage_bindings.sql",
       "0035_pipeline_manifest_revision_tuple.sql",
       "0036_milestone_title_changed_event.sql",
+      "0037_task_dependencies.sql",
+      "0038_milestone_description_changed_event.sql",
+      "0039_task_dependency_immutable_edges.sql",
+      "0040_task_execution_history.sql",
     ]);
     expect(
       database

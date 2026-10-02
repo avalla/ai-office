@@ -3,6 +3,7 @@ import { UpdateTask } from "@ai-office/application/commands/update-task.ts";
 import { manageAgentRuns } from "./run-services.ts";
 import { ManageTaskLifecycle } from "@ai-office/application/commands/manage-task-lifecycle.ts";
 import { ManageTaskRequirements } from "@ai-office/application/commands/manage-task-requirements.ts";
+import { ManageTaskDependencies } from "@ai-office/application/commands/manage-task-dependencies.ts";
 import {
   ReconcileTasks,
   type TaskReconciliationIssue,
@@ -121,6 +122,7 @@ export async function handleTaskCommand(
     tasks,
     governance,
     taskRequirements,
+    taskDependencies,
     pipelines,
     runtime,
     audit,
@@ -138,7 +140,71 @@ export async function handleTaskCommand(
     clock,
     transactions,
     manageAgentRuns(context),
+    context.taskDependencies,
   );
+  const dependencies = new ManageTaskDependencies(
+    projects,
+    tasks,
+    taskDependencies,
+    audit,
+    clock,
+    transactions,
+  );
+
+  if (
+    command === "task:dependency:add" ||
+    command === "task:dependency:remove"
+  ) {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "task", "depends-on"]),
+      new Set(["json"]),
+    );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError(`${command} only accepts named options`);
+    const input = {
+      projectId: requiredOption(parsed, "project"),
+      taskId: requiredOption(parsed, "task"),
+      dependsOnTaskId: requiredOption(parsed, "depends-on"),
+      actorId: principal.id,
+    };
+    if (command === "task:dependency:add") {
+      const result = await dependencies.link(input);
+      io.stdout(
+        parsed.flags.has("json")
+          ? JSON.stringify(result)
+          : `Task dependency ${result.created ? "added" : "already exists"}: ${input.taskId} depends on ${input.dependsOnTaskId}`,
+      );
+    } else {
+      const result = await dependencies.unlink(input);
+      io.stdout(
+        parsed.flags.has("json")
+          ? JSON.stringify(result)
+          : `Task dependency ${result.removed ? "removed" : "already absent"}: ${input.taskId} depends on ${input.dependsOnTaskId}`,
+      );
+    }
+    return 0;
+  }
+
+  if (command === "task:readiness") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "task"]),
+      new Set(["json"]),
+    );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError("task:readiness only accepts named options");
+    const readiness = await dependencies.readiness(
+      requiredOption(parsed, "project"),
+      requiredOption(parsed, "task"),
+    );
+    io.stdout(
+      parsed.flags.has("json")
+        ? JSON.stringify(readiness)
+        : `${readiness.taskId}: ${readiness.runnable ? "runnable" : "blocked"}${readiness.blockedBy.length ? ` by ${readiness.blockedBy.map((item) => `${item.taskId} (${item.status})`).join(", ")}` : ""}`,
+    );
+    return 0;
+  }
 
   if (command === "task:create") {
     const parsed = parseArguments(
@@ -397,6 +463,8 @@ export async function handleTaskCommand(
       lifecycle,
       clock,
       transactions,
+      governance,
+      taskDependencies,
     );
 
     const approve = parsed.options.get("approve");

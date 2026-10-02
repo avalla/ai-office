@@ -28,6 +28,12 @@ import type { PipelineRunRepository } from "../ports/pipeline-run-repository.por
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
 import type { TaskRequirementRepository } from "../ports/task-requirement-repository.port.ts";
+import type { GovernanceRepository } from "../ports/governance-repository.port.ts";
+import type { TaskDependencyRepository } from "../ports/task-dependency-repository.port.ts";
+import {
+  assertAcyclicDependency,
+  blockingPrerequisites,
+} from "@ai-office/domain/task/task-dependency.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import {
   taskLifecycleOperations,
@@ -51,7 +57,12 @@ export type TaskReconciliationFinding =
   /** The task is completed while linked requirements are still open. */
   | "completed_task_open_requirements"
   /** The task claims to be in flight with nothing executing it. */
-  | "in_flight_task_without_execution";
+  | "in_flight_task_without_execution"
+  | "completed_milestone_active_task"
+  | "verified_requirement_competing_tasks"
+  | "verified_requirement_duplicate_tasks"
+  | "blocking_prerequisite_incomplete"
+  | "invalid_task_dependency";
 
 export type TaskReconciliationSeverity = "inconsistent" | "warning";
 
@@ -148,6 +159,8 @@ export class ReconcileTasks {
     private readonly lifecycle: ManageTaskLifecycle,
     private readonly clock: Clock,
     private readonly transactions: TransactionRunner,
+    private readonly governance?: GovernanceRepository,
+    private readonly dependencies?: TaskDependencyRepository,
   ) {}
 
   /** Detection. Performs no write of any kind. */
@@ -158,14 +171,34 @@ export class ReconcileTasks {
     const tasks = (await this.tasks.listByProject(projectId)).map((task) =>
       task.snapshot(),
     );
-    const [pipelines, runs, linked] = await Promise.all([
-      this.pipelines.listByProject(projectId),
-      this.runtime.listRuns(projectId),
-      this.links.listForTasks(
-        projectId,
-        tasks.map((task) => task.id),
-      ),
-    ]);
+    const [pipelines, runs, linked, governance, dependencies] =
+      await Promise.all([
+        this.pipelines.listByProject(projectId),
+        this.runtime.listRuns(projectId),
+        this.links.listForTasks(
+          projectId,
+          tasks.map((task) => task.id),
+        ),
+        this.governance?.getSnapshot(projectId),
+        this.dependencies?.listByProject(projectId),
+      ]);
+
+    const requirementById = new Map(
+      governance?.requirements.map((item) => [item.id, item] as const) ?? [],
+    );
+    const milestoneById = new Map(
+      governance?.milestones.map((item) => [item.id, item] as const) ?? [],
+    );
+    const statusByTask = new Map(
+      tasks.map((item) => [item.id, item.status] as const),
+    );
+    const tasksByRequirement = new Map<string, typeof tasks>();
+    for (const task of tasks)
+      for (const requirement of linked.get(task.id) ?? []) {
+        const values = tasksByRequirement.get(requirement.requirementId) ?? [];
+        values.push(task);
+        tasksByRequirement.set(requirement.requirementId, values);
+      }
 
     const pipelinesByTask = new Map<
       string,
@@ -191,6 +224,109 @@ export class ReconcileTasks {
       const requirements = linked.get(task.id) ?? [];
       const progress = requirementProgress(requirements);
       const base = { taskId: task.id, title: task.title, status: task.status };
+
+      if (dependencies !== undefined) {
+        const prerequisites = dependencies.filter(
+          (edge) => edge.taskId === task.id,
+        );
+        try {
+          const blockedBy = blockingPrerequisites(
+            task.id,
+            prerequisites.map((edge) => edge.dependsOnTaskId),
+            statusByTask,
+          );
+          if (blockedBy.length > 0 && !isTerminalTaskStatus(task.status))
+            issues.push({
+              ...base,
+              finding: "blocking_prerequisite_incomplete",
+              severity: "warning",
+              summary: `incomplete prerequisites: ${blockedBy.map((item) => `${item.taskId} (${item.status})`).join(", ")}`,
+              suggestedCommand: null,
+              repairOperation: null,
+              repairable: false,
+              refusalReason:
+                "prerequisites must complete through their own lifecycle",
+            });
+        } catch {
+          issues.push({
+            ...base,
+            finding: "invalid_task_dependency",
+            severity: "inconsistent",
+            summary: "a prerequisite task reference is missing",
+            suggestedCommand: null,
+            repairOperation: null,
+            repairable: false,
+            refusalReason: "planning reference requires operator inspection",
+          });
+        }
+      }
+
+      for (const linkedRequirement of requirements) {
+        const requirement = requirementById.get(
+          linkedRequirement.requirementId,
+        );
+        const milestone =
+          requirement?.milestoneId === undefined
+            ? undefined
+            : milestoneById.get(requirement.milestoneId);
+        if (
+          milestone?.status === "completed" &&
+          inFlightTaskStatuses.has(task.status)
+        )
+          issues.push({
+            ...base,
+            finding: "completed_milestone_active_task",
+            severity: "inconsistent",
+            summary: `completed milestone ${milestone.title} still has task ${task.status}`,
+            suggestedCommand: null,
+            repairOperation: null,
+            repairable: false,
+            refusalReason: "milestone status cannot attest to a task outcome",
+          });
+        if (requirement?.status !== "verified") continue;
+        const peers = tasksByRequirement.get(requirement.id) ?? [];
+        const competing = peers.find(
+          (peer) =>
+            peer.id !== task.id &&
+            peer.status === "completed" &&
+            inFlightTaskStatuses.has(task.status) &&
+            similarTaskTitles(peer.title, task.title),
+        );
+        if (competing !== undefined)
+          issues.push({
+            ...base,
+            finding: "verified_requirement_competing_tasks",
+            severity: "warning",
+            summary: `verified requirement ${requirement.key} has completed task ${competing.id} and similar task ${task.id} still ${task.status}`,
+            suggestedCommand: null,
+            repairOperation: null,
+            repairable: false,
+            refusalReason:
+              "multiple linked tasks may be legitimate slices; an operator must reconcile duplicates",
+          });
+        const duplicate = peers.find(
+          (peer) =>
+            peer.id !== task.id &&
+            isTerminalTaskStatus(peer.status) &&
+            isTerminalTaskStatus(task.status) &&
+            (peer.createdAt.getTime() < task.createdAt.getTime() ||
+              (peer.createdAt.getTime() === task.createdAt.getTime() &&
+                peer.id < task.id)) &&
+            similarTaskTitles(peer.title, task.title),
+        );
+        if (duplicate !== undefined)
+          issues.push({
+            ...base,
+            finding: "verified_requirement_duplicate_tasks",
+            severity: "warning",
+            summary: `verified requirement ${requirement.key} links similar terminal tasks ${duplicate.id} and ${task.id}`,
+            suggestedCommand: null,
+            repairOperation: null,
+            repairable: false,
+            refusalReason:
+              "terminal task history is immutable; inspect links and document supersession",
+          });
+      }
 
       const terminalPipelines = taskPipelines.filter(
         (value) => value.status !== "active",
@@ -315,6 +451,31 @@ export class ReconcileTasks {
         });
     }
 
+    if (dependencies !== undefined) {
+      const validated: { taskId: string; dependsOnTaskId: string }[] = [];
+      for (const edge of dependencies) {
+        try {
+          assertAcyclicDependency(edge.taskId, edge.dependsOnTaskId, validated);
+        } catch {
+          const task = tasks.find((item) => item.id === edge.taskId);
+          if (task !== undefined)
+            issues.push({
+              taskId: task.id,
+              title: task.title,
+              status: task.status,
+              finding: "invalid_task_dependency",
+              severity: "inconsistent",
+              summary: "blocking dependencies contain a cycle",
+              suggestedCommand: null,
+              repairOperation: null,
+              repairable: false,
+              refusalReason: "cycle requires explicit operator correction",
+            });
+        }
+        validated.push(edge);
+      }
+    }
+
     const repairs = issues.filter((issue) => issue.repairable);
     return {
       projectId,
@@ -420,6 +581,22 @@ function correctionCommandFor(from: TaskStatus, to: TaskStatus): string | null {
   return to === "completed" && isHistoricalCompletionApplicable(from)
     ? taskCompletionRecordCommand
     : null;
+}
+
+function similarTaskTitles(left: string, right: string): boolean {
+  const normalize = (value: string): string =>
+    value
+      .toLowerCase()
+      .replace(/^[a-z]{1,12}-\d+[a-z]?:\s*/u, "")
+      .replace(/[^a-z0-9]+/gu, " ")
+      .trim();
+  const a = normalize(left);
+  const b = normalize(right);
+  return (
+    a.length >= 12 &&
+    b.length >= 12 &&
+    (a === b || a.startsWith(`${b} `) || b.startsWith(`${a} `))
+  );
 }
 
 function planHash(
