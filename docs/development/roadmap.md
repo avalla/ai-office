@@ -1761,7 +1761,50 @@ marketplace or remote registry; dynamic downloads or untrusted executable
 plugins; runtime-generated packs; replacement of the pipeline engine,
 governance, ProjectStorage, AgentKnowledgeStore, model routing, or worker queue.
 
-## M11-M16 dependency summary and open design questions
+## M17 — Execution Observability & Heterogeneous Actors Foundation
+
+Status: planned; requirements, delivery slices and proposed ADR only. No
+ExecutorSession, hook ingress or generic Actor implementation is claimed.
+
+Goal: observe managed Codex/Claude executor work end to end and expose it in
+the operational console, while separating Actor, Role, Capability, Assignment,
+Execution, Presence and Evidence so future domain packs can add other kinds of
+participants. `AgentRun` remains the current governed AI execution record;
+M17 adds a compatible path toward a general work execution model without a
+cosmetic rename or destructive migration. ExecutorSession records the provider
+session, never another pipeline, stage or task authority. Hooks supply verified,
+sanitized telemetry and cannot advance workflows.
+
+The [M17 delivery plan](m17-execution-observability.md) records EO-R01–EO-R22,
+EO-T01–EO-T14, task dependencies, requirement coverage, security/correlation
+semantics, storage parity, recovery, three exit scenarios and non-goals. The
+[proposed ADR-0028](../adr/ADR-0028-actor-execution-and-observation.md) is the
+first decision gate, not current architecture. M17 consumes M11/M11.5 execution
+authority, the relevant M12 worker launch/observe boundary, ADR-0015 read
+models, M15/M16 core/pack constraints and the React dashboard delivered by
+PR #86. It does not duplicate M12 worker-port work, M16 pack resolution, M10
+same-UID hardening, model routing, or the dashboard migration. PostgreSQL
+storage work must meet the existing ProjectStorage/RLS contract and any
+remaining M15-PG-PARITY prerequisite.
+
+Exit requires a managed pipeline/stage/AgentRun launched through AI Office to
+produce a verified ExecutorSession and lifecycle event, with authoritative
+task/stage/run linkage and last activity visible in React Work/Pipelines/Agents
+through query APIs and SSE invalidation; session end and authoritative run
+completion remain separate. A manually launched supported executor can appear
+as external/unbound for one deterministic registered project, without an
+invented task, role or governed run. Human/robot/service/machine contract
+fixtures must fit core actor/execution/presence seams without LLM-specific
+fields or production adapters. Existing data, CLI, fencing, task locks,
+approvals and SQLite/PostgreSQL behavior remain compatible.
+
+Non-goals: MES, OPC-UA, PLC or robot fleet control; human time tracking,
+employee surveillance or HR attendance; generic workflow engine rewrite;
+renaming AgentRun everywhere for naming purity; inferred assignment of external
+sessions; hook-driven pipeline authority; every executor/provider; or production
+human/robot/machine/service adapters.
+
+## M11-M17 dependency summary and open design questions
 
 ```text
 M6E office definitions + M6 policy/actions + M8.5 context
@@ -1783,6 +1826,9 @@ M6E office definitions + M6 policy/actions + M8.5 context
                           |
                           v
            M16 Generic Core & Domain Packs
+                          |
+                          v
+       M17 Execution Observability & Heterogeneous Actors
 ```
 
 These milestones intentionally defer:
@@ -1817,4 +1863,4 @@ These questions require milestone-specific assessments and, where a durable
 architectural choice is ready, an ADR. The accepted M16 ADR records the pack
 boundary; later tasks must implement it without silently changing existing
 project semantics. This roadmap direction does not itself select an
-implementation or authorize work on M11-M16.
+implementation or authorize work on M11-M17.

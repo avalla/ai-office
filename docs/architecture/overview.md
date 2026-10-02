@@ -100,6 +100,17 @@ without an intent require an explicit worker or simulation. The bounded Claude
 worker receives task data through an application port, with resource tools
 disabled; autonomous LLM tool selection is future work.
 
+M17 proposes a separate executor-observation boundary for managed Codex/Claude
+sessions and, where supported, external unbound sessions. The proposal keeps
+the current `AgentRun`, PipelineRun and stage authority in the Runtime; a
+future `ExecutorSession` and lifecycle hook event would be verified, bounded
+evidence, not a workflow transition. It also separates Actor, Role, Capability,
+Assignment, Execution, Presence and Evidence so future domain packs need not
+make a human, robot, machine or service look like an LLM agent. These are
+planned contracts, not current Runtime entities or APIs. See the
+[M17 plan](../development/m17-execution-observability.md) and proposed
+[ADR-0028](../adr/ADR-0028-actor-execution-and-observation.md).
+
 ## Application and domain boundaries
 
 ```text
