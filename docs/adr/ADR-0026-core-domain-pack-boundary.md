@@ -1,7 +1,7 @@
 # ADR-0026: AI Office Core / Domain Pack Boundary
 
-- Status: Proposed — GP-02 must review and accept or revise this decision before implementation
-- Date: 2026-10-01
+- Status: Proposed — GP-01 reviewed; acceptance requires the M15 work/evidence decision
+- Date: 2026-10-02
 - Tags: domain-packs, architecture, compatibility, governance
 
 ## Context
@@ -14,9 +14,13 @@ M15 assesses cross-domain work, evidence, artifact, and authority primitives.
 M16 must make domain semantics installable while existing installations continue
 operating. See the [M16 audit and plan](../development/generic-core-domain-packs.md).
 
-This ADR is a **proposed target contract**, not a statement that pack APIs or
-storage exist today. GP-02 must resolve its open choices against M15's accepted
-work-container decision and current storage/runtime contracts.
+This ADR is a **reviewable GP-02 contract proposal**, not a statement that pack
+APIs or storage exist today. The merged [M15 assessment](../development/m15-shared-professional-model.md)
+chooses `Project` as the likely authority root and gives source/evidence rules,
+but still labels that boundary proposed and calls for a focused accepted ADR.
+GP-02 therefore cannot be marked accepted until that decision exists and this
+contract is checked against it. [GP-01](../development/generic-core-domain-packs.md#gp-01-source-verification-and-compatibility-risks)
+records the source audit behind this proposal.
 
 ## Proposed decision
 
@@ -59,12 +63,74 @@ definitions and need no domain-specific role, task, or pipeline identity checks.
 
 A pack has a canonical unique ID, immutable version, manifest/schema version,
 core contract compatibility range, human-readable name and description,
-declared dependencies, and typed declarative contribution sections. Exact
-serialization, package naming, and version syntax are GP-02 decisions. The
+declared dependencies, and typed declarative contribution sections. The
 contract is compositional: independent role, workflow, artifact, policy,
 knowledge, capability, prompt, and validator contributions share only the
 identity/compatibility envelope. A giant central registry of all domain
 behavior is not required.
+
+The proposed public `DomainPackManifest` is strict UTF-8 JSON, schema version
+`1`. IDs use lower-case reverse-DNS segments (`org.ai-office.development`),
+versions are exact `MAJOR.MINOR.PATCH` values with no range or build metadata,
+and digests are `sha256:<64 lowercase hex>` over canonical JSON with the
+`digest` field omitted. Canonicalization sorts object keys and unordered
+definition/dependency collections by qualified ID; workflow stages keep their
+declared order. A pack cannot redefine an existing `(id, version)` with a
+different digest. `coreContract` is an integer compatibility interval
+`[minInclusive, maxExclusive)`, separate from product and manifest versions;
+unknown schema versions and unsupported intervals fail validation.
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "org.ai-office.development",
+  "version": "1.0.0",
+  "digest": "sha256:<64 lowercase hexadecimal characters>",
+  "coreContract": { "minInclusive": 1, "maxExclusive": 2 },
+  "metadata": {
+    "name": "Development",
+    "description": "Software delivery defaults"
+  },
+  "dependencies": [],
+  "contributions": {
+    "roles": [{ "id": "reviewer", "title": "Reviewer" }],
+    "taskTypes": [{ "id": "feature" }],
+    "workflows": [
+      {
+        "id": "delivery",
+        "taskType": "feature",
+        "stages": [{ "id": "review", "role": "reviewer" }]
+      }
+    ],
+    "agents": [],
+    "artifactTypes": [],
+    "evidenceTypes": [],
+    "policies": [],
+    "knowledge": [],
+    "capabilities": [],
+    "prompts": [],
+    "validators": []
+  }
+}
+```
+
+The example shows the envelope and qualified references; its digest is an
+illustrative placeholder, not an installable manifest or a frozen schema for
+the later GP-11–GP-16 sections. Each section gets its own strict validator
+and documented project override rules. A dependency records exact pack ID,
+version and digest; ranges and transitive implicit selection are excluded from
+the first contract. A project may select zero, one or several versions, but at
+most one version of a given pack ID. Definitions are addressed as
+`pack ID / kind / local ID`; project-facing aliases are separate and must be
+unique. Missing or conflicting references fail before scheduling.
+
+Public manifest types, parsers and fixtures belong in a small
+`packages/domain-pack-contracts` workspace package. The first official pack
+can live in `packages/domain-pack-development` and import only that public
+contract. `packages/domain` and `packages/application` retain the existing
+dependency direction and cannot import an official pack package. Runtime
+composition registers trusted installed packages through an explicit catalog;
+there is no `require`, script path or executable entry in pack JSON.
 
 Initial pack delivery is local and declarative. Packs do not download or run
 arbitrary code. A future validator or integration requiring executable behavior
@@ -78,9 +144,12 @@ packages, but `packages/domain` and `packages/application` cannot import them.
 
 ### Installation, binding, and deterministic resolution
 
-Installed-pack inventory and project pack bindings are authoritative project
-state through existing `ProjectStorage` composition and versioned migrations as
-needed. Local files or package presence alone do not change a project. An
+The Runtime records a locally installed pack inventory (ID, version, digest,
+schema/core compatibility and trusted package provenance) and project pack
+bindings through `ProjectStorage` with forward migrations. Installed bytes
+must match their registered digest at bootstrap; the inventory is an
+availability allowlist, while the project binding is the authority to use a
+pack. Filesystem/package presence alone does not change a project. An
 operator previews and applies install, upgrade, detach, and reconciliation
 through the Runtime; repeated application of the same intent is idempotent and
 audited. Validation fails before a run for missing pack, incompatible core or
@@ -96,6 +165,24 @@ Running pipeline and AgentRun inputs remain pinned; a pack update cannot change
 their in-flight semantics. Persist only authoritative inputs and the minimum
 pinned execution evidence needed for recovery; a derived resolved view may be
 recomputed and compared by digest.
+
+The binding records exact `(id, version, digest)` tuples and the project
+configuration revision. A new run records the effective digest and source
+tuples alongside its existing immutable manifest/definition pins in one
+authoritative transaction. This is a forward-only extension; schema-1 office
+rows and older snapshots keep their current reader and meaning. Resolution
+sorts pack tuples before merging definitions, rejects duplicate or unknown
+qualified IDs and aliases, and never uses package discovery order as priority.
+An empty selection resolves only project-owned definitions and core rules.
+
+For example, a development project may bind only
+`(org.ai-office.development, 1.0.0, sha256:<digest>)` and override its
+`workflow/delivery` stage list; the override is tied to that source tuple and
+survives an upgrade preview. A custom legal team may bind `packs: []` and use
+only project-authored roles and workflows. If two selected packs both claim the
+project alias `reviewer`, resolution reports both qualified sources and blocks
+scheduling until the project chooses an explicit alias mapping. None of these
+cases changes the task, run, approval or action state machines.
 
 Each contributed identifier is qualified by pack ID, definition kind, and
 local ID. Two versions of one pack, duplicate qualified IDs, incompatible
@@ -181,6 +268,15 @@ connectors/adapters satisfy those contracts; installation checks availability,
 while actual use still requires project-scoped grants, constraints,
 preconditions, approval, and controlled execution.
 
+Validators in pack JSON are references to separately installed trusted adapter
+IDs and exact versions, with an input schema, bounded output schema and
+failure policy. Runtime registration checks identity, version, supported
+artifact/evidence type, size and time limits before use; unknown, unavailable,
+malformed or timed-out mandatory validation fails closed. An adapter receives
+only the scoped input granted by its application port. It cannot decide a
+professional approval, create a capability grant, or directly mutate
+`ProjectStorage`. Protected effects still cross the controlled-action gateway.
+
 Mechanical architecture tests reject core imports of official or third-party
 packs and packs importing core implementation internals. Compatibility fixtures
 cover old development projects; development, legal, manufacturing, and
@@ -196,9 +292,11 @@ provenance remain mandatory across all fixtures.
   not exceptions to a development default.
 - The existing office manifest, repository identity, and knowledge scope need
   staged adapters or extensions; none is renamed or migrated by this ADR.
-- GP-02 must decide exact manifest syntax, package layout, installed-inventory
-  storage, supported validator adapter contracts, compatibility version rules,
-  and the smallest persisted resolution evidence after examining M15 decisions.
+- GP-02 proposes exact manifest syntax, package layout, inventory/binding
+  storage, validator adapter rules, compatibility versions and pinned evidence
+  above. These remain reviewable choices until the M15 authority/evidence ADR
+  is accepted. GP-03/GP-04 may refine field-level section schemas without
+  changing these boundaries.
 - A remote marketplace, dynamic downloads, untrusted code execution, new
   pipeline engine, ProjectStorage replacement, or new knowledge database is
   outside M16.
