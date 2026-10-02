@@ -105,6 +105,9 @@ describe("Domain Pack schema-1 contract", () => {
   });
 
   test("rejects invalid identity, version, digest and unsupported schema", () => {
+    expect(
+      errorCode(() => parseDomainPackManifest(bytes({ schemaVersion: 2 }))),
+    ).toBe("unsupported_schema");
     for (const [field, replacement, code] of [
       ["id", "Development", "invalid_identity"],
       ["version", "^1.0.0", "invalid_identity"],
@@ -186,6 +189,20 @@ describe("Domain Pack schema-1 contract", () => {
       );
   });
 
+  test("rejects trailing content, controls, malformed collections and excessive nesting", () => {
+    for (const source of [
+      `${new TextDecoder().decode(signed(fixture()))} true`,
+      '"raw\ncontrol"',
+      '{"a":[1,]}',
+      '{"a":1,}',
+      "[1 2]",
+      `${"[".repeat(129)}0${"]".repeat(129)}`,
+    ])
+      expect(
+        errorCode(() => parseDomainPackManifest(encoder.encode(source))),
+      ).toBe("malformed_input");
+  });
+
   test("normalizes only declared unordered arrays and object keys", () => {
     const first = fixture();
     first.dependencies = [
@@ -260,6 +277,21 @@ describe("Domain Pack schema-1 contract", () => {
     expect(
       computeManifestDigest(parseDomainPackManifest(bytes(value))),
     ).not.toBe(expected);
+    const dependencyDigest = computeManifestDigest(
+      parseDomainPackManifest(bytes(value)),
+    );
+    (value.dependencies as Array<Record<string, unknown>>)[0]!.version =
+      "2.0.0";
+    expect(
+      computeManifestDigest(parseDomainPackManifest(bytes(value))),
+    ).not.toBe(dependencyDigest);
+    (value.dependencies as Array<Record<string, unknown>>)[0]!.version =
+      "1.0.0";
+    (value.dependencies as Array<Record<string, unknown>>)[0]!.manifestDigest =
+      `sha256:${"2".repeat(64)}`;
+    expect(
+      computeManifestDigest(parseDomainPackManifest(bytes(value))),
+    ).not.toBe(dependencyDigest);
     value.dependencies = [];
     (value.contributions as Record<string, unknown>).roles = [
       { id: "reviewer", title: "Reviewer" },
@@ -267,6 +299,17 @@ describe("Domain Pack schema-1 contract", () => {
     expect(
       computeManifestDigest(parseDomainPackManifest(bytes(value))),
     ).not.toBe(expected);
+    const contributionDigest = computeManifestDigest(
+      parseDomainPackManifest(bytes(value)),
+    );
+    (
+      (value.contributions as Record<string, unknown>).roles as Array<
+        Record<string, unknown>
+      >
+    )[0]!.title = "Lead reviewer";
+    expect(
+      computeManifestDigest(parseDomainPackManifest(bytes(value))),
+    ).not.toBe(contributionDigest);
   });
 
   test("checks core interval and qualified reference shape", () => {

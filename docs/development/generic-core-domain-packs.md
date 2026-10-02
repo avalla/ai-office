@@ -12,6 +12,32 @@ contract fixtures. Domain Packs are not available to Runtime or projects.
 The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
 architectural contract, not current Runtime behavior.
 
+## GP-03 additive migration and compatibility plan
+
+GP-03 adds a workspace contract package and no application, Runtime, storage,
+CLI, migration or snapshot-reader integration. No SQLite or PostgreSQL data
+migration is required. Existing OfficeManifest schema-1 rows, Project, Task,
+PipelineRun and AgentRun states, repository bindings, and AgentKnowledgeStore
+keys retain their current representation. Portable snapshots retain their
+current readers and serialized bytes. No existing project acquires a Domain
+Pack selection, and there is no installed-pack catalog or change in Runtime
+semantics from loading the contract package alone.
+
+This is the reusable primitive selected for GP-03 by ADR-0026: exact pack,
+dependency and contribution identities, compatibility range, declarative
+envelope and content digest. ADR-0027 accepts later generic project and
+evidence boundaries but defers their storage and professional enforcement.
+Adding task, artifact or evidence fields to current state machines here would
+prematurely choose their GP-05/GP-14 semantics, so GP-03 preserves those
+models and their schema-1 readers.
+
+The existing schema-1 fixture and representative SQLite upgrade test cover
+this additive boundary. GP-04 will define the installed-pack catalog and its
+host-local availability state. GP-05 is the first task that persists
+authoritative **project** Domain Pack selection; it owns the forward SQLite
+and PostgreSQL migrations and upgrade tests for those bindings. GP-09 owns
+later legacy-development compatibility when pack resolution reaches Runtime.
+
 ## Objective and decision boundary
 
 AI Office should operate governed teams in arbitrary domains. The core owns
@@ -188,8 +214,9 @@ another roadmap milestone.
 Every GP key is also a project requirement key. Each row gives the task's
 objective, smallest delivery slice, acceptance, artifact/verification, and
 explicit exclusion. The linked AI Office task and requirement descriptions
-carry the same fields. GP-01 and GP-02 have passed review; GP-03 onward remain
-planned/proposed or blocked by their stated prerequisites.
+carry the same fields. GP-01 and GP-02 have passed review; the GP-03 contract
+implementation is in PR #84. GP-04 onward remain planned/proposed or blocked
+by their stated prerequisites.
 
 | ID and title                                       | Depends on                      | Slice and acceptance                                                                                                                                                                                                     | Artifact / verification                                                                                              | Non-goal                                                  |
 | -------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |

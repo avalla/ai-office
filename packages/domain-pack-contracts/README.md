@@ -7,6 +7,12 @@ It provides branded identity, exact version and digest types; typed contribution
 dependency and core compatibility envelopes; strict UTF-8 JSON parsing; schema
 validation; deterministic canonicalization; and digest verification.
 
+"Public" names the supported contract boundary for pack authors and future
+official packs inside the workspace. The package remains `private: true`
+because npm publication and versioned external distribution are outside GP-03.
+Publication requires a later explicit packaging decision; it is not implied by
+this manifest API.
+
 Import the public API from `src/index.ts`. `parseDomainPackManifest(bytes)`
 validates file bytes and returns a typed `DomainPackManifest`.
 `canonicalizeDomainPackManifest(manifest)` returns the exact UTF-8 digest input.
@@ -23,7 +29,10 @@ field and contribution section. Contribution items currently accept only an
 ASCII `id` and optional `title`/`description`; workflow items also have a
 `taskType` and ordered `stages` with `id`/`role`. Unknown fields fail validation,
 including executable entry points and embedded credentials. Later GP slices
-must explicitly extend section schemas before they can add fields.
+must explicitly extend section schemas through a compatible manifest/schema
+decision before they can add fields. The current generic `Contribution` type is
+not the final field-level schema for agents, artifact types, evidence types,
+policies, knowledge, capabilities, prompts or validators.
 
 For `manifestDigest`, validation removes only the root `manifestDigest`, sorts
 `dependencies` and each top-level contribution array by unique ASCII `id`,

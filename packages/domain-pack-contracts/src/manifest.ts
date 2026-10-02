@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { canonicalizeJcsJson, hasLoneSurrogate } from "./jcs.ts";
 
 declare const domainPackIdBrand: unique symbol;
 declare const domainPackVersionBrand: unique symbol;
@@ -245,17 +246,6 @@ function string(value: unknown, path: string, code: ManifestErrorCode): string {
   return value;
 }
 
-function hasLoneSurrogate(value: string): boolean {
-  for (let i = 0; i < value.length; i += 1) {
-    const code = value.charCodeAt(i);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(++i);
-      if (!Number.isFinite(next) || next < 0xdc00 || next > 0xdfff) return true;
-    } else if (code >= 0xdc00 && code <= 0xdfff) return true;
-  }
-  return false;
-}
-
 function localId(
   value: unknown,
   path: string,
@@ -357,6 +347,12 @@ function dependencies(value: unknown): readonly DomainPackDependency[] {
 
 export function validateDomainPackManifest(value: unknown): DomainPackManifest {
   const record = object(value, "$", "malformed_input");
+  if (Object.hasOwn(record, "schemaVersion") && record.schemaVersion !== 1)
+    return fail(
+      "unsupported_schema",
+      "schemaVersion",
+      "only schema version 1 is supported",
+    );
   keys(
     record,
     [
@@ -372,12 +368,6 @@ export function validateDomainPackManifest(value: unknown): DomainPackManifest {
     "$",
     "malformed_input",
   );
-  if (record.schemaVersion !== 1)
-    return fail(
-      "unsupported_schema",
-      "schemaVersion",
-      "only schema version 1 is supported",
-    );
   const metadata = object(record.metadata, "metadata", "malformed_input");
   keys(metadata, ["name", "description"], "metadata", "malformed_input");
   const source = object(
@@ -585,27 +575,6 @@ export function parseDomainPackManifest(bytes: Uint8Array): DomainPackManifest {
   return validateDomainPackManifest(new StrictJsonReader(source).read());
 }
 
-type Json =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly Json[]
-  | { readonly [key: string]: Json };
-
-function jcs(value: Json): string {
-  if (Array.isArray(value)) return `[${value.map(jcs).join(",")}]`;
-  if (value !== null && typeof value === "object")
-    return `{${Object.keys(value)
-      .sort()
-      .map(
-        (key) =>
-          `${JSON.stringify(key)}:${jcs((value as Record<string, Json>)[key]!)}`,
-      )
-      .join(",")}}`;
-  return JSON.stringify(value);
-}
-
 function digest(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
@@ -632,7 +601,11 @@ export function canonicalizeDomainPackManifest(
       ]),
     ),
   };
-  return new TextEncoder().encode(jcs(normalized as unknown as Json));
+  return new TextEncoder().encode(
+    canonicalizeJcsJson(
+      normalized as unknown as Parameters<typeof canonicalizeJcsJson>[0],
+    ),
+  );
 }
 
 export function computeManifestDigest(
