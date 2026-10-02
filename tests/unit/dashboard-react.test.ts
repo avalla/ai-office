@@ -1,0 +1,565 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router-dom";
+import { describe, expect, test } from "vitest";
+import type {
+  AgentRunState,
+  DashboardOverview,
+  PipelineRunState,
+  ProjectDetail,
+  ProjectSummary,
+  TaskDetail,
+  TaskOperationalState,
+} from "@ai-office/application/read-models/operational-read-models.ts";
+import {
+  DataNote,
+  PipelinePanel,
+  TaskTable,
+} from "../../apps/dashboard/src/components/operations.tsx";
+import {
+  OverviewPage,
+  PipelineDetail,
+  ProjectPage,
+  RunPage,
+  TaskPage,
+} from "../../apps/dashboard/src/features/pages.tsx";
+import {
+  parseRoute,
+  routeHref,
+} from "../../apps/dashboard/src/ui/view-model.ts";
+import { taskFilterQuery } from "../../apps/dashboard/src/lib/task-filters.ts";
+
+const now = "2026-09-03T12:00:00.000Z";
+const agent = {
+  agentId: "agent-1",
+  name: "Review Agent",
+  roleId: "role-1",
+  roleKey: "review",
+};
+const other = {
+  agentId: "agent-2",
+  name: "Worker Agent",
+  roleId: "role-2",
+  roleKey: "worker",
+};
+const stages: PipelineRunState["stages"] = [
+  {
+    stageRunId: "stage-1",
+    stageId: "intake",
+    name: "Intake",
+    objective: "Gather facts",
+    roleId: "role-1",
+    index: 0,
+    status: "completed",
+    requiresApproval: false,
+    assignedAgent: agent,
+    assignedAt: now,
+    completedAt: now,
+    approvalDecision: null,
+    approvedBy: null,
+    approvedAt: null,
+  },
+  {
+    stageRunId: "stage-2",
+    stageId: "review",
+    name: "Review",
+    objective: "Check work",
+    roleId: "role-1",
+    index: 1,
+    status: "active",
+    requiresApproval: true,
+    assignedAgent: agent,
+    assignedAt: now,
+    completedAt: null,
+    approvalDecision: null,
+    approvedBy: null,
+    approvedAt: null,
+  },
+  {
+    stageRunId: "stage-3",
+    stageId: "release",
+    name: "Release",
+    objective: "Deliver",
+    roleId: "role-2",
+    index: 2,
+    status: "pending",
+    requiresApproval: false,
+    assignedAgent: null,
+    assignedAt: null,
+    completedAt: null,
+    approvalDecision: null,
+    approvedBy: null,
+    approvedAt: null,
+  },
+];
+const pipeline: PipelineRunState = {
+  pipelineRunId: "pipeline-1",
+  projectId: "project-1",
+  task: { taskId: "task-1", title: "Prepare advice" },
+  pipelineId: "pack-generic",
+  pipelineName: "Generic workflow",
+  pipelineDescription: "A configurable workflow",
+  manifestRevision: 1,
+  status: "active",
+  currentStage: stages[1]!,
+  stages,
+  stageCounts: {
+    total: 3,
+    completed: 1,
+    active: 1,
+    awaitingApproval: 0,
+    pending: 1,
+    cancelled: 0,
+  },
+  startedBy: "operator",
+  createdAt: now,
+  updatedAt: now,
+  completedAt: null,
+  cancelledAt: null,
+  attentionReasons: [],
+};
+const run = (id: string, assigned = other): AgentRunState => ({
+  runId: id,
+  projectId: "project-1",
+  task: { taskId: "task-1", title: "Prepare advice" },
+  agent: assigned,
+  status: "running",
+  terminal: false,
+  pipelineRunId: "pipeline-1",
+  execution: {
+    kind: "worker",
+    adapterId: "claude-code",
+    adapterVersion: "1",
+    inputHash: "0".repeat(64),
+  },
+  model: null,
+  actionIntent: null,
+  hasResult: false,
+  hasError: false,
+  failure: null,
+  worktreePath: null,
+  createdAt: now,
+  startedAt: now,
+  completedAt: null,
+  updatedAt: now,
+  durationMs: null,
+});
+const summary: ProjectSummary = {
+  projectId: "project-1",
+  name: "AI Office",
+  description: null,
+  repository: {
+    repositoryId: null,
+    localPaths: [],
+    remoteUrl: null,
+    defaultBranch: null,
+  },
+  currentMilestone: null,
+  milestoneCount: 0,
+  activeMilestoneCount: 0,
+  tasks: {
+    total: 1,
+    open: 1,
+    terminal: 0,
+    byStatus: {
+      pending: 1,
+      assigned: 0,
+      running: 0,
+      blocked: 0,
+      waiting_review: 0,
+      completed: 0,
+      failed: 0,
+      cancelled: 0,
+    },
+  },
+  requirements: {
+    total: 0,
+    open: 0,
+    terminal: 0,
+    verified: 0,
+    rejected: 0,
+    byStatus: {
+      proposed: 0,
+      accepted: 0,
+      implemented: 0,
+      verified: 0,
+      rejected: 0,
+    },
+  },
+  activeAgentRuns: 2,
+  activePipelineRuns: 1,
+  pendingReviews: 0,
+  agentsWorking: 1,
+  attentionRequired: false,
+  attention: { total: 0, items: [], truncated: false },
+  lastActivityAt: now,
+  createdAt: now,
+  updatedAt: now,
+};
+const task: TaskOperationalState = {
+  taskId: "task-1",
+  projectId: "project-1",
+  title: "Prepare advice",
+  description: "A clear and readable description.",
+  priority: 0,
+  recordedStatus: "pending",
+  operationalStatus: "in_progress",
+  divergesFromRecordedStatus: true,
+  divergenceReasons: ["agent_run_active_without_task_transition"],
+  requirements: {
+    availability: "available",
+    value: { total: 0, open: 0, terminal: 0, verified: 0, rejected: 0 },
+  },
+  requirementReferences: [],
+  milestone: {
+    availability: "unavailable",
+    reason: "task_milestone_link_not_modelled",
+    explanation: "Direct task milestone relation is unavailable",
+  },
+  activeAgentRuns: {
+    total: 2,
+    items: [
+      {
+        runId: "run-1",
+        status: "running",
+        agentId: "agent-2",
+        agent: other,
+        pipelineRunId: "pipeline-1",
+        startedAt: now,
+        updatedAt: now,
+        createdAt: now,
+        ownsLeaseRecord: false,
+        hasValidLease: false,
+      },
+      {
+        runId: "run-2",
+        status: "running",
+        agentId: "agent-2",
+        agent: other,
+        pipelineRunId: "pipeline-1",
+        startedAt: now,
+        updatedAt: now,
+        createdAt: now,
+        ownsLeaseRecord: true,
+        hasValidLease: true,
+      },
+    ],
+    truncated: false,
+  },
+  primaryAgentRun: {
+    runId: "run-1",
+    status: "running",
+    agentId: "agent-2",
+    agent: other,
+    pipelineRunId: "pipeline-1",
+    startedAt: now,
+    updatedAt: now,
+    createdAt: now,
+    ownsLeaseRecord: false,
+    hasValidLease: false,
+  },
+  lease: {
+    ownerRunId: "run-2",
+    acquiredAt: now,
+    expiresAt: "2026-09-03T13:00:00.000Z",
+    expired: false,
+    ownerRunStatus: "running",
+  },
+  runsWithoutValidLeaseCount: 1,
+  activePipelineRun: {
+    pipelineRunId: "pipeline-1",
+    pipelineId: "pack-generic",
+    pipelineName: "Generic workflow",
+    status: "active",
+    currentStageId: "review",
+    currentStageName: "Review",
+    currentStageStatus: "active",
+    stageIndex: 1,
+    stageCount: 3,
+  },
+  assignedAgent: agent,
+  pendingReviewCount: 0,
+  blockedReason: null,
+  attentionReasons: [],
+  createdAt: now,
+  updatedAt: now,
+  lastActivityAt: now,
+};
+const detail: TaskDetail = {
+  generatedAt: now,
+  projectName: "AI Office",
+  task,
+  pipeline,
+  runs: { total: 2, items: [run("run-1"), run("run-2")], truncated: false },
+  activity: { items: [], nextCursor: null },
+};
+const project: ProjectDetail = {
+  generatedAt: now,
+  summary,
+  milestones: [],
+  requirements: [],
+  agents: [],
+  tasks: { total: 1, items: [task], truncated: false },
+  pipelines: { total: 1, items: [pipeline], truncated: false },
+  runs: { total: 2, items: [run("run-1"), run("run-2")], truncated: false },
+  reviews: { total: 0, items: [], truncated: false },
+  recentActivity: { items: [], nextCursor: null },
+};
+const overview: DashboardOverview = {
+  generatedAt: now,
+  projects: [summary],
+  totals: {
+    projects: 1,
+    openTasks: 1,
+    activeAgentRuns: 2,
+    activePipelineRuns: 1,
+    pendingReviews: 0,
+    agentsWorking: 1,
+    attentionItems: 0,
+  },
+  attention: { total: 0, items: [], truncated: false },
+  activeRuns: {
+    total: 2,
+    items: [run("run-1"), run("run-2")],
+    truncated: false,
+  },
+  recentActivity: { items: [], nextCursor: null },
+};
+const html = (component: unknown, props: Record<string, unknown>) =>
+  renderToStaticMarkup(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(
+        component as React.ComponentType<Record<string, unknown>>,
+        props,
+      ),
+    ),
+  );
+
+describe("React dashboard routes", () => {
+  test.each([
+    "#/",
+    "#/projects",
+    "#/work",
+    "#/projects/project-1",
+    "#/projects/project-1/pipeline",
+    "#/projects/project-1/tasks",
+    "#/projects/project-1/tasks/task-1",
+    "#/projects/project-1/milestones",
+    "#/projects/project-1/requirements",
+    "#/projects/project-1/agents",
+    "#/pipelines",
+    "#/agents",
+    "#/runs/run-1",
+    "#/memory",
+  ])("round trips %s", (hash) =>
+    expect(routeHref(parseRoute(hash))).toBe(hash),
+  );
+  test("rejects malformed task filters", () =>
+    expect(parseRoute("#/projects/project-1/tasks?priority=abc").kind).toBe(
+      "invalid",
+    ));
+});
+describe("operational presentation", () => {
+  test("shows assigned and working agents separately, including concurrent runs", () => {
+    const markup = html(PipelineDetail, {
+      pipeline,
+      runs: { total: 2, items: [run("run-1"), run("run-2")], truncated: false },
+      agents: [],
+    });
+    expect(markup).toContain("Current stage");
+    expect(markup).toContain("Intake");
+    expect(markup).toContain("Release");
+    expect(markup).toContain("Review Agent");
+    expect(markup).toContain("Worker Agent");
+    expect(markup).toContain("run-1");
+    expect(markup).toContain("run-2");
+    expect(markup).toContain("does not identify a run&#x27;s stage");
+  });
+  test("assignment alone never appears as a working run", () => {
+    const markup = html(PipelineDetail, {
+      pipeline,
+      runs: { total: 0, items: [], truncated: false },
+      agents: [],
+    });
+    expect(markup).toContain("Review Agent");
+    expect(markup).toContain("No active run");
+    expect(markup).not.toContain("Worker Agent");
+  });
+  test("shows approval and review as separate recorded attention", () => {
+    const awaitingStage = {
+      ...stages[1]!,
+      status: "awaiting_approval" as const,
+    };
+    const awaitingPipeline: PipelineRunState = {
+      ...pipeline,
+      currentStage: awaitingStage,
+      stages: [stages[0]!, awaitingStage, stages[2]!],
+      stageCounts: { ...pipeline.stageCounts, active: 0, awaitingApproval: 1 },
+      attentionReasons: [
+        {
+          kind: "pipeline_stage_awaiting_approval",
+          projectId: "project-1",
+          subjectType: "pipeline_run",
+          subjectId: "pipeline-1",
+          summary: "Approval is required before the next stage",
+          since: now,
+        },
+      ],
+    };
+    const pipelineMarkup = html(PipelineDetail, {
+      pipeline: awaitingPipeline,
+      runs: { total: 0, items: [], truncated: false },
+      agents: [],
+    });
+    expect(pipelineMarkup).toContain("Approval: waiting");
+    expect(pipelineMarkup).toContain(
+      "Approval is required before the next stage",
+    );
+    expect(pipelineMarkup).toContain("No active run");
+
+    const runMarkup = html(RunPage, {
+      data: {
+        kind: "run",
+        detail: {
+          run: run("run-1"),
+          events: { total: 0, items: [], truncated: false },
+          actions: [],
+          pipeline,
+          reviews: [
+            {
+              reviewId: "review-1",
+              projectId: "project-1",
+              subjectType: "agent_run",
+              subjectId: "run-1",
+              reviewer: {
+                type: "user",
+                id: "operator",
+                displayName: "Operator",
+              },
+              status: "pending",
+              summary: "Human review requested",
+              createdAt: now,
+              completedAt: null,
+              decision: null,
+            },
+          ],
+          activity: { items: [], nextCursor: null },
+          attentionReasons: [],
+        },
+        task: detail,
+      },
+    });
+    expect(runMarkup).toContain("Human review requested");
+    expect(runMarkup).toContain("pending");
+  });
+  test("shows recorded divergence, representative run, both active runs and valid lease", () => {
+    const markup = html(TaskPage, { data: { kind: "task", detail } });
+    expect(markup).toContain("Recorded: pending");
+    expect(markup).toContain("in progress");
+    expect(markup).toContain("run-1");
+    expect(markup).toContain("run-2");
+    expect(markup).toContain("No valid lease");
+    expect(markup).toContain("Valid lease");
+    expect(markup).toContain("Working agents and execution authority");
+  });
+  test("uses authoritative totals and discloses samples", () => {
+    const markup = html(DataNote, {
+      list: { total: 8, items: [1, 2], truncated: true },
+      noun: "runs",
+    });
+    expect(markup).toContain("Showing 2 of 8 runs");
+    const home = html(OverviewPage, {
+      data: {
+        kind: "overview",
+        overview: {
+          ...overview,
+          totals: { ...overview.totals, activeAgentRuns: 8 },
+          activeRuns: { total: 8, items: [run("run-1")], truncated: true },
+        },
+        pipelines: new Map([
+          ["project-1", { total: 1, items: [pipeline], truncated: false }],
+        ]),
+      },
+    });
+    expect(home).toContain("8</dd>");
+    expect(home).toContain("Showing 1 of 8 active runs");
+  });
+  test("renders generic stage and role names without development vocabulary", () => {
+    const markup = html(PipelinePanel, { pipeline });
+    expect(markup).toContain("Generic workflow");
+    expect(markup).toContain("Intake");
+    expect(markup).toContain("Release");
+    expect(markup).not.toContain("architect");
+  });
+  test("renders project sections and task table", () => {
+    const page = {
+      kind: "project",
+      project,
+      activePipelines: { total: 1, items: [pipeline], truncated: false },
+      activeRuns: {
+        total: 2,
+        items: [run("run-1"), run("run-2")],
+        truncated: false,
+      },
+    };
+    expect(html(ProjectPage, { data: page, section: "pipeline" })).toContain(
+      "Stage timeline",
+    );
+    expect(html(TaskTable, { tasks: [task] })).toContain("No linked milestone");
+  });
+  test("renders run failure and controlled action facts safely", () => {
+    const report = {
+      kind: "run",
+      detail: {
+        run: {
+          ...run("run-1"),
+          failure: { code: "WORKER_FAILED", message: "<script>bad</script>" },
+          status: "failed",
+          terminal: true,
+        },
+        events: { total: 0, items: [], truncated: false },
+        actions: [],
+        pipeline,
+        reviews: [],
+        activity: { items: [], nextCursor: null },
+        attentionReasons: [],
+      },
+      task: detail,
+    };
+    const markup = html(RunPage, { data: report });
+    expect(markup).toContain("WORKER_FAILED");
+    expect(markup).toContain("&lt;script&gt;bad&lt;/script&gt;");
+    expect(markup).not.toContain("<script>bad</script>");
+  });
+});
+describe("task filters", () => {
+  test("keeps all existing filters and resets offset", () =>
+    expect(
+      taskFilterQuery({
+        search: "task",
+        status: "active",
+        priority: "0",
+        agent: "agent:agent-1",
+        milestone: "milestone-1",
+        sort: "short_name",
+      }),
+    ).toEqual({
+      search: "task",
+      status: "active",
+      priority: 0,
+      agentId: "agent-1",
+      milestoneId: "milestone-1",
+      sort: "short_name",
+    }));
+  test("unassigned is exclusive with an agent", () =>
+    expect(
+      taskFilterQuery({
+        search: "",
+        status: "all",
+        priority: "",
+        agent: "none",
+      }),
+    ).toMatchObject({ status: "all", unassigned: true }));
+});

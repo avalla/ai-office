@@ -4,7 +4,8 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "resolveJsonModule": true,
-    "lib": ["ES2022"],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
@@ -44,6 +45,7 @@
   "include": [
     "bin/**/*.ts",
     "apps/**/*.ts",
+    "apps/**/*.tsx",
     "packages/**/*.ts",
     "scripts/**/*.ts",
     "tests/**/*.ts"

@@ -7,8 +7,10 @@ import type {
   TaskDetail,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
-import { renderRun } from "../../apps/dashboard/src/ui/render.ts";
-import { runViewModel } from "../../apps/dashboard/src/ui/view-model.ts";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router-dom";
+import { RunPage } from "../../apps/dashboard/src/features/pages.tsx";
 
 test("queued tasks require an explicit executor; simulation is durable and never inferred for historical runs", async () => {
   const r = await runRuntime();
@@ -61,9 +63,8 @@ test("an injected executor is only the normal-run default, never the explicit si
       "",
     );
     expect(
-      (
-        await r.command(["run:tick", "--project", r.projectId, "--simulate"])
-      ).exitCode,
+      (await r.command(["run:tick", "--project", r.projectId, "--simulate"]))
+        .exitCode,
     ).toBe(0);
     expect(injectedCalls).toBe(0);
     expect(
@@ -153,9 +154,7 @@ test("a configured prepared worker records provenance and invokes its acceptance
       "--run",
       runId,
     ]);
-    expect(show.stdout).toContain(
-      "Executor: worker (configured-worker 1)",
-    );
+    expect(show.stdout).toContain("Executor: worker (configured-worker 1)");
   } finally {
     await r.close();
   }
@@ -235,7 +234,13 @@ console.log(JSON.stringify({type:'result', subtype:'success', is_error:false,
     );
     expect(task.task.recordedStatus).toBe("pending");
     expect(task.runs.items[0]?.execution?.kind).toBe("worker");
-    const html = renderRun(runViewModel(detail));
+    const html = renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(RunPage, { data: { kind: "run", detail, task } }),
+      ),
+    );
     expect(html).toContain("Worker output");
     expect(html).toContain("&lt;script&gt;untrusted&lt;/script&gt;");
     expect(html).not.toContain("<script>untrusted</script>");

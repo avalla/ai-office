@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import {
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
@@ -507,7 +503,6 @@ describe("dashboard loopback host", () => {
     }
   });
 
-
   test("--no-open keeps the browser closed and prints a token-free URL", async () => {
     const runtime = await startRuntime();
     const controller = new AbortController();
@@ -568,9 +563,9 @@ describe("dashboard loopback host", () => {
       expect(response.status).toBe(200);
       const script = await response.text();
       expect(script.length).toBeGreaterThan(1000);
-      // The bundle carries the rendering the unit tests cover.
+      // The single served bundle carries the React operations view.
       expect(script).toContain("Needs attention");
-      expect(script).not.toContain("import ");
+      expect(script).not.toMatch(/^import\s/m);
     } finally {
       await host.stop();
     }
