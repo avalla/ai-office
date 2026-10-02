@@ -10,7 +10,7 @@ Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Andrea Valla.
 
 - **Authoritative local Runtime** with a persistent daemon and versioned CLI protocol over an owner-only Unix socket.
 - **Project lifecycle**: install, status, handover, portable backup/restore, repository identity, and deterministic project bindings.
-- **Custom offices**: versioned roles, agents, model policies, pipelines, task kinds, approvals, overrides, and project-specific manifests.
+- **Custom offices**: versioned roles, agents, model policies, pipeline definitions, approvals, overrides, and project-specific manifests.
 - **Governed execution**: task lifecycle, requirements, milestones, reviews, ADRs, enforced pipeline stages, locks, fencing, retries, and audit events.
 - **Agent execution**: bounded real workers, simulation, per-agent model routing, usage normalization, budgets, and cost accounting.
 - **Controlled actions**: deny-by-default capabilities, project-scoped resources, approval gates, and audited filesystem operations.
