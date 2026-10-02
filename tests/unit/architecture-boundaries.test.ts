@@ -90,6 +90,46 @@ function importsStoragePostgres(file: string, specifier: string): boolean {
 }
 
 describe("application architecture boundaries", () => {
+  test("Domain Pack contracts remain independent and cannot form a package cycle", () => {
+    const contracts = join(repositoryRoot, "packages", "domain-pack-contracts");
+    const offenders: string[] = [];
+    for (const file of typescriptFiles(contracts)) {
+      for (const specifier of importedSpecifiers(readFileSync(file, "utf8"))) {
+        const target = resolvedTarget(file, specifier);
+        if (
+          specifier.startsWith("@ai-office/") ||
+          (target?.startsWith("packages/") === true &&
+            !target.startsWith("packages/domain-pack-contracts/"))
+        )
+          offenders.push(`${relative(repositoryRoot, file)} -> ${specifier}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("domain and application do not import official Domain Packs", () => {
+    const offenders: string[] = [];
+    for (const layer of ["domain", "application"]) {
+      for (const file of typescriptFiles(
+        join(repositoryRoot, "packages", layer),
+      )) {
+        for (const specifier of importedSpecifiers(
+          readFileSync(file, "utf8"),
+        )) {
+          const target = resolvedTarget(file, specifier);
+          if (
+            (specifier.startsWith("@ai-office/domain-pack-") &&
+              !specifier.startsWith("@ai-office/domain-pack-contracts")) ||
+            (target?.startsWith("packages/domain-pack-") === true &&
+              !target.startsWith("packages/domain-pack-contracts/"))
+          )
+            offenders.push(`${relative(repositoryRoot, file)} -> ${specifier}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   test("project Runtime composition consumes repository ports, not SQLite classes", () => {
     const contextPath = join(
       repositoryRoot,

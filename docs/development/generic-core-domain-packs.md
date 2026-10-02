@@ -5,10 +5,12 @@ Status: M16 planned. The GP-01 source audit was performed against `main` at
 `90c51cf`. [ADR-0027](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 defines the four M15 authority/evidence prerequisites and was integrated in
 PR #81. GP-02 completed their alignment review against
-[ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md). This document does
-not assert that Domain Packs exist today. The [roadmap](roadmap.md) owns
-milestone status; ADR-0026 is an accepted architectural contract, not current
-Runtime behavior.
+[ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md). GP-03 introduces
+only the public [Domain Pack contract package](../../packages/domain-pack-contracts/README.md):
+manifest types, strict parsing, canonicalization, digest verification and
+contract fixtures. Domain Packs are not available to Runtime or projects.
+The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
+architectural contract, not current Runtime behavior.
 
 ## Objective and decision boundary
 
