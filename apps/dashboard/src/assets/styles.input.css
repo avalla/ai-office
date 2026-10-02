@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --background: 220 23% 97%;
+    --surface: 0 0% 100%;
+    --foreground: 222 34% 16%;
+    --subtle: 219 13% 42%;
+    --muted: 220 20% 93%;
+    --border: 218 19% 84%;
+    --primary: 221 78% 43%;
+    --primary-foreground: 0 0% 100%;
+    --ring: 221 78% 53%;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --background: 222 23% 10%;
+      --surface: 222 22% 14%;
+      --foreground: 210 22% 93%;
+      --subtle: 214 15% 69%;
+      --muted: 221 18% 20%;
+      --border: 219 18% 30%;
+      --primary: 216 80% 65%;
+      --primary-foreground: 222 35% 12%;
+      --ring: 216 80% 65%;
+    }
+  }
+  * {
+    box-sizing: border-box;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+  body {
+    @apply m-0 bg-background font-sans text-base leading-relaxed text-foreground antialiased;
+  }
+  a {
+    @apply text-blue-700 underline-offset-2 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-blue-300;
+  }
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+  th {
+    @apply border-b border-border bg-muted px-4 py-3 text-xs font-semibold uppercase tracking-wide text-subtle;
+  }
+  td {
+    @apply max-w-[28rem] border-b border-border px-4 py-3 align-top leading-relaxed;
+  }
+  tbody tr:hover {
+    @apply bg-muted/40;
+  }
+}
+@layer components {
+  .page-stack {
+    @apply space-y-8;
+  }
+  .sidebar-label {
+    @apply mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-subtle;
+  }
+  .sidebar-link {
+    @apply flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium text-foreground no-underline hover:bg-muted hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:bg-muted aria-[current=page]:text-blue-800 dark:aria-[current=page]:text-blue-200;
+  }
+}

@@ -42,6 +42,7 @@ import {
 /* -------------------------------------------------------------------------- */
 
 export const projectSections = [
+  "pipeline",
   "tasks",
   "milestones",
   "requirements",
@@ -51,8 +52,17 @@ export type ProjectSection = (typeof projectSections)[number];
 
 export type DashboardRoute =
   | { kind: "overview" }
+  | { kind: "projects" }
+  | { kind: "work" }
+  | { kind: "pipelines" }
+  | { kind: "agents" }
   | { kind: "memory" }
-  | { kind: "project"; projectId: string; section?: ProjectSection; taskQuery?: TaskPageQuery }
+  | {
+      kind: "project";
+      projectId: string;
+      section?: ProjectSection;
+      taskQuery?: TaskPageQuery;
+    }
   | {
       kind: "task";
       projectId: string;
@@ -120,6 +130,13 @@ export function parseRoute(hash: string): DashboardRoute {
     return { kind: "run", runId: decodeURIComponent(segments[1]!) };
   if (segments.length === 1 && segments[0] === "memory")
     return { kind: "memory" };
+  if (segments.length === 1 && segments[0] === "projects")
+    return { kind: "projects" };
+  if (segments.length === 1 && segments[0] === "work") return { kind: "work" };
+  if (segments.length === 1 && segments[0] === "pipelines")
+    return { kind: "pipelines" };
+  if (segments.length === 1 && segments[0] === "agents")
+    return { kind: "agents" };
   return { kind: "overview" };
 }
 
@@ -137,6 +154,10 @@ export function routeHref(route: DashboardRoute): string {
     return `#/projects/${encodeURIComponent(route.projectId)}${route.section === undefined ? "" : `/${route.section}`}${suffix}`;
   if (route.kind === "run") return `#/runs/${encodeURIComponent(route.runId)}`;
   if (route.kind === "memory") return "#/memory";
+  if (route.kind === "projects") return "#/projects";
+  if (route.kind === "work") return "#/work";
+  if (route.kind === "pipelines") return "#/pipelines";
+  if (route.kind === "agents") return "#/agents";
   return "#/";
 }
 
@@ -236,7 +257,7 @@ const agentStateLabels: Record<AgentState["state"], string> = {
   disabled: "disabled",
   idle: "idle",
   assigned: "assigned",
-  working: "active run",
+  working: "working · active run",
   awaiting_approval: "waiting",
   last_run_failed: "last run failed",
 };

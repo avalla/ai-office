@@ -28,6 +28,8 @@ interface Harness {
   states: ConnectionState[];
   /** Routes passed to `refresh`, in order. */
   fetched: DashboardRoute[];
+  /** Responses accepted while their sync token was still current. */
+  accepted: DashboardRoute[];
   /** Runs every scheduled callback whose turn has come. */
   flushTimers(): Promise<void>;
   /** Lets pending refresh promises settle. */
@@ -41,6 +43,7 @@ interface Harness {
 function harness(): Harness {
   const states: ConnectionState[] = [];
   const fetched: DashboardRoute[] = [];
+  const accepted: DashboardRoute[] = [];
   let route: DashboardRoute = { kind: "overview" };
   let failures = 0;
   let release: (() => void) | null = null;
@@ -50,7 +53,7 @@ function harness(): Harness {
   let nextHandle = 1;
 
   const controller = createSyncController({
-    refresh: async (target) => {
+    refresh: async (target, isCurrent) => {
       fetched.push(target);
       if (gate !== null) {
         const pending = gate;
@@ -61,6 +64,7 @@ function harness(): Harness {
         failures -= 1;
         throw new Error("query failed");
       }
+      if (isCurrent()) accepted.push(target);
     },
     currentRoute: () => route,
     onStateChange: (state) => states.push(state),
@@ -84,6 +88,7 @@ function harness(): Harness {
     controller,
     states,
     fetched,
+    accepted,
     async flushTimers() {
       const due = [...timers.entries()];
       timers.clear();
@@ -249,6 +254,50 @@ describe("dashboard sync controller", () => {
       kind: "project",
       projectId: "project-1",
     });
+    expect(h.controller.state()).toBe("live");
+  });
+
+  test("a route change during an old in-flight request never adopts the old sync token", async () => {
+    const h = harness();
+    const finishOld = h.block();
+    h.controller.start();
+    await h.settle();
+    h.controller.streamEstablished();
+    h.setRoute({ kind: "project", projectId: "project-2", section: "tasks" });
+    h.controller.routeChanged();
+    expect(h.controller.state()).toBe("syncing");
+    expect(h.fetched).toEqual([{ kind: "overview" }]);
+
+    finishOld();
+    await h.settle();
+
+    expect(h.fetched.at(-1)).toEqual({
+      kind: "project",
+      projectId: "project-2",
+      section: "tasks",
+    });
+    expect(h.controller.state()).toBe("live");
+    expect(h.states).toEqual(["syncing", "live"]);
+  });
+
+  test("A to B to A during a request discards the first A response", async () => {
+    const h = harness();
+    const finishOld = h.block();
+    h.controller.start();
+    await h.settle();
+    h.controller.streamEstablished();
+    h.setRoute({ kind: "project", projectId: "project-2" });
+    h.controller.routeChanged();
+    h.setRoute({ kind: "overview" });
+    h.controller.routeChanged();
+    await h.flushTimers();
+    expect(h.controller.state()).toBe("syncing");
+
+    finishOld();
+    await h.settle();
+
+    expect(h.fetched).toEqual([{ kind: "overview" }, { kind: "overview" }]);
+    expect(h.accepted).toEqual([{ kind: "overview" }]);
     expect(h.controller.state()).toBe("live");
   });
 

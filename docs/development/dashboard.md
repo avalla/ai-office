@@ -10,8 +10,14 @@ contract; clients still accept the unavailable response from older hosts.
 
 The dashboard is a local, read-only operations console. It answers the questions
 an operator asks between commands: what projects exist, what is being worked on,
-which pipeline stage each run is in, which agent is doing what, what is waiting
+which stage each pipeline is in, which agent is doing what, what is waiting
 for a human, what failed, and what happened recently.
+
+The presentation is a React/TypeScript SPA with React Router hash routes,
+Tailwind CSS, shadcn-style components, and Lucide icons. `DashboardHost` still
+serves one browser bundle and stylesheet and proxies the existing query API
+over the daemon Unix socket. No mutation API or second production server is
+involved.
 
 ## Usage
 
@@ -166,18 +172,23 @@ or receive raw SQL access; their project integrations point to the derived
 `AI-OFFICE.md` guidance and repository-local skill, while Runtime-backed work
 can select reusable memory through the application boundary.
 
-### Project navigation and section pages
+### Navigation and section pages
 
-The project UI keeps one native navigation bar under the project header and uses
-separate hash routes for the operational areas:
+The desktop shell has a persistent sidebar; mobile uses a Sheet. Native links
+and React Router hash routes provide these views:
 
-- `#/projects/:id` — overview with exact aggregates, attention, pipelines,
-  reviews, and recent activity;
+- `#/` — exact cross-project totals, active work, attention, and activity;
+- `#/projects`, `#/work`, `#/pipelines`, `#/agents`, `#/memory` — global views;
+- `#/projects/:id` — current work, exact aggregates, attention, progress, and activity;
+- `#/projects/:id/pipeline` — active pipeline runs, current stage, stage timeline,
+  assignments, active run evidence, and involved agents;
 - `#/projects/:id/tasks` — searchable, paged task table;
+- `#/projects/:id/tasks/:taskId` — task execution and history;
 - `#/projects/:id/milestones` — milestone progress and status filter;
 - `#/projects/:id/requirements` — requirement descriptions, status and
   milestone filters, and linked tasks;
-- `#/projects/:id/agents` — every agent's projected activity state.
+- `#/projects/:id/agents` — every agent's projected activity state;
+- `#/runs/:runId` — run detail and execution events.
 
 The active section is marked with `aria-current="page"`, and task filter state
 remains in the URL so reloads, pagination, and task-detail round trips are
@@ -220,9 +231,9 @@ The default page order is milestone title ascending, then task short name
 reloads and task-detail round trips in the hash URL. Applying filters resets the page; live refreshes
 preserve drafts and keyboard focus. Pagination reads current state rather than
 a frozen snapshot, so concurrent changes can move tasks between pages.
-Project summaries, attention, and charts always cover the whole project.
+Project summaries and attention counts always cover the whole project.
 
-### Task details and progress charts
+### Task details and progress
 
 Task titles open a dedicated route, `#/projects/:id/tasks/:taskId`, from the
 project table, agent table, task attention entries, and run detail. The query
@@ -247,21 +258,10 @@ run's detail. The empty state explains that task creation alone currently emits
 no audit event; missing historical events are never fabricated. Both histories
 disclose their presentation limits.
 
-Charts use existing exact aggregates: recorded task status from
-`ProjectSummary.tasks.byStatus`, completed/all tasks across projects, and active
-run versus assigned-stage counts from each `AgentState`. They never count the
-displayed task or run samples. The status chart is explicitly labelled as
-recorded status, not operational status; the workload chart is not a capacity
-or execution-authority claim. Counts remain visible as text, and SVG bars use
-numeric attributes compatible with the existing CSP. No chart dependency or
-build step is added.
-
-Zero-count status bars and agents with no current work are omitted from charts;
-the agent table still lists all agents. Empty operational sections and the
-duplicate divergent-task table are omitted. Task activity keeps an explicit
-empty state so absent audit history is distinguishable from a hidden section.
-Divergence remains visible in the
-task row and task detail.
+Milestone progress uses exact requirement counts. The UI never computes a
+health score or derives counts from displayed samples. Empty operational
+sections explain the absence of data. Divergence remains visible in the task
+row and task detail.
 
 Run detail filters activity by the run's own aggregate ids **in SQL, before the
 limit**, so a run whose events are older than the latest project window still
@@ -309,10 +309,10 @@ client conflates:
 
 The invariant is: **once the dashboard says `live`, the current route has been
 re-queried after the most recent stream connection was established.** It is
-expressed as a sync token pairing the connection epoch with the route key — a
-new connection bumps the epoch, a navigation changes the route key, and a
-refresh adopts the token it started under only when it _succeeds_. A failed
-query therefore never reads as `live`.
+expressed as a sync token combining connection epoch, navigation revision, and
+route key. A new connection bumps the epoch; every navigation bumps the
+revision, including A → B → A. The browser accepts a response only if its token
+is still current. A failed query therefore never reads as `live`.
 
 The reconnect refresh reuses the same single-flight-plus-debounce path as
 invalidations, so a reconnect storm, an invalidate burst, a hash-route change,
@@ -586,8 +586,8 @@ with ties broken by run id descending; active stages by their pipeline run's
 `updated_at` descending with ties broken by pipeline run id ascending. The
 derived state itself reads only the _exact counts_ — including a separate exact
 count of assignments awaiting approval — so a truncated sample can never change
-it. The agent table renders the representative plus `+N more`, computed from
-`total`.
+it. The agent table shows exact active-run and active-stage totals and the
+displayed run references; truncated lists identify how many are shown.
 
 The read port mirrors this: `listAgentRunFacts` returns `activeRuns` with an
 exact `activeRunCount`, and `listActiveStagesForAgents` returns `stages` with an
@@ -671,28 +671,33 @@ that path does not require rewriting it.
 
 ## Frontend
 
-There is no frontend framework or build step. The UI is TypeScript bundled by
-Bun in memory at host start, split into:
+The browser entry is `ui/entry.tsx`. Bun builds the production React bundle in
+memory when the host starts. `bun run dashboard:styles` compiles Tailwind into
+the checked-in `assets/styles.css`; `ai-office dashboard` serves that file, so
+production needs no separate development server. The frontend is split into:
 
-- `ui/view-model.ts` — pure mapping from read models to labels, tones, glyphs,
-  and ordering;
-- `ui/render.ts` — pure view model to HTML, with every interpolated value
-  escaped;
-- `ui/charts.ts` — labelled SVG bars over exact aggregates;
-- `ui/task-filters.ts` — native filters and page links over the query contract;
-- `ui/html.ts` — shared HTML escaping boundary;
-- `ui/app.ts` — the browser shell: fetch, the invalidation stream, and the
-  single DOM write.
+- `app/app.tsx` — HashRouter shell and connection state;
+- `api/client.ts` — typed, GET-only access to daemon read models;
+- `components/` — reusable shadcn-style controls and operational views;
+- `features/pages.tsx` — route views;
+- `lib/task-filters.ts` — URL-backed filters using the query parser;
+- `ui/sync-controller.ts` and `ui/view-model.ts` — tested synchronization and
+  pure presentation labels/routes.
 
-Presentation mapping, escaping, chart totals, task details, and routing are
-unit tested directly. Task detail also has SQLite integration and Unix-socket
-coverage for ownership, missing records, limits, and read-only behavior. Browser
-checks can use a temporary synthetic Runtime fixture without opening personal
-project state or adding browser tooling to the production bundle.
+React escapes interpolated text. The UI does not use `innerHTML`. Unit tests
+cover routing, status semantics, filters, concurrency, samples, and rendering;
+Unix-socket tests cover host and query boundaries.
 
 Pipeline stages are rendered from the persisted run definition — stage names and
 order come from the manifest revision the run pinned. No role vocabulary is
-hardcoded.
+hardcoded. A run links to a pipeline run but not to a specific stage in the
+read model. The UI labels the pipeline's current stage as pipeline context and
+does not claim that a given run executed that stage. Stage start time and an
+exact global pending-approval count are likewise unavailable. Direct task
+milestone membership remains `task_milestone_link_not_modelled`.
+Pipeline work indicators use only non-terminal runs associated with the
+pipeline. A complete active-run sample can establish absence; a truncated
+sample can only say that no matching run is shown.
 
 ### Execution evidence and generated output
 
@@ -700,6 +705,8 @@ Run rows and detail identify the recorded executor: simulation, controlled actio
 or real worker. Missing historical provenance is explicitly unknown. Agent
 liveness is labelled “active run”; it is not proof of model execution. A worker
 run detail displays its bounded final output, adapter/version and input digest,
-reported model/session and optional usage estimate. Content is escaped as text;
+selected model routing, reported model/session and optional usage estimate.
+Gateway runs additionally display the sanitized provider usage and cost evidence
+separately from advisory worker-reported estimates. Content is escaped as text;
 raw client envelopes and hidden reasoning are not projected. Generated output
 does not attest to file changes, successful tests, task completion or approval.

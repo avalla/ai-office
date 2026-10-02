@@ -1,30 +1,15 @@
 # Dashboard design
 
-The operator reads task descriptions and compares work across agents on a desktop
-during development, with occasional checks on a narrow screen. Retain system
-light/dark preferences so the console matches the surrounding workspace.
+The dashboard is the read-only operations console. Its first screen answers what is active, who is working, what is assigned, and what needs attention. Desktop uses a persistent sidebar and a dense but readable content column; mobile uses a Sheet.
 
-## Color and typography
+## Visual language
 
-Restrained neutral surfaces with blue for active work, amber for attention,
-green for completion, and muted text for inactive state. Colors supplement
-labels. Use the existing system sans-serif and monospace stack for identifiers
-and timestamps; use tabular numerals for counts.
+System sans-serif text and comfortable line-height carry primary information. Technical IDs use monospace, truncate visually, and expose their full value in a title. Neutral surfaces use blue for active work, amber for attention, and green for completion. Every badge also has a symbol and text. Counts use tabular numerals. The palette follows `prefers-color-scheme` and keeps sufficient contrast in light and dark mode.
 
-## Layout and components
+## Information hierarchy
 
-Keep the persistent header and centered content area. Put task navigation and
-progress near the project heading. Charts use labelled horizontal bars with
-visible counts and clear denominators, without new chart dependencies.
-Task details are their own route with breadcrumbs, readable description,
-assignment evidence, pipeline stages, run history, and scoped activity.
+Overview begins with authoritative totals and active work. Project overview stays compact and links to Pipeline, Tasks, Milestones, Requirements, and Agents. The pipeline page highlights its current stage and shows the persisted stage sequence, assignment, active pipeline runs, and involved agents. Assignment is never presented as evidence of a working run. A run's pipeline current stage is context, because the read model has no run-to-stage relation.
 
-Put search, operational status, numeric priority, and current agent filters above
-the task table. Choices reflect persisted project data; do not invent a priority
-scale or role vocabulary. Keep filters and page in the URL, retain edits during
-live refresh, and show matching and project totals separately. Charts describe
-the whole project and omit empty categories; avoid duplicate or empty sections.
+Task search, operational status, persisted numeric priority, current agent, unassigned, milestone, sort, and pagination stay in the hash URL. Draft controls remain mounted through live refresh. Task and run details show recorded facts and operational interpretation separately. Exact totals accompany truncated samples.
 
-Tables scroll within their section on narrow screens. Summary metadata wraps;
-long identifiers and descriptions must not widen the entire page. Use native
-links, focus outlines, and no decorative animation.
+Native links, labelled controls, visible focus, heading order, screen-reader status, reduced motion, responsive table scrolling, and bounded text widths are required. Avoid nested cards and decorative charts.

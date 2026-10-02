@@ -128,11 +128,12 @@ function text(
  * from the read models it renders.
  */
 async function buildClientScript(): Promise<string> {
-  const entry = join(sourceDirectory, "ui", "entry.ts");
+  const entry = join(sourceDirectory, "ui", "entry.tsx");
   const built = await Bun.build({
     entrypoints: [entry],
     target: "browser",
-    minify: false,
+    minify: true,
+    define: { "process.env.NODE_ENV": '"production"' },
   });
   if (!built.success)
     throw new DashboardHostError(
@@ -201,11 +202,7 @@ export async function startDashboardHost(
       );
 
     if (url.pathname === "/app.js")
-      return text(
-        clientScript,
-        200,
-        "text/javascript; charset=utf-8",
-      );
+      return text(clientScript, 200, "text/javascript; charset=utf-8");
     if (url.pathname === "/styles.css")
       return text(styles, 200, "text/css; charset=utf-8");
 
