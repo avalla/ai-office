@@ -1,7 +1,8 @@
 # M15-1 — Shared professional model boundary
 
-Status: design assessment, 2026-10-02. This document defines the proposed
-compatibility boundary for M15. It does not change the Runtime, persistence,
+Status: design assessment, 2026-10-02. This document records the evidence and
+alternatives behind the [accepted architectural boundary in ADR-0027](../adr/ADR-0027-cross-domain-authority-and-evidence.md).
+It does not change the Runtime, persistence,
 portable snapshots, or supported domains. The [roadmap](roadmap.md#m15--domain-neutral-professional-work-and-vertical-profiles) owns milestone status.
 
 ## Objective and observed baseline
@@ -159,25 +160,28 @@ schema changes, not that the mechanism already exists.
 ## Decision register
 
 “Accepted for M15 assessment” selects design direction only; it does not make
-an unimplemented Runtime feature current or accept a storage migration. This
-register is the handoff to a focused M15 ADR and to GP-01/GP-02.
+an unimplemented Runtime feature current or accept a storage migration.
+[ADR-0027](../adr/ADR-0027-cross-domain-authority-and-evidence.md) settles the
+four authority/evidence decisions marked below. The other entries retain their
+assessment maturity and may need later decisions.
 
-| Decision                                                                                       | Status                                     | Consequence or next decision                                                                                                   |
-| ---------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
-| Keep `Project` as the single Runtime authority root.                                           | Accepted for M15 assessment                | Preserve task/pipeline/audit ownership and existing project IDs.                                                               |
-| Give non-repository projects a portable identity distinct from `projectId` and `repositoryId`. | Requires focused ADR before implementation | Define creation, uniqueness, legacy readers, backup/restore and knowledge-key mapping without rewriting repository identities. |
-| Make repository binding optional and software-specific.                                        | Accepted for M15 assessment                | Keep current install/CLI/checkout behavior as a compatibility path; new non-repository lifecycle needs an ADR.                 |
-| Add a generic `WorkUnit` aggregate now.                                                        | Deferred                                   | Reconsider only if both probes expose an invariant that cannot be owned by Project, Task or a domain record.                   |
-| Use a generic source-version, anchor and provenance envelope.                                  | Accepted for M15 assessment                | Specify immutable identity, locator resolution and invalidation in a focused ADR before schema work.                           |
-| Keep claim/evidence truth states and verification rules domain-owned.                          | Accepted for M15 assessment                | Core stores lineage and enforces declared gates without a universal truth-state machine.                                       |
-| Bind artifact review and approval to an exact version/fingerprint.                             | Accepted for M15 assessment                | ADR-0021 provides the conceptual decision; artifact storage and correction-loop implementation remain deferred.                |
-| Treat role labels as proof of qualification or human presence.                                 | Rejected                                   | Require a trusted identity/qualification decision; current trusted-local same-UID routing is insufficient for a legal pilot.   |
-| Define qualification, delegation and authenticated human-presence evidence.                    | Requires focused ADR before implementation | Keep domain qualification rules outside core; bind verified principal evidence to exact professional decisions.                |
-| Route protected external effects through controlled actions.                                   | Accepted for M15 assessment                | Preserve scoped grants, exact-action approval, preconditions, one attempt and explicit reconciliation.                         |
-| Generalize AgentKnowledgeStore scope beyond `repositoryId`.                                    | Requires focused ADR before implementation | Preserve tenant and old knowledge keys; no pack/model-selected tenant or fabricated repository ID.                             |
-| Define retention, redaction, legal hold and confidential export policy.                        | Requires focused ADR before implementation | Domain rules may strengthen restrictions; storage/export semantics and conflicts need explicit treatment.                      |
-| Change storage schemas or portable snapshots in this assessment.                               | Deferred                                   | Use forward migrations, representative upgrades, SQLite/PG contract parity and versioned snapshot readers in later tasks.      |
-| Give a matter/order a synthetic repository identity as a compatibility shortcut.               | Rejected                                   | Avoid misleading source-code semantics and knowledge scope.                                                                    |
+| Decision                                                                                       | Status                                     | Consequence or next decision                                                                                                          |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Keep `Project` as the single Runtime authority root.                                           | Accepted for M15 assessment                | Preserve task/pipeline/audit ownership and existing project IDs.                                                                      |
+| Give non-repository projects a portable identity distinct from `projectId` and `repositoryId`. | Accepted by ADR-0027; not implemented      | A tagged portable key preserves legacy repository readers; implementation must specify creation, uniqueness and new snapshot format.  |
+| Make repository binding optional and software-specific.                                        | Accepted for M15 assessment                | Keep current install/CLI/checkout behavior; ADR-0027 defines the new identity boundary, while lifecycle implementation follows later. |
+| Add a generic `WorkUnit` aggregate now.                                                        | Deferred                                   | Reconsider only if both probes expose an invariant that cannot be owned by Project, Task or a domain record.                          |
+| Use a generic source-version, anchor and provenance envelope.                                  | Accepted for M15 assessment                | ADR-0027 accepts the envelope; specify locator resolution and invalidation before schema work.                                        |
+| Keep claim/evidence truth states and verification rules domain-owned.                          | Accepted for M15 assessment                | Core stores lineage and enforces declared gates without a universal truth-state machine.                                              |
+| Bind artifact review and approval to an exact version/fingerprint.                             | Accepted for M15 assessment                | ADR-0021 provides the conceptual decision; artifact storage and correction-loop implementation remain deferred.                       |
+| Treat role labels as proof of qualification or human presence.                                 | Rejected                                   | Require a trusted identity/qualification decision; current trusted-local same-UID routing is insufficient for a legal pilot.          |
+| Define qualification, delegation and authenticated human-presence evidence.                    | Accepted by ADR-0027; not implemented      | Keep domain qualification rules outside core; bind verified principal and presence evidence to exact professional decisions.          |
+| Route protected external effects through controlled actions.                                   | Accepted for M15 assessment                | Preserve scoped grants, exact-action approval, preconditions, one attempt and explicit reconciliation.                                |
+| Generalize AgentKnowledgeStore scope beyond `repositoryId`.                                    | Accepted by ADR-0027; not implemented      | Version the trusted scope while preserving tenant, old repository knowledge keys and provenance.                                      |
+| Compose mandatory evidence and domain-scope constraints.                                       | Accepted by ADR-0027; not implemented      | Qualify and conjoin mandatory clauses; intersect allowed scopes; reject unknown or incomparable rules.                                |
+| Define retention, redaction, legal hold and confidential export policy.                        | Requires focused ADR before implementation | Domain rules may strengthen restrictions; storage/export semantics and conflicts need explicit treatment.                             |
+| Change storage schemas or portable snapshots in this assessment.                               | Deferred                                   | Use forward migrations, representative upgrades, SQLite/PG contract parity and versioned snapshot readers in later tasks.             |
+| Give a matter/order a synthetic repository identity as a compatibility shortcut.               | Rejected                                   | Avoid misleading source-code semantics and knowledge scope.                                                                           |
 
 ## Input to GP-01, GP-02 and proposed ADR-0026
 
@@ -188,17 +192,14 @@ matter/order/site vocabulary and source locators as domain definitions or
 adapters. It must review the current knowledge `repositoryId` dependency and
 not classify a desired future envelope as implemented code.
 
-GP-02 should use the portable-identity and exact-evidence decisions above when
-reviewing the proposed ADR-0026 pack contract. No direct contradiction was
-found with its project-owned configuration, immutable pack defaults, pinned
-runs, deny-by-default grants or legacy repository compatibility. The unresolved
-inputs are how a pack declares mandatory evidence and domain-scope restrictions
-without making them optional overrides; how trusted organization/site and
-qualified-human identities enter a project; and how non-repository knowledge
-scope and portable identity coexist with old repository keys. An incompatible
-pack constraint must fail closed, not select a permissive winner. GP-02 must
-resolve these as contract questions; this PR does not modify ADR-0026 or start
-pack implementation.
+GP-02 must compare the proposed ADR-0026 pack contract with the four decisions
+in ADR-0027 before accepting or revising it. The earlier assessment found no
+direct contradiction with project-owned configuration, immutable pack defaults,
+pinned runs, deny-by-default grants or legacy repository compatibility. It did
+leave portable identity, knowledge scope, mandatory evidence/domain-scope
+composition and trusted professional principals open; ADR-0027 now defines
+their architectural contracts. This assessment does not accept ADR-0026 or
+start pack implementation.
 
 ## Alternatives and decision sequence
 
@@ -215,13 +216,14 @@ pack implementation.
   preferred. It preserves authority and lets non-repository work enter through
   explicit new contracts.
 
-Before production implementation, accept or revise this boundary in a focused
-ADR after the [legal](m15-legal-design-probe.md) and
-[manufacturing](m15-manufacturing-exception-management-probe.md) probes. Then
-sequence portable identity, creation and knowledge scope; generic source and
-artifact contracts; domain policy hooks; and connector implementations as
-separate slices. Any later vertical-pack design must consume the accepted
-decision, not assume that this assessment already changed the Runtime.
+ADR-0027 accepts the shared authority/evidence boundary after the
+[legal](m15-legal-design-probe.md) and
+[manufacturing](m15-manufacturing-exception-management-probe.md) probes. Later
+implementation slices must sequence portable identity, creation and knowledge
+scope; generic source and artifact contracts; domain policy hooks; and
+connector implementations, each with its own compatibility and security tests.
+Any later vertical-pack design must consume that decision without assuming
+this assessment changed the Runtime.
 
 ## Probe acceptance
 

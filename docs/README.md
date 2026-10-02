@@ -32,7 +32,8 @@ AI Office keeps different kinds of documentation separate so current product tru
   `AI-OFFICE.md` and Codex/Claude project skills.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [M16 Generic Core & Domain Packs plan](development/generic-core-domain-packs.md): reviewed GP-01 source audit, compatibility risks, extraction map, fixtures, and GP delivery sequence; no pack runtime is implemented yet.
-- [Proposed core/pack boundary](adr/ADR-0026-core-domain-pack-boundary.md): blocked GP-02 contract candidate, pending the accepted M15 work/evidence decision.
+- [Proposed core/pack boundary](adr/ADR-0026-core-domain-pack-boundary.md): blocked GP-02 contract candidate, pending M15-4 integration and comparison with ADR-0027.
+- [Cross-domain project authority and evidence](adr/ADR-0027-cross-domain-authority-and-evidence.md): accepted M15-4 architectural boundary for portable project identity, knowledge scope, mandatory evidence/constraints and trusted professional decisions; implementation is deferred.
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
