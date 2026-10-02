@@ -130,6 +130,33 @@ describe("application architecture boundaries", () => {
     expect(offenders).toEqual([]);
   });
 
+  test("GP-04 availability and resolution cannot reach project storage or Runtime scheduling", () => {
+    const gp04Files = [
+      "packages/application/src/ports/installed-domain-pack-catalog.port.ts",
+      "packages/application/src/domain-pack/resolve-installed-packs.ts",
+      "packages/runtime-host/src/installed-domain-pack-catalog.ts",
+    ];
+    for (const location of gp04Files) {
+      const file = join(repositoryRoot, location);
+      const source = readFileSync(file, "utf8");
+      expect(source).not.toMatch(
+        /ProjectStorage|projectId|pipeline:|run:schedule/,
+      );
+      expect(
+        importedSpecifiers(source).filter((specifier) =>
+          /storage|repository|domain-pack-development|commands\//.test(
+            specifier,
+          ),
+        ),
+      ).toEqual([]);
+    }
+    const runtimeCommand = readFileSync(
+      join(repositoryRoot, "packages/runtime-host/src/runtime-command.ts"),
+      "utf8",
+    );
+    expect(runtimeCommand).not.toContain("installed-domain-pack-catalog");
+  });
+
   test("project Runtime composition consumes repository ports, not SQLite classes", () => {
     const contextPath = join(
       repositoryRoot,

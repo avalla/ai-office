@@ -1739,8 +1739,11 @@ slices.
 GP-01's source audit and extraction map passed final repository review.
 M15-4's authority/evidence decision passed final repository review in PR #81.
 GP-02 completed the ADR-0026/ADR-0027 alignment review and accepted the
-Domain Pack contract. Neither document adds pack Runtime behavior or changes
-the planned status of M16. GP-03 remains a separate implementation task.
+Domain Pack contract. GP-03's schema-1 contract package passed implementation
+review and merged in PR #84. GP-04 adds only a host-local installed-pack
+catalog and exact dependency closure; it does not persist project selection
+or alter Runtime project semantics. M16 remains planned until its end-to-end
+exit criteria are met.
 
 Exit: development, legal, manufacturing, and empty/custom fixtures run the same
 core lifecycles without changes to core for each domain. Legacy development
