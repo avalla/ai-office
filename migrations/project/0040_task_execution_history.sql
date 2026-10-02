@@ -18,8 +18,27 @@ BEGIN SELECT RAISE(ABORT, 'task execution history must belong to task project');
 
 CREATE TRIGGER task_execution_history_no_regression
 BEFORE UPDATE ON task_execution_history
-WHEN NOT (OLD.state = 'unknown' AND NEW.state = 'executed'
-  AND NEW.task_id = OLD.task_id AND NEW.project_id = OLD.project_id)
+WHEN NOT (
+  NEW.task_id = OLD.task_id
+  AND NEW.project_id = OLD.project_id
+  AND (
+    (OLD.state = 'unknown' AND NEW.state = 'executed')
+    OR (
+      OLD.state = 'executed'
+      AND NEW.state = 'executed'
+      AND (
+        NEW.first_known_at IS OLD.first_known_at
+        OR (
+          NEW.first_known_at IS NOT NULL
+          AND (
+            OLD.first_known_at IS NULL
+            OR NEW.first_known_at < OLD.first_known_at
+          )
+        )
+      )
+    )
+  )
+)
 BEGIN SELECT RAISE(ABORT, 'task execution history is monotonic'); END;
 
 CREATE TRIGGER task_execution_history_no_delete
@@ -71,8 +90,21 @@ BEGIN
   VALUES (NEW.id, NEW.project_id, 'executed',
     CASE WHEN NEW.status = 'running' THEN NEW.updated_at ELSE NULL END)
   ON CONFLICT(task_id) DO UPDATE SET state = 'executed',
-    first_known_at = COALESCE(task_execution_history.first_known_at, excluded.first_known_at)
-  WHERE task_execution_history.state = 'unknown';
+    first_known_at = CASE
+      WHEN task_execution_history.first_known_at IS NULL THEN excluded.first_known_at
+      WHEN excluded.first_known_at IS NULL THEN task_execution_history.first_known_at
+      WHEN excluded.first_known_at < task_execution_history.first_known_at THEN excluded.first_known_at
+      ELSE task_execution_history.first_known_at
+    END
+  WHERE task_execution_history.state = 'unknown'
+    OR (
+      task_execution_history.state = 'executed'
+      AND excluded.first_known_at IS NOT NULL
+      AND (
+        task_execution_history.first_known_at IS NULL
+        OR excluded.first_known_at < task_execution_history.first_known_at
+      )
+    );
 END;
 
 CREATE TRIGGER task_execution_history_agent_run
@@ -88,8 +120,21 @@ BEGIN
   INSERT INTO task_execution_history(task_id, project_id, state, first_known_at)
   VALUES (NEW.task_id, NEW.project_id, 'executed', NEW.created_at)
   ON CONFLICT(task_id) DO UPDATE SET state = 'executed',
-    first_known_at = COALESCE(task_execution_history.first_known_at, excluded.first_known_at)
-  WHERE task_execution_history.state = 'unknown';
+    first_known_at = CASE
+      WHEN task_execution_history.first_known_at IS NULL THEN excluded.first_known_at
+      WHEN excluded.first_known_at IS NULL THEN task_execution_history.first_known_at
+      WHEN excluded.first_known_at < task_execution_history.first_known_at THEN excluded.first_known_at
+      ELSE task_execution_history.first_known_at
+    END
+  WHERE task_execution_history.state = 'unknown'
+    OR (
+      task_execution_history.state = 'executed'
+      AND excluded.first_known_at IS NOT NULL
+      AND (
+        task_execution_history.first_known_at IS NULL
+        OR excluded.first_known_at < task_execution_history.first_known_at
+      )
+    );
 END;
 
 CREATE TRIGGER task_execution_history_pipeline_run
@@ -105,8 +150,21 @@ BEGIN
   INSERT INTO task_execution_history(task_id, project_id, state, first_known_at)
   VALUES (NEW.task_id, NEW.project_id, 'executed', NEW.created_at)
   ON CONFLICT(task_id) DO UPDATE SET state = 'executed',
-    first_known_at = COALESCE(task_execution_history.first_known_at, excluded.first_known_at)
-  WHERE task_execution_history.state = 'unknown';
+    first_known_at = CASE
+      WHEN task_execution_history.first_known_at IS NULL THEN excluded.first_known_at
+      WHEN excluded.first_known_at IS NULL THEN task_execution_history.first_known_at
+      WHEN excluded.first_known_at < task_execution_history.first_known_at THEN excluded.first_known_at
+      ELSE task_execution_history.first_known_at
+    END
+  WHERE task_execution_history.state = 'unknown'
+    OR (
+      task_execution_history.state = 'executed'
+      AND excluded.first_known_at IS NOT NULL
+      AND (
+        task_execution_history.first_known_at IS NULL
+        OR excluded.first_known_at < task_execution_history.first_known_at
+      )
+    );
 END;
 
 CREATE TRIGGER task_dependency_history_insert
