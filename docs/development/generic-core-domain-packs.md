@@ -58,7 +58,7 @@ independently reviewable.
 | **ADAPTER / INTEGRATION**      | `migrations/project/*` and `supabase/migrations/*` store manifest JSON with schema version 1, task/requirement links, pinned pipeline definitions and tenant constraints; PG remains partial per ADR-0022.                                                                                                                                               | Use forward migrations and fresh/upgrade tests for pack binding. Preserve PG tenant/RLS policy and fail closed while parity is incomplete; do not create sidecar authority.                          |
 | **ADAPTER / INTEGRATION**      | Root `package.json` uses `apps/*` and `packages/*` workspaces; `packages/runtime-host` and `apps/daemon` compose application ports and adapters. No Domain Pack package exists.                                                                                                                                                                          | Put public pack contracts below composition roots; a future reference pack imports those contracts, while core packages never import the pack.                                                       |
 | **GENERIC ABSTRACTION NEEDED** | `tests/contracts/office-manifest-repository.contract.ts`, `tests/helpers/run-runtime.ts`, `tests/e2e/task-lifecycle-cli.test.ts` and capability/pipeline end-to-end tests use software-oriented fixtures and the current agent directory.                                                                                                                | Retain pre-pack fixtures as regressions; add development, legal, manufacturing and empty/custom fixtures over the same contracts and backend upgrade paths.                                          |
-| **DOCUMENTATION ONLY**         | `README.md`, `AGENTS.md`, `docs/architecture/overview.md`, `docs/development/professional-work-verticals.md` and ADR-0021/0022/0025 describe current software-first behavior or future verticals.                                                                                                                                                        | Update current guidance only as implementation slices land. Keep M15 research and proposed M16 ADR labelled future.                                                                                  |
+| **DOCUMENTATION ONLY**         | `README.md`, `AGENTS.md`, `docs/architecture/overview.md`, `docs/development/professional-work-verticals.md` and ADR-0021/0022/0025 describe current software-first behavior or future verticals.                                                                                                                                                        | Update current guidance only as implementation slices land. Keep M15 research historical and the accepted M16 ADR distinct from shipped Runtime behavior.                                            |
 
 The audit distinguishes capability declaration from capability grants, role
 names from core role identity, pack workflow templates from the pipeline
@@ -186,7 +186,7 @@ another roadmap milestone.
 Every GP key is also a project requirement key. Each row gives the task's
 objective, smallest delivery slice, acceptance, artifact/verification, and
 explicit exclusion. The linked AI Office task and requirement descriptions
-carry the same fields. GP-01 has passed review; later tasks remain
+carry the same fields. GP-01 and GP-02 have passed review; GP-03 onward remain
 planned/proposed or blocked by their stated prerequisites.
 
 | ID and title                                       | Depends on                      | Slice and acceptance                                                                                                                                                                                                     | Artifact / verification                                                                                              | Non-goal                                                  |
@@ -225,7 +225,7 @@ configuration; official packs have no privileged core import or branch;
 upgrade conflicts are deterministic and auditable; and the empty/custom
 fixture succeeds beside development, legal and manufacturing. Existing tenant,
 RLS, fencing, approval, audit, provenance, task, run, pipeline and storage
-guarantees must still pass. A proposed ADR or a fixture alone does not satisfy
+guarantees must still pass. An accepted ADR or a fixture alone does not satisfy
 the eventual end-to-end exit.
 
 Out of scope: complete legal software, MES, ERP or industrial integrations;

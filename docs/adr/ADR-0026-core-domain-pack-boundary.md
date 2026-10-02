@@ -79,7 +79,7 @@ knowledge, capability, prompt, and validator contributions share only the
 identity/compatibility envelope. A giant central registry of all domain
 behavior is not required.
 
-The proposed public `DomainPackManifest` is one strict UTF-8 JSON file in the
+The future public `DomainPackManifest` is one strict UTF-8 JSON file in the
 first contract, schema version `1`. IDs use lower-case reverse-DNS segments
 (`org.ai-office.development`), and versions are exact `MAJOR.MINOR.PATCH`
 values with no range or build metadata. A pack cannot redefine an existing
