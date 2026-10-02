@@ -1,8 +1,9 @@
 # M16 — Generic Core & Domain Packs: boundary audit and delivery plan
 
-Status: planned. The GP-01 source audit was performed against `main` at
-`7886519` on 2026-10-02 and is awaiting review. GP-02 remains a blocked
-decision proposal. This document does not assert that Domain Packs exist today.
+Status: M16 planned. The GP-01 source audit was performed against `main` at
+`7886519` and passed final repository review on 2026-10-02 against PR #80 at
+`90c51cf`. GP-02 remains a blocked decision proposal. This document does not
+assert that Domain Packs exist today.
 The [roadmap](roadmap.md) owns milestone
 status; [ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md) is not an
 accepted current-runtime rule.
@@ -183,7 +184,8 @@ another roadmap milestone.
 Every GP key is also a project requirement key. Each row gives the task's
 objective, smallest delivery slice, acceptance, artifact/verification, and
 explicit exclusion. The linked AI Office task and requirement descriptions
-carry the same fields. All remain planned/proposed.
+carry the same fields. GP-01 has passed review; later tasks remain
+planned/proposed or blocked by their stated prerequisites.
 
 | ID and title                                       | Depends on                        | Slice and acceptance                                                                                                                                                                                                     | Artifact / verification                                                                                              | Non-goal                                                  |
 | -------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |

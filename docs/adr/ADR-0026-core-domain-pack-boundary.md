@@ -1,6 +1,6 @@
 # ADR-0026: AI Office Core / Domain Pack Boundary
 
-- Status: Proposed — GP-01 audit performed and awaiting review; GP-02 blocked on M15 decisions
+- Status: Proposed — GP-01 audit passed review; GP-02 blocked on M15 decisions
 - Date: 2026-10-02
 - Tags: domain-packs, architecture, compatibility, governance
 
@@ -359,7 +359,7 @@ claim that the missing representation exists today:
    authenticated human-presence and qualification evidence for decisions that
    require them. A role name, model output or pack declaration is insufficient.
 
-GP-01's performed audit is also awaiting review. Acceptance of this ADR must
+GP-01's source audit passed final repository review. Acceptance of this ADR must
 compare these M15 decisions with the GP-01 findings, ADR-0021's artifact
 boundary, ADR-0022's portable `ProjectStorage` semantics, and ADR-0025's
 knowledge boundary. No Domain Pack Runtime behavior exists by accepting the

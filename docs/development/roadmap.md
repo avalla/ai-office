@@ -1727,7 +1727,7 @@ linked to each task. Hard task prerequisites are stored as typed task dependency
 edges; descriptions retain rationale and external milestone context. GP-10A/B/C
 remain separately tracked extraction slices.
 
-GP-01 now has a completed source audit and extraction map awaiting review.
+GP-01's source audit and extraction map passed final repository review.
 GP-02 has a concrete but blocked contract proposal; acceptance remains gated
 by the accepted M15 work/evidence decision. Neither document adds pack Runtime
 behavior or changes the planned status of M16.
