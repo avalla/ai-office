@@ -55,6 +55,7 @@ test("SQLite upgrade backfills authoritative execution and keeps the marker mono
       "pipeline",
       "returned",
       "status-only",
+      "earliest",
       "prerequisite",
     ])
       database
@@ -178,6 +179,39 @@ test("SQLite upgrade backfills authoritative execution and keeps the marker mono
           "UPDATE task_execution_history SET state='unknown' WHERE task_id='start'",
         )
         .run(),
+    ).toThrow("monotonic");
+    const later = "2026-09-30T12:00:00.000Z";
+    database
+      .prepare(
+        "UPDATE task SET status='running', updated_at=? WHERE id='earliest'",
+      )
+      .run(later);
+    expect(
+      database
+        .query<{ first_known_at: string | null }, []>(
+          "SELECT first_known_at FROM task_execution_history WHERE task_id='earliest'",
+        )
+        .get()?.first_known_at,
+    ).toBe(later);
+    database
+      .prepare(
+        `INSERT INTO agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at)
+      VALUES ('earliest-run','p','earliest','agent','cancelled',?,?)`,
+      )
+      .run(at, at);
+    expect(
+      database
+        .query<{ first_known_at: string | null }, []>(
+          "SELECT first_known_at FROM task_execution_history WHERE task_id='earliest'",
+        )
+        .get()?.first_known_at,
+    ).toBe(at);
+    expect(() =>
+      database
+        .prepare(
+          "UPDATE task_execution_history SET first_known_at=? WHERE task_id='earliest'",
+        )
+        .run(later),
     ).toThrow("monotonic");
     database
       .prepare(
