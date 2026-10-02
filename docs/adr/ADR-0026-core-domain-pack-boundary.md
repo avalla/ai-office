@@ -1,6 +1,6 @@
 # ADR-0026: AI Office Core / Domain Pack Boundary
 
-- Status: Proposed — GP-01 audit passed review; GP-02 blocked on M15 decisions
+- Status: Proposed — GP-01 and M15-4 passed review; GP-02 blocked pending M15-4 integration and comparison
 - Date: 2026-10-02
 - Tags: domain-packs, architecture, compatibility, governance
 
@@ -16,12 +16,12 @@ operating. See the [M16 audit and plan](../development/generic-core-domain-packs
 
 This ADR is a **reviewable GP-02 contract proposal**, not a statement that pack
 APIs or storage exist today. The merged [M15 assessment](../development/m15-shared-professional-model.md)
-chooses `Project` as the likely authority root and gives source/evidence rules,
-but still labels that boundary proposed and calls for a focused accepted ADR.
-GP-02 therefore cannot be marked accepted until that decision exists and this
-contract is checked against it. [GP-01](../development/generic-core-domain-packs.md#gp-01-source-verification-and-compatibility-risks)
-records the performed source audit behind this proposal; that audit awaits
-review.
+chose `Project` as the likely authority root and identified four unresolved
+questions. [ADR-0027](ADR-0027-cross-domain-authority-and-evidence.md) now
+settles their architectural boundaries. GP-02 cannot be accepted until M15-4
+is integrated and this proposal is checked against that decision.
+The [GP-01 source audit](../development/generic-core-domain-packs.md#gp-01-source-verification-and-compatibility-risks)
+passed final review.
 
 ## Proposed decision
 
@@ -298,8 +298,9 @@ privileged branch in task, pipeline, worker, knowledge, model-routing, queue,
 approval, or storage logic. A project with zero packs can define custom roles,
 agents, pipelines, artifacts, policies, and knowledge configuration through the
 same public contracts. Existing repository bindings remain valid for legacy
-projects; a generic non-repository project identity requires the M15 decision
-and a versioned compatibility path, not a rename of `repositoryId` in place.
+projects; ADR-0027 defines the tagged portable identity for a future generic
+non-repository project, with a versioned compatibility path rather than an
+in-place rename of `repositoryId`.
 
 ### Governance, knowledge, capabilities, and purity
 
@@ -337,12 +338,12 @@ empty/custom fixtures exercise the same Runtime contracts. Tenant/RLS checks,
 fencing, pipeline guards, immutable AgentRuns, task transitions, and audit
 provenance remain mandatory across all fixtures.
 
-## Acceptance gates and unresolved M15 decisions
+## Acceptance gates and M15 alignment
 
-ADR-0026 remains Proposed and GP-02 remains blocked. A focused accepted M15
-authority/evidence ADR must settle the following before this contract can be
-accepted; the safe invariants above are constraints on that decision, not a
-claim that the missing representation exists today:
+ADR-0026 remains Proposed and GP-02 remains blocked. ADR-0027 accepts the
+following architectural boundaries; M15-4 integration and an explicit
+GP-02 comparison with each boundary are still required before this contract
+can be accepted. None of the missing representations exists in Runtime today:
 
 1. **Portable non-repository project identity:** define creation, association,
    snapshot and legacy-reader rules without fabricating a `repositoryId` or
@@ -360,7 +361,7 @@ claim that the missing representation exists today:
    require them. A role name, model output or pack declaration is insufficient.
 
 GP-01's source audit passed final repository review. Acceptance of this ADR must
-compare these M15 decisions with the GP-01 findings, ADR-0021's artifact
+compare ADR-0027 with the GP-01 findings, ADR-0021's artifact
 boundary, ADR-0022's portable `ProjectStorage` semantics, and ADR-0025's
 knowledge boundary. No Domain Pack Runtime behavior exists by accepting the
 document alone.
@@ -376,7 +377,7 @@ document alone.
 - GP-02 proposes manifest syntax, package layout, host-local catalog versus
   portable project binding ownership, validator adapter rules, compatibility
   versions and pinned evidence above. These remain reviewable choices until
-  the M15 authority/evidence ADR is accepted. GP-03/GP-04 may refine field-level
+  GP-02 checks them against accepted ADR-0027. GP-03/GP-04 may refine field-level
   section schemas without changing these boundaries.
 - A remote marketplace, dynamic downloads, untrusted code execution, new
   pipeline engine, ProjectStorage replacement, or new knowledge database is
@@ -390,3 +391,4 @@ document alone.
 - [Artifact review boundary](ADR-0021-artifact-review-and-approval-workflow.md)
 - [ProjectStorage boundary](ADR-0022-project-storage-adapters.md)
 - [AgentKnowledgeStore boundary](ADR-0025-native-agent-knowledge-store.md)
+- [M15 cross-domain authority and evidence](ADR-0027-cross-domain-authority-and-evidence.md)

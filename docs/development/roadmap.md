@@ -1377,7 +1377,8 @@ Exit direction:
 
 ## M15 — Domain-neutral professional work and vertical profiles
 
-Status: design assessment in progress; no M15 runtime implementation.
+Status: design assessment and architectural decision; no M15 runtime
+implementation.
 
 Goal: prove that the orchestration, policy, provenance, approval, artifact, and
 audit foundations can support professional work beyond software development
@@ -1394,9 +1395,13 @@ necessary, an ADR select concrete domain and storage changes.
 M15-1 records the [shared-model boundary assessment](m15-shared-professional-model.md).
 M15-2 and M15-3 exercise it with a [legal design probe](m15-legal-design-probe.md)
 and a [manufacturing exception-management design probe](m15-manufacturing-exception-management-probe.md).
-These are design artifacts; their target contracts are not implemented Runtime
-capabilities. A focused ADR and implementation slices must resolve the
-remaining identity, evidence, storage, and policy choices before production work.
+M15-4 records the [accepted cross-domain authority and evidence boundary](../adr/ADR-0027-cross-domain-authority-and-evidence.md):
+one Project authority with a tagged portable key, versioned trusted knowledge
+scope, deterministic mandatory evidence and domain-scope composition, and
+verified professional-decision principals. These are design artifacts; their
+target contracts are not implemented Runtime capabilities. Later implementation
+slices must specify storage, wire formats and provider protocols, and cover
+fresh and upgrade behavior before production use.
 
 Core capabilities to assess:
 
@@ -1709,7 +1714,7 @@ existing projects through a visible implicit development compatibility profile
 without rewriting their office, roles, agents or pipelines; (4) extract
 development defaults incrementally and prove semantic parity; (5) offer an
 explicit, reviewed development-pack adoption path; (6) consider requiring
-explicit pack selection for *new* projects only after empty/custom projects are
+explicit pack selection for _new_ projects only after empty/custom projects are
 supported. Existing projects continue operating at every stage. Missing or
 incompatible explicitly selected packs fail closed; legacy compatibility is
 versioned and auditable, never a silent replacement. A future multi-pack
@@ -1721,16 +1726,22 @@ dependency graph, acceptance criteria, extraction inventory, migration stages,
 and non-goals are in the
 [Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
 [proposed core/pack boundary ADR](../adr/ADR-0026-core-domain-pack-boundary.md)
-is the GP-02 decision gate, not an accepted current-runtime contract. The AI
+is the GP-02 decision gate, not an accepted current-runtime contract. The
+[M15-4 decision](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
+supplies its four authority/evidence prerequisites; GP-02 must review the
+proposal against them after M15-4 integration. The AI
 Office project record has a distinct planned M16 milestone with one requirement
-linked to each task. Hard task prerequisites are stored as typed task dependency
-edges; descriptions retain rationale and external milestone context. GP-10A/B/C
-remain separately tracked extraction slices.
+linked to each task. Existing GP task prerequisites are stored as typed task
+dependency edges; GP-02's cross-milestone M15-4 prerequisite is also stored as
+a typed task dependency edge in the project Runtime. GP-10A/B/C remain separately tracked extraction
+slices.
 
 GP-01's source audit and extraction map passed final repository review.
+M15-4's authority/evidence decision passed final repository review in PR #81.
 GP-02 has a concrete but blocked contract proposal; acceptance remains gated
-by the accepted M15 work/evidence decision. Neither document adds pack Runtime
-behavior or changes the planned status of M16.
+by M15-4 integration and a separate comparison of ADR-0026 with
+ADR-0027. Neither document adds pack Runtime behavior or changes the planned
+status of M16.
 
 Exit: development, legal, manufacturing, and empty/custom fixtures run the same
 core lifecycles without changes to core for each domain. Legacy development
