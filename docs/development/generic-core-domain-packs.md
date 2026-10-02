@@ -3,12 +3,12 @@
 Status: M16 planned. The GP-01 source audit was performed against `main` at
 `7886519` and passed final repository review on 2026-10-02 against PR #80 at
 `90c51cf`. [ADR-0027](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
-now defines the four M15 authority/evidence prerequisites, pending M15-4
-integration after final review in PR #81. GP-02 remains a blocked decision proposal. This document does not
-assert that Domain Packs exist today.
-The [roadmap](roadmap.md) owns milestone
-status; [ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md) is not an
-accepted current-runtime rule.
+defines the four M15 authority/evidence prerequisites and was integrated in
+PR #81. GP-02 completed their alignment review against
+[ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md). This document does
+not assert that Domain Packs exist today. The [roadmap](roadmap.md) owns
+milestone status; ADR-0026 is an accepted architectural contract, not current
+Runtime behavior.
 
 ## Objective and decision boundary
 
@@ -110,10 +110,9 @@ core-purity and upgrade gates. GP-03 onward owns implementation and migrations.
 
 ## Target contract and acceptance scenarios
 
-The target `DomainPackManifest` is a proposed contract, not a shipped TypeScript
-API. ADR-0026 defines a candidate syntax after checking the current versioned
-office manifest, ports and package layout; acceptance awaits M15-4 review and
-integration plus GP-02's separate ADR comparison.
+The target `DomainPackManifest` is an accepted architectural contract, not a
+shipped TypeScript API. ADR-0026 defines its envelope after checking the
+current versioned office manifest, ports, package layout and ADR-0027.
 At minimum it identifies pack ID, immutable version, `manifestDigest`,
 manifest schema and core compatibility, metadata, dependencies, and
 independently validated declarations. A project selects
@@ -177,9 +176,8 @@ GP-11..GP-16 → GP-17 legal, GP-18 manufacturing, GP-19 empty/custom
 GP-10C + GP-17..GP-19 → GP-20 purity and regression → GP-21 authoring guide
 ```
 
-The M11.6 artifact contract is a prerequisite to production GP-14 work;
-M15-4 integration and the ADR-0026 comparison are prerequisites to
-GP-02 acceptance.
+The M11.6 artifact contract is a prerequisite to production GP-14 work.
+M15-4 integration and the ADR-0026 comparison satisfied GP-02's decision gate.
 Tasks may be reviewed as individual PRs; no task is permission to implement
 another roadmap milestone.
 
