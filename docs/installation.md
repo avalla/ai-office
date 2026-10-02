@@ -337,7 +337,7 @@ SQLite remains the default and complete local Runtime project storage.
 
 When incomplete PostgreSQL storage is selected for a Runtime surface that lacks parity, startup is expected to fail closed rather than silently mix PostgreSQL and SQLite.
 
-See [Storage architecture](../docs/architecture/storage.md).
+See [Storage architecture](architecture/storage.md).
 
 ## 13. Dashboard
 
