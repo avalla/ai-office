@@ -1,8 +1,9 @@
 # M16 — Generic Core & Domain Packs: boundary audit and delivery plan
 
-Status: planned. GP-01 source audit reviewed against `main` at `7886519`
-on 2026-10-02; GP-02 remains a decision proposal. This document does not
-assert that Domain Packs exist today. The [roadmap](roadmap.md) owns milestone
+Status: planned. The GP-01 source audit was performed against `main` at
+`7886519` on 2026-10-02 and is awaiting review. GP-02 remains a blocked
+decision proposal. This document does not assert that Domain Packs exist today.
+The [roadmap](roadmap.md) owns milestone
 status; [ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md) is not an
 accepted current-runtime rule.
 
@@ -85,9 +86,10 @@ Verified dependency path (arrows indicate data or authority flow, not a new
 implementation):
 
 ```text
-local pack manifest --validate--> Runtime catalog --explicit selection-->
+host-local installed catalog --trusted availability check--+
+                                                     |
 ProjectStorage binding + project-owned definitions/overrides
-  --deterministic resolution--> effective project configuration
+  --deterministic resolution, using both inputs--> effective project configuration
   --pin--> PipelineRun / AgentRun --dispatch--> WorkerRuntime
                                    |                  |
                                    |                  +--> advisory AgentKnowledgeStore
@@ -108,13 +110,16 @@ core-purity and upgrade gates. GP-03 onward owns implementation and migrations.
 The target `DomainPackManifest` is a proposed contract, not a shipped TypeScript
 API. ADR-0026 defines a candidate syntax after checking the current versioned
 office manifest, ports and package layout; acceptance awaits the M15 decision.
-At minimum it identifies pack ID,
-immutable version/digest, manifest schema and core compatibility, metadata,
-dependencies, and independently validated declarations. A project selects
+At minimum it identifies pack ID, immutable version, `manifestDigest`,
+manifest schema and core compatibility, metadata, dependencies, and
+independently validated declarations. A project selects
 pack versions explicitly where it has migrated. Project definitions and
 overrides determine the effective roles, agents, pipelines, prompts, policies,
 artifacts, validators and knowledge behavior. Required capabilities resolve
 to registered adapter contracts at validation/bootstrap; grants remain separate.
+The host-local catalog checks an independent `artifactDigest` for its installed
+file; it is availability state, not `ProjectStorage` authority or portable
+project state. A binding never arises from package discovery.
 
 Four fixtures must ultimately use the **same** Runtime, task and agent
 lifecycle, pipeline engine, approval/audit/provenance model, authoritative
