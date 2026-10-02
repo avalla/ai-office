@@ -48,9 +48,10 @@ function validProvenance(provenance: TrustedPackProvenance): boolean {
 export class InMemoryInstalledDomainPackCatalog implements InstalledDomainPackCatalog {
   private readonly trustedInstallerIds: ReadonlySet<string>;
   private readonly entries = new Map<string, InstalledPackArtifact>();
+  readonly #coreContractVersion: number;
 
   constructor(
-    readonly coreContractVersion: number,
+    coreContractVersion: number,
     trustedInstallerIds: readonly string[],
   ) {
     if (!Number.isSafeInteger(coreContractVersion) || coreContractVersion < 0)
@@ -59,6 +60,11 @@ export class InMemoryInstalledDomainPackCatalog implements InstalledDomainPackCa
         "Invalid core contract version",
       );
     this.trustedInstallerIds = new Set(trustedInstallerIds);
+    this.#coreContractVersion = coreContractVersion;
+  }
+
+  get coreContractVersion(): number {
+    return this.#coreContractVersion;
   }
 
   trusts(provenance: TrustedPackProvenance): boolean {

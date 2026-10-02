@@ -27,6 +27,8 @@ export interface InstalledPackArtifact extends InstalledPackDescriptor {
 }
 
 export interface InstalledDomainPackCatalog {
+  /** Runtime-owned compatibility version, fixed by trusted host composition. */
+  readonly coreContractVersion: number;
   read(
     id: DomainPackId,
     version: DomainPackVersion,

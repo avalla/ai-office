@@ -11,10 +11,8 @@ import {
   type InstalledDomainPackCatalog,
   type PackIdentity,
 } from "../../packages/application/src/ports/installed-domain-pack-catalog.port.ts";
-import {
-  resolveInstalledPacks,
-  resolveVerifiedPackClosure,
-} from "../../packages/application/src/domain-pack/resolve-installed-packs.ts";
+import { resolveInstalledPacks } from "../../packages/application/src/domain-pack/resolve-installed-packs.ts";
+import { resolveVerifiedPackClosure } from "../../packages/application/src/domain-pack/internal/verified-pack-closure.ts";
 import { InMemoryInstalledDomainPackCatalog } from "../../packages/runtime-host/src/installed-domain-pack-catalog.ts";
 
 const encoder = new TextEncoder();
@@ -103,7 +101,7 @@ describe("host-local installed Domain Pack catalog", () => {
       );
       const target = catalog();
       const requested = register(target, bytes);
-      const result = resolveInstalledPacks(target, [requested], 1);
+      const result = resolveInstalledPacks(target, [requested]);
       expect(result).toEqual([
         {
           identity: requested,
@@ -125,11 +123,10 @@ describe("host-local installed Domain Pack catalog", () => {
     const other = pack("org.example.alpha");
     const target = catalog();
     for (const bytes of [top, leaf, other, middle]) register(target, bytes);
-    const result = resolveInstalledPacks(
-      target,
-      [identity(top), identity(other)],
-      1,
-    );
+    const result = resolveInstalledPacks(target, [
+      identity(top),
+      identity(other),
+    ]);
     expect(result.map((entry) => entry.identity.id)).toEqual([
       "org.example.alpha",
       "org.example.leaf",
@@ -148,11 +145,70 @@ describe("host-local installed Domain Pack catalog", () => {
     for (const bytes of [one, two, three]) register(first, bytes);
     for (const bytes of [three, two, one]) register(second, bytes);
     expect(
-      resolveInstalledPacks(first, [identity(two), identity(three)], 1),
-    ).toEqual(
-      resolveInstalledPacks(second, [identity(three), identity(two)], 1),
-    );
+      resolveInstalledPacks(first, [identity(two), identity(three)]),
+    ).toEqual(resolveInstalledPacks(second, [identity(three), identity(two)]));
     expect(first.list()).toEqual(second.list());
+  });
+
+  test("three roots and shared multilevel dependencies resolve in canonical order", () => {
+    const leaf = pack("org.example.leaf");
+    const shared = pack("org.example.shared", "1.0.0", [identity(leaf)]);
+    const extra = pack("org.example.extra");
+    const alpha = pack("org.example.alpha", "1.0.0", [
+      identity(shared),
+      identity(extra),
+    ]);
+    const beta = pack("org.example.beta", "1.0.0", [identity(shared)]);
+    const gamma = pack("org.example.gamma", "1.0.0", [
+      identity(extra),
+      identity(shared),
+    ]);
+    const first = catalog();
+    const second = catalog();
+    for (const bytes of [gamma, leaf, alpha, extra, beta, shared])
+      register(first, bytes);
+    for (const bytes of [shared, beta, extra, alpha, leaf, gamma])
+      register(second, bytes);
+    const left = resolveInstalledPacks(first, [
+      identity(gamma),
+      identity(alpha),
+      identity(beta),
+    ]);
+    const right = resolveInstalledPacks(second, [
+      identity(beta),
+      identity(gamma),
+      identity(alpha),
+    ]);
+    expect(left).toEqual(right);
+    expect(left.map((entry) => entry.identity.id)).toEqual([
+      "org.example.alpha",
+      "org.example.beta",
+      "org.example.extra",
+      "org.example.gamma",
+      "org.example.leaf",
+      "org.example.shared",
+    ]);
+    expect(left[0]?.dependencies).toEqual([identity(extra), identity(shared)]);
+    expect(left[3]?.dependencies).toEqual([identity(extra), identity(shared)]);
+
+    const reordered = pack("org.example.gamma", "1.0.0", [
+      identity(shared),
+      identity(extra),
+    ]);
+    expect(identity(reordered)).toEqual(identity(gamma));
+    const third = catalog();
+    for (const bytes of [leaf, shared, extra, alpha, beta, reordered])
+      register(third, bytes);
+    const result = resolveInstalledPacks(third, [
+      identity(beta),
+      identity(alpha),
+      identity(reordered),
+    ]);
+    expect(result.map((entry) => entry.identity)).toEqual(
+      left.map((entry) => entry.identity),
+    );
+    expect(result[3]?.dependencies).toEqual(left[3]?.dependencies);
+    expect(result[3]?.artifactDigest).not.toBe(left[3]?.artifactDigest);
   });
 
   test("identical registration is idempotent and caller byte mutation cannot change the catalog", () => {
@@ -165,7 +221,58 @@ describe("host-local installed Domain Pack catalog", () => {
     const read = target.read(requested.id, requested.version);
     expect(read?.artifactDigest).toBe(computeArtifactDigest(read!.bytes));
     read!.bytes[0] = 0;
-    expect(resolveInstalledPacks(target, [requested], 1)).toHaveLength(1);
+    expect(resolveInstalledPacks(target, [requested])).toHaveLength(1);
+  });
+
+  test("catalog and resolved values do not expose mutable registration state", () => {
+    const trusted = [provenance.installerId];
+    const target = new InMemoryInstalledDomainPackCatalog(1, trusted);
+    trusted.push("untrusted-added-later");
+    expect(
+      target.trusts({ installerId: "untrusted-added-later", reference: "x" }),
+    ).toBe(false);
+    expect(Reflect.set(target, "coreContractVersion", 3)).toBe(false);
+    expect(target.coreContractVersion).toBe(1);
+
+    const leaf = pack("org.example.copy-leaf");
+    const root = pack("org.example.copy-root", "1.0.0", [identity(leaf)]);
+    register(target, leaf);
+    const submittedProvenance = { ...provenance };
+    const requested = target.register({
+      bytes: root,
+      artifactDigest: computeArtifactDigest(root),
+      provenance: submittedProvenance,
+    });
+    submittedProvenance.installerId = "untrusted-added-later";
+    submittedProvenance.reference = "changed";
+    const read = target.read(requested.id, requested.version)!;
+    Reflect.set(read.identity, "id", "org.example.changed");
+    Reflect.set(read.coreContract, "minInclusive", 99);
+    Reflect.set(read.provenance, "installerId", "untrusted-added-later");
+    read.bytes[0] = 0;
+    const listed = target
+      .list()
+      .find((entry) => entry.identity.id === requested.id)!;
+    Reflect.set(listed.identity, "version", "9.0.0");
+    Reflect.set(listed.coreContract, "maxExclusive", 99);
+    Reflect.set(listed.provenance, "reference", "changed");
+    const resolved = resolveInstalledPacks(target, [requested]);
+    const rootResult = resolved.find(
+      (entry) => entry.identity.id === requested.id,
+    )!;
+    expect(rootResult.provenance).toEqual(provenance);
+    expect(rootResult.coreContract).toEqual({
+      minInclusive: 1,
+      maxExclusive: 2,
+    });
+    expect(rootResult.dependencies).toEqual([identity(leaf)]);
+    Reflect.set(rootResult.dependencies[0]!, "id", "org.example.changed");
+    (rootResult.dependencies as PackIdentity[]).push(requested);
+    expect(
+      resolveInstalledPacks(target, [requested]).find(
+        (entry) => entry.identity.id === requested.id,
+      )?.dependencies,
+    ).toEqual([identity(leaf)]);
   });
 
   test("accepts an interval containing the current core contract version", () => {
@@ -175,8 +282,11 @@ describe("host-local installed Domain Pack catalog", () => {
     });
     const target = catalog();
     const requested = register(target, bytes);
-    expect(resolveInstalledPacks(target, [requested], 2)).toHaveLength(1);
-    expect(code(() => resolveInstalledPacks(target, [requested], 3))).toBe(
+    expect(resolveInstalledPacks(target, [requested])).toHaveLength(1);
+    const incompatible = new InMemoryInstalledDomainPackCatalog(3, [
+      provenance.installerId,
+    ]);
+    expect(code(() => register(incompatible, bytes))).toBe(
       "incompatible_core_contract",
     );
   });
@@ -184,12 +294,12 @@ describe("host-local installed Domain Pack catalog", () => {
   test("rejects missing roots and exact dependencies", () => {
     const target = catalog();
     const missing = identity(pack("org.example.missing"));
-    expect(code(() => resolveInstalledPacks(target, [missing], 1))).toBe(
+    expect(code(() => resolveInstalledPacks(target, [missing]))).toBe(
       "missing_pack",
     );
     const root = pack("org.example.root", "1.0.0", [missing]);
     register(target, root);
-    expect(code(() => resolveInstalledPacks(target, [identity(root)], 1))).toBe(
+    expect(code(() => resolveInstalledPacks(target, [identity(root)]))).toBe(
       "missing_dependency",
     );
   });
@@ -202,12 +312,12 @@ describe("host-local installed Domain Pack catalog", () => {
       ...identity(dep),
       manifestDigest: placeholder as PackIdentity["manifestDigest"],
     };
-    expect(code(() => resolveInstalledPacks(target, [wrong], 1))).toBe(
+    expect(code(() => resolveInstalledPacks(target, [wrong]))).toBe(
       "manifest_digest_mismatch",
     );
     const root = pack("org.example.root", "1.0.0", [wrong]);
     register(target, root);
-    expect(code(() => resolveInstalledPacks(target, [identity(root)], 1))).toBe(
+    expect(code(() => resolveInstalledPacks(target, [identity(root)]))).toBe(
       "dependency_digest_mismatch",
     );
   });
@@ -249,6 +359,12 @@ describe("host-local installed Domain Pack catalog", () => {
         .decode(first)
         .replace('"schemaVersion":1', '"schemaVersion": 1'),
     );
+    expect(identity(respace).manifestDigest).toBe(
+      identity(first).manifestDigest,
+    );
+    expect(computeArtifactDigest(respace)).not.toBe(
+      computeArtifactDigest(first),
+    );
     expect(code(() => register(target, respace))).toBe("duplicate_conflict");
     expect(
       code(() =>
@@ -270,12 +386,37 @@ describe("host-local installed Domain Pack catalog", () => {
     for (const bytes of [old, newer, left, right]) register(target, bytes);
     expect(
       code(() =>
-        resolveInstalledPacks(target, [identity(right), identity(left)], 1),
+        resolveInstalledPacks(target, [identity(right), identity(left)]),
       ),
     ).toBe("version_conflict");
   });
 
-  test("rejects a cyclic verified dependency graph", () => {
+  test("deduplicates identical roots and rejects conflicting root identities in either order", () => {
+    const target = catalog();
+    const old = pack("org.example.root", "1.0.0");
+    const newer = pack("org.example.root", "2.0.0");
+    register(target, old);
+    register(target, newer);
+    const oldIdentity = identity(old);
+    expect(resolveInstalledPacks(target, [oldIdentity, oldIdentity])).toEqual(
+      resolveInstalledPacks(target, [oldIdentity]),
+    );
+    const wrongDigest = {
+      ...oldIdentity,
+      manifestDigest: placeholder as PackIdentity["manifestDigest"],
+    };
+    for (const roots of [
+      [oldIdentity, identity(newer)],
+      [identity(newer), oldIdentity],
+      [oldIdentity, wrongDigest],
+      [wrongDigest, oldIdentity],
+    ])
+      expect(code(() => resolveInstalledPacks(target, roots))).toBe(
+        "version_conflict",
+      );
+  });
+
+  test("defensive graph guard rejects a synthetic cycle of already verified entries", () => {
     // A valid content-addressed cycle would require a SHA-256 fixed point.
     // Exercise the graph guard with synthetic already-verified entries.
     const aBytes = pack("org.example.cycle-a");
@@ -350,6 +491,21 @@ describe("host-local installed Domain Pack catalog", () => {
         }),
       ),
     ).toBe("untrusted_provenance");
+    for (const reference of ["", "line\nbreak", "x".repeat(513)])
+      expect(
+        code(() =>
+          target.register({
+            bytes,
+            artifactDigest: computeArtifactDigest(bytes),
+            provenance: { installerId: provenance.installerId, reference },
+          }),
+        ),
+      ).toBe("untrusted_provenance");
+    value.dependencies = [];
+    value.installerId = provenance.installerId;
+    expect(
+      code(() => register(target, encoder.encode(JSON.stringify(value)))),
+    ).toBe("malformed_catalog_entry");
     expect(target.list()).toEqual([]);
   });
 
@@ -360,22 +516,25 @@ describe("host-local installed Domain Pack catalog", () => {
     register(target, bytes);
     const good = target.read(requested.id, requested.version)!;
     const corrupt: InstalledDomainPackCatalog = {
+      coreContractVersion: 1,
       read: () => ({ ...good, artifactDigest: placeholder as ArtifactDigest }),
       list: () => [],
       trusts: () => true,
     };
-    expect(code(() => resolveInstalledPacks(corrupt, [requested], 1))).toBe(
+    expect(code(() => resolveInstalledPacks(corrupt, [requested]))).toBe(
       "artifact_digest_mismatch",
     );
     const untrusted: InstalledDomainPackCatalog = {
+      coreContractVersion: 1,
       read: () => good,
       list: () => [],
       trusts: () => false,
     };
-    expect(code(() => resolveInstalledPacks(untrusted, [requested], 1))).toBe(
+    expect(code(() => resolveInstalledPacks(untrusted, [requested]))).toBe(
       "untrusted_provenance",
     );
     const wrongDescriptor: InstalledDomainPackCatalog = {
+      coreContractVersion: 1,
       read: () => ({
         ...good,
         coreContract: { minInclusive: 0, maxExclusive: 2 },
@@ -384,26 +543,30 @@ describe("host-local installed Domain Pack catalog", () => {
       trusts: () => true,
     };
     expect(
-      code(() => resolveInstalledPacks(wrongDescriptor, [requested], 1)),
+      code(() => resolveInstalledPacks(wrongDescriptor, [requested])),
     ).toBe("malformed_catalog_entry");
+    const incompatibleCore: InstalledDomainPackCatalog = {
+      ...untrusted,
+      coreContractVersion: 2,
+      trusts: () => true,
+    };
+    expect(
+      code(() => resolveInstalledPacks(incompatibleCore, [requested])),
+    ).toBe("incompatible_core_contract");
   });
 
   test("rejects malformed explicit requests without fallback selection", () => {
     const target = catalog();
-    expect(resolveInstalledPacks(target, [], 1)).toEqual([]);
+    expect(resolveInstalledPacks(target, [])).toEqual([]);
     expect(
       code(() =>
-        resolveInstalledPacks(
-          target,
-          [
-            {
-              id: "bad",
-              version: "latest",
-              manifestDigest: placeholder,
-            } as PackIdentity,
-          ],
-          1,
-        ),
+        resolveInstalledPacks(target, [
+          {
+            id: "bad",
+            version: "latest",
+            manifestDigest: placeholder,
+          } as PackIdentity,
+        ]),
       ),
     ).toBe("malformed_request");
   });

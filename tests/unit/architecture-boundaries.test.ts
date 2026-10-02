@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import * as installedPackResolver from "../../packages/application/src/domain-pack/resolve-installed-packs.ts";
 
 const repositoryRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -134,6 +135,7 @@ describe("application architecture boundaries", () => {
     const gp04Files = [
       "packages/application/src/ports/installed-domain-pack-catalog.port.ts",
       "packages/application/src/domain-pack/resolve-installed-packs.ts",
+      "packages/application/src/domain-pack/internal/verified-pack-closure.ts",
       "packages/runtime-host/src/installed-domain-pack-catalog.ts",
     ];
     for (const location of gp04Files) {
@@ -149,12 +151,25 @@ describe("application architecture boundaries", () => {
           ),
         ),
       ).toEqual([]);
+      if (location.startsWith("packages/application/"))
+        expect(
+          importedSpecifiers(source).filter(
+            (specifier) =>
+              specifier.startsWith("@ai-office/runtime-host") ||
+              resolvedTarget(file, specifier)?.startsWith(
+                "packages/runtime-host/",
+              ) === true,
+          ),
+        ).toEqual([]);
     }
     const runtimeCommand = readFileSync(
       join(repositoryRoot, "packages/runtime-host/src/runtime-command.ts"),
       "utf8",
     );
     expect(runtimeCommand).not.toContain("installed-domain-pack-catalog");
+    expect(Object.keys(installedPackResolver)).toEqual([
+      "resolveInstalledPacks",
+    ]);
   });
 
   test("project Runtime composition consumes repository ports, not SQLite classes", () => {

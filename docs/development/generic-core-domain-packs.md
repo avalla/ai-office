@@ -47,23 +47,34 @@ registers exact UTF-8 manifest bytes supplied by a trusted local installer.
 It checks the declared `artifactDigest` against those bytes, verifies the GP-03
 schema-1 manifest and `manifestDigest`, checks the current integer core
 contract, and requires an installer ID on the host's explicit trust list plus
-an opaque nonempty installation reference. Content hashes identify and protect
-content; they do not establish installer trust. The adapter snapshots bytes
-and returns copies, so caller mutation cannot alter an installed artifact.
+an opaque nonempty installation reference. Runtime-host composition supplies
+the trusted installer-ID set; manifest content cannot add an installer or make
+the caller trusted. The reference is provenance and audit metadata, not proof
+by itself. A valid digest does not establish trust. This trusted-local adapter
+does not implement signatures, PKI or remote-registry trust. It copies the
+installer-ID set and snapshots bytes and descriptors, so caller mutation cannot
+alter trusted availability after registration.
 
 The catalog records one immutable local artifact for each `(id, version)`.
 Repeating the same bytes, digest and provenance is idempotent. A different
 manifest digest, artifact digest, bytes or provenance for the same `(id,
 version)` is a typed conflict. There is no discovery-order winner, version
-range, latest-version choice, download, or automatic selection. Catalog state
-is process-local availability state. GP-04 adds no database table or migration:
-ADR-0026 requires host-local ownership but leaves concrete persistence to
-GP-04, and no current Runtime path needs availability to survive a restart.
-A durable deployment-local implementation can later satisfy the same port
-without using `ProjectStorage` or portable snapshots.
+range, latest-version choice, download, or automatic selection. In particular,
+two byte-different manifests may canonicalize to the same `manifestDigest`;
+their distinct exact-byte `artifactDigest` values still make them different
+installed artifacts and registration conflicts. This preserves ADR-0026's
+immutable `(id, version)` identity and GP-04's one-local-artifact rule. Catalog
+state is process-local availability state. GP-04 defines the host-local
+availability contract; no current Runtime path requires it to survive restart.
+`ProjectStorage` is deliberately not used, and portable project snapshots do
+not contain the catalog. A future durable deployment-local adapter may
+implement the same port. Durable project selection begins in GP-05 and is a
+different authority.
 
-The resolver accepts only caller-supplied exact `(id, version,
-manifestDigest)` tuples and a core contract version. It rechecks artifact
+The public resolver accepts only caller-supplied exact `(id, version,
+manifestDigest)` tuples. It gets the current core-contract version from the
+trusted Runtime-composed catalog; project and pack metadata cannot select it.
+The version is independent of the product version. It rechecks artifact
 bytes, manifest identity, compatibility and trusted provenance on read, walks
 exact manifest dependencies recursively, and returns each installed pack once
 with its dependencies, artifact digest and local provenance. Output is sorted
@@ -72,6 +83,13 @@ the same order. Requests and catalog insertion order do not affect the result.
 Typed errors distinguish missing requested packs or dependencies, wrong
 digests, unsupported schema, incompatible core contracts, untrusted source,
 duplicate registrations, conflicting versions and dependency cycles.
+`resolveInstalledPacks` is the only supported production resolution API. Its
+internal graph walk accepts already verified entries solely to exercise the
+defensive cycle guard in tests. Because schema-1 manifest digests include exact
+dependency identities, a naturally valid content-addressed cycle would require
+a digest fixed point; the synthetic graph test does not claim such an artifact
+exists. The guard remains useful for malformed catalog implementations, future
+schema versions and defense in depth.
 
 The port and resolver have no project ID, binding operation, `ProjectStorage`
 dependency or scheduling hook. Registration and resolution cannot instantiate

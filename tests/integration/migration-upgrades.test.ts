@@ -60,11 +60,35 @@ describe("migration upgrades", () => {
       ) VALUES ('office','existing',1,1,?,'codex','ai-office','1',?)`,
         )
         .run(source, timestamp);
+      database
+        .prepare(
+          "INSERT INTO task(id,project_id,title,status,created_at,updated_at) VALUES ('task','existing','Existing','pending',?,?)",
+        )
+        .run(timestamp, timestamp);
+      database
+        .prepare(
+          `INSERT INTO pipeline_run(
+            id,project_id,task_id,manifest_revision_id,manifest_revision,
+            definition_json,status,current_stage_index,started_by,version,
+            created_at,updated_at
+          ) VALUES ('run','existing','task','office',1,?,'active',0,'operator',1,?,?)`,
+        )
+        .run(
+          JSON.stringify(parseOfficeManifestJson(source).pipelines[0]),
+          timestamp,
+          timestamp,
+        );
       const before = database
         .query(
           "SELECT id,project_id,revision,schema_version,manifest_json FROM office_manifest_revision",
         )
         .all();
+      const pipelineBefore = database
+        .query("SELECT * FROM pipeline_run WHERE id='run'")
+        .get();
+      const taskBefore = database
+        .query("SELECT * FROM task WHERE id='task'")
+        .get();
       const changesBefore = database
         .query<{ count: number }, []>("SELECT total_changes() AS count")
         .get()?.count;
@@ -83,7 +107,7 @@ describe("migration upgrades", () => {
           reference: "bundled/custom",
         },
       });
-      expect(resolveInstalledPacks(catalog, [identity], 1)).toHaveLength(1);
+      expect(resolveInstalledPacks(catalog, [identity])).toHaveLength(1);
       expect(
         database
           .query(
@@ -91,6 +115,15 @@ describe("migration upgrades", () => {
           )
           .all(),
       ).toEqual(before);
+      expect(
+        database.query("SELECT * FROM pipeline_run WHERE id='run'").get(),
+      ).toEqual(pipelineBefore);
+      expect(
+        database.query("SELECT * FROM task WHERE id='task'").get(),
+      ).toEqual(taskBefore);
+      expect(
+        Object.hasOwn(parseOfficeManifestJson(source), "domainPacks"),
+      ).toBe(false);
       expect(
         database
           .query<{ count: number }, []>("SELECT total_changes() AS count")
