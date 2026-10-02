@@ -1725,11 +1725,11 @@ Delivery tasks GP-01–GP-21 (with GP-10A/B/C extraction slices) and their
 dependency graph, acceptance criteria, extraction inventory, migration stages,
 and non-goals are in the
 [Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
-[proposed core/pack boundary ADR](../adr/ADR-0026-core-domain-pack-boundary.md)
-is the GP-02 decision gate, not an accepted current-runtime contract. The
+[accepted core/pack boundary ADR](../adr/ADR-0026-core-domain-pack-boundary.md)
+is the GP-02 architectural decision, not an implemented Runtime contract. The
 [M15-4 decision](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
-supplies its four authority/evidence prerequisites; GP-02 must review the
-proposal against them after M15-4 integration. The AI
+supplies its four authority/evidence prerequisites; GP-02 reviewed the
+contract against them after M15-4 integration. The AI
 Office project record has a distinct planned M16 milestone with one requirement
 linked to each task. Existing GP task prerequisites are stored as typed task
 dependency edges; GP-02's cross-milestone M15-4 prerequisite is also stored as
@@ -1738,10 +1738,9 @@ slices.
 
 GP-01's source audit and extraction map passed final repository review.
 M15-4's authority/evidence decision passed final repository review in PR #81.
-GP-02 has a concrete but blocked contract proposal; acceptance remains gated
-by M15-4 integration and a separate comparison of ADR-0026 with
-ADR-0027. Neither document adds pack Runtime behavior or changes the planned
-status of M16.
+GP-02 completed the ADR-0026/ADR-0027 alignment review and accepted the
+Domain Pack contract. Neither document adds pack Runtime behavior or changes
+the planned status of M16. GP-03 remains a separate implementation task.
 
 Exit: development, legal, manufacturing, and empty/custom fixtures run the same
 core lifecycles without changes to core for each domain. Legacy development
@@ -1812,7 +1811,7 @@ These milestones intentionally defer:
   engines.
 
 These questions require milestone-specific assessments and, where a durable
-architectural choice is ready, an ADR. The proposed M16 ADR records a decision
-candidate for the pack boundary; GP-02 must accept or revise it before
-implementation. This roadmap direction does not itself select an
+architectural choice is ready, an ADR. The accepted M16 ADR records the pack
+boundary; later tasks must implement it without silently changing existing
+project semantics. This roadmap direction does not itself select an
 implementation or authorize work on M11-M16.

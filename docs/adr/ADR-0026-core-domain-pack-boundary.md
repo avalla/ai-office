@@ -1,6 +1,6 @@
 # ADR-0026: AI Office Core / Domain Pack Boundary
 
-- Status: Proposed — GP-01 and M15-4 passed review; GP-02 blocked pending M15-4 integration and comparison
+- Status: Accepted — GP-02 alignment review after M15-4 and PR #81
 - Date: 2026-10-02
 - Tags: domain-packs, architecture, compatibility, governance
 
@@ -14,16 +14,15 @@ M15 assesses cross-domain work, evidence, artifact, and authority primitives.
 M16 must make domain semantics installable while existing installations continue
 operating. See the [M16 audit and plan](../development/generic-core-domain-packs.md).
 
-This ADR is a **reviewable GP-02 contract proposal**, not a statement that pack
-APIs or storage exist today. The merged [M15 assessment](../development/m15-shared-professional-model.md)
-chose `Project` as the likely authority root and identified four unresolved
-questions. [ADR-0027](ADR-0027-cross-domain-authority-and-evidence.md) now
-settles their architectural boundaries. GP-02 cannot be accepted until M15-4
-is integrated and this proposal is checked against that decision.
+This ADR is the **accepted GP-02 contract**, not a statement that pack APIs or
+storage exist today. The merged [M15 assessment](../development/m15-shared-professional-model.md)
+identified four authority questions. [ADR-0027](ADR-0027-cross-domain-authority-and-evidence.md)
+settles their architectural boundaries; GP-02 reviewed this contract against
+them after M15-4 integration in PR #81.
 The [GP-01 source audit](../development/generic-core-domain-packs.md#gp-01-source-verification-and-compatibility-risks)
 passed final review.
 
-## Proposed decision
+## Decision
 
 ### Core, pack, and project ownership
 
@@ -36,13 +35,23 @@ approval presets, knowledge categories and retrieval guidance, capability
 requirements, validators, and prompts. An adapter supplies access to an
 external system through a public application port or controlled connector.
 
+`Project` is the single authority root. Its `projectId` is Runtime-local; its
+one primary portable key is tagged as either the existing repository
+`repositoryId` or a future non-repository `projectUid`, as defined by ADR-0027.
+Verified repository and domain associations are optional and do not replace
+that key. A pack cannot create or select a Project, mint or select its portable
+key, fabricate a repository identity, or choose its tenant. Trusted Runtime and
+deployment state supply tenant authority. Pack selection and project identity
+are independent operations.
+
 The project owns instantiated roles, agents, pipelines, policy choices, prompts,
 and all project overrides. A project may replace, extend, disable, or omit pack
 defaults where the definition is semantically optional, and may add definitions
 that no pack supplied. No official pack is mandatory. Effective security is
 always bounded by core invariants: an override cannot grant a capability,
 remove a required core approval, bypass tenant isolation, relax fencing, or
-change audit/provenance and lifecycle rules.
+change audit/provenance and lifecycle rules. An override also cannot remove or
+weaken a mandatory requirement of a selected pack.
 
 Each resolved definition records five distinct ownership/provenance concepts:
 
@@ -70,7 +79,7 @@ knowledge, capability, prompt, and validator contributions share only the
 identity/compatibility envelope. A giant central registry of all domain
 behavior is not required.
 
-The proposed public `DomainPackManifest` is one strict UTF-8 JSON file in the
+The future public `DomainPackManifest` is one strict UTF-8 JSON file in the
 first contract, schema version `1`. IDs use lower-case reverse-DNS segments
 (`org.ai-office.development`), and versions are exact `MAJOR.MINOR.PATCH`
 values with no range or build metadata. A pack cannot redefine an existing
@@ -105,7 +114,8 @@ To reproduce `manifestDigest`, a conforming implementation must:
    contribution array as semantically unordered: sort each by its unique ASCII
    `id` in ascending code-unit order, rejecting duplicate IDs. Keep every
    other array in source order, including workflow `stages`, policy sequences,
-   and any nested array not explicitly declared unordered.
+   and any nested array not explicitly declared unordered. Source order in a
+   policy array affects its digest, never mandatory-clause precedence.
 3. Serialize that normalized object with [RFC 8785/JCS](https://www.rfc-editor.org/rfc/rfc8785.html):
    recursively canonicalize object keys by UTF-16 code units, retain array
    order after step 2, and emit the JCS UTF-8 bytes without extra whitespace.
@@ -199,8 +209,12 @@ A project pack binding records exact selected `(id, version, manifestDigest)`
 tuples and the project configuration revision. It is explicit, audited,
 authoritative project semantic state persisted through `ProjectStorage` and
 included in portable project state. Package discovery or catalog installation
-never creates a binding. At resolution every bound tuple must match a compatible
-trusted installed catalog entry; missing availability fails closed. An operator
+never creates a binding or changes the Project's portable key. Portable pack
+binding and portable project identity are separate ProjectStorage facts. A
+future snapshot version must preserve both when a binding exists; old snapshot
+readers and meanings remain unchanged. At resolution every bound tuple must
+match a compatible trusted installed catalog entry; missing availability fails
+closed. An operator
 previews and applies binding, upgrade, detach and reconciliation through the
 Runtime; repeated application of the same intent is idempotent and audited.
 Validation fails before a run for missing pack, incompatible core or manifest
@@ -243,9 +257,15 @@ dependencies, or a collision in a requested project-facing alias fail with an
 explainable conflict. There is no import-order winner. Multi-pack projects may
 be staged, but the schema and resolver must allow explicit ordered-independent
 composition. Project override precedence applies only to documented fields.
-Governance and security constraints combine by intersection or an explicit
-core-defined composition rule; incomparable constraints fail
-closed. A pack cannot silently weaken another pack's or the project's gate.
+Mandatory policy clauses from core, every selected pack, and the project are
+normalized by qualified source identity and compose conjunctively, regardless
+of pack or declaration order. Required predicates accumulate, allowed scopes
+intersect, and denials accumulate. Project policy may strengthen the result;
+overrides cannot weaken core invariants or a selected pack's mandatory clauses.
+Repeated IDs with incompatible meanings, unknown mandatory clause kinds,
+missing evaluators, inaccessible required evidence, and incomparable
+constraints fail closed. No pack can silently weaken another pack's or the
+project's gate.
 
 Removal is previewed and blocked while active pinned runs or project-owned
 references need that pack, unless an explicit migration maps those references
@@ -297,26 +317,38 @@ The development pack first reproduces current behavior. It receives no
 privileged branch in task, pipeline, worker, knowledge, model-routing, queue,
 approval, or storage logic. A project with zero packs can define custom roles,
 agents, pipelines, artifacts, policies, and knowledge configuration through the
-same public contracts. Existing repository bindings remain valid for legacy
-projects; ADR-0027 defines the tagged portable identity for a future generic
-non-repository project, with a versioned compatibility path rather than an
-in-place rename of `repositoryId`.
+same public contracts. Existing repository bindings, knowledge namespaces,
+schema-1 offices, pinned PipelineRuns and AgentRuns, and snapshots remain
+readable with their current meaning. Current repository workflows continue
+without immediate pack conversion. ADR-0027 defines the tagged portable
+identity for a future generic non-repository project, with a versioned
+compatibility path rather than an in-place rename of `repositoryId` or a
+silent project identity migration.
 
 ### Governance, knowledge, capabilities, and purity
 
-Packs declare stricter approval and evidence requirements. Core enforces them
-with existing governance, pipeline, artifact review, controlled-action and
-audit mechanisms. Workflow approval, professional artifact approval, and exact
-action approval remain distinct. Pack prompts and validators cannot authorize
-an action. Artifact types extend the generic version/provenance contract from
+Packs may declare mandatory approval, evidence and professional-decision
+requirements, but cannot create grants, trusted source facts, verified
+principals, qualification or presence evidence, or approvals. Runtime enforces
+the effective clauses against trusted evidence. Source identity, exact revision
+and anchor provenance; artifact version/fingerprint and producer lineage;
+evidence currentness; professional review; pipeline/stage approval; and exact
+protected-action approval have distinct subjects and gates under ADR-0021 and
+ADR-0027. Changed fingerprints make prior review or evidence non-current
+without rewriting its history. Pack prompts and validators cannot authorize an
+action. Artifact types extend the generic version/provenance contract from
 M11.6; development commits and PRs remain domain evidence, never task-status
 authority.
 
 Pack knowledge categories, schemas, retrieval guidance, and seed references
 use `AgentKnowledgeStore`; no second knowledge subsystem or pack-owned
-operational authority is introduced. GP-15 must reconcile its current trusted
-tenant plus portable `repositoryId` scope with non-repository projects without
-breaking existing records or allowing a pack to choose tenant scope. Pack
+operational authority is introduced. The future versioned scope uses the
+trusted tenant and ADR-0027 tagged portable project key resolved by Runtime
+from ProjectStorage. The repository variant retains existing
+`tenantId + repositoryId` namespaces and provenance; the project variant uses
+a separate `tenantId + projectUid` namespace. Optional project-owned domain
+scopes only narrow trusted project scope. Pack metadata cannot choose tenant,
+portable key, domain-scope identity, visibility or operational status. Pack
 capabilities name required or optional abstract operations. Registered
 connectors/adapters satisfy those contracts; installation checks availability,
 while actual use still requires project-scoped grants, constraints,
@@ -331,6 +363,14 @@ only the scoped input granted by its application port. It cannot decide a
 professional approval, create a capability grant, or directly mutate
 `ProjectStorage`. Protected effects still cross the controlled-action gateway.
 
+When a pack requires a professional decision, it may declare authenticated
+human principal, decision-bound presence, qualification, reviewer independence
+or delegation requirements. Runtime validates them through ADR-0027's trusted
+identity and attestation boundaries. Role name, agent identity, model output,
+prompt, local OS UID and CLI actor text are not proof of professional identity,
+presence or qualification. Unknown or unavailable trusted evidence blocks the
+professional gate.
+
 Mechanical architecture tests reject core imports of official or third-party
 packs and packs importing core implementation internals. Compatibility fixtures
 cover old development projects; development, legal, manufacturing, and
@@ -340,31 +380,29 @@ provenance remain mandatory across all fixtures.
 
 ## Acceptance gates and M15 alignment
 
-ADR-0026 remains Proposed and GP-02 remains blocked. ADR-0027 accepts the
-following architectural boundaries; M15-4 integration and an explicit
-GP-02 comparison with each boundary are still required before this contract
-can be accepted. None of the missing representations exists in Runtime today:
+GP-02 compared this contract with all four accepted ADR-0027 boundaries after
+M15-4 integration. No material conflict was found:
 
-1. **Portable non-repository project identity:** define creation, association,
-   snapshot and legacy-reader rules without fabricating a `repositoryId` or
-   changing existing repository bindings.
-2. **AgentKnowledgeStore scope:** define trusted project scope beyond
-   `repositoryId` while retaining historical knowledge keys, provenance and
-   tenant ownership. Pack metadata cannot select the tenant or scope.
-3. **Mandatory evidence and domain-scope constraints:** define a versioned
-   representation and deterministic composition rule for mandatory evidence,
-   domain restrictions and project overrides. An unresolved or incomparable
-   constraint fails closed; an override cannot silently weaken a core or
-   selected-pack gate.
-4. **Professional decision principals:** define trusted actor identity,
-   authenticated human-presence and qualification evidence for decisions that
-   require them. A role name, model output or pack declaration is insufficient.
+1. **Portable project identity:** `Project` remains the authority root; its
+   tagged portable key and optional associations are independent of pack
+   selection. Legacy `repositoryId` keeps its meaning. Non-repository creation,
+   storage and snapshot contracts remain implementation work.
+2. **AgentKnowledgeStore scope:** Runtime supplies trusted tenant and tagged
+   project identity; pack declarations cannot select or widen either scope.
+   Versioned scope and legacy namespace compatibility remain implementation
+   work.
+3. **Mandatory evidence and constraints:** selected-pack clauses are
+   conjunctive and deterministic with core/project clauses; unknown,
+   inaccessible or incomparable mandatory inputs fail closed. Clause registry,
+   evaluators and persistence remain implementation work.
+4. **Professional principals:** packs may require a professional decision but
+   cannot attest identity, presence, qualification, independence or delegation.
+   Trusted providers and Runtime verification remain implementation work.
 
-GP-01's source audit passed final repository review. Acceptance of this ADR must
-compare ADR-0027 with the GP-01 findings, ADR-0021's artifact
-boundary, ADR-0022's portable `ProjectStorage` semantics, and ADR-0025's
-knowledge boundary. No Domain Pack Runtime behavior exists by accepting the
-document alone.
+GP-01's source audit passed final repository review. The GP-02 comparison also
+checked ADR-0021's artifact boundary, ADR-0022's portable `ProjectStorage`
+semantics, and ADR-0025's knowledge boundary. No Domain Pack Runtime behavior
+exists by accepting this document alone.
 
 ## Consequences and open decisions
 
@@ -374,10 +412,9 @@ document alone.
   not exceptions to a development default.
 - The existing office manifest, repository identity, and knowledge scope need
   staged adapters or extensions; none is renamed or migrated by this ADR.
-- GP-02 proposes manifest syntax, package layout, host-local catalog versus
+- GP-02 accepts the manifest syntax, package layout, host-local catalog versus
   portable project binding ownership, validator adapter rules, compatibility
-  versions and pinned evidence above. These remain reviewable choices until
-  GP-02 checks them against accepted ADR-0027. GP-03/GP-04 may refine field-level
+  versions and pinned evidence above. GP-03/GP-04 may refine field-level
   section schemas without changing these boundaries.
 - A remote marketplace, dynamic downloads, untrusted code execution, new
   pipeline engine, ProjectStorage replacement, or new knowledge database is

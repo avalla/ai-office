@@ -13,9 +13,9 @@ probes need one Project, Task, pipeline, policy and audit authority for work
 without a source-code repository. The completed
 [GP-01 audit](../development/generic-core-domain-packs.md) found reusable
 state machines alongside repository-specific creation, portable backup and
-knowledge scope. [ADR-0026](ADR-0026-core-domain-pack-boundary.md) is still a
-proposed Domain Pack contract; this ADR supplies its missing M15 authority
-constraints, not acceptance of that proposal.
+knowledge scope. [ADR-0026](ADR-0026-core-domain-pack-boundary.md) was proposed
+when this ADR was written; GP-02 later accepted it after comparing these M15
+authority constraints.
 
 Today `Project.id` is a Runtime-local row ID. `CreateProject` also associates
 `repo_<projectId>`; repository install and portable snapshot formats 1–4 use
@@ -261,11 +261,9 @@ authentication boundary.
 | UID encoding, snapshot v5 schema, port/migration shapes, principal attestation protocol, clause registry and persistence tables | **Requires later implementation detail** | Contract, fresh/upgrade, parity and security tests are required before shipping.                           |
 
 The architectural decisions above are accepted without claiming that the
-target Runtime capabilities exist. M15-4 passed final repository review;
-integration of this ADR remains a project-planning prerequisite. GP-02 must
-subsequently compare ADR-0026 against these decisions and accept or revise
-**that separate ADR**. GP-02 stays blocked while this PR is open, and
-ADR-0026 remains Proposed.
+target Runtime capabilities exist. M15-4 passed final repository review and
+was integrated in PR #81. GP-02 subsequently compared ADR-0026 against these
+decisions and accepted that separate ADR.
 
 ## References
 
@@ -277,4 +275,4 @@ ADR-0026 remains Proposed.
 - [ADR-0022 ProjectStorage](ADR-0022-project-storage-adapters.md)
 - [ADR-0023 tenant authority](ADR-0023-postgres-tenant-authority.md) and [ADR-0024 RLS](ADR-0024-postgres-tenant-authorization-rls.md)
 - [ADR-0025 AgentKnowledgeStore](ADR-0025-native-agent-knowledge-store.md)
-- [Proposed ADR-0026 Domain Pack boundary](ADR-0026-core-domain-pack-boundary.md)
+- [Accepted ADR-0026 Domain Pack boundary](ADR-0026-core-domain-pack-boundary.md)
