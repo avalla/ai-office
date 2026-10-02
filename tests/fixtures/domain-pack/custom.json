@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "id": "org.example.custom",
+  "version": "1.0.0",
+  "manifestDigest": "sha256:6da016cf854774724029e2753f91b49353d6fbb9a74e965fb3ad2ee4e7e0aaf3",
+  "coreContract": {
+    "minInclusive": 1,
+    "maxExclusive": 3
+  },
+  "metadata": {
+    "name": "Custom",
+    "description": "Custom contract fixture"
+  },
+  "dependencies": [],
+  "contributions": {
+    "roles": [],
+    "taskTypes": [],
+    "workflows": [],
+    "agents": [],
+    "artifactTypes": [],
+    "evidenceTypes": [],
+    "policies": [],
+    "knowledge": [],
+    "capabilities": [],
+    "prompts": [],
+    "validators": []
+  }
+}

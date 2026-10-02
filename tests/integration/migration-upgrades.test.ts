@@ -3,6 +3,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
 } from "node:fs";
@@ -11,6 +12,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
+import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
+import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
+import { computeArtifactDigest } from "../../packages/domain-pack-contracts/src/index.ts";
+import { resolveInstalledPacks } from "../../packages/application/src/domain-pack/resolve-installed-packs.ts";
+import { InMemoryInstalledDomainPackCatalog } from "../../packages/runtime-host/src/installed-domain-pack-catalog.ts";
 
 const roots: string[] = [];
 const migrations = join(
@@ -27,6 +33,218 @@ afterEach(() => {
 });
 
 describe("migration upgrades", () => {
+  test("GP-04 catalog operations leave schema-1 project authority unchanged", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-gp04-isolation-"));
+    roots.push(root);
+    const database = openDatabase(join(root, "project.sqlite"));
+    try {
+      migrate(database, migrations);
+      const source = readFileSync(
+        join(
+          process.cwd(),
+          ".agents/skills/ai-office/assets/default-office-manifest.json",
+        ),
+        "utf8",
+      );
+      const timestamp = "2026-09-01T00:00:00.000Z";
+      database
+        .prepare(
+          "INSERT INTO project(id,name,description,created_at,updated_at) VALUES ('existing','Existing',NULL,?,?)",
+        )
+        .run(timestamp, timestamp);
+      database
+        .prepare(
+          `INSERT INTO office_manifest_revision(
+        id,project_id,revision,schema_version,manifest_json,
+        source_host,source_skill,source_skill_version,applied_at
+      ) VALUES ('office','existing',1,1,?,'codex','ai-office','1',?)`,
+        )
+        .run(source, timestamp);
+      database
+        .prepare(
+          "INSERT INTO task(id,project_id,title,status,created_at,updated_at) VALUES ('task','existing','Existing','pending',?,?)",
+        )
+        .run(timestamp, timestamp);
+      database
+        .prepare(
+          `INSERT INTO pipeline_run(
+            id,project_id,task_id,manifest_revision_id,manifest_revision,
+            definition_json,status,current_stage_index,started_by,version,
+            created_at,updated_at
+          ) VALUES ('run','existing','task','office',1,?,'active',0,'operator',1,?,?)`,
+        )
+        .run(
+          JSON.stringify(parseOfficeManifestJson(source).pipelines[0]),
+          timestamp,
+          timestamp,
+        );
+      const before = database
+        .query(
+          "SELECT id,project_id,revision,schema_version,manifest_json FROM office_manifest_revision",
+        )
+        .all();
+      const pipelineBefore = database
+        .query("SELECT * FROM pipeline_run WHERE id='run'")
+        .get();
+      const taskBefore = database
+        .query("SELECT * FROM task WHERE id='task'")
+        .get();
+      const changesBefore = database
+        .query<{ count: number }, []>("SELECT total_changes() AS count")
+        .get()?.count;
+
+      const bytes = readFileSync(
+        new URL("../fixtures/domain-pack/custom.json", import.meta.url),
+      );
+      const catalog = new InMemoryInstalledDomainPackCatalog(1, [
+        "local-distribution",
+      ]);
+      const identity = catalog.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: {
+          installerId: "local-distribution",
+          reference: "bundled/custom",
+        },
+      });
+      expect(resolveInstalledPacks(catalog, [identity])).toHaveLength(1);
+      expect(
+        database
+          .query(
+            "SELECT id,project_id,revision,schema_version,manifest_json FROM office_manifest_revision",
+          )
+          .all(),
+      ).toEqual(before);
+      expect(
+        database.query("SELECT * FROM pipeline_run WHERE id='run'").get(),
+      ).toEqual(pipelineBefore);
+      expect(
+        database.query("SELECT * FROM task WHERE id='task'").get(),
+      ).toEqual(taskBefore);
+      expect(
+        Object.hasOwn(parseOfficeManifestJson(source), "domainPacks"),
+      ).toBe(false);
+      expect(
+        database
+          .query<{ count: number }, []>("SELECT total_changes() AS count")
+          .get()?.count,
+      ).toBe(changesBefore);
+      expect(
+        database
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%domain_pack%'",
+          )
+          .all(),
+      ).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
+  test("keeps a pre-Domain-Pack office manifest and pipeline pin unchanged", async () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-gp03-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0034_exact_pipeline_stage_bindings.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    }
+    const source = readFileSync(
+      join(
+        process.cwd(),
+        ".agents/skills/ai-office/assets/default-office-manifest.json",
+      ),
+      "utf8",
+    );
+    const office = parseOfficeManifestJson(source);
+    const definition = JSON.stringify(office.pipelines[0]);
+    const timestamp = "2026-09-01T00:00:00.000Z";
+    const database = openDatabase(join(root, "project.sqlite"));
+    try {
+      migrate(database, partial);
+      database
+        .prepare(
+          "INSERT INTO project(id,name,description,created_at,updated_at) VALUES ('legacy','Legacy',NULL,?,?)",
+        )
+        .run(timestamp, timestamp);
+      database
+        .prepare(
+          "INSERT INTO task(id,project_id,title,status,created_at,updated_at) VALUES ('task','legacy','Existing','pending',?,?)",
+        )
+        .run(timestamp, timestamp);
+      database
+        .prepare(
+          `INSERT INTO office_manifest_revision(
+            id,project_id,revision,schema_version,manifest_json,
+            source_host,source_skill,source_skill_version,applied_at
+          ) VALUES ('manifest','legacy',1,1,?,'codex','ai-office','1',?)`,
+        )
+        .run(source, timestamp);
+      database
+        .prepare(
+          `INSERT INTO pipeline_run(
+            id,project_id,task_id,manifest_revision_id,manifest_revision,
+            definition_json,status,current_stage_index,started_by,version,
+            created_at,updated_at
+          ) VALUES ('run','legacy','task','manifest',1,?,'active',0,'operator',1,?,?)`,
+        )
+        .run(definition, timestamp, timestamp);
+
+      expect(migrate(database, migrations).applied.at(-1)).toBe(
+        "0040_task_execution_history.sql",
+      );
+      const stored = database
+        .query<{ manifest_json: string }, []>(
+          "SELECT manifest_json FROM office_manifest_revision WHERE id='manifest'",
+        )
+        .get();
+      expect(stored?.manifest_json).toBe(source);
+      expect(
+        (
+          await new SqliteOfficeManifestRepository(database).findLatest(
+            "legacy",
+          )
+        )?.manifest,
+      ).toEqual(office);
+      expect(
+        database
+          .query<
+            {
+              manifest_revision_id: string;
+              manifest_revision: number;
+              definition_json: string;
+            },
+            []
+          >(
+            "SELECT manifest_revision_id, manifest_revision, definition_json FROM pipeline_run WHERE id='run'",
+          )
+          .get(),
+      ).toEqual({
+        manifest_revision_id: "manifest",
+        manifest_revision: 1,
+        definition_json: definition,
+      });
+      expect(
+        database
+          .query<{ status: string }, []>(
+            "SELECT status FROM task WHERE id='task'",
+          )
+          .get()?.status,
+      ).toBe("pending");
+      expect(Object.hasOwn(office, "domainPacks")).toBe(false);
+      expect(
+        database
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%domain_pack%'",
+          )
+          .all(),
+      ).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
+
   test.each([
     ["M2", "0005_audit_event.sql"],
     ["M3", "0006_agent_runtime.sql"],

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "org.example.manufacturing",
+  "version": "1.0.0",
+  "manifestDigest": "sha256:a6f991dcd8af725d15143a42ee605ba95a8470dc127fd2be4d3955ce03bbd583",
+  "coreContract": {
+    "minInclusive": 1,
+    "maxExclusive": 3
+  },
+  "metadata": {
+    "name": "Manufacturing",
+    "description": "Manufacturing contract fixture"
+  },
+  "dependencies": [],
+  "contributions": {
+    "roles": [
+      {
+        "id": "quality-lead",
+        "title": "Manufacturing"
+      }
+    ],
+    "taskTypes": [
+      {
+        "id": "inspection"
+      }
+    ],
+    "workflows": [
+      {
+        "id": "flow",
+        "taskType": "inspection",
+        "stages": [
+          {
+            "id": "intake",
+            "role": "quality-lead"
+          },
+          {
+            "id": "review",
+            "role": "quality-lead"
+          }
+        ]
+      }
+    ],
+    "agents": [],
+    "artifactTypes": [],
+    "evidenceTypes": [],
+    "policies": [],
+    "knowledge": [],
+    "capabilities": [],
+    "prompts": [],
+    "validators": []
+  }
+}

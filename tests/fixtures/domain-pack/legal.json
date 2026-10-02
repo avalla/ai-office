@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "org.example.legal",
+  "version": "1.0.0",
+  "manifestDigest": "sha256:1a3339f5faeb8558db8fe20e31cacf98d900c0e7e4ebe67f8672983095b35b77",
+  "coreContract": {
+    "minInclusive": 1,
+    "maxExclusive": 3
+  },
+  "metadata": {
+    "name": "Legal",
+    "description": "Legal contract fixture"
+  },
+  "dependencies": [],
+  "contributions": {
+    "roles": [
+      {
+        "id": "counsel",
+        "title": "Legal"
+      }
+    ],
+    "taskTypes": [
+      {
+        "id": "matter"
+      }
+    ],
+    "workflows": [
+      {
+        "id": "flow",
+        "taskType": "matter",
+        "stages": [
+          {
+            "id": "intake",
+            "role": "counsel"
+          },
+          {
+            "id": "review",
+            "role": "counsel"
+          }
+        ]
+      }
+    ],
+    "agents": [],
+    "artifactTypes": [],
+    "evidenceTypes": [],
+    "policies": [],
+    "knowledge": [],
+    "capabilities": [],
+    "prompts": [],
+    "validators": []
+  }
+}

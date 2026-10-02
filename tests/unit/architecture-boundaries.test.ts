@@ -3,6 +3,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import * as installedPackResolver from "../../packages/application/src/domain-pack/resolve-installed-packs.ts";
 
 const repositoryRoot = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -90,6 +91,87 @@ function importsStoragePostgres(file: string, specifier: string): boolean {
 }
 
 describe("application architecture boundaries", () => {
+  test("Domain Pack contracts remain independent and cannot form a package cycle", () => {
+    const contracts = join(repositoryRoot, "packages", "domain-pack-contracts");
+    const offenders: string[] = [];
+    for (const file of typescriptFiles(contracts)) {
+      for (const specifier of importedSpecifiers(readFileSync(file, "utf8"))) {
+        const target = resolvedTarget(file, specifier);
+        if (
+          specifier.startsWith("@ai-office/") ||
+          (target?.startsWith("packages/") === true &&
+            !target.startsWith("packages/domain-pack-contracts/"))
+        )
+          offenders.push(`${relative(repositoryRoot, file)} -> ${specifier}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("domain and application do not import official Domain Packs", () => {
+    const offenders: string[] = [];
+    for (const layer of ["domain", "application"]) {
+      for (const file of typescriptFiles(
+        join(repositoryRoot, "packages", layer),
+      )) {
+        for (const specifier of importedSpecifiers(
+          readFileSync(file, "utf8"),
+        )) {
+          const target = resolvedTarget(file, specifier);
+          if (
+            (specifier.startsWith("@ai-office/domain-pack-") &&
+              !specifier.startsWith("@ai-office/domain-pack-contracts")) ||
+            (target?.startsWith("packages/domain-pack-") === true &&
+              !target.startsWith("packages/domain-pack-contracts/"))
+          )
+            offenders.push(`${relative(repositoryRoot, file)} -> ${specifier}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("GP-04 availability and resolution cannot reach project storage or Runtime scheduling", () => {
+    const gp04Files = [
+      "packages/application/src/ports/installed-domain-pack-catalog.port.ts",
+      "packages/application/src/domain-pack/resolve-installed-packs.ts",
+      "packages/application/src/domain-pack/internal/verified-pack-closure.ts",
+      "packages/runtime-host/src/installed-domain-pack-catalog.ts",
+    ];
+    for (const location of gp04Files) {
+      const file = join(repositoryRoot, location);
+      const source = readFileSync(file, "utf8");
+      expect(source).not.toMatch(
+        /ProjectStorage|projectId|pipeline:|run:schedule/,
+      );
+      expect(
+        importedSpecifiers(source).filter((specifier) =>
+          /storage|repository|domain-pack-development|commands\//.test(
+            specifier,
+          ),
+        ),
+      ).toEqual([]);
+      if (location.startsWith("packages/application/"))
+        expect(
+          importedSpecifiers(source).filter(
+            (specifier) =>
+              specifier.startsWith("@ai-office/runtime-host") ||
+              resolvedTarget(file, specifier)?.startsWith(
+                "packages/runtime-host/",
+              ) === true,
+          ),
+        ).toEqual([]);
+    }
+    const runtimeCommand = readFileSync(
+      join(repositoryRoot, "packages/runtime-host/src/runtime-command.ts"),
+      "utf8",
+    );
+    expect(runtimeCommand).not.toContain("installed-domain-pack-catalog");
+    expect(Object.keys(installedPackResolver)).toEqual([
+      "resolveInstalledPacks",
+    ]);
+  });
+
   test("project Runtime composition consumes repository ports, not SQLite classes", () => {
     const contextPath = join(
       repositoryRoot,
