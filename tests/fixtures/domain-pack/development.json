@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "id": "org.ai-office.development",
+  "version": "1.0.0",
+  "manifestDigest": "sha256:26b71333f202563bf5f1f8e377c68500f3a01fd8638305b2d1e06bff659dae8f",
+  "coreContract": {
+    "minInclusive": 1,
+    "maxExclusive": 3
+  },
+  "metadata": {
+    "name": "Development",
+    "description": "Development contract fixture"
+  },
+  "dependencies": [],
+  "contributions": {
+    "roles": [
+      {
+        "id": "reviewer",
+        "title": "Development"
+      }
+    ],
+    "taskTypes": [
+      {
+        "id": "feature"
+      }
+    ],
+    "workflows": [
+      {
+        "id": "flow",
+        "taskType": "feature",
+        "stages": [
+          {
+            "id": "intake",
+            "role": "reviewer"
+          },
+          {
+            "id": "review",
+            "role": "reviewer"
+          }
+        ]
+      }
+    ],
+    "agents": [],
+    "artifactTypes": [],
+    "evidenceTypes": [],
+    "policies": [],
+    "knowledge": [],
+    "capabilities": [],
+    "prompts": [],
+    "validators": []
+  }
+}

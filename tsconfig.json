@@ -16,6 +16,9 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
+      "@ai-office/domain-pack-contracts/*": [
+        "packages/domain-pack-contracts/src/*"
+      ],
       "@ai-office/domain/*": ["packages/domain/src/*"],
       "@ai-office/application/*": ["packages/application/src/*"],
       "@ai-office/storage-sqlite/*": ["packages/storage-sqlite/src/*"],
