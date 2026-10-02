@@ -7,6 +7,7 @@ import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
+import { SqliteProjectPackBindingRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-pack-binding.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 import { SqliteTaskDependencyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-dependency.repository.ts";
 import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
@@ -22,6 +23,7 @@ describe("SQLite project storage contracts", () => {
 
     return {
       projects: new SqliteProjectRepository(database),
+      packBindings: new SqliteProjectPackBindingRepository(database),
       tasks: new SqliteTaskRepository(database),
       taskDependencies: new SqliteTaskDependencyRepository(database),
       taskRequirements: new SqliteTaskRequirementRepository(database),
@@ -56,5 +58,5 @@ describe("SQLite project storage contracts", () => {
         rmSync(root, { recursive: true, force: true });
       },
     };
-  });
+  }, { packBindings: true });
 });

@@ -22,6 +22,8 @@ import {
   RuntimeUnavailableError,
 } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
+import { computeArtifactDigest } from "../../packages/domain-pack-contracts/src/index.ts";
+import { InMemoryInstalledDomainPackCatalog } from "../../packages/runtime-host/src/installed-domain-pack-catalog.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
 
@@ -430,6 +432,120 @@ profiles:
       ]);
       expect(removed.code).toBe(0);
       expect(JSON.parse(removed.stdout[0]!)).toMatchObject({ removed: true });
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
+  test("previews and applies an explicit project pack binding over the socket", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-pack-binding-cli-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const installedPacks = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    const bytes = readFileSync(
+      new URL("../fixtures/domain-pack/custom.json", import.meta.url),
+    );
+    const pack = installedPacks.register({
+      bytes,
+      artifactDigest: computeArtifactDigest(bytes),
+      provenance: {
+        installerId: "local-distribution",
+        reference: "bundled/custom",
+      },
+    });
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+      installedPacks,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+    try {
+      await waitForDaemon(socket.socketPath);
+      const created = await invoke(["project:create", "Pack fixture"]);
+      expect(created.code).toBe(0);
+      const projectId = created.stdout[0]!.replace("Project created: ", "");
+      const shown = await invoke([
+        "project:pack:show",
+        "--project",
+        projectId,
+        "--json",
+      ]);
+      expect(JSON.parse(shown.stdout[0]!)).toMatchObject({
+        configurationRevision: 0,
+        packs: [],
+      });
+      const preview = await invoke([
+        "project:pack:preview",
+        "--project",
+        projectId,
+        "--packs",
+        JSON.stringify([pack]),
+        "--json",
+      ]);
+      expect(preview.code).toBe(0);
+      expect(JSON.parse(preview.stdout[0]!)).toMatchObject({
+        added: [pack],
+        issues: [],
+      });
+      const applied = await invoke([
+        "project:pack:apply",
+        "--project",
+        projectId,
+        "--packs",
+        JSON.stringify([pack]),
+        "--expected-revision",
+        "0",
+        "--json",
+      ]);
+      expect(applied.code).toBe(0);
+      expect(JSON.parse(applied.stdout[0]!)).toMatchObject({
+        configurationRevision: 1,
+        packs: [pack],
+      });
+      const stale = await invoke([
+        "project:pack:apply",
+        "--project",
+        projectId,
+        "--packs",
+        "[]",
+        "--expected-revision",
+        "0",
+        "--json",
+      ]);
+      expect(stale.code).toBe(1);
+      expect(stale.stderr.join("\n")).toContain("stale");
+      const removed = await invoke([
+        "project:pack:apply",
+        "--project",
+        projectId,
+        "--packs",
+        "[]",
+        "--expected-revision",
+        "1",
+        "--json",
+      ]);
+      expect(removed.code).toBe(0);
+      expect(JSON.parse(removed.stdout[0]!)).toMatchObject({
+        configurationRevision: 2,
+        packs: [],
+      });
     } finally {
       controller.abort();
       await running;

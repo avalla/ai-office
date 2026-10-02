@@ -22,6 +22,7 @@ import { PersistentRuntimeHost } from "./office-daemon.ts";
 import { QueryApi } from "./query-api.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
+import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import {
   KnowledgeStoreError,
@@ -110,6 +111,7 @@ export interface BootstrapOptions {
   globalMigrationDirectory?: string;
   agentClients?: AgentClientCatalog;
   projectBindings?: ProjectBindingAdapter;
+  installedPacks?: InstalledDomainPackCatalog;
   defaultOfficeManifest?: OfficeManifest;
   /** Host-only secondary knowledge configuration. */
   agentKnowledgeConfiguration?: AgentKnowledgeConfiguration;
@@ -342,6 +344,7 @@ export async function bootstrap(
       routing,
       projectStorage,
       agentKnowledge,
+      options.installedPacks,
     );
 
     const queueConfiguration = readQueueConfiguration(process.env);

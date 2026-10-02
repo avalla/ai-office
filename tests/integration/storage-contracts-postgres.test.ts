@@ -19,6 +19,7 @@ import {
 import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-postgres.ts";
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
+import { PostgresProjectPackBindingRepository } from "@ai-office/storage-postgres/repositories/postgres-project-pack-binding.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
 import { PostgresTaskDependencyRepository } from "@ai-office/storage-postgres/repositories/postgres-task-dependency.repository.ts";
 import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
@@ -79,6 +80,10 @@ describe.skipIf(connectionString === undefined)(
 
     defineProjectStorageContracts(async () => ({
       projects: new PostgresProjectRepository(database, tenantId),
+      packBindings: new PostgresProjectPackBindingRepository(
+        database,
+        tenantId,
+      ),
       tasks: new PostgresTaskRepository(database, tenantId),
       taskDependencies: new PostgresTaskDependencyRepository(
         database,
@@ -113,7 +118,7 @@ describe.skipIf(connectionString === undefined)(
         );
       },
       async close(): Promise<void> {},
-    }));
+    }), { packBindings: true });
 
     test("serializes concurrent inverse dependency edges so no cycle commits", async () => {
       const first = new PostgresClient(connectionString!);
@@ -390,6 +395,7 @@ describe.skipIf(connectionString === undefined)(
         );
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           "20261001000400_task_execution_history.sql",
+          "20261002000100_project_pack_binding.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -754,6 +760,7 @@ describe.skipIf(connectionString === undefined)(
           "20261001000200_milestone_description_changed_event.sql",
           "20261001000300_task_dependency_immutable_edges.sql",
           "20261001000400_task_execution_history.sql",
+          "20261002000100_project_pack_binding.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

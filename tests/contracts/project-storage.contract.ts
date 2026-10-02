@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { ProjectRepository } from "@ai-office/application/ports/project-repository.port.ts";
+import {
+  StaleProjectPackBindingError,
+  type ProjectPackBindingRepository,
+} from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
+import type { PackIdentity } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import type {
   LinkedRequirement,
   TaskRequirementRepository,
@@ -14,9 +19,15 @@ import {
 import type { RequirementStatus } from "@ai-office/domain/governance/governance.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
+import {
+  parseDomainPackId,
+  parseDomainPackVersion,
+  parseManifestDigest,
+} from "../../packages/domain-pack-contracts/src/index.ts";
 
 export interface RepositoryContractHarness {
   projects: ProjectRepository;
+  packBindings?: ProjectPackBindingRepository;
   tasks: TaskRepository;
   taskRequirements: TaskRequirementRepository;
   taskDependencies?: TaskDependencyRepository;
@@ -33,6 +44,7 @@ export interface RepositoryContractHarness {
 
 export function defineProjectStorageContracts(
   createHarness: () => Promise<RepositoryContractHarness>,
+  features: { packBindings?: boolean } = {},
 ): void {
   let harness: RepositoryContractHarness;
   let prefix: string;
@@ -94,6 +106,104 @@ export function defineProjectStorageContracts(
       ).toBeUndefined();
     });
   });
+
+  if (features.packBindings)
+    describe("ProjectPackBindingRepository", () => {
+      const bindings = () => {
+        if (!harness.packBindings)
+          throw new Error(
+            "Pack binding repository is required for this contract",
+          );
+        return harness.packBindings;
+      };
+      const now = new Date("2026-10-02T00:00:00.000Z");
+      const first: PackIdentity = {
+        id: parseDomainPackId("org.example.first"),
+        version: parseDomainPackVersion("1.0.0"),
+        manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+      };
+      const second: PackIdentity = {
+        id: parseDomainPackId("org.example.second"),
+        version: parseDomainPackVersion("2.0.0"),
+        manifestDigest: parseManifestDigest(`sha256:${"b".repeat(64)}`),
+      };
+
+      test("starts empty, persists exact tuples, and increments only for changes", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-packs`)
+        ).snapshot().id;
+        expect(await bindings().get(projectId)).toEqual({
+          projectId,
+          configurationRevision: 0,
+          packs: [],
+        });
+        const applied = await bindings().replace(
+          projectId,
+          0,
+          [second, first],
+          now,
+        );
+        expect(applied).toEqual({
+          changed: true,
+          binding: {
+            projectId,
+            configurationRevision: 1,
+            packs: [first, second],
+          },
+        });
+        expect(await bindings().get(projectId)).toEqual(applied.binding);
+        expect(
+          await bindings().replace(projectId, 1, [first, second], now),
+        ).toEqual({ changed: false, binding: applied.binding });
+        await expect(
+          bindings().replace(projectId, 0, [], now),
+        ).rejects.toBeInstanceOf(StaleProjectPackBindingError);
+        expect(
+          (await bindings().replace(projectId, 1, [], now)).binding,
+        ).toEqual({ projectId, configurationRevision: 2, packs: [] });
+      });
+
+      test("isolates projects and rolls back replacement", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-a`)
+        ).snapshot().id;
+        const otherId = (await createProject(harness, `${prefix}-b`)).snapshot()
+          .id;
+        await bindings().replace(projectId, 0, [first], now);
+        expect(await bindings().get(otherId)).toEqual({
+          projectId: otherId,
+          configurationRevision: 0,
+          packs: [],
+        });
+        await expect(
+          harness.transactions.run(async () => {
+            await bindings().replace(projectId, 1, [second], now);
+            throw new Error("rollback binding");
+          }),
+        ).rejects.toThrow("rollback binding");
+        expect((await bindings().get(projectId)).packs).toEqual([first]);
+        expect((await bindings().get(projectId)).configurationRevision).toBe(1);
+      });
+
+      test("rejects two active versions of the same pack ID without changing revision", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-unique`)
+        ).snapshot().id;
+        await expect(
+          bindings().replace(
+            projectId,
+            0,
+            [first, { ...first, version: parseDomainPackVersion("2.0.0") }],
+            now,
+          ),
+        ).rejects.toThrow();
+        expect(await bindings().get(projectId)).toEqual({
+          projectId,
+          configurationRevision: 0,
+          packs: [],
+        });
+      });
+    });
 
   describe("TaskRepository", () => {
     test("returns null when a task is missing", async () => {

@@ -118,6 +118,7 @@ test("SQLite upgrade backfills authoritative execution and keeps the marker mono
 
     expect(migrate(database, migrations).applied).toEqual([
       "0040_task_execution_history.sql",
+      "0041_project_pack_binding.sql",
     ]);
     expect(migrate(database, migrations).applied).toEqual([]);
     const rows = database

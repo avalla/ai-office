@@ -1674,8 +1674,10 @@ See [Professional-work verticals](professional-work-verticals.md).
 
 ## M16 — Generic Core & Domain Packs
 
-Status: planned; architecture and project planning only. No pack runtime or
-storage migration is implemented by this roadmap entry.
+Status: in progress. GP-03 public contracts and GP-04 host-local catalog and
+resolver are merged. GP-05 explicit project pack binding is implemented in
+this review branch; effective configuration and pack-driven Runtime behavior
+remain planned.
 
 AI Office is transitioning from a software-development-oriented implementation
 into a domain-neutral operational core. Domain-specific semantics are supplied
@@ -1742,8 +1744,13 @@ GP-02 completed the ADR-0026/ADR-0027 alignment review and accepted the
 Domain Pack contract. GP-03's schema-1 contract package passed implementation
 review and merged in PR #84. GP-04 adds only a host-local installed-pack
 catalog and exact dependency closure; it does not persist project selection
-or alter Runtime project semantics. M16 remains planned until its end-to-end
-exit criteria are met.
+or alter Runtime project semantics. GP-05 adds an authoritative, audited,
+portable exact selection with a checked project pack configuration revision;
+SQLite and PostgreSQL use forward migrations, and portable archives add
+format version 5. Operators can show, preview and apply a selection through
+the Runtime. An empty selection remains valid and no pack is inferred from
+the project or host. GP-05 does not resolve project definitions or change
+running work. M16 remains incomplete until its end-to-end exit criteria are met.
 
 Exit: development, legal, manufacturing, and empty/custom fixtures run the same
 core lifecycles without changes to core for each domain. Legacy development

@@ -166,10 +166,47 @@ describe("application architecture boundaries", () => {
       join(repositoryRoot, "packages/runtime-host/src/runtime-command.ts"),
       "utf8",
     );
-    expect(runtimeCommand).not.toContain("installed-domain-pack-catalog");
+    expect(runtimeCommand).toContain(
+      "new InMemoryInstalledDomainPackCatalog(1, [])",
+    );
     expect(Object.keys(installedPackResolver)).toEqual([
       "resolveInstalledPacks",
     ]);
+  });
+
+  test("GP-05 project selection stays separate from host artifacts and scheduling", () => {
+    const bindingPort = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/application/src/ports/project-pack-binding-repository.port.ts",
+      ),
+      "utf8",
+    );
+    const bindingService = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/application/src/domain-pack/manage-project-pack-binding.ts",
+      ),
+      "utf8",
+    );
+    const sqliteBinding = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/storage-sqlite/src/repositories/sqlite-project-pack-binding.repository.ts",
+      ),
+      "utf8",
+    );
+    const projectCommands = readFileSync(
+      join(repositoryRoot, "packages/runtime-host/src/commands/project.ts"),
+      "utf8",
+    );
+    for (const source of [bindingPort, sqliteBinding])
+      expect(source).not.toMatch(/artifactDigest|installerId|provenance|bytes/);
+    expect(bindingService).toContain('from "./resolve-installed-packs.ts"');
+    expect(bindingService).not.toMatch(
+      /run:schedule|pipeline:start|resolveVerifiedPackClosure|configurationDigest/,
+    );
+    expect(projectCommands).not.toContain("packBindings.replace");
   });
 
   test("project Runtime composition consumes repository ports, not SQLite classes", () => {

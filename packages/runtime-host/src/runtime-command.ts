@@ -161,6 +161,12 @@ import type { ProjectArchiveAdapter } from "@ai-office/application/ports/project
 import { LocalProjectArchiveAdapter } from "./local-project-archive-adapter.ts";
 import { PortableProjectArchiveError } from "@ai-office/application/project-portability/project-snapshot.ts";
 import type { ProjectStorage } from "@ai-office/application/ports/project-storage.port.ts";
+import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
+import { DomainPackCatalogError } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
+import { StaleProjectPackBindingError } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
+import { ProjectPackBindingProjectNotFoundError } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
+import { InMemoryInstalledDomainPackCatalog } from "./installed-domain-pack-catalog.ts";
+import { handleProjectPackCommand } from "./commands/project-pack.ts";
 import {
   ProjectStorageBootstrap,
   requireCompleteProjectStorage,
@@ -203,6 +209,9 @@ const commands = [
   "project:export",
   "project:backup",
   "project:restore",
+  "project:pack:show",
+  "project:pack:preview",
+  "project:pack:apply",
   "office:context",
   "office:workspace",
   "office:validate",
@@ -335,6 +344,8 @@ export interface RuntimeCommandOptions {
   gatewayProviders?: GatewayModelProviders;
   /** A daemon-owned full project authority, when the Runtime is hosted. */
   projectStorage?: ProjectStorage;
+  /** Trusted host-local availability, never selected project state. */
+  installedPacks?: InstalledDomainPackCatalog;
   /**
    * Explicit project storage selection for direct Runtime command execution.
    * Mutually exclusive with the daemon-owned projectStorage.
@@ -368,6 +379,7 @@ function defaultOfficeManifest(): OfficeManifest {
 const handlers = [
   handleLifecycleCommand,
   handleProjectCommand,
+  handleProjectPackCommand,
   handleOfficeCommand,
   handlePipelineCommand,
   handleClientCommand,
@@ -390,6 +402,9 @@ function isCommand(value: string): value is Command {
 function formatKnownError(error: unknown): string | null {
   if (
     error instanceof CliUsageError ||
+    error instanceof DomainPackCatalogError ||
+    error instanceof StaleProjectPackBindingError ||
+    error instanceof ProjectPackBindingProjectNotFoundError ||
     error instanceof KnowledgeAdmissionError ||
     error instanceof KnowledgeStoreError ||
     error instanceof DomainValidationError ||
@@ -578,6 +593,8 @@ export async function executeRuntimeCommand(
       io,
       principal: localOperatorPrincipal,
       ...projectStorage,
+      installedPacks:
+        options.installedPacks ?? new InMemoryInstalledDomainPackCatalog(1, []),
       audit: new RecordAuditEvent(projectStorage.auditEvents, ids, clock),
       ids,
       clock,

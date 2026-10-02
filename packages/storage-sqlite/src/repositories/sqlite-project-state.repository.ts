@@ -11,6 +11,7 @@ import {
   type PortableProjectState,
 } from "@ai-office/application/project-portability/project-snapshot.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
+import { SqliteProjectPackBindingRepository } from "./sqlite-project-pack-binding.repository.ts";
 
 interface ProjectRow {
   name: string;
@@ -540,6 +541,9 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
         updatedAt: row.updated_at,
       }));
 
+    const packBinding = await new SqliteProjectPackBindingRepository(
+      this.database,
+    ).get(projectId);
     return portableProjectStateSchema.parse({
       project: {
         name: project.name,
@@ -552,6 +556,10 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
       taskExecutionHistory,
       profileEntries,
       officeManifests,
+      packBinding: {
+        configurationRevision: packBinding.configurationRevision,
+        packs: packBinding.packs,
+      },
       governance: {
         milestones,
         requirements,
@@ -569,6 +577,22 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
     state: PortableProjectState,
   ): Promise<void> {
     const value = portableProjectStateSchema.parse(state);
+    const packBinding = value.packBinding ?? {
+      configurationRevision: 0,
+      packs: [],
+    };
+    this.database
+      .query(
+        `INSERT INTO project_pack_binding(project_id, configuration_revision)
+       VALUES (?, ?)`,
+      )
+      .run(projectId, packBinding.configurationRevision);
+    const insertPack = this.database.query(
+      `INSERT INTO project_pack_binding_pack(project_id, pack_id, pack_version, manifest_digest)
+       VALUES (?, ?, ?, ?)`,
+    );
+    for (const pack of packBinding.packs)
+      insertPack.run(projectId, pack.id, pack.version, pack.manifestDigest);
     for (const item of value.tasks)
       this.database
         .prepare(
@@ -836,13 +860,15 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
     }
     const restored = await this.loadPortableState(projectId);
     const version =
-      value.taskExecutionHistory !== undefined
-        ? 4
-        : value.taskDependencies !== undefined
-          ? 3
-          : value.governance.taskRequirements !== undefined
-            ? 2
-            : 1;
+      value.packBinding !== undefined
+        ? 5
+        : value.taskExecutionHistory !== undefined
+          ? 4
+          : value.taskDependencies !== undefined
+            ? 3
+            : value.governance.taskRequirements !== undefined
+              ? 2
+              : 1;
     const comparable = portableStateAtFormatVersion(restored, version);
     if (canonicalStringify(comparable) !== canonicalStringify(value))
       throw new Error("Restored portable project state does not match archive");
