@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { ImportProject } from "@ai-office/application/commands/import-project.ts";
 import { CreateTask } from "@ai-office/application/commands/create-task.ts";
 import { ManageGovernance } from "@ai-office/application/commands/manage-governance.ts";
+import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate-action-policy.ts";
@@ -51,6 +52,7 @@ import { SqliteAgentRuntimeRepository } from "@ai-office/storage-sqlite/reposito
 import { SqlitePipelineRunRepository } from "@ai-office/storage-sqlite/repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteOfficeManifestRepository } from "@ai-office/storage-sqlite/repositories/sqlite-office-manifest.repository.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
+import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/installed-domain-pack-catalog.ts";
 import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
 import { parseDomainPackId, parseDomainPackVersion, parseManifestDigest } from "../../packages/domain-pack-contracts/src/index.ts";
@@ -185,10 +187,8 @@ describe("project portability", () => {
   test("v5 carries exact selection to an unavailable host; v4 restores empty", async () => {
     const sourceRuntime = temporaryRoot("ai-office-gp05-portable-source-");
     const targetRuntime = temporaryRoot("ai-office-gp05-portable-target-");
-    const oldRuntime = temporaryRoot("ai-office-gp05-portable-old-");
     const source = temporaryRoot("ai-office-gp05-source-");
     const target = temporaryRoot("ai-office-gp05-target-");
-    const oldTarget = temporaryRoot("ai-office-gp05-old-target-");
     writeFileSync(join(source, "package.json"), '{"name":"pack-source"}\n');
     const origin = openRuntime(sourceRuntime);
     const imported = await importProject(origin, source);
@@ -223,33 +223,58 @@ describe("project portability", () => {
       (await destination.states.loadPortableState(restored.projectId))
         .packBinding,
     ).toEqual({ configurationRevision: 1, packs: [pack] });
+    const absentCatalog = new InMemoryInstalledDomainPackCatalog(1, []);
+    const validator = new ManageProjectPackBinding({
+      projects: destination.projects,
+      bindings: new SqliteProjectPackBindingRepository(destination.database),
+      catalog: absentCatalog,
+      auditEvents: new SqliteAuditEventRepository(destination.database),
+      transactions: destination.transactions,
+      clock: destination.clock,
+      ids: destination.ids,
+    });
+    expect(absentCatalog.list()).toEqual([]);
+    expect((await validator.preview(restored.projectId, [pack])).issues).toMatchObject([
+      { code: "missing_pack" },
+    ]);
+    expect((await validator.read(restored.projectId)).packs).toEqual([pack]);
     destination.database.close();
 
-    const oldState = portableStateAtFormatVersion(backup.archive.state, 4);
-    const oldArchive = createPortableProjectArchive({
-      state: oldState,
-      manifest: portableProjectManifestFor({
-        formatVersion: 4,
-        projectIdentity: backup.archive.manifest.projectIdentity,
-        createdAt: backup.archive.manifest.createdAt,
-        revision: {
-          id: backup.archive.manifest.revision.id,
-          stateChecksum: portableStateChecksum(oldState),
-        },
-      }),
-    });
-    const oldDestination = openRuntime(oldRuntime);
-    const oldRestored = await oldDestination.service.restore({
-      archive: parsePortableProjectArchive(
-        serializePortableProjectArchive(oldArchive),
-      ),
-      rootPath: oldTarget,
-    });
-    expect(
-      (await oldDestination.states.loadPortableState(oldRestored.projectId))
-        .packBinding,
-    ).toEqual({ configurationRevision: 0, packs: [] });
-    oldDestination.database.close();
+    for (const version of [1, 2, 3, 4] as const) {
+      const oldState = portableStateAtFormatVersion(
+        backup.archive.state,
+        version,
+      );
+      const oldArchive = createPortableProjectArchive({
+        state: oldState,
+        manifest: portableProjectManifestFor({
+          formatVersion: version,
+          projectIdentity: backup.archive.manifest.projectIdentity,
+          createdAt: backup.archive.manifest.createdAt,
+          revision: {
+            id: backup.archive.manifest.revision.id,
+            stateChecksum: portableStateChecksum(oldState),
+          },
+        }),
+      });
+      const oldDestination = openRuntime(
+        temporaryRoot(`ai-office-gp05-portable-v${version}-`),
+      );
+      try {
+        const oldRestored = await oldDestination.service.restore({
+          archive: parsePortableProjectArchive(
+            serializePortableProjectArchive(oldArchive),
+          ),
+          rootPath: temporaryRoot(`ai-office-gp05-v${version}-target-`),
+        });
+        expect(
+          (await oldDestination.states.loadPortableState(oldRestored.projectId))
+            .packBinding,
+        ).toEqual({ configurationRevision: 0, packs: [] });
+      } finally {
+        oldDestination.database.close();
+      }
+    }
   });
 
   test("backs up and restores one logical project at a different machine path", async () => {

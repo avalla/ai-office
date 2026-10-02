@@ -24,6 +24,21 @@ describe("SQLite project storage contracts", () => {
     return {
       projects: new SqliteProjectRepository(database),
       packBindings: new SqliteProjectPackBindingRepository(database),
+      async deleteProject(projectId: string): Promise<void> {
+        database.query("DELETE FROM project WHERE id = ?").run(projectId);
+      },
+      async bindingRowCounts(projectId: string) {
+        const count = (table: "project_pack_binding" | "project_pack_binding_pack") =>
+          database
+            .query<{ count: number }, [string]>(
+              `SELECT count(*) AS count FROM ${table} WHERE project_id = ?`,
+            )
+            .get(projectId)!.count;
+        return {
+          heads: count("project_pack_binding"),
+          packs: count("project_pack_binding_pack"),
+        };
+      },
       tasks: new SqliteTaskRepository(database),
       taskDependencies: new SqliteTaskDependencyRepository(database),
       taskRequirements: new SqliteTaskRequirementRepository(database),

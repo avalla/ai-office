@@ -1674,7 +1674,7 @@ See [Professional-work verticals](professional-work-verticals.md).
 
 ## M16 — Generic Core & Domain Packs
 
-Status: in progress. GP-03 public contracts and GP-04 host-local catalog and
+Status: active in AI Office and in progress. GP-03 public contracts and GP-04 host-local catalog and
 resolver are merged. GP-05 explicit project pack binding is implemented in
 this review branch; effective configuration and pack-driven Runtime behavior
 remain planned.

@@ -107,6 +107,52 @@ describe("portable project snapshot", () => {
     expect(serialized).not.toContain("artifactDigest");
     expect(serialized).not.toContain("installerId");
     expect(serialized).not.toContain("provenance");
+    expect(serialized).not.toContain("catalog");
+    expect(serialized).not.toContain("credential");
+    const selectedPack = selected.packBinding!.packs[0]!;
+    const invalidBinding = (packBinding: unknown) => {
+      const invalid = {
+        ...selected,
+        packBinding,
+      } as PortableProjectState;
+      expect(() =>
+        createPortableProjectArchive({
+          state: invalid,
+          manifest: manifest(invalid),
+        }),
+      ).toThrow();
+    };
+    invalidBinding({ configurationRevision: 0, packs: [selectedPack] });
+    invalidBinding({
+      configurationRevision: 3,
+      packs: [selectedPack, { ...selectedPack, version: "2.0.0" }],
+    });
+    invalidBinding({
+      configurationRevision: 3,
+      packs: [selectedPack, { ...selectedPack, id: "org.example.a" }],
+    });
+    invalidBinding({
+      configurationRevision: 3,
+      packs: [{ ...selectedPack, artifactDigest: `sha256:${"b".repeat(64)}` }],
+    });
+    invalidBinding({
+      configurationRevision: 3,
+      packs: [{ ...selectedPack, installerId: "local-distribution" }],
+    });
+    const removed: PortableProjectState = {
+      ...selected,
+      packBinding: { configurationRevision: 4, packs: [] },
+    };
+    expect(
+      parsePortableProjectArchive(
+        serializePortableProjectArchive(
+          createPortableProjectArchive({
+            state: removed,
+            manifest: manifest(removed),
+          }),
+        ),
+      ).state.packBinding,
+    ).toEqual({ configurationRevision: 4, packs: [] });
     expect(() =>
       createPortableProjectArchive({
         state: selected,

@@ -28,6 +28,10 @@ import {
 export interface RepositoryContractHarness {
   projects: ProjectRepository;
   packBindings?: ProjectPackBindingRepository;
+  deleteProject?: (projectId: string) => Promise<void>;
+  bindingRowCounts?: (
+    projectId: string,
+  ) => Promise<{ heads: number; packs: number }>;
   tasks: TaskRepository;
   taskRequirements: TaskRequirementRepository;
   taskDependencies?: TaskDependencyRepository;
@@ -201,6 +205,26 @@ export function defineProjectStorageContracts(
           projectId,
           configurationRevision: 0,
           packs: [],
+        });
+      });
+
+      test("deleting a project cascades its binding head and exact tuples", async () => {
+        if (!harness.deleteProject || !harness.bindingRowCounts)
+          throw new Error("Pack binding cascade probes are required");
+        const projectId = (
+          await createProject(harness, `${prefix}-cascade`)
+        ).snapshot().id;
+        await bindings().replace(projectId, 0, [first, second], now);
+        await harness.deleteProject(projectId);
+        expect(await harness.projects.findById(projectId)).toBeNull();
+        expect(await bindings().get(projectId)).toEqual({
+          projectId,
+          configurationRevision: 0,
+          packs: [],
+        });
+        expect(await harness.bindingRowCounts(projectId)).toEqual({
+          heads: 0,
+          packs: 0,
         });
       });
     });

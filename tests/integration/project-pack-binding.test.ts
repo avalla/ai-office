@@ -97,6 +97,11 @@ describe("GP-05 explicit project pack binding", () => {
       expect(
         (await service().preview("project-a", [pack, pack])).issues,
       ).toMatchObject([{ code: "version_conflict" }]);
+      await expect(
+        service().preview("project-a", [
+          { ...pack, version: "not-a-version" as PackIdentity["version"] },
+        ]),
+      ).rejects.toMatchObject({ code: "malformed_request" });
       expect(await storage.packBindings.get("project-a")).toMatchObject({
         configurationRevision: 0,
         packs: [],
@@ -111,6 +116,23 @@ describe("GP-05 explicit project pack binding", () => {
         configurationRevision: 1,
         packs: [pack],
       });
+      expect(await service().preview("project-a", [])).toMatchObject({
+        current: { configurationRevision: 1, packs: [pack] },
+        proposed: [],
+        removed: [pack],
+        added: [],
+        issues: [],
+      });
+      const changedPack: PackIdentity = {
+        ...pack,
+        manifestDigest: parseManifestDigest(`sha256:${"b".repeat(64)}`),
+      };
+      expect(await service().preview("project-a", [changedPack])).toMatchObject(
+        {
+          changed: [{ before: pack, after: changedPack }],
+          issues: [{ code: "manifest_digest_mismatch" }],
+        },
+      );
       const unavailable = new InMemoryInstalledDomainPackCatalog(1, []);
       expect((await service(unavailable).read("project-a")).packs).toEqual([
         pack,
@@ -139,16 +161,36 @@ describe("GP-05 explicit project pack binding", () => {
           .get()?.count,
       ).toBe(1);
       const audit = database
-        .query<{ payload_json: string }, []>(
-          "SELECT payload_json FROM audit_event WHERE event_type='project.pack_binding_applied'",
+        .query<
+          {
+            project_id: string;
+            actor_type: string;
+            actor_id: string;
+            occurred_at: string;
+            payload_json: string;
+          },
+          []
+        >(
+          "SELECT project_id, actor_type, actor_id, occurred_at, payload_json FROM audit_event WHERE event_type='project.pack_binding_applied'",
         )
         .get();
+      expect(audit).toMatchObject({
+        project_id: "project-a",
+        actor_type: "cli",
+        actor_id: "local-operator",
+        occurred_at: "2026-10-02T00:00:00.000Z",
+      });
       expect(JSON.parse(audit!.payload_json)).toMatchObject({
+        intent: "replace",
         previousRevision: 0,
         newRevision: 1,
+        previousPacks: [],
         packs: [pack],
         result: "applied",
       });
+      expect(audit!.payload_json).not.toMatch(
+        /artifactDigest|installerId|provenance|credential|bytes/,
+      );
       await expect(
         service().apply({
           projectId: "project-a",

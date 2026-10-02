@@ -121,9 +121,12 @@ Preview is read-only. Apply checks the expected revision, validates the exact
 proposed tuples against the public GP-04 resolver, replaces the selection in
 one transaction and appends a project audit event with previous/new revisions,
 exact tuples, local operator actor and timestamp. A stale revision fails; an
-identical selection at the current revision does not increment it or add an
-audit event. The installed catalog remains host-local availability: a restored
-binding can remain valid even when its artifacts are absent on that host.
+identical selection at the current revision is a no-op even if its artifact is
+now unavailable locally: it does not increment the revision or add an audit
+event. A changed selection still requires fresh GP-04 validation. This keeps
+persisted selection valid when host-local availability changes. Preview reports
+valid selection conflicts and availability failures as issues; structurally
+malformed tuples fail with a typed request error before a preview is returned.
 
 Portable project archives use format version 5 for new backups and include
 only the exact binding tuples and configuration revision. Readers for versions
