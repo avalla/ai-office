@@ -344,6 +344,98 @@ profiles:
     }
   });
 
+  test("discovers the bound project for task dependency commands over the socket", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-task-deps-cli-"));
+    temporaryDirectories.push(projectRoot);
+    writeFileSync(join(projectRoot, "README.md"), "# Dependencies\n");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+
+    try {
+      await waitForDaemon(socket.socketPath);
+      const installed = await invoke(["install", ".", "--json"]);
+      expect([0, 2]).toContain(installed.code);
+      const projectId = (
+        JSON.parse(installed.stdout[0]!) as { project: { id: string } }
+      ).project.id;
+      const created = await invoke([
+        "task:create",
+        "--project",
+        projectId,
+        "--title",
+        "Dependent",
+      ]);
+      const prerequisite = await invoke([
+        "task:create",
+        "--project",
+        projectId,
+        "--title",
+        "Prerequisite",
+      ]);
+      expect(created.code).toBe(0);
+      expect(prerequisite.code).toBe(0);
+      const taskId = created.stdout[0]!.replace("Task created: ", "");
+      const prerequisiteId = prerequisite.stdout[0]!.replace(
+        "Task created: ",
+        "",
+      );
+
+      const added = await invoke([
+        "task:dependency:add",
+        "--task",
+        taskId,
+        "--depends-on",
+        prerequisiteId,
+        "--json",
+      ]);
+      expect(added.code).toBe(0);
+      expect(JSON.parse(added.stdout[0]!)).toMatchObject({ created: true });
+
+      const readiness = await invoke([
+        "task:readiness",
+        "--task",
+        taskId,
+        "--json",
+      ]);
+      expect(readiness.code).toBe(0);
+      expect(JSON.parse(readiness.stdout[0]!)).toMatchObject({
+        taskId,
+        runnable: false,
+        blockedBy: [{ taskId: prerequisiteId, status: "pending" }],
+      });
+
+      const removed = await invoke([
+        "task:dependency:remove",
+        "--task",
+        taskId,
+        "--depends-on",
+        prerequisiteId,
+        "--json",
+      ]);
+      expect(removed.code).toBe(0);
+      expect(JSON.parse(removed.stdout[0]!)).toMatchObject({ removed: true });
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
   test("records a historical task completion through the socket", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-daemon-task-"));
     temporaryDirectories.push(projectRoot);
