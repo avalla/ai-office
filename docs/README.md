@@ -5,6 +5,7 @@ AI Office keeps different kinds of documentation separate so current product tru
 ## Current project direction
 
 - [Project README](../README.md): product overview, current status, quick start, and concise examples.
+- [Installation guide](installation.md): source-linked installation, Runtime/service setup, project onboarding, credentials, optional infrastructure, updates, uninstall, and troubleshooting.
 - [Operating instructions](../AGENTS.md): canonical evergreen development contract for coding clients and contributors.
 - [Agent client integration](development/agent-client-integration.md): current Codex/Claude detection, planning, ownership, apply, and validation contract.
 - [Architecture overview](architecture/overview.md): current system boundaries, implemented surfaces, storage responsibilities, and trust model.
