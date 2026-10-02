@@ -18,7 +18,8 @@ parties, legal issue, deadline and professional role definitions are legal
 domain records. The document system and communication system remain sources of
 their own content and delivery outcomes. The project need not have a repository
 or coding client. The Runtime, rather than a prompt or role name, enforces
-scope, transitions and approvals.
+scope, transitions and approvals in the target design; legal matter scope and
+qualified-human identity are not current Runtime capabilities.
 
 | Stage                 | Input and output                                                                                                                            | Required authority or check                                                                                                                                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -37,6 +38,65 @@ within a bounded loop. Today the sequential pipeline foundation exists, but
 typed artifacts and bounded correction loops are future work; this probe does
 not claim the pipeline is executable now.
 
+## Data flow and authority boundaries
+
+This is the target design flow. The boxes identify the owner of each decision;
+they do not assert that source registration, artifact review, a send connector
+or authenticated human presence is implemented today.
+
+```mermaid
+flowchart LR
+  subgraph external[External authoritative systems]
+    docs[Document/source system]
+    comms[Communication system]
+  end
+  subgraph adapters[Trusted adapters and connectors]
+    intake[Authorized source read/registration]
+    identity[Identity and qualification evidence]
+    send[Typed send connector]
+  end
+  subgraph core[AI Office core authority]
+    source[Source version and anchor]
+    artifact[Artifact version and lineage]
+    review[Adversarial review on exact version]
+    professional[Exact professional approval record]
+    action[Capability, grant and exact-action approval]
+    outcome[Observed or reconciled outcome]
+  end
+  subgraph legal[Legal-domain definitions and policy]
+    claims[Claim/evidence and citation verification]
+    gate[Qualified reviewer and confidentiality gates]
+  end
+  subgraph model[Model-generated advisory output]
+    draft[Candidate extraction, research and draft]
+  end
+  subgraph human[Authenticated human decision]
+    lawyer[Lawyer reviews and decides]
+  end
+
+  docs --> intake --> source
+  source --> draft --> claims
+  source --> claims
+  claims --> artifact --> review --> gate
+  artifact --> professional
+  gate --> professional
+  lawyer --> identity --> professional
+  professional --> action --> send --> comms --> outcome
+```
+
+The authorized adapter registers a source version and anchor; legal checks
+decide whether a candidate claim has adequate evidence. A model may propose a
+claim or draft but cannot register a trusted source, establish truth, sign a
+professional approval, grant a capability or invoke `send`/filing authority.
+The lawyer's decision requires independently verified identity and
+qualification evidence before the Runtime records an exact-version
+professional approval. The controlled-action gateway then separately checks
+the grant, recipient, descriptor, artifact fingerprint, required action
+approval and current preconditions. A connector performs the one external
+attempt; the communication system owns delivery facts, which AI Office records
+as observed or explicitly unknown pending reconciliation. There is no
+model-to-send or model-to-filing authority path.
+
 ## Failure probes
 
 | Change or failure                                                                 | Expected Runtime decision                                                                                                  |
@@ -51,7 +111,7 @@ not claim the pipeline is executable now.
 
 ## Core boundary exercised
 
-Core owns the exact source/artifact/version envelope, project ownership,
+In the target design, core owns the exact source/artifact/version envelope, project ownership,
 lineage, pipeline gates, stable actor identities, deny-by-default policy,
 controlled-action lifecycle and audit. Legal definitions own matter/party/issue
 vocabulary, evidence-state meanings, citation locator and verifier, lawyer
