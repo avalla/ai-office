@@ -337,6 +337,7 @@ describe.skipIf(connectionString === undefined)(
           "pipeline",
           "returned",
           "status-only",
+          "earliest",
           "concurrent",
           "crash",
           "prerequisite",
@@ -441,6 +442,36 @@ describe.skipIf(connectionString === undefined)(
         await expect(
           database.query(
             "UPDATE core.task_execution_history SET state='unknown' WHERE task_id='start'",
+          ),
+        ).rejects.toThrow("monotonic");
+        const later = new Date("2026-09-30T12:00:00.000Z");
+        await database.query(
+          "UPDATE core.task SET status='running', updated_at=$1 WHERE id='earliest'",
+          [later],
+        );
+        expect(
+          (
+            await database.query<{ first_known_at: Date | null }>(
+              "SELECT first_known_at FROM core.task_execution_history WHERE task_id='earliest'",
+            )
+          )[0]?.first_known_at?.toISOString(),
+        ).toBe(later.toISOString());
+        await database.query(
+          `INSERT INTO core.agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at)
+          VALUES ('earliest-run','history-project','earliest','history-agent','cancelled',$1,$1)`,
+          [at],
+        );
+        expect(
+          (
+            await database.query<{ first_known_at: Date | null }>(
+              "SELECT first_known_at FROM core.task_execution_history WHERE task_id='earliest'",
+            )
+          )[0]?.first_known_at?.toISOString(),
+        ).toBe(at.toISOString());
+        await expect(
+          database.query(
+            "UPDATE core.task_execution_history SET first_known_at=$1 WHERE task_id='earliest'",
+            [later],
           ),
         ).rejects.toThrow("monotonic");
         await expect(
