@@ -1727,6 +1727,11 @@ linked to each task. Hard task prerequisites are stored as typed task dependency
 edges; descriptions retain rationale and external milestone context. GP-10A/B/C
 remain separately tracked extraction slices.
 
+GP-01's source audit and extraction map passed final repository review.
+GP-02 has a concrete but blocked contract proposal; acceptance remains gated
+by the accepted M15 work/evidence decision. Neither document adds pack Runtime
+behavior or changes the planned status of M16.
+
 Exit: development, legal, manufacturing, and empty/custom fixtures run the same
 core lifecycles without changes to core for each domain. Legacy development
 fixtures still load, resolve roles and agents, run pipelines, create tasks,

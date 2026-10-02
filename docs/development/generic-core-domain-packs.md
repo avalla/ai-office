@@ -1,9 +1,12 @@
 # M16 — Generic Core & Domain Packs: boundary audit and delivery plan
 
-Status: planned. This document records the 2026-10-01 repository audit and
-implementation tasks. It does not assert that Domain Packs exist today. The
-[roadmap](roadmap.md) owns milestone status; [ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md)
-is a proposed GP-02 decision, not an accepted current-runtime rule.
+Status: M16 planned. The GP-01 source audit was performed against `main` at
+`7886519` and passed final repository review on 2026-10-02 against PR #80 at
+`90c51cf`. GP-02 remains a blocked decision proposal. This document does not
+assert that Domain Packs exist today.
+The [roadmap](roadmap.md) owns milestone
+status; [ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md) is not an
+accepted current-runtime rule.
 
 ## Objective and decision boundary
 
@@ -26,8 +29,9 @@ Pro/Supabase completion, and a remote pack marketplace are not prerequisites.
 
 Classification is by _responsibility_, not by whether a file currently sits in
 `packages/domain`. A file can contain both reusable mechanics and a
-development-specific definition. GP-01 must confirm this inventory and record
-the exact extraction order before production work.
+development-specific definition. The rows below record the GP-01 audit; the
+source anchors and extraction order following the matrix make each boundary
+independently reviewable.
 
 | Classification                 | Current evidence                                                                                                                                                                                                                                                                                                                                         | Decision for M16                                                                                                                                                                                     |
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -57,24 +61,66 @@ the exact extraction order before production work.
 The audit distinguishes capability declaration from capability grants, role
 names from core role identity, pack workflow templates from the pipeline
 engine, repository binding from project authority, and knowledge advice from
-operational state. It also exposes planning-model limits: `task` has no
-`milestone_id`, and `task_requirement` is many-to-many; dependency and slice
-relations are not native. In the AI Office project plan, each GP task links to
-one GP requirement under M16, and its structured description records slices,
-dependencies and acceptance criteria. The graph below is the planning source
-until native relations exist.
+operational state. The planning model has explicit typed task dependency edges
+([SQLite migration](../../migrations/project/0037_task_dependencies.sql)),
+but `task` has no `milestone_id`, `task_requirement` is many-to-many, and
+delivery slices are not native relations. Each GP task links to one GP
+requirement under M16; dependency edges record task prerequisites, while
+descriptions retain external milestones and slice acceptance criteria.
+
+### GP-01 source verification and compatibility risks
+
+| Seam                          | Verified source and current behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Classification and migration risk                                                                                                                                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Project and work              | [`Project`](../../packages/domain/src/project/project.ts) is a named Runtime-local ID; [`CreateProject`](../../packages/application/src/commands/create-project.ts) also creates `repo_<projectId>`. [`Task`](../../packages/domain/src/task/task.ts) owns project-scoped transitions.                                                                                                                                                                                                                                                                                                      | **CORE** project/task authority; **ADAPTER / INTEGRATION** repository association. Non-repository creation needs a separate portable identity and legacy association reader; a synthetic `repo_` is not a neutral identity.           |
+| Agent and role                | [`Role`](../../packages/domain/src/agent/role.ts) contains project identity, version, policy, limits, `sourcePath` and guidance; [`SyncAgentDefinitions`](../../packages/application/src/commands/sync-agent-definitions.ts) derives stable IDs from YAML. [`AgentRun`](../../packages/domain/src/agent/agent-run.ts) pins run facts.                                                                                                                                                                                                                                                       | **CORE** run/role identity; **GENERIC ABSTRACTION NEEDED** definition origin; **ADAPTER / INTEGRATION** YAML sync. Pack upgrades cannot overwrite project roles or alter pinned run guidance.                                         |
+| Office and pipeline           | [`OfficeManifest`](../../packages/domain/src/office/office-manifest.ts) is schema 1 with five closed software task kinds; [validation](../../packages/application/src/office/office-manifest-schema.ts) requires a default kind and existing role for each stage. [`ApplyOfficeManifest`](../../packages/application/src/commands/apply-office-manifest.ts) appends a revision and audit in one transaction. [`PipelineRun`](../../packages/domain/src/pipeline/pipeline-run.ts) pins the revision and definition.                                                                          | **GENERIC ABSTRACTION NEEDED** task-type and definition resolution; **CORE** pipeline transitions and pinning. New pack contracts must leave schema-1 readers, revisions and active stages intact.                                    |
+| Governance and effects        | [Governance](../../packages/domain/src/governance/governance.ts) records M5 reviews/approvals; [capability policy](../../packages/domain/src/capability/policy-engine.ts) evaluates grants. [`ResourceType`](../../packages/domain/src/capability/capability.ts) includes GitHub and other connector types.                                                                                                                                                                                                                                                                                 | **CORE** governance, policy and exact-action approval; **GENERIC ABSTRACTION NEEDED** resource-type extension; **ADAPTER / INTEGRATION** connector operations. A pack declaration is never a grant, qualification or action approval. |
+| Worker and artifacts          | [`WorkerRuntime`](../../packages/application/src/ports/worker-runtime.port.ts) receives bounded, tool-free context and returns text. [`WorkerAgentExecutor`](../../packages/application/src/commands/worker-agent-executor.ts) still returns `artifacts: []`; [ADR-0021](../adr/ADR-0021-artifact-review-and-approval-workflow.md) is a conceptual accepted contract.                                                                                                                                                                                                                       | **CORE** dispatch/fencing; **GENERIC ABSTRACTION NEEDED** versioned artifact/evidence envelope. Pack validators cannot rely on artifact review being implemented yet.                                                                 |
+| Knowledge                     | [`KnowledgeScope`](../../packages/application/src/ports/agent-knowledge-store.port.ts) requires trusted tenant plus portable `repositoryId`; [`RunContextAssembler`](../../packages/application/src/context/run-context-assembler.ts) injects bounded advisory hits.                                                                                                                                                                                                                                                                                                                        | **CORE** knowledge port and trusted scope; **GENERIC ABSTRACTION NEEDED** non-repository scope. Preserve old keys and provenance; pack content cannot choose tenant or operational state.                                             |
+| Repository and clients        | [Project import](../../packages/application/src/commands/import-project.ts), [scanner](../../packages/runtime-host/src/local-project-scanner.ts), [lifecycle](../../packages/runtime-host/src/commands/lifecycle.ts), [CLI](../../apps/cli/src/daemon-cli.ts) and [offline status](../../apps/cli/src/offline-project-status.ts) treat a checkout as the entry path.                                                                                                                                                                                                                        | **ADAPTER / INTEGRATION** software project entry. Preserve `install/status/next`, local path semantics, binding and snapshot compatibility while a non-repository path is added separately.                                           |
+| Software defaults and prompts | The [default manifest](../../.agents/skills/ai-office/assets/default-office-manifest.json) defines software roles and workflows. [Permission preferences](../../packages/domain/src/project/project-profile.ts) include tests/commits; the [instruction contract](../../packages/domain/src/agent/project-instruction-contract.ts) and [compiler input](../../packages/application/src/project-lifecycle/build-project-instructions.ts) require repository/testing concepts. [Requirement validation](../../packages/runtime-host/src/commands/requirement.ts) says “software requirement.” | **DEVELOPMENT PACK** defaults, terminology and guidance; **DOCUMENTATION ONLY** user-facing examples. Existing generated guidance and approvals remain valid until a versioned reader and parity fixture exist.                       |
+| Authoritative schema          | SQLite [office revision](../../migrations/project/0017_skill_first_office.sql) and PostgreSQL [office revision](../../supabase/migrations/20260922020000_office_manifest_pipeline_authority.sql) both constrain `schema_version = 1`; SQLite [pipeline pinning](../../migrations/project/0020_pipeline_enforcement.sql) fixes exact definition and project ownership. [Task–requirement links](../../migrations/project/0026_task_requirement_linkage.sql) are explicit and many-to-many.                                                                                                   | **CORE** authoritative persistence; **GENERIC ABSTRACTION NEEDED** forward schema evolution. No in-place migration rewrite, sidecar authority, or semantic inference from task titles.                                                |
+| Regression surface            | [Manifest validation tests](../../tests/unit/office-manifest-schema.test.ts), [storage contracts](../../tests/contracts/office-manifest-repository.contract.ts) and [daemon task lifecycle tests](../../tests/e2e/task-lifecycle-cli.test.ts) exercise current behavior. [Architecture overview](../architecture/overview.md) and [README](../../README.md) describe current software-first operation.                                                                                                                                                                                      | **CORE** regression contract; **DOCUMENTATION ONLY** current-product claims. Retain old fixtures and add upgrade, zero-pack and cross-domain fixtures in later GP slices.                                                             |
+
+Verified dependency path (arrows indicate data or authority flow, not a new
+implementation):
+
+```text
+host-local installed catalog --trusted availability check--+
+                                                     |
+ProjectStorage binding + project-owned definitions/overrides
+  --deterministic resolution, using both inputs--> effective project configuration
+  --pin--> PipelineRun / AgentRun --dispatch--> WorkerRuntime
+                                   |                  |
+                                   |                  +--> advisory AgentKnowledgeStore
+                                   +--> core policy / approval / audit
+                                             +--> controlled connector action
+```
+
+Extraction order: (1) preserve schema-1 and repository fixtures; (2) accept the
+M15 project/evidence boundary and the GP-02 contract; (3) introduce generic
+types and catalog without changing stored behavior; (4) persist explicit
+bindings and resolve project overrides; (5) verify an implicit development
+compatibility profile against old state; (6) extract software defaults and
+prompts; (7) exercise legal, manufacturing and zero-pack fixtures; (8) enforce
+core-purity and upgrade gates. GP-03 onward owns implementation and migrations.
 
 ## Target contract and acceptance scenarios
 
-The target `DomainPackManifest` is a _concept_, not a frozen TypeScript API.
-GP-02 chooses syntax after checking the current versioned office manifest,
-ports, package layout, and M15 decision. At minimum it identifies pack ID,
-immutable version/digest, manifest schema and core compatibility, metadata,
-dependencies, and independently validated declarations. A project selects
+The target `DomainPackManifest` is a proposed contract, not a shipped TypeScript
+API. ADR-0026 defines a candidate syntax after checking the current versioned
+office manifest, ports and package layout; acceptance awaits the M15 decision.
+At minimum it identifies pack ID, immutable version, `manifestDigest`,
+manifest schema and core compatibility, metadata, dependencies, and
+independently validated declarations. A project selects
 pack versions explicitly where it has migrated. Project definitions and
 overrides determine the effective roles, agents, pipelines, prompts, policies,
 artifacts, validators and knowledge behavior. Required capabilities resolve
 to registered adapter contracts at validation/bootstrap; grants remain separate.
+The host-local catalog checks an independent `artifactDigest` for its installed
+file; it is availability state, not `ProjectStorage` authority or portable
+project state. A binding never arises from package discovery.
 
 Four fixtures must ultimately use the **same** Runtime, task and agent
 lifecycle, pipeline engine, approval/audit/provenance model, authoritative
@@ -138,7 +184,8 @@ another roadmap milestone.
 Every GP key is also a project requirement key. Each row gives the task's
 objective, smallest delivery slice, acceptance, artifact/verification, and
 explicit exclusion. The linked AI Office task and requirement descriptions
-carry the same fields. All remain planned/proposed.
+carry the same fields. GP-01 has passed review; later tasks remain
+planned/proposed or blocked by their stated prerequisites.
 
 | ID and title                                       | Depends on                        | Slice and acceptance                                                                                                                                                                                                     | Artifact / verification                                                                                              | Non-goal                                                  |
 | -------------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
