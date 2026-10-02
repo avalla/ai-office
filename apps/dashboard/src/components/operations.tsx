@@ -258,128 +258,157 @@ export function ActivityList({
 export function PipelineTimeline({
   pipeline,
   runs = [],
+  runSample,
 }: {
   pipeline: PipelineRunState;
   runs?: readonly AgentRunState[];
+  runSample?: BoundedList<AgentRunState>;
 }) {
-  const associatedRuns = runs.filter(
-    (run) => run.pipelineRunId === pipeline.pipelineRunId,
-  );
+  const associatedRuns = activePipelineRuns(runs, pipeline.pipelineRunId);
   return (
-    <ol className="space-y-0 border-l-2 border-border pl-6">
-      {pipeline.stages.map((stage) => {
-        const current = pipeline.currentStage?.stageRunId === stage.stageRunId;
-        const Icon =
-          stage.status === "completed"
-            ? Check
-            : stage.status === "active"
-              ? LoaderCircle
-              : stage.status === "awaiting_approval"
-                ? Pause
-                : stage.status === "cancelled"
-                  ? X
-                  : Circle;
-        return (
-          <li
-            key={stage.stageRunId}
-            className={cn("relative pb-6", current && "font-medium")}
-          >
-            <span
-              className={cn(
-                "absolute -left-[2.06rem] top-0 rounded-full border bg-surface p-1",
-                current
-                  ? "border-primary text-primary"
-                  : "border-border text-subtle",
-              )}
+    <div className="space-y-3">
+      <ol className="space-y-0 border-l-2 border-border pl-6">
+        {pipeline.stages.map((stage) => {
+          const current =
+            pipeline.currentStage?.stageRunId === stage.stageRunId;
+          const Icon =
+            stage.status === "completed"
+              ? Check
+              : stage.status === "active"
+                ? LoaderCircle
+                : stage.status === "awaiting_approval"
+                  ? Pause
+                  : stage.status === "cancelled"
+                    ? X
+                    : Circle;
+          return (
+            <li
+              key={stage.stageRunId}
+              className={cn("relative pb-6", current && "font-medium")}
             >
-              <Icon size={16} aria-hidden="true" />
-            </span>
-            <div
-              className={cn(
-                "rounded-lg p-3",
-                current &&
-                  "border border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950",
-              )}
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <strong>{stage.name}</strong>
-                {current && (
-                  <span className="text-xs font-semibold uppercase text-blue-700 dark:text-blue-300">
-                    Current stage
-                  </span>
+              <span
+                className={cn(
+                  "absolute -left-[2.06rem] top-0 rounded-full border bg-surface p-1",
+                  current
+                    ? "border-primary text-primary"
+                    : "border-border text-subtle",
                 )}
-                <StatusBadge
-                  label={stage.status}
-                  tone={
-                    stage.status === "completed"
-                      ? "good"
-                      : stage.status === "active"
-                        ? "active"
-                        : stage.status === "awaiting_approval"
-                          ? "attention"
-                          : "neutral"
-                  }
-                />
-              </div>
-              <p className="mt-1 text-sm text-subtle">{stage.objective}</p>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                <span>
-                  Assigned:{" "}
-                  <strong>{stage.assignedAgent?.name ?? "No agent"}</strong>
-                </span>
-                {stage.assignedAt && (
-                  <span>Assigned {formatTimestamp(stage.assignedAt)}</span>
+              >
+                <Icon size={16} aria-hidden="true" />
+              </span>
+              <div
+                className={cn(
+                  "rounded-lg p-3",
+                  current &&
+                    "border border-blue-300 bg-blue-50 dark:border-blue-800 dark:bg-blue-950",
                 )}
-                {stage.completedAt && (
-                  <span>Completed {formatTimestamp(stage.completedAt)}</span>
-                )}
-                {stage.requiresApproval && (
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <strong>{stage.name}</strong>
+                  {current && (
+                    <span className="text-xs font-semibold uppercase text-blue-700 dark:text-blue-300">
+                      Current stage
+                    </span>
+                  )}
+                  <StatusBadge
+                    label={stage.status}
+                    tone={
+                      stage.status === "completed"
+                        ? "good"
+                        : stage.status === "active"
+                          ? "active"
+                          : stage.status === "awaiting_approval"
+                            ? "attention"
+                            : "neutral"
+                    }
+                  />
+                </div>
+                <p className="mt-1 text-sm text-subtle">{stage.objective}</p>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm">
                   <span>
-                    Approval:{" "}
-                    {stage.approvalDecision ??
-                      (stage.status === "awaiting_approval"
-                        ? "waiting"
-                        : "required")}
+                    Assigned:{" "}
+                    <strong>{stage.assignedAgent?.name ?? "No agent"}</strong>
                   </span>
-                )}
+                  {stage.assignedAt && (
+                    <span>Assigned {formatTimestamp(stage.assignedAt)}</span>
+                  )}
+                  {stage.completedAt && (
+                    <span>Completed {formatTimestamp(stage.completedAt)}</span>
+                  )}
+                  {stage.requiresApproval && (
+                    <span>
+                      Approval:{" "}
+                      {stage.approvalDecision ??
+                        (stage.status === "awaiting_approval"
+                          ? "waiting"
+                          : "required")}
+                    </span>
+                  )}
+                </div>
               </div>
-              {current && (
-                <p className="mt-2 text-sm">
-                  Pipeline active runs:{" "}
-                  {associatedRuns.length
-                    ? associatedRuns.map((run) => (
-                        <Link
-                          className="mr-2 inline-block"
-                          key={run.runId}
-                          to={`/runs/${encodeURIComponent(run.runId)}`}
-                        >
-                          {run.agent?.name ?? "Agent unavailable"} ·{" "}
-                          <Id value={run.runId} />
-                        </Link>
-                      ))
-                    : "none in displayed sample"}
-                </p>
-              )}
-            </div>
-          </li>
-        );
-      })}
-    </ol>
+            </li>
+          );
+        })}
+      </ol>
+      <div className="text-sm">
+        <p>
+          Pipeline active runs:{" "}
+          {associatedRuns.length
+            ? associatedRuns.map((run) => (
+                <Link
+                  className="mr-2 inline-block"
+                  key={run.runId}
+                  to={`/runs/${encodeURIComponent(run.runId)}`}
+                >
+                  {run.agent?.name ?? "Agent unavailable"} ·{" "}
+                  <Id value={run.runId} />
+                </Link>
+              ))
+            : activeRunAbsence(runSample)}
+        </p>
+        <p className="text-xs text-subtle">
+          These runs belong to the pipeline; their specific stage is not
+          available in the read model.
+        </p>
+      </div>
+    </div>
   );
+}
+
+/** A pipeline association is historical; only a non-terminal run is active evidence. */
+export function activePipelineRuns(
+  runs: readonly AgentRunState[],
+  pipelineRunId: string,
+): AgentRunState[] {
+  return runs.filter(
+    (run) => !run.terminal && run.pipelineRunId === pipelineRunId,
+  );
+}
+
+export function activeRunAbsence(sample?: BoundedList<AgentRunState>): string {
+  if (sample === undefined) return "No active run shown in this view";
+  if (!sample.truncated && sample.items.length === sample.total)
+    return "No matching active run in complete sample";
+  return sample.truncated
+    ? "No matching active run in truncated sample"
+    : "No matching active run in displayed sample";
 }
 
 export function PipelinePanel({
   pipeline,
   runs = [],
+  runSample,
   compact = false,
 }: {
   pipeline: PipelineRunState;
   runs?: readonly AgentRunState[];
+  runSample?: BoundedList<AgentRunState>;
   compact?: boolean;
 }) {
   const current = pipeline.currentStage;
-  const matchingRuns = runs.filter(
-    (run) => run.pipelineRunId === pipeline.pipelineRunId,
+  const matchingRuns = activePipelineRuns(
+    runSample?.items ?? runs,
+    pipeline.pipelineRunId,
   );
   const workingNames = [
     ...new Set(
@@ -426,7 +455,7 @@ export function PipelinePanel({
             label: "Working on pipeline",
             value: workingNames.length
               ? workingNames.join(", ")
-              : "No active run in sample",
+              : activeRunAbsence(runSample),
           },
           {
             label: "Stages",
@@ -445,7 +474,13 @@ export function PipelinePanel({
       {pipeline.attentionReasons.length > 0 && (
         <AttentionList items={pipeline.attentionReasons} />
       )}
-      {!compact && <PipelineTimeline pipeline={pipeline} runs={runs} />}
+      {!compact && (
+        <PipelineTimeline
+          pipeline={pipeline}
+          runs={matchingRuns}
+          {...(runSample ? { runSample } : {})}
+        />
+      )}
     </Card>
   );
 }
@@ -738,7 +773,11 @@ export function TaskRow({
           : "—"}
       </td>
       <td>
-        {working.length ? working.join(", ") : "No active run"}
+        {working.length
+          ? working.join(", ")
+          : task.activeAgentRuns.total === 0
+            ? "No active run"
+            : "No active run shown in sample"}
         {task.activeAgentRuns.total > working.length && (
           <span className="block text-xs text-subtle">
             {task.activeAgentRuns.total} active runs; {working.length} shown

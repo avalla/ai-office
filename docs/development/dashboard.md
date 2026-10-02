@@ -309,10 +309,10 @@ client conflates:
 
 The invariant is: **once the dashboard says `live`, the current route has been
 re-queried after the most recent stream connection was established.** It is
-expressed as a sync token pairing the connection epoch with the route key — a
-new connection bumps the epoch, a navigation changes the route key, and a
-refresh adopts the token it started under only when it _succeeds_. A failed
-query therefore never reads as `live`.
+expressed as a sync token combining connection epoch, navigation revision, and
+route key. A new connection bumps the epoch; every navigation bumps the
+revision, including A → B → A. The browser accepts a response only if its token
+is still current. A failed query therefore never reads as `live`.
 
 The reconnect refresh reuses the same single-flight-plus-debounce path as
 invalidations, so a reconnect storm, an invalidate burst, a hash-route change,
@@ -695,6 +695,9 @@ read model. The UI labels the pipeline's current stage as pipeline context and
 does not claim that a given run executed that stage. Stage start time and an
 exact global pending-approval count are likewise unavailable. Direct task
 milestone membership remains `task_milestone_link_not_modelled`.
+Pipeline work indicators use only non-terminal runs associated with the
+pipeline. A complete active-run sample can establish absence; a truncated
+sample can only say that no matching run is shown.
 
 ### Execution evidence and generated output
 
@@ -702,6 +705,8 @@ Run rows and detail identify the recorded executor: simulation, controlled actio
 or real worker. Missing historical provenance is explicitly unknown. Agent
 liveness is labelled “active run”; it is not proof of model execution. A worker
 run detail displays its bounded final output, adapter/version and input digest,
-reported model/session and optional usage estimate. Content is escaped as text;
+selected model routing, reported model/session and optional usage estimate.
+Gateway runs additionally display the sanitized provider usage and cost evidence
+separately from advisory worker-reported estimates. Content is escaped as text;
 raw client envelopes and hidden reasoning are not projected. Generated output
 does not attest to file changes, successful tests, task completion or approval.

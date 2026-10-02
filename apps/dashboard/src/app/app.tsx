@@ -193,7 +193,7 @@ function DashboardShell() {
 
   useEffect(() => {
     const sync = createSyncController({
-      refresh: async (nextRoute: DashboardRoute) => {
+      refresh: async (nextRoute: DashboardRoute, isCurrent) => {
         const nextKey = routeHref(nextRoute);
         setSnapshot((previous) => ({
           key: nextKey,
@@ -205,11 +205,11 @@ function DashboardShell() {
             queryRoute(nextRoute),
             getProjectSummaries(),
           ]);
-          if (routeHref(parseRoute(window.location.hash)) !== nextKey) return;
+          if (!isCurrent()) return;
           setProjects(list);
           setSnapshot({ key: nextKey, data, loading: false });
         } catch (error) {
-          if (routeHref(parseRoute(window.location.hash)) !== nextKey) return;
+          if (!isCurrent()) return;
           const message =
             error instanceof Error ? error.message : "Unknown query error";
           setSnapshot({ key: nextKey, error: message, loading: false });

@@ -17,9 +17,9 @@
  * > Once the dashboard reports `live`, the current route has been re-queried
  * > after the most recent stream connection was established.
  *
- * It is expressed as a *sync token* — the connection epoch paired with the
- * route key. Every connection bumps the epoch and every navigation changes the
- * route key, so either one invalidates the token. A refresh captures the token
+ * It is expressed as a *sync token* — the connection epoch, navigation
+ * revision, and route key. Every connection bumps the epoch and every
+ * navigation bumps the revision, including A → B → A. A refresh captures the token
  * it started under and adopts it only when it *succeeds*; the state is `live`
  * only while the adopted token still equals the current one.
  *
@@ -46,10 +46,11 @@ export type ConnectionState =
 
 export interface SyncControllerOptions {
   /**
-   * Re-queries authoritative state for `route` and renders it. Must reject when
-   * the query failed: a failed refresh never counts as a synchronization.
+   * Re-queries authoritative state for `route` and renders it only while
+   * `isCurrent()` is true. Must reject when the query failed: a failed refresh
+   * never counts as a synchronization.
    */
-  refresh: (route: DashboardRoute) => Promise<void>;
+  refresh: (route: DashboardRoute, isCurrent: () => boolean) => Promise<void>;
   /** The route the shell should display right now. */
   currentRoute: () => DashboardRoute;
   /** Called whenever the reported state changes, and never otherwise. */
@@ -88,6 +89,7 @@ export function createSyncController(
    * under an older epoch cannot vouch for the current one.
    */
   let epoch = 0;
+  let routeRevision = 0;
   let connected = false;
   let everConnected = false;
   let syncToken: string | null = null;
@@ -100,7 +102,7 @@ export function createSyncController(
   let debounce: number | undefined;
 
   const currentToken = (): string =>
-    `${epoch}:${routeKey(options.currentRoute())}`;
+    `${epoch}:${routeRevision}:${routeKey(options.currentRoute())}`;
 
   const computeState = (): ConnectionState => {
     if (!connected) return everConnected ? "reconnecting" : "connecting";
@@ -129,10 +131,10 @@ export function createSyncController(
         // Route and epoch are captured together, before the await, so the
         // token can only be adopted for the state that was actually fetched.
         const route = options.currentRoute();
-        const token = `${epoch}:${routeKey(route)}`;
+        const token = currentToken();
         emit();
         try {
-          await options.refresh(route);
+          await options.refresh(route, () => token === currentToken());
           syncToken = token;
         } catch {
           // The shell renders the failure. Leaving the token unadopted keeps
@@ -181,6 +183,7 @@ export function createSyncController(
     routeChanged(): void {
       // A navigation is a user action; it refreshes immediately rather than
       // waiting out the invalidation debounce. `run` still serializes it.
+      routeRevision += 1;
       emit();
       void run();
     },

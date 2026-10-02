@@ -19,9 +19,11 @@ import {
 import {
   OverviewPage,
   PipelineDetail,
+  PipelinesPage,
   ProjectPage,
   RunPage,
   TaskPage,
+  WorkPage,
 } from "../../apps/dashboard/src/features/pages.tsx";
 import {
   parseRoute,
@@ -360,6 +362,28 @@ describe("React dashboard routes", () => {
     expect(parseRoute("#/projects/project-1/tasks?priority=abc").kind).toBe(
       "invalid",
     ));
+  test("task filters survive list, detail, and refreshed route parsing", () => {
+    const list = parseRoute(
+      "#/projects/project-1/tasks?search=advice&status=active&priority=0&agent=agent-1&milestone=milestone-1&sort=short_name&offset=20",
+    );
+    expect(list.kind).toBe("project");
+    if (list.kind !== "project" || list.taskQuery === undefined) return;
+    const detailRoute = {
+      kind: "task" as const,
+      projectId: "project-1",
+      taskId: "task-1",
+      taskQuery: list.taskQuery,
+    };
+    expect(parseRoute(routeHref(list))).toEqual(list);
+    expect(parseRoute(routeHref(detailRoute))).toEqual(detailRoute);
+    const page = html(TaskPage, {
+      data: { kind: "task", detail },
+      taskQuery: list.taskQuery,
+    });
+    expect(page).toContain("search=advice");
+    expect(page).toContain("agent=agent-1");
+    expect(page).toContain("offset=20");
+  });
 });
 describe("operational presentation", () => {
   test("shows assigned and working agents separately, including concurrent runs", () => {
@@ -384,8 +408,133 @@ describe("operational presentation", () => {
       agents: [],
     });
     expect(markup).toContain("Review Agent");
-    expect(markup).toContain("No active run");
+    expect(markup).toContain("No matching active run in complete sample");
     expect(markup).not.toContain("Worker Agent");
+  });
+  test("pipeline detail excludes a terminal run even when it appears in the supplied list", () => {
+    const historical: AgentRunState = {
+      ...run("run-completed"),
+      status: "completed",
+      terminal: true,
+      completedAt: now,
+      durationMs: 1_000,
+    };
+    const markup = html(PipelineDetail, {
+      pipeline,
+      runs: { total: 1, items: [historical], truncated: false },
+      agents: [],
+    });
+    expect(markup).toContain("No matching active run in complete sample");
+    expect(markup).not.toContain("Worker Agent");
+  });
+  test("only a non-terminal pipeline run is shown as active execution", () => {
+    const markup = html(PipelinePanel, {
+      pipeline,
+      runs: [run("run-running")],
+    });
+    expect(markup).toContain("Working on pipeline");
+    expect(markup).toContain("Worker Agent");
+    expect(markup).toContain("Pipeline active runs:");
+    expect(markup).toContain("run-running");
+  });
+  test.each(["completed", "failed", "cancelled"] as const)(
+    "%s run remains historical in a pipeline panel and Run Detail",
+    (status) => {
+      const historical: AgentRunState = {
+        ...run(`run-${status}`),
+        status,
+        terminal: true,
+        completedAt: now,
+        durationMs: 1_000,
+      };
+      const panel = html(PipelinePanel, { pipeline, runs: [historical] });
+      expect(panel).toContain("No active run shown in this view");
+      expect(panel).toContain(
+        "Pipeline active runs: No active run shown in this view",
+      );
+      expect(panel).not.toContain("Worker Agent");
+
+      const page = html(RunPage, {
+        data: {
+          kind: "run",
+          detail: {
+            run: historical,
+            pipeline,
+            events: { total: 0, items: [], truncated: false },
+            reviews: [],
+            actions: [],
+            activity: { items: [], nextCursor: null },
+            attentionReasons: [],
+          },
+          task: null,
+        },
+      });
+      expect(page).toContain("No active run shown in this view");
+      expect(page).toContain(
+        "Pipeline active runs: No active run shown in this view",
+      );
+    },
+  );
+  test("global pipelines use matching active runs from the overview sample", () => {
+    const elsewhere: AgentRunState = {
+      ...run("run-elsewhere", {
+        agentId: "agent-3",
+        name: "Elsewhere Agent",
+        roleId: "role-3",
+        roleKey: "elsewhere",
+      }),
+      pipelineRunId: "pipeline-elsewhere",
+    };
+    const page = html(PipelinesPage, {
+      data: {
+        kind: "pipelines",
+        overview: {
+          ...overview,
+          activeRuns: {
+            total: 2,
+            items: [run("run-matching"), elsewhere],
+            truncated: false,
+          },
+        },
+        pipelines: new Map([
+          ["project-1", { total: 1, items: [pipeline], truncated: false }],
+        ]),
+      },
+    });
+    expect(page).toContain("Worker Agent");
+    expect(page).not.toContain("Elsewhere Agent");
+  });
+  test("global pipeline sample absence is explicit when truncated", () => {
+    const elsewhere = {
+      ...run("run-elsewhere"),
+      pipelineRunId: "pipeline-elsewhere",
+    };
+    const page = html(PipelinesPage, {
+      data: {
+        kind: "pipelines",
+        overview: {
+          ...overview,
+          activeRuns: { total: 3, items: [elsewhere], truncated: true },
+        },
+        pipelines: new Map([
+          ["project-1", { total: 1, items: [pipeline], truncated: false }],
+        ]),
+      },
+    });
+    expect(page).toContain("No matching active run in truncated sample");
+    expect(page).toContain("Showing 1 of 3 active runs");
+    expect(page).not.toContain("No matching active run in complete sample");
+  });
+  test("a complete active-run sample can establish exact pipeline absence", () => {
+    const page = html(PipelinePanel, {
+      pipeline,
+      runSample: {
+        total: 1,
+        items: [{ ...run("run-elsewhere"), pipelineRunId: "other" }],
+        truncated: false,
+      },
+    });
+    expect(page).toContain("No matching active run in complete sample");
   });
   test("shows approval and review as separate recorded attention", () => {
     const awaitingStage = {
@@ -417,7 +566,9 @@ describe("operational presentation", () => {
     expect(pipelineMarkup).toContain(
       "Approval is required before the next stage",
     );
-    expect(pipelineMarkup).toContain("No active run");
+    expect(pipelineMarkup).toContain(
+      "No matching active run in complete sample",
+    );
 
     const runMarkup = html(RunPage, {
       data: {
@@ -485,6 +636,44 @@ describe("operational presentation", () => {
     });
     expect(home).toContain("8</dd>");
     expect(home).toContain("Showing 1 of 8 active runs");
+  });
+  test("empty bounded samples do not erase authoritative active work", () => {
+    const sampledOverview: DashboardOverview = {
+      ...overview,
+      activeRuns: { total: 2, items: [], truncated: true },
+    };
+    const samples = new Map([
+      ["project-1", { total: 1, items: [], truncated: true }],
+    ]);
+    const home = html(OverviewPage, {
+      data: { kind: "overview", overview: sampledOverview, pipelines: samples },
+    });
+    expect(home).toContain("No active run shown in the displayed sample.");
+    expect(home).not.toContain("No active runs recorded.");
+
+    const work = html(WorkPage, {
+      data: { kind: "work", overview: sampledOverview, pipelines: samples },
+    });
+    expect(work).toContain("No active pipeline shown in the displayed samples.");
+    const globalPipelines = html(PipelinesPage, {
+      data: {
+        kind: "pipelines",
+        overview: sampledOverview,
+        pipelines: new Map(),
+      },
+    });
+    expect(globalPipelines).toContain(
+      "No active pipeline shown in the displayed samples.",
+    );
+
+    const unsampledTask: TaskOperationalState = {
+      ...task,
+      activeAgentRuns: { total: 2, items: [], truncated: true },
+    };
+    const row = html(TaskTable, { tasks: [unsampledTask] });
+    expect(row).toContain("No active run shown in sample");
+    expect(row).toContain("2 active runs; 0 shown");
+    expect(row).not.toContain("No active run</td>");
   });
   test("renders generic stage and role names without development vocabulary", () => {
     const markup = html(PipelinePanel, { pipeline });

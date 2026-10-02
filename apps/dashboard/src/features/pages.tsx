@@ -13,6 +13,8 @@ import { taskPageParameters } from "@ai-office/application/protocol/query-protoc
 import type { DashboardData } from "../api/client.ts";
 import {
   ActivityList,
+  activePipelineRuns,
+  activeRunAbsence,
   AgentTable,
   AttentionList,
   DataNote,
@@ -203,7 +205,11 @@ export function OverviewPage({
             </table>
           </div>
         ) : (
-          <Empty>No active runs recorded.</Empty>
+          <Empty>
+            {overview.activeRuns.total === 0
+              ? "No active runs recorded."
+              : "No active run shown in the displayed sample."}
+          </Empty>
         )}
         <DataNote list={overview.activeRuns} noun="active runs" />
         {currentPipelines.length > 0 && (
@@ -212,7 +218,7 @@ export function OverviewPage({
               <PipelinePanel
                 key={pipeline.pipelineRunId}
                 pipeline={pipeline}
-                runs={overview.activeRuns.items}
+                runSample={overview.activeRuns}
                 compact
               />
             ))}
@@ -307,12 +313,18 @@ export function WorkPage({
             <PipelinePanel
               key={pipeline.pipelineRunId}
               pipeline={pipeline}
-              runs={data.overview.activeRuns.items}
+              runSample={data.overview.activeRuns}
               compact
             />
           ))}
         </div>
-        {currentPipelines.length === 0 && <Empty>No active pipelines.</Empty>}
+        {currentPipelines.length === 0 && (
+          <Empty>
+            {data.overview.totals.activePipelineRuns === 0
+              ? "No active pipelines."
+              : "No active pipeline shown in the displayed samples."}
+          </Empty>
+        )}
         {[...data.pipelines.values()].map((sample, index) => (
           <DataNote key={index} list={sample} noun="active pipelines" />
         ))}
@@ -368,6 +380,7 @@ export function PipelinesPage({
         "Active pipelines",
         `${data.overview.totals.activePipelineRuns} active across all projects`,
       )}
+      <DataNote list={data.overview.activeRuns} noun="active runs" />
       {samples.length ? (
         samples.map(([id, sample]) => (
           <Section
@@ -384,6 +397,7 @@ export function PipelinesPage({
                 <PipelinePanel
                   key={pipeline.pipelineRunId}
                   pipeline={pipeline}
+                  runSample={data.overview.activeRuns}
                   compact
                 />
               ))}
@@ -392,7 +406,11 @@ export function PipelinesPage({
           </Section>
         ))
       ) : (
-        <Empty>No active pipelines recorded.</Empty>
+        <Empty>
+          {data.overview.totals.activePipelineRuns === 0
+            ? "No active pipelines recorded."
+            : "No active pipeline shown in the displayed samples."}
+        </Empty>
       )}
     </div>
   );
@@ -532,7 +550,7 @@ function ProjectOverview({
             <PipelinePanel
               key={pipeline.pipelineRunId}
               pipeline={pipeline}
-              runs={activeRuns.items}
+              runSample={activeRuns}
               compact
             />
           ))}
@@ -651,9 +669,7 @@ export function PipelineDetail({
   runs: BoundedList<AgentRunState>;
   agents: readonly AgentState[];
 }) {
-  const matching = runs.items.filter(
-    (run) => run.pipelineRunId === pipeline.pipelineRunId,
-  );
+  const matching = activePipelineRuns(runs.items, pipeline.pipelineRunId);
   const current = pipeline.currentStage;
   const involved = agents.filter(
     (agent) =>
@@ -728,7 +744,7 @@ export function PipelineDetail({
                       ),
                     ),
                   ].join(", ")
-                : "No active run in displayed sample",
+                : activeRunAbsence(runs),
             },
             { label: "Active runs shown", value: matching.length },
           ]}
@@ -741,7 +757,11 @@ export function PipelineDetail({
         )}
       </div>
       <Section title="Stage timeline">
-        <PipelineTimeline pipeline={pipeline} runs={matching} />
+        <PipelineTimeline
+          pipeline={pipeline}
+          runs={matching}
+          runSample={runs}
+        />
       </Section>
       <Section
         title="Agents involved"
@@ -1428,11 +1448,69 @@ export function RunPage({
                 value: pipeline?.currentStage?.name ?? "—",
               },
               {
-                label: "Execution adapter",
-                value: run.execution
-                  ? `${run.execution.kind} · ${run.execution.adapterId} · ${run.execution.adapterVersion}`
-                  : "Not recorded",
+                label: "Executor kind",
+                value: run.execution?.kind ?? "Not recorded",
               },
+              {
+                label: "Adapter ID",
+                value: run.execution?.adapterId ?? "Not recorded",
+              },
+              {
+                label: "Adapter version",
+                value: run.execution?.adapterVersion ?? "Not recorded",
+              },
+              {
+                label: "Input SHA-256",
+                value: run.execution?.inputHash ? (
+                  <code className="break-all font-mono text-xs">
+                    {run.execution.inputHash}
+                  </code>
+                ) : (
+                  "Not recorded"
+                ),
+              },
+              {
+                label: "Model routing before execution",
+                value:
+                  run.model === null
+                    ? "Not recorded (historical run)"
+                    : run.model.status === "unrouted"
+                      ? "Unrouted · executor default"
+                      : "Resolved",
+              },
+              ...(run.model?.status === "resolved"
+                ? [
+                    {
+                      label: "Selected model",
+                      value: run.model.selection.modelRef,
+                    },
+                    {
+                      label: "Selection source",
+                      value: run.model.selection.source,
+                    },
+                    {
+                      label: "Model policy",
+                      value: run.model.selection.policy,
+                    },
+                    {
+                      label: "Model profile",
+                      value: run.model.selection.profile ?? "No profile",
+                    },
+                    {
+                      label: "Selected reasoning effort",
+                      value:
+                        run.model.selection.reasoningEffort ?? "Not specified",
+                    },
+                    {
+                      label: "Selected max output tokens",
+                      value:
+                        run.model.selection.maxOutputTokens ?? "Not specified",
+                    },
+                  ]
+                : []),
+              ...(run.worktreePath
+                ? [{ label: "Worktree path", value: run.worktreePath }]
+                : []),
               { label: "Created", value: formatTimestamp(run.createdAt) },
               { label: "Started", value: formatTimestamp(run.startedAt) },
               { label: "Ended", value: formatTimestamp(run.completedAt) },
@@ -1528,15 +1606,127 @@ export function RunPage({
       </div>
       {workerOutput && (
         <Section title="Worker output">
-          <Card>
+          <Card className="space-y-5">
             <p className="text-sm text-subtle">
               Generated content does not establish file changes, test success or
               approval.
             </p>
-            <h3 className="mt-3 font-semibold">{workerOutput.summary}</h3>
-            <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words text-sm">
+            <h3 className="font-semibold">{workerOutput.summary}</h3>
+            <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words text-sm">
               {workerOutput.content}
             </pre>
+            <div className="border-t border-border pt-4">
+              <h3 className="mb-3 font-semibold">Worker report</h3>
+              <FactGrid
+                facts={[
+                  {
+                    label: "Reported model",
+                    value: workerOutput.model ?? "Not reported",
+                  },
+                  {
+                    label: "Session ID",
+                    value: workerOutput.sessionId ?? "Not reported",
+                  },
+                  {
+                    label: "Worker reported input tokens",
+                    value: workerOutput.usage?.inputTokens ?? "Not reported",
+                  },
+                  {
+                    label: "Worker reported output tokens",
+                    value: workerOutput.usage?.outputTokens ?? "Not reported",
+                  },
+                  {
+                    label: "CLI cost estimate (advisory)",
+                    value:
+                      workerOutput.estimatedCostUsd === null
+                        ? "Not reported"
+                        : `USD ${new Intl.NumberFormat("en-US", { maximumSignificantDigits: 8 }).format(workerOutput.estimatedCostUsd)}`,
+                  },
+                ]}
+              />
+            </div>
+            {workerOutput.metering && (
+              <div className="border-t border-border pt-4">
+                <h3 className="mb-3 font-semibold">Gateway metering</h3>
+                <FactGrid
+                  facts={[
+                    {
+                      label: "Provider",
+                      value: workerOutput.metering.providerId,
+                    },
+                    {
+                      label: "Actual model",
+                      value: workerOutput.metering.model,
+                    },
+                    {
+                      label: "Provider request ID",
+                      value:
+                        workerOutput.metering.providerRequestId ??
+                        "Not reported",
+                    },
+                    {
+                      label: "Input tokens",
+                      value: workerOutput.metering.usage.inputTokens,
+                    },
+                    {
+                      label: "Cached input tokens",
+                      value: workerOutput.metering.usage.cachedInputTokens,
+                    },
+                    {
+                      label: "Output tokens",
+                      value: workerOutput.metering.usage.outputTokens,
+                    },
+                    {
+                      label: "Reasoning tokens",
+                      value: workerOutput.metering.usage.reasoningTokens,
+                    },
+                    {
+                      label: "Applied reasoning effort",
+                      value:
+                        workerOutput.metering.appliedParameters
+                          .reasoningEffort ?? "Not applied",
+                    },
+                    {
+                      label: "Max output tokens",
+                      value:
+                        workerOutput.metering.appliedParameters.maxOutputTokens,
+                    },
+                    {
+                      label: "Pricing version",
+                      value: workerOutput.metering.pricingVersionId,
+                    },
+                    {
+                      label: "Budget scope",
+                      value: workerOutput.metering.budgetScope,
+                    },
+                    {
+                      label: "Budget limit",
+                      value: `${workerOutput.metering.budgetLimitMicros} micros ${workerOutput.metering.currency}`,
+                    },
+                    {
+                      label: "Reserved cost",
+                      value: `${workerOutput.metering.reservedMicros} micros ${workerOutput.metering.currency}`,
+                    },
+                    {
+                      label: "Estimated gateway cost",
+                      value: `${workerOutput.metering.estimatedMicros} micros ${workerOutput.metering.currency}`,
+                    },
+                    {
+                      label: "Actual gateway cost",
+                      value: `${workerOutput.metering.actualMicros} micros ${workerOutput.metering.currency}`,
+                    },
+                    {
+                      label: "Currency",
+                      value: workerOutput.metering.currency,
+                    },
+                  ]}
+                />
+                <p className="mt-3 text-xs text-subtle">
+                  Gateway metering is authoritative for gateway runs. The CLI
+                  estimate above is advisory.
+                </p>
+              </div>
+            )}
           </Card>
         </Section>
       )}
