@@ -1729,17 +1729,17 @@ and non-goals are in the
 is the GP-02 decision gate, not an accepted current-runtime contract. The
 [M15-4 decision](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 supplies its four authority/evidence prerequisites; GP-02 must review the
-proposal against them after M15-4 review and integration. The AI
+proposal against them after M15-4 integration. The AI
 Office project record has a distinct planned M16 milestone with one requirement
 linked to each task. Existing GP task prerequisites are stored as typed task
-dependency edges; GP-02's new cross-milestone M15-4 prerequisite is recorded in
-its task description and this roadmap pending support from the running project
-Runtime for a typed edge. GP-10A/B/C remain separately tracked extraction
+dependency edges; GP-02's cross-milestone M15-4 prerequisite is also stored as
+a typed task dependency edge in the project Runtime. GP-10A/B/C remain separately tracked extraction
 slices.
 
 GP-01's source audit and extraction map passed final repository review.
+M15-4's authority/evidence decision passed final repository review in PR #81.
 GP-02 has a concrete but blocked contract proposal; acceptance remains gated
-by M15-4 review/integration and a separate comparison of ADR-0026 with
+by M15-4 integration and a separate comparison of ADR-0026 with
 ADR-0027. Neither document adds pack Runtime behavior or changes the planned
 status of M16.
 

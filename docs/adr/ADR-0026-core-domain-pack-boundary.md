@@ -1,6 +1,6 @@
 # ADR-0026: AI Office Core / Domain Pack Boundary
 
-- Status: Proposed — GP-01 audit passed review; GP-02 blocked pending M15-4 integration and comparison
+- Status: Proposed — GP-01 and M15-4 passed review; GP-02 blocked pending M15-4 integration and comparison
 - Date: 2026-10-02
 - Tags: domain-packs, architecture, compatibility, governance
 
@@ -19,7 +19,7 @@ APIs or storage exist today. The merged [M15 assessment](../development/m15-shar
 chose `Project` as the likely authority root and identified four unresolved
 questions. [ADR-0027](ADR-0027-cross-domain-authority-and-evidence.md) now
 settles their architectural boundaries. GP-02 cannot be accepted until M15-4
-is reviewed and integrated and this proposal is checked against that decision.
+is integrated and this proposal is checked against that decision.
 The [GP-01 source audit](../development/generic-core-domain-packs.md#gp-01-source-verification-and-compatibility-risks)
 passed final review.
 
@@ -341,7 +341,7 @@ provenance remain mandatory across all fixtures.
 ## Acceptance gates and M15 alignment
 
 ADR-0026 remains Proposed and GP-02 remains blocked. ADR-0027 accepts the
-following architectural boundaries; M15-4 review/integration and an explicit
+following architectural boundaries; M15-4 integration and an explicit
 GP-02 comparison with each boundary are still required before this contract
 can be accepted. None of the missing representations exists in Runtime today:
 

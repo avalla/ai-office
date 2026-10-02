@@ -60,7 +60,7 @@ remote, path, title, pack, model or caller-provided value can mint the UID or a
 `repositoryId`.
 
 Within each trusted tenant boundary, one portable key maps to exactly one local
-`projectId`, and each project has exactly one primary portable key. The same
+`projectId`, and each newly created project has exactly one primary portable key. The same
 key cannot designate two projects in a tenant, even after restore; a verified
 repository association is a separate, explicitly unique relation.
 The mapping and optional repository associations are authoritative
@@ -85,7 +85,11 @@ a local row; a matching key permits only the existing explicit
 import/reconciliation path and conflicting content fails closed. Restore never
 guesses an identity from content or silently rewrites a different project.
 Historical runtime-local `projectId` values are not made
-portable. Converting a repository-keyed project to a project UID, if ever
+portable. Existing legacy project rows without a repository identity remain
+readable; adopting a primary key for one requires an explicit, audited
+compatibility operation that verifies ownership and rejects collisions. It
+must not silently mint a project UID or reinterpret a schema-1 binding.
+Converting a repository-keyed project to a project UID, if ever
 needed, requires an explicit, audited compatibility operation retaining the
 legacy alias and knowledge provenance. It is not a side effect of install,
 restore, repository discovery or pack adoption.
@@ -257,10 +261,11 @@ authentication boundary.
 | UID encoding, snapshot v5 schema, port/migration shapes, principal attestation protocol, clause registry and persistence tables | **Requires later implementation detail** | Contract, fresh/upgrade, parity and security tests are required before shipping.                           |
 
 The architectural decisions above are accepted without claiming that the
-target Runtime capabilities exist. M15-4 review and integration of this ADR
-remain a project-planning prerequisite; GP-02 must subsequently compare
-ADR-0026 against these decisions and accept or revise **that separate ADR**.
-GP-02 stays blocked during this draft PR, and ADR-0026 remains Proposed.
+target Runtime capabilities exist. M15-4 passed final repository review;
+integration of this ADR remains a project-planning prerequisite. GP-02 must
+subsequently compare ADR-0026 against these decisions and accept or revise
+**that separate ADR**. GP-02 stays blocked while this PR is open, and
+ADR-0026 remains Proposed.
 
 ## References
 

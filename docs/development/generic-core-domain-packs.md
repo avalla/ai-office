@@ -4,7 +4,7 @@ Status: M16 planned. The GP-01 source audit was performed against `main` at
 `7886519` and passed final repository review on 2026-10-02 against PR #80 at
 `90c51cf`. [ADR-0027](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 now defines the four M15 authority/evidence prerequisites, pending M15-4
-review and integration. GP-02 remains a blocked decision proposal. This document does not
+integration after final review in PR #81. GP-02 remains a blocked decision proposal. This document does not
 assert that Domain Packs exist today.
 The [roadmap](roadmap.md) owns milestone
 status; [ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md) is not an
@@ -178,7 +178,7 @@ GP-10C + GP-17..GP-19 → GP-20 purity and regression → GP-21 authoring guide
 ```
 
 The M11.6 artifact contract is a prerequisite to production GP-14 work;
-M15-4 review/integration and the ADR-0026 comparison are prerequisites to
+M15-4 integration and the ADR-0026 comparison are prerequisites to
 GP-02 acceptance.
 Tasks may be reviewed as individual PRs; no task is permission to implement
 another roadmap milestone.
