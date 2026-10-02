@@ -39,11 +39,25 @@ BEGIN
     END IF;
     RETURN OLD;
   END IF;
-  IF NOT (OLD.state = 'unknown' AND NEW.state = 'executed'
-    AND OLD.task_id = NEW.task_id AND OLD.project_id = NEW.project_id) THEN
+  IF OLD.task_id <> NEW.task_id OR OLD.project_id <> NEW.project_id THEN
     RAISE EXCEPTION 'task execution history is monotonic';
   END IF;
-  RETURN NEW;
+  IF OLD.state = 'unknown' AND NEW.state = 'executed' THEN
+    RETURN NEW;
+  END IF;
+  IF OLD.state = 'executed' AND NEW.state = 'executed' AND (
+    NEW.first_known_at IS NOT DISTINCT FROM OLD.first_known_at
+    OR (
+      NEW.first_known_at IS NOT NULL
+      AND (
+        OLD.first_known_at IS NULL
+        OR NEW.first_known_at < OLD.first_known_at
+      )
+    )
+  ) THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'task execution history is monotonic';
 END;
 $$;
 
@@ -92,8 +106,20 @@ BEGIN
   INSERT INTO core.task_execution_history(task_id, project_id, state, first_known_at)
   VALUES (history_task_id, history_project_id, 'executed', history_at)
   ON CONFLICT(task_id) DO UPDATE SET state = 'executed',
-    first_known_at = COALESCE(core.task_execution_history.first_known_at, EXCLUDED.first_known_at)
-  WHERE core.task_execution_history.state = 'unknown';
+    first_known_at = CASE
+      WHEN core.task_execution_history.first_known_at IS NULL THEN EXCLUDED.first_known_at
+      WHEN EXCLUDED.first_known_at IS NULL THEN core.task_execution_history.first_known_at
+      ELSE LEAST(core.task_execution_history.first_known_at, EXCLUDED.first_known_at)
+    END
+  WHERE core.task_execution_history.state = 'unknown'
+    OR (
+      core.task_execution_history.state = 'executed'
+      AND EXCLUDED.first_known_at IS NOT NULL
+      AND (
+        core.task_execution_history.first_known_at IS NULL
+        OR EXCLUDED.first_known_at < core.task_execution_history.first_known_at
+      )
+    );
   RETURN NEW;
 END;
 $$;
