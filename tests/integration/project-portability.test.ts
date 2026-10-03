@@ -14,6 +14,7 @@ import { CreateTask } from "@ai-office/application/commands/create-task.ts";
 import { ManageGovernance } from "@ai-office/application/commands/manage-governance.ts";
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
+import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate-action-policy.ts";
@@ -58,6 +59,7 @@ import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/inst
 import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
 import {
+  computeArtifactDigest,
   parseDomainPackId,
   parseDomainPackVersion,
   parseManifestDigest,
@@ -190,6 +192,102 @@ afterEach(() => {
 });
 
 describe("project portability", () => {
+  test("v6 restore recomputes the same derived configuration with a different installer reference", async () => {
+    const source = temporaryRoot("ai-office-gp06-portable-project-");
+    writeFileSync(join(source, "package.json"), '{"name":"gp06"}\n');
+    const origin = openRuntime(
+      temporaryRoot("ai-office-gp06-portable-source-"),
+    );
+    const projectId = (await importProject(origin, source)).projectId;
+    const bytes = readFileSync(
+      new URL("../fixtures/domain-pack/legal.json", import.meta.url),
+    );
+    const makeCatalog = (reference: string) => {
+      const catalog = new InMemoryInstalledDomainPackCatalog(1, [
+        "local-distribution",
+      ]);
+      const tuple = catalog.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: { installerId: "local-distribution", reference },
+      });
+      return { catalog, tuple };
+    };
+    const original = makeCatalog("source-install");
+    const now = new Date("2026-10-03T00:00:00.000Z");
+    await new SqliteProjectPackBindingRepository(origin.database).replace(
+      projectId,
+      0,
+      [original.tuple],
+      now,
+    );
+    await new SqliteProjectDefinitionRepository(origin.database).replace(
+      {
+        projectId,
+        revision: 0,
+        owned: [
+          {
+            origin: "project_owned",
+            kind: "roles",
+            id: "operator",
+            revision: 1,
+            enabled: true,
+            payload: { id: "operator" },
+            actorId: "operator",
+            changedAt: now.toISOString(),
+          },
+        ],
+        overrides: [
+          {
+            origin: "project_override",
+            source: { ...original.tuple, kind: "roles", localId: "counsel" },
+            operation: "replace",
+            revision: 1,
+            payload: { id: "counsel", title: "Lead counsel" },
+            actorId: "operator",
+            changedAt: now.toISOString(),
+          },
+        ],
+      },
+      0,
+      now,
+    );
+    const reader = (
+      runtime: ReturnType<typeof openRuntime>,
+      catalog: InMemoryInstalledDomainPackCatalog,
+    ) =>
+      new ReadProjectConfiguration({
+        projects: runtime.projects,
+        bindings: new SqliteProjectPackBindingRepository(runtime.database),
+        definitions: new SqliteProjectDefinitionRepository(runtime.database),
+        transactions: runtime.transactions,
+        catalog,
+      });
+    const before = await reader(origin, original.catalog).read(projectId);
+    const backup = await origin.service.backup(projectId);
+    expect(serializePortableProjectArchive(backup.archive)).not.toContain(
+      "configurationDigest",
+    );
+    const destination = openRuntime(
+      temporaryRoot("ai-office-gp06-portable-destination-"),
+    );
+    const restored = await destination.service.restore({
+      archive: parsePortableProjectArchive(
+        serializePortableProjectArchive(backup.archive),
+      ),
+      rootPath: source,
+    });
+    const installedAgain = makeCatalog("destination-install");
+    const after = await reader(destination, installedAgain.catalog).read(
+      restored.projectId,
+    );
+    expect(after.configurationDigest).toBe(before.configurationDigest);
+    expect(after.effectiveDefinitions).toEqual(before.effectiveDefinitions);
+    expect(after.origins).toEqual(before.origins);
+    origin.database.close();
+    destination.database.close();
+  });
+
   test("v6 round-trips authoritative owned definitions and pinned unresolved overrides", async () => {
     const sourceRuntime = temporaryRoot("ai-office-gp07-portable-source-");
     const source = temporaryRoot("ai-office-gp07-portable-project-");

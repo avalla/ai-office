@@ -118,6 +118,7 @@ const projectScopedCommands = new Set([
   "project:definition:show",
   "project:definition:preview",
   "project:definition:apply",
+  "project:configuration:show",
   "office:context",
   "office:workspace",
   "office:apply",

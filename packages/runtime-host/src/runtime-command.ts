@@ -173,6 +173,7 @@ import { handleProjectDefinitionCommand } from "./commands/project-definition.ts
 import { ProjectPackBindingProjectNotFoundError } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { InMemoryInstalledDomainPackCatalog } from "./installed-domain-pack-catalog.ts";
 import { handleProjectPackCommand } from "./commands/project-pack.ts";
+import { handleProjectConfigurationCommand } from "./commands/project-configuration.ts";
 import {
   ProjectStorageBootstrap,
   requireCompleteProjectStorage,
@@ -221,6 +222,7 @@ const commands = [
   "project:definition:show",
   "project:definition:preview",
   "project:definition:apply",
+  "project:configuration:show",
   "office:context",
   "office:workspace",
   "office:validate",
@@ -390,6 +392,7 @@ const handlers = [
   handleProjectCommand,
   handleProjectPackCommand,
   handleProjectDefinitionCommand,
+  handleProjectConfigurationCommand,
   handleOfficeCommand,
   handlePipelineCommand,
   handleClientCommand,

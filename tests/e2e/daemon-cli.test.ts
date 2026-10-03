@@ -566,6 +566,25 @@ profiles:
         state: { revision: 1, owned: [{ id: "custom" }] },
         issues: [],
       });
+      const resolved = await invoke([
+        "project:configuration:show",
+        "--project",
+        projectId,
+        "--json",
+      ]);
+      expect(resolved.code).toBe(0);
+      expect(JSON.parse(resolved.stdout[0]!)).toMatchObject({
+        ok: true,
+        configuration: {
+          bindingRevision: 1,
+          definitionRevision: 1,
+          selectedPacks: [pack],
+          projectOwnedDefinitions: [{ kind: "roles", localId: "custom" }],
+        },
+      });
+      expect(
+        JSON.parse(resolved.stdout[0]!).configuration.configurationDigest,
+      ).toMatch(/^sha256:[0-9a-f]{64}$/);
       const definitionStale = await invoke([
         "project:definition:apply",
         "--project",
