@@ -340,12 +340,14 @@ test("upgrading 0028 provenance keeps its context digest and leaves the unreport
     outcome: "retrieved",
     contextQuerySha256: "d".repeat(64),
     providerQuerySha256: null,
-    references: [{
-      rank: 1,
-      referenceId: "decisions/storage",
-      contentDigest: `sha256:${"b".repeat(64)}`,
-      injected: true,
-    }],
+    references: [
+      {
+        rank: 1,
+        referenceId: "decisions/storage",
+        contentDigest: `sha256:${"b".repeat(64)}`,
+        injected: true,
+      },
+    ],
   });
   expect(await repository.findRetrieval("legacy-failed")).toMatchObject({
     provider: "cairnkeep",

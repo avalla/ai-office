@@ -325,16 +325,23 @@ async function runWithKnowledge(
 
 test("native knowledge cannot push a large dispatched worker context over its byte limit", async () => {
   const f = await fixture();
-  f.db.prepare("UPDATE task SET description=? WHERE id='t'").run("d".repeat(127 * 1024));
+  f.db
+    .prepare("UPDATE task SET description=? WHERE id='t'")
+    .run("d".repeat(127 * 1024));
   const findKnowledge = vi.fn(async () => [knowledgeHit]);
   const { assembler, provenance } = await nativeKnowledge(f, findKnowledge);
   let dispatched: WorkerContext | undefined;
-  expect((await runWithKnowledge(f, assembler, (context) => {
-    dispatched = context;
-  })).status).toBe("completed");
+  expect(
+    (
+      await runWithKnowledge(f, assembler, (context) => {
+        dispatched = context;
+      })
+    ).status,
+  ).toBe("completed");
   expect(dispatched).toBeDefined();
-  expect(new TextEncoder().encode(canonicalStringify(dispatched)).byteLength)
-    .toBeLessThanOrEqual(workerLimits.contextBytes);
+  expect(
+    new TextEncoder().encode(canonicalStringify(dispatched)).byteLength,
+  ).toBeLessThanOrEqual(workerLimits.contextBytes);
   expect(dispatched).not.toHaveProperty("projectMemory");
   expect(findKnowledge).not.toHaveBeenCalled();
   expect(await provenance.findRetrieval("r")).toMatchObject({
@@ -352,11 +359,20 @@ test("native knowledge is advisory and its exact dispatched block is pinned in t
   const findKnowledge = vi.fn(async () => [knowledgeHit]);
   const { assembler, provenance } = await nativeKnowledge(f, findKnowledge);
   let dispatched: WorkerContext | undefined;
-  expect((await runWithKnowledge(f, assembler, async (context) => {
-    dispatched = context;
-    expect((await f.runs.findRun("r"))?.snapshot().execution?.inputHash)
-      .toBe(createHash("sha256").update(canonicalStringify(context)).digest("hex"));
-  })).status).toBe("completed");
+  expect(
+    (
+      await runWithKnowledge(f, assembler, async (context) => {
+        dispatched = context;
+        expect(
+          (await f.runs.findRun("r"))?.snapshot().execution?.inputHash,
+        ).toBe(
+          createHash("sha256")
+            .update(canonicalStringify(context))
+            .digest("hex"),
+        );
+      })
+    ).status,
+  ).toBe("completed");
   expect(findKnowledge).toHaveBeenCalledWith(
     { tenantId: "tenant-a", repositoryId: "repo_worker" },
     { text: "tradeoffs", limit: 5 },
@@ -368,19 +384,31 @@ test("native knowledge is advisory and its exact dispatched block is pinned in t
   });
   const withoutKnowledge = { ...dispatched };
   delete withoutKnowledge.projectMemory;
-  expect((await f.runs.findRun("r"))?.snapshot().execution?.inputHash)
-    .not.toBe(createHash("sha256").update(canonicalStringify(withoutKnowledge)).digest("hex"));
+  expect((await f.runs.findRun("r"))?.snapshot().execution?.inputHash).not.toBe(
+    createHash("sha256")
+      .update(canonicalStringify(withoutKnowledge))
+      .digest("hex"),
+  );
   expect(await provenance.findRetrieval("r")).toMatchObject({
     provider: "surrealdb",
     outcome: "retrieved",
     references: [{ referenceId: knowledgeHit.id, injected: true }],
   });
   expect((await f.tasks.findById("t"))?.snapshot().status).toBe("pending");
-  expect((await f.pipelines.findById("pipeline", "p"))?.currentStage())
-    .toMatchObject({ status: "active" });
-  for (const table of ["capability_grants", "action_requests", "action_approvals", "governance_event"])
-    expect(f.db.query<{ count: number }, []>(`SELECT COUNT(*) count FROM ${table}`).get()?.count)
-      .toBe(0);
+  expect(
+    (await f.pipelines.findById("pipeline", "p"))?.currentStage(),
+  ).toMatchObject({ status: "active" });
+  for (const table of [
+    "capability_grants",
+    "action_requests",
+    "action_approvals",
+    "governance_event",
+  ])
+    expect(
+      f.db
+        .query<{ count: number }, []>(`SELECT COUNT(*) count FROM ${table}`)
+        .get()?.count,
+    ).toBe(0);
 });
 
 test("a controlled-action run never searches native agent knowledge", async () => {
@@ -419,13 +447,25 @@ test("a controlled-action run never searches native agent knowledge", async () =
     projectId: "p",
     taskId: "t",
     agentId: "a",
-    actionIntent: { resourceId: "missing", operation: "filesystem.read", arguments: {} },
+    actionIntent: {
+      resourceId: "missing",
+      operation: "filesystem.read",
+      arguments: {},
+    },
   });
-  const run = (await new AdmitAgentRun(f.runs, f.tasks, f.pipelines, clock)
-    .execute((await f.runs.findRun("controlled"))!))!;
+  const run = (await new AdmitAgentRun(
+    f.runs,
+    f.tasks,
+    f.pipelines,
+    clock,
+  ).execute((await f.runs.findRun("controlled"))!))!;
   expect(run.snapshot().actionIntent).toBeDefined();
-  await new ExecuteAgentRun(f.runs, executor, new InMemoryWorktreeManager(), clock)
-    .execute(run);
+  await new ExecuteAgentRun(
+    f.runs,
+    executor,
+    new InMemoryWorktreeManager(),
+    clock,
+  ).execute(run);
   expect(gateway).toHaveBeenCalledTimes(1);
   expect(findKnowledge).not.toHaveBeenCalled();
   expect(await provenance.findRetrieval("controlled")).toBeNull();
@@ -437,7 +477,11 @@ test("interrupted native preparation cannot search again or replace pinned prove
   const { assembler, provenance } = await nativeKnowledge(f, findKnowledge);
   const worker = vi.fn(async () => output);
   const executor = new WorkerAgentExecutor(
-    { id: "test-worker", inspect: async () => ({ version: "1" }), execute: worker },
+    {
+      id: "test-worker",
+      inspect: async () => ({ version: "1" }),
+      execute: worker,
+    },
     f.runs,
     f.tasks,
     f.pipelines,
@@ -454,14 +498,22 @@ test("interrupted native preparation cannot search again or replace pinned prove
   });
   f.db.prepare("UPDATE task SET title=? WHERE id='t'").run("Another subject");
   const current = (await f.runs.findRun("r"))!;
-  expect(await new AdmitAgentRun(f.runs, f.tasks, f.pipelines, clock).execute(current))
-    .toBeNull();
+  expect(
+    await new AdmitAgentRun(f.runs, f.tasks, f.pipelines, clock).execute(
+      current,
+    ),
+  ).toBeNull();
   await expect(executor.prepare(current)).rejects.toMatchObject({
     code: "WORKER_CONTEXT_INVALID",
   });
-  expect(await new ExecuteAgentRun(
-    f.runs, executor, new InMemoryWorktreeManager(), clock,
-  ).execute(current)).toMatchObject({
+  expect(
+    await new ExecuteAgentRun(
+      f.runs,
+      executor,
+      new InMemoryWorktreeManager(),
+      clock,
+    ).execute(current),
+  ).toMatchObject({
     status: "failed",
     error: { code: "WORKER_CONTEXT_INVALID" },
   });
