@@ -121,6 +121,20 @@ const featureFlags = codexDisabledFeatures.flatMap((feature) => [
   feature,
 ]);
 
+/**
+ * Configuration that keeps ambient context out. An empty marker list turns
+ * project-root discovery off: Codex otherwise walks up from the working
+ * directory and, when an ancestor of the temporary tree holds `.git`, loads
+ * that directory's `.agents/skills` and `.codex/skills`.
+ */
+const isolationConfig = [
+  'web_search="disabled"',
+  "mcp_servers={}",
+  "skills.bundled.enabled=false",
+  "project_doc_max_bytes=0",
+  "project_root_markers=[]",
+].flatMap((override) => ["--config", override]);
+
 /** Fails closed unless the CLI reports exactly the audited feature state. */
 export function verifyCodexFeatureIsolation(listing: string): void {
   const enabled = new Map<string, boolean>();
@@ -145,7 +159,8 @@ export function verifyCodexFeatureIsolation(listing: string): void {
 /**
  * Copies only the operator's file-backed Codex login into the isolated home.
  * Keyring logins and anything that is not the caller's own regular file fail
- * closed; the source is opened read-only and never followed through a link.
+ * closed; the source is opened read-only and `auth.json` itself is never
+ * followed when it is a link (a linked Codex home directory still resolves).
  */
 async function materializeAuth(
   operatorHome: string,
@@ -154,9 +169,11 @@ async function materializeAuth(
   let bytes: Buffer;
   try {
     if (!isAbsolute(operatorHome)) throw new Error("relative home");
+    // Non-blocking, so a FIFO or device cannot stall the open; the type is
+    // then checked on the opened descriptor, never on the path.
     const source = await open(
       join(operatorHome, authFileName),
-      constants.O_RDONLY | constants.O_NOFOLLOW,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
     try {
       const info = await source.stat();
@@ -167,7 +184,21 @@ async function materializeAuth(
         info.uid !== process.getuid?.()
       )
         throw new Error("auth file");
-      bytes = await source.readFile();
+      // Bounded read: a file that grows after the check is still refused.
+      const buffer = Buffer.alloc(maxAuthBytes + 1);
+      let length = 0;
+      while (length < buffer.length) {
+        const { bytesRead } = await source.read(
+          buffer,
+          length,
+          buffer.length - length,
+          length,
+        );
+        if (bytesRead === 0) break;
+        length += bytesRead;
+      }
+      if (length === 0 || length > maxAuthBytes) throw new Error("auth size");
+      bytes = buffer.subarray(0, length);
     } finally {
       await source.close();
     }
@@ -203,9 +234,16 @@ function token(value: unknown): value is number {
 }
 
 /**
+ * The progress notice Codex prints while it retries a dropped stream, for
+ * example `Reconnecting... 2/5 (stream disconnected before completion)`. A
+ * retry that gives up is followed by `turn.failed`, which still fails the run.
+ */
+const reconnectNotice = /^Reconnecting\.\.\. [1-9]\d?\/[1-9]\d?(?: \(|$)/;
+
+/**
  * Accepts exactly one completed turn carrying one final structured message.
- * Reasoning items and non-fatal notice items are ignored; every other item or
- * event fails closed. Codex does not emit an item for a tool call it rejects,
+ * Reasoning items, non-fatal notice items and the reconnect notice above are
+ * ignored; every other item or event, including any other `error`, fails closed. Codex does not emit an item for a tool call it rejects,
  * so this parser bounds the result and is not what keeps tools away.
  */
 export function parseCodexWorkerOutput(
@@ -255,7 +293,11 @@ export function parseCodexWorkerOutput(
             inputTokens: counts.input_tokens,
             outputTokens: counts.output_tokens,
           };
-      } else {
+      } else if (
+        event.type !== "error" ||
+        typeof event.message !== "string" ||
+        !reconnectNotice.test(event.message)
+      ) {
         throw new Error("unexpected event");
       }
     }
@@ -346,20 +388,28 @@ export class CodexWorkerRuntime implements WorkerRuntime {
           platform: this.platform,
           env,
         });
+      // A probe that fails, an unknown feature key included, means the
+      // isolation cannot be established: unavailable, not a failed task.
+      const unavailable = async (args: readonly string[]) => {
+        try {
+          return await probe(args);
+        } catch (error) {
+          if (error instanceof WorkerRuntimeError)
+            throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
+          throw error;
+        }
+      };
       const version = /^codex-cli (\S+)\n?$/.exec(
-        await probe(["--version"]),
+        await unavailable(["--version"]),
       )?.[1];
       if (version === undefined || !auditedCodexVersions.has(version))
         throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
-      // An unknown feature key exits non-zero: the isolation is inexpressible.
-      let listing: string;
-      try {
-        listing = await probe(["features", "list", ...featureFlags]);
-      } catch (error) {
-        if (error instanceof WorkerRuntimeError)
-          throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
-        throw error;
-      }
+      const listing = await unavailable([
+        "features",
+        "list",
+        ...featureFlags,
+        ...isolationConfig,
+      ]);
       verifyCodexFeatureIsolation(listing);
       return { version };
     });
@@ -401,14 +451,7 @@ export class CodexWorkerRuntime implements WorkerRuntime {
         "--sandbox",
         "read-only",
         ...featureFlags,
-        "--config",
-        'web_search="disabled"',
-        "--config",
-        "mcp_servers={}",
-        "--config",
-        "skills.bundled.enabled=false",
-        "--config",
-        "project_doc_max_bytes=0",
+        ...isolationConfig,
         ...(selection?.reasoningEffort == null
           ? []
           : [
@@ -469,7 +512,11 @@ export class CodexWorkerRuntime implements WorkerRuntime {
         },
       });
     } finally {
-      await rm(root, { recursive: true, force: true });
+      // A tree that cannot be removed may still hold the login copy; that is
+      // a typed failure of the run, never a raw error carrying the path.
+      await rm(root, { recursive: true, force: true }).catch(() => {
+        throw new WorkerRuntimeError("WORKER_FAILED");
+      });
     }
   }
 }

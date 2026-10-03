@@ -137,18 +137,36 @@ version range is accepted and no other worker is tried. The worker also needs
 that CLI on the Runtime host PATH and a file-backed Codex login.
 
 Every `codex` process it starts, including the version and feature probes, runs
-in a fresh private temporary tree (mode `0700`) that is removed after success,
-failure, cancellation and timeout. The tree holds an empty `HOME`, an isolated
-`CODEX_HOME` and an empty working directory.
-The child environment is exactly `PATH`, that `HOME` and that `CODEX_HOME`;
-provider keys, proxy variables and the operator's Codex home are not inherited.
+in a fresh private temporary tree (mode `0700`). The tree holds an empty `HOME`,
+an isolated `CODEX_HOME` and a private working directory, which during
+`codex exec` contains only the generated output schema. The child environment
+is exactly `PATH`, that `HOME` and that `CODEX_HOME`; provider keys, proxy
+variables and the operator's Codex home are not inherited.
+
+The worker owns the whole process group of each `codex` process. On success as
+well as on failure, cancellation and timeout it kills every remaining member
+of the group and waits for the group to be empty before it returns, and only
+then removes the tree. A process that leaves the group (a new session) is not
+owned. If the tree cannot be removed the run fails with `WORKER_FAILED` rather
+than reporting a result while a copy of the login may remain.
+
+The tree is created under the Runtime's temporary directory, whose ancestors
+are not trusted. Codex normally walks up from its working directory to a
+project root marked by `.git` and loads that directory's `.agents/skills` and
+`.codex/skills`; a `.git` in the temporary directory itself would be enough.
+The worker therefore turns project-root discovery off
+(`project_root_markers=[]`) for the feature probe and for `codex exec`, so no
+ancestor project state, skills included, is loaded.
 
 Authentication is the only operator state that crosses into the isolated home.
 The adapter reads `auth.json` from the operator's Codex home (`CODEX_HOME`, or
 `~/.codex`) and copies it, mode `0600`, into the isolated home. The source must
-be the Runtime user's own regular file; it is opened read-only, never followed
-through a symbolic link, and never rewritten. A keyring-only login, a missing,
-empty, oversized or non-JSON file, and a relative `CODEX_HOME` fail with
+be the Runtime user's own regular file; it is opened read-only and without
+blocking, checked on the opened descriptor, read up to a fixed size, and never
+rewritten. `auth.json` itself is not followed when it is a symbolic link; a
+Codex home directory that is a link still resolves. A keyring-only login, a
+missing, empty, oversized or non-JSON file, a FIFO, socket, device or
+directory in its place, and a relative `CODEX_HOME` fail with
 `WORKER_UNAVAILABLE` before the task is sent; the worker never falls back to
 the operator's home, and `OPENAI_API_KEY`/`CODEX_API_KEY` are not used. Because
 only that file is copied, the operator's `AGENTS.md`, `AGENTS.override.md`,
@@ -161,8 +179,9 @@ API-key login is unaffected.
 
 `codex exec` runs with `--ephemeral`, `--ignore-user-config`,
 `--strict-config`, `--sandbox read-only`, web search disabled, no MCP servers,
-bundled skills disabled and project instruction files disabled
-(`project_doc_max_bytes=0`). It disables every default-enabled capability
+bundled skills disabled, project instruction files disabled
+(`project_doc_max_bytes=0`) and project-root discovery disabled
+(`project_root_markers=[]`). It disables every default-enabled capability
 feature of the supported CLI: shell and process execution (`shell_tool`,
 `unified_exec`, `unified_exec_tty`, `shell_snapshot`, `code_mode_host`,
 `code_mode`, `code_mode_only`, `sleep_tool`, `hooks`, `worktrees`,
@@ -177,12 +196,14 @@ and memory (`multi_agent`, `multi_agent_v2`, `goals`, `memories`,
 `guardian_approval`) and background or interactive surfaces
 (`daemon_auto_start`, `in_app_updates`, `in_app_chat`, `in_app_dictation`,
 `realtime_conversation`, `fast_mode`). Before any task is dispatched the
-adapter runs `codex features list` with the same flags and requires the
-reported state to match its audit: an unknown feature key, a feature that
+adapter runs `codex features list` with the same `--disable` flags and
+configuration overrides and requires the reported state to match its audit: an unknown feature key, a feature that
 stays enabled, or an enabled feature the adapter has never audited (for example
 one added by a newer CLI) fails with `WORKER_UNAVAILABLE`. In 0.160.0
 `--disable unified_exec` is accepted but has no effect; `shell_tool` is what
-removes the shell tools, and the check requires it to be off.
+removes the shell tools, and the check requires it to be off. The probe runs
+without the login; `codex exec` runs with it. Anything Codex loads only for an
+authenticated session is therefore not covered by the probe (see below).
 
 What this does not achieve:
 
@@ -190,6 +211,23 @@ What this does not achieve:
   instructions, sandbox notice and an environment block naming the temporary
   working directory, shell, date and timezone. The recorded `inputHash` covers
   the Runtime context only.
+- A ChatGPT login whose workspace distributes managed configuration is not
+  supported and must not be used with this worker. For such a login
+  (observed with an `enterprise` plan claim) Codex downloads a workspace
+  configuration bundle at startup and applies it to the authenticated
+  session. In a local reproduction with a stand-in backend, an MCP server
+  defined in that bundle was started as a process on the Runtime host under
+  this worker's exact flags, `mcp_servers={}` included; features disabled
+  on the command line stayed off, but one not disabled there was turned on. The
+  feature probe is unauthenticated and does not see any of this. The worker
+  does not yet detect or refuse such a login; that is an open defect, not an
+  accepted limitation.
+- Provider-supplied model metadata is not pinned. With a ChatGPT login Codex
+  fetches the model list from the provider at session start and uses it in the
+  same run; it can change the model-visible tools and the base instructions
+  without any change of CLI version, so the version allowlist does not cover
+  it. In every case tried under this worker's flags it changed what the model
+  is shown and told, not what the client will execute.
 - Feature flags do not remove tools that Codex derives from model metadata. On
   0.160.0 a code-mode model is still shown `exec`, `wait`, `request_user_input`
   and the sub-agent tools, and other models `apply_patch` and
@@ -197,16 +235,24 @@ What this does not achieve:
   by the client (`exec` because its host is disabled, sub-agents because an
   ephemeral session has no rollout, `apply_patch` by the read-only sandbox), but
   they are model-visible and a refused call still costs a model round trip.
-- Host-level Codex configuration under `/etc/codex` is controlled by the host
+- Host-level Codex configuration under `/etc/codex` (configuration,
+  requirements, rules, agents and skills) is controlled by the host
   administrator and is not excluded.
+- Codex itself starts local helper processes such as `lsb_release` and
+  `getconf`, resolved through the inherited `PATH`, before any model
+  interaction. With a ChatGPT login it also sends its own analytics events
+  (thread id, model, operating system, CLI version) to the provider.
 - This narrows what the Codex client loads and offers. It is not a boundary
   against another process of the same user, which can read the temporary copy
   while it exists, as it can read the operator's own login.
 
 The adapter accepts exactly one completed JSONL turn with exactly one
-schema-constrained `{summary, content}` message. Reasoning items and
-non-fatal notice items are ignored; any other item, any unknown event, a failed
-turn and anything after the completed turn fail closed. Codex emits no JSONL
+schema-constrained `{summary, content}` message. Reasoning items, non-fatal
+notice items and the `Reconnecting... n/m` notice Codex prints while it retries
+a dropped stream are ignored; a retry that recovers still needs the completed
+turn and a zero exit, and one that gives up ends in a failed turn. Any other
+`error` event, any other item, any unknown event, a failed turn and anything
+after the completed turn fail closed. Codex emits no JSONL
 item for a tool call it refuses, so this check bounds the result and is not
 what keeps tools away. The recorded model is the persisted routed model, never
 one named by the output. Runtime authorization and controlled-action policy

@@ -153,6 +153,21 @@ describe("bounded Codex worker", () => {
     expect(request.args).toContain("mcp_servers={}");
     expect(request.args).toContain("skills.bundled.enabled=false");
     expect(request.args).toContain("project_doc_max_bytes=0");
+    expect(request.args).toContain("project_root_markers=[]");
+    // The feature probe runs under the same flags and overrides as the task.
+    const overrides = (args: readonly string[]) =>
+      args.filter(
+        (value, index) =>
+          value === "--disable" ||
+          value === "--config" ||
+          ["--disable", "--config"].includes(args[index - 1]!),
+      );
+    expect(overrides(calls[1]!.args)).toEqual(
+      overrides(request.args)
+        .filter((value) => !value.startsWith("model_reasoning_effort="))
+        .slice(0, overrides(calls[1]!.args).length),
+    );
+    expect(calls[1]!.args).toContain("project_root_markers=[]");
     expect(value("--model")).toBe("gpt-5.6-sol");
     expect(request.args).toContain('model_reasoning_effort="high"');
     expect(request.input).toContain("Review evidence");
@@ -250,6 +265,12 @@ describe("bounded Codex worker", () => {
         ? codexFeatureListing
         : inspection(request)!,
     );
+    // A version probe that fails or cannot start is unavailable, not failed.
+    await refuses(async (request) => {
+      if (request.args[0] === "--version")
+        throw new WorkerRuntimeError("WORKER_FAILED");
+      return inspection(request)!;
+    });
     await refuses(async (request) =>
       request.args[0] === "--version"
         ? "codex-cli 0.159.0\n"
@@ -419,6 +440,50 @@ describe("bounded Codex worker", () => {
         undefined,
       ).model,
     ).toBeNull();
+
+    // The retry notice of a stream Codex then recovers is not a failure.
+    const reconnecting = (text: string) => ({ type: "error", message: text });
+    const retried = [
+      ...events.slice(0, 2),
+      reconnecting(
+        "Reconnecting... 1/5 (stream disconnected before completion: x)",
+      ),
+      reconnecting("Reconnecting... 5/5"),
+      ...events.slice(2),
+    ];
+    expect(parseCodexWorkerOutput(jsonl(retried), "m")).toMatchObject({
+      summary: "Review",
+      usage: { inputTokens: 10, outputTokens: 20 },
+    });
+    // It never replaces completion: no message, no completed turn, a failed
+    // turn and a notice after completion all still fail.
+    invalid(retried.slice(0, -1));
+    invalid(retried.filter((event) => event !== events[3]));
+    invalid([
+      ...retried.slice(0, -1),
+      { type: "turn.failed", error: { message: "gave up" } },
+    ]);
+    invalid([...retried, reconnecting("Reconnecting... 1/5")]);
+    // Only that exact notice is tolerated; any other error is fatal.
+    for (const text of [
+      "stream failed",
+      "stream disconnected before completion",
+      "reconnecting... 1/5",
+      "Reconnecting...",
+      "Reconnecting... 0/5",
+      "Reconnecting... 1/5: sandbox disabled",
+      " Reconnecting... 1/5",
+      "error: Reconnecting... 1/5",
+      "Reconnecting... x/5",
+      "Reconnecting... 1/",
+    ])
+      invalid([...events.slice(0, 2), reconnecting(text), ...events.slice(2)]);
+    invalid([
+      ...events.slice(0, 2),
+      { type: "error", message: 5 },
+      ...events.slice(2),
+    ]);
+    invalid([...events.slice(0, 2), { type: "error" }, ...events.slice(2)]);
 
     const message = events[3]!;
     for (const item of [

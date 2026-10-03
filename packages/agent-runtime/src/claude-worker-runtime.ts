@@ -161,12 +161,14 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
     };
     const finish = () => {
       if (!closed) return;
+      // The group is owned on every outcome: a descendant that outlives a
+      // successful parent is killed too, and nothing returns while one runs.
       if (
-        failure !== undefined &&
         posixProcessGroup &&
         child.pid !== undefined &&
         processGroupAlive(child.pid)
       ) {
+        signalTree("SIGKILL");
         groupPollTimer = setTimeout(finish, processTreePollMs);
         return;
       }
@@ -212,7 +214,7 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
       clearTimeout(deadline);
       if (failure === undefined && code !== 0)
         failure = new WorkerRuntimeError("WORKER_FAILED");
-      if (failure !== undefined && posixProcessGroup) signalTree("SIGKILL");
+      if (posixProcessGroup) signalTree("SIGKILL");
       finish();
     });
     child.stdin?.end(request.input);

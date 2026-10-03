@@ -26,7 +26,8 @@ export function codexFeatureListingAfter(args: readonly string[]): string {
     .join("\n");
 }
 
-export type FakeCodexMode = "ok" | "fail" | "hang" | "tool";
+export type FakeCodexMode =
+  "ok" | "fail" | "hang" | "tool" | "linger" | "reconnect" | "gave-up";
 
 export interface FakeCodexReport {
   args: string[];
@@ -37,6 +38,8 @@ export interface FakeCodexReport {
   codexHome: { entries: string[]; mode: number };
   auth: { content: string; mode: number } | null;
   prompt: string;
+  /** Skills the audited CLI would load from a discovered project root. */
+  projectSkills: string[];
 }
 
 /**
@@ -68,24 +71,54 @@ if (args[0] === "features") {
 }
 if (args[0] !== "exec") process.exit(1);
 const mode = fs.readFileSync(${JSON.stringify(modePath)}, "utf8").trim();
+const names = (dir) => { try { return fs.readdirSync(dir).sort(); } catch { return []; } };
 const list = (dir) => ({ entries: fs.readdirSync(dir).sort(), mode: fs.statSync(dir).mode & 0o777 });
 const authPath = path.join(process.env.CODEX_HOME, "auth.json");
 const auth = fs.existsSync(authPath) ? { content: fs.readFileSync(authPath, "utf8"), mode: fs.statSync(authPath).mode & 0o777 } : null;
 const prompt = await Bun.stdin.text();
-fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({ args, env: process.env, cwd: process.cwd(), cwdEntries: fs.readdirSync(process.cwd()).sort(), home: list(process.env.HOME), codexHome: list(process.env.CODEX_HOME), auth, prompt }));
+// ".bun" in HOME is this stand-in's own interpreter cache, not client state.
+// Project discovery as codex-cli 0.160.0 does it: walk up from the working
+// directory to the first ancestor holding a root marker (".git" by default,
+// file or directory) and load its skills. project_root_markers=[] turns it off.
+const config = args.filter((_, i) => args[i - 1] === "--config" || args[i - 1] === "-c");
+const markers = config.includes("project_root_markers=[]") ? [] : [".git"];
+const projectSkills = [];
+for (let dir = process.cwd(); ; dir = path.dirname(dir)) {
+  if (markers.some((marker) => fs.existsSync(path.join(dir, marker)))) {
+    for (const skills of [".agents/skills", ".codex/skills"])
+      for (const name of names(path.join(dir, skills))) projectSkills.push(path.join(dir, skills, name));
+    break;
+  }
+  if (path.dirname(dir) === dir) break;
+}
+fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({ args, env: process.env, cwd: process.cwd(), cwdEntries: fs.readdirSync(process.cwd()).sort(), home: { ...list(process.env.HOME), entries: list(process.env.HOME).entries.filter((name) => name !== ".bun") }, codexHome: list(process.env.CODEX_HOME), auth, prompt, projectSkills }));
 // A real client writes session state into its home; cleanup must remove it.
 fs.writeFileSync(path.join(process.env.CODEX_HOME, "state.sqlite"), "state");
 if (mode === "fail") { console.error("login failed for " + (auth === null ? "nobody" : auth.content)); process.exit(1); }
 if (mode === "hang") { setInterval(() => {}, 1000); await new Promise(() => {}); }
+if (mode === "linger") {
+  // A helper that outlives a successful parent and keeps writing its home.
+  const helper = require("node:child_process").spawn(process.execPath, ["-e", "const fs = require('node:fs'); const path = require('node:path'); setInterval(() => { try { const dir = path.join(process.env.CODEX_HOME, 'sessions'); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, String(Date.now())), 'x'); } catch {} }, 1);"], { stdio: "ignore" });
+  helper.unref();
+  fs.writeFileSync(${JSON.stringify(join(root, "codex-helper.pid"))}, String(helper.pid));
+  await Bun.sleep(50);
+}
 const events = [
   { type: "thread.started", thread_id: "fixture-thread" },
   { type: "item.completed", item: { id: "item_0", type: "error", message: "Code Mode is unavailable because code-mode host is disabled." } },
   { type: "turn.started" },
+  ...(mode === "reconnect" || mode === "gave-up" ? [{ type: "error", message: "Reconnecting... 1/5 (stream disconnected before completion: error sending request)" }, { type: "error", message: "Reconnecting... 2/5 (stream disconnected before completion: error sending request)" }] : []),
   ...(mode === "tool" ? [{ type: "item.completed", item: { id: "item_1", type: "command_execution", command: "cat /etc/passwd" } }] : []),
   { type: "item.completed", item: { id: "item_2", type: "agent_message", text: JSON.stringify({ summary: "Codex analysis", content: "Explicit context only" }) } },
   { type: "turn.completed", usage: { input_tokens: 5, cached_input_tokens: 0, output_tokens: 7, reasoning_output_tokens: 0 } },
 ];
+if (mode === "gave-up") {
+  events.splice(-2, 2, { type: "error", message: "stream disconnected before completion" }, { type: "turn.failed", error: { message: "stream disconnected before completion" } });
+  for (const event of events) console.log(JSON.stringify(event));
+  process.exit(1);
+}
 for (const event of events) console.log(JSON.stringify(event));
+process.exit(0);
 `,
     { mode: 0o700 },
   );
@@ -94,6 +127,8 @@ for (const event of events) console.log(JSON.stringify(event));
     executable,
     setMode: (mode: FakeCodexMode) => writeFileSync(modePath, mode),
     setFeatureListing: (listing: string) => writeFileSync(listingPath, listing),
+    helperPid: () =>
+      Number(readFileSync(join(root, "codex-helper.pid"), "utf8")),
     report: () =>
       JSON.parse(readFileSync(reportPath, "utf8")) as FakeCodexReport,
   };

@@ -11,6 +11,8 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { WorkerContext } from "@ai-office/application/ports/worker-runtime.port.ts";
@@ -240,6 +242,135 @@ describe.skipIf(process.platform === "win32")(
           .filter((line) => !line.startsWith("view_image "))
           .join("\n"),
       );
+    });
+
+    test("project state in an ancestor of the temporary tree never reaches the worker", async () => {
+      // The temporary root lives inside a directory that looks like a project.
+      mkdirSync(join(root, ".agents", "skills", "ambient-a"), {
+        recursive: true,
+      });
+      mkdirSync(join(root, ".codex", "skills", "ambient-c"), {
+        recursive: true,
+      });
+      for (const skill of [
+        ".agents/skills/ambient-a",
+        ".codex/skills/ambient-c",
+      ])
+        writeFileSync(
+          join(root, skill, "SKILL.md"),
+          "---\nname: ambient\ndescription: AMBIENT PROJECT SKILL\n---\n",
+        );
+      writeFileSync(join(root, "AGENTS.md"), "AMBIENT PROJECT INSTRUCTIONS");
+      writeFileSync(
+        join(root, ".codex", "config.toml"),
+        "[features]\nshell_tool = true\nview_image = true\n",
+      );
+      const marker = join(root, ".git");
+      for (const create of [
+        () => mkdirSync(marker),
+        () => writeFileSync(join(marker, "HEAD"), "ref: refs/heads/main\n"),
+        () => {
+          rmSync(marker, { recursive: true });
+          writeFileSync(marker, "");
+        },
+      ]) {
+        create();
+        // Control: without the worker's configuration the audited CLI finds
+        // the ancestor root and loads both skill directories.
+        const work = join(scratch, "control");
+        mkdirSync(work);
+        await runWorkerProcess({
+          executable: fake.executable,
+          args: ["exec", "-"],
+          cwd: work,
+          input: "",
+          timeoutMs: 10000,
+          env: { PATH: process.env.PATH ?? "", HOME: work, CODEX_HOME: work },
+        });
+        expect(fake.report().projectSkills).toEqual([
+          join(root, ".agents", "skills", "ambient-a"),
+          join(root, ".codex", "skills", "ambient-c"),
+        ]);
+        rmSync(work, { recursive: true });
+
+        await worker().execute(context, limits);
+        const report = fake.report();
+        expect(report.cwd.startsWith(realpathSync(root))).toBe(true);
+        expect(report.projectSkills).toEqual([]);
+        expect(report.args).toContain("project_root_markers=[]");
+        expect(report.args).toContain("project_doc_max_bytes=0");
+        expect(report.args).toContain("skills.bundled.enabled=false");
+        expect(report.prompt).not.toContain("AMBIENT");
+        cleaned();
+      }
+    });
+
+    test("a descendant that outlives a successful client is reaped before cleanup", async () => {
+      fake.setMode("linger");
+      const output = await worker().execute(context, limits);
+      expect(output.summary).toBe("Codex analysis");
+      // The helper kept writing into the isolated home; it is already dead
+      // and the tree, login copy included, is gone.
+      expect(() => process.kill(fake.helperPid(), 0)).toThrow();
+      expect(existsSync(fake.report().env.CODEX_HOME!)).toBe(false);
+      await Bun.sleep(50);
+      cleaned();
+    });
+
+    test("a recovered reconnect is accepted and an abandoned one is not", async () => {
+      fake.setMode("reconnect");
+      expect(await worker().execute(context, limits)).toMatchObject({
+        summary: "Codex analysis",
+        usage: { inputTokens: 5, outputTokens: 7 },
+      });
+      fake.setMode("gave-up");
+      await expect(worker().execute(context, limits)).rejects.toMatchObject({
+        code: "WORKER_FAILED",
+      });
+      cleaned();
+    });
+
+    test("an auth.json that is not a regular file is refused without blocking", async () => {
+      const auth = join(operatorHome, "auth.json");
+      const refusedQuickly = async () => {
+        writeFileSync(join(root, "codex-report.json"), "null");
+        const started = Date.now();
+        // A blocked open would outlive both the deadline and the cancellation.
+        const control = new AbortController();
+        const timer = setTimeout(() => control.abort(), 3000);
+        try {
+          await expect(
+            worker().execute(
+              context,
+              { ...limits, timeoutMs: 3000 },
+              control.signal,
+            ),
+          ).rejects.toMatchObject({ code: "WORKER_UNAVAILABLE" });
+        } finally {
+          clearTimeout(timer);
+        }
+        expect(Date.now() - started).toBeLessThan(2500);
+        expect(readFileSync(join(root, "codex-report.json"), "utf8")).toBe(
+          "null",
+        );
+        cleaned();
+      };
+      rmSync(auth);
+      execFileSync("mkfifo", [auth]);
+      await refusedQuickly();
+      rmSync(auth);
+      mkdirSync(auth);
+      await refusedQuickly();
+      rmSync(auth, { recursive: true });
+      const server = createServer().listen(auth);
+      try {
+        await new Promise((resolve) => server.once("listening", resolve));
+        await refusedQuickly();
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+      }
+      symlinkSync("/dev/zero", auth);
+      await refusedQuickly();
     });
 
     test("the shared runner gives the Claude worker no Codex state", async () => {
