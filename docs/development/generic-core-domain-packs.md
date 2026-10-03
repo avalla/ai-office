@@ -472,6 +472,8 @@ GP-10A + GP-13 → GP-10B workflows/prompts
 GP-10B + GP-14..GP-16 → GP-10C evidence/integrations/adoption
 GP-11..GP-16 → GP-17 legal, GP-18 manufacturing, GP-19 empty/custom
 GP-10C + GP-17..GP-19 → GP-20 purity and regression → GP-21 authoring guide
+GP-06 + GP-07 → GP-22 binding composition preflight (hardening)
+GP-06 + GP-07 → GP-23 pack manifest U+0000 policy assessment (hardening)
 ```
 
 The M11.6 artifact contract is a prerequisite to production GP-14 work.
@@ -511,6 +513,153 @@ carry the same fields. GP-01 through GP-07 have passed review and merged.
 | GP-19 — Empty/custom domain fixture                | GP-11–GP-16                     | Zero official packs; project-defined roles, agents, workflow, artifacts, policy and knowledge work without core edits.                                                                                                   | Custom-domain fixture and end-to-end configuration/upgrade tests.                                                    | Making `custom` a privileged official pack.               |
 | GP-20 — Core purity and legacy regression gate     | GP-10C, GP-17–GP-19             | Enforce `pack → public core contracts`, no core import of official packs, and run four-domain plus pre-pack fixtures against lifecycle, approval, storage, knowledge, audit and fencing.                                 | Architecture rule and integration suite; `bun run check` plus DB upgrade/RLS checks as applicable.                   | Broad refactor outside M16.                               |
 | GP-21 — Pack authoring and operations guide        | GP-20                           | Document manifest, lifecycle, project ownership/customization, conflicts, upgrades, local install/validate and custom/three reference examples using actual commands.                                                    | Authoring guide and tested examples; docs/CLI parity review.                                                         | Marketplace, remote registry or speculative CLI commands. |
+
+## Post-GP-06 hardening follow-ups
+
+GP-22 and GP-23 are planned and not implemented. They harden the merged GP-06
+and GP-07 contracts; they are not unfinished GP-06 or GP-07 acceptance
+criteria and do not reopen that work. Each is a project requirement key with
+one linked AI Office task, depends only on GP-06 and GP-07, and can be
+completed without the other. No other GP task depends on them.
+
+### GP-22 — Binding composition preflight
+
+Depends on: GP-06, GP-07.
+
+GP-07 rejects a project-owned definition whose `(kind, localId)` collides with
+the currently resolved pack closure. The inverse path is open: a project that
+already holds a project-owned definition can apply a binding whose resolved
+closure contains the same `(kind, localId)`; the binding mutation succeeds and
+GP-06 then reports `duplicate_effective_definition`. A portable restore can
+likewise carry individually valid binding and definition sections whose
+composition is invalid.
+
+Goal: close the inverse gap so composition validation is symmetric. GP-07
+checks a prospective project definition against the resolved pack closure.
+GP-22 checks a prospective pack binding against existing project-owned
+definitions. Portable restore validates the combined prospective binding,
+project definitions and resolved closure after archive structural validation
+and before authoritative state is committed, but only when the exact closure
+is resolvable on the restore host. No second resolver is introduced.
+
+Pack availability is operational, host-local state, not portable project
+authority. Portable archives do not embed pack artifacts or catalog state, and
+an archive carrying an exact binding must stay restorable onto a host whose
+catalog does not yet contain those artifacts. GP-22 does not make installed
+pack availability a prerequisite for restore. This exception applies to
+restore only; binding mutation stays strict.
+
+Acceptance, `project:pack:preview` and `project:pack:apply`:
+
+- the prospective exact pack closure is resolved with the existing
+  GP-04/shared resolver; GP-04 and GP-06 resolution logic is not duplicated;
+- every project-owned `(kind, localId)` is compared against every definition
+  in the prospective resolved closure, selected packs and transitive
+  dependencies alike;
+- identity comparison is exact, case-sensitive and locale-independent;
+- a collision is rejected with a typed, deterministic diagnostic;
+- preview and apply agree;
+- a failed apply leaves the binding revision and state unchanged.
+
+Acceptance, portable restore when the exact closure is locally resolvable.
+After archive structural and integrity validation and before authoritative
+state is committed:
+
+- the exact prospective pack closure is resolved with the existing shared
+  GP-04 resolver;
+- project-owned `(kind, localId)` definitions are compared against that
+  resolved closure;
+- an archive whose sections are individually valid but whose composition
+  contains a project-owned/pack collision is rejected before commit;
+- restore stays atomic and leaves no partial project, binding or definition
+  state.
+
+Acceptance, portable restore when the exact closure is not locally resolvable:
+
+- restore remains allowed; the archive is not rejected merely because selected
+  or dependency pack artifacts are unavailable locally;
+- the exact portable binding and definition state are persisted under the
+  existing portability contract;
+- definitions are never guessed, and nothing is resolved against a different
+  installed pack version or digest;
+- GP-06 remains the fail-closed backstop: it reports `pack_unavailable` while
+  the exact closure is unavailable, and a composition error such as
+  `duplicate_effective_definition` once the exact closure becomes resolvable
+  and conflicts with project-owned definitions.
+
+GP-06 also remains the defensive fail-closed backstop for corrupt state and
+non-conforming adapters.
+
+Acceptance tests cover at minimum:
+
+- a direct selected-pack collision;
+- a collision introduced by a transitive dependency;
+- a different kind with the same local ID is allowed;
+- a different case is not a collision;
+- removal and replacement scenarios remain possible where appropriate;
+- preview/apply consistency;
+- binding revision unchanged after a rejected apply;
+- restore with an available closure and a direct collision is rejected
+  atomically, for a checksummed archive;
+- restore with an available closure and a transitive collision is rejected
+  atomically;
+- restore with an available closure and no collision succeeds;
+- restore of an exact binding whose pack artifacts are absent succeeds and
+  preserves the binding and definitions;
+- after such a restore, GP-06 reports `pack_unavailable`;
+- when the exact artifacts later become available, a valid composition
+  resolves normally and a colliding composition fails closed;
+- no fallback to another installed version or digest is permitted;
+- existing portability behavior covered by the repository tests is preserved;
+- SQLite and PostgreSQL behave equivalently where the binding path supports
+  both.
+
+Non-goals: pack upgrade reconciliation (GP-08); aliases; automatic pack
+selection; Runtime scheduling from pack definitions; a second configuration
+resolver; making installed pack availability a prerequisite for restore.
+
+### GP-23 — Pack manifest U+0000 policy assessment
+
+Depends on: GP-06, GP-07.
+
+Project definition text has one shared rule: at most 16,000 UTF-16 code units,
+no lone surrogate, no U+0000, valid non-BMP characters allowed, no
+normalization. U+0000 is rejected there because PostgreSQL `jsonb` cannot
+represent it consistently with SQLite. Pack manifest descriptive text has
+separate validation and may still permit U+0000.
+
+Goal: determine, from the actual persistence, canonicalization and runtime
+boundaries, whether pack manifest text needs the same restriction. The task is
+assessment-first.
+
+Assessment: trace manifest textual fields through manifest parsing and
+verification; JCS canonicalization and the manifest digest; the installed pack
+catalog; SQLite persistence, if any; PostgreSQL persistence, if any; portable
+or exported state, if any; the effective GP-06 configuration; CLI/API
+serialization; and dashboard/read models. U+0000 is tested against those real
+boundaries, not assumed unsafe because project definitions reject it.
+
+Acceptance: exactly one explicit, evidence-backed outcome is recorded.
+
+1. Reject U+0000 in pack manifest text, if any supported storage or runtime
+   boundary cannot represent it consistently. Then:
+   - one shared manifest text predicate is added;
+   - rejection happens before installation or persistence;
+   - valid non-BMP Unicode and existing normalization semantics are preserved;
+   - SQLite/PostgreSQL parity tests are added where applicable;
+   - manifest and digest regression tests are added.
+2. Allow U+0000 by design, if all supported manifest paths represent it
+   consistently. Then:
+   - the distinction from project-definition text is documented;
+   - a regression test proves U+0000 remains supported;
+   - the documentation states why PostgreSQL's project-definition `jsonb`
+     limitation does not apply to this path.
+
+No restriction is introduced without evidence.
+
+Non-goals: Unicode normalization; unnecessary changes to manifest identity
+semantics; changes to GP-07 definition text behavior; a general Unicode
+redesign.
 
 ## Milestone exit and exclusions
 
