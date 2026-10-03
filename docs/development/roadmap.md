@@ -1828,7 +1828,12 @@ depends on the other, and no other GP task depends on them.
   gap. Binding preview/apply will check the prospective pack closure against
   existing project-owned definitions. Portable restore will validate the
   combined prospective binding, project definitions and resolved closure after
-  archive structural validation and before authoritative state is committed.
+  archive structural validation and before authoritative state is committed,
+  when the exact closure is resolvable on the restore host. Pack availability
+  stays host-local operational state: an archive whose exact pack artifacts
+  are absent locally still restores, GP-06 reports `pack_unavailable`, and a
+  collision fails closed once the exact closure becomes resolvable. Binding
+  mutation stays strict.
   Both use the existing shared resolver; no second resolver is introduced.
   GP-06 stays the fail-closed backstop.
 - GP-23 — Pack manifest U+0000 policy assessment. Project definition text

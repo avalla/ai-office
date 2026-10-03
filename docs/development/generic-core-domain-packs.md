@@ -539,7 +539,15 @@ checks a prospective project definition against the resolved pack closure.
 GP-22 checks a prospective pack binding against existing project-owned
 definitions. Portable restore validates the combined prospective binding,
 project definitions and resolved closure after archive structural validation
-and before authoritative state is committed. No second resolver is introduced.
+and before authoritative state is committed, but only when the exact closure
+is resolvable on the restore host. No second resolver is introduced.
+
+Pack availability is operational, host-local state, not portable project
+authority. Portable archives do not embed pack artifacts or catalog state, and
+an archive carrying an exact binding must stay restorable onto a host whose
+catalog does not yet contain those artifacts. GP-22 does not make installed
+pack availability a prerequisite for restore. This exception applies to
+restore only; binding mutation stays strict.
 
 Acceptance, `project:pack:preview` and `project:pack:apply`:
 
@@ -553,17 +561,33 @@ Acceptance, `project:pack:preview` and `project:pack:apply`:
 - preview and apply agree;
 - a failed apply leaves the binding revision and state unchanged.
 
-Acceptance, portable restore:
+Acceptance, portable restore when the exact closure is locally resolvable.
+After archive structural and integrity validation and before authoritative
+state is committed:
 
-- after archive structural validation and before authoritative state is
-  committed, the prospective combination of pack binding, project definitions
-  and resolved pack closure is validated;
-- an archive whose sections are individually valid but whose effective
-  configuration would contain a project-owned/pack collision is rejected;
+- the exact prospective pack closure is resolved with the existing shared
+  GP-04 resolver;
+- project-owned `(kind, localId)` definitions are compared against that
+  resolved closure;
+- an archive whose sections are individually valid but whose composition
+  contains a project-owned/pack collision is rejected before commit;
 - restore stays atomic and leaves no partial project, binding or definition
   state.
 
-GP-06 remains the defensive fail-closed backstop for corrupt state and
+Acceptance, portable restore when the exact closure is not locally resolvable:
+
+- restore remains allowed; the archive is not rejected merely because selected
+  or dependency pack artifacts are unavailable locally;
+- the exact portable binding and definition state are persisted under the
+  existing portability contract;
+- definitions are never guessed, and nothing is resolved against a different
+  installed pack version or digest;
+- GP-06 remains the fail-closed backstop: it reports `pack_unavailable` while
+  the exact closure is unavailable, and a composition error such as
+  `duplicate_effective_definition` once the exact closure becomes resolvable
+  and conflicts with project-owned definitions.
+
+GP-06 also remains the defensive fail-closed backstop for corrupt state and
 non-conforming adapters.
 
 Acceptance tests cover at minimum:
@@ -575,13 +599,24 @@ Acceptance tests cover at minimum:
 - removal and replacement scenarios remain possible where appropriate;
 - preview/apply consistency;
 - binding revision unchanged after a rejected apply;
-- a checksummed archive with a composition collision is rejected atomically;
+- restore with an available closure and a direct collision is rejected
+  atomically, for a checksummed archive;
+- restore with an available closure and a transitive collision is rejected
+  atomically;
+- restore with an available closure and no collision succeeds;
+- restore of an exact binding whose pack artifacts are absent succeeds and
+  preserves the binding and definitions;
+- after such a restore, GP-06 reports `pack_unavailable`;
+- when the exact artifacts later become available, a valid composition
+  resolves normally and a colliding composition fails closed;
+- no fallback to another installed version or digest is permitted;
+- existing portability behavior covered by the repository tests is preserved;
 - SQLite and PostgreSQL behave equivalently where the binding path supports
   both.
 
 Non-goals: pack upgrade reconciliation (GP-08); aliases; automatic pack
 selection; Runtime scheduling from pack definitions; a second configuration
-resolver.
+resolver; making installed pack availability a prerequisite for restore.
 
 ### GP-23 — Pack manifest U+0000 policy assessment
 
