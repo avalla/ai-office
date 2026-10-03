@@ -1732,7 +1732,8 @@ versioned and auditable, never a silent replacement. A future multi-pack
 project uses explicit namespace, conflict, and policy composition rules rather
 than import order. Pack upgrades do not overwrite project-owned modifications.
 
-Delivery tasks GP-01–GP-21 (with GP-10A/B/C extraction slices) and their
+Delivery tasks GP-01–GP-21 (with GP-10A/B/C extraction slices), the
+post-GP-06 hardening follow-ups GP-22 and GP-23, and their
 dependency graph, acceptance criteria, extraction inventory, migration stages,
 and non-goals are in the
 [Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
@@ -1769,6 +1770,34 @@ pack upgrade reconciliation, Development Pack parity/extraction, automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
 end-to-end exit criteria are met.
+
+### Post-GP-06 hardening follow-ups
+
+Status: planned; neither is implemented. GP-22 and GP-23 are separate,
+independently completable M16 tasks that harden the merged GP-06 and GP-07
+contracts. They are not unfinished GP-06 or GP-07 acceptance criteria, and
+neither reopens that work. Each depends only on merged GP-06 and GP-07; neither
+depends on the other, and no other GP task depends on them.
+
+- GP-22 — Binding composition preflight. GP-07 already rejects a project-owned
+  definition that collides with the currently resolved pack closure, but a
+  later `project:pack:apply`, or a portable restore whose sections are valid
+  individually, can still produce a collision that only GP-06 reports as
+  `duplicate_effective_definition`. GP-22 makes the check symmetric: binding
+  preview/apply and restore validate the prospective composition before
+  authoritative state is committed, through the existing shared resolver.
+  GP-06 stays the fail-closed backstop.
+- GP-23 — Pack manifest U+0000 policy assessment. Project definition text
+  rejects U+0000 because PostgreSQL `jsonb` cannot represent it consistently
+  with SQLite. Pack manifest text is validated separately. GP-23 traces
+  manifest text through its real persistence, canonicalization and
+  serialization boundaries and records one evidence-based outcome: reject
+  U+0000 through one shared manifest text predicate, or allow it by design
+  with a regression test and a documented distinction. No restriction is
+  introduced without evidence.
+
+Scope, exact acceptance criteria and non-goals are in the
+[plan's hardening section](generic-core-domain-packs.md#post-gp-06-hardening-follow-ups).
 
 Exit: development, legal, manufacturing, and empty/custom fixtures run the same
 core lifecycles without changes to core for each domain. Legacy development
