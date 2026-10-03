@@ -58,9 +58,11 @@ Three boundaries govern this direction:
 The M6E office manifest is the configuration precursor for this direction. The
 M11 enforcement foundation now persists pinned sequential pipeline and stage
 runs for explicitly enforced definitions; guidance-only definitions still rely
-on the active host. M11.5 queue-backed orchestration, disabled by default,
-dispatches workers and advances enforced stages; without it, runs advance only
-through explicit commands. Advanced orchestration remains future work. M14 is intended to deliver the first complete software-development
+on the active host. A successful explicit `run:tick` of a stage-bound run is
+reconciled into its bound stage. M11.5 queue-backed orchestration, disabled by
+default, automates dispatch and orchestration of subsequent work without
+repeated operator-driven ticks. Advanced orchestration remains future work. M14
+is intended to deliver the first complete software-development
 vertical. This direction preserves M0-M14 scope and implementation status and
 does not rename the current `Project` aggregate, change existing schemas, or
 claim support for another professional domain.
@@ -972,10 +974,12 @@ Implemented foundation:
 
 Still future within M11: branching, bounded cycles, retries/timeouts,
 machine-interpretable artifacts, generalized conditions and failure
-compensation. Explicitly scheduled runs can use the first bounded text worker;
-on its own this does not automate pipeline advancement. Automated dispatch and
-stage advancement arrived with M11.5 queue-backed orchestration, which is
-disabled by default.
+compensation. Explicitly scheduled runs can use the first bounded text worker
+through an explicit tick. Successful completion of a stage-bound run is
+reconciled into its bound pipeline stage, subject to approval gates and
+pipeline semantics. Automated dispatch and orchestration of subsequent work
+without repeated operator-driven ticks arrived with M11.5 queue-backed
+orchestration, which is disabled by default.
 
 A future pipeline definition must be able to describe:
 
@@ -1679,10 +1683,10 @@ See [Professional-work verticals](professional-work-verticals.md).
 ## M16 — Generic Core & Domain Packs
 
 Status: active in AI Office and in progress. GP-03 public contracts, GP-04
-host-local catalog/resolver, GP-05 exact project binding, and GP-07 definition
-ownership and source-pinned overrides are merged. GP-06 derived effective
-configuration and read-only inspection are implemented in a review branch.
-Pack-driven Runtime behavior remains planned.
+host-local catalog/resolver, GP-05 exact project binding, GP-07 definition
+ownership and source-pinned overrides, and GP-06 derived effective
+configuration with read-only inspection are merged. Pack-driven Runtime
+behavior remains planned.
 
 AI Office is transitioning from a software-development-oriented implementation
 into a domain-neutral operational core. Domain-specific semantics are supplied
