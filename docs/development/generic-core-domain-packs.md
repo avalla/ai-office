@@ -534,10 +534,12 @@ GP-06 then reports `duplicate_effective_definition`. A portable restore can
 likewise carry individually valid binding and definition sections whose
 composition is invalid.
 
-Goal: composition validation is symmetric. Definition mutation validates
-against the pack closure (done in GP-07); binding mutation validates against
-existing project definitions; portable restore validates the complete
-prospective composition before authoritative state is committed.
+Goal: close the inverse gap so composition validation is symmetric. GP-07
+checks a prospective project definition against the resolved pack closure.
+GP-22 checks a prospective pack binding against existing project-owned
+definitions. Portable restore validates the combined prospective binding,
+project definitions and resolved closure after archive structural validation
+and before authoritative state is committed. No second resolver is introduced.
 
 Acceptance, `project:pack:preview` and `project:pack:apply`:
 

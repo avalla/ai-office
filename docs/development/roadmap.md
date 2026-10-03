@@ -1742,7 +1742,7 @@ is the GP-02 architectural decision, not an implemented Runtime contract. The
 [M15-4 decision](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 supplies its four authority/evidence prerequisites; GP-02 reviewed the
 contract against them after M15-4 integration. The AI
-Office project record has a distinct planned M16 milestone with one requirement
+Office project record has a distinct active M16 milestone with one requirement
 linked to each task. Existing GP task prerequisites are stored as typed task
 dependency edges; GP-02's cross-milestone M15-4 prerequisite is also stored as
 a typed task dependency edge in the project Runtime. GP-10A/B/C remain separately tracked extraction
@@ -1779,22 +1779,26 @@ contracts. They are not unfinished GP-06 or GP-07 acceptance criteria, and
 neither reopens that work. Each depends only on merged GP-06 and GP-07; neither
 depends on the other, and no other GP task depends on them.
 
-- GP-22 — Binding composition preflight. GP-07 already rejects a project-owned
-  definition that collides with the currently resolved pack closure, but a
-  later `project:pack:apply`, or a portable restore whose sections are valid
-  individually, can still produce a collision that only GP-06 reports as
-  `duplicate_effective_definition`. GP-22 makes the check symmetric: binding
-  preview/apply and restore validate the prospective composition before
-  authoritative state is committed, through the existing shared resolver.
+- GP-22 — Binding composition preflight. GP-07 checks a prospective
+  project-owned definition against the currently resolved pack closure. The
+  inverse path is open: a later `project:pack:apply`, or a portable restore
+  whose sections are valid individually, can still produce a collision that
+  only GP-06 reports as `duplicate_effective_definition`. GP-22 closes that
+  gap. Binding preview/apply will check the prospective pack closure against
+  existing project-owned definitions. Portable restore will validate the
+  combined prospective binding, project definitions and resolved closure after
+  archive structural validation and before authoritative state is committed.
+  Both use the existing shared resolver; no second resolver is introduced.
   GP-06 stays the fail-closed backstop.
 - GP-23 — Pack manifest U+0000 policy assessment. Project definition text
   rejects U+0000 because PostgreSQL `jsonb` cannot represent it consistently
   with SQLite. Pack manifest text is validated separately. GP-23 traces
   manifest text through its real persistence, canonicalization and
-  serialization boundaries and records one evidence-based outcome: reject
-  U+0000 through one shared manifest text predicate, or allow it by design
-  with a regression test and a documented distinction. No restriction is
-  introduced without evidence.
+  serialization boundaries without assuming the answer, and records exactly
+  one evidence-backed outcome: reject U+0000 consistently through one shared
+  manifest text predicate, or allow it explicitly by design with a regression
+  test and a documented distinction. No restriction is introduced without
+  evidence.
 
 Scope, exact acceptance criteria and non-goals are in the
 [plan's hardening section](generic-core-domain-packs.md#post-gp-06-hardening-follow-ups).
