@@ -58,8 +58,9 @@ Three boundaries govern this direction:
 The M6E office manifest is the configuration precursor for this direction. The
 M11 enforcement foundation now persists pinned sequential pipeline and stage
 runs for explicitly enforced definitions; guidance-only definitions still rely
-on the active host. Advanced orchestration and worker dispatch remain future
-work. M14 is intended to deliver the first complete software-development
+on the active host. M11.5 queue-backed orchestration, disabled by default,
+dispatches workers and advances enforced stages; without it, runs advance only
+through explicit commands. Advanced orchestration remains future work. M14 is intended to deliver the first complete software-development
 vertical. This direction preserves M0-M14 scope and implementation status and
 does not rename the current `Project` aggregate, change existing schemas, or
 claim support for another professional domain.
@@ -361,7 +362,7 @@ Status: implemented.
 - automatic project-ID resolution for project-scoped commands;
 - idempotent install reconciliation, default office only when absent, passive
   client detection, and ownership-safe sequential client apply;
-- status schema version `3`, including distinct repository identity and runtime
+- status schema version `4`, including distinct repository identity and runtime
   association plus offline repository/client inspection when
   the daemon is unavailable;
 - lifecycle uninstall that preserves the portable identity, user content,
@@ -375,8 +376,9 @@ Status: implemented.
   source-maintenance exception requires no operational source opt-in and grants
   no Runtime authority (ADR-0011); published-package and automatic updates remain
   outside this feature;
-- linkable source-checkout `ai-office` bin while published packages, compiled
-  binaries, and background service management remain M9 work.
+- linkable source-checkout `ai-office` bin while published packages and
+  compiled binaries remain M9 work. Per-user background service management
+  has since shipped as `ai-office service install|status|uninstall`.
 
 The repository artifact is portable identity metadata rather than project
 authority. Clones and purged runtimes establish a local SQLite mapping through
@@ -482,8 +484,8 @@ Delivered:
 - an in-memory invalidation bus and `GET /api/events` server-sent stream that
   carries topics only, persists nothing, and cannot become a second source of
   truth;
-- `ai-office dashboard`, a foreground loopback host that serves a dependency-free
-  console and forwards `/api/*` to the daemon socket;
+- `ai-office dashboard`, a foreground loopback host that serves the console
+  (since rebuilt as a React application, see M17) and forwards `/api/*` to the daemon socket;
 - honest reporting of the gap between persisted and operational state: a task
   scheduled for a run still reads `pending`, so the read model publishes
   `recordedStatus`, `operationalStatus`, and the reasons they differ, and the UI
@@ -969,9 +971,11 @@ Implemented foundation:
 - pipeline diagnostics in project status and append-only audit integration.
 
 Still future within M11: branching, bounded cycles, retries/timeouts,
-machine-interpretable artifacts, generalized conditions, failure compensation,
-and automated worker-runtime dispatch. Explicitly scheduled runs can use the
-first bounded text worker; this does not automate pipeline advancement.
+machine-interpretable artifacts, generalized conditions and failure
+compensation. Explicitly scheduled runs can use the first bounded text worker;
+on its own this does not automate pipeline advancement. Automated dispatch and
+stage advancement arrived with M11.5 queue-backed orchestration, which is
+disabled by default.
 
 A future pipeline definition must be able to describe:
 
@@ -1486,9 +1490,9 @@ those same `core.pipeline_run` and `core.pipeline_stage_run` tables in place,
 adds authoritative `OfficeManifestRepository` and `PipelineRunRepository`
 persistence, and adds the append-only `core.pipeline_override` relation.
 PostgreSQL remains intentionally partial: its implemented capability groups are
-exactly `projects`, `officeManifests`, `pipelines`, `tasks`,
-`taskRequirements`, `governance`, `runtime`, `auditEvents`, and
-`transactions`; a request to use it as complete Runtime authority still
+exactly `projects`, `packBindings`, `definitions`, `officeManifests`,
+`pipelines`, `tasks`, `taskDependencies`, `taskRequirements`, `governance`,
+`runtime`, `auditEvents`, and `transactions`; a request to use it as complete Runtime authority still
 fails closed with the missing capability list; no SQLite fallback or hybrid
 authority is allowed. PostgreSQL connection configuration is explicit
 through `AI_OFFICE_STORAGE_PROVIDER=postgres` and `AI_OFFICE_POSTGRES_URL`, and

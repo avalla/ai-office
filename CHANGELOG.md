@@ -117,5 +117,6 @@ No version tag or public release has been published by these changes.
 The existing baseline includes the persistent Runtime, explicit run outcomes,
 atomic admission, cancellation and approved recovery, task/requirement queries,
 four core plus fourteen opt-in agent profiles, and hardened source-linked
-program updates. Real worker dispatch and an autonomous development loop remain
-future work.
+program updates. Worker dispatch is available through explicit `run:tick`
+workers and opt-in queue-backed orchestration; an autonomous development loop
+remains future work.

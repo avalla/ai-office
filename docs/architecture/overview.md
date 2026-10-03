@@ -501,7 +501,7 @@ The independently supplied `client:* --root` is the integration root containing
 the optional instruction contract, shared guide, host pointers, and repository
 skills. These three roots may coincide but do not have to. See the [storage design](storage.md) and
 the README's
-[local storage guide](../../README.md#local-storage-and-state).
+[storage responsibilities](../../README.md#storage-responsibilities).
 
 An installed repository also contains `.ai-office/project.json`. This
 committable portable identity is not a fourth database and is not authoritative
@@ -560,9 +560,11 @@ The runtime now provides the first enforceable pipeline foundation: manifest
 definitions may remain guidance-only or opt into enforcement; a started run
 pins its definition and persists stage runs, task binding, assignment,
 transition, approval, override, and audit state. Advanced branching, retries,
-machine-interpretable stage artifacts and automated worker dispatch remain
-later M11/M12 work. An explicit tick can now invoke a bounded text worker for
-a scheduled stage-bound run; it does not advance the stage.
+and machine-interpretable stage artifacts remain later M11/M12 work. An
+explicit tick can invoke a bounded text worker for a scheduled stage-bound run;
+on its own it does not advance the stage. Automated dispatch and stage
+advancement require the queue-backed orchestration described below, which is
+disabled by default.
 
 ```text
                          AI Office authority
