@@ -1,6 +1,7 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { constants } from "node:fs";
+import { mkdir, mkdtemp, open, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
 import {
   WorkerRuntimeError,
   workerLimits,
@@ -18,6 +19,9 @@ import {
 } from "./claude-worker-runtime.ts";
 
 const minimumVersion = [0, 160, 0] as const;
+const inspectionTimeoutMs = 10000;
+const authFileName = "auth.json";
+const maxAuthBytes = 64 * 1024;
 const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const effortLevels: ReadonlySet<string> = new Set([
   "low",
@@ -25,6 +29,154 @@ const effortLevels: ReadonlySet<string> = new Set([
   "high",
   "xhigh",
 ]);
+
+/**
+ * Every default-enabled capability feature of `codex-cli` 0.160.0, audited
+ * with `codex features list`. Each key is a valid feature of that version: the
+ * CLI exits on an unknown name. `--disable unified_exec` is accepted but has no
+ * effect there; `shell_tool` is what removes the shell tools.
+ */
+export const codexDisabledFeatures = [
+  // Shell and process execution.
+  "shell_tool",
+  "unified_exec",
+  "unified_exec_tty",
+  "shell_snapshot",
+  "code_mode_host",
+  "code_mode",
+  "code_mode_only",
+  "sleep_tool",
+  "hooks",
+  "worktrees",
+  "workspace_dependencies",
+  // Local file disclosure.
+  "view_image",
+  // Network, browser and computer automation.
+  "image_generation",
+  "browser_use",
+  "browser_use_external",
+  "browser_use_full_cdp_access",
+  "in_app_browser",
+  "computer_use",
+  "in_app_local_automation",
+  // Apps, plugins, skills and MCP.
+  "apps",
+  "plugins",
+  "plugin_sharing",
+  "remote_plugin",
+  "skill_mcp_dependency_install",
+  "skill_search",
+  "mentions_v2",
+  "tool_call_mcp_elicitation",
+  "tool_suggest",
+  "auth_elicitation",
+  // Agents, goals and ambient memory.
+  "multi_agent",
+  "multi_agent_v2",
+  "goals",
+  "memories",
+  "guardian_approval",
+  // Background services and interactive surfaces.
+  "daemon_auto_start",
+  "in_app_updates",
+  "in_app_chat",
+  "in_app_dictation",
+  "realtime_conversation",
+  "fast_mode",
+] as const;
+
+/**
+ * Features allowed to stay enabled: transport, compaction and approval
+ * behavior, retired no-op flags, and `unified_exec`, which 0.160.0 cannot turn
+ * off and which exposes nothing once `shell_tool` is off. Any other enabled
+ * feature, including one a later CLI adds, makes the worker unavailable.
+ */
+const toleratedEnabledFeatures: ReadonlySet<string> = new Set([
+  "compaction_image_budget",
+  "content_item_kinds",
+  "enable_request_compression",
+  "guardian_reuse_parent_compaction",
+  "system_proxy_fallback",
+  "unbounded_connection_retries",
+  "unified_exec",
+  "write_stdin_approval",
+  "collaboration_modes",
+  "item_ids",
+  "resize_all_images",
+  "sqlite",
+  "steer",
+  "terminal_resize_reflow",
+  "tool_search_always_defer_mcp_tools",
+  "tui_app_server",
+  "unified_exec_zsh_fork",
+]);
+
+const featureFlags = codexDisabledFeatures.flatMap((feature) => [
+  "--disable",
+  feature,
+]);
+
+/** Fails closed unless the CLI reports exactly the audited feature state. */
+export function verifyCodexFeatureIsolation(listing: string): void {
+  const enabled = new Map<string, boolean>();
+  for (const line of listing.split("\n")) {
+    if (line.trim() === "") continue;
+    const match =
+      /^([a-z0-9_.]+)\s+(?:stable|experimental|under development|deprecated|removed)\s+(true|false)$/.exec(
+        line.trim(),
+      );
+    if (match === null || enabled.has(match[1]!))
+      throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
+    enabled.set(match[1]!, match[2] === "true");
+  }
+  for (const feature of codexDisabledFeatures)
+    if (!enabled.has(feature))
+      throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
+  for (const [feature, on] of enabled)
+    if (on && !toleratedEnabledFeatures.has(feature))
+      throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
+}
+
+/**
+ * Copies only the operator's file-backed Codex login into the isolated home.
+ * Keyring logins and anything that is not the caller's own regular file fail
+ * closed; the source is opened read-only and never followed through a link.
+ */
+async function materializeAuth(
+  operatorHome: string,
+  isolatedHome: string,
+): Promise<void> {
+  let bytes: Buffer;
+  try {
+    if (!isAbsolute(operatorHome)) throw new Error("relative home");
+    const source = await open(
+      join(operatorHome, authFileName),
+      constants.O_RDONLY | constants.O_NOFOLLOW,
+    );
+    try {
+      const info = await source.stat();
+      if (
+        !info.isFile() ||
+        info.size === 0 ||
+        info.size > maxAuthBytes ||
+        info.uid !== process.getuid?.()
+      )
+        throw new Error("auth file");
+      bytes = await source.readFile();
+    } finally {
+      await source.close();
+    }
+    if (record(JSON.parse(bytes.toString("utf8")) as unknown) === null)
+      throw new Error("auth content");
+  } catch {
+    throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
+  }
+  await writeFile(join(isolatedHome, authFileName), bytes, {
+    mode: 0o600,
+    flag: "wx",
+  });
+}
+
 const outputSchema = {
   type: "object",
   additionalProperties: false,
@@ -45,7 +197,12 @@ function token(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
-/** Accept one completed Codex turn and its final structured message only. */
+/**
+ * Accepts exactly one completed turn carrying one final structured message.
+ * Reasoning items and non-fatal notice items are ignored; every other item or
+ * event fails closed. Codex does not emit an item for a tool call it rejects,
+ * so this parser bounds the result and is not what keeps tools away.
+ */
 export function parseCodexWorkerOutput(
   text: string,
   assignedModel: string | undefined,
@@ -53,32 +210,38 @@ export function parseCodexWorkerOutput(
   let sessionId: string | null = null;
   let answer: string | null = null;
   let usage: WorkerOutput["usage"] = null;
+  let started = 0;
   let completed = 0;
   try {
     for (const line of text.trim().split("\n")) {
       const event = record(JSON.parse(line) as unknown);
-      if (event === null) throw new Error("event");
+      if (event === null || completed > 0) throw new Error("event");
       if (event.type === "thread.started") {
         if (sessionId !== null || typeof event.thread_id !== "string")
           throw new Error("thread");
         if (!/^[a-zA-Z0-9_-]{1,128}$/.test(event.thread_id))
           throw new Error("thread id");
         sessionId = event.thread_id;
+      } else if (sessionId === null) {
+        throw new Error("thread not started");
       } else if (
         event.type === "item.started" ||
         event.type === "item.updated" ||
         event.type === "item.completed"
       ) {
         const item = record(event.item);
-        if (
-          item === null ||
-          !["agent_message", "reasoning"].includes(String(item.type))
-        )
-          throw new Error("unexpected tool item");
-        if (event.type === "item.completed" && item.type === "agent_message") {
-          if (typeof item.text !== "string") throw new Error("message");
+        if (item?.type === "error") {
+          if (event.type !== "item.completed") throw new Error("notice");
+        } else if (item?.type === "agent_message") {
+          if (event.type !== "item.completed") continue;
+          if (answer !== null || typeof item.text !== "string")
+            throw new Error("message");
           answer = item.text;
+        } else if (item?.type !== "reasoning") {
+          throw new Error("unexpected tool item");
         }
+      } else if (event.type === "turn.started") {
+        started += 1;
       } else if (event.type === "turn.completed") {
         completed += 1;
         const counts = record(event.usage);
@@ -87,11 +250,11 @@ export function parseCodexWorkerOutput(
             inputTokens: counts.input_tokens,
             outputTokens: counts.output_tokens,
           };
-      } else if (event.type !== "turn.started") {
+      } else {
         throw new Error("unexpected event");
       }
     }
-    if (sessionId === null || completed !== 1 || answer === null)
+    if (started !== 1 || completed !== 1 || answer === null)
       throw new Error("incomplete turn");
     const artifact = record(JSON.parse(answer) as unknown);
     if (
@@ -119,7 +282,20 @@ export function parseCodexWorkerOutput(
   }
 }
 
-/** Codex CLI login worker. It receives only the Runtime's explicit context. */
+interface CodexIsolation {
+  cwd: string;
+  codexHome: string;
+  env: Readonly<Record<string, string>>;
+}
+
+/**
+ * Codex CLI login worker. Each process runs in a fresh private directory with
+ * its own `HOME` and `CODEX_HOME`, so operator instructions, configuration,
+ * skills, rules and session state are never loaded; only the login file is
+ * copied in. The model still receives Codex's built-in instructions and
+ * environment context next to the Runtime context. This narrows what Codex
+ * loads; it is not a boundary against another same-UID process.
+ */
 export class CodexWorkerRuntime implements WorkerRuntime {
   readonly id = "codex-cli";
   private inspection: Promise<{ version: string }> | undefined;
@@ -129,6 +305,7 @@ export class CodexWorkerRuntime implements WorkerRuntime {
     private readonly runner: WorkerProcessRunner = runWorkerProcess,
     private readonly model?: string,
     private readonly platform: WorkerPlatform = currentWorkerPlatform(),
+    private readonly operatorCodexHome?: string,
   ) {}
 
   supportsModel(selection: AgentRunModelSelection):
@@ -151,18 +328,22 @@ export class CodexWorkerRuntime implements WorkerRuntime {
   }
 
   inspect(): Promise<{ version: string }> {
-    this.inspection ??= this.inDirectory(async (cwd) => {
+    this.inspection ??= this.inIsolation(async ({ cwd, env }) => {
       if (this.platform === "win32")
         throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
-      const output = await this.runner({
-        executable: this.executable,
-        args: ["--version"],
-        cwd,
-        input: "",
-        timeoutMs: 10000,
-        platform: this.platform,
-      });
-      const match = /^codex-cli (\d+)\.(\d+)\.(\d+)\s*$/.exec(output);
+      const probe = (args: readonly string[]) =>
+        this.runner({
+          executable: this.executable,
+          args,
+          cwd,
+          input: "",
+          timeoutMs: inspectionTimeoutMs,
+          platform: this.platform,
+          env,
+        });
+      const match = /^codex-cli (\d+)\.(\d+)\.(\d+)\s*$/.exec(
+        await probe(["--version"]),
+      );
       if (match === null) throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
       const version = match.slice(1).map(Number);
       for (let i = 0; i < minimumVersion.length; i += 1) {
@@ -170,6 +351,16 @@ export class CodexWorkerRuntime implements WorkerRuntime {
           throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
         if (version[i]! > minimumVersion[i]!) break;
       }
+      // An unknown feature key exits non-zero: the isolation is inexpressible.
+      let listing: string;
+      try {
+        listing = await probe(["features", "list", ...featureFlags]);
+      } catch (error) {
+        if (error instanceof WorkerRuntimeError)
+          throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
+        throw error;
+      }
+      verifyCodexFeatureIsolation(listing);
       return { version: match[0].trim().slice("codex-cli ".length) };
     });
     return this.inspection;
@@ -187,7 +378,15 @@ export class CodexWorkerRuntime implements WorkerRuntime {
     }
     const model = selection?.model ?? this.model;
     await this.inspect();
-    return this.inDirectory(async (cwd) => {
+    return this.inIsolation(async ({ cwd, codexHome, env }) => {
+      const configuredHome = process.env.CODEX_HOME;
+      await materializeAuth(
+        this.operatorCodexHome ??
+          (configuredHome === undefined || configuredHome === ""
+            ? join(homedir(), ".codex")
+            : configuredHome),
+        codexHome,
+      );
       const schemaPath = join(cwd, "answer.schema.json");
       await writeFile(schemaPath, JSON.stringify(outputSchema), {
         mode: 0o600,
@@ -201,34 +400,15 @@ export class CodexWorkerRuntime implements WorkerRuntime {
         "--skip-git-repo-check",
         "--sandbox",
         "read-only",
-        "--disable",
-        "shell_tool",
-        "--disable",
-        "unified_exec",
-        "--disable",
-        "plugins",
-        "--disable",
-        "apps",
-        "--disable",
-        "browser_use",
-        "--disable",
-        "computer_use",
-        "--disable",
-        "code_mode_host",
-        "--disable",
-        "image_generation",
-        "--disable",
-        "in_app_browser",
-        "--disable",
-        "in_app_local_automation",
-        "--disable",
-        "multi_agent",
-        "--disable",
-        "remote_plugin",
+        ...featureFlags,
         "--config",
         'web_search="disabled"',
         "--config",
         "mcp_servers={}",
+        "--config",
+        "skills.bundled.enabled=false",
+        "--config",
+        "project_doc_max_bytes=0",
         ...(selection?.reasoningEffort == null
           ? []
           : [
@@ -257,20 +437,39 @@ export class CodexWorkerRuntime implements WorkerRuntime {
         input: prompt,
         timeoutMs: limits.timeoutMs,
         platform: this.platform,
+        env,
         ...(signal === undefined ? {} : { signal }),
       });
       return parseCodexWorkerOutput(output, model);
     });
   }
 
-  private async inDirectory<T>(
-    operation: (cwd: string) => Promise<T>,
+  /**
+   * One private tree per process, removed on every outcome. The child gets
+   * `PATH` to find the executable plus this tree's `HOME` and `CODEX_HOME`;
+   * provider keys, proxies and the operator's Codex home are not inherited.
+   */
+  private async inIsolation<T>(
+    operation: (isolation: CodexIsolation) => Promise<T>,
   ): Promise<T> {
-    const cwd = await mkdtemp(join(tmpdir(), "ai-office-codex-worker-"));
+    const root = await mkdtemp(join(tmpdir(), "ai-office-codex-worker-"));
     try {
-      return await operation(cwd);
+      const [home, codexHome, cwd] = ["home", "codex-home", "work"].map(
+        (name) => join(root, name),
+      ) as [string, string, string];
+      for (const directory of [home, codexHome, cwd])
+        await mkdir(directory, { mode: 0o700 });
+      return await operation({
+        cwd,
+        codexHome,
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: home,
+          CODEX_HOME: codexHome,
+        },
+      });
     } finally {
-      await rm(cwd, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   }
 }

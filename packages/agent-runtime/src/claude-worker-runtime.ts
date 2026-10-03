@@ -21,6 +21,12 @@ export interface WorkerProcessRequest {
   timeoutMs: number;
   signal?: AbortSignal;
   platform?: WorkerPlatform;
+  /**
+   * The complete child environment, built by the executor that owns the
+   * process. When present nothing is inherited from the Runtime host; when
+   * omitted the default allowlist below applies.
+   */
+  env?: Readonly<Record<string, string>>;
 }
 
 export type WorkerPlatform = "posix" | "win32";
@@ -32,6 +38,19 @@ export function currentWorkerPlatform(): WorkerPlatform {
 export type WorkerProcessRunner = (
   request: WorkerProcessRequest,
 ) => Promise<string>;
+/**
+ * Inherited by a worker that supplies no environment of its own: executable
+ * lookup, the login home and the Claude Code configuration directory. Another
+ * client's state never belongs here; its executor passes `env` instead.
+ */
+const defaultInheritedEnvironment = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "USER",
+  "LOGNAME",
+  "CLAUDE_CONFIG_DIR",
+] as const;
 const terminationGraceMs = 2000;
 const inspectionTimeoutMs = 10000;
 const processTreePollMs = 10;
@@ -105,19 +124,12 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
       reject(new DOMException("Execution cancelled", "AbortError"));
       return;
     }
-    const env: Record<string, string> = {};
-    for (const name of [
-      "PATH",
-      "HOME",
-      "TMPDIR",
-      "USER",
-      "LOGNAME",
-      "CLAUDE_CONFIG_DIR",
-      "CODEX_HOME",
-    ]) {
-      const value = process.env[name];
-      if (value !== undefined) env[name] = value;
-    }
+    const env: Record<string, string> = { ...request.env };
+    if (request.env === undefined)
+      for (const name of defaultInheritedEnvironment) {
+        const value = process.env[name];
+        if (value !== undefined) env[name] = value;
+      }
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(request.executable, [...request.args], {
