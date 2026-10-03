@@ -129,11 +129,17 @@ hooks may still run. Operators requiring process-level isolation must add an
 OS/container policy outside this adapter's guarantee. A host started before a
 PATH/login change may need to be restarted explicitly.
 
-The Codex worker requires `codex-cli` 0.160.0 or newer on the Runtime host PATH
-and a file-backed Codex login. Every `codex` process it starts, including the
-version and feature probes, runs in a fresh private temporary tree (mode `0700`)
-that is removed after success, failure, cancellation and timeout. The tree
-holds an empty `HOME`, an isolated `CODEX_HOME` and an empty working directory.
+The Codex worker runs only explicitly audited `codex-cli` versions, held in an
+allowlist in the adapter. The only audited version is `0.160.0`: an older,
+newer, pre-release or unparseable version fails with `WORKER_UNAVAILABLE`
+before any task is dispatched, until that version is audited and added. No
+version range is accepted and no other worker is tried. The worker also needs
+that CLI on the Runtime host PATH and a file-backed Codex login.
+
+Every `codex` process it starts, including the version and feature probes, runs
+in a fresh private temporary tree (mode `0700`) that is removed after success,
+failure, cancellation and timeout. The tree holds an empty `HOME`, an isolated
+`CODEX_HOME` and an empty working directory.
 The child environment is exactly `PATH`, that `HOME` and that `CODEX_HOME`;
 provider keys, proxy variables and the operator's Codex home are not inherited.
 

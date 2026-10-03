@@ -15,6 +15,7 @@ import {
 } from "@ai-office/application/ports/worker-runtime.port.ts";
 import {
   CodexWorkerRuntime,
+  auditedCodexVersions,
   codexDisabledFeatures,
   parseCodexWorkerOutput,
   verifyCodexFeatureIsolation,
@@ -269,6 +270,65 @@ describe("bounded Codex worker", () => {
         operatorHome,
       ).execute(context, limits),
     ).rejects.toMatchObject({ code: "WORKER_UNAVAILABLE" });
+  });
+
+  test("only an explicitly audited CLI version is accepted, before anything else runs", async () => {
+    expect([...auditedCodexVersions]).toEqual(["0.160.0"]);
+    const probes = async (versionOutput: string) => {
+      const calls: string[] = [];
+      const worker = runtime(async (request) => {
+        calls.push(request.args[0]!);
+        return request.args[0] === "--version"
+          ? versionOutput
+          : (inspection(request) ?? jsonl(events));
+      });
+      const result = await worker.execute(context, limits).then(
+        (output) => output.summary,
+        (error: unknown) => (error as WorkerRuntimeError).code,
+      );
+      return { result, calls };
+    };
+    for (const accepted of ["codex-cli 0.160.0\n", "codex-cli 0.160.0"])
+      expect(await probes(accepted)).toEqual({
+        result: "Review",
+        calls: ["--version", "features", "exec"],
+      });
+    for (const rejected of [
+      // Older.
+      "codex-cli 0.159.0\n",
+      "codex-cli 0.159.9\n",
+      "codex-cli 0.16.0\n",
+      // Newer patch, minor and major: unaudited until added.
+      "codex-cli 0.160.1\n",
+      "codex-cli 0.161.0\n",
+      "codex-cli 1.0.0\n",
+      "codex-cli 0.1600.0\n",
+      // Pre-release, build and look-alike spellings.
+      "codex-cli 0.160.0-alpha.1\n",
+      "codex-cli 0.160.0+build\n",
+      "codex-cli 0.160.0.1\n",
+      "codex-cli 0.160\n",
+      "codex-cli v0.160.0\n",
+      "codex-cli 00.160.0\n",
+      // Malformed output.
+      "",
+      "\n",
+      "0.160.0\n",
+      "codex 0.160.0\n",
+      "codex-cli\n",
+      "codex-cli  0.160.0\n",
+      " codex-cli 0.160.0\n",
+      "codex-cli 0.160.0 (extra)\n",
+      "codex-cli 0.160.0\n\n",
+      "codex-cli 0.160.0\ncodex-cli 0.161.0\n",
+      "warning: something\ncodex-cli 0.160.0\n",
+      "codex-cli >=0.160.0\n",
+      "codex-cli ^0.160.0\n",
+    ])
+      expect(await probes(rejected), JSON.stringify(rejected)).toEqual({
+        result: "WORKER_UNAVAILABLE",
+        calls: ["--version"],
+      });
   });
 
   test("routes only exact OpenAI models and never substitutes one", async () => {

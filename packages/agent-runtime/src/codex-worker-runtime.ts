@@ -18,7 +18,12 @@ import {
   type WorkerProcessRunner,
 } from "./claude-worker-runtime.ts";
 
-const minimumVersion = [0, 160, 0] as const;
+/**
+ * Codex CLI versions whose feature set, tool surface and JSONL output were
+ * audited for this worker. Membership is exact: an older, newer, pre-release
+ * or unparseable version is unavailable until it is audited and added here.
+ */
+export const auditedCodexVersions: ReadonlySet<string> = new Set(["0.160.0"]);
 const inspectionTimeoutMs = 10000;
 const authFileName = "auth.json";
 const maxAuthBytes = 64 * 1024;
@@ -341,16 +346,11 @@ export class CodexWorkerRuntime implements WorkerRuntime {
           platform: this.platform,
           env,
         });
-      const match = /^codex-cli (\d+)\.(\d+)\.(\d+)\s*$/.exec(
+      const version = /^codex-cli (\S+)\n?$/.exec(
         await probe(["--version"]),
-      );
-      if (match === null) throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
-      const version = match.slice(1).map(Number);
-      for (let i = 0; i < minimumVersion.length; i += 1) {
-        if (version[i]! < minimumVersion[i]!)
-          throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
-        if (version[i]! > minimumVersion[i]!) break;
-      }
+      )?.[1];
+      if (version === undefined || !auditedCodexVersions.has(version))
+        throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
       // An unknown feature key exits non-zero: the isolation is inexpressible.
       let listing: string;
       try {
@@ -361,7 +361,7 @@ export class CodexWorkerRuntime implements WorkerRuntime {
         throw error;
       }
       verifyCodexFeatureIsolation(listing);
-      return { version: match[0].trim().slice("codex-cli ".length) };
+      return { version };
     });
     return this.inspection;
   }
