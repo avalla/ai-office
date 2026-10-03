@@ -202,6 +202,7 @@ test("upgrading an existing database adds provenance without touching historical
     "0039_task_dependency_immutable_edges.sql",
     "0040_task_execution_history.sql",
     "0041_project_pack_binding.sql",
+    "0042_project_definition_ownership.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   expect(
@@ -327,6 +328,7 @@ test("upgrading 0028 provenance keeps its context digest and leaves the unreport
     "0039_task_dependency_immutable_edges.sql",
     "0040_task_execution_history.sql",
     "0041_project_pack_binding.sql",
+    "0042_project_definition_ownership.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   const repository = new SqliteProjectMemoryProvenanceRepository(db);
