@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import type { ProjectRepository } from "@ai-office/application/ports/project-repository.port.ts";
+import type { ProjectDefinitionRepository } from "@ai-office/application/ports/project-definition-repository.port.ts";
+import {
+  StaleProjectDefinitionError,
+  type ProjectOwnedDefinition,
+} from "@ai-office/application/domain-pack/project-definition.ts";
 import {
   StaleProjectPackBindingError,
   type ProjectPackBindingRepository,
@@ -28,10 +33,14 @@ import {
 export interface RepositoryContractHarness {
   projects: ProjectRepository;
   packBindings?: ProjectPackBindingRepository;
+  definitions?: ProjectDefinitionRepository;
   deleteProject?: (projectId: string) => Promise<void>;
   bindingRowCounts?: (
     projectId: string,
   ) => Promise<{ heads: number; packs: number }>;
+  definitionRowCounts?: (
+    projectId: string,
+  ) => Promise<{ heads: number; owned: number; overrides: number }>;
   tasks: TaskRepository;
   taskRequirements: TaskRequirementRepository;
   taskDependencies?: TaskDependencyRepository;
@@ -48,7 +57,7 @@ export interface RepositoryContractHarness {
 
 export function defineProjectStorageContracts(
   createHarness: () => Promise<RepositoryContractHarness>,
-  features: { packBindings?: boolean } = {},
+  features: { packBindings?: boolean; definitions?: boolean } = {},
 ): void {
   let harness: RepositoryContractHarness;
   let prefix: string;
@@ -225,6 +234,268 @@ export function defineProjectStorageContracts(
         expect(await harness.bindingRowCounts(projectId)).toEqual({
           heads: 0,
           packs: 0,
+        });
+      });
+    });
+
+  if (features.definitions)
+    describe("ProjectDefinitionRepository", () => {
+      const definitions = () => {
+        if (!harness.definitions)
+          throw new Error("Definition repository is required");
+        return harness.definitions;
+      };
+      const now = new Date("2026-10-03T00:00:00.000Z");
+      const owned: ProjectOwnedDefinition = {
+        origin: "project_owned",
+        kind: "roles",
+        id: "custom",
+        revision: 1,
+        enabled: true,
+        payload: { id: "custom", title: "Custom" },
+        actorId: "operator",
+        changedAt: now.toISOString(),
+      };
+      test("round-trips project authority, isolates projects, and rejects stale revisions", async () => {
+        const first = (
+          await createProject(harness, `${prefix}-definitions-a`)
+        ).snapshot().id;
+        const second = (
+          await createProject(harness, `${prefix}-definitions-b`)
+        ).snapshot().id;
+        expect(await definitions().get(first)).toEqual({
+          projectId: first,
+          revision: 0,
+          owned: [],
+          overrides: [],
+        });
+        const result = await definitions().replace(
+          { projectId: first, revision: 0, owned: [owned], overrides: [] },
+          0,
+          now,
+        );
+        expect(result.revision).toBe(1);
+        expect(await definitions().get(first)).toEqual(result);
+        expect(await definitions().get(second)).toEqual({
+          projectId: second,
+          revision: 0,
+          owned: [],
+          overrides: [],
+        });
+        await expect(
+          definitions().replace({ ...result, owned: [] }, 0, now),
+        ).rejects.toBeInstanceOf(StaleProjectDefinitionError);
+        expect(await definitions().get(first)).toEqual(result);
+      });
+      test("rolls back definition mutations with the caller transaction", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-definitions-rollback`)
+        ).snapshot().id;
+        await expect(
+          harness.transactions.run(async () => {
+            await definitions().replace(
+              { projectId, revision: 0, owned: [owned], overrides: [] },
+              0,
+              now,
+            );
+            throw new Error("rollback definitions");
+          }),
+        ).rejects.toThrow("rollback definitions");
+        expect(await definitions().get(projectId)).toEqual({
+          projectId,
+          revision: 0,
+          owned: [],
+          overrides: [],
+        });
+      });
+      test("round-trips exact override identity and rejects duplicate source targets atomically", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-source`)
+        ).snapshot().id;
+        const override = {
+          origin: "project_override" as const,
+          source: {
+            id: parseDomainPackId("org.example.legal"),
+            version: parseDomainPackVersion("1.0.0"),
+            manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+            kind: "roles" as const,
+            localId: "counsel",
+          },
+          operation: "replace" as const,
+          revision: 1,
+          payload: { id: "counsel", title: "Counsel" },
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        const current = await definitions().replace(
+          { projectId, revision: 0, owned: [], overrides: [override] },
+          0,
+          now,
+        );
+        expect(await definitions().get(projectId)).toEqual(current);
+        await expect(
+          definitions().replace(
+            {
+              projectId,
+              revision: 1,
+              owned: [],
+              overrides: [override, override],
+            },
+            1,
+            now,
+          ),
+        ).rejects.toThrow();
+        expect(await definitions().get(projectId)).toEqual(current);
+      });
+
+      test("creates, updates and removes ordered owned and exact-source entries", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-lifecycle`)
+        ).snapshot().id;
+        const source = {
+          id: parseDomainPackId("org.example.legal"),
+          version: parseDomainPackVersion("1.0.0"),
+          manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+          kind: "roles" as const,
+          localId: "counsel",
+        };
+        const override = {
+          origin: "project_override" as const,
+          source,
+          operation: "replace" as const,
+          revision: 1,
+          payload: { id: "counsel", title: "Counsel" },
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        const created = await definitions().replace(
+          {
+            projectId,
+            revision: 0,
+            owned: [
+              { ...owned, id: "z", payload: { id: "z" } },
+              { ...owned, id: "a", payload: { id: "a" } },
+            ],
+            overrides: [
+              { ...override, source: { ...source, kind: "agents" as const } },
+              override,
+            ],
+          },
+          0,
+          now,
+        );
+        expect(created.revision).toBe(1);
+        expect(
+          (await definitions().get(projectId)).owned.map((item) => item.id),
+        ).toEqual(["a", "z"]);
+        expect(
+          (await definitions().get(projectId)).overrides.map(
+            (item) => item.source.kind,
+          ),
+        ).toEqual(["agents", "roles"]);
+        const updated = await definitions().replace(
+          {
+            projectId,
+            revision: 1,
+            owned: [
+              {
+                ...owned,
+                id: "a",
+                revision: 2,
+                payload: { id: "a", title: "Updated" },
+              },
+            ],
+            overrides: [
+              {
+                ...override,
+                revision: 2,
+                operation: "extend",
+                payload: { id: "counsel", description: "Added" },
+              },
+            ],
+          },
+          1,
+          now,
+        );
+        expect(updated.revision).toBe(2);
+        expect(await definitions().get(projectId)).toMatchObject({
+          revision: 2,
+          owned: [{ id: "a", revision: 2 }],
+          overrides: [{ source, revision: 2, operation: "extend" }],
+        });
+        await expect(
+          definitions().replace(
+            { ...created, owned: [], overrides: [] },
+            1,
+            now,
+          ),
+        ).rejects.toBeInstanceOf(StaleProjectDefinitionError);
+        expect(
+          (
+            await definitions().replace(
+              { projectId, revision: 2, owned: [], overrides: [] },
+              2,
+              now,
+            )
+          ).revision,
+        ).toBe(3);
+        expect(await definitions().get(projectId)).toEqual({
+          projectId,
+          revision: 3,
+          owned: [],
+          overrides: [],
+        });
+      });
+
+      test("rejects duplicate owned identities and cascades all definition rows on project deletion", async () => {
+        if (!harness.deleteProject || !harness.definitionRowCounts)
+          throw new Error("Definition cascade probes are required");
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-cascade`)
+        ).snapshot().id;
+        const source = {
+          id: parseDomainPackId("org.example.legal"),
+          version: parseDomainPackVersion("1.0.0"),
+          manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+          kind: "roles" as const,
+          localId: "counsel",
+        };
+        const override = {
+          origin: "project_override" as const,
+          source,
+          operation: "disable" as const,
+          revision: 1,
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        // Repository storage requires a valid kind/operation pair.
+        const promptOverride = {
+          ...override,
+          source: { ...source, kind: "prompts" as const },
+        };
+        const current = await definitions().replace(
+          {
+            projectId,
+            revision: 0,
+            owned: [owned],
+            overrides: [promptOverride],
+          },
+          0,
+          now,
+        );
+        await expect(
+          definitions().replace({ ...current, owned: [owned, owned] }, 1, now),
+        ).rejects.toThrow();
+        expect(await harness.definitionRowCounts(projectId)).toEqual({
+          heads: 1,
+          owned: 1,
+          overrides: 1,
+        });
+        await harness.deleteProject(projectId);
+        expect(await harness.definitionRowCounts(projectId)).toEqual({
+          heads: 0,
+          owned: 0,
+          overrides: 0,
         });
       });
     });

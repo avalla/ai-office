@@ -28,7 +28,8 @@ test("forward migration preserves existing tasks and starts with an empty depend
       name !== "0038_milestone_description_changed_event.sql" &&
       name !== "0039_task_dependency_immutable_edges.sql" &&
       name !== "0040_task_execution_history.sql" &&
-      name !== "0041_project_pack_binding.sql",
+      name !== "0041_project_pack_binding.sql" &&
+      name !== "0042_project_definition_ownership.sql",
   ))
     copyFileSync(join(migrations, file), join(prior, file));
   const database = openDatabase(join(root, "project.sqlite"));
@@ -52,6 +53,7 @@ test("forward migration preserves existing tasks and starts with an empty depend
       "0039_task_dependency_immutable_edges.sql",
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
+      "0042_project_definition_ownership.sql",
     ]);
     expect(migrate(database, migrations).applied).toEqual([]);
     expect(

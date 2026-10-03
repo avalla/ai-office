@@ -1674,9 +1674,10 @@ See [Professional-work verticals](professional-work-verticals.md).
 
 ## M16 — Generic Core & Domain Packs
 
-Status: active in AI Office and in progress. GP-03 public contracts and GP-04 host-local catalog and
-resolver are merged. GP-05 explicit project pack binding is implemented in
-this review branch; effective configuration and pack-driven Runtime behavior
+Status: active in AI Office and in progress. GP-03 public contracts, GP-04
+host-local catalog/resolver and GP-05 exact project binding are merged. GP-07
+authoritative definition ownership and source-pinned overrides are implemented
+in a review branch. Effective configuration and pack-driven Runtime behavior
 remain planned.
 
 AI Office is transitioning from a software-development-oriented implementation
@@ -1750,7 +1751,14 @@ SQLite and PostgreSQL use forward migrations, and portable archives add
 format version 5. Operators can show, preview and apply a selection through
 the Runtime. An empty selection remains valid and no pack is inferred from
 the project or host. GP-05 does not resolve project definitions or change
-running work. M16 remains incomplete until its end-to-end exit criteria are met.
+running work. GP-07 adds project-owned descriptive definitions and typed
+project-owned workflows, exact pack-source overrides, constrained
+replace/extend/disable operations, conflict/security validation, SQLite and
+PostgreSQL persistence, audited checked revisions and portable archive format 6. Existing OfficeManifest, role, agent, pipeline, task, run pin and binding
+state remain unchanged. The new definitions are not scheduled or resolved;
+aliases, configuration digest, pack upgrade reconciliation, Development Pack
+parity/extraction, automatic selection and Runtime execution from packs remain
+deferred. M16 remains incomplete until its end-to-end exit criteria are met.
 
 Exit: development, legal, manufacturing, and empty/custom fixtures run the same
 core lifecycles without changes to core for each domain. Legacy development

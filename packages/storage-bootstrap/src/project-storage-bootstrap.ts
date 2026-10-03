@@ -11,6 +11,7 @@ import { PostgresOfficeManifestRepository } from "@ai-office/storage-postgres/re
 import { PostgresPipelineRunRepository } from "@ai-office/storage-postgres/repositories/postgres-pipeline-run.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresProjectPackBindingRepository } from "@ai-office/storage-postgres/repositories/postgres-project-pack-binding.repository.ts";
+import { PostgresProjectDefinitionRepository } from "@ai-office/storage-postgres/repositories/postgres-project-definition.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
 import { PostgresTaskDependencyRepository } from "@ai-office/storage-postgres/repositories/postgres-task-dependency.repository.ts";
 import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
@@ -50,6 +51,7 @@ export type ProjectStorageConfig =
 export const projectStorageCapabilityNames = [
   "projects",
   "packBindings",
+  "definitions",
   "profiles",
   "officeManifests",
   "pipelines",
@@ -242,6 +244,10 @@ export class ProjectStorageBootstrap {
           database,
           configuration.tenantId,
         ),
+        definitions: new PostgresProjectDefinitionRepository(
+          database,
+          configuration.tenantId,
+        ),
         tasks: new PostgresTaskRepository(database, configuration.tenantId),
         taskDependencies: new PostgresTaskDependencyRepository(
           database,
@@ -276,6 +282,7 @@ export class ProjectStorageBootstrap {
         ProjectStorage,
         | "projects"
         | "packBindings"
+        | "definitions"
         | "tasks"
         | "taskDependencies"
         | "taskRequirements"
@@ -351,6 +358,7 @@ function postgresCapabilities(): ProjectStorageCapabilities {
   return capabilities([
     "projects",
     "packBindings",
+    "definitions",
     "officeManifests",
     "pipelines",
     "tasks",

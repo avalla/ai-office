@@ -164,6 +164,12 @@ import type { ProjectStorage } from "@ai-office/application/ports/project-storag
 import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { DomainPackCatalogError } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { StaleProjectPackBindingError } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
+import {
+  ProjectDefinitionConflictError,
+  StaleProjectDefinitionError,
+} from "@ai-office/application/domain-pack/project-definition.ts";
+import { ProjectDefinitionProjectNotFoundError } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
+import { handleProjectDefinitionCommand } from "./commands/project-definition.ts";
 import { ProjectPackBindingProjectNotFoundError } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { InMemoryInstalledDomainPackCatalog } from "./installed-domain-pack-catalog.ts";
 import { handleProjectPackCommand } from "./commands/project-pack.ts";
@@ -212,6 +218,9 @@ const commands = [
   "project:pack:show",
   "project:pack:preview",
   "project:pack:apply",
+  "project:definition:show",
+  "project:definition:preview",
+  "project:definition:apply",
   "office:context",
   "office:workspace",
   "office:validate",
@@ -380,6 +389,7 @@ const handlers = [
   handleLifecycleCommand,
   handleProjectCommand,
   handleProjectPackCommand,
+  handleProjectDefinitionCommand,
   handleOfficeCommand,
   handlePipelineCommand,
   handleClientCommand,
@@ -405,6 +415,9 @@ function formatKnownError(error: unknown): string | null {
     error instanceof DomainPackCatalogError ||
     error instanceof StaleProjectPackBindingError ||
     error instanceof ProjectPackBindingProjectNotFoundError ||
+    error instanceof ProjectDefinitionConflictError ||
+    error instanceof StaleProjectDefinitionError ||
+    error instanceof ProjectDefinitionProjectNotFoundError ||
     error instanceof KnowledgeAdmissionError ||
     error instanceof KnowledgeStoreError ||
     error instanceof DomainValidationError ||

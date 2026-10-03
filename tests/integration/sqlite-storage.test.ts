@@ -79,6 +79,7 @@ describe("project database migrations", () => {
       "0039_task_dependency_immutable_edges.sql",
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
+      "0042_project_definition_ownership.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -130,6 +131,7 @@ describe("project database migrations", () => {
       { version: "0039_task_dependency_immutable_edges.sql" },
       { version: "0040_task_execution_history.sql" },
       { version: "0041_project_pack_binding.sql" },
+      { version: "0042_project_definition_ownership.sql" },
     ]);
     database.close();
   });

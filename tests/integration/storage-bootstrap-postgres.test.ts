@@ -9,6 +9,7 @@ import {
 } from "@ai-office/storage-bootstrap/project-storage-bootstrap.ts";
 import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
 import { PostgresAgentRuntimeRepository } from "@ai-office/storage-postgres/repositories/postgres-agent-runtime.repository.ts";
+import { PostgresProjectDefinitionRepository } from "@ai-office/storage-postgres/repositories/postgres-project-definition.repository.ts";
 import { PostgresGovernanceRepository } from "@ai-office/storage-postgres/repositories/postgres-governance.repository.ts";
 import { PostgresOfficeManifestRepository } from "@ai-office/storage-postgres/repositories/postgres-office-manifest.repository.ts";
 import { PostgresPipelineRunRepository } from "@ai-office/storage-postgres/repositories/postgres-pipeline-run.repository.ts";
@@ -59,6 +60,9 @@ describe.skipIf(connectionString === undefined)(
         expect(handle.repositories.projects).toBeInstanceOf(
           PostgresProjectRepository,
         );
+        expect(handle.repositories.definitions).toBeInstanceOf(
+          PostgresProjectDefinitionRepository,
+        );
         expect(handle.repositories.tasks).toBeInstanceOf(
           PostgresTaskRepository,
         );
@@ -90,6 +94,7 @@ describe.skipIf(connectionString === undefined)(
         ).toEqual([
           "projects",
           "packBindings",
+          "definitions",
           "officeManifests",
           "pipelines",
           "tasks",

@@ -14,6 +14,8 @@ import type { RequirementStatus } from "@ai-office/domain/governance/governance.
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
+import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
+import { StaleProjectDefinitionError } from "@ai-office/application/domain-pack/project-definition.ts";
 import type { AuditEventRepository } from "@ai-office/application/ports/audit-event-repository.port.ts";
 import { StaleProjectPackBindingError } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
 import { computeArtifactDigest } from "../../packages/domain-pack-contracts/src/index.ts";
@@ -26,6 +28,7 @@ import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-po
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresProjectPackBindingRepository } from "@ai-office/storage-postgres/repositories/postgres-project-pack-binding.repository.ts";
+import { PostgresProjectDefinitionRepository } from "@ai-office/storage-postgres/repositories/postgres-project-definition.repository.ts";
 import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
 import { PostgresTaskDependencyRepository } from "@ai-office/storage-postgres/repositories/postgres-task-dependency.repository.ts";
@@ -71,6 +74,26 @@ function bindingService(
     auditEvents,
     transactions: new PostgresTransactionRunner(database),
     clock: { now: () => new Date("2026-10-02T00:00:00.000Z") },
+    ids: { generate: randomUUID },
+  });
+}
+
+function definitionService(
+  database: PostgresClient,
+  catalog: ReturnType<typeof installedBindingFixtures>["catalog"],
+  auditEvents: AuditEventRepository = new PostgresAuditEventRepository(
+    database,
+    tenantId,
+  ),
+) {
+  return new ManageProjectDefinitions({
+    projects: new PostgresProjectRepository(database, tenantId),
+    definitions: new PostgresProjectDefinitionRepository(database, tenantId),
+    bindings: new PostgresProjectPackBindingRepository(database, tenantId),
+    catalog,
+    auditEvents,
+    transactions: new PostgresTransactionRunner(database),
+    clock: { now: () => new Date("2026-10-03T00:00:00.000Z") },
     ids: { generate: randomUUID },
   });
 }
@@ -124,64 +147,90 @@ describe.skipIf(connectionString === undefined)(
       await database.close();
     });
 
-    defineProjectStorageContracts(async () => ({
-      projects: new PostgresProjectRepository(database, tenantId),
-      packBindings: new PostgresProjectPackBindingRepository(
-        database,
-        tenantId,
-      ),
-      async deleteProject(projectId: string): Promise<void> {
-        await database.query(
-          "DELETE FROM core.project WHERE id = $1 AND tenant_id = $2",
-          [projectId, tenantId],
-        );
-      },
-      async bindingRowCounts(projectId: string) {
-        const [head] = await database.query<{ count: string }>(
-          "SELECT count(*) FROM core.project_pack_binding WHERE project_id = $1",
-          [projectId],
-        );
-        const [pack] = await database.query<{ count: string }>(
-          "SELECT count(*) FROM core.project_pack_binding_pack WHERE project_id = $1",
-          [projectId],
-        );
-        return { heads: Number(head?.count), packs: Number(pack?.count) };
-      },
-      tasks: new PostgresTaskRepository(database, tenantId),
-      taskDependencies: new PostgresTaskDependencyRepository(
-        database,
-        tenantId,
-      ),
-      taskRequirements: new PostgresTaskRequirementRepository(
-        database,
-        tenantId,
-      ),
-      transactions: new PostgresTransactionRunner(database),
-      async seedRequirement(input: {
-        id: string;
-        projectId: string;
-        key: string;
-        title: string;
-        status: RequirementStatus;
-      }): Promise<void> {
-        await database.query(
-          `INSERT INTO core.requirement(
+    defineProjectStorageContracts(
+      async () => ({
+        projects: new PostgresProjectRepository(database, tenantId),
+        packBindings: new PostgresProjectPackBindingRepository(
+          database,
+          tenantId,
+        ),
+        definitions: new PostgresProjectDefinitionRepository(
+          database,
+          tenantId,
+        ),
+        async deleteProject(projectId: string): Promise<void> {
+          await database.query(
+            "DELETE FROM core.project WHERE id = $1 AND tenant_id = $2",
+            [projectId, tenantId],
+          );
+        },
+        async bindingRowCounts(projectId: string) {
+          const [head] = await database.query<{ count: string }>(
+            "SELECT count(*) FROM core.project_pack_binding WHERE project_id = $1",
+            [projectId],
+          );
+          const [pack] = await database.query<{ count: string }>(
+            "SELECT count(*) FROM core.project_pack_binding_pack WHERE project_id = $1",
+            [projectId],
+          );
+          return { heads: Number(head?.count), packs: Number(pack?.count) };
+        },
+        async definitionRowCounts(projectId: string) {
+          const count = async (
+            table:
+              | "project_definition_head"
+              | "project_owned_definition"
+              | "project_definition_override",
+          ) => {
+            const [row] = await database.query<{ count: string }>(
+              `SELECT count(*) FROM core.${table} WHERE project_id = $1`,
+              [projectId],
+            );
+            return Number(row?.count);
+          };
+          return {
+            heads: await count("project_definition_head"),
+            owned: await count("project_owned_definition"),
+            overrides: await count("project_definition_override"),
+          };
+        },
+        tasks: new PostgresTaskRepository(database, tenantId),
+        taskDependencies: new PostgresTaskDependencyRepository(
+          database,
+          tenantId,
+        ),
+        taskRequirements: new PostgresTaskRequirementRepository(
+          database,
+          tenantId,
+        ),
+        transactions: new PostgresTransactionRunner(database),
+        async seedRequirement(input: {
+          id: string;
+          projectId: string;
+          key: string;
+          title: string;
+          status: RequirementStatus;
+        }): Promise<void> {
+          await database.query(
+            `INSERT INTO core.requirement(
              id, project_id, requirement_key, title, description, status,
              created_at, updated_at
            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-          [
-            input.id,
-            input.projectId,
-            input.key,
-            input.title,
-            input.title,
-            input.status,
-            new Date("2026-01-01T00:00:00.000Z"),
-          ],
-        );
-      },
-      async close(): Promise<void> {},
-    }), { packBindings: true });
+            [
+              input.id,
+              input.projectId,
+              input.key,
+              input.title,
+              input.title,
+              input.status,
+              new Date("2026-01-01T00:00:00.000Z"),
+            ],
+          );
+        },
+        async close(): Promise<void> {},
+      }),
+      { packBindings: true, definitions: true },
+    );
 
     test("application audit failure rolls back PostgreSQL binding and audit writes", async () => {
       const writer = new PostgresClient(connectionString!);
@@ -353,6 +402,204 @@ describe.skipIf(connectionString === undefined)(
             [projectId],
           ),
         ).toEqual([{ count: "1" }]);
+      } finally {
+        releaseFirst();
+        await Promise.all([
+          firstClient.close(),
+          secondClient.close(),
+          observer.close(),
+        ]);
+      }
+    }, 15000);
+
+    test("definition audit failure rolls back head, owned or override rows, and audit", async () => {
+      const writer = new PostgresClient(connectionString!);
+      const observer = new PostgresClient(connectionString!);
+      const { catalog, legal } = installedBindingFixtures();
+      try {
+        for (const kind of ["owned", "override"] as const) {
+          const projectId = `definition-audit-${randomUUID()}`;
+          await new PostgresProjectRepository(observer, tenantId).save(
+            Project.create({
+              id: projectId,
+              name: "Definition audit rollback",
+              now: new Date("2026-10-03T00:00:00.000Z"),
+            }),
+          );
+          if (kind === "override")
+            await new PostgresProjectPackBindingRepository(
+              observer,
+              tenantId,
+            ).replace(
+              projectId,
+              0,
+              [legal],
+              new Date("2026-10-03T00:00:00.000Z"),
+            );
+          const realAudit = new PostgresAuditEventRepository(writer, tenantId);
+          const service = definitionService(writer, catalog, {
+            append: async (event) => {
+              expect(
+                await new PostgresProjectDefinitionRepository(
+                  writer,
+                  tenantId,
+                ).get(projectId),
+              ).toMatchObject({ revision: 1 });
+              expect(
+                await new PostgresProjectDefinitionRepository(
+                  observer,
+                  tenantId,
+                ).get(projectId),
+              ).toMatchObject({ revision: 0, owned: [], overrides: [] });
+              await realAudit.append(event);
+              throw new Error("definition audit append failed after insert");
+            },
+          });
+          const mutation =
+            kind === "owned"
+              ? {
+                  action: "put_owned",
+                  kind: "roles",
+                  id: "custom",
+                  enabled: true,
+                  payload: { id: "custom" },
+                }
+              : {
+                  action: "put_override",
+                  source: { ...legal, kind: "roles", localId: "counsel" },
+                  operation: "replace",
+                  payload: { id: "counsel" },
+                };
+          await expect(
+            service.apply({
+              projectId,
+              mutation,
+              expectedRevision: 0,
+              actorId: "operator",
+            }),
+          ).rejects.toThrow("definition audit append failed after insert");
+          expect(
+            await new PostgresProjectDefinitionRepository(
+              observer,
+              tenantId,
+            ).get(projectId),
+          ).toMatchObject({ revision: 0, owned: [], overrides: [] });
+          expect(
+            await observer.query<{ count: string }>(
+              "SELECT count(*) FROM core.project_definition_head WHERE project_id = $1",
+              [projectId],
+            ),
+          ).toEqual([{ count: "0" }]);
+          expect(
+            await observer.query<{ count: string }>(
+              "SELECT count(*) FROM core.audit_event WHERE project_id = $1 AND event_type = 'project.definition_changed'",
+              [projectId],
+            ),
+          ).toEqual([{ count: "0" }]);
+        }
+      } finally {
+        await Promise.all([writer.close(), observer.close()]);
+      }
+    });
+
+    test("concurrent same-entry definition updates fence one complete state and audit", async () => {
+      const firstClient = new PostgresClient(connectionString!);
+      const secondClient = new PostgresClient(connectionString!);
+      const observer = new PostgresClient(connectionString!);
+      const { catalog } = installedBindingFixtures();
+      const projectId = `definition-race-${randomUUID()}`;
+      let releaseFirst!: () => void;
+      const firstMayCommit = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let signalFirstAudit!: () => void;
+      const firstAtAudit = new Promise<void>((resolve) => {
+        signalFirstAudit = resolve;
+      });
+      try {
+        await new PostgresProjectRepository(observer, tenantId).save(
+          Project.create({
+            id: projectId,
+            name: "Definition revision race",
+            now: new Date("2026-10-03T00:00:00.000Z"),
+          }),
+        );
+        const base = {
+          action: "put_owned",
+          kind: "roles",
+          id: "custom",
+          enabled: true,
+          payload: { id: "custom", title: "Initial" },
+        };
+        await definitionService(observer, catalog).apply({
+          projectId,
+          mutation: base,
+          expectedRevision: 0,
+          actorId: "setup",
+        });
+        const realAudit = new PostgresAuditEventRepository(
+          firstClient,
+          tenantId,
+        );
+        const first = definitionService(firstClient, catalog, {
+          append: async (event) => {
+            signalFirstAudit();
+            await firstMayCommit;
+            await realAudit.append(event);
+          },
+        }).apply({
+          projectId,
+          mutation: {
+            ...base,
+            payload: { id: "custom", title: "First" },
+            expectedEntryRevision: 1,
+          },
+          expectedRevision: 1,
+          actorId: "first-operator",
+        });
+        await firstAtAudit;
+        let secondSettled = false;
+        const second = definitionService(secondClient, catalog)
+          .apply({
+            projectId,
+            mutation: {
+              ...base,
+              payload: { id: "custom", title: "Second" },
+              expectedEntryRevision: 1,
+            },
+            expectedRevision: 1,
+            actorId: "second-operator",
+          })
+          .finally(() => {
+            secondSettled = true;
+          });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(secondSettled).toBe(false);
+        releaseFirst();
+        const [firstResult, secondResult] = await Promise.allSettled([
+          first,
+          second,
+        ]);
+        expect(firstResult).toMatchObject({ status: "fulfilled" });
+        expect(secondResult).toMatchObject({
+          status: "rejected",
+          reason: expect.any(StaleProjectDefinitionError),
+        });
+        expect(
+          await new PostgresProjectDefinitionRepository(observer, tenantId).get(
+            projectId,
+          ),
+        ).toMatchObject({
+          revision: 2,
+          owned: [{ id: "custom", revision: 2, payload: { title: "First" } }],
+          overrides: [],
+        });
+        expect(
+          await observer.query<{ count: string }>(
+            "SELECT count(*) FROM core.audit_event WHERE project_id = $1 AND event_type = 'project.definition_changed'",
+            [projectId],
+          ),
+        ).toEqual([{ count: "2" }]);
       } finally {
         releaseFirst();
         await Promise.all([
@@ -639,6 +886,7 @@ describe.skipIf(connectionString === undefined)(
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           "20261001000400_task_execution_history.sql",
           "20261002000100_project_pack_binding.sql",
+          "20261003000100_project_definition_ownership.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -1004,6 +1252,7 @@ describe.skipIf(connectionString === undefined)(
           "20261001000300_task_dependency_immutable_edges.sql",
           "20261001000400_task_execution_history.sql",
           "20261002000100_project_pack_binding.sql",
+          "20261003000100_project_definition_ownership.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

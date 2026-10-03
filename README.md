@@ -43,13 +43,13 @@ The Runtime owns mutable project state and orchestration semantics. Repository M
 
 ### Storage responsibilities
 
-| Component | Role | Current status |
-| --- | --- | --- |
-| SQLite | Project authority and default Runtime storage | **Default / complete** |
-| PostgreSQL / Supabase | Alternative `ProjectStorage` implementation | **Partial; full Runtime startup fails closed where parity is missing** |
-| SurrealDB | Secondary `AgentKnowledgeStore` | **Optional / supported** |
-| Redis or Valkey | BullMQ delivery / wake-up transport | **Optional** |
-| `global.sqlite` | Reusable roles, patterns, and lessons | **Implemented** |
+| Component             | Role                                          | Current status                                                         |
+| --------------------- | --------------------------------------------- | ---------------------------------------------------------------------- |
+| SQLite                | Project authority and default Runtime storage | **Default / complete**                                                 |
+| PostgreSQL / Supabase | Alternative `ProjectStorage` implementation   | **Partial; full Runtime startup fails closed where parity is missing** |
+| SurrealDB             | Secondary `AgentKnowledgeStore`               | **Optional / supported**                                               |
+| Redis or Valkey       | BullMQ delivery / wake-up transport           | **Optional**                                                           |
+| `global.sqlite`       | Reusable roles, patterns, and lessons         | **Implemented**                                                        |
 
 SurrealDB never replaces project authority. PostgreSQL and SurrealDB solve different problems and are deliberately kept behind different ports.
 
@@ -236,7 +236,7 @@ The repository uses Bun, strict TypeScript, ESLint, Prettier, Vitest, SQLite int
 
 ## Project direction
 
-The current Runtime remains software-development-oriented. M15 defined cross-domain professional-work boundaries, and M16 is progressively extracting a generic core plus versioned Domain Packs. GP-05 records exact project pack selection, but development, legal, manufacturing, and other packs do not yet supply Runtime roles or workflows.
+The current Runtime remains software-development-oriented. M15 defined cross-domain professional-work boundaries, and M16 is progressively extracting a generic core plus versioned Domain Packs. GP-05 records exact project pack selection. GP-07 records project-owned definitions and exact, validated pack-source overrides. Development, legal, manufacturing, and other packs do not yet supply Runtime roles or workflows.
 
 See:
 
