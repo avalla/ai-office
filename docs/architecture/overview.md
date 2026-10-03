@@ -69,8 +69,9 @@ from installed catalog availability; each override pins the exact source kind
 and local ID as well. Mutations use checked project and entry revisions,
 read-only preview, typed conflict validation and transactional audit. Portable
 archive format 6 carries only this authoritative semantic state. Runtime
-scheduling still uses the existing office, role, agent and pipeline state;
-effective pack resolution and configuration digest are deferred to GP-06.
+scheduling still uses the existing office, role, agent and pipeline state.
+GP-06 resolves the exact packs and project definitions into a derived,
+digest-pinned, read-only effective configuration; nothing is scheduled from it.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,
@@ -501,7 +502,7 @@ The independently supplied `client:* --root` is the integration root containing
 the optional instruction contract, shared guide, host pointers, and repository
 skills. These three roots may coincide but do not have to. See the [storage design](storage.md) and
 the README's
-[local storage guide](../../README.md#local-storage-and-state).
+[storage responsibilities](../../README.md#storage-responsibilities).
 
 An installed repository also contains `.ai-office/project.json`. This
 committable portable identity is not a fourth database and is not authoritative
@@ -560,9 +561,12 @@ The runtime now provides the first enforceable pipeline foundation: manifest
 definitions may remain guidance-only or opt into enforcement; a started run
 pins its definition and persists stage runs, task binding, assignment,
 transition, approval, override, and audit state. Advanced branching, retries,
-machine-interpretable stage artifacts and automated worker dispatch remain
-later M11/M12 work. An explicit tick can now invoke a bounded text worker for
-a scheduled stage-bound run; it does not advance the stage.
+and machine-interpretable stage artifacts remain later M11/M12 work. An
+explicit tick can invoke a bounded text worker for a scheduled stage-bound run.
+Successful completion is reconciled into its bound pipeline stage, subject to
+approval gates and pipeline semantics. The queue-backed orchestration described
+below, disabled by default, automates dispatch and orchestration of subsequent
+work without requiring repeated operator-driven ticks.
 
 ```text
                          AI Office authority
