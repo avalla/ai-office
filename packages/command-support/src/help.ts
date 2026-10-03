@@ -72,6 +72,9 @@ Commands:
   update [--approve <plan-hash>] [--json]  # source maintenance; relevant Runtime hosts must be stopped
   runtime:purge [--approve <plan-hash>]  # local; daemon must be stopped
   task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
+  project:pack:show --project <id> [--json]
+  project:pack:preview --project <id> --packs <exact-tuples-json> [--json]
+  project:pack:apply --project <id> --packs <exact-tuples-json> --expected-revision <integer> [--json]
   task:update --project <id> --task <id> --description <description>
   task:list --project <id>
   task:transitions --project <id> --task <id> [--json]   # read-only preflight

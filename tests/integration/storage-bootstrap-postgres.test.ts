@@ -89,6 +89,7 @@ describe.skipIf(connectionString === undefined)(
             .map(([capability]) => capability),
         ).toEqual([
           "projects",
+          "packBindings",
           "officeManifests",
           "pipelines",
           "tasks",

@@ -3,6 +3,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   readdirSync,
   rmSync,
 } from "node:fs";
@@ -12,6 +13,11 @@ import { beforeAll, afterAll, describe, expect, test } from "vitest";
 import type { RequirementStatus } from "@ai-office/domain/governance/governance.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
+import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
+import type { AuditEventRepository } from "@ai-office/application/ports/audit-event-repository.port.ts";
+import { StaleProjectPackBindingError } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
+import { computeArtifactDigest } from "../../packages/domain-pack-contracts/src/index.ts";
+import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/installed-domain-pack-catalog.ts";
 import {
   PostgresClient,
   TransactionContextExpiredError,
@@ -19,6 +25,8 @@ import {
 import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-postgres.ts";
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
+import { PostgresProjectPackBindingRepository } from "@ai-office/storage-postgres/repositories/postgres-project-pack-binding.repository.ts";
+import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
 import { PostgresTaskDependencyRepository } from "@ai-office/storage-postgres/repositories/postgres-task-dependency.repository.ts";
 import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
@@ -27,6 +35,45 @@ import { defineProjectStorageContracts } from "../contracts/project-storage.cont
 const connectionString = process.env.AI_OFFICE_TEST_POSTGRES_URL;
 const migrationDirectory = join(process.cwd(), "supabase", "migrations");
 const tenantId = "contract-tenant";
+
+function installedBindingFixtures() {
+  const catalog = new InMemoryInstalledDomainPackCatalog(1, [
+    "local-distribution",
+  ]);
+  const register = (name: "custom" | "legal") => {
+    const bytes = readFileSync(
+      new URL(`../fixtures/domain-pack/${name}.json`, import.meta.url),
+    );
+    return catalog.register({
+      bytes,
+      artifactDigest: computeArtifactDigest(bytes),
+      provenance: {
+        installerId: "local-distribution",
+        reference: `bundled/${name}`,
+      },
+    });
+  };
+  return { catalog, custom: register("custom"), legal: register("legal") };
+}
+
+function bindingService(
+  database: PostgresClient,
+  catalog: ReturnType<typeof installedBindingFixtures>["catalog"],
+  auditEvents: AuditEventRepository = new PostgresAuditEventRepository(
+    database,
+    tenantId,
+  ),
+) {
+  return new ManageProjectPackBinding({
+    projects: new PostgresProjectRepository(database, tenantId),
+    bindings: new PostgresProjectPackBindingRepository(database, tenantId),
+    catalog,
+    auditEvents,
+    transactions: new PostgresTransactionRunner(database),
+    clock: { now: () => new Date("2026-10-02T00:00:00.000Z") },
+    ids: { generate: randomUUID },
+  });
+}
 
 describe.skipIf(connectionString === undefined)(
   "PostgreSQL project storage contracts",
@@ -79,6 +126,27 @@ describe.skipIf(connectionString === undefined)(
 
     defineProjectStorageContracts(async () => ({
       projects: new PostgresProjectRepository(database, tenantId),
+      packBindings: new PostgresProjectPackBindingRepository(
+        database,
+        tenantId,
+      ),
+      async deleteProject(projectId: string): Promise<void> {
+        await database.query(
+          "DELETE FROM core.project WHERE id = $1 AND tenant_id = $2",
+          [projectId, tenantId],
+        );
+      },
+      async bindingRowCounts(projectId: string) {
+        const [head] = await database.query<{ count: string }>(
+          "SELECT count(*) FROM core.project_pack_binding WHERE project_id = $1",
+          [projectId],
+        );
+        const [pack] = await database.query<{ count: string }>(
+          "SELECT count(*) FROM core.project_pack_binding_pack WHERE project_id = $1",
+          [projectId],
+        );
+        return { heads: Number(head?.count), packs: Number(pack?.count) };
+      },
       tasks: new PostgresTaskRepository(database, tenantId),
       taskDependencies: new PostgresTaskDependencyRepository(
         database,
@@ -113,7 +181,187 @@ describe.skipIf(connectionString === undefined)(
         );
       },
       async close(): Promise<void> {},
-    }));
+    }), { packBindings: true });
+
+    test("application audit failure rolls back PostgreSQL binding and audit writes", async () => {
+      const writer = new PostgresClient(connectionString!);
+      const observer = new PostgresClient(connectionString!);
+      const projectId = `pack-audit-${randomUUID()}`;
+      const { catalog, custom } = installedBindingFixtures();
+      try {
+        await new PostgresProjectRepository(observer, tenantId).save(
+          Project.create({
+            id: projectId,
+            name: "Pack audit rollback",
+            now: new Date("2026-10-02T00:00:00.000Z"),
+          }),
+        );
+        const writerBindings = new PostgresProjectPackBindingRepository(
+          writer,
+          tenantId,
+        );
+        const observerBindings = new PostgresProjectPackBindingRepository(
+          observer,
+          tenantId,
+        );
+        const realAudit = new PostgresAuditEventRepository(writer, tenantId);
+        const failingAudit: AuditEventRepository = {
+          append: async (event) => {
+            expect(await writerBindings.get(projectId)).toMatchObject({
+              configurationRevision: 1,
+              packs: [custom],
+            });
+            expect(await observerBindings.get(projectId)).toEqual({
+              projectId,
+              configurationRevision: 0,
+              packs: [],
+            });
+            await realAudit.append(event);
+            throw new Error("audit append failed after insert");
+          },
+        };
+        await expect(
+          bindingService(writer, catalog, failingAudit).apply({
+            projectId,
+            desired: [custom],
+            expectedRevision: 0,
+            actorId: "local-operator",
+          }),
+        ).rejects.toThrow("audit append failed after insert");
+        expect(await observerBindings.get(projectId)).toEqual({
+          projectId,
+          configurationRevision: 0,
+          packs: [],
+        });
+        expect(
+          await observer.query<{ count: string }>(
+            "SELECT count(*) FROM core.project_pack_binding WHERE project_id = $1",
+            [projectId],
+          ),
+        ).toEqual([{ count: "0" }]);
+        expect(
+          await observer.query<{ count: string }>(
+            "SELECT count(*) FROM core.audit_event WHERE project_id = $1 AND event_type = 'project.pack_binding_applied'",
+            [projectId],
+          ),
+        ).toEqual([{ count: "0" }]);
+      } finally {
+        await Promise.all([writer.close(), observer.close()]);
+      }
+    });
+
+    test("concurrent application applies fence one revision and one complete audit", async () => {
+      const firstClient = new PostgresClient(connectionString!);
+      const secondClient = new PostgresClient(connectionString!);
+      const observer = new PostgresClient(connectionString!);
+      const projectId = `pack-race-${randomUUID()}`;
+      const { catalog, custom, legal } = installedBindingFixtures();
+      let releaseFirst!: () => void;
+      const firstMayCommit = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      let signalFirstAudit!: () => void;
+      const firstAtAudit = new Promise<void>((resolve) => {
+        signalFirstAudit = resolve;
+      });
+      try {
+        await new PostgresProjectRepository(observer, tenantId).save(
+          Project.create({
+            id: projectId,
+            name: "Pack revision race",
+            now: new Date("2026-10-02T00:00:00.000Z"),
+          }),
+        );
+        await new PostgresProjectPackBindingRepository(
+          observer,
+          tenantId,
+        ).replace(projectId, 0, [custom], new Date("2026-10-02T00:00:00.000Z"));
+        const realAudit = new PostgresAuditEventRepository(
+          firstClient,
+          tenantId,
+        );
+        const first = bindingService(firstClient, catalog, {
+          append: async (event) => {
+            signalFirstAudit();
+            await firstMayCommit;
+            await realAudit.append(event);
+          },
+        }).apply({
+          projectId,
+          desired: [legal],
+          expectedRevision: 1,
+          actorId: "first-operator",
+        });
+        await Promise.race([
+          firstAtAudit,
+          first.then(() => {
+            throw new Error("first apply completed before its audit barrier");
+          }),
+        ]);
+        let secondSettled = false;
+        const second = bindingService(secondClient, catalog)
+          .apply({
+            projectId,
+            desired: [custom, legal],
+            expectedRevision: 1,
+            actorId: "second-operator",
+          })
+          .finally(() => {
+            secondSettled = true;
+          });
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(secondSettled).toBe(false);
+        releaseFirst();
+        const [firstResult, secondResult] = await Promise.allSettled([
+          first,
+          second,
+        ]);
+        expect(firstResult).toMatchObject({ status: "fulfilled" });
+        expect(secondResult).toMatchObject({
+          status: "rejected",
+          reason: expect.any(StaleProjectPackBindingError),
+        });
+        expect(
+          await new PostgresProjectPackBindingRepository(
+            observer,
+            tenantId,
+          ).get(projectId),
+        ).toEqual({
+          projectId,
+          configurationRevision: 2,
+          packs: [legal],
+        });
+        expect(
+          await observer.query<{
+            pack_id: string;
+            pack_version: string;
+            manifest_digest: string;
+          }>(
+            "SELECT pack_id, pack_version, manifest_digest FROM core.project_pack_binding_pack WHERE project_id = $1 ORDER BY pack_id",
+            [projectId],
+          ),
+        ).toEqual([
+          {
+            pack_id: legal.id,
+            pack_version: legal.version,
+            manifest_digest: legal.manifestDigest,
+          },
+        ]);
+        expect(
+          await observer.query<{ count: string }>(
+            "SELECT count(*) FROM core.audit_event WHERE project_id = $1 AND event_type = 'project.pack_binding_applied'",
+            [projectId],
+          ),
+        ).toEqual([{ count: "1" }]);
+      } finally {
+        releaseFirst();
+        await Promise.all([
+          firstClient.close(),
+          secondClient.close(),
+          observer.close(),
+        ]);
+      }
+    }, 15000);
 
     test("serializes concurrent inverse dependency edges so no cycle commits", async () => {
       const first = new PostgresClient(connectionString!);
@@ -390,6 +638,7 @@ describe.skipIf(connectionString === undefined)(
         );
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           "20261001000400_task_execution_history.sql",
+          "20261002000100_project_pack_binding.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -754,6 +1003,7 @@ describe.skipIf(connectionString === undefined)(
           "20261001000200_milestone_description_changed_event.sql",
           "20261001000300_task_dependency_immutable_edges.sql",
           "20261001000400_task_execution_history.sql",
+          "20261002000100_project_pack_binding.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

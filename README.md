@@ -2,7 +2,7 @@
 
 AI Office is a local-first, auditable multi-agent office for software delivery. It keeps project and governance state under an authoritative Runtime, coordinates agents and pipelines, meters model usage and cost, and routes protected side effects through explicit capability and approval boundaries.
 
-> **Current scope:** AI Office is software-development-first today. The generic-core / Domain Packs work is planned in M16; Domain Packs are **not** a current Runtime feature.
+> **Current scope:** AI Office is software-development-first today. M16 has public pack contracts, a host-local catalog and explicit project pack selection. Selected packs do not yet produce an effective Runtime configuration or change execution.
 
 Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Andrea Valla.
 
@@ -236,7 +236,7 @@ The repository uses Bun, strict TypeScript, ESLint, Prettier, Vitest, SQLite int
 
 ## Project direction
 
-The current Runtime remains software-development-oriented. M15 is defining cross-domain professional-work boundaries, and M16 plans the extraction of a generic core plus versioned Domain Packs. Until that work lands, do not treat development, legal, manufacturing, or other packs as implemented Runtime capabilities.
+The current Runtime remains software-development-oriented. M15 defined cross-domain professional-work boundaries, and M16 is progressively extracting a generic core plus versioned Domain Packs. GP-05 records exact project pack selection, but development, legal, manufacturing, and other packs do not yet supply Runtime roles or workflows.
 
 See:
 

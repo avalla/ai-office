@@ -16,6 +16,7 @@ import type { RuntimeAgentKnowledge } from "@ai-office/application/ports/agent-k
 import type { ModelRoutingState } from "@ai-office/application/model-routing/model-routing.ts";
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
+import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 
 export interface CommandContext extends ProjectStorage {
   onRunChanged?: () => void;
@@ -50,6 +51,7 @@ export interface CommandContext extends ProjectStorage {
   modelProviders: ModelProviderCatalog;
   /** Host provider access for gateway-executed routed runs; credentials never leave it. */
   gatewayProviders: GatewayModelProviders;
+  installedPacks: InstalledDomainPackCatalog;
 }
 
 export * from "@ai-office/command-support/arguments.ts";

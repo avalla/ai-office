@@ -1,6 +1,6 @@
 # M16 — Generic Core & Domain Packs: boundary audit and delivery plan
 
-Status: M16 planned. The GP-01 source audit was performed against `main` at
+Status: M16 in progress. The GP-01 source audit was performed against `main` at
 `7886519` and passed final repository review on 2026-10-02 against PR #80 at
 `90c51cf`. [ADR-0027](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 defines the four M15 authority/evidence prerequisites and was integrated in
@@ -10,6 +10,9 @@ only the public [Domain Pack contract package](../../packages/domain-pack-contra
 manifest types, strict parsing, canonicalization, digest verification and
 contract fixtures. GP-04 adds a host-local installed-pack catalog and exact
 dependency resolver, but does not activate packs for Runtime projects.
+GP-05 adds explicit authoritative project selection, reviewable through
+`project:pack:show`, `project:pack:preview` and `project:pack:apply`. It does not
+activate pack definitions for Runtime execution.
 The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
 architectural contract, not current Runtime behavior.
 
@@ -94,12 +97,50 @@ schema versions and defense in depth.
 The port and resolver have no project ID, binding operation, `ProjectStorage`
 dependency or scheduling hook. Registration and resolution cannot instantiate
 roles, workflows, policies or capabilities and do not change existing
-OfficeManifest schema-1 projects or Runtime execution. GP-05 owns durable,
+OfficeManifest schema-1 projects or Runtime execution. GP-05 adds durable,
 explicit project pack binding. GP-06 owns effective resolved project
 configuration. Still deferred: automatic selection, aliases and project
 overrides, upgrade reconciliation, Development Pack extraction, install or
 download marketplace, remote registry, executable validators,
 KnowledgeScopeV2, and portable project UID persistence.
+
+## GP-05 explicit project pack binding
+
+`ProjectStorage.packBindings` records each project's exact selected `(id,
+version, manifestDigest)` tuples and a checked `configurationRevision`. A
+revision-zero empty selection is valid for existing and new projects. The
+SQLite `0041` and PostgreSQL `20261002000100` migrations add separate binding
+heads and tuple rows; PostgreSQL ties them to tenant/project ownership and RLS.
+Neither schema stores artifact bytes, `artifactDigest`, installer provenance,
+resolved dependency closure, or a default Development Pack. Historical
+OfficeManifest rows and run pins are left unchanged.
+
+The application service previews the current and proposed selection, added,
+removed and changed tuples, and any GP-04 availability or dependency error.
+Preview is read-only. Apply checks the expected revision, validates the exact
+proposed tuples against the public GP-04 resolver, replaces the selection in
+one transaction and appends a project audit event with previous/new revisions,
+exact tuples, local operator actor and timestamp. A stale revision fails; an
+identical selection at the current revision is a no-op even if its artifact is
+now unavailable locally: it does not increment the revision or add an audit
+event. A changed selection still requires fresh GP-04 validation. This keeps
+persisted selection valid when host-local availability changes. Preview reports
+valid selection conflicts and availability failures as issues; structurally
+malformed tuples fail with a typed request error before a preview is returned.
+
+Portable project archives use format version 5 for new backups and include
+only the exact binding tuples and configuration revision. Readers for versions
+1–4 remain; importing one yields revision zero and an empty selection. No
+catalog entry, `artifactDigest`, provenance or credential is exported. The
+current Runtime composes an empty installed catalog unless a trusted host
+composition supplies registered artifacts, so a nonempty apply requires that
+host to make the exact artifacts available. Removal only changes selection;
+GP-08 owns reconciliation of later pack-owned definitions and references.
+
+Effective resolved project configuration, aliases, project overrides, pack
+upgrade reconciliation, Development Pack compatibility/extraction, automatic
+selection, remote marketplace/download, executable validators,
+KnowledgeScopeV2 and portable project UID persistence remain deferred.
 
 ## Objective and decision boundary
 

@@ -77,6 +77,97 @@ function manifest(
 }
 
 describe("portable project snapshot", () => {
+  test("v5 carries only exact project pack selection and keeps v4 readable", () => {
+    const legacy: PortableProjectState = {
+      ...state(),
+      taskDependencies: [],
+      taskExecutionHistory: [{ taskId: "task-1", state: "never" }],
+      governance: { ...state().governance, taskRequirements: [] },
+    };
+    const selected: PortableProjectState = {
+      ...legacy,
+      packBinding: {
+        configurationRevision: 3,
+        packs: [
+          {
+            id: "org.example.custom",
+            version: "1.0.0",
+            manifestDigest: `sha256:${"a".repeat(64)}`,
+          },
+        ],
+      },
+    };
+    expect(portableProjectFormatVersionFor(selected)).toBe(5);
+    const archive = createPortableProjectArchive({
+      state: selected,
+      manifest: manifest(selected),
+    });
+    const serialized = serializePortableProjectArchive(archive);
+    expect(parsePortableProjectArchive(serialized)).toEqual(archive);
+    expect(serialized).not.toContain("artifactDigest");
+    expect(serialized).not.toContain("installerId");
+    expect(serialized).not.toContain("provenance");
+    expect(serialized).not.toContain("catalog");
+    expect(serialized).not.toContain("credential");
+    const selectedPack = selected.packBinding!.packs[0]!;
+    const invalidBinding = (packBinding: unknown) => {
+      const invalid = {
+        ...selected,
+        packBinding,
+      } as PortableProjectState;
+      expect(() =>
+        createPortableProjectArchive({
+          state: invalid,
+          manifest: manifest(invalid),
+        }),
+      ).toThrow();
+    };
+    invalidBinding({ configurationRevision: 0, packs: [selectedPack] });
+    invalidBinding({
+      configurationRevision: 3,
+      packs: [selectedPack, { ...selectedPack, version: "2.0.0" }],
+    });
+    invalidBinding({
+      configurationRevision: 3,
+      packs: [selectedPack, { ...selectedPack, id: "org.example.a" }],
+    });
+    invalidBinding({
+      configurationRevision: 3,
+      packs: [{ ...selectedPack, artifactDigest: `sha256:${"b".repeat(64)}` }],
+    });
+    invalidBinding({
+      configurationRevision: 3,
+      packs: [{ ...selectedPack, installerId: "local-distribution" }],
+    });
+    const removed: PortableProjectState = {
+      ...selected,
+      packBinding: { configurationRevision: 4, packs: [] },
+    };
+    expect(
+      parsePortableProjectArchive(
+        serializePortableProjectArchive(
+          createPortableProjectArchive({
+            state: removed,
+            manifest: manifest(removed),
+          }),
+        ),
+      ).state.packBinding,
+    ).toEqual({ configurationRevision: 4, packs: [] });
+    expect(() =>
+      createPortableProjectArchive({
+        state: selected,
+        manifest: manifest(selected, 4),
+      }),
+    ).toThrow("cannot carry project pack binding");
+    const old = createPortableProjectArchive({
+      state: legacy,
+      manifest: manifest(legacy),
+    });
+    expect(old.manifest.formatVersion).toBe(4);
+    expect(
+      parsePortableProjectArchive(serializePortableProjectArchive(old)),
+    ).toEqual(old);
+  });
   test("v4 requires one explicit, non-contradictory execution answer per task", () => {
     const value: PortableProjectState = {
       ...state(),
@@ -295,7 +386,7 @@ describe("portable project snapshot", () => {
       parsePortableProjectArchive(
         JSON.stringify({
           ...archive,
-          manifest: { ...archive.manifest, formatVersion: 5 },
+          manifest: { ...archive.manifest, formatVersion: 6 },
         }),
       ),
     ).toThrow("does not declare a supported format version");

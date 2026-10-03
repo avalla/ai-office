@@ -15,6 +15,7 @@ import type { ModelRoutingState } from "@ai-office/application/model-routing/mod
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import type { ProjectStorage } from "@ai-office/application/ports/project-storage.port.ts";
+import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import {
   CliPromptRequiredError,
   executeRuntimeCommand,
@@ -75,6 +76,7 @@ export class ApplicationRuntime implements AiOfficeRuntime {
     },
     private readonly projectStorage?: ProjectStorage,
     private readonly agentKnowledge?: RuntimeAgentKnowledge,
+    private readonly installedPacks?: InstalledDomainPackCatalog,
   ) {}
 
   private async executeCommand(
@@ -146,6 +148,9 @@ export class ApplicationRuntime implements AiOfficeRuntime {
         ...(this.projectStorage === undefined
           ? {}
           : { projectStorage: this.projectStorage }),
+        ...(this.installedPacks === undefined
+          ? {}
+          : { installedPacks: this.installedPacks }),
         io,
         propagatePromptRequired: true,
       });

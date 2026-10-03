@@ -166,10 +166,82 @@ describe("application architecture boundaries", () => {
       join(repositoryRoot, "packages/runtime-host/src/runtime-command.ts"),
       "utf8",
     );
-    expect(runtimeCommand).not.toContain("installed-domain-pack-catalog");
+    expect(runtimeCommand).toContain(
+      "new InMemoryInstalledDomainPackCatalog(1, [])",
+    );
     expect(Object.keys(installedPackResolver)).toEqual([
       "resolveInstalledPacks",
     ]);
+  });
+
+  test("GP-05 project selection stays separate from host artifacts and scheduling", () => {
+    const bindingPort = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/application/src/ports/project-pack-binding-repository.port.ts",
+      ),
+      "utf8",
+    );
+    const bindingService = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/application/src/domain-pack/manage-project-pack-binding.ts",
+      ),
+      "utf8",
+    );
+    const sqliteBinding = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/storage-sqlite/src/repositories/sqlite-project-pack-binding.repository.ts",
+      ),
+      "utf8",
+    );
+    const postgresBinding = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/storage-postgres/src/repositories/postgres-project-pack-binding.repository.ts",
+      ),
+      "utf8",
+    );
+    const projectStorage = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/application/src/ports/project-storage.port.ts",
+      ),
+      "utf8",
+    );
+    const bindingCommands = readFileSync(
+      join(
+        repositoryRoot,
+        "packages/runtime-host/src/commands/project-pack.ts",
+      ),
+      "utf8",
+    );
+    const projectCommands = readFileSync(
+      join(repositoryRoot, "packages/runtime-host/src/commands/project.ts"),
+      "utf8",
+    );
+    for (const source of [bindingPort, sqliteBinding, postgresBinding])
+      expect(source).not.toMatch(/artifactDigest|installerId|provenance|bytes/);
+    expect(projectStorage).not.toContain("InstalledDomainPackCatalog");
+    for (const migration of [
+      "migrations/project/0041_project_pack_binding.sql",
+      "supabase/migrations/20261002000100_project_pack_binding.sql",
+    ]) {
+      const schema = readFileSync(
+        join(repositoryRoot, migration),
+        "utf8",
+      ).replace(/^--.*$/gm, "");
+      expect(schema).not.toMatch(
+        /artifact_digest|artifact_bytes|installer_id|installation_reference|provenance|catalog_/i,
+      );
+    }
+    expect(bindingService).toContain('from "./resolve-installed-packs.ts"');
+    for (const source of [bindingService, bindingCommands])
+      expect(source).not.toMatch(
+        /run:schedule|pipeline:start|resolveVerifiedPackClosure|configurationDigest|effectiveRoles|resolveAliases|reconcilePacks/,
+      );
+    expect(projectCommands).not.toContain("packBindings.replace");
   });
 
   test("project Runtime composition consumes repository ports, not SQLite classes", () => {

@@ -14,6 +14,7 @@ import { SqlitePipelineRunRepository } from "./repositories/sqlite-pipeline-run.
 import { SqliteProjectMemoryProvenanceRepository } from "./repositories/sqlite-project-memory-provenance.repository.ts";
 import { SqliteProjectProfileRepository } from "./repositories/sqlite-project-profile.repository.ts";
 import { SqliteProjectRepository } from "./repositories/sqlite-project.repository.ts";
+import { SqliteProjectPackBindingRepository } from "./repositories/sqlite-project-pack-binding.repository.ts";
 import { SqliteProjectStateRepository } from "./repositories/sqlite-project-state.repository.ts";
 import { SqliteRepositoryIdentityRepository } from "./repositories/sqlite-repository-identity.repository.ts";
 import { SqliteTaskRequirementRepository } from "./repositories/sqlite-task-requirement.repository.ts";
@@ -25,6 +26,7 @@ import { SqliteTransactionRunner } from "./database/sqlite-transaction-runner.ts
 export function createSqliteProjectStorage(database: Database): ProjectStorage {
   return {
     projects: new SqliteProjectRepository(database),
+    packBindings: new SqliteProjectPackBindingRepository(database),
     profiles: new SqliteProjectProfileRepository(database),
     officeManifests: new SqliteOfficeManifestRepository(database),
     pipelines: new SqlitePipelineRunRepository(database),
