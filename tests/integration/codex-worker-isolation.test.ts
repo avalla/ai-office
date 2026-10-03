@@ -287,9 +287,10 @@ describe.skipIf(process.platform === "win32")(
           timeoutMs: 10000,
           env: { PATH: process.env.PATH ?? "", HOME: work, CODEX_HOME: work },
         });
+        // The child reports resolved paths; the temporary root may be a link.
         expect(fake.report().projectSkills).toEqual([
-          join(root, ".agents", "skills", "ambient-a"),
-          join(root, ".codex", "skills", "ambient-c"),
+          join(realpathSync(root), ".agents", "skills", "ambient-a"),
+          join(realpathSync(root), ".codex", "skills", "ambient-c"),
         ]);
         rmSync(work, { recursive: true });
 
@@ -362,13 +363,20 @@ describe.skipIf(process.platform === "win32")(
       mkdirSync(auth);
       await refusedQuickly();
       rmSync(auth, { recursive: true });
-      const server = createServer().listen(auth);
-      try {
-        await new Promise((resolve) => server.once("listening", resolve));
-        await refusedQuickly();
-      } finally {
-        await new Promise((resolve) => server.close(resolve));
+      // A socket where the path is short enough for the platform to bind one.
+      const server = createServer();
+      const bound = await new Promise<boolean>((resolve) => {
+        server.once("error", () => resolve(false));
+        server.listen(auth, () => resolve(true));
+      });
+      if (bound) {
+        try {
+          await refusedQuickly();
+        } finally {
+          await new Promise((resolve) => server.close(resolve));
+        }
       }
+      rmSync(auth, { force: true });
       symlinkSync("/dev/zero", auth);
       await refusedQuickly();
     });
