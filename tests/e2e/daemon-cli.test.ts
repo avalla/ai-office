@@ -22,7 +22,11 @@ import {
   RuntimeUnavailableError,
 } from "../../apps/cli/src/daemon-client.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
-import { computeArtifactDigest } from "../../packages/domain-pack-contracts/src/index.ts";
+import {
+  computeArtifactDigest,
+  computeManifestDigest,
+  parseDomainPackManifest,
+} from "../../packages/domain-pack-contracts/src/index.ts";
 import { InMemoryInstalledDomainPackCatalog } from "../../packages/runtime-host/src/installed-domain-pack-catalog.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import type { RuntimeClient } from "@ai-office/application/runtime/runtime-client.port.ts";
@@ -438,6 +442,137 @@ profiles:
     }
   });
 
+  test("definition preview and apply reject pack collisions and U+0000 over the socket without writing", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-definition-collision-cli-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const installedPacks = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    const bytes = readFileSync(
+      new URL("../fixtures/domain-pack/legal.json", import.meta.url),
+    );
+    const pack = installedPacks.register({
+      bytes,
+      artifactDigest: computeArtifactDigest(bytes),
+      provenance: {
+        installerId: "local-distribution",
+        reference: "bundled/legal",
+      },
+    });
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+      installedPacks,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+    try {
+      await waitForDaemon(socket.socketPath);
+      const created = await invoke(["project:create", "Collision fixture"]);
+      expect(created.code).toBe(0);
+      const projectId = created.stdout[0]!.replace("Project created: ", "");
+      expect(
+        (
+          await invoke([
+            "project:pack:apply",
+            "--project",
+            projectId,
+            "--packs",
+            JSON.stringify([pack]),
+            "--expected-revision",
+            "0",
+            "--json",
+          ])
+        ).code,
+      ).toBe(0);
+      const definition = (
+        command: "preview" | "apply",
+        id: string,
+        title?: string,
+      ) =>
+        invoke([
+          `project:definition:${command}`,
+          "--project",
+          projectId,
+          "--mutation",
+          JSON.stringify({
+            action: "put_owned",
+            kind: "roles",
+            id,
+            enabled: true,
+            payload: { id, ...(title === undefined ? {} : { title }) },
+          }),
+          ...(command === "apply" ? ["--expected-revision", "0"] : []),
+          "--json",
+        ]);
+      const collision =
+        "Project definition roles/counsel collides with pack org.example.legal@1.0.0 in the resolved pack closure";
+
+      const preview = await definition("preview", "counsel");
+      expect(preview.code).toBe(1);
+      expect(JSON.parse(preview.stdout[0]!)).toMatchObject({
+        current: { revision: 0 },
+        issues: [{ code: "pack_definition_collision", message: collision }],
+      });
+      const applied = await definition("apply", "counsel");
+      expect(applied.code).toBe(1);
+      expect(applied.stdout).toEqual([]);
+      expect(applied.stderr).toEqual([collision]);
+
+      for (const command of ["preview", "apply"] as const) {
+        const rejected = await definition(command, "custom", "a\u0000");
+        expect(rejected.code).toBe(1);
+        expect(rejected.stdout).toEqual([]);
+        expect(rejected.stderr).toEqual(["title must be bounded text"]);
+      }
+
+      const shown = await invoke([
+        "project:definition:show",
+        "--project",
+        projectId,
+        "--json",
+      ]);
+      expect(JSON.parse(shown.stdout[0]!)).toMatchObject({
+        state: { revision: 0, owned: [], overrides: [] },
+        issues: [],
+      });
+      // The same identity under different case is a distinct definition.
+      expect((await definition("apply", "Counsel", "😀")).code).toBe(0);
+      const resolved = await invoke([
+        "project:configuration:show",
+        "--project",
+        projectId,
+        "--json",
+      ]);
+      expect(resolved.code).toBe(0);
+      expect(JSON.parse(resolved.stdout[0]!)).toMatchObject({
+        ok: true,
+        configuration: {
+          projectOwnedDefinitions: [
+            { effectiveId: "project:roles/Counsel", payload: { title: "😀" } },
+          ],
+        },
+      });
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
   test("previews and applies an explicit project pack binding over the socket", async () => {
     const projectRoot = mkdtempSync(
       join(tmpdir(), "ai-office-pack-binding-cli-"),
@@ -566,6 +701,25 @@ profiles:
         state: { revision: 1, owned: [{ id: "custom" }] },
         issues: [],
       });
+      const resolved = await invoke([
+        "project:configuration:show",
+        "--project",
+        projectId,
+        "--json",
+      ]);
+      expect(resolved.code).toBe(0);
+      expect(JSON.parse(resolved.stdout[0]!)).toMatchObject({
+        ok: true,
+        configuration: {
+          bindingRevision: 1,
+          definitionRevision: 1,
+          selectedPacks: [pack],
+          projectOwnedDefinitions: [{ kind: "roles", localId: "custom" }],
+        },
+      });
+      expect(
+        JSON.parse(resolved.stdout[0]!).configuration.configurationDigest,
+      ).toMatch(/^sha256:[0-9a-f]{64}$/);
       const definitionStale = await invoke([
         "project:definition:apply",
         "--project",
@@ -605,6 +759,223 @@ profiles:
         configurationRevision: 2,
         packs: [],
       });
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
+  test("project:configuration:show stays read-only, project-scoped and sanitized over the socket", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-configuration-cli-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const installedPacks = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    const install = (bytes: Uint8Array, reference: string) =>
+      installedPacks.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: { installerId: "local-distribution", reference },
+      });
+    const legalBytes = readFileSync(
+      new URL("../fixtures/domain-pack/legal.json", import.meta.url),
+    );
+    const legal = install(legalBytes, "/home/operator/secret-install/legal");
+    const policyDraft = parseDomainPackManifest(legalBytes);
+    const policyManifest = {
+      ...policyDraft,
+      id: "org.example.policy",
+      contributions: {
+        ...policyDraft.contributions,
+        policies: [{ id: "deny-all" }],
+      },
+    } as unknown as typeof policyDraft;
+    const policy = install(
+      new TextEncoder().encode(
+        JSON.stringify({
+          ...policyManifest,
+          manifestDigest: computeManifestDigest(policyManifest),
+        }),
+      ),
+      "/home/operator/secret-install/policy",
+    );
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+      installedPacks,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+    const create = async (name: string) =>
+      (await invoke(["project:create", name])).stdout[0]!.replace(
+        "Project created: ",
+        "",
+      );
+    const show = (projectId: string) =>
+      invoke(["project:configuration:show", "--project", projectId, "--json"]);
+    const bind = async (
+      projectId: string,
+      packs: unknown[],
+      revision: number,
+    ) =>
+      expect(
+        (
+          await invoke([
+            "project:pack:apply",
+            "--project",
+            projectId,
+            "--packs",
+            JSON.stringify(packs),
+            "--expected-revision",
+            String(revision),
+            "--json",
+          ])
+        ).code,
+      ).toBe(0);
+    const authority = async (projectId: string) =>
+      JSON.stringify([
+        (await invoke(["project:pack:show", "--project", projectId, "--json"]))
+          .stdout,
+        (
+          await invoke([
+            "project:definition:show",
+            "--project",
+            projectId,
+            "--json",
+          ])
+        ).stdout,
+        (await invoke(["task:list", "--project", projectId])).stdout,
+      ]);
+    const expectSanitized = (output: { stdout: string[]; stderr: string[] }) =>
+      expect([...output.stdout, ...output.stderr].join("\n")).not.toMatch(
+        /secret-install|\/home\/|\bat .+:\d+:\d+|SQLITE|SELECT |ZodError|\.ts:/u,
+      );
+    try {
+      await waitForDaemon(socket.socketPath);
+      const projectId = await create("Configuration fixture");
+      const otherId = await create("Other configuration fixture");
+
+      const empty = await show(projectId);
+      expect(empty.code).toBe(0);
+      expect(Object.keys(JSON.parse(empty.stdout[0]!))).toEqual([
+        "ok",
+        "configuration",
+      ]);
+      expect(Object.keys(JSON.parse(empty.stdout[0]!).configuration)).toEqual([
+        "formatVersion",
+        "coreContractVersion",
+        "bindingRevision",
+        "definitionRevision",
+        "selectedPacks",
+        "resolvedPacks",
+        "projectOwnedDefinitions",
+        "appliedOverrides",
+        "effectiveDefinitions",
+        "origins",
+        "disabledDefinitions",
+        "resolvedWorkflowReferences",
+        "configurationDigest",
+        "pin",
+      ]);
+      expect(
+        JSON.parse(empty.stdout[0]!).configuration.configurationDigest,
+      ).toBe(
+        "sha256:c272fa286a92c8d3732e97fec7b0373c3a7854cb70e4a108a7690acb92bd7b19",
+      );
+
+      await bind(projectId, [legal], 0);
+      const overrideApplied = await invoke([
+        "project:definition:apply",
+        "--project",
+        projectId,
+        "--mutation",
+        JSON.stringify({
+          action: "put_override",
+          source: { ...legal, kind: "roles", localId: "counsel" },
+          operation: "replace",
+          payload: { id: "counsel", title: "Lead counsel" },
+        }),
+        "--expected-revision",
+        "0",
+        "--json",
+      ]);
+      expect(overrideApplied.code).toBe(0);
+      const resolved = await show(projectId);
+      expect(resolved.code).toBe(0);
+      expect(resolved.stdout).toEqual((await show(projectId)).stdout);
+      expect(JSON.parse(resolved.stdout[0]!).configuration).toMatchObject({
+        bindingRevision: 1,
+        definitionRevision: 1,
+        selectedPacks: [legal],
+        appliedOverrides: [{ operation: "replace", revision: 1 }],
+      });
+      expectSanitized(resolved);
+
+      // Another project never observes this project's binding or overrides.
+      expect((await show(otherId)).stdout).toEqual(empty.stdout);
+
+      // Removing the selected pack leaves a pinned override with no source.
+      await bind(projectId, [], 1);
+      const before = await authority(projectId);
+      const stale = await show(projectId);
+      expect(stale.code).toBe(1);
+      expect(JSON.parse(stale.stdout[0]!)).toEqual({
+        ok: false,
+        diagnostics: [
+          {
+            code: "unresolved_override",
+            message:
+              "Override source pack org.example.legal@1.0.0 is not an exact selected pack",
+          },
+        ],
+      });
+      expectSanitized(stale);
+
+      // A failed resolution changes no binding, definition or task state.
+      expect(await authority(projectId)).toBe(before);
+
+      await bind(otherId, [policy], 0);
+      const beforePolicy = await authority(otherId);
+      const unsupported = await show(otherId);
+      expect(unsupported.code).toBe(1);
+      expect(JSON.parse(unsupported.stdout[0]!)).toMatchObject({
+        ok: false,
+        diagnostics: [{ code: "unsupported_security_composition" }],
+      });
+      expectSanitized(unsupported);
+      expect(await authority(otherId)).toBe(beforePolicy);
+
+      const missing = await show("no-such-project");
+      expect(missing.code).toBe(1);
+      expect(missing.stdout).toEqual([]);
+      expect(missing.stderr.join("\n")).toBe(
+        "Project no-such-project not found",
+      );
+      const unscoped = await invoke(["project:configuration:show", "--json"]);
+      expect(unscoped.code).toBe(1);
+      expectSanitized(unscoped);
+      const positional = await invoke([
+        "project:configuration:show",
+        "--project",
+        projectId,
+        "extra",
+      ]);
+      expect(positional.code).toBe(1);
+      expect(positional.stdout).toEqual([]);
     } finally {
       controller.abort();
       await running;

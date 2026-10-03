@@ -78,6 +78,7 @@ Commands:
   project:definition:show --project <id> [--json]
   project:definition:preview --project <id> --mutation <json> [--json]
   project:definition:apply --project <id> --mutation <json> --expected-revision <integer> [--json]
+  project:configuration:show --project <id> [--json]  # read-only derived configuration
   task:update --project <id> --task <id> --description <description>
   task:list --project <id>
   task:transitions --project <id> --task <id> [--json]   # read-only preflight

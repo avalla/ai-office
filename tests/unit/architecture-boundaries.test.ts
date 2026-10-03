@@ -15,6 +15,7 @@ function typescriptFiles(directory: string): string[] {
   const entries = readdirSync(directory);
   const files: string[] = [];
   for (const entry of entries) {
+    if (entry === "node_modules") continue;
     const path = join(directory, entry);
     if (statSync(path).isDirectory()) {
       files.push(...typescriptFiles(path));
@@ -24,6 +25,64 @@ function typescriptFiles(directory: string): string[] {
   }
   return files;
 }
+
+test("GP-06 configuration remains derived and outside scheduling and portable authority", () => {
+  const resolver = readFileSync(
+    join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/resolve-project-configuration.ts",
+    ),
+    "utf8",
+  );
+  const reader = readFileSync(
+    join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/read-project-configuration.ts",
+    ),
+    "utf8",
+  );
+  const storagePort = readFileSync(
+    join(
+      repositoryRoot,
+      "packages/application/src/ports/project-storage.port.ts",
+    ),
+    "utf8",
+  );
+  const archive = readFileSync(
+    join(
+      repositoryRoot,
+      "packages/application/src/project-portability/project-snapshot.ts",
+    ),
+    "utf8",
+  );
+  const manifests = readFileSync(
+    join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/resolve-installed-pack-manifests.ts",
+    ),
+    "utf8",
+  );
+  expect(resolver).toContain("resolveInstalledPackManifests");
+  expect(manifests).toContain("resolveInstalledPacks(");
+  expect(reader).toContain("resolveProjectConfiguration");
+  expect(storagePort).not.toContain("ResolvedProjectConfiguration");
+  expect(archive).not.toContain("ResolvedProjectConfiguration");
+  expect(resolver).not.toMatch(
+    /org\.ai-office\.development|org\.example\.(?:legal|manufacturing)/u,
+  );
+  for (const file of typescriptFiles(
+    join(repositoryRoot, "packages/application/src/runtime"),
+  ))
+    expect(readFileSync(file, "utf8")).not.toContain(
+      "ReadProjectConfiguration",
+    );
+  for (const file of typescriptFiles(
+    join(repositoryRoot, "packages/storage-sqlite/src"),
+  ))
+    expect(readFileSync(file, "utf8")).not.toContain(
+      "resolved_project_configuration",
+    );
+});
 
 /** Every module specifier in a static import, re-export, or dynamic import. */
 function importedSpecifiers(source: string): string[] {

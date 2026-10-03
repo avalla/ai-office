@@ -184,6 +184,21 @@ may declare at most 1,000 stages, the same bound portable archive format 6
 enforces, so every accepted definition stays exportable. Mutation results and
 later reads list entries in the same code-unit order on both storage backends.
 
+Definition titles and descriptions follow one text rule, shared by GP-07
+mutation validation and portable archive format 6: at most 16,000 UTF-16 code
+units, no lone surrogate and no U+0000. Text is not normalized, and valid
+non-BMP characters are accepted. The rule runs before storage, so SQLite and
+PostgreSQL accept and reject the same text with the same typed diagnostic.
+
+Previewing or applying a project-owned definition also checks the resolved
+pack closure of the current binding, selected packs and their transitive
+dependencies alike. A matching kind and local ID, compared exactly by code
+unit, is reported as `pack_definition_collision` and nothing is written. The
+check reads the closure through the same GP-04 resolution GP-06 uses and runs
+before the mutation transaction. When the closure cannot be resolved the check
+is skipped. GP-06 remains the authority: it rejects a collision that appears
+later, for example after the binding changes or through restore.
+
 | Schema-1 pack contribution                                           | `replace`               | `extend`                      | `disable`   |
 | -------------------------------------------------------------------- | ----------------------- | ----------------------------- | ----------- |
 | Roles, task types, agents, artifact types, evidence types, knowledge | Descriptive fields only | Absent title/description only | Unsupported |
@@ -210,11 +225,88 @@ carries authoritative entries, including unresolved pinned overrides; formats
 1–5 remain readable with their original meanings. Format 6 excludes installed
 artifacts, credentials and resolved configuration.
 
-GP-06 will resolve these sources into an effective configuration and define
+GP-06 resolves these sources into an effective configuration and defines
 its digest. GP-08 will handle pack upgrade reconciliation. Aliases, legacy
 Development Pack parity/extraction, automatic selection, downloads, registry,
 executable validators, KnowledgeScopeV2, portable project UIDs and Runtime
 execution from pack definitions remain deferred.
+
+## GP-06 derived project configuration
+
+`ReadProjectConfiguration` reads the GP-05 binding and GP-07 definition state
+inside one short ProjectStorage transaction. It reads both revisions twice; a
+change in either interval fails with `stale_resolution`. The overlapping reads
+also cover PostgreSQL's read-committed transactions. Installed pack resolution
+and digest work run after the transaction. No resolved table, authoritative
+cache, portable archive field, or scheduler switch is added.
+
+The resolver takes the project ID, binding revision and exact tuples,
+definition-state revision and entries, trusted installed catalog, and core
+contract version explicitly. GP-04 checks trust, artifact bytes, manifest
+digest, core compatibility, and exact dependency closure. GP-06 captures the
+verified artifacts for definition extraction. Missing or changed artifacts
+fail resolution without changing the binding or pinned overrides.
+
+Effective IDs are `pack:<id>@<version>#<manifestDigest>/<kind>/<localId>` and
+`project:<kind>/<localId>`. Project context is implicit, so a restored local
+project row ID cannot affect the digest. Pack sources remain immutable. A
+project-owned entry with the same kind and local ID as an entry anywhere in
+the resolved pack closure, including transitive dependencies, is rejected;
+distinct packs may use the same local ID under different qualified IDs. Every derived list uses one locale-independent order: pack sources in
+GP-07's exact source tuple order (pack ID, version, manifest digest, kind,
+local ID, compared by code unit), then project-owned entries in GP-07's
+kind/ID order. Exact project overrides apply after independent project
+definitions, using GP-07's replace, extend and prompt-disable matrix. No
+import or registration order wins.
+
+The resolver treats stored definition state as untrusted input. Each owned
+entry and override is re-checked against GP-07's mutation contract (kind,
+local ID, payload fields, workflow stage bound, entry revision) before it can
+appear in the view; a violation fails with `configuration_invariant` or
+`unresolved_override` and a diagnostic that names only the violated contract
+code. As in GP-07, an override source must be an explicitly selected pack
+tuple: a pack present only as a transitive dependency of the closure is not an
+override source, and a duplicate selected tuple is rejected.
+
+Schema-1 pack workflow references resolve only within the originating pack.
+Project-owned schema-1 workflow references resolve only project-owned task
+types and roles. Schema-1 workflow fields use bare local IDs and cannot encode
+explicit cross-pack references; an ambiguous bare reference fails closed and
+a single pack match is not inferred. Qualified cross-pack workflow syntax and
+project-facing aliases remain deferred. Stage array order is preserved.
+Missing or disabled required definitions fail resolution. The read view also
+exposes the qualified task-type and ordered stage-role targets for each enabled
+workflow.
+
+The version-1 `configurationDigest` is SHA-256 of the UTF-8 string
+`ai-office-project-configuration-v1\n` followed by RFC 8785 canonical JSON of
+the derived material. It covers format and core contract version, binding and
+definition revisions, sorted selected and resolved tuples, effective and
+project-owned definitions, applied override IDs and revisions, origins,
+disabled IDs, and qualified workflow targets. It excludes Runtime-local
+project row ID, actor and edit timestamps, installer provenance, and artifact
+bytes. Exact bytes and trust
+establish validity; manifest digests and effective content establish
+configuration identity. `pin` returns the digest, revisions, and exact tuples
+for later run persistence.
+
+The version-1 empty input vector (core contract 1, both revisions 0, no packs
+or definitions) is
+`sha256:c272fa286a92c8d3732e97fec7b0373c3a7854cb70e4a108a7690acb92bd7b19`.
+
+Schema-1 policy contributions have descriptive fields but no typed mandatory
+clause or evaluator. A nonempty policy section yields
+`unsupported_security_composition` rather than an overrideable policy.
+Evidence and capability names are descriptive declarations; they create no
+verified fact, grant, or approval. ADR-0027's conjunctive gates, scope
+intersection, accumulating denials, and ordered bounds need a typed policy
+contract before they can govern execution.
+
+`project:configuration:show --project <id> [--json]` returns the derived view
+or a sanitized typed diagnostic through the Runtime socket. An unknown project
+is reported as not found, like the other project commands. Empty bindings and
+definitions resolve to a valid empty view. Existing OfficeManifest scheduling,
+roles, agents, pipelines and run pins retain their current behavior.
 
 ## Objective and decision boundary
 
@@ -393,7 +485,8 @@ Every GP key is also a project requirement key. Each row gives the task's
 objective, smallest delivery slice, acceptance, artifact/verification, and
 explicit exclusion. The linked AI Office task and requirement descriptions
 carry the same fields. GP-01 through GP-05 and GP-07 have passed review and
-merged; GP-06 builds on the merged GP-07 state.
+merged. GP-06 is implemented in a review branch on top of the merged GP-07
+state; it remains incomplete until its separate final review.
 
 | ID and title                                       | Depends on                      | Slice and acceptance                                                                                                                                                                                                     | Artifact / verification                                                                                              | Non-goal                                                  |
 | -------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |

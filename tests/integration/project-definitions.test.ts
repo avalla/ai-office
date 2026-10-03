@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
+import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import {
   parseDefinitionMutation,
   StaleProjectDefinitionError,
@@ -138,6 +139,367 @@ const apply = (
   });
 
 describe("GP-07 authoritative definition ownership", () => {
+  test("rejects lone surrogates in owned, override, and workflow text before persistence", async () => {
+    const { database, storage, catalog, service, bind, legal } =
+      await harness();
+    await bind();
+    const mutations = [
+      {
+        action: "put_owned",
+        kind: "roles",
+        id: "custom",
+        enabled: true,
+        payload: { id: "custom", title: "\ud800" },
+      },
+      {
+        action: "put_owned",
+        kind: "roles",
+        id: "custom",
+        enabled: true,
+        payload: { id: "custom", description: "\udc00" },
+      },
+      putOverride(legal, "replace", { id: "counsel", description: "\ud800" }),
+      {
+        action: "put_owned",
+        kind: "workflows",
+        id: "review",
+        enabled: true,
+        payload: {
+          id: "review",
+          title: "\udc00",
+          taskType: "matter",
+          stages: [{ id: "intake", role: "counsel" }],
+        },
+      },
+    ];
+    for (const mutation of mutations) {
+      await expect(apply(service(), mutation, 0)).rejects.toMatchObject({
+        code: "malformed_origin_reference",
+      });
+      expect((await storage.definitions.get("a")).revision).toBe(0);
+    }
+
+    await apply(
+      service(),
+      {
+        action: "put_owned",
+        kind: "roles",
+        id: "custom",
+        enabled: true,
+        payload: { id: "custom", title: "😀" },
+      },
+      0,
+    );
+    const resolved = await new ReadProjectConfiguration({
+      projects: storage.projects,
+      bindings: storage.packBindings,
+      definitions: storage.definitions,
+      catalog,
+      transactions: storage.transactions,
+    }).read("a");
+    expect(resolved.projectOwnedDefinitions[0]?.payload.title).toBe("😀");
+    database.close();
+  });
+
+  test("corrupt persisted Unicode fails GP-06 resolution with a sanitized typed error", async () => {
+    const { database, storage, catalog } = await harness();
+    database
+      .query(
+        "INSERT INTO project_definition_head(project_id,revision) VALUES ('a',1)",
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO project_owned_definition
+        (project_id,kind,local_id,revision,enabled,payload_json,actor_id,changed_at)
+        VALUES ('a','roles','corrupt',1,1,?,'operator','2026-10-03T00:00:00.000Z')`,
+      )
+      .run(JSON.stringify({ id: "corrupt", title: "\ud800" }));
+    const read = new ReadProjectConfiguration({
+      projects: storage.projects,
+      bindings: storage.packBindings,
+      definitions: storage.definitions,
+      catalog,
+      transactions: storage.transactions,
+    });
+    const error = await read.read("a").then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toMatchObject({ code: "configuration_invariant" });
+    expect((error as Error).message).toBe(
+      "Stored project definition violates the definition contract: malformed_origin_reference",
+    );
+    database.close();
+  });
+
+  test("rejects U+0000 in every definition text field before persistence", async () => {
+    const { database, storage, service, bind, legal } = await harness();
+    await bind();
+    const owned = (payload: object, kind = "roles") => ({
+      action: "put_owned",
+      kind,
+      id: "custom",
+      enabled: true,
+      payload,
+    });
+    const workflow = (fields: object) =>
+      owned(
+        {
+          id: "custom",
+          taskType: "matter",
+          stages: [{ id: "intake", role: "counsel" }],
+          ...fields,
+        },
+        "workflows",
+      );
+    expect(() =>
+      parseDefinitionMutation(owned({ id: "custom", title: "a\u0000" })),
+    ).toThrow(
+      expect.objectContaining({
+        code: "malformed_origin_reference",
+        message: "title must be bounded text",
+      }),
+    );
+    const mutations = [
+      owned({ id: "custom", title: "a\u0000" }),
+      owned({ id: "custom", description: "\u0000" }),
+      workflow({ title: "a\u0000b" }),
+      workflow({ description: "a\u0000" }),
+      putOverride(legal, "replace", { id: "counsel", title: "a\u0000" }),
+      putOverride(legal, "replace", { id: "counsel", description: "a\u0000" }),
+      putOverride(legal, "extend", { description: "a\u0000" }),
+    ];
+    const audits = () =>
+      database
+        .query<{ count: number }, []>(
+          "SELECT count(*) AS count FROM audit_event WHERE event_type='project.definition_changed'",
+        )
+        .get()!.count;
+    for (const mutation of mutations) {
+      await expect(service().preview("a", mutation)).rejects.toMatchObject({
+        code: "malformed_origin_reference",
+      });
+      await expect(apply(service(), mutation, 0)).rejects.toMatchObject({
+        code: "malformed_origin_reference",
+      });
+      expect(await storage.definitions.get("a")).toMatchObject({
+        revision: 0,
+        owned: [],
+        overrides: [],
+      });
+      expect(audits()).toBe(0);
+    }
+
+    // Valid non-BMP text at the code-unit bound is unaffected and unnormalized.
+    const title = `e\u0301${"😀".repeat(7_999)}`;
+    expect(title).toHaveLength(16_000);
+    const applied = await apply(
+      service(),
+      owned({ id: "custom", title, description: "😀" }),
+      0,
+    );
+    expect(applied.owned[0]?.payload).toEqual({
+      id: "custom",
+      title,
+      description: "😀",
+    });
+    database.close();
+  });
+
+  test("corrupt persisted U+0000 fails GP-06 resolution with a sanitized typed error", async () => {
+    const { database, storage, catalog } = await harness();
+    database
+      .query(
+        "INSERT INTO project_definition_head(project_id,revision) VALUES ('a',1)",
+      )
+      .run();
+    database
+      .query(
+        `INSERT INTO project_owned_definition
+        (project_id,kind,local_id,revision,enabled,payload_json,actor_id,changed_at)
+        VALUES ('a','roles','corrupt',1,1,?,'operator','2026-10-03T00:00:00.000Z')`,
+      )
+      .run(JSON.stringify({ id: "corrupt", title: "a\u0000" }));
+    await expect(
+      new ReadProjectConfiguration({
+        projects: storage.projects,
+        bindings: storage.packBindings,
+        definitions: storage.definitions,
+        catalog,
+        transactions: storage.transactions,
+      }).read("a"),
+    ).rejects.toMatchObject({
+      code: "configuration_invariant",
+      message:
+        "Stored project definition violates the definition contract: malformed_origin_reference",
+    });
+    database.close();
+  });
+
+  test("a project-owned definition that collides with the resolved pack closure is rejected before mutation", async () => {
+    const { database, storage, catalog, service, bind, legal } =
+      await harness();
+    // `legal` contributes roles/counsel and taskTypes/matter. `dependent`
+    // selects it only as a transitive dependency.
+    const draft = parseDomainPackManifest(
+      readFileSync(
+        new URL("../fixtures/domain-pack/custom.json", import.meta.url),
+      ),
+    );
+    const dependentManifest = {
+      ...draft,
+      id: parseDomainPackId("org.example.dependent"),
+      dependencies: [legal],
+      contributions: {
+        ...draft.contributions,
+        prompts: [
+          {
+            id: "greeting" as (typeof draft.contributions.roles)[number]["id"],
+          },
+        ],
+      },
+    };
+    const dependentBytes = new TextEncoder().encode(
+      JSON.stringify({
+        ...dependentManifest,
+        manifestDigest: computeManifestDigest(dependentManifest),
+      }),
+    );
+    const dependent = catalog.register({
+      bytes: dependentBytes,
+      artifactDigest: computeArtifactDigest(dependentBytes),
+      provenance: { installerId: "local-distribution", reference: "dependent" },
+    });
+    const owned = (kind: string, id: string) => ({
+      action: "put_owned",
+      kind,
+      id,
+      enabled: true,
+      payload: { id },
+    });
+    const reader = new ReadProjectConfiguration({
+      projects: storage.projects,
+      bindings: storage.packBindings,
+      definitions: storage.definitions,
+      catalog,
+      transactions: storage.transactions,
+    });
+    const writes = () =>
+      database
+        .query<{ changes: number }, []>("SELECT total_changes() AS changes")
+        .get()!.changes;
+    const collision = (kind: string, id: string) => ({
+      code: "pack_definition_collision",
+      message: `Project definition ${kind}/${id} collides with pack org.example.legal@1.0.0 in the resolved pack closure`,
+    });
+
+    // Without a binding nothing can collide.
+    expect(
+      (await service().preview("a", owned("roles", "counsel"))).issues,
+    ).toEqual([]);
+
+    for (const [label, packs] of [
+      ["directly selected", [legal]],
+      ["transitive dependency", [dependent]],
+    ] as const) {
+      await bind([...packs]);
+      const before = writes();
+      for (const [kind, id] of [
+        ["roles", "counsel"],
+        ["taskTypes", "matter"],
+      ] as const) {
+        expect(
+          (await service().preview("a", owned(kind, id))).issues,
+          label,
+        ).toEqual([collision(kind, id)]);
+        await expect(
+          apply(service(), owned(kind, id), 0),
+          label,
+        ).rejects.toMatchObject(collision(kind, id));
+      }
+      expect(writes(), label).toBe(before);
+      expect(await storage.definitions.get("a")).toMatchObject({
+        revision: 0,
+        owned: [],
+      });
+    }
+
+    // Same local ID under another kind, and a case-different ID, are distinct
+    // identities for GP-07 exactly as they are for GP-06.
+    let revision = 0;
+    for (const [kind, id] of [
+      ["taskTypes", "counsel"],
+      ["roles", "matter"],
+      ["roles", "Counsel"],
+      ["roles", "COUNSEL"],
+      ["prompts", "Greeting"],
+    ] as const) {
+      const mutation = owned(kind, id);
+      expect((await service().preview("a", mutation)).issues).toEqual([]);
+      revision = (await apply(service(), mutation, revision)).revision;
+    }
+    const resolved = await reader.read("a");
+    expect(
+      resolved.projectOwnedDefinitions.map((item) => item.effectiveId),
+    ).toEqual([
+      "project:prompts/Greeting",
+      "project:roles/COUNSEL",
+      "project:roles/Counsel",
+      "project:roles/matter",
+      "project:taskTypes/counsel",
+    ]);
+
+    // GP-06 stays the backstop for state that did not come through apply, and
+    // an entry that collides can still be removed.
+    await storage.definitions.replace(
+      {
+        projectId: "a",
+        revision,
+        owned: [
+          {
+            origin: "project_owned",
+            kind: "prompts",
+            id: "greeting",
+            revision: 1,
+            enabled: true,
+            payload: { id: "greeting" },
+            actorId: "operator",
+            changedAt: "2026-10-03T00:00:00.000Z",
+          },
+        ],
+        overrides: [],
+      },
+      revision,
+      new Date("2026-10-03T00:00:00.000Z"),
+    );
+    await expect(reader.read("a")).rejects.toMatchObject({
+      code: "duplicate_effective_definition",
+      message:
+        "Project definition prompts/greeting collides with the resolved pack closure",
+    });
+    await expect(
+      apply(
+        service(),
+        { ...owned("prompts", "greeting"), expectedEntryRevision: 1 },
+        revision + 1,
+      ),
+    ).rejects.toMatchObject({ code: "pack_definition_collision" });
+    await apply(
+      service(),
+      { action: "remove_owned", kind: "prompts", id: "greeting" },
+      revision + 1,
+    );
+    expect((await reader.read("a")).projectOwnedDefinitions).toEqual([]);
+
+    // A closure that cannot be resolved is not this mutation's conflict.
+    await bind([{ ...legal, manifestDigest: dependent.manifestDigest }]);
+    expect(
+      (await service().preview("a", owned("roles", "counsel"))).issues,
+    ).toEqual([]);
+    database.close();
+  });
+
   test("schema-1 operation matrix rejects every unsupported kind and operation", () => {
     const descriptive = new Set([
       "roles",

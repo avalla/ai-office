@@ -7,6 +7,7 @@ import {
   type ContributionKind,
   type DomainPackDependency,
 } from "../../../domain-pack-contracts/src/index.ts";
+import { hasLoneSurrogate } from "../../../domain-pack-contracts/src/jcs.ts";
 
 /** Only project_owned and project_override are mutable project authority. */
 export type DefinitionOrigin =
@@ -99,6 +100,7 @@ export type DefinitionIssueCode =
   | "conflicting_ownership_metadata"
   | "duplicate_project_definition"
   | "duplicate_override_target"
+  | "pack_definition_collision"
   | "source_pack_not_selected"
   | "source_definition_missing"
   | "source_digest_mismatch"
@@ -134,6 +136,23 @@ export class StaleProjectDefinitionError extends Error {
 /** Shared with the portable archive schema so accepted state stays exportable. */
 export const maximumWorkflowStages = 1_000;
 
+export const maximumDefinitionTextLength = 16_000;
+
+/**
+ * The one text rule for definition titles and descriptions, shared with the
+ * portable archive schema. Text is bounded in UTF-16 code units and is not
+ * normalized. Lone surrogates have no canonical JSON form; U+0000 cannot be
+ * stored by every ProjectStorage provider.
+ */
+export function isDefinitionText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= maximumDefinitionTextLength &&
+    !value.includes("\u0000") &&
+    !hasLoneSurrogate(value)
+  );
+}
+
 const descriptiveKinds: readonly ContributionKind[] = [
   "roles",
   "taskTypes",
@@ -143,7 +162,7 @@ const descriptiveKinds: readonly ContributionKind[] = [
   "knowledge",
   "prompts",
 ];
-const projectOwnedKinds: readonly ContributionKind[] = [
+export const projectOwnedKinds: readonly ContributionKind[] = [
   ...descriptiveKinds,
   "workflows",
 ];
@@ -232,10 +251,7 @@ export function parseDefinitionPayload(
       "Extension cannot change definition identity",
     );
   for (const key of ["title", "description"])
-    if (
-      item[key] !== undefined &&
-      (typeof item[key] !== "string" || item[key].length > 16_000)
-    )
+    if (item[key] !== undefined && !isDefinitionText(item[key]))
       throw new ProjectDefinitionConflictError(
         "malformed_origin_reference",
         `${key} must be bounded text`,

@@ -11,6 +11,10 @@ import {
   type ProjectPackBindingRepository,
 } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
 import type { PackIdentity } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
+import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
+import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
+import { resolveProjectConfiguration } from "@ai-office/application/domain-pack/resolve-project-configuration.ts";
+import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
 import type {
   LinkedRequirement,
   TaskRequirementRepository,
@@ -895,6 +899,225 @@ export function defineProjectStorageContracts(
       ).rejects.toBeInstanceOf(TransactionAlreadyActiveError);
     });
   });
+  if (features.packBindings && features.definitions)
+    describe("derived project configuration sources", () => {
+      // No pack is installed: the contract is about what storage hands the
+      // GP-06 resolver, not about pack resolution.
+      const emptyCatalog = {
+        coreContractVersion: 1,
+        read: () => undefined,
+        list: () => [],
+        trusts: () => false,
+      };
+      const reader = () => {
+        if (!harness.packBindings || !harness.definitions)
+          throw new Error("Configuration source repositories are required");
+        return new ReadProjectConfiguration({
+          projects: harness.projects,
+          bindings: harness.packBindings,
+          definitions: harness.definitions,
+          transactions: harness.transactions,
+          catalog: emptyCatalog,
+        });
+      };
+      const now = new Date("2026-10-03T00:00:00.000Z");
+      const entry = (
+        kind: ProjectOwnedDefinition["kind"],
+        id: string,
+        payload: ProjectOwnedDefinition["payload"],
+        enabled = true,
+      ): ProjectOwnedDefinition => ({
+        origin: "project_owned",
+        kind,
+        id,
+        revision: 1,
+        enabled,
+        payload,
+        actorId: "operator",
+        changedAt: now.toISOString(),
+      });
+
+      test("an untouched project resolves to the fixed empty vector without creating rows", async () => {
+        if (!harness.bindingRowCounts || !harness.definitionRowCounts)
+          throw new Error("Row count probes are required");
+        const projectId = (
+          await createProject(harness, `${prefix}-configuration-empty`)
+        ).snapshot().id;
+        const result = await reader().read(projectId);
+        expect(result.configurationDigest).toBe(
+          "sha256:c272fa286a92c8d3732e97fec7b0373c3a7854cb70e4a108a7690acb92bd7b19",
+        );
+        await expect(
+          reader().read(`${prefix}-configuration-absent`),
+        ).rejects.toBeInstanceOf(ProjectNotFoundError);
+        expect(await harness.bindingRowCounts(projectId)).toEqual({
+          heads: 0,
+          packs: 0,
+        });
+        expect(await harness.definitionRowCounts(projectId)).toEqual({
+          heads: 0,
+          owned: 0,
+          overrides: 0,
+        });
+      });
+
+      test("U+0000 definition text is rejected before storage and non-BMP text is stored unchanged", async () => {
+        if (
+          !harness.packBindings ||
+          !harness.definitions ||
+          !harness.definitionRowCounts
+        )
+          throw new Error("Definition repositories and probes are required");
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-text`)
+        ).snapshot().id;
+        const audited: string[] = [];
+        let sequence = 0;
+        const service = new ManageProjectDefinitions({
+          projects: harness.projects,
+          definitions: harness.definitions,
+          bindings: harness.packBindings,
+          catalog: emptyCatalog,
+          auditEvents: {
+            append: async (event) => {
+              audited.push(event.snapshot().eventType);
+            },
+          },
+          transactions: harness.transactions,
+          clock: { now: () => now },
+          ids: { generate: () => `${prefix}-audit-${++sequence}` },
+        });
+        const put = (payload: object, kind = "roles") =>
+          service.apply({
+            projectId,
+            mutation: {
+              action: "put_owned",
+              kind,
+              id: "custom",
+              enabled: true,
+              payload: { id: "custom", ...payload },
+            },
+            expectedRevision: 0,
+            actorId: "operator",
+          });
+        for (const attempt of [
+          () => put({ title: "a\u0000" }),
+          () => put({ description: "a\u0000b" }),
+          () =>
+            put({ title: "\u0000", taskType: "task", stages: [] }, "workflows"),
+        ])
+          await expect(attempt()).rejects.toMatchObject({
+            name: "ProjectDefinitionConflictError",
+            code: "malformed_origin_reference",
+          });
+        // The provider never saw the rejected text: no head, entry or audit.
+        expect(await harness.definitionRowCounts(projectId)).toEqual({
+          heads: 0,
+          owned: 0,
+          overrides: 0,
+        });
+        expect(audited).toEqual([]);
+
+        const text = "e\u0301 \u{1F600} \u{10FFFF}";
+        await put({ title: text, description: text });
+        const stored = await harness.definitions.get(projectId);
+        expect(stored.owned.map((item) => item.payload)).toEqual([
+          { id: "custom", title: text, description: text },
+        ]);
+        expect(audited).toEqual(["project.definition_changed"]);
+        expect((await reader().read(projectId)).configurationDigest).toBe(
+          resolveProjectConfiguration({
+            projectId: "provider-independent",
+            binding: {
+              projectId: "provider-independent",
+              configurationRevision: 0,
+              packs: [],
+            },
+            definitions: {
+              projectId: "provider-independent",
+              revision: 1,
+              owned: [
+                entry("roles", "custom", {
+                  description: text,
+                  title: text,
+                  id: "custom",
+                }),
+              ],
+              overrides: [],
+            },
+            catalog: emptyCatalog,
+            coreContractVersion: 1,
+          }).configurationDigest,
+        );
+      });
+
+      test("stored definitions resolve to the provider-independent digest and order", async () => {
+        if (!harness.definitions)
+          throw new Error("Definition repository is required");
+        const projectId = (
+          await createProject(harness, `${prefix}-configuration-digest`)
+        ).snapshot().id;
+        const otherId = (
+          await createProject(harness, `${prefix}-configuration-other`)
+        ).snapshot().id;
+        // Mixed case, punctuation, key order, Unicode and empty text exercise
+        // collation and JSON storage differences between providers.
+        const owned = [
+          entry("roles", "b", { title: "\u00e9 \u{1F600}", id: "b" }),
+          entry("roles", "B", { id: "B", description: "" }),
+          entry("roles", "b-1", { id: "b-1" }),
+          entry("roles", "b.1", { id: "b.1" }, false),
+          entry("taskTypes", "Task", { id: "Task" }),
+          entry("workflows", "flow", {
+            stages: [
+              { role: "b", id: "z-last-written-first" },
+              { id: "a", role: "B" },
+            ],
+            taskType: "Task",
+            id: "flow",
+          }),
+        ];
+        const stored = await harness.definitions.replace(
+          { projectId, revision: 0, owned, overrides: [] },
+          0,
+          now,
+        );
+        const result = await reader().read(projectId);
+        const expected = resolveProjectConfiguration({
+          projectId: "provider-independent",
+          binding: {
+            projectId: "provider-independent",
+            configurationRevision: 0,
+            packs: [],
+          },
+          definitions: {
+            projectId: "provider-independent",
+            revision: 1,
+            owned: [...owned].reverse(),
+            overrides: [],
+          },
+          catalog: emptyCatalog,
+          coreContractVersion: 1,
+        });
+        expect(result).toEqual(expected);
+        expect(result.configurationDigest).toBe(
+          "sha256:82bb4212df2f7c6250d97085f490769c94dd282e89dc8452379405d97d2fc583",
+        );
+        expect(
+          result.projectOwnedDefinitions.map((item) => item.localId),
+        ).toEqual(["B", "b", "b-1", "b.1", "Task", "flow"]);
+        expect(result.disabledDefinitions).toEqual(["project:roles/b.1"]);
+        expect(result.resolvedWorkflowReferences[0]!.stages).toEqual([
+          { id: "z-last-written-first", roleId: "project:roles/b" },
+          { id: "a", roleId: "project:roles/B" },
+        ]);
+        // Reading is side-effect free and never crosses projects.
+        expect(await harness.definitions.get(projectId)).toEqual(stored);
+        expect((await reader().read(otherId)).configurationDigest).toBe(
+          "sha256:c272fa286a92c8d3732e97fec7b0373c3a7854cb70e4a108a7690acb92bd7b19",
+        );
+      });
+    });
 }
 
 async function createProject(

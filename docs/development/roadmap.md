@@ -1675,9 +1675,10 @@ See [Professional-work verticals](professional-work-verticals.md).
 ## M16 — Generic Core & Domain Packs
 
 Status: active in AI Office and in progress. GP-03 public contracts, GP-04
-host-local catalog/resolver, GP-05 exact project binding and GP-07
-authoritative definition ownership with source-pinned overrides are merged.
-Effective configuration and pack-driven Runtime behavior remain planned.
+host-local catalog/resolver, GP-05 exact project binding, and GP-07 definition
+ownership and source-pinned overrides are merged. GP-06 derived effective
+configuration and read-only inspection are implemented in a review branch.
+Pack-driven Runtime behavior remains planned.
 
 AI Office is transitioning from a software-development-oriented implementation
 into a domain-neutral operational core. Domain-specific semantics are supplied
@@ -1754,10 +1755,12 @@ running work. GP-07 adds project-owned descriptive definitions and typed
 project-owned workflows, exact pack-source overrides, constrained
 replace/extend/disable operations, conflict/security validation, SQLite and
 PostgreSQL persistence, audited checked revisions and portable archive format 6. Existing OfficeManifest, role, agent, pipeline, task, run pin and binding
-state remain unchanged. The new definitions are not scheduled or resolved;
-aliases, configuration digest, pack upgrade reconciliation, Development Pack
-parity/extraction, automatic selection and Runtime execution from packs remain
-deferred. M16 remains incomplete until its end-to-end exit criteria are met.
+state remain unchanged. GP-06 resolves exact packs and project definitions into
+a derived, digest-pinned, inspectable view without scheduling from it. Aliases,
+pack upgrade reconciliation, Development Pack parity/extraction, automatic
+selection, remote marketplace/downloads, executable validators and Runtime
+execution from packs remain deferred. M16 remains incomplete until its
+end-to-end exit criteria are met.
 
 Exit: development, legal, manufacturing, and empty/custom fixtures run the same
 core lifecycles without changes to core for each domain. Legacy development

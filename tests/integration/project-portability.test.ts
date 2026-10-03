@@ -14,6 +14,7 @@ import { CreateTask } from "@ai-office/application/commands/create-task.ts";
 import { ManageGovernance } from "@ai-office/application/commands/manage-governance.ts";
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
+import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate-action-policy.ts";
@@ -26,6 +27,7 @@ import type { ProjectBindingAdapter } from "@ai-office/application/ports/project
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
 import {
   createPortableProjectArchive,
+  portableProjectArchiveSchemaV6,
   portableProjectManifestFor,
   portableStateAtFormatVersion,
   portableStateChecksum,
@@ -58,7 +60,10 @@ import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/inst
 import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
 import {
+  computeArtifactDigest,
+  computeManifestDigest,
   parseDomainPackId,
+  parseDomainPackManifest,
   parseDomainPackVersion,
   parseManifestDigest,
 } from "../../packages/domain-pack-contracts/src/index.ts";
@@ -190,6 +195,233 @@ afterEach(() => {
 });
 
 describe("project portability", () => {
+  test("format-6 definition text uses GP-07's Unicode contract", () => {
+    const schema = portableProjectArchiveSchemaV6.shape.state.shape.definitions;
+    const owned = (kind: "roles" | "workflows", payload: object) => ({
+      revision: 1,
+      owned: [
+        {
+          origin: "project_owned",
+          kind,
+          id: "custom",
+          revision: 1,
+          enabled: true,
+          payload,
+          actorId: "operator",
+          changedAt: "2026-10-03T00:00:00.000Z",
+        },
+      ],
+      overrides: [],
+    });
+    const override = (operation: "replace" | "extend", payload: object) => ({
+      revision: 1,
+      owned: [],
+      overrides: [
+        {
+          origin: "project_override",
+          source: {
+            id: "org.example.legal",
+            version: "1.0.0",
+            manifestDigest: `sha256:${"a".repeat(64)}`,
+            kind: "roles",
+            localId: "custom",
+          },
+          operation,
+          revision: 1,
+          payload,
+          actorId: "operator",
+          changedAt: "2026-10-03T00:00:00.000Z",
+        },
+      ],
+    });
+    const workflow = (fields: object) => ({
+      id: "custom",
+      taskType: "task",
+      stages: [],
+      ...fields,
+    });
+
+    for (const state of [
+      owned("roles", { id: "custom", title: "\ud800" }),
+      owned("roles", { id: "custom", description: "\udc00" }),
+      owned("workflows", workflow({ title: "\ud800" })),
+      owned("workflows", workflow({ description: "\udc00" })),
+      override("replace", { id: "custom", title: "\ud800" }),
+      override("replace", { id: "custom", description: "\udc00" }),
+      override("extend", { title: "\ud800" }),
+      override("extend", { description: "\udc00" }),
+      owned("roles", { id: "custom", title: "a\u0000" }),
+      owned("roles", { id: "custom", description: "\u0000" }),
+      owned("workflows", workflow({ title: "a\u0000" })),
+      owned("workflows", workflow({ description: "a\u0000b" })),
+      override("replace", { id: "custom", title: "a\u0000" }),
+      override("replace", { id: "custom", description: "a\u0000" }),
+      override("extend", { title: "a\u0000" }),
+      override("extend", { description: "a\u0000" }),
+    ])
+      expect(schema.safeParse(state).success).toBe(false);
+
+    for (const state of [
+      owned("roles", { id: "custom", title: "😀", description: "😀" }),
+      owned("workflows", workflow({ title: "😀", description: "😀" })),
+      override("replace", { id: "custom", title: "😀", description: "😀" }),
+      override("extend", { title: "😀", description: "😀" }),
+      owned("roles", { id: "custom", title: "a".repeat(16_000) }),
+    ])
+      expect(schema.safeParse(state).success).toBe(true);
+    expect(
+      schema.safeParse(
+        owned("roles", { id: "custom", title: "a".repeat(16_001) }),
+      ).success,
+    ).toBe(false);
+  });
+
+  test("v6 restore recomputes the same derived configuration with a different installer reference", async () => {
+    const source = temporaryRoot("ai-office-gp06-portable-project-");
+    writeFileSync(join(source, "package.json"), '{"name":"gp06"}\n');
+    const origin = openRuntime(
+      temporaryRoot("ai-office-gp06-portable-source-"),
+    );
+    const projectId = (await importProject(origin, source)).projectId;
+    const bytes = readFileSync(
+      new URL("../fixtures/domain-pack/legal.json", import.meta.url),
+    );
+    const makeCatalog = (reference: string) => {
+      const catalog = new InMemoryInstalledDomainPackCatalog(1, [
+        "local-distribution",
+      ]);
+      const tuple = catalog.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: { installerId: "local-distribution", reference },
+      });
+      return { catalog, tuple };
+    };
+    const original = makeCatalog("source-install");
+    const now = new Date("2026-10-03T00:00:00.000Z");
+    await new SqliteProjectPackBindingRepository(origin.database).replace(
+      projectId,
+      0,
+      [original.tuple],
+      now,
+    );
+    await new SqliteProjectDefinitionRepository(origin.database).replace(
+      {
+        projectId,
+        revision: 0,
+        owned: [
+          {
+            origin: "project_owned",
+            kind: "roles",
+            id: "operator",
+            revision: 1,
+            enabled: true,
+            payload: { id: "operator" },
+            actorId: "operator",
+            changedAt: now.toISOString(),
+          },
+        ],
+        overrides: [
+          {
+            origin: "project_override",
+            source: { ...original.tuple, kind: "roles", localId: "counsel" },
+            operation: "replace",
+            revision: 1,
+            payload: { id: "counsel", title: "Lead counsel" },
+            actorId: "operator",
+            changedAt: now.toISOString(),
+          },
+        ],
+      },
+      0,
+      now,
+    );
+    const reader = (
+      runtime: ReturnType<typeof openRuntime>,
+      catalog: InMemoryInstalledDomainPackCatalog,
+    ) =>
+      new ReadProjectConfiguration({
+        projects: runtime.projects,
+        bindings: new SqliteProjectPackBindingRepository(runtime.database),
+        definitions: new SqliteProjectDefinitionRepository(runtime.database),
+        transactions: runtime.transactions,
+        catalog,
+      });
+    const before = await reader(origin, original.catalog).read(projectId);
+    const backup = await origin.service.backup(projectId);
+    expect(serializePortableProjectArchive(backup.archive)).not.toContain(
+      "configurationDigest",
+    );
+    const destination = openRuntime(
+      temporaryRoot("ai-office-gp06-portable-destination-"),
+    );
+    const restored = await destination.service.restore({
+      archive: parsePortableProjectArchive(
+        serializePortableProjectArchive(backup.archive),
+      ),
+      rootPath: source,
+    });
+    const installedAgain = makeCatalog("destination-install");
+    const after = await reader(destination, installedAgain.catalog).read(
+      restored.projectId,
+    );
+    expect(after.configurationDigest).toBe(before.configurationDigest);
+    expect(after.effectiveDefinitions).toEqual(before.effectiveDefinitions);
+    expect(after.origins).toEqual(before.origins);
+    expect(after).toEqual(before);
+    expect(JSON.stringify(after)).not.toMatch(/-install/u);
+
+    // A destination without the exact pack, or with different content under
+    // the same ID and version, fails instead of deriving another configuration.
+    const writes = () =>
+      destination.database
+        .query<{ changes: number }, []>("SELECT total_changes() AS changes")
+        .get()!.changes;
+    const writesBefore = writes();
+    const emptyCatalog = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    await expect(
+      reader(destination, emptyCatalog).read(restored.projectId),
+    ).rejects.toMatchObject({ code: "pack_unavailable" });
+    const draft = parseDomainPackManifest(bytes);
+    const changedManifest = {
+      ...draft,
+      metadata: { ...draft.metadata, description: "Changed after restore" },
+    };
+    const changedBytes = new TextEncoder().encode(
+      JSON.stringify({
+        ...changedManifest,
+        manifestDigest: computeManifestDigest(changedManifest),
+      }),
+    );
+    const changedCatalog = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    changedCatalog.register({
+      bytes: changedBytes,
+      artifactDigest: computeArtifactDigest(changedBytes),
+      provenance: { installerId: "local-distribution", reference: "changed" },
+    });
+    await expect(
+      reader(destination, changedCatalog).read(restored.projectId),
+    ).rejects.toMatchObject({ code: "pack_unavailable" });
+    expect(
+      await reader(destination, installedAgain.catalog).read(
+        restored.projectId,
+      ),
+    ).toEqual(before);
+    // Neither successful nor failed resolution writes a single row.
+    expect(writes()).toBe(writesBefore);
+    expect(
+      await new SqliteProjectDefinitionRepository(destination.database).get(
+        restored.projectId,
+      ),
+    ).toMatchObject({ revision: 1, owned: [{ id: "operator" }] });
+    origin.database.close();
+    destination.database.close();
+  });
+
   test("v6 round-trips authoritative owned definitions and pinned unresolved overrides", async () => {
     const sourceRuntime = temporaryRoot("ai-office-gp07-portable-source-");
     const source = temporaryRoot("ai-office-gp07-portable-project-");

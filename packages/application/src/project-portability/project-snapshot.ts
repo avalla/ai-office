@@ -14,7 +14,11 @@ import {
   parseDomainPackVersion,
   parseManifestDigest,
 } from "../../../domain-pack-contracts/src/index.ts";
-import { maximumWorkflowStages } from "../domain-pack/project-definition.ts";
+import {
+  isDefinitionText,
+  maximumDefinitionTextLength,
+  maximumWorkflowStages,
+} from "../domain-pack/project-definition.ts";
 
 export const portableProjectFormat = "ai-office-project" as const;
 
@@ -247,14 +251,20 @@ const portableOwnedKind = z.union([
   z.literal("workflows"),
 ]);
 const portableDefinitionId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u);
+const portableDefinitionText = z
+  .string()
+  .max(maximumDefinitionTextLength)
+  .refine(isDefinitionText, {
+    message: "must be valid Unicode text without U+0000",
+  });
 const portableDescriptivePayload = z.strictObject({
   id: portableDefinitionId,
-  title: z.string().max(16_000).optional(),
-  description: z.string().max(16_000).optional(),
+  title: portableDefinitionText.optional(),
+  description: portableDefinitionText.optional(),
 });
 const portableExtensionPayload = z.strictObject({
-  title: z.string().max(16_000).optional(),
-  description: z.string().max(16_000).optional(),
+  title: portableDefinitionText.optional(),
+  description: portableDefinitionText.optional(),
 });
 const portableWorkflowPayload = portableDescriptivePayload.extend({
   taskType: portableDefinitionId,
