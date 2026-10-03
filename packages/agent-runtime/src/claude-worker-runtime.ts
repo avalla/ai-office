@@ -113,6 +113,7 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
       "USER",
       "LOGNAME",
       "CLAUDE_CONFIG_DIR",
+      "CODEX_HOME",
     ]) {
       const value = process.env[name];
       if (value !== undefined) env[name] = value;

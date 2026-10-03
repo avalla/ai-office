@@ -1210,10 +1210,10 @@ draft version actually approved.
 
 Status: future.
 
-A bounded precursor is implemented: explicit `run:tick --worker claude`, an
+A bounded precursor is implemented: explicit `run:tick --worker claude|codex`, an
 application worker port, tool-free task/stage context, immutable dispatch
 provenance and inspectable generated output. It does not deliver the complete
-M12 organization profiles or M14 software vertical. See
+M12 organization profiles, repository-editing Codex execution, or M14 software vertical. See
 [agent runtime](agent-runtime.md) and [ADR-0017](../adr/ADR-0017-bounded-external-worker.md).
 
 Goal: make worker execution replaceable and extend onboarding from office

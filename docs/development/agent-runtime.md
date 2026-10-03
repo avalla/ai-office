@@ -84,6 +84,8 @@ After scheduling a task, choose the executor explicitly:
 ```bash
 ai-office run:tick --project <project-id> --worker claude
 ai-office run:tick --project <project-id> --worker claude --worker-model <model>
+ai-office run:tick --project <project-id> --worker codex
+ai-office run:tick --project <project-id> --worker codex --worker-model <model>
 ai-office run:tick --project <project-id> --worker gateway
 ai-office run:show --project <project-id> --run <run-id>
 ```
@@ -127,6 +129,31 @@ hooks may still run. Operators requiring process-level isolation must add an
 OS/container policy outside this adapter's guarantee. A host started before a
 PATH/login change may need to be restarted explicitly.
 
+The Codex worker requires `codex-cli` 0.160.0 or newer on the Runtime host PATH
+and a working Codex login. It runs `codex exec` in an empty temporary directory
+with an ephemeral session, read-only sandbox, disabled shell, browser, computer,
+plugin, app and MCP tools, no user configuration, no project instructions, and
+web search disabled. Existing exec-policy rules remain loaded. Runtime
+authorization and controlled-action policy remain authoritative. Codex sees
+only the explicit Runtime context and pinned role guidance. The adapter accepts
+one completed JSONL turn with a schema-constrained `{summary, content}` answer;
+unexpected tool events or malformed output fail closed. This is model-visible
+tool isolation, not a same-UID process security boundary. A Runtime host
+started before a PATH/login change may need a restart.
+
+The Codex CLI reports token usage but no trustworthy USD estimate to this
+adapter. The role timeout is enforced by process termination. The CLI does not
+expose an equivalent hard `maxCostMicros` or model-iteration limit: the result
+records unknown cost, and operators who need a metered budget must select the
+gateway worker. Codex only produces analysis and drafted content; it does not
+edit files or run tests for the Developer stage.
+
+When the optional BullMQ queue is enabled, `AI_OFFICE_QUEUE_WORKER=codex`
+selects this worker for that Runtime host. The queue still has one host-wide
+worker setting; mixed Claude and Codex stages need explicit per-run `run:tick`
+selection until per-agent executor routing is implemented. No automatic
+provider fallback is implied by the model route.
+
 The first real worker produces **analysis and drafted content**. It receives
 task title/description, synchronized agent/role identity and version, and the
 active pinned stage's objective/checks when present. That data is sent to the
@@ -161,13 +188,14 @@ The dashboard identifies simulation, controlled action, real worker and unknown
 historical execution separately. Task history links to each run's events/output.
 Historical provenance is never guessed from a result's prose.
 
-The role's timeout and iteration limit become process deadline and client turn
-limit. For Claude, `maxCostMicros` denotes millionths of a USD client cost
+For Claude, the role's timeout and iteration limit become process deadline and
+client turn limit. Its `maxCostMicros` denotes millionths of a USD client cost
 estimate per run. This client-side estimate limit is separate from gateway
 budgets and actual billing; subscription cost is unknown. Reported input tokens
 exclude cache-read/cache-creation counts. Missing estimates or tokens remain
 unknown. Routed runs execute exactly their persisted model: the Claude worker passes it
-as `--model` and its `reasoning_effort` as `--effort`, and refuses other
+as `--model` and its `reasoning_effort` as `--effort`; Codex passes it as
+`--model` and `model_reasoning_effort`. Each refuses other
 providers and `max_output_tokens` with `WORKER_MODEL_UNSUPPORTED` before
 dispatch. `run:tick` checks the batch first and starts nothing when a queued
 routed run cannot be honored. `--worker-model` overrides client model selection
@@ -181,8 +209,8 @@ estimate, and the role limits applied at dispatch. See
 [agent model routing](llm-cost-control.md#agent-model-routing).
 
 Cancellation or deadline stops and reaps the whole worker process group on
-POSIX before the execution returns. The real Claude worker is unsupported on
-Windows until a tested Job Object or equivalent process-tree ownership boundary
+POSIX before the execution returns. The real Claude and Codex workers are
+unsupported on Windows until a tested Job Object or equivalent process-tree ownership boundary
 exists; simulation and controlled actions are not disabled. Controlled action
 invocation receives the assigned role timeout and propagates its AbortSignal.
 A connector that ignores cancellation is not detached: the runtime waits for
