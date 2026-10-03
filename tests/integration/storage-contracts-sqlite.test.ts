@@ -44,6 +44,24 @@ describe("SQLite project storage contracts", () => {
             packs: count("project_pack_binding_pack"),
           };
         },
+        async definitionRowCounts(projectId: string) {
+          const count = (
+            table:
+              | "project_definition_head"
+              | "project_owned_definition"
+              | "project_definition_override",
+          ) =>
+            database
+              .query<{ count: number }, [string]>(
+                `SELECT count(*) AS count FROM ${table} WHERE project_id = ?`,
+              )
+              .get(projectId)!.count;
+          return {
+            heads: count("project_definition_head"),
+            owned: count("project_owned_definition"),
+            overrides: count("project_definition_override"),
+          };
+        },
         tasks: new SqliteTaskRepository(database),
         taskDependencies: new SqliteTaskDependencyRepository(database),
         taskRequirements: new SqliteTaskRequirementRepository(database),

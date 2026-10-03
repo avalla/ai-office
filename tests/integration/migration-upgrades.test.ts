@@ -66,9 +66,60 @@ describe("migration upgrades", () => {
         VALUES ('role','legacy','reviewer','Reviewer',1,'[]','[]','default','{}','role.yaml',?,?)`,
         )
         .run(at, at);
+      const rawManifest = readFileSync(
+        join(
+          process.cwd(),
+          ".agents/skills/ai-office/assets/default-office-manifest.json",
+        ),
+        "utf8",
+      );
+      database
+        .query(
+          "INSERT INTO task(id,project_id,title,status,created_at,updated_at) VALUES ('task','legacy','Task','pending',?,?)",
+        )
+        .run(at, at);
+      database
+        .query(
+          `INSERT INTO office_manifest_revision(id,project_id,revision,schema_version,manifest_json,source_host,source_skill,source_skill_version,applied_at)
+        VALUES ('office','legacy',1,1,?,'codex','ai-office','1',?)`,
+        )
+        .run(rawManifest, at);
+      database
+        .query(
+          `INSERT INTO pipeline_run(id,project_id,task_id,manifest_revision_id,manifest_revision,definition_json,status,current_stage_index,started_by,version,created_at,updated_at)
+        VALUES ('pipeline','legacy','task','office',1,?,'active',0,'operator',1,?,?)`,
+        )
+        .run(
+          JSON.stringify(parseOfficeManifestJson(rawManifest).pipelines[0]),
+          at,
+          at,
+        );
+      database
+        .query(
+          "INSERT INTO agent(id,project_id,role_id,name,enabled,created_at,updated_at) VALUES ('agent','legacy','role','Agent',1,?,?)",
+        )
+        .run(at, at);
+      database
+        .query(
+          `INSERT INTO agent_run(id,project_id,task_id,agent_id,status,execution_json,created_at,updated_at)
+        VALUES ('agent-run','legacy','task','agent','completed','{"worker":"mock"}',?,?)`,
+        )
+        .run(at, at);
       const beforeRole = database
         .query("SELECT * FROM role WHERE id='role'")
         .get();
+      const existingTables = [
+        "task",
+        "office_manifest_revision",
+        "pipeline_run",
+        "agent",
+        "agent_run",
+      ] as const;
+      const beforeRows = existingTables.map((table) =>
+        database
+          .query(`SELECT * FROM ${table} WHERE project_id='legacy'`)
+          .all(),
+      );
       const beforeBinding = database
         .query(
           "SELECT * FROM project_pack_binding_pack WHERE project_id='legacy'",
@@ -80,6 +131,12 @@ describe("migration upgrades", () => {
       expect(
         database.query("SELECT * FROM role WHERE id='role'").get(),
       ).toEqual(beforeRole);
+      for (const [index, table] of existingTables.entries())
+        expect(
+          database
+            .query(`SELECT * FROM ${table} WHERE project_id='legacy'`)
+            .all(),
+        ).toEqual(beforeRows[index]);
       expect(
         database
           .query(

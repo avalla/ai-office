@@ -102,6 +102,11 @@ export type DefinitionIssueCode =
   | "source_pack_not_selected"
   | "source_definition_missing"
   | "source_digest_mismatch"
+  | "source_untrusted"
+  | "source_incompatible_core"
+  | "source_incompatible_contract"
+  | "source_dependency_unavailable"
+  | "source_dependency_conflict"
   | "unsupported_override_operation"
   | "protected_security_invariant"
   | "source_unavailable";

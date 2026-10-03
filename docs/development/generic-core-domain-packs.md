@@ -157,21 +157,45 @@ ID)`. It must match the explicit binding and a verified installed definition
 when authored. `project:definition:show` reports unresolved entries after a
 binding or availability change; it never retargets or removes them. `preview`
 shows the current entry, intended mutation, exact source, ownership transition
-and typed issues without writing. `apply` checks the project revision and,
-for an update, the entry revision, then writes and audits in one transaction.
-Duplicate create intents fail; there is no last-writer-wins behavior.
+and typed issues without writing. `apply` requires the exact project definition
+revision for **every** mutation. `put_owned` and `put_override` additionally
+require `expectedEntryRevision` when replacing an existing entry; omitting it
+means create only. `remove_owned` and `remove_override` use the exact project
+revision as their destructive fence and do not accept an entry revision. A
+concurrent project change makes the removal stale, even when it touches a
+different entry. Duplicate create intents fail; there is no last-writer-wins
+behavior. Mutation and its bounded audit event commit in one transaction.
+
+Installed source bytes, trust and dependency closure are checked before that
+transaction. Inside it, GP-07 rechecks the authoritative project revision and
+selected pack ID, version and manifest digest. Host artifact availability is
+not project authority and no host artifact or installer metadata is persisted.
+Inspection keeps distinct, bounded issues for unavailable, untrusted,
+incompatible and conflicting sources without exposing artifact contents.
 
 For schema-1 contribution fields, GP-07 accepts project-owned descriptive
 `roles`, `taskTypes`, `agents`, `artifactTypes`, `evidenceTypes`, `knowledge`
 and `prompts`, plus typed project-owned `workflows` with `taskType` and stage
-references. These are source material only. Pack overrides accept `replace`
-for a complete descriptive contribution, `extend` for a title/description
-field absent in that exact source, and `disable` only for optional `prompts`.
-Workflow, policy, capability and validator overrides are rejected pending
-their typed security and mandatory-clause contracts. Unknown fields,
+references. Workflow stage IDs, task type IDs and role IDs are checked for
+syntax and duplicate stages now; whether the referenced definitions exist in
+the eventual effective configuration is deferred to GP-06. GP-07 does not
+resolve them against the legacy OfficeManifest or selected packs.
+
+| Schema-1 pack contribution                                           | `replace`               | `extend`                      | `disable`   |
+| -------------------------------------------------------------------- | ----------------------- | ----------------------------- | ----------- |
+| Roles, task types, agents, artifact types, evidence types, knowledge | Descriptive fields only | Absent title/description only | Unsupported |
+| Prompts                                                              | Descriptive fields only | Absent title/description only | Supported   |
+| Workflows, policies, capabilities, validators                        | Unsupported             | Unsupported                   | Unsupported |
+
+`replace` supplies the complete schema-1 descriptive envelope; `extend` fills
+only optional title or description fields missing from the exact source. An
+empty extension or a change to identity or an existing source field is invalid.
+Unknown fields,
 capability grants, evidence/approval removal, scope changes, trusted-principal
 claims, controlled-action bypasses and incomparable security merges fail
-validation. The Runtime does not schedule from these entries yet.
+validation. Removing a project record only removes that record; it does not
+change pack definitions, legacy office state, run pins or project pack binding.
+The Runtime does not schedule from these entries yet.
 
 SQLite migration `0042` and PostgreSQL migration `20261003000100` add
 project-owned and exact-source override tables with project foreign keys,

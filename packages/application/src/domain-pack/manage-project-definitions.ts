@@ -12,7 +12,10 @@ import {
   type ProjectOwnedDefinition,
 } from "./project-definition.ts";
 import { resolveInstalledPacks } from "./resolve-installed-packs.ts";
-import type { InstalledDomainPackCatalog } from "../ports/installed-domain-pack-catalog.port.ts";
+import {
+  DomainPackCatalogError,
+  type InstalledDomainPackCatalog,
+} from "../ports/installed-domain-pack-catalog.port.ts";
 import type { ProjectDefinitionRepository } from "../ports/project-definition-repository.port.ts";
 import type { ProjectPackBindingRepository } from "../ports/project-pack-binding-repository.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
@@ -24,6 +27,56 @@ import type { IdGenerator } from "../ports/id-generator.port.ts";
 export interface ProjectDefinitionIssue {
   readonly code: DefinitionIssueCode;
   readonly message: string;
+}
+
+function installedSourceIssue(error: unknown): ProjectDefinitionIssue {
+  if (error instanceof DomainPackCatalogError) {
+    switch (error.code) {
+      case "untrusted_provenance":
+        return {
+          code: "source_untrusted",
+          message: "Installed pack provenance is not trusted",
+        };
+      case "incompatible_core_contract":
+        return {
+          code: "source_incompatible_core",
+          message: "Installed pack is incompatible with this core contract",
+        };
+      case "missing_dependency":
+        return {
+          code: "source_dependency_unavailable",
+          message: "A selected pack dependency is unavailable",
+        };
+      case "dependency_digest_mismatch":
+      case "version_conflict":
+      case "duplicate_conflict":
+      case "dependency_cycle":
+      case "malformed_dependency_graph":
+        return {
+          code: "source_dependency_conflict",
+          message: "Selected pack dependencies conflict",
+        };
+      case "manifest_digest_mismatch":
+      case "artifact_digest_mismatch":
+        return {
+          code: "source_digest_mismatch",
+          message: "Installed pack content differs from its declared digest",
+        };
+      case "unsupported_schema":
+      case "malformed_catalog_entry":
+        return {
+          code: "source_incompatible_contract",
+          message: "Installed pack contract cannot be verified",
+        };
+      case "missing_pack":
+      case "malformed_request":
+        break;
+    }
+  }
+  return {
+    code: "source_unavailable",
+    message: "Installed pack source cannot be verified",
+  };
 }
 export interface ProjectDefinitionPreview {
   readonly current: ProjectDefinitionState;
@@ -127,13 +180,7 @@ export class ManageProjectDefinitions {
       }
       return [];
     } catch (error) {
-      return [
-        {
-          code: "source_unavailable",
-          message:
-            error instanceof Error ? error.message : "Pack source unavailable",
-        },
-      ];
+      return [installedSourceIssue(error)];
     }
   }
 

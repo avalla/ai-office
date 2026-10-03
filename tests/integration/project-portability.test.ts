@@ -13,6 +13,7 @@ import { ImportProject } from "@ai-office/application/commands/import-project.ts
 import { CreateTask } from "@ai-office/application/commands/create-task.ts";
 import { ManageGovernance } from "@ai-office/application/commands/manage-governance.ts";
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
+import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import { EvaluateActionPolicy } from "@ai-office/application/capability/evaluate-action-policy.ts";
@@ -205,6 +206,18 @@ describe("project portability", () => {
       kind: "roles" as const,
       localId: "counsel",
     };
+    await new SqliteProjectPackBindingRepository(origin.database).replace(
+      projectId,
+      0,
+      [
+        {
+          id: exact.id,
+          version: exact.version,
+          manifestDigest: exact.manifestDigest,
+        },
+      ],
+      now,
+    );
     await definitions.replace(
       {
         projectId,
@@ -217,6 +230,16 @@ describe("project portability", () => {
             revision: 1,
             enabled: true,
             payload: { id: "custom", title: "Custom" },
+            actorId: "operator",
+            changedAt: now.toISOString(),
+          },
+          {
+            origin: "project_owned",
+            kind: "roles",
+            id: "alpha",
+            revision: 1,
+            enabled: true,
+            payload: { id: "alpha" },
             actorId: "operator",
             changedAt: now.toISOString(),
           },
@@ -236,16 +259,41 @@ describe("project portability", () => {
       0,
       now,
     );
+    const firstRevision = await definitions.get(projectId);
+    await definitions.replace(
+      {
+        ...firstRevision,
+        owned: firstRevision.owned.map((entry) =>
+          entry.id === "custom"
+            ? {
+                ...entry,
+                revision: 2,
+                payload: { id: "custom", title: "Updated" },
+              }
+            : entry,
+        ),
+        overrides: firstRevision.overrides.map((entry) => ({
+          ...entry,
+          revision: 2,
+          payload: { id: "counsel", title: "Updated counsel" },
+        })),
+      },
+      1,
+      now,
+    );
     const backup = await origin.service.backup(projectId);
     expect(backup.archive.manifest.formatVersion).toBe(6);
     expect(backup.archive.state.definitions).toMatchObject({
-      revision: 1,
-      owned: [{ id: "custom" }],
-      overrides: [{ source: exact }],
+      revision: 2,
+      owned: [
+        { id: "alpha", revision: 1 },
+        { id: "custom", revision: 2, payload: { title: "Updated" } },
+      ],
+      overrides: [{ source: exact, revision: 2 }],
     });
     const serialized = serializePortableProjectArchive(backup.archive);
     expect(serialized).not.toMatch(
-      /artifactDigest|installerId|runtime_resolved|configurationDigest/u,
+      /artifactDigest|installerId|credentials|runtime_resolved|configurationDigest/u,
     );
     const destinationRuntime = temporaryRoot(
       "ai-office-gp07-portable-destination-",
@@ -256,12 +304,66 @@ describe("project portability", () => {
       rootPath: source,
     });
     expect(
-      (
-        await new SqliteProjectDefinitionRepository(destination.database).get(
-          restored.projectId,
-        )
-      ).overrides,
-    ).toMatchObject([{ source: exact }]);
+      await new SqliteProjectDefinitionRepository(destination.database).get(
+        restored.projectId,
+      ),
+    ).toMatchObject({
+      revision: 2,
+      owned: [
+        { id: "alpha", revision: 1 },
+        { id: "custom", revision: 2, payload: { title: "Updated" } },
+      ],
+      overrides: [{ source: exact, revision: 2 }],
+    });
+    const absentCatalog = new InMemoryInstalledDomainPackCatalog(1, []);
+    expect(absentCatalog.list()).toEqual([]);
+    const inspector = new ManageProjectDefinitions({
+      projects: destination.projects,
+      definitions: new SqliteProjectDefinitionRepository(destination.database),
+      bindings: new SqliteProjectPackBindingRepository(destination.database),
+      catalog: absentCatalog,
+      auditEvents: new SqliteAuditEventRepository(destination.database),
+      transactions: destination.transactions,
+      clock: destination.clock,
+      ids: destination.ids,
+    });
+    expect((await inspector.inspect(restored.projectId)).issues).toMatchObject([
+      { code: "source_unavailable", source: exact },
+    ]);
+
+    const v5State = portableStateAtFormatVersion(backup.archive.state, 5);
+    const v5Archive = createPortableProjectArchive({
+      state: v5State,
+      manifest: portableProjectManifestFor({
+        formatVersion: 5,
+        projectIdentity: backup.archive.manifest.projectIdentity,
+        createdAt: backup.archive.manifest.createdAt,
+        revision: {
+          id: backup.archive.manifest.revision.id,
+          stateChecksum: portableStateChecksum(v5State),
+        },
+      }),
+    });
+    const oldDestination = openRuntime(
+      temporaryRoot("ai-office-gp07-v5-target-"),
+    );
+    const oldRestored = await oldDestination.service.restore({
+      archive: parsePortableProjectArchive(
+        serializePortableProjectArchive(v5Archive),
+      ),
+      rootPath: temporaryRoot("ai-office-gp07-v5-project-"),
+    });
+    expect(
+      await new SqliteProjectDefinitionRepository(oldDestination.database).get(
+        oldRestored.projectId,
+      ),
+    ).toEqual({
+      projectId: oldRestored.projectId,
+      revision: 0,
+      owned: [],
+      overrides: [],
+    });
+    oldDestination.database.close();
     origin.database.close();
     destination.database.close();
   });
