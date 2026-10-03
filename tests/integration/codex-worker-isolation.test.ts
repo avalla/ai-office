@@ -5,13 +5,14 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { WorkerContext } from "@ai-office/application/ports/worker-runtime.port.ts";
 import { runWorkerProcess } from "@ai-office/agent-runtime/claude-worker-runtime.ts";
 import {
@@ -102,8 +103,11 @@ describe.skipIf(process.platform === "win32")(
       expect(report.env.CODEX_HOME).not.toBe(operatorHome);
       expect(report.env.HOME).not.toBe(homedir());
       expect(dirname(report.env.CODEX_HOME!)).toBe(dirname(report.env.HOME!));
-      expect(dirname(report.cwd)).toBe(dirname(report.env.HOME!));
-      expect(dirname(dirname(report.cwd))).toBe(scratch);
+      // The child reports its resolved directory; the temporary root may be a link.
+      expect(basename(dirname(report.cwd))).toBe(
+        basename(dirname(report.env.HOME!)),
+      );
+      expect(dirname(dirname(report.cwd))).toBe(realpathSync(scratch));
       expect(report.codexHome).toEqual({ entries: ["auth.json"], mode: 0o700 });
       expect(report.home).toEqual({ entries: [], mode: 0o700 });
       expect(report.cwdEntries).toEqual(["answer.schema.json"]);
