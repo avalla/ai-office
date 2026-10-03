@@ -26,6 +26,7 @@ import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-po
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresProjectPackBindingRepository } from "@ai-office/storage-postgres/repositories/postgres-project-pack-binding.repository.ts";
+import { PostgresProjectDefinitionRepository } from "@ai-office/storage-postgres/repositories/postgres-project-definition.repository.ts";
 import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
 import { PostgresTaskDependencyRepository } from "@ai-office/storage-postgres/repositories/postgres-task-dependency.repository.ts";
@@ -124,64 +125,71 @@ describe.skipIf(connectionString === undefined)(
       await database.close();
     });
 
-    defineProjectStorageContracts(async () => ({
-      projects: new PostgresProjectRepository(database, tenantId),
-      packBindings: new PostgresProjectPackBindingRepository(
-        database,
-        tenantId,
-      ),
-      async deleteProject(projectId: string): Promise<void> {
-        await database.query(
-          "DELETE FROM core.project WHERE id = $1 AND tenant_id = $2",
-          [projectId, tenantId],
-        );
-      },
-      async bindingRowCounts(projectId: string) {
-        const [head] = await database.query<{ count: string }>(
-          "SELECT count(*) FROM core.project_pack_binding WHERE project_id = $1",
-          [projectId],
-        );
-        const [pack] = await database.query<{ count: string }>(
-          "SELECT count(*) FROM core.project_pack_binding_pack WHERE project_id = $1",
-          [projectId],
-        );
-        return { heads: Number(head?.count), packs: Number(pack?.count) };
-      },
-      tasks: new PostgresTaskRepository(database, tenantId),
-      taskDependencies: new PostgresTaskDependencyRepository(
-        database,
-        tenantId,
-      ),
-      taskRequirements: new PostgresTaskRequirementRepository(
-        database,
-        tenantId,
-      ),
-      transactions: new PostgresTransactionRunner(database),
-      async seedRequirement(input: {
-        id: string;
-        projectId: string;
-        key: string;
-        title: string;
-        status: RequirementStatus;
-      }): Promise<void> {
-        await database.query(
-          `INSERT INTO core.requirement(
+    defineProjectStorageContracts(
+      async () => ({
+        projects: new PostgresProjectRepository(database, tenantId),
+        packBindings: new PostgresProjectPackBindingRepository(
+          database,
+          tenantId,
+        ),
+        definitions: new PostgresProjectDefinitionRepository(
+          database,
+          tenantId,
+        ),
+        async deleteProject(projectId: string): Promise<void> {
+          await database.query(
+            "DELETE FROM core.project WHERE id = $1 AND tenant_id = $2",
+            [projectId, tenantId],
+          );
+        },
+        async bindingRowCounts(projectId: string) {
+          const [head] = await database.query<{ count: string }>(
+            "SELECT count(*) FROM core.project_pack_binding WHERE project_id = $1",
+            [projectId],
+          );
+          const [pack] = await database.query<{ count: string }>(
+            "SELECT count(*) FROM core.project_pack_binding_pack WHERE project_id = $1",
+            [projectId],
+          );
+          return { heads: Number(head?.count), packs: Number(pack?.count) };
+        },
+        tasks: new PostgresTaskRepository(database, tenantId),
+        taskDependencies: new PostgresTaskDependencyRepository(
+          database,
+          tenantId,
+        ),
+        taskRequirements: new PostgresTaskRequirementRepository(
+          database,
+          tenantId,
+        ),
+        transactions: new PostgresTransactionRunner(database),
+        async seedRequirement(input: {
+          id: string;
+          projectId: string;
+          key: string;
+          title: string;
+          status: RequirementStatus;
+        }): Promise<void> {
+          await database.query(
+            `INSERT INTO core.requirement(
              id, project_id, requirement_key, title, description, status,
              created_at, updated_at
            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)`,
-          [
-            input.id,
-            input.projectId,
-            input.key,
-            input.title,
-            input.title,
-            input.status,
-            new Date("2026-01-01T00:00:00.000Z"),
-          ],
-        );
-      },
-      async close(): Promise<void> {},
-    }), { packBindings: true });
+            [
+              input.id,
+              input.projectId,
+              input.key,
+              input.title,
+              input.title,
+              input.status,
+              new Date("2026-01-01T00:00:00.000Z"),
+            ],
+          );
+        },
+        async close(): Promise<void> {},
+      }),
+      { packBindings: true, definitions: true },
+    );
 
     test("application audit failure rolls back PostgreSQL binding and audit writes", async () => {
       const writer = new PostgresClient(connectionString!);
@@ -639,6 +647,7 @@ describe.skipIf(connectionString === undefined)(
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           "20261001000400_task_execution_history.sql",
           "20261002000100_project_pack_binding.sql",
+          "20261003000100_project_definition_ownership.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -1004,6 +1013,7 @@ describe.skipIf(connectionString === undefined)(
           "20261001000300_task_dependency_immutable_edges.sql",
           "20261001000400_task_execution_history.sql",
           "20261002000100_project_pack_binding.sql",
+          "20261003000100_project_definition_ownership.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

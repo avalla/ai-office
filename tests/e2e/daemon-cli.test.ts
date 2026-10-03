@@ -519,6 +519,65 @@ profiles:
         configurationRevision: 1,
         packs: [pack],
       });
+      const definitionMutation = {
+        action: "put_owned",
+        kind: "roles",
+        id: "custom",
+        enabled: true,
+        payload: { id: "custom", title: "Custom" },
+      };
+      const definitionPreview = await invoke([
+        "project:definition:preview",
+        "--project",
+        projectId,
+        "--mutation",
+        JSON.stringify(definitionMutation),
+        "--json",
+      ]);
+      expect(definitionPreview.code).toBe(0);
+      expect(JSON.parse(definitionPreview.stdout[0]!)).toMatchObject({
+        current: { revision: 0 },
+        ownershipTransition: "absent -> project_owned",
+        issues: [],
+      });
+      const definitionApplied = await invoke([
+        "project:definition:apply",
+        "--project",
+        projectId,
+        "--mutation",
+        JSON.stringify(definitionMutation),
+        "--expected-revision",
+        "0",
+        "--json",
+      ]);
+      expect(definitionApplied.code).toBe(0);
+      expect(JSON.parse(definitionApplied.stdout[0]!)).toMatchObject({
+        revision: 1,
+        owned: [{ id: "custom" }],
+      });
+      const definitionShown = await invoke([
+        "project:definition:show",
+        "--project",
+        projectId,
+        "--json",
+      ]);
+      expect(definitionShown.code).toBe(0);
+      expect(JSON.parse(definitionShown.stdout[0]!)).toMatchObject({
+        state: { revision: 1, owned: [{ id: "custom" }] },
+        issues: [],
+      });
+      const definitionStale = await invoke([
+        "project:definition:apply",
+        "--project",
+        projectId,
+        "--mutation",
+        JSON.stringify({ ...definitionMutation, expectedEntryRevision: 1 }),
+        "--expected-revision",
+        "0",
+        "--json",
+      ]);
+      expect(definitionStale.code).toBe(1);
+      expect(definitionStale.stderr.join("\n")).toContain("stale");
       const stale = await invoke([
         "project:pack:apply",
         "--project",

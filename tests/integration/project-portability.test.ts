@@ -44,6 +44,7 @@ import { SqliteProjectProfileRepository } from "@ai-office/storage-sqlite/reposi
 import { SqliteRepositoryIdentityRepository } from "@ai-office/storage-sqlite/repositories/sqlite-repository-identity.repository.ts";
 import { SqliteProjectStateRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-state.repository.ts";
 import { SqliteProjectPackBindingRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-pack-binding.repository.ts";
+import { SqliteProjectDefinitionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-definition.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 import { SqliteTaskDependencyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-dependency.repository.ts";
 import { SqliteGovernanceRepository } from "@ai-office/storage-sqlite/repositories/sqlite-governance.repository.ts";
@@ -55,7 +56,11 @@ import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositori
 import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/installed-domain-pack-catalog.ts";
 import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-project-binding-adapter.ts";
 import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
-import { parseDomainPackId, parseDomainPackVersion, parseManifestDigest } from "../../packages/domain-pack-contracts/src/index.ts";
+import {
+  parseDomainPackId,
+  parseDomainPackVersion,
+  parseManifestDigest,
+} from "../../packages/domain-pack-contracts/src/index.ts";
 
 const roots: string[] = [];
 const migrations = join(process.cwd(), "migrations", "project");
@@ -184,6 +189,82 @@ afterEach(() => {
 });
 
 describe("project portability", () => {
+  test("v6 round-trips authoritative owned definitions and pinned unresolved overrides", async () => {
+    const sourceRuntime = temporaryRoot("ai-office-gp07-portable-source-");
+    const source = temporaryRoot("ai-office-gp07-portable-project-");
+    writeFileSync(join(source, "package.json"), '{"name":"gp07"}\n');
+    const origin = openRuntime(sourceRuntime);
+    const imported = await importProject(origin, source);
+    const projectId = imported.projectId;
+    const now = new Date("2026-10-03T00:00:00.000Z");
+    const definitions = new SqliteProjectDefinitionRepository(origin.database);
+    const exact = {
+      id: parseDomainPackId("org.example.legal"),
+      version: parseDomainPackVersion("1.0.0"),
+      manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+      kind: "roles" as const,
+      localId: "counsel",
+    };
+    await definitions.replace(
+      {
+        projectId,
+        revision: 0,
+        owned: [
+          {
+            origin: "project_owned",
+            kind: "roles",
+            id: "custom",
+            revision: 1,
+            enabled: true,
+            payload: { id: "custom", title: "Custom" },
+            actorId: "operator",
+            changedAt: now.toISOString(),
+          },
+        ],
+        overrides: [
+          {
+            origin: "project_override",
+            source: exact,
+            operation: "replace",
+            revision: 1,
+            payload: { id: "counsel", title: "Counsel" },
+            actorId: "operator",
+            changedAt: now.toISOString(),
+          },
+        ],
+      },
+      0,
+      now,
+    );
+    const backup = await origin.service.backup(projectId);
+    expect(backup.archive.manifest.formatVersion).toBe(6);
+    expect(backup.archive.state.definitions).toMatchObject({
+      revision: 1,
+      owned: [{ id: "custom" }],
+      overrides: [{ source: exact }],
+    });
+    const serialized = serializePortableProjectArchive(backup.archive);
+    expect(serialized).not.toMatch(
+      /artifactDigest|installerId|runtime_resolved|configurationDigest/u,
+    );
+    const destinationRuntime = temporaryRoot(
+      "ai-office-gp07-portable-destination-",
+    );
+    const destination = openRuntime(destinationRuntime);
+    const restored = await destination.service.restore({
+      archive: parsePortableProjectArchive(serialized),
+      rootPath: source,
+    });
+    expect(
+      (
+        await new SqliteProjectDefinitionRepository(destination.database).get(
+          restored.projectId,
+        )
+      ).overrides,
+    ).toMatchObject([{ source: exact }]);
+    origin.database.close();
+    destination.database.close();
+  });
   test("v5 carries exact selection to an unavailable host; v4 restores empty", async () => {
     const sourceRuntime = temporaryRoot("ai-office-gp05-portable-source-");
     const targetRuntime = temporaryRoot("ai-office-gp05-portable-target-");
@@ -204,7 +285,7 @@ describe("project portability", () => {
       new Date("2026-10-02T00:00:00.000Z"),
     );
     const backup = await origin.service.backup(imported.projectId);
-    expect(backup.archive.manifest.formatVersion).toBe(5);
+    expect(backup.archive.manifest.formatVersion).toBe(6);
     expect(backup.archive.state.packBinding).toEqual({
       configurationRevision: 1,
       packs: [pack],
@@ -234,9 +315,9 @@ describe("project portability", () => {
       ids: destination.ids,
     });
     expect(absentCatalog.list()).toEqual([]);
-    expect((await validator.preview(restored.projectId, [pack])).issues).toMatchObject([
-      { code: "missing_pack" },
-    ]);
+    expect(
+      (await validator.preview(restored.projectId, [pack])).issues,
+    ).toMatchObject([{ code: "missing_pack" }]);
     expect((await validator.read(restored.projectId)).packs).toEqual([pack]);
     destination.database.close();
 
@@ -1444,7 +1525,7 @@ describe("project portability", () => {
 
     const backup = await origin.service.backup(imported.projectId);
     // New backups carry explicit lifetime execution knowledge in version 4.
-    expect(backup.archive.manifest.formatVersion).toBe(5);
+    expect(backup.archive.manifest.formatVersion).toBe(6);
     expect(backup.archive.manifest.contents).toContain("task_requirements");
     expect(backup.archive.state.taskDependencies).toEqual([]);
     expect(
@@ -1522,7 +1603,7 @@ describe("project portability", () => {
       ),
     ).toBe(beforeReorder);
     const first = await origin.service.backup(imported.projectId);
-    expect(first.archive.manifest.formatVersion).toBe(5);
+    expect(first.archive.manifest.formatVersion).toBe(6);
     expect(first.archive.state.taskDependencies).toHaveLength(2);
     for (const invalidDependencies of [
       [
@@ -1591,7 +1672,7 @@ describe("project portability", () => {
     await createTask(origin, imported.projectId, "Unlinked work");
 
     const backup = await origin.service.backup(imported.projectId);
-    expect(backup.archive.manifest.formatVersion).toBe(5);
+    expect(backup.archive.manifest.formatVersion).toBe(6);
     expect(backup.archive.manifest.contents).toContain(
       "task_execution_history",
     );
@@ -1667,7 +1748,7 @@ describe("project portability", () => {
     task.unblock(origin.clock.now());
     await tasks.save(task);
     const backup = await origin.service.backup(imported.projectId);
-    expect(backup.archive.manifest.formatVersion).toBe(5);
+    expect(backup.archive.manifest.formatVersion).toBe(6);
     expect(backup.archive.state.taskExecutionHistory).toContainEqual(
       expect.objectContaining({ taskId: dependent, state: "executed" }),
     );
@@ -1914,7 +1995,7 @@ describe("project portability", () => {
         }),
       ).rejects.toThrow("execution history");
       const upgraded = await destination.service.backup(restored.projectId);
-      expect(upgraded.archive.manifest.formatVersion).toBe(5);
+      expect(upgraded.archive.manifest.formatVersion).toBe(6);
       expect(upgraded.archive.state.taskExecutionHistory).toContainEqual({
         taskId: dependent,
         state: "unknown",
@@ -1938,7 +2019,7 @@ describe("project portability", () => {
       createPortableProjectArchive({
         // The current referential check must reject it, not the version guard.
         manifest: portableProjectManifestFor({
-          formatVersion: 5,
+          formatVersion: 6,
           projectIdentity: backup.archive.manifest.projectIdentity,
           createdAt: backup.archive.manifest.createdAt,
           revision: {

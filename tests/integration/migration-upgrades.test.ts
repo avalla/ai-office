@@ -33,6 +33,86 @@ afterEach(() => {
 });
 
 describe("migration upgrades", () => {
+  test("GP-07 upgrades a bound legacy project without classifying or rewriting existing definitions", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-gp07-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "pre-gp07");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort())
+      if (file <= "0041_project_pack_binding.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    const database = openDatabase(join(root, "project.sqlite"));
+    try {
+      migrate(database, partial);
+      const at = "2026-10-02T00:00:00.000Z";
+      database
+        .query(
+          "INSERT INTO project(id,name,created_at,updated_at) VALUES ('legacy','Legacy',?,?)",
+        )
+        .run(at, at);
+      database
+        .query(
+          "INSERT INTO project_pack_binding(project_id,configuration_revision) VALUES ('legacy',1)",
+        )
+        .run();
+      database
+        .query(
+          "INSERT INTO project_pack_binding_pack(project_id,pack_id,pack_version,manifest_digest) VALUES ('legacy','org.example.legal','1.0.0',?)",
+        )
+        .run(`sha256:${"a".repeat(64)}`);
+      database
+        .query(
+          `INSERT INTO role(id,project_id,role_key,name,version,capabilities_json,tools_json,model_policy,limits_json,source_path,created_at,updated_at)
+        VALUES ('role','legacy','reviewer','Reviewer',1,'[]','[]','default','{}','role.yaml',?,?)`,
+        )
+        .run(at, at);
+      const beforeRole = database
+        .query("SELECT * FROM role WHERE id='role'")
+        .get();
+      const beforeBinding = database
+        .query(
+          "SELECT * FROM project_pack_binding_pack WHERE project_id='legacy'",
+        )
+        .all();
+      expect(migrate(database, migrations).applied).toEqual([
+        "0042_project_definition_ownership.sql",
+      ]);
+      expect(
+        database.query("SELECT * FROM role WHERE id='role'").get(),
+      ).toEqual(beforeRole);
+      expect(
+        database
+          .query(
+            "SELECT * FROM project_pack_binding_pack WHERE project_id='legacy'",
+          )
+          .all(),
+      ).toEqual(beforeBinding);
+      expect(
+        database
+          .query(
+            "SELECT * FROM project_owned_definition WHERE project_id='legacy'",
+          )
+          .all(),
+      ).toEqual([]);
+      expect(
+        database
+          .query(
+            "SELECT * FROM project_definition_override WHERE project_id='legacy'",
+          )
+          .all(),
+      ).toEqual([]);
+      expect(
+        database
+          .query(
+            "SELECT * FROM project_definition_head WHERE project_id='legacy'",
+          )
+          .all(),
+      ).toEqual([]);
+      expect(migrate(database, migrations).applied).toEqual([]);
+    } finally {
+      database.close();
+    }
+  });
   test("GP-05 upgrades a pre-binding project to an empty selection without rewriting pinned state", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-gp05-upgrade-"));
     roots.push(root);
@@ -105,6 +185,7 @@ describe("migration upgrades", () => {
         .get();
       expect(migrate(database, migrations).applied).toEqual([
         "0041_project_pack_binding.sql",
+        "0042_project_definition_ownership.sql",
       ]);
       expect(
         database
@@ -296,7 +377,7 @@ describe("migration upgrades", () => {
         .run(definition, timestamp, timestamp);
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0041_project_pack_binding.sql",
+        "0042_project_definition_ownership.sql",
       );
       const stored = database
         .query<{ manifest_json: string }, []>(
@@ -381,7 +462,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0041_project_pack_binding.sql",
+        "0042_project_definition_ownership.sql",
       );
       expect(
         database
@@ -513,6 +594,7 @@ describe("migration upgrades", () => {
       "0039_task_dependency_immutable_edges.sql",
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
+      "0042_project_definition_ownership.sql",
     ]);
     expect(
       database
@@ -590,6 +672,7 @@ describe("migration upgrades", () => {
       "0039_task_dependency_immutable_edges.sql",
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
+      "0042_project_definition_ownership.sql",
     ]);
     expect(
       database
@@ -747,6 +830,7 @@ describe("migration upgrades", () => {
       "0039_task_dependency_immutable_edges.sql",
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
+      "0042_project_definition_ownership.sql",
     ]);
     expect(
       database
@@ -808,6 +892,7 @@ describe("migration upgrades", () => {
       "0039_task_dependency_immutable_edges.sql",
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
+      "0042_project_definition_ownership.sql",
     ]);
     database
       .prepare(
@@ -1143,6 +1228,7 @@ describe("migration upgrades", () => {
       "0039_task_dependency_immutable_edges.sql",
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
+      "0042_project_definition_ownership.sql",
     ]);
     expect(
       upgraded
@@ -1206,6 +1292,7 @@ describe("migration upgrades", () => {
       "0039_task_dependency_immutable_edges.sql",
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
+      "0042_project_definition_ownership.sql",
     ]);
     expect(
       database

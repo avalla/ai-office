@@ -31,9 +31,9 @@ export const portableProjectFormat = "ai-office-project" as const;
  * rejects.
  *
  * Historical v1-v4 readers and their exact wire contracts remain supported.
- * New backups use v5 because project pack selection is always explicit.
+ * New backups use v6 for authoritative project definitions. v5 remains frozen.
  */
-export const portableProjectFormatVersions = [1, 2, 3, 4, 5] as const;
+export const portableProjectFormatVersions = [1, 2, 3, 4, 5, 6] as const;
 export type PortableProjectFormatVersion =
   (typeof portableProjectFormatVersions)[number];
 
@@ -44,6 +44,7 @@ export const portableProjectLinkedFormatVersion = 2 as const;
 export const portableProjectDependencyFormatVersion = 3 as const;
 export const portableProjectExecutionHistoryFormatVersion = 4 as const;
 export const portableProjectPackBindingFormatVersion = 5 as const;
+export const portableProjectDefinitionFormatVersion = 6 as const;
 export const portableProjectExtension = ".aioffice" as const;
 export const maximumPortableProjectBytes = 32 * 1024 * 1024;
 
@@ -231,6 +232,169 @@ const portablePackBinding = z
       });
   });
 
+const portableDefinitionKind = z.enum([
+  "roles",
+  "taskTypes",
+  "agents",
+  "artifactTypes",
+  "evidenceTypes",
+  "knowledge",
+  "prompts",
+]);
+const portableOwnedKind = z.union([
+  portableDefinitionKind,
+  z.literal("workflows"),
+]);
+const portableDefinitionId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u);
+const portableDescriptivePayload = z.strictObject({
+  id: portableDefinitionId,
+  title: z.string().max(16_000).optional(),
+  description: z.string().max(16_000).optional(),
+});
+const portableExtensionPayload = z.strictObject({
+  title: z.string().max(16_000).optional(),
+  description: z.string().max(16_000).optional(),
+});
+const portableWorkflowPayload = portableDescriptivePayload.extend({
+  taskType: portableDefinitionId,
+  stages: z
+    .array(
+      z.strictObject({ id: portableDefinitionId, role: portableDefinitionId }),
+    )
+    .max(1_000),
+});
+const portableExactDefinitionSource = z.strictObject({
+  id: z.string().refine((value) => {
+    try {
+      parseDomainPackId(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }),
+  version: z.string().refine((value) => {
+    try {
+      parseDomainPackVersion(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }),
+  manifestDigest: z.string().refine((value) => {
+    try {
+      parseManifestDigest(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }),
+  kind: portableDefinitionKind,
+  localId: portableDefinitionId,
+});
+const portableDefinitionState = z
+  .strictObject({
+    revision: z.number().int().nonnegative().safe(),
+    owned: z
+      .array(
+        z.strictObject({
+          origin: z.literal("project_owned"),
+          kind: portableOwnedKind,
+          id: portableDefinitionId,
+          revision: z.number().int().positive().safe(),
+          enabled: z.boolean(),
+          payload: z.union([
+            portableDescriptivePayload,
+            portableWorkflowPayload,
+          ]),
+          actorId: id,
+          changedAt: timestamp,
+        }),
+      )
+      .max(100_000),
+    overrides: z
+      .array(
+        z.strictObject({
+          origin: z.literal("project_override"),
+          source: portableExactDefinitionSource,
+          operation: z.enum(["replace", "extend", "disable"]),
+          revision: z.number().int().positive().safe(),
+          payload: z
+            .union([portableDescriptivePayload, portableExtensionPayload])
+            .optional(),
+          actorId: id,
+          changedAt: timestamp,
+        }),
+      )
+      .max(100_000),
+  })
+  .superRefine((state, context) => {
+    const owned = new Set<string>();
+    for (const [index, item] of state.owned.entries()) {
+      const key = `${item.kind}\u0000${item.id}`;
+      if (owned.has(key) || item.payload.id !== item.id)
+        context.addIssue({
+          code: "custom",
+          path: ["owned", index],
+          message: "Duplicate or conflicting project definition identity",
+        });
+      if ((item.kind === "workflows") !== "stages" in item.payload)
+        context.addIssue({
+          code: "custom",
+          path: ["owned", index, "payload"],
+          message: "Workflow kind requires its typed payload",
+        });
+      if (
+        "stages" in item.payload &&
+        new Set(item.payload.stages.map((stage) => stage.id)).size !==
+          item.payload.stages.length
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["owned", index, "payload", "stages"],
+          message: "Duplicate workflow stage ID",
+        });
+      owned.add(key);
+    }
+    const overrides = new Set<string>();
+    for (const [index, item] of state.overrides.entries()) {
+      const source = item.source;
+      const key = `${source.id}\u0000${source.version}\u0000${source.manifestDigest}\u0000${source.kind}\u0000${source.localId}`;
+      if (overrides.has(key))
+        context.addIssue({
+          code: "custom",
+          path: ["overrides", index],
+          message: "Duplicate override target",
+        });
+      overrides.add(key);
+      if (
+        (item.operation === "disable" &&
+          (source.kind !== "prompts" || item.payload !== undefined)) ||
+        (item.operation !== "disable" &&
+          (item.payload === undefined ||
+            (item.operation === "replace" &&
+              (!("id" in item.payload) ||
+                item.payload.id !== source.localId)) ||
+            (item.operation === "extend" &&
+              ("id" in item.payload ||
+                Object.keys(item.payload).length === 0))))
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["overrides", index],
+          message: "Unsupported or malformed override operation",
+        });
+    }
+    if (
+      state.revision === 0 &&
+      (state.owned.length > 0 || state.overrides.length > 0)
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["revision"],
+        message: "Nonempty definition state needs a positive revision",
+      });
+  });
+
 /** Governance exactly as format version 1 froze it. */
 const portableGovernanceShape = z.strictObject({
   milestones: z.array(
@@ -391,6 +555,9 @@ const portableProjectStateShapeV4 = z.strictObject({
 const portableProjectStateShapeV5 = portableProjectStateShapeV4.extend({
   packBinding: portablePackBinding,
 });
+const portableProjectStateShapeV6 = portableProjectStateShapeV5.extend({
+  definitions: portableDefinitionState,
+});
 
 /**
  * The producer/reader union. Fields added in later versions are optional here.
@@ -405,6 +572,7 @@ const portableProjectStateShape = z.strictObject({
   taskDependencies: taskDependencies.optional(),
   taskExecutionHistory: taskExecutionHistory.optional(),
   packBinding: portablePackBinding.optional(),
+  definitions: portableDefinitionState.optional(),
   governance: portableGovernanceShape.extend({
     taskRequirements: taskRequirementLinks.optional(),
   }),
@@ -651,6 +819,8 @@ export const portableProjectStateSchemaV4 =
   portableProjectStateShapeV4.superRefine(referentialClosure);
 export const portableProjectStateSchemaV5 =
   portableProjectStateShapeV5.superRefine(referentialClosure);
+export const portableProjectStateSchemaV6 =
+  portableProjectStateShapeV6.superRefine(referentialClosure);
 
 export type PortableProjectState = z.infer<typeof portableProjectStateSchema>;
 
@@ -668,6 +838,8 @@ export function portableTaskRequirementLinks(
 export function portableProjectFormatVersionFor(
   state: PortableProjectState,
 ): PortableProjectFormatVersion {
+  if (state.definitions !== undefined)
+    return portableProjectDefinitionFormatVersion;
   if (state.packBinding !== undefined)
     return portableProjectPackBindingFormatVersion;
   if (state.taskExecutionHistory !== undefined)
@@ -684,14 +856,23 @@ export function portableStateAtFormatVersion(
   state: PortableProjectState,
   version: PortableProjectFormatVersion,
 ): PortableProjectState {
-  if (version === 5) return state;
+  if (version === 6) return state;
   const {
     packBinding: _packBinding,
+    definitions: _definitions,
     taskExecutionHistory: _history,
     taskDependencies,
     governance,
     ...common
   } = state;
+  if (version === 5)
+    return {
+      ...common,
+      taskDependencies,
+      taskExecutionHistory: state.taskExecutionHistory,
+      packBinding: state.packBinding,
+      governance,
+    };
   if (version === 4)
     return {
       ...common,
@@ -773,6 +954,20 @@ export const portableProjectContents = {
     "task_execution_history",
     "project_pack_binding",
   ],
+  6: [
+    "project",
+    "tasks",
+    "profile",
+    "office_manifests",
+    "governance",
+    "agent_definitions",
+    "terminal_run_summaries",
+    "task_requirements",
+    "task_dependencies",
+    "task_execution_history",
+    "project_pack_binding",
+    "project_definitions",
+  ],
 } as const;
 
 const portableProjectManifestBase = {
@@ -840,6 +1035,18 @@ export const portableProjectManifestSchemaV5 = z.strictObject({
     z.literal("project_pack_binding"),
   ]),
 });
+export const portableProjectManifestSchemaV6 = z.strictObject({
+  ...portableProjectManifestBase,
+  formatVersion: z.literal(portableProjectDefinitionFormatVersion),
+  contents: z.tuple([
+    ...manifestContentsV1,
+    z.literal("task_requirements"),
+    z.literal("task_dependencies"),
+    z.literal("task_execution_history"),
+    z.literal("project_pack_binding"),
+    z.literal("project_definitions"),
+  ]),
+});
 
 /** Accepts either version. Which one is decided before the state is parsed. */
 export const portableProjectManifestSchema = z.union([
@@ -848,6 +1055,7 @@ export const portableProjectManifestSchema = z.union([
   portableProjectManifestSchemaV3,
   portableProjectManifestSchemaV4,
   portableProjectManifestSchemaV5,
+  portableProjectManifestSchemaV6,
 ]);
 
 export type PortableProjectManifest = z.infer<
@@ -872,35 +1080,41 @@ export function portableProjectManifestFor(input: {
     revision: input.revision,
     ...(input.source === undefined ? {} : { source: input.source }),
   };
-  return input.formatVersion === portableProjectPackBindingFormatVersion
+  return input.formatVersion === portableProjectDefinitionFormatVersion
     ? {
         ...envelope,
-        formatVersion: portableProjectPackBindingFormatVersion,
-        contents: [...portableProjectContents[5]],
+        formatVersion: portableProjectDefinitionFormatVersion,
+        contents: [...portableProjectContents[6]],
       }
-    : input.formatVersion === portableProjectExecutionHistoryFormatVersion
+    : input.formatVersion === portableProjectPackBindingFormatVersion
       ? {
           ...envelope,
-          formatVersion: portableProjectExecutionHistoryFormatVersion,
-          contents: [...portableProjectContents[4]],
+          formatVersion: portableProjectPackBindingFormatVersion,
+          contents: [...portableProjectContents[5]],
         }
-      : input.formatVersion === portableProjectDependencyFormatVersion
+      : input.formatVersion === portableProjectExecutionHistoryFormatVersion
         ? {
             ...envelope,
-            formatVersion: portableProjectDependencyFormatVersion,
-            contents: [...portableProjectContents[3]],
+            formatVersion: portableProjectExecutionHistoryFormatVersion,
+            contents: [...portableProjectContents[4]],
           }
-        : input.formatVersion === portableProjectLinkedFormatVersion
+        : input.formatVersion === portableProjectDependencyFormatVersion
           ? {
               ...envelope,
-              formatVersion: portableProjectLinkedFormatVersion,
-              contents: [...portableProjectContents[2]],
+              formatVersion: portableProjectDependencyFormatVersion,
+              contents: [...portableProjectContents[3]],
             }
-          : {
-              ...envelope,
-              formatVersion: portableProjectBaseFormatVersion,
-              contents: [...portableProjectContents[1]],
-            };
+          : input.formatVersion === portableProjectLinkedFormatVersion
+            ? {
+                ...envelope,
+                formatVersion: portableProjectLinkedFormatVersion,
+                contents: [...portableProjectContents[2]],
+              }
+            : {
+                ...envelope,
+                formatVersion: portableProjectBaseFormatVersion,
+                contents: [...portableProjectContents[1]],
+              };
 }
 
 const integrityShape = z.strictObject({
@@ -932,6 +1146,11 @@ export const portableProjectArchiveSchemaV4 = z.strictObject({
 export const portableProjectArchiveSchemaV5 = z.strictObject({
   manifest: portableProjectManifestSchemaV5,
   state: portableProjectStateSchemaV5,
+  integrity: integrityShape,
+});
+export const portableProjectArchiveSchemaV6 = z.strictObject({
+  manifest: portableProjectManifestSchemaV6,
+  state: portableProjectStateSchemaV6,
   integrity: integrityShape,
 });
 
@@ -1017,18 +1236,20 @@ export function createPortableProjectArchive(input: {
   const required = portableProjectFormatVersionFor(input.state);
   if (declared < required)
     throw new PortableProjectArchiveError(
-      `Portable project archive format version ${declared} cannot carry ${required === 5 ? "project pack binding" : required === 4 ? "lifetime task execution history" : "Task/Requirement links"}; write format version ${required}`,
+      `Portable project archive format version ${declared} cannot carry ${required === 6 ? "project definitions" : required === 5 ? "project pack binding" : required === 4 ? "lifetime task execution history" : "Task/Requirement links"}; write format version ${required}`,
     );
   const state =
-    declared === portableProjectPackBindingFormatVersion
-      ? portableProjectStateSchemaV5.parse(input.state)
-      : declared === portableProjectExecutionHistoryFormatVersion
-        ? portableProjectStateSchemaV4.parse(input.state)
-        : declared === portableProjectDependencyFormatVersion
-          ? portableProjectStateSchemaV3.parse(input.state)
-          : declared === portableProjectLinkedFormatVersion
-            ? portableProjectStateSchemaV2.parse(input.state)
-            : portableProjectStateSchemaV1.parse(input.state);
+    declared === portableProjectDefinitionFormatVersion
+      ? portableProjectStateSchemaV6.parse(input.state)
+      : declared === portableProjectPackBindingFormatVersion
+        ? portableProjectStateSchemaV5.parse(input.state)
+        : declared === portableProjectExecutionHistoryFormatVersion
+          ? portableProjectStateSchemaV4.parse(input.state)
+          : declared === portableProjectDependencyFormatVersion
+            ? portableProjectStateSchemaV3.parse(input.state)
+            : declared === portableProjectLinkedFormatVersion
+              ? portableProjectStateSchemaV2.parse(input.state)
+              : portableProjectStateSchemaV1.parse(input.state);
   assertPortableProjectStateSafe(state);
   const stateChecksum = portableStateChecksum(state);
   if (input.manifest.revision.stateChecksum !== stateChecksum)
@@ -1036,15 +1257,17 @@ export function createPortableProjectArchive(input: {
       "Snapshot revision checksum does not match portable state",
     );
   const manifest =
-    declared === portableProjectPackBindingFormatVersion
-      ? portableProjectManifestSchemaV5.parse(input.manifest)
-      : declared === portableProjectExecutionHistoryFormatVersion
-        ? portableProjectManifestSchemaV4.parse(input.manifest)
-        : declared === portableProjectDependencyFormatVersion
-          ? portableProjectManifestSchemaV3.parse(input.manifest)
-          : declared === portableProjectLinkedFormatVersion
-            ? portableProjectManifestSchemaV2.parse(input.manifest)
-            : portableProjectManifestSchemaV1.parse(input.manifest);
+    declared === portableProjectDefinitionFormatVersion
+      ? portableProjectManifestSchemaV6.parse(input.manifest)
+      : declared === portableProjectPackBindingFormatVersion
+        ? portableProjectManifestSchemaV5.parse(input.manifest)
+        : declared === portableProjectExecutionHistoryFormatVersion
+          ? portableProjectManifestSchemaV4.parse(input.manifest)
+          : declared === portableProjectDependencyFormatVersion
+            ? portableProjectManifestSchemaV3.parse(input.manifest)
+            : declared === portableProjectLinkedFormatVersion
+              ? portableProjectManifestSchemaV2.parse(input.manifest)
+              : portableProjectManifestSchemaV1.parse(input.manifest);
   const basis = { manifest, state };
   return {
     ...basis,
@@ -1093,15 +1316,17 @@ export function parsePortableProjectArchive(
       `Portable project archive does not declare a supported format version (supported: ${portableProjectFormatVersions.join(", ")})`,
     );
   const parsed = (
-    version === portableProjectPackBindingFormatVersion
-      ? portableProjectArchiveSchemaV5
-      : version === portableProjectExecutionHistoryFormatVersion
-        ? portableProjectArchiveSchemaV4
-        : version === portableProjectDependencyFormatVersion
-          ? portableProjectArchiveSchemaV3
-          : version === portableProjectLinkedFormatVersion
-            ? portableProjectArchiveSchemaV2
-            : portableProjectArchiveSchemaV1
+    version === portableProjectDefinitionFormatVersion
+      ? portableProjectArchiveSchemaV6
+      : version === portableProjectPackBindingFormatVersion
+        ? portableProjectArchiveSchemaV5
+        : version === portableProjectExecutionHistoryFormatVersion
+          ? portableProjectArchiveSchemaV4
+          : version === portableProjectDependencyFormatVersion
+            ? portableProjectArchiveSchemaV3
+            : version === portableProjectLinkedFormatVersion
+              ? portableProjectArchiveSchemaV2
+              : portableProjectArchiveSchemaV1
   ).safeParse(value);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];

@@ -128,7 +128,7 @@ persisted selection valid when host-local availability changes. Preview reports
 valid selection conflicts and availability failures as issues; structurally
 malformed tuples fail with a typed request error before a preview is returned.
 
-Portable project archives use format version 5 for new backups and include
+GP-05 introduced portable archive format version 5, including
 only the exact binding tuples and configuration revision. Readers for versions
 1–4 remain; importing one yields revision zero and an empty selection. No
 catalog entry, `artifactDigest`, provenance or credential is exported. The
@@ -137,10 +137,57 @@ composition supplies registered artifacts, so a nonempty apply requires that
 host to make the exact artifacts available. Removal only changes selection;
 GP-08 owns reconciliation of later pack-owned definitions and references.
 
-Effective resolved project configuration, aliases, project overrides, pack
+Effective resolved project configuration, aliases, pack
 upgrade reconciliation, Development Pack compatibility/extraction, automatic
 selection, remote marketplace/download, executable validators,
 KnowledgeScopeV2 and portable project UID persistence remain deferred.
+
+## GP-07 authoritative definition ownership and overrides
+
+`ProjectStorage.definitions` is separate project semantic authority with a
+checked revision. Project-authored entries are `project_owned` or
+`project_override`; `core_owned` stays with core enforcement, `pack_owned`
+names immutable pack source material, and `runtime_resolved` is a future
+derived GP-06 view. Existing schema-1 OfficeManifest, role, agent, pipeline
+and run-pin rows are untouched. No legacy row is classified as pack-owned and
+no Development Pack is inferred.
+
+An override source is exactly `(pack ID, version, manifestDigest, kind, local
+ID)`. It must match the explicit binding and a verified installed definition
+when authored. `project:definition:show` reports unresolved entries after a
+binding or availability change; it never retargets or removes them. `preview`
+shows the current entry, intended mutation, exact source, ownership transition
+and typed issues without writing. `apply` checks the project revision and,
+for an update, the entry revision, then writes and audits in one transaction.
+Duplicate create intents fail; there is no last-writer-wins behavior.
+
+For schema-1 contribution fields, GP-07 accepts project-owned descriptive
+`roles`, `taskTypes`, `agents`, `artifactTypes`, `evidenceTypes`, `knowledge`
+and `prompts`, plus typed project-owned `workflows` with `taskType` and stage
+references. These are source material only. Pack overrides accept `replace`
+for a complete descriptive contribution, `extend` for a title/description
+field absent in that exact source, and `disable` only for optional `prompts`.
+Workflow, policy, capability and validator overrides are rejected pending
+their typed security and mandatory-clause contracts. Unknown fields,
+capability grants, evidence/approval removal, scope changes, trusted-principal
+claims, controlled-action bypasses and incomparable security merges fail
+validation. The Runtime does not schedule from these entries yet.
+
+SQLite migration `0042` and PostgreSQL migration `20261003000100` add
+project-owned and exact-source override tables with project foreign keys,
+revision heads and uniqueness. PostgreSQL adds tenant ownership and RLS under
+the existing partial ProjectStorage provider rules. Successful changes audit
+project, identity, origin, operation, exact source when present, revisions,
+actor and timestamp without the definition body. Portable archive format 6
+carries authoritative entries, including unresolved pinned overrides; formats
+1–5 remain readable with their original meanings. Format 6 excludes installed
+artifacts, credentials and resolved configuration.
+
+GP-06 will resolve these sources into an effective configuration and define
+its digest. GP-08 will handle pack upgrade reconciliation. Aliases, legacy
+Development Pack parity/extraction, automatic selection, downloads, registry,
+executable validators, KnowledgeScopeV2, portable project UIDs and Runtime
+execution from pack definitions remain deferred.
 
 ## Objective and decision boundary
 
@@ -318,9 +365,9 @@ another roadmap milestone.
 Every GP key is also a project requirement key. Each row gives the task's
 objective, smallest delivery slice, acceptance, artifact/verification, and
 explicit exclusion. The linked AI Office task and requirement descriptions
-carry the same fields. GP-01 through GP-03 have passed review. GP-04 implements
-host-local availability and exact dependency resolution; GP-05 onward remain
-planned/proposed or blocked by their stated prerequisites.
+carry the same fields. GP-01 through GP-05 have passed review and merged.
+GP-07 is implemented in its review branch; GP-06 remains dependent on GP-07
+completion.
 
 | ID and title                                       | Depends on                      | Slice and acceptance                                                                                                                                                                                                     | Artifact / verification                                                                                              | Non-goal                                                  |
 | -------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |

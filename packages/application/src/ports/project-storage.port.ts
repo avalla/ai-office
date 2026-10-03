@@ -13,6 +13,7 @@ import type { ProjectMemoryProvenanceRepository } from "./project-memory-provena
 import type { ProjectProfileRepository } from "./project-profile-repository.port.ts";
 import type { ProjectRepository } from "./project-repository.port.ts";
 import type { ProjectPackBindingRepository } from "./project-pack-binding-repository.port.ts";
+import type { ProjectDefinitionRepository } from "./project-definition-repository.port.ts";
 import type { ProjectStateRepository } from "./project-state-repository.port.ts";
 import type { RepositoryIdentityRepository } from "./repository-identity-repository.port.ts";
 import type { TaskRepository } from "./task-repository.port.ts";
@@ -29,6 +30,7 @@ import type { TransactionRunner } from "./transaction-runner.port.ts";
 export interface ProjectStorage {
   projects: ProjectRepository;
   packBindings: ProjectPackBindingRepository;
+  definitions: ProjectDefinitionRepository;
   profiles: ProjectProfileRepository;
   officeManifests: OfficeManifestRepository;
   pipelines: PipelineRunRepository;

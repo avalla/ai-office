@@ -62,6 +62,16 @@ checkout; it replays governance decisions through existing constraints and
 never trusts another machine's absolute path or overwrites different local
 state. SQLite remains an adapter detail rather than the transfer format.
 
+Project Domain Pack selection and definition authorship are distinct
+ProjectStorage facts. Selection pins exact `(id, version, manifestDigest)`
+tuples. GP-07 stores project-owned definitions and project overrides separately
+from installed catalog availability; each override pins the exact source kind
+and local ID as well. Mutations use checked project and entry revisions,
+read-only preview, typed conflict validation and transactional audit. Portable
+archive format 6 carries only this authoritative semantic state. Runtime
+scheduling still uses the existing office, role, agent and pipeline state;
+effective pack resolution and configuration digest are deferred to GP-06.
+
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,
 readiness dimensions, the repository-maturity heuristic, the review fingerprint

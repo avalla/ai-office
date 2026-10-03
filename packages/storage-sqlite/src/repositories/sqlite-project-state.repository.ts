@@ -12,6 +12,7 @@ import {
 } from "@ai-office/application/project-portability/project-snapshot.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import { SqliteProjectPackBindingRepository } from "./sqlite-project-pack-binding.repository.ts";
+import { SqliteProjectDefinitionRepository } from "./sqlite-project-definition.repository.ts";
 
 interface ProjectRow {
   name: string;
@@ -544,6 +545,9 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
     const packBinding = await new SqliteProjectPackBindingRepository(
       this.database,
     ).get(projectId);
+    const projectDefinitions = await new SqliteProjectDefinitionRepository(
+      this.database,
+    ).get(projectId);
     return portableProjectStateSchema.parse({
       project: {
         name: project.name,
@@ -559,6 +563,11 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
       packBinding: {
         configurationRevision: packBinding.configurationRevision,
         packs: packBinding.packs,
+      },
+      definitions: {
+        revision: projectDefinitions.revision,
+        owned: projectDefinitions.owned,
+        overrides: projectDefinitions.overrides,
       },
       governance: {
         milestones,
@@ -593,6 +602,47 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
     );
     for (const pack of packBinding.packs)
       insertPack.run(projectId, pack.id, pack.version, pack.manifestDigest);
+    const definitions = value.definitions ?? {
+      revision: 0,
+      owned: [],
+      overrides: [],
+    };
+    this.database
+      .query(
+        "INSERT INTO project_definition_head(project_id, revision) VALUES (?, ?)",
+      )
+      .run(projectId, definitions.revision);
+    const insertOwned = this.database.query(
+      `INSERT INTO project_owned_definition(project_id, kind, local_id, revision, enabled, payload_json, actor_id, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const item of definitions.owned)
+      insertOwned.run(
+        projectId,
+        item.kind,
+        item.id,
+        item.revision,
+        item.enabled ? 1 : 0,
+        JSON.stringify(item.payload),
+        item.actorId,
+        item.changedAt,
+      );
+    const insertOverride = this.database.query(
+      `INSERT INTO project_definition_override(project_id, pack_id, pack_version, manifest_digest, kind, local_id, operation, revision, payload_json, actor_id, changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const item of definitions.overrides)
+      insertOverride.run(
+        projectId,
+        item.source.id,
+        item.source.version,
+        item.source.manifestDigest,
+        item.source.kind,
+        item.source.localId,
+        item.operation,
+        item.revision,
+        item.payload === undefined ? null : JSON.stringify(item.payload),
+        item.actorId,
+        item.changedAt,
+      );
     for (const item of value.tasks)
       this.database
         .prepare(
@@ -860,15 +910,17 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
     }
     const restored = await this.loadPortableState(projectId);
     const version =
-      value.packBinding !== undefined
-        ? 5
-        : value.taskExecutionHistory !== undefined
-          ? 4
-          : value.taskDependencies !== undefined
-            ? 3
-            : value.governance.taskRequirements !== undefined
-              ? 2
-              : 1;
+      value.definitions !== undefined
+        ? 6
+        : value.packBinding !== undefined
+          ? 5
+          : value.taskExecutionHistory !== undefined
+            ? 4
+            : value.taskDependencies !== undefined
+              ? 3
+              : value.governance.taskRequirements !== undefined
+                ? 2
+                : 1;
     const comparable = portableStateAtFormatVersion(restored, version);
     if (canonicalStringify(comparable) !== canonicalStringify(value))
       throw new Error("Restored portable project state does not match archive");

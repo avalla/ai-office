@@ -8,6 +8,7 @@ import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.t
 import { SqliteTransactionRunner } from "@ai-office/storage-sqlite/database/sqlite-transaction-runner.ts";
 import { SqliteProjectRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project.repository.ts";
 import { SqliteProjectPackBindingRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-pack-binding.repository.ts";
+import { SqliteProjectDefinitionRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-definition.repository.ts";
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 import { SqliteTaskDependencyRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-dependency.repository.ts";
 import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task-requirement.repository.ts";
@@ -16,62 +17,68 @@ import { defineProjectStorageContracts } from "../contracts/project-storage.cont
 const migrationDirectory = join(process.cwd(), "migrations", "project");
 
 describe("SQLite project storage contracts", () => {
-  defineProjectStorageContracts(async () => {
-    const root = mkdtempSync(join(tmpdir(), "ai-office-sqlite-contract-"));
-    const database = openDatabase(join(root, "project.sqlite"));
-    migrate(database, migrationDirectory);
+  defineProjectStorageContracts(
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "ai-office-sqlite-contract-"));
+      const database = openDatabase(join(root, "project.sqlite"));
+      migrate(database, migrationDirectory);
 
-    return {
-      projects: new SqliteProjectRepository(database),
-      packBindings: new SqliteProjectPackBindingRepository(database),
-      async deleteProject(projectId: string): Promise<void> {
-        database.query("DELETE FROM project WHERE id = ?").run(projectId);
-      },
-      async bindingRowCounts(projectId: string) {
-        const count = (table: "project_pack_binding" | "project_pack_binding_pack") =>
+      return {
+        projects: new SqliteProjectRepository(database),
+        packBindings: new SqliteProjectPackBindingRepository(database),
+        definitions: new SqliteProjectDefinitionRepository(database),
+        async deleteProject(projectId: string): Promise<void> {
+          database.query("DELETE FROM project WHERE id = ?").run(projectId);
+        },
+        async bindingRowCounts(projectId: string) {
+          const count = (
+            table: "project_pack_binding" | "project_pack_binding_pack",
+          ) =>
+            database
+              .query<{ count: number }, [string]>(
+                `SELECT count(*) AS count FROM ${table} WHERE project_id = ?`,
+              )
+              .get(projectId)!.count;
+          return {
+            heads: count("project_pack_binding"),
+            packs: count("project_pack_binding_pack"),
+          };
+        },
+        tasks: new SqliteTaskRepository(database),
+        taskDependencies: new SqliteTaskDependencyRepository(database),
+        taskRequirements: new SqliteTaskRequirementRepository(database),
+        transactions: new SqliteTransactionRunner(database),
+        async seedRequirement(input: {
+          id: string;
+          projectId: string;
+          key: string;
+          title: string;
+          status: RequirementStatus;
+        }): Promise<void> {
           database
-            .query<{ count: number }, [string]>(
-              `SELECT count(*) AS count FROM ${table} WHERE project_id = ?`,
-            )
-            .get(projectId)!.count;
-        return {
-          heads: count("project_pack_binding"),
-          packs: count("project_pack_binding_pack"),
-        };
-      },
-      tasks: new SqliteTaskRepository(database),
-      taskDependencies: new SqliteTaskDependencyRepository(database),
-      taskRequirements: new SqliteTaskRequirementRepository(database),
-      transactions: new SqliteTransactionRunner(database),
-      async seedRequirement(input: {
-        id: string;
-        projectId: string;
-        key: string;
-        title: string;
-        status: RequirementStatus;
-      }): Promise<void> {
-        database
-          .prepare(
-            `INSERT INTO requirement(
+            .prepare(
+              `INSERT INTO requirement(
               id, project_id, requirement_key, title, description, status,
               created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            input.id,
-            input.projectId,
-            input.key,
-            input.title,
-            input.title,
-            input.status,
-            "2026-01-01T00:00:00.000Z",
-            "2026-01-01T00:00:00.000Z",
-          );
-      },
-      async close(): Promise<void> {
-        database.close();
-        rmSync(root, { recursive: true, force: true });
-      },
-    };
-  }, { packBindings: true });
+            )
+            .run(
+              input.id,
+              input.projectId,
+              input.key,
+              input.title,
+              input.title,
+              input.status,
+              "2026-01-01T00:00:00.000Z",
+              "2026-01-01T00:00:00.000Z",
+            );
+        },
+        async close(): Promise<void> {
+          database.close();
+          rmSync(root, { recursive: true, force: true });
+        },
+      };
+    },
+    { packBindings: true, definitions: true },
+  );
 });

@@ -287,6 +287,46 @@ describe("application architecture boundaries", () => {
     ).toEqual([]);
   });
 
+  test("GP-07 definition authority stays outside scheduling and effective resolution", () => {
+    const read = (path: string) =>
+      readFileSync(join(repositoryRoot, path), "utf8");
+    const service = read(
+      "packages/application/src/domain-pack/manage-project-definitions.ts",
+    );
+    const contract = read(
+      "packages/application/src/domain-pack/project-definition.ts",
+    );
+    const commands = read(
+      "packages/runtime-host/src/commands/project-definition.ts",
+    );
+    const scheduling = [
+      "packages/runtime-host/src/commands/run.ts",
+      "packages/runtime-host/src/commands/pipeline.ts",
+      "packages/application/src/runtime/schedule-agent-run.ts",
+    ];
+    for (const source of [service, contract, commands])
+      expect(source).not.toMatch(
+        /configurationDigest|resolveEffective|reconcileUpgrade|domain-pack-development/u,
+      );
+    expect(contract).toContain('"runtime_resolved"');
+    expect(service).not.toContain("packBindings.replace");
+    for (const path of scheduling)
+      if (existsSync(join(repositoryRoot, path)))
+        expect(read(path)).not.toMatch(
+          /\.definitions\b|project_definition_override/u,
+        );
+    const sqlite = read(
+      "migrations/project/0042_project_definition_ownership.sql",
+    );
+    const postgres = read(
+      "supabase/migrations/20261003000100_project_definition_ownership.sql",
+    );
+    for (const migration of [sqlite, postgres])
+      expect(migration).not.toMatch(
+        /artifact_digest|installer_id|catalog_availability|configuration_digest|runtime_resolved/iu,
+      );
+  });
+
   test("Runtime command handlers cannot import SQLite adapters", () => {
     const offenders: string[] = [];
     for (const file of typescriptFiles(
