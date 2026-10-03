@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
@@ -80,6 +80,7 @@ limits:
       const output = captured();
       const exitCode = await runDaemonCli(args, {
         projectRoot: root,
+        workingDirectory: root,
         socketPath,
         io: output.io,
       });
@@ -89,9 +90,17 @@ limits:
       await waitForDaemon(socketPath);
       const project = await run(["project:create", "M6A"]);
       const projectId = project.stdout[0]!.replace("Project created: ", "");
-      expect((await run(["agent:sync", "--project", projectId])).exitCode).toBe(
-        0,
-      );
+      expect(
+        (
+          await run([
+            "agent:sync",
+            "--project",
+            projectId,
+            "--directory",
+            resolve("agents"),
+          ])
+        ).exitCode,
+      ).toBe(0);
       const agentRows = await run(["agent:list", "--project", projectId]);
       const agentId = agentRows.stdout[1]!.split("\t")[0]!;
       const missingProject = await run(["resource:list"]);
@@ -433,6 +442,7 @@ limits:
       const output = captured();
       const exitCode = await runDaemonCli(args, {
         projectRoot: root,
+        workingDirectory: root,
         socketPath,
         io: output.io,
       });
@@ -442,9 +452,17 @@ limits:
       await waitForDaemon(socketPath);
       const project = await run(["project:create", "M6B"]);
       const projectId = project.stdout[0]!.replace("Project created: ", "");
-      expect((await run(["agent:sync", "--project", projectId])).exitCode).toBe(
-        0,
-      );
+      expect(
+        (
+          await run([
+            "agent:sync",
+            "--project",
+            projectId,
+            "--directory",
+            resolve("agents"),
+          ])
+        ).exitCode,
+      ).toBe(0);
       const agentId = (
         await run(["agent:list", "--project", projectId])
       ).stdout[1]!.split("\t")[0]!;

@@ -149,6 +149,7 @@ test("a managed Runtime executes a gateway run with its Runtime home credential 
     const stderr: string[] = [];
     const exitCode = await runDaemonCli(args, {
       projectRoot: r.root,
+      workingDirectory: r.root,
       socketPath: r.socketPath,
       io: {
         stdout: (value) => stdout.push(value),

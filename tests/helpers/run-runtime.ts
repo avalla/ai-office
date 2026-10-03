@@ -45,6 +45,7 @@ export async function runRuntime(
       stderr: string[] = [];
     const exitCode = await runDaemonCli(args, {
       projectRoot: root,
+      workingDirectory: root,
       socketPath,
       io: {
         stdout: (value) => stdout.push(value),
