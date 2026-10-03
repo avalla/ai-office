@@ -1,6 +1,8 @@
 import type { Database } from "bun:sqlite";
 import {
   StaleProjectDefinitionError,
+  compareExactSources,
+  compareOwnedDefinitions,
   type ProjectDefinitionState,
   type ProjectOwnedDefinition,
   type ProjectDefinitionOverride,
@@ -156,7 +158,14 @@ export class SqliteProjectDefinitionRepository implements ProjectDefinitionRepos
           item.changedAt,
         );
       this.database.exec("RELEASE SAVEPOINT project_definition_replace");
-      return { ...state, revision: expectedRevision + 1 };
+      return {
+        ...state,
+        revision: expectedRevision + 1,
+        owned: [...state.owned].sort(compareOwnedDefinitions),
+        overrides: [...state.overrides].sort((left, right) =>
+          compareExactSources(left.source, right.source),
+        ),
+      };
     } catch (error) {
       this.database.exec("ROLLBACK TO SAVEPOINT project_definition_replace");
       this.database.exec("RELEASE SAVEPOINT project_definition_replace");

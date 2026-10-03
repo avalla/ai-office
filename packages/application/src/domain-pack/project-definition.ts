@@ -131,6 +131,9 @@ export class StaleProjectDefinitionError extends Error {
   }
 }
 
+/** Shared with the portable archive schema so accepted state stays exportable. */
+export const maximumWorkflowStages = 1_000;
+
 const descriptiveKinds: readonly ContributionKind[] = [
   "roles",
   "taskTypes",
@@ -253,6 +256,11 @@ function parseWorkflowPayload(value: unknown, id: string): WorkflowDefinition {
     throw new ProjectDefinitionConflictError(
       "protected_security_invariant",
       "Workflow payload must use the typed schema-1 fields",
+    );
+  if (item.stages.length > maximumWorkflowStages)
+    throw new ProjectDefinitionConflictError(
+      "malformed_origin_reference",
+      `Workflow may declare at most ${maximumWorkflowStages} stages`,
     );
   const common = parseDefinitionPayload(
     {
@@ -417,4 +425,29 @@ export function sourceKey(source: ExactPackDefinitionSource): string {
     source.kind,
     source.localId,
   ].join("\u0000");
+}
+
+const compareText = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+/** Code-unit order, matching the repositories' `ORDER BY kind, local_id`. */
+export function compareOwnedDefinitions(
+  left: Pick<ProjectOwnedDefinition, "kind" | "id">,
+  right: Pick<ProjectOwnedDefinition, "kind" | "id">,
+): number {
+  return compareText(left.kind, right.kind) || compareText(left.id, right.id);
+}
+
+/** Code-unit order over the exact source tuple, matching repository reads. */
+export function compareExactSources(
+  left: ExactPackDefinitionSource,
+  right: ExactPackDefinitionSource,
+): number {
+  return (
+    compareText(left.id, right.id) ||
+    compareText(left.version, right.version) ||
+    compareText(left.manifestDigest, right.manifestDigest) ||
+    compareText(left.kind, right.kind) ||
+    compareText(left.localId, right.localId)
+  );
 }

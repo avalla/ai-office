@@ -316,6 +316,92 @@ describe("GP-07 authoritative definition ownership", () => {
     database.close();
   });
 
+  test("accepted workflows stay within the portable archive stage bound", async () => {
+    const { storage, service } = await harness();
+    const workflow = (count: number) => ({
+      action: "put_owned",
+      kind: "workflows",
+      id: "review",
+      enabled: true,
+      payload: {
+        id: "review",
+        taskType: "matter",
+        stages: Array.from({ length: count }, (_, index) => ({
+          id: `stage-${index}`,
+          role: "counsel",
+        })),
+      },
+    });
+    await expect(
+      service().apply({
+        projectId: "a",
+        mutation: workflow(1_001),
+        expectedRevision: 0,
+        actorId: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "malformed_origin_reference" });
+    expect((await service().read("a")).revision).toBe(0);
+    await service().apply({
+      projectId: "a",
+      mutation: workflow(1_000),
+      expectedRevision: 0,
+      actorId: "operator",
+    });
+    const exported = await storage.projectStates.loadPortableState("a");
+    expect(exported.definitions?.owned).toHaveLength(1);
+  });
+
+  test("apply returns entries in the same order as a later read", async () => {
+    const { service, bind, legal, promptPack } = await harness();
+    await bind([legal, promptPack]);
+    let revision = 0;
+    for (const id of ["a", "B", "a-1", "a_1", "A.b"])
+      revision = (
+        await service().apply({
+          projectId: "a",
+          mutation: {
+            action: "put_owned",
+            kind: "roles",
+            id,
+            enabled: true,
+            payload: { id },
+          },
+          expectedRevision: revision,
+          actorId: "operator",
+        })
+      ).revision;
+    await service().apply({
+      projectId: "a",
+      mutation: putOverride(
+        promptPack,
+        "disable",
+        undefined,
+        "prompts",
+        "greeting",
+      ),
+      expectedRevision: revision,
+      actorId: "operator",
+    });
+    const applied = await service().apply({
+      projectId: "a",
+      mutation: putOverride(legal, "replace", {
+        id: "counsel",
+        title: "Counsel",
+      }),
+      expectedRevision: revision + 1,
+      actorId: "operator",
+    });
+    const read = await service().read("a");
+    expect(applied).toEqual(read);
+    expect(read.owned.map((item) => item.id)).toEqual([
+      "A.b",
+      "B",
+      "a",
+      "a-1",
+      "a_1",
+    ]);
+  });
+
   test("validates installed pack bytes before opening the definition transaction", async () => {
     const { database, storage, catalog, legal, service, bind } =
       await harness();

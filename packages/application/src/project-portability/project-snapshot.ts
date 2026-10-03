@@ -14,6 +14,7 @@ import {
   parseDomainPackVersion,
   parseManifestDigest,
 } from "../../../domain-pack-contracts/src/index.ts";
+import { maximumWorkflowStages } from "../domain-pack/project-definition.ts";
 
 export const portableProjectFormat = "ai-office-project" as const;
 
@@ -261,7 +262,7 @@ const portableWorkflowPayload = portableDescriptivePayload.extend({
     .array(
       z.strictObject({ id: portableDefinitionId, role: portableDefinitionId }),
     )
-    .max(1_000),
+    .max(maximumWorkflowStages),
 });
 const portableExactDefinitionSource = z.strictObject({
   id: z.string().refine((value) => {

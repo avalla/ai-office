@@ -243,6 +243,16 @@ describe("project portability", () => {
             actorId: "operator",
             changedAt: now.toISOString(),
           },
+          {
+            origin: "project_owned",
+            kind: "roles",
+            id: "B",
+            revision: 1,
+            enabled: true,
+            payload: { id: "B" },
+            actorId: "operator",
+            changedAt: now.toISOString(),
+          },
         ],
         overrides: [
           {
@@ -286,6 +296,7 @@ describe("project portability", () => {
     expect(backup.archive.state.definitions).toMatchObject({
       revision: 2,
       owned: [
+        { id: "B", revision: 1 },
         { id: "alpha", revision: 1 },
         { id: "custom", revision: 2, payload: { title: "Updated" } },
       ],
@@ -310,6 +321,7 @@ describe("project portability", () => {
     ).toMatchObject({
       revision: 2,
       owned: [
+        { id: "B", revision: 1 },
         { id: "alpha", revision: 1 },
         { id: "custom", revision: 2, payload: { title: "Updated" } },
       ],
