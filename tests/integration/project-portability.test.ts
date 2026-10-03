@@ -27,6 +27,7 @@ import type { ProjectBindingAdapter } from "@ai-office/application/ports/project
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
 import {
   createPortableProjectArchive,
+  portableProjectArchiveSchemaV6,
   portableProjectManifestFor,
   portableStateAtFormatVersion,
   portableStateChecksum,
@@ -194,6 +195,79 @@ afterEach(() => {
 });
 
 describe("project portability", () => {
+  test("format-6 definition text uses GP-07's Unicode contract", () => {
+    const schema = portableProjectArchiveSchemaV6.shape.state.shape.definitions;
+    const owned = (kind: "roles" | "workflows", payload: object) => ({
+      revision: 1,
+      owned: [
+        {
+          origin: "project_owned",
+          kind,
+          id: "custom",
+          revision: 1,
+          enabled: true,
+          payload,
+          actorId: "operator",
+          changedAt: "2026-10-03T00:00:00.000Z",
+        },
+      ],
+      overrides: [],
+    });
+    const override = (operation: "replace" | "extend", payload: object) => ({
+      revision: 1,
+      owned: [],
+      overrides: [
+        {
+          origin: "project_override",
+          source: {
+            id: "org.example.legal",
+            version: "1.0.0",
+            manifestDigest: `sha256:${"a".repeat(64)}`,
+            kind: "roles",
+            localId: "custom",
+          },
+          operation,
+          revision: 1,
+          payload,
+          actorId: "operator",
+          changedAt: "2026-10-03T00:00:00.000Z",
+        },
+      ],
+    });
+    const workflow = (fields: object) => ({
+      id: "custom",
+      taskType: "task",
+      stages: [],
+      ...fields,
+    });
+
+    for (const state of [
+      owned("roles", { id: "custom", title: "\ud800" }),
+      owned("roles", { id: "custom", description: "\udc00" }),
+      owned("workflows", workflow({ title: "\ud800" })),
+      owned("workflows", workflow({ description: "\udc00" })),
+      override("replace", { id: "custom", title: "\ud800" }),
+      override("replace", { id: "custom", description: "\udc00" }),
+      override("extend", { title: "\ud800" }),
+      override("extend", { description: "\udc00" }),
+    ])
+      expect(schema.safeParse(state).success).toBe(false);
+
+    for (const state of [
+      owned("roles", { id: "custom", title: "😀", description: "😀" }),
+      owned("workflows", workflow({ title: "😀", description: "😀" })),
+      override("replace", { id: "custom", title: "😀", description: "😀" }),
+      override("extend", { title: "😀", description: "😀" }),
+      owned("roles", { id: "custom", title: "a".repeat(16_000) }),
+    ])
+      expect(schema.safeParse(state).success).toBe(true);
+    expect(
+      schema.safeParse(
+        owned("roles", { id: "custom", title: "a".repeat(16_001) }),
+      ).success,
+    ).toBe(false);
+  });
+
   test("v6 restore recomputes the same derived configuration with a different installer reference", async () => {
     const source = temporaryRoot("ai-office-gp06-portable-project-");
     writeFileSync(join(source, "package.json"), '{"name":"gp06"}\n');
