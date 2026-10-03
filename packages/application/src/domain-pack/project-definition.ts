@@ -7,6 +7,7 @@ import {
   type ContributionKind,
   type DomainPackDependency,
 } from "../../../domain-pack-contracts/src/index.ts";
+import { hasLoneSurrogate } from "../../../domain-pack-contracts/src/jcs.ts";
 
 /** Only project_owned and project_override are mutable project authority. */
 export type DefinitionOrigin =
@@ -234,7 +235,9 @@ export function parseDefinitionPayload(
   for (const key of ["title", "description"])
     if (
       item[key] !== undefined &&
-      (typeof item[key] !== "string" || item[key].length > 16_000)
+      (typeof item[key] !== "string" ||
+        item[key].length > 16_000 ||
+        hasLoneSurrogate(item[key]))
     )
       throw new ProjectDefinitionConflictError(
         "malformed_origin_reference",

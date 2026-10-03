@@ -22,6 +22,7 @@ import { InMemoryInstalledDomainPackCatalog } from "../../packages/runtime-host/
 import { ReadProjectConfiguration } from "../../packages/application/src/domain-pack/read-project-configuration.ts";
 import type { ProjectPackBindingRepository } from "../../packages/application/src/ports/project-pack-binding-repository.port.ts";
 import type { ProjectDefinitionRepository } from "../../packages/application/src/ports/project-definition-repository.port.ts";
+import type { InstalledDomainPackCatalog } from "../../packages/application/src/ports/installed-domain-pack-catalog.port.ts";
 import type { ProjectRepository } from "../../packages/application/src/ports/project-repository.port.ts";
 
 const encoder = new TextEncoder();
@@ -587,6 +588,76 @@ function deepFreeze<T>(value: T): T {
 }
 
 describe("GP-06 hardening", () => {
+  test("adapter-owned pack properties never enter selected, closure, provenance, pin, or digest", () => {
+    const target = catalog();
+    const dependency = register(
+      target,
+      syntheticPack("org.example.dependency", { roles: [{ id: "worker" }] }),
+    );
+    const parent = register(
+      target,
+      syntheticPack("org.example.parent", { roles: [{ id: "lead" }] }, [
+        dependency,
+      ]),
+    );
+    const baseline = resolve(target, [parent]);
+    const adapter: InstalledDomainPackCatalog = {
+      coreContractVersion: target.coreContractVersion,
+      read: (id, version) => {
+        const artifact = target.read(id, version);
+        return (
+          artifact && {
+            ...artifact,
+            identity: { ...artifact.identity, installer: "adapter-local" },
+          }
+        );
+      },
+      list: () => target.list(),
+      trusts: (value) => target.trusts(value),
+    };
+    const adapterBinding = { ...parent, localPath: "/private/adapter/path" };
+    const extra = resolveProjectConfiguration({
+      projectId: "project-a",
+      binding: binding([adapterBinding]),
+      definitions: state(),
+      catalog: adapter,
+      coreContractVersion: 1,
+    });
+    const tuple = (identity: Tuple) => ({
+      id: identity.id,
+      version: identity.version,
+      manifestDigest: identity.manifestDigest,
+    });
+    expect(extra.selectedPacks).toEqual([tuple(parent)]);
+    expect(extra.resolvedPacks).toEqual([tuple(dependency), tuple(parent)]);
+    expect(extra.pin.selectedPacks).toEqual(extra.selectedPacks);
+    expect(extra.pin.resolvedPacks).toEqual(extra.resolvedPacks);
+    for (const provenance of Object.values(extra.origins))
+      if (provenance.origin === "pack_owned")
+        expect(Object.keys(provenance.pack)).toEqual([
+          "id",
+          "version",
+          "manifestDigest",
+        ]);
+    expect(JSON.stringify(extra)).not.toMatch(
+      /localPath|installer|adapter-local/u,
+    );
+    expect(extra.configurationDigest).toBe(baseline.configurationDigest);
+
+    const nextVersion = register(
+      target,
+      syntheticPack(
+        "org.example.parent",
+        { roles: [{ id: "lead" }] },
+        [dependency],
+        "2.0.0",
+      ),
+    );
+    expect(resolve(target, [nextVersion]).configurationDigest).not.toBe(
+      baseline.configurationDigest,
+    );
+  });
+
   test("an override may only target an explicitly selected pack, never a dependency-only pack", () => {
     const target = catalog();
     const dependency = register(

@@ -128,7 +128,13 @@ function tupleKey(pack: PackIdentity): string {
 }
 
 function sortedPacks(packs: readonly PackIdentity[]): PackIdentity[] {
-  return [...packs].sort((a, b) => compare(tupleKey(a), tupleKey(b)));
+  return packs
+    .map(({ id, version, manifestDigest }) => ({
+      id,
+      version,
+      manifestDigest,
+    }))
+    .sort((a, b) => compare(tupleKey(a), tupleKey(b)));
 }
 
 function packId(
