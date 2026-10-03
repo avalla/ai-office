@@ -38,7 +38,9 @@ jobs:
         run: bunx --bun vitest run tests/integration/agent-knowledge-persistence.test.ts
       - name: Stop and restart from the same on-disk volume
         run: |
-          docker stop ai-office-ak09-surrealdb
+          # Remove the old container explicitly before reusing the name. With
+          # --rm, docker stop can return before asynchronous removal completes.
+          docker rm -f ai-office-ak09-surrealdb
           docker run --rm -d --name ai-office-ak09-surrealdb --user 0:0 \
             -p 127.0.0.1:8001:8000 \
             -v ai-office-ak09-persistence:/data \
@@ -57,5 +59,5 @@ jobs:
       - name: Remove test container and volume
         if: always()
         run: |
-          docker stop ai-office-ak09-surrealdb || true
+          docker rm -f ai-office-ak09-surrealdb || true
           docker volume rm ai-office-ak09-persistence || true
