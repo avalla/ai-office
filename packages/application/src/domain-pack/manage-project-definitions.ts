@@ -61,7 +61,7 @@ export class ManageProjectDefinitions {
     return this.dependencies.definitions.get(projectId);
   }
 
-  private async sourceIssues(
+  private async sourceBindingIssues(
     projectId: string,
     item: ProjectDefinitionOverride,
   ): Promise<ProjectDefinitionIssue[]> {
@@ -81,6 +81,16 @@ export class ManageProjectDefinitions {
           message: `Selected manifest digest differs for ${item.source.id}@${item.source.version}`,
         },
       ];
+    return [];
+  }
+
+  private async sourceIssues(
+    projectId: string,
+    item: ProjectDefinitionOverride,
+  ): Promise<ProjectDefinitionIssue[]> {
+    const bindingIssues = await this.sourceBindingIssues(projectId, item);
+    if (bindingIssues.length > 0) return bindingIssues;
+    const binding = await this.dependencies.bindings.get(projectId);
     try {
       resolveInstalledPacks(this.dependencies.catalog, binding.packs);
       const artifact = this.dependencies.catalog.read(
@@ -127,9 +137,7 @@ export class ManageProjectDefinitions {
     }
   }
 
-  async inspect(
-    projectId: string,
-  ): Promise<{
+  async inspect(projectId: string): Promise<{
     state: ProjectDefinitionState;
     issues: readonly (ProjectDefinitionIssue & {
       source: ProjectDefinitionOverride["source"];
@@ -147,6 +155,7 @@ export class ManageProjectDefinitions {
     projectId: string,
     mutation: ProjectDefinitionMutation,
     current: ProjectDefinitionState,
+    checkInstalledSource = true,
   ): Promise<ProjectDefinitionPreview> {
     const issues: ProjectDefinitionIssue[] = [];
     const affected =
@@ -195,7 +204,11 @@ export class ManageProjectDefinitions {
         actorId: "preview",
         changedAt: "1970-01-01T00:00:00.000Z",
       };
-      issues.push(...(await this.sourceIssues(projectId, candidate)));
+      issues.push(
+        ...(await (checkInstalledSource
+          ? this.sourceIssues(projectId, candidate)
+          : this.sourceBindingIssues(projectId, candidate))),
+      );
     }
     return {
       current,
@@ -259,6 +272,7 @@ export class ManageProjectDefinitions {
         input.projectId,
         mutation,
         current,
+        false,
       );
       if (checked.issues[0])
         throw new ProjectDefinitionConflictError(

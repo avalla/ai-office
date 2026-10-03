@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
 import { parseDefinitionMutation } from "@ai-office/application/domain-pack/project-definition.ts";
@@ -253,6 +253,33 @@ describe("GP-07 authoritative definition ownership", () => {
         )
         .get()?.count,
     ).toBe(0);
+    database.close();
+  });
+
+  test("validates installed pack bytes before opening the definition transaction", async () => {
+    const { database, storage, catalog, legal, service, bind } =
+      await harness();
+    await bind([legal]);
+    let inTransaction = false;
+    const run = storage.transactions.run.bind(storage.transactions);
+    vi.spyOn(storage.transactions, "run").mockImplementation(async (work) => {
+      inTransaction = true;
+      try {
+        return await run(work);
+      } finally {
+        inTransaction = false;
+      }
+    });
+    const read = catalog.read.bind(catalog);
+    vi.spyOn(catalog, "read").mockImplementation((id, version) => {
+      expect(inTransaction).toBe(false);
+      return read(id, version);
+    });
+    await apply(
+      service(),
+      putOverride(legal, "replace", { id: "counsel", title: "Lead counsel" }),
+      0,
+    );
     database.close();
   });
 
