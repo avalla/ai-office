@@ -20,10 +20,12 @@ import { runWorkerProcess } from "@ai-office/agent-runtime/claude-worker-runtime
 import {
   CodexWorkerRuntime,
   codexDisabledFeatures,
+  codexRefreshBlockedUrl,
 } from "@ai-office/agent-runtime/codex-worker-runtime.ts";
 import {
   codexFeatureListing,
   codexLogin,
+  codexToken,
   createOperatorCodexHome,
   installFakeCodex,
   managedBundlePlans,
@@ -101,9 +103,13 @@ describe.skipIf(process.platform === "win32")(
 
       expect(Object.keys(report.env).sort()).toEqual([
         "CODEX_HOME",
+        "CODEX_REFRESH_TOKEN_URL_OVERRIDE",
         "HOME",
         "PATH",
       ]);
+      expect(report.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE).toBe(
+        "http://127.0.0.1:0/ai-office-refresh-disabled",
+      );
       expect(report.env.CODEX_HOME).not.toBe(operatorHome);
       expect(report.env.HOME).not.toBe(homedir());
       expect(dirname(report.env.CODEX_HOME!)).toBe(dirname(report.env.HOME!));
@@ -469,6 +475,137 @@ describe.skipIf(process.platform === "win32")(
         expect(existsSync(sideEffect)).toBe(false);
         cleaned();
       } finally {
+        await backend.stop(true);
+      }
+    });
+
+    test("the client can never refresh the admitted login into a managed workspace", async () => {
+      // A stand-in issuer that answers a refresh with Enterprise tokens, and
+      // a backend whose workspace bundle defines an MCP server.
+      const sideEffect = join(root, "mcp-side-effect");
+      const requests: string[] = [];
+      const backend = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: (request) => {
+          const path = new URL(request.url).pathname;
+          requests.push(path);
+          if (path === "/oauth/token")
+            return Response.json({
+              id_token: codexToken("enterprise"),
+              access_token: codexToken("enterprise"),
+              refresh_token: "refreshed",
+            });
+          return Response.json({
+            config_toml: {
+              enterprise_managed: [
+                {
+                  id: "fragment",
+                  name: "fragment",
+                  contents: [
+                    "[mcp_servers.managed]",
+                    `command = ${JSON.stringify(process.execPath)}`,
+                    `args = ${JSON.stringify(["-e", `require("node:fs").writeFileSync(${JSON.stringify(sideEffect)}, "started")`])}`,
+                  ].join("\n"),
+                },
+              ],
+            },
+            requirements_toml: { enterprise_managed: [] },
+          });
+        },
+      });
+      const origin = `http://127.0.0.1:${backend.port}`;
+      const ambientOverride = process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE;
+      try {
+        fake = installFakeCodex(root, origin);
+        const auth = join(operatorHome, "auth.json");
+        const expired = Math.floor(Date.now() / 1000) - 3600;
+        const stale = codexLogin("plus", secret, expired);
+        const reset = () => {
+          requests.length = 0;
+          rmSync(sideEffect, { force: true });
+          rmSync(join(root, "codex-calls.log"), { force: true });
+          rmSync(join(root, "codex-refresh.log"), { force: true });
+        };
+        const untouched = () => {
+          expect(requests).toEqual([]);
+          expect(existsSync(sideEffect)).toBe(false);
+          cleaned();
+        };
+
+        // Control: a stale personal login that is allowed to refresh becomes
+        // Enterprise, fetches the bundle and starts the MCP server.
+        const direct = join(scratch, "direct");
+        mkdirSync(direct);
+        writeFileSync(join(direct, "auth.json"), stale);
+        await runWorkerProcess({
+          executable: fake.executable,
+          args: ["features", "list"],
+          cwd: direct,
+          input: "",
+          timeoutMs: 10000,
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: direct,
+            CODEX_HOME: direct,
+          },
+        });
+        expect(requests).toEqual([
+          "/oauth/token",
+          "/backend-api/wham/config/bundle",
+        ]);
+        expect(fake.refreshAttempts()).toEqual([`${origin}/oauth/token`]);
+        expect(readFileSync(sideEffect, "utf8")).toBe("started");
+        rmSync(direct, { recursive: true });
+        reset();
+
+        // An operator-level override is not inherited by the worker's child.
+        process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE = `${origin}/oauth/token`;
+
+        // 1. A stale login is refused before any Codex process.
+        writeFileSync(auth, stale);
+        await expect(worker().execute(context, limits)).rejects.toMatchObject({
+          code: "WORKER_UNAVAILABLE",
+        });
+        expect(fake.calls()).toEqual([]);
+        expect(fake.refreshAttempts()).toEqual([]);
+        untouched();
+        reset();
+
+        // 2. Even if a stale login reached the client (here the worker's
+        // clock is wrong by two hours), the refresh goes to the blocked
+        // address: no new tokens, no bundle, no MCP server.
+        const behind = () => Date.now() - 2 * 3600 * 1000;
+        const sourceBefore = readFileSync(auth);
+        await expect(
+          new CodexWorkerRuntime(
+            fake.executable,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            behind,
+          ).execute(context, limits),
+        ).rejects.toMatchObject({ code: "WORKER_FAILED" });
+        expect(fake.calls()).toEqual(["--version", "features", "exec"]);
+        expect(fake.refreshAttempts()).toEqual([codexRefreshBlockedUrl]);
+        expect(readFileSync(auth).equals(sourceBefore)).toBe(true);
+        untouched();
+        reset();
+
+        // 3. A fresh login the provider rejects mid-run: the refresh that
+        // an expiry check cannot foresee is blocked the same way.
+        writeFileSync(auth, codexLogin("plus", secret));
+        fake.setMode("unauthorized");
+        await expect(worker().execute(context, limits)).rejects.toMatchObject({
+          code: "WORKER_FAILED",
+        });
+        expect(fake.refreshAttempts()).toEqual([codexRefreshBlockedUrl]);
+        untouched();
+      } finally {
+        if (ambientOverride === undefined)
+          delete process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE;
+        else process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE = ambientOverride;
         await backend.stop(true);
       }
     });

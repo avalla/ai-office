@@ -179,35 +179,58 @@ const loginFields: ReadonlySet<string> = new Set([
   "last_refresh",
 ]);
 
-/** The plan claim of one token; nothing else is read and nothing is kept. */
-function planClaim(token: unknown): string | null {
-  if (typeof token !== "string") return null;
+/**
+ * Where the child is told to refresh its login: a loopback address nothing can
+ * listen on. `codex-cli` 0.160.0 honours this override, so a refresh inside a
+ * run fails instead of replacing the admitted tokens with ones the provider
+ * issues later, which may belong to another plan or a managed workspace.
+ */
+export const codexRefreshBlockedUrl =
+  "http://127.0.0.1:0/ai-office-refresh-disabled";
+/** 0.160.0 refreshes an access token within five minutes of its expiry. */
+const refreshWindowMs = 5 * 60 * 1000;
+/** Allowance for clock difference between this host and the token issuer. */
+const clockSkewMs = 60 * 1000;
+
+/** The two claims admission reads from a token; nothing else is kept. */
+function tokenClaims(token: unknown): { plan: string | null; exp: unknown } {
+  if (typeof token !== "string") return { plan: null, exp: undefined };
   const parts = token.split(".");
-  if (parts.length !== 3 || !/^[A-Za-z0-9_-]+$/.test(parts[1]!)) return null;
+  if (parts.length !== 3 || !/^[A-Za-z0-9_-]+$/.test(parts[1]!))
+    return { plan: null, exp: undefined };
   const claims = record(
     JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as unknown,
   );
   const plan = record(
     claims?.["https://api.openai.com/auth"],
   )?.chatgpt_plan_type;
-  return typeof plan === "string" ? plan : null;
+  return { plan: typeof plan === "string" ? plan : null, exp: claims?.exp };
 }
 
 /**
- * Admits only a ChatGPT login of a supported personal plan. The claims are
+ * Admits only a ChatGPT login of a supported personal plan whose access token
+ * stays outside Codex's refresh window until `validUntilMs`. The claims are
  * read locally and are not verified: this decides which logins the worker
  * hands to Codex, it does not authenticate them. The provider still does.
  */
-function admitLogin(login: Record<string, unknown>): void {
+function admitLogin(
+  login: Record<string, unknown>,
+  validUntilMs: number,
+): void {
   const tokens = record(login.tokens);
-  const plan = planClaim(tokens?.id_token);
+  const { plan } = tokenClaims(tokens?.id_token);
+  const access = tokenClaims(tokens?.access_token);
   if (
     Object.keys(login).some((field) => !loginFields.has(field)) ||
     login.auth_mode !== "chatgpt" ||
     (login.OPENAI_API_KEY ?? null) !== null ||
     plan === null ||
     !supportedPersonalPlanClaims.has(plan) ||
-    planClaim(tokens?.access_token) !== plan
+    access.plan !== plan ||
+    typeof access.exp !== "number" ||
+    !Number.isSafeInteger(access.exp) ||
+    !Number.isSafeInteger(access.exp * 1000) ||
+    access.exp * 1000 <= validUntilMs + refreshWindowMs + clockSkewMs
   )
     throw new Error("unsupported login");
 }
@@ -219,7 +242,10 @@ function admitLogin(login: Record<string, unknown>): void {
  * is opened read-only and `auth.json` itself is never followed when it is a
  * link (a linked Codex home directory still resolves).
  */
-async function readOperatorLogin(operatorHome: string): Promise<Buffer> {
+async function readOperatorLogin(
+  operatorHome: string,
+  validUntilMs: number,
+): Promise<Buffer> {
   try {
     if (!isAbsolute(operatorHome)) throw new Error("relative home");
     // Non-blocking, so a FIFO or device cannot stall the open; the type is
@@ -258,7 +284,7 @@ async function readOperatorLogin(operatorHome: string): Promise<Buffer> {
     }
     const login = record(JSON.parse(bytes.toString("utf8")) as unknown);
     if (login === null) throw new Error("auth content");
-    admitLogin(login);
+    admitLogin(login, validUntilMs);
     return bytes;
   } catch {
     throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
@@ -405,6 +431,7 @@ export class CodexWorkerRuntime implements WorkerRuntime {
     private readonly model?: string,
     private readonly platform: WorkerPlatform = currentWorkerPlatform(),
     private readonly operatorCodexHome?: string,
+    private readonly now: () => number = Date.now,
   ) {}
 
   supportsModel(selection: AgentRunModelSelection):
@@ -435,7 +462,7 @@ export class CodexWorkerRuntime implements WorkerRuntime {
   private async inspectAdmitted(): Promise<{ version: string }> {
     if (this.platform === "win32")
       throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
-    await readOperatorLogin(this.operatorHome());
+    await readOperatorLogin(this.operatorHome(), this.now());
     return this.inIsolation(async ({ cwd, env }) => {
       const probe = (args: readonly string[]) =>
         this.runner({
@@ -500,7 +527,11 @@ export class CodexWorkerRuntime implements WorkerRuntime {
       // Read and admitted again here: these are the bytes Codex will use.
       await writeFile(
         join(codexHome, authFileName),
-        await readOperatorLogin(this.operatorHome()),
+        // It must outlast this run: the child can never refresh it.
+        await readOperatorLogin(
+          this.operatorHome(),
+          this.now() + limits.timeoutMs,
+        ),
         { mode: 0o600, flag: "wx" },
       );
       const schemaPath = join(cwd, "answer.schema.json");
@@ -555,8 +586,9 @@ export class CodexWorkerRuntime implements WorkerRuntime {
 
   /**
    * One private tree per process, removed on every outcome. The child gets
-   * `PATH` to find the executable plus this tree's `HOME` and `CODEX_HOME`;
-   * provider keys, proxies and the operator's Codex home are not inherited.
+   * `PATH` to find the executable, this tree's `HOME` and `CODEX_HOME`, and
+   * the fixed refresh block; provider keys, proxies, the operator's Codex home
+   * and any refresh override of the operator's are not inherited.
    */
   private async inIsolation<T>(
     operation: (isolation: CodexIsolation) => Promise<T>,
@@ -575,6 +607,7 @@ export class CodexWorkerRuntime implements WorkerRuntime {
           PATH: process.env.PATH ?? "",
           HOME: home,
           CODEX_HOME: codexHome,
+          CODEX_REFRESH_TOKEN_URL_OVERRIDE: codexRefreshBlockedUrl,
         },
       });
     } finally {

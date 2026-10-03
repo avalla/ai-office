@@ -45,9 +45,13 @@ test("Codex CLI worker runs isolated from the operator's Codex home and persists
     expect(report.prompt).toContain("Test task");
     expect(Object.keys(report.env).sort()).toEqual([
       "CODEX_HOME",
+      "CODEX_REFRESH_TOKEN_URL_OVERRIDE",
       "HOME",
       "PATH",
     ]);
+    expect(report.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE).toBe(
+      "http://127.0.0.1:0/ai-office-refresh-disabled",
+    );
     expect(report.env.CODEX_HOME).not.toBe(operatorHome);
     expect(report.env.HOME).not.toBe(homedir());
     expect(report.codexHome.entries).toEqual(["auth.json"]);

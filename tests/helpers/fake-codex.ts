@@ -27,7 +27,14 @@ export function codexFeatureListingAfter(args: readonly string[]): string {
 }
 
 export type FakeCodexMode =
-  "ok" | "fail" | "hang" | "tool" | "linger" | "reconnect" | "gave-up";
+  | "ok"
+  | "fail"
+  | "hang"
+  | "tool"
+  | "linger"
+  | "reconnect"
+  | "gave-up"
+  | "unauthorized";
 
 export interface FakeCodexReport {
   args: string[];
@@ -43,12 +50,17 @@ export interface FakeCodexReport {
 }
 
 /** A JWT-shaped token carrying only the claims the worker and CLI read. */
-export function codexToken(plan: unknown): string {
+export function codexToken(
+  plan: unknown,
+  /** `exp` in seconds, far in the future by default; `null` omits it. */
+  exp: unknown = 4102444800,
+): string {
   const part = (value: unknown) =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
   return [
     part({ alg: "none", typ: "JWT" }),
     part({
+      ...(exp === null ? {} : { exp }),
       "https://api.openai.com/auth": {
         chatgpt_account_id: "account-fixture",
         ...(plan === undefined ? {} : { chatgpt_plan_type: plan }),
@@ -59,13 +71,18 @@ export function codexToken(plan: unknown): string {
 }
 
 /** A file-backed ChatGPT login as codex-cli 0.160.0 stores it. */
-export function codexLogin(plan: unknown, secret: string): string {
+export function codexLogin(
+  plan: unknown,
+  secret: string,
+  /** `exp` of the access token in seconds; `null` omits the claim. */
+  accessExp: unknown = 4102444800,
+): string {
   return JSON.stringify({
     auth_mode: "chatgpt",
     OPENAI_API_KEY: null,
     tokens: {
       id_token: codexToken(plan),
-      access_token: codexToken(plan),
+      access_token: codexToken(plan, accessExp),
       refresh_token: secret,
       account_id: "account-fixture",
     },
@@ -115,10 +132,31 @@ const args = process.argv.slice(2);
 const calls = ${JSON.stringify(join(root, "codex-calls.log"))};
 fs.appendFileSync(calls, args[0] + "\\n");
 if (args[0] === "--version") { console.log("codex-cli 0.160.0"); process.exit(0); }
-// What 0.160.0 does once it has a login of a managed plan: download the
-// workspace configuration bundle and start the MCP servers it defines.
-const login = (() => { try { return JSON.parse(fs.readFileSync(path.join(process.env.CODEX_HOME, "auth.json"), "utf8")); } catch { return null; } })();
-const plan = (() => { try { return JSON.parse(Buffer.from(login.tokens.id_token.split(".")[1], "base64url").toString("utf8"))["https://api.openai.com/auth"].chatgpt_plan_type; } catch { return undefined; } })();
+const authFile = path.join(process.env.CODEX_HOME ?? "", "auth.json");
+const claimsOf = (token) => { try { return JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8")); } catch { return {}; } };
+let login = (() => { try { return JSON.parse(fs.readFileSync(authFile, "utf8")); } catch { return null; } })();
+// What 0.160.0 does with a login before anything else: refresh an access
+// token within five minutes of its expiry, or one the provider rejects with
+// 401, at CODEX_REFRESH_TOKEN_URL_OVERRIDE or else at its issuer, then store
+// and use the tokens it gets back.
+const authenticated = login !== null && (args[0] === "features" || args[0] === "exec");
+const stale = authenticated && (claimsOf(login.tokens?.access_token ?? "").exp ?? 0) * 1000 < Date.now() + 5 * 60 * 1000;
+const rejected = args[0] === "exec" && fs.readFileSync(${JSON.stringify(modePath)}, "utf8").trim() === "unauthorized";
+if (authenticated && (stale || rejected)) {
+  const target = process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE ?? ${JSON.stringify((backend ?? "http://127.0.0.1:0") + "/oauth/token")};
+  fs.appendFileSync(${JSON.stringify(join(root, "codex-refresh.log"))}, target + "\\n");
+  try {
+    const refreshed = await (await fetch(target, { method: "POST" })).json();
+    login = { ...login, tokens: { ...login.tokens, ...refreshed } };
+    fs.writeFileSync(authFile, JSON.stringify(login));
+  } catch {
+    console.error("Failed to refresh token: error sending request for url (" + target + ")");
+    process.exit(1);
+  }
+}
+// And once it holds a login of a managed plan: download the workspace
+// configuration bundle and start the MCP servers it defines.
+const plan = claimsOf(login?.tokens?.id_token ?? "")["https://api.openai.com/auth"]?.chatgpt_plan_type;
 if (${JSON.stringify(backend ?? "")} !== "" && ${JSON.stringify(managedBundlePlans)}.includes(plan) && (args[0] === "features" || args[0] === "exec")) {
   const bundle = await (await fetch(${JSON.stringify(backend ?? "")} + "/backend-api/wham/config/bundle")).json();
   for (const fragment of bundle.config_toml?.enterprise_managed ?? []) {
@@ -196,6 +234,16 @@ process.exit(0);
     calls: () => {
       try {
         return readFileSync(join(root, "codex-calls.log"), "utf8")
+          .trim()
+          .split("\n");
+      } catch {
+        return [];
+      }
+    },
+    /** Every URL at which the client tried to refresh its login. */
+    refreshAttempts: () => {
+      try {
+        return readFileSync(join(root, "codex-refresh.log"), "utf8")
           .trim()
           .split("\n");
       } catch {

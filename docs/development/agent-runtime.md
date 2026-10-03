@@ -162,12 +162,44 @@ An authenticated Codex probe is deliberately not used as the boundary, since
 fetching and applying managed configuration can have side effects before the
 Runtime could inspect the result.
 
+A bounded Codex run never refreshes its copied login. The credential
+generation admitted by AI Office stays fixed for the lifetime of the run,
+because a refreshed credential can carry a different plan or workspace
+identity: with `codex-cli` 0.160.0, a stored personal login whose access token
+had expired was refreshed at startup, the issuer returned Enterprise tokens,
+and Codex then downloaded the workspace configuration and started its MCP
+server. Two controls prevent this:
+
+- The child's `CODEX_REFRESH_TOKEN_URL_OVERRIDE` is always
+  `http://127.0.0.1:0/ai-office-refresh-disabled`, a loopback address nothing
+  can listen on. 0.160.0 sends every refresh there, whether it is triggered by
+  a token near expiry or by the provider answering `401`, so the refresh fails,
+  no new tokens are installed and the run fails closed instead of changing
+  identity. This is the boundary.
+- A login is admitted only if its access token's `exp` claim satisfies
+  `exp > now + run timeout + 5 minutes + 1 minute`. The run timeout is the
+  role timeout of the run; five minutes is the window before expiry in which
+  0.160.0 refreshes (it refreshed with 280 seconds left and not with 320); one
+  minute allows for clock difference with the issuer. Before the run timeout
+  is known, the same rule is applied with a zero timeout, ahead of the version
+  and feature probes. A missing, non-integer, non-positive or out-of-range
+  `exp` is refused. This keeps predictably stale runs from starting; it is
+  not what stops a refresh.
+
+An expired or nearly expired login therefore fails with `WORKER_UNAVAILABLE`.
+The operator refreshes it by running or logging in with Codex outside AI
+Office, then retries. AI Office does not call the refresh endpoint itself and
+does not use an authenticated Codex probe to refresh and inspect the result,
+since either would let provider-controlled managed configuration become active
+before the boundary exists. Tokens refreshed inside an isolated run are
+neither accepted nor persisted.
+
 The claims are read locally and their signature is not verified. This decides
 which stored logins the worker will hand to Codex; it does not authenticate
 them, and the provider still does when Codex uses the login. It relies on the
 login file being what the operator's own `codex login` wrote, on Codex 0.160.0
-deciding from the same claim, and on the provider not treating a personal plan
-as a managed workspace. It says nothing about the safety of account classes
+deciding from the same claim of the same, unrefreshed tokens, and on the
+provider not treating a personal plan as a managed workspace. It says nothing about the safety of account classes
 that have not been audited, and a provider-side change for an admitted plan
 would not be detected. Both tokens in the file must name the same admitted
 plan. Only the plan claim is read; nothing decoded is logged or stored.
@@ -182,13 +214,18 @@ Every `codex` process it starts, including the version and feature probes, runs
 in a fresh private temporary tree (mode `0700`). The tree holds an empty `HOME`,
 an isolated `CODEX_HOME` and a private working directory, which during
 `codex exec` contains only the generated output schema. The child environment
-is exactly `PATH`, that `HOME` and that `CODEX_HOME`; provider keys, proxy
-variables and the operator's Codex home are not inherited.
+is exactly `PATH`, that `HOME`, that `CODEX_HOME` and a fixed
+`CODEX_REFRESH_TOKEN_URL_OVERRIDE` (see below); provider keys, proxy variables,
+the operator's Codex home and any refresh override in the operator's
+environment are not inherited.
 
 The worker owns the whole process group of each `codex` process. On success as
 well as on failure, cancellation and timeout it kills every remaining member
 of the group and waits for the group to be empty before it returns, and only
-then removes the tree. A process that leaves the group (a new session) is not
+then removes the tree. That wait has no upper bound: where the Runtime process
+is itself the reaper of orphaned processes and does not reap them (for example
+as PID 1 of a container), a killed descendant stays a zombie and the call does
+not return. This is a known defect tracked as follow-up work. A process that leaves the group (a new session) is not
 owned. If the tree cannot be removed the run fails with `WORKER_FAILED` rather
 than reporting a result while a copy of the login may remain.
 
@@ -216,9 +253,8 @@ the operator's home, and `OPENAI_API_KEY`/`CODEX_API_KEY` are not used. Because
 only that file is copied, the operator's `AGENTS.md`, `AGENTS.override.md`,
 `config.toml`, skills, rules, MCP and plugin configuration, memories and
 session history are not loaded. The copy is deleted with the tree, which is
-ordinary file removal, not secure erasure. If Codex refreshes a ChatGPT login
-during a run, the refreshed token is discarded with the copy and the operator's
-`auth.json` keeps the old one, so the operator may have to log in again.
+ordinary file removal, not secure erasure. The copy is never refreshed and the
+operator's `auth.json` is never rewritten.
 
 `codex exec` runs with `--ephemeral`, `--ignore-user-config`,
 `--strict-config`, `--sandbox read-only`, web search disabled, no MCP servers,
@@ -247,8 +283,9 @@ one added by a newer CLI) fails with `WORKER_UNAVAILABLE`. In 0.160.0
 removes the shell tools, and the check requires it to be off. The probe runs
 without the login; `codex exec` runs with it. What Codex loads only for an
 authenticated session is therefore not covered by the probe: managed workspace
-configuration is kept out by the plan allowlist above, and provider-supplied
-model metadata is a stated limitation below.
+configuration is kept out by the plan allowlist together with the refresh
+block above, and provider-supplied model metadata is a stated limitation
+below.
 
 What this does not achieve:
 

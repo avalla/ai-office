@@ -18,6 +18,7 @@ import {
   CodexWorkerRuntime,
   auditedCodexVersions,
   codexDisabledFeatures,
+  codexRefreshBlockedUrl,
   parseCodexWorkerOutput,
   supportedPersonalPlanClaims,
   verifyCodexFeatureIsolation,
@@ -108,8 +109,16 @@ describe("bounded Codex worker", () => {
   const runtime = (
     runner: (request: WorkerProcessRequest) => Promise<string>,
     model?: string,
+    now?: () => number,
   ) =>
-    new CodexWorkerRuntime("codex-test", runner, model, "posix", operatorHome);
+    new CodexWorkerRuntime(
+      "codex-test",
+      runner,
+      model,
+      "posix",
+      operatorHome,
+      now,
+    );
 
   test("pins the selected model and effort in an isolated, read-only CLI invocation", async () => {
     const calls: WorkerProcessRequest[] = [];
@@ -181,9 +190,13 @@ describe("bounded Codex worker", () => {
     for (const call of calls) {
       expect(Object.keys(call.env!).sort()).toEqual([
         "CODEX_HOME",
+        "CODEX_REFRESH_TOKEN_URL_OVERRIDE",
         "HOME",
         "PATH",
       ]);
+      expect(call.env!.CODEX_REFRESH_TOKEN_URL_OVERRIDE).toBe(
+        "http://127.0.0.1:0/ai-office-refresh-disabled",
+      );
       expect(call.env!.CODEX_HOME).not.toBe(operatorHome);
       expect(call.env!.HOME).not.toBe(homedir());
       expect(existsSync(call.env!.CODEX_HOME!)).toBe(false);
@@ -517,6 +530,118 @@ describe("bounded Codex worker", () => {
       ["unknown field", login((value) => (value.future_credential = 1))],
     ] as const)
       expect(await attempt(text), label).toEqual(refused);
+  });
+
+  test("an access token must stay outside the refresh window for the whole bounded run", async () => {
+    expect(codexRefreshBlockedUrl).toBe(
+      "http://127.0.0.1:0/ai-office-refresh-disabled",
+    );
+    // A fixed clock: 2027-01-15T08:00:00Z. The run may take ten minutes.
+    const nowMs = 1_800_000_000_000;
+    const now = nowMs / 1000;
+    const run = { ...limits, timeoutMs: 600_000 };
+    const refreshWindow = 300;
+    const clockSkew = 60;
+    const auth = join(operatorHome, "auth.json");
+    const attempt = async (exp: unknown) => {
+      writeFileSync(auth, codexLogin("plus", "s", exp), { mode: 0o600 });
+      const calls: string[] = [];
+      const outcome = (work: Promise<unknown>) =>
+        work.then(
+          () => "admitted",
+          (error: unknown) => (error as WorkerRuntimeError).code,
+        );
+      const worker = () =>
+        runtime(
+          async (request) => {
+            calls.push(request.args[0]!);
+            return inspection(request) ?? jsonl(events);
+          },
+          undefined,
+          () => nowMs,
+        );
+      const inspected = await outcome(worker().inspect());
+      calls.length = 0;
+      const executed = await outcome(worker().execute(context, run));
+      return { inspected, executed, calls };
+    };
+    const admitted = {
+      inspected: "admitted",
+      executed: "admitted",
+      calls: ["--version", "features", "exec"],
+    };
+    // Refused before any Codex process, the unauthenticated probes included.
+    const refused = {
+      inspected: "WORKER_UNAVAILABLE",
+      executed: "WORKER_UNAVAILABLE",
+      calls: [],
+    };
+    // Usable now but not for the whole run: the probes run, the task is not sent.
+    const tooShort = {
+      inspected: "admitted",
+      executed: "WORKER_UNAVAILABLE",
+      calls: ["--version", "features"],
+    };
+    const needed = now + 600 + refreshWindow + clockSkew;
+
+    expect(await attempt(needed + 1)).toEqual(admitted);
+    expect(await attempt(4102444800)).toEqual(admitted);
+    // exp > now + timeout + refresh window + clock skew is strict.
+    expect(await attempt(needed)).toEqual(tooShort);
+    expect(await attempt(needed - 1)).toEqual(tooShort);
+    // Beyond the refresh window, shorter than the run.
+    expect(await attempt(now + refreshWindow + clockSkew + 1)).toEqual(
+      tooShort,
+    );
+    expect(await attempt(now + 600)).toEqual(tooShort);
+    // Inside the refresh window, at it, and already expired.
+    expect(await attempt(now + refreshWindow + clockSkew)).toEqual(refused);
+    expect(await attempt(now + 200)).toEqual(refused);
+    expect(await attempt(now)).toEqual(refused);
+    expect(await attempt(now - 1)).toEqual(refused);
+    expect(await attempt(now - 86400)).toEqual(refused);
+    // Missing, non-numeric, malformed and absurd values.
+    for (const exp of [
+      null,
+      "4102444800",
+      "",
+      true,
+      [4102444800],
+      { exp: 4102444800 },
+      4102444800.5,
+      0,
+      -1,
+      -4102444800,
+      1e300,
+      Number.MAX_SAFE_INTEGER,
+      Number.MAX_SAFE_INTEGER + 2,
+      9_007_199_254_741,
+    ])
+      expect(await attempt(exp), JSON.stringify(exp)).toEqual(refused);
+    // The largest value whose millisecond form is still exact is accepted.
+    expect(await attempt(9_007_199_254_740)).toEqual(admitted);
+  });
+
+  test("the refresh block is fixed by the worker and never taken from the operator's environment", async () => {
+    const ambient = process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE;
+    process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE =
+      "https://issuer.example.invalid/oauth/token";
+    try {
+      const seen: (string | undefined)[] = [];
+      await runtime(async (request) => {
+        seen.push(request.env!.CODEX_REFRESH_TOKEN_URL_OVERRIDE);
+        return inspection(request) ?? jsonl(events);
+      }).execute(context, limits);
+      expect(seen).toEqual([
+        codexRefreshBlockedUrl,
+        codexRefreshBlockedUrl,
+        codexRefreshBlockedUrl,
+      ]);
+    } finally {
+      if (ambient === undefined)
+        delete process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE;
+      else process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE = ambient;
+    }
   });
 
   test("routes only exact OpenAI models and never substitutes one", async () => {
