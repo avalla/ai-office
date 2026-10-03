@@ -3,6 +3,8 @@ import { verifyDomainPackManifest } from "../../../domain-pack-contracts/src/ind
 import {
   ProjectDefinitionConflictError,
   StaleProjectDefinitionError,
+  compareExactSources,
+  compareOwnedDefinitions,
   parseDefinitionMutation,
   sourceKey,
   type DefinitionIssueCode,
@@ -367,12 +369,8 @@ export class ManageProjectDefinitions {
         overrides = overrides.filter(
           (item) => sourceKey(item.source) !== sourceKey(mutation.source),
         );
-      owned.sort((a, b) =>
-        `${a.kind}/${a.id}`.localeCompare(`${b.kind}/${b.id}`),
-      );
-      overrides.sort((a, b) =>
-        sourceKey(a.source).localeCompare(sourceKey(b.source)),
-      );
+      owned.sort(compareOwnedDefinitions);
+      overrides.sort((a, b) => compareExactSources(a.source, b.source));
       const result = await this.dependencies.definitions.replace(
         {
           projectId: input.projectId,

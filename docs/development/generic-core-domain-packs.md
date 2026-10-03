@@ -179,7 +179,10 @@ and `prompts`, plus typed project-owned `workflows` with `taskType` and stage
 references. Workflow stage IDs, task type IDs and role IDs are checked for
 syntax and duplicate stages now; whether the referenced definitions exist in
 the eventual effective configuration is deferred to GP-06. GP-07 does not
-resolve them against the legacy OfficeManifest or selected packs.
+resolve them against the legacy OfficeManifest or selected packs. A workflow
+may declare at most 1,000 stages, the same bound portable archive format 6
+enforces, so every accepted definition stays exportable. Mutation results and
+later reads list entries in the same code-unit order on both storage backends.
 
 | Schema-1 pack contribution                                           | `replace`               | `extend`                      | `disable`   |
 | -------------------------------------------------------------------- | ----------------------- | ----------------------------- | ----------- |

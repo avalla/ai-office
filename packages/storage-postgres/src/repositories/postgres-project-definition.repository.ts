@@ -1,5 +1,7 @@
 import {
   StaleProjectDefinitionError,
+  compareExactSources,
+  compareOwnedDefinitions,
   type ProjectDefinitionState,
   type ProjectOwnedDefinition,
   type ProjectDefinitionOverride,
@@ -56,11 +58,11 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
       [projectId, this.tenantId],
     );
     const ownedRows = await this.database.query<OwnedRow>(
-      `SELECT kind, local_id, revision, enabled, payload_json, actor_id, changed_at FROM core.project_owned_definition WHERE project_id = $1 AND tenant_id = $2 ORDER BY kind, local_id`,
+      `SELECT kind, local_id, revision, enabled, payload_json, actor_id, changed_at FROM core.project_owned_definition WHERE project_id = $1 AND tenant_id = $2 ORDER BY kind COLLATE "C", local_id COLLATE "C"`,
       [projectId, this.tenantId],
     );
     const overrideRows = await this.database.query<OverrideRow>(
-      `SELECT pack_id, pack_version, manifest_digest, kind, local_id, operation, revision, payload_json, actor_id, changed_at FROM core.project_definition_override WHERE project_id = $1 AND tenant_id = $2 ORDER BY pack_id, pack_version, manifest_digest, kind, local_id`,
+      `SELECT pack_id, pack_version, manifest_digest, kind, local_id, operation, revision, payload_json, actor_id, changed_at FROM core.project_definition_override WHERE project_id = $1 AND tenant_id = $2 ORDER BY pack_id COLLATE "C", pack_version COLLATE "C", manifest_digest COLLATE "C", kind COLLATE "C", local_id COLLATE "C"`,
       [projectId, this.tenantId],
     );
     return {
@@ -160,7 +162,14 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
             item.changedAt,
           ],
         );
-      return { ...state, revision: expectedRevision + 1 };
+      return {
+        ...state,
+        revision: expectedRevision + 1,
+        owned: [...state.owned].sort(compareOwnedDefinitions),
+        overrides: [...state.overrides].sort((left, right) =>
+          compareExactSources(left.source, right.source),
+        ),
+      };
     });
   }
 }

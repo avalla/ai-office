@@ -375,6 +375,7 @@ export function defineProjectStorageContracts(
             owned: [
               { ...owned, id: "z", payload: { id: "z" } },
               { ...owned, id: "a", payload: { id: "a" } },
+              { ...owned, id: "B", payload: { id: "B" } },
             ],
             overrides: [
               { ...override, source: { ...source, kind: "agents" as const } },
@@ -387,7 +388,8 @@ export function defineProjectStorageContracts(
         expect(created.revision).toBe(1);
         expect(
           (await definitions().get(projectId)).owned.map((item) => item.id),
-        ).toEqual(["a", "z"]);
+        ).toEqual(["B", "a", "z"]);
+        expect(created).toEqual(await definitions().get(projectId));
         expect(
           (await definitions().get(projectId)).overrides.map(
             (item) => item.source.kind,
