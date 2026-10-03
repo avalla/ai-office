@@ -4,7 +4,7 @@ export interface QueueConfiguration {
   provider: QueueProvider;
   redisUrl?: string;
   status: "disabled" | "configured" | "misconfigured";
-  worker: "claude" | "gateway";
+  worker: "claude" | "codex" | "gateway";
 }
 
 /** Reads host-local queue configuration without returning credential-bearing diagnostics. */
@@ -13,12 +13,17 @@ export function readQueueConfiguration(
 ): QueueConfiguration {
   const provider = env.AI_OFFICE_QUEUE_PROVIDER ?? "none";
   const workerValue = env.AI_OFFICE_QUEUE_WORKER ?? "claude";
-  const worker = workerValue === "gateway" ? "gateway" : "claude";
+  const worker =
+    workerValue === "gateway" || workerValue === "codex"
+      ? workerValue
+      : "claude";
   if (provider === "none")
     return { provider: "none", status: "disabled", worker };
   if (
     provider !== "bullmq" ||
-    (workerValue !== "claude" && workerValue !== "gateway")
+    (workerValue !== "claude" &&
+      workerValue !== "codex" &&
+      workerValue !== "gateway")
   )
     return { provider: "bullmq", status: "misconfigured", worker };
   const redisUrl = env.AI_OFFICE_REDIS_URL;

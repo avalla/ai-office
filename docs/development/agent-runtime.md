@@ -84,6 +84,8 @@ After scheduling a task, choose the executor explicitly:
 ```bash
 ai-office run:tick --project <project-id> --worker claude
 ai-office run:tick --project <project-id> --worker claude --worker-model <model>
+ai-office run:tick --project <project-id> --worker codex
+ai-office run:tick --project <project-id> --worker codex --worker-model <model>
 ai-office run:tick --project <project-id> --worker gateway
 ai-office run:show --project <project-id> --run <run-id>
 ```
@@ -127,6 +129,188 @@ hooks may still run. Operators requiring process-level isolation must add an
 OS/container policy outside this adapter's guarantee. A host started before a
 PATH/login change may need to be restarted explicitly.
 
+The Codex worker runs only explicitly audited `codex-cli` versions, held in an
+allowlist in the adapter. The only audited version is `0.160.0`: an older,
+newer, pre-release or unparseable version fails with `WORKER_UNAVAILABLE`
+before any task is dispatched, until that version is audited and added. No
+version range is accepted and no other worker is tried. The worker also needs
+that CLI on the Runtime host PATH and a file-backed ChatGPT login of a
+supported personal plan.
+
+Only explicitly audited personal ChatGPT account classes are supported. The
+adapter reads the plan claim (`chatgpt_plan_type`) from the login's tokens and
+admits exactly `free`, `go`, `plus`, `pro`, `prolite` and `promax`, the values
+`codex-cli` 0.160.0 writes for personal plans. Managed organizational
+workspaces are intentionally unsupported: Team, Business, Enterprise,
+Education and their variants, any plan the adapter does not list, a missing
+plan and a malformed token or claim all fail with `WORKER_UNAVAILABLE` before
+any Codex process is started, the version and feature probes included, and no
+other worker is tried. An API-key login and every other credential kind in
+`auth.json` are refused the same way; provider API credentials belong to the
+gateway worker, which has its own trust model.
+
+The restriction exists because `codex-cli` 0.160.0, once authenticated with a
+managed-workspace login, downloads provider-controlled workspace configuration
+and applies it to the session. In a local reproduction such configuration
+defined an MCP server that Codex started as a host process under this worker's
+exact flags, `mcp_servers={}` included, and turned on a feature that was not
+disabled on the command line. The download was observed for the `business`, `ent26`,
+`enterprise`, `enterprise_cbp_automation`, `enterprise_cbp_usage_based`, `hc`,
+`edu`, `education` and `edu_pro` claims; the allowlist does not depend on that
+list. The check is made by AI Office itself while it validates `auth.json`.
+An authenticated Codex probe is deliberately not used as the boundary, since
+fetching and applying managed configuration can have side effects before the
+Runtime could inspect the result.
+
+The claims are read locally and their signature is not verified. This decides
+which stored logins the worker will hand to Codex; it does not authenticate
+them, and the provider still does when Codex uses the login. It relies on the
+login file being what the operator's own `codex login` wrote, on Codex 0.160.0
+deciding from the same claim, and on the provider not treating a personal plan
+as a managed workspace. It says nothing about the safety of account classes
+that have not been audited, and a provider-side change for an admitted plan
+would not be detected. Both tokens in the file must name the same admitted
+plan. Only the plan claim is read; nothing decoded is logged or stored.
+
+A managed-workspace Codex executor would need its own capability and trust
+design rather than reuse of this worker. Executor credentials are not yet
+modelled by trust mode (personal subscription, provider API key, managed
+workspace, Runtime-owned credential); that is follow-up work outside this
+adapter.
+
+Every `codex` process it starts, including the version and feature probes, runs
+in a fresh private temporary tree (mode `0700`). The tree holds an empty `HOME`,
+an isolated `CODEX_HOME` and a private working directory, which during
+`codex exec` contains only the generated output schema. The child environment
+is exactly `PATH`, that `HOME` and that `CODEX_HOME`; provider keys, proxy
+variables and the operator's Codex home are not inherited.
+
+The worker owns the whole process group of each `codex` process. On success as
+well as on failure, cancellation and timeout it kills every remaining member
+of the group and waits for the group to be empty before it returns, and only
+then removes the tree. A process that leaves the group (a new session) is not
+owned. If the tree cannot be removed the run fails with `WORKER_FAILED` rather
+than reporting a result while a copy of the login may remain.
+
+The tree is created under the Runtime's temporary directory, whose ancestors
+are not trusted. Codex normally walks up from its working directory to a
+project root marked by `.git` and loads that directory's `.agents/skills` and
+`.codex/skills`; a `.git` in the temporary directory itself would be enough.
+The worker therefore turns project-root discovery off
+(`project_root_markers=[]`) for the feature probe and for `codex exec`, so no
+ancestor project state, skills included, is loaded.
+
+Authentication is the only operator state that crosses into the isolated home.
+The adapter reads `auth.json` from the operator's Codex home (`CODEX_HOME`, or
+`~/.codex`) and copies it, mode `0600`, into the isolated home. The source must
+be the Runtime user's own regular file; it is opened read-only and without
+blocking, checked on the opened descriptor, read up to a fixed size, and never
+rewritten. `auth.json` itself is not followed when it is a symbolic link; a
+Codex home directory that is a link still resolves. A keyring-only login, a
+missing, empty, oversized or non-JSON file, a FIFO, socket, device or
+directory in its place, a relative `CODEX_HOME` and a login outside the
+supported personal plans fail with `WORKER_UNAVAILABLE` before any Codex
+process starts. The login is read and admitted again immediately before it is
+copied, so the copied bytes are the admitted ones; the worker never falls back to
+the operator's home, and `OPENAI_API_KEY`/`CODEX_API_KEY` are not used. Because
+only that file is copied, the operator's `AGENTS.md`, `AGENTS.override.md`,
+`config.toml`, skills, rules, MCP and plugin configuration, memories and
+session history are not loaded. The copy is deleted with the tree, which is
+ordinary file removal, not secure erasure. If Codex refreshes a ChatGPT login
+during a run, the refreshed token is discarded with the copy and the operator's
+`auth.json` keeps the old one, so the operator may have to log in again.
+
+`codex exec` runs with `--ephemeral`, `--ignore-user-config`,
+`--strict-config`, `--sandbox read-only`, web search disabled, no MCP servers,
+bundled skills disabled, project instruction files disabled
+(`project_doc_max_bytes=0`) and project-root discovery disabled
+(`project_root_markers=[]`). It disables every default-enabled capability
+feature of the supported CLI: shell and process execution (`shell_tool`,
+`unified_exec`, `unified_exec_tty`, `shell_snapshot`, `code_mode_host`,
+`code_mode`, `code_mode_only`, `sleep_tool`, `hooks`, `worktrees`,
+`workspace_dependencies`), local image reading (`view_image`), network, browser
+and computer automation (`image_generation`, `browser_use`,
+`browser_use_external`, `browser_use_full_cdp_access`, `in_app_browser`,
+`computer_use`, `in_app_local_automation`), apps, plugins, skills and MCP
+(`apps`, `plugins`, `plugin_sharing`, `remote_plugin`,
+`skill_mcp_dependency_install`, `skill_search`, `mentions_v2`,
+`tool_call_mcp_elicitation`, `tool_suggest`, `auth_elicitation`), agents, goals
+and memory (`multi_agent`, `multi_agent_v2`, `goals`, `memories`,
+`guardian_approval`) and background or interactive surfaces
+(`daemon_auto_start`, `in_app_updates`, `in_app_chat`, `in_app_dictation`,
+`realtime_conversation`, `fast_mode`). Before any task is dispatched the
+adapter runs `codex features list` with the same `--disable` flags and
+configuration overrides and requires the reported state to match its audit: an unknown feature key, a feature that
+stays enabled, or an enabled feature the adapter has never audited (for example
+one added by a newer CLI) fails with `WORKER_UNAVAILABLE`. In 0.160.0
+`--disable unified_exec` is accepted but has no effect; `shell_tool` is what
+removes the shell tools, and the check requires it to be off. The probe runs
+without the login; `codex exec` runs with it. What Codex loads only for an
+authenticated session is therefore not covered by the probe: managed workspace
+configuration is kept out by the plan allowlist above, and provider-supplied
+model metadata is a stated limitation below.
+
+What this does not achieve:
+
+- The model context is not only Runtime data. Codex adds its own built-in
+  instructions, sandbox notice and an environment block naming the temporary
+  working directory, shell, date and timezone. The recorded `inputHash` covers
+  the Runtime context only.
+- Provider-supplied model metadata is not pinned. With a ChatGPT login Codex
+  fetches the model list from the provider at session start and uses it in the
+  same run; it can change the model-visible tools and the base instructions
+  without any change of CLI version, so the version allowlist does not cover
+  it. In every case tried under this worker's flags it changed what the model
+  is shown and told, not what the client will execute.
+- Feature flags do not remove tools that Codex derives from model metadata. On
+  0.160.0 a code-mode model is still shown `exec`, `wait`, `request_user_input`
+  and the sub-agent tools, and other models `apply_patch` and
+  `request_user_input`. In this configuration they were observed to be refused
+  by the client (`exec` because its host is disabled, sub-agents because an
+  ephemeral session has no rollout, `apply_patch` by the read-only sandbox), but
+  they are model-visible and a refused call still costs a model round trip.
+- Host-level Codex configuration under `/etc/codex` (configuration,
+  requirements, rules, agents and skills) is controlled by the host
+  administrator and is not excluded.
+- Codex itself starts local helper processes such as `lsb_release` and
+  `getconf`, resolved through the inherited `PATH`, before any model
+  interaction. With a ChatGPT login it also sends its own analytics events
+  (thread id, model, operating system, CLI version) to the provider.
+- This narrows what the Codex client loads and offers. It is not a boundary
+  against another process of the same user, which can read the temporary copy
+  while it exists, as it can read the operator's own login.
+
+The adapter accepts exactly one completed JSONL turn with exactly one
+schema-constrained `{summary, content}` message. Reasoning items, non-fatal
+notice items and the `Reconnecting... n/m` notice Codex prints while it retries
+a dropped stream are ignored; a retry that recovers still needs the completed
+turn and a zero exit, and one that gives up ends in a failed turn. Any other
+`error` event, any other item, any unknown event, a failed turn and anything
+after the completed turn fail closed. Codex emits no JSONL
+item for a tool call it refuses, so this check bounds the result and is not
+what keeps tools away. The recorded model is the persisted routed model, never
+one named by the output. Runtime authorization and controlled-action policy
+remain authoritative. A Runtime host started before a PATH/login change may
+need a restart.
+
+The Codex CLI reports token usage but no trustworthy USD estimate to this
+adapter. The role timeout is enforced by process termination. The CLI does not
+expose an equivalent hard `maxCostMicros` or model-iteration limit: the result
+records unknown cost, malformed usage is recorded as unknown, and operators who
+need a metered budget must select the gateway worker. Codex only produces
+analysis and drafted content; it does not edit files or run tests for the
+Developer stage.
+
+When the optional BullMQ queue is enabled, `AI_OFFICE_QUEUE_WORKER=codex`
+selects this worker for every queued run on that Runtime host; the default
+remains `claude`, and any other value leaves the queue misconfigured rather
+than selecting a worker. Queued runs execute the same `run:tick --worker codex`
+command, with the same isolation and authentication, as an explicit tick. The
+queue has one host-wide worker setting; mixed Claude and Codex stages need
+explicit per-run `run:tick` selection until per-agent executor routing is
+implemented. A run that the selected worker cannot execute fails; no other
+executor or provider is tried.
+
 The first real worker produces **analysis and drafted content**. It receives
 task title/description, synchronized agent/role identity and version, and the
 active pinned stage's objective/checks when present. That data is sent to the
@@ -161,13 +345,14 @@ The dashboard identifies simulation, controlled action, real worker and unknown
 historical execution separately. Task history links to each run's events/output.
 Historical provenance is never guessed from a result's prose.
 
-The role's timeout and iteration limit become process deadline and client turn
-limit. For Claude, `maxCostMicros` denotes millionths of a USD client cost
+For Claude, the role's timeout and iteration limit become process deadline and
+client turn limit. Its `maxCostMicros` denotes millionths of a USD client cost
 estimate per run. This client-side estimate limit is separate from gateway
 budgets and actual billing; subscription cost is unknown. Reported input tokens
 exclude cache-read/cache-creation counts. Missing estimates or tokens remain
 unknown. Routed runs execute exactly their persisted model: the Claude worker passes it
-as `--model` and its `reasoning_effort` as `--effort`, and refuses other
+as `--model` and its `reasoning_effort` as `--effort`; Codex passes it as
+`--model` and `model_reasoning_effort`. Each refuses other
 providers and `max_output_tokens` with `WORKER_MODEL_UNSUPPORTED` before
 dispatch. `run:tick` checks the batch first and starts nothing when a queued
 routed run cannot be honored. `--worker-model` overrides client model selection
@@ -181,8 +366,8 @@ estimate, and the role limits applied at dispatch. See
 [agent model routing](llm-cost-control.md#agent-model-routing).
 
 Cancellation or deadline stops and reaps the whole worker process group on
-POSIX before the execution returns. The real Claude worker is unsupported on
-Windows until a tested Job Object or equivalent process-tree ownership boundary
+POSIX before the execution returns. The real Claude and Codex workers are
+unsupported on Windows until a tested Job Object or equivalent process-tree ownership boundary
 exists; simulation and controlled actions are not disabled. Controlled action
 invocation receives the assigned role timeout and propagates its AbortSignal.
 A connector that ignores cancellation is not detached: the runtime waits for

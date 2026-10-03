@@ -147,6 +147,7 @@ a model.
 | Assigned provider | First-party executor | Parameters | Cost evidence |
 | --- | --- | --- | --- |
 | `openai` | `run:tick --worker gateway` | `reasoning_effort` and `max_output_tokens` applied exactly | metered by the gateway |
+| `openai` | `run:tick --worker codex` | `reasoning_effort` as `model_reasoning_effort`; `max_output_tokens` refused | token usage; USD cost unknown |
 | `anthropic` | `run:tick --worker claude` | `reasoning_effort` as `--effort`; `max_output_tokens` refused | client estimate or unknown |
 
 The gateway worker:

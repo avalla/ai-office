@@ -328,6 +328,38 @@ describe("bounded Claude worker", () => {
   );
 
   test.skipIf(process.platform === "win32")(
+    "POSIX success does not return while a descendant of the worker is alive",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "ao-worker-success-tree-"));
+      const pidFile = join(root, "grandchild.pid");
+      try {
+        // The parent backgrounds a detached-stdio child and exits 0.
+        const script = [
+          "const { spawn } = require('node:child_process');",
+          "const fs = require('node:fs');",
+          `const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); child.unref(); fs.writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
+          "process.stdout.write('done'); process.exit(0);",
+        ].join(" ");
+        expect(
+          await runWorkerProcess({
+            executable: process.execPath,
+            args: ["-e", script],
+            cwd: root,
+            input: "",
+            timeoutMs: 10000,
+          }),
+        ).toBe("done");
+        // No waiting: the runner already owned and reaped the whole group.
+        const pid = Number(readFileSync(pidFile, "utf8"));
+        expect(pid).toBeGreaterThan(0);
+        expect(() => process.kill(pid, 0)).toThrow();
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
     "POSIX AbortSignal cancellation also kills the whole worker group",
     async () => {
       const root = mkdtempSync(join(tmpdir(), "ao-worker-abort-tree-"));

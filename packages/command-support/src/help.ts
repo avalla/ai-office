@@ -105,7 +105,7 @@ Commands:
   model:reload [--json]
     operator-only audited reload of host-local routing between scheduled runs
   run:schedule --project <id> --task <id> --agent <id> [--resource <id> --operation <name> [--arguments <json>]]
-  run:tick --project <id> [--worker claude [--worker-model <model>] | --worker gateway | --simulate] [--capacity <1-100>] [--json]
+  run:tick --project <id> [--worker claude|codex [--worker-model <model>] | --worker gateway | --simulate] [--capacity <1-100>] [--json]
   run:cancel --project <id> --run <id> --reason <text> [--json]
   run:reconcile --project <id> --run <id> --reason <text> [--approve <planHash>] [--json]
   run:list --project <id>
