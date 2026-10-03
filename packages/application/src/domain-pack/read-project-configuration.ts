@@ -1,3 +1,4 @@
+import { ProjectNotFoundError } from "../errors.ts";
 import type { InstalledDomainPackCatalog } from "../ports/installed-domain-pack-catalog.port.ts";
 import type { ProjectPackBindingRepository } from "../ports/project-pack-binding-repository.port.ts";
 import type { ProjectDefinitionRepository } from "../ports/project-definition-repository.port.ts";
@@ -25,10 +26,7 @@ export class ReadProjectConfiguration {
     const { binding, definitions } = await this.ports.transactions.run(
       async () => {
         if (!(await this.ports.projects.findById(projectId)))
-          throw new ProjectConfigurationResolutionError(
-            "configuration_invariant",
-            "Project does not exist",
-          );
+          throw new ProjectNotFoundError(projectId);
         const binding = await this.ports.bindings.get(projectId);
         const definitions = await this.ports.definitions.get(projectId);
         const bindingCheck = await this.ports.bindings.get(projectId);

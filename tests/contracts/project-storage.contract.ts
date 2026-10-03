@@ -11,6 +11,9 @@ import {
   type ProjectPackBindingRepository,
 } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
 import type { PackIdentity } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
+import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
+import { resolveProjectConfiguration } from "@ai-office/application/domain-pack/resolve-project-configuration.ts";
+import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
 import type {
   LinkedRequirement,
   TaskRequirementRepository,
@@ -895,6 +898,135 @@ export function defineProjectStorageContracts(
       ).rejects.toBeInstanceOf(TransactionAlreadyActiveError);
     });
   });
+  if (features.packBindings && features.definitions)
+    describe("derived project configuration sources", () => {
+      // No pack is installed: the contract is about what storage hands the
+      // GP-06 resolver, not about pack resolution.
+      const emptyCatalog = {
+        coreContractVersion: 1,
+        read: () => undefined,
+        list: () => [],
+        trusts: () => false,
+      };
+      const reader = () => {
+        if (!harness.packBindings || !harness.definitions)
+          throw new Error("Configuration source repositories are required");
+        return new ReadProjectConfiguration({
+          projects: harness.projects,
+          bindings: harness.packBindings,
+          definitions: harness.definitions,
+          transactions: harness.transactions,
+          catalog: emptyCatalog,
+        });
+      };
+      const now = new Date("2026-10-03T00:00:00.000Z");
+      const entry = (
+        kind: ProjectOwnedDefinition["kind"],
+        id: string,
+        payload: ProjectOwnedDefinition["payload"],
+        enabled = true,
+      ): ProjectOwnedDefinition => ({
+        origin: "project_owned",
+        kind,
+        id,
+        revision: 1,
+        enabled,
+        payload,
+        actorId: "operator",
+        changedAt: now.toISOString(),
+      });
+
+      test("an untouched project resolves to the fixed empty vector without creating rows", async () => {
+        if (!harness.bindingRowCounts || !harness.definitionRowCounts)
+          throw new Error("Row count probes are required");
+        const projectId = (
+          await createProject(harness, `${prefix}-configuration-empty`)
+        ).snapshot().id;
+        const result = await reader().read(projectId);
+        expect(result.configurationDigest).toBe(
+          "sha256:c272fa286a92c8d3732e97fec7b0373c3a7854cb70e4a108a7690acb92bd7b19",
+        );
+        await expect(
+          reader().read(`${prefix}-configuration-absent`),
+        ).rejects.toBeInstanceOf(ProjectNotFoundError);
+        expect(await harness.bindingRowCounts(projectId)).toEqual({
+          heads: 0,
+          packs: 0,
+        });
+        expect(await harness.definitionRowCounts(projectId)).toEqual({
+          heads: 0,
+          owned: 0,
+          overrides: 0,
+        });
+      });
+
+      test("stored definitions resolve to the provider-independent digest and order", async () => {
+        if (!harness.definitions)
+          throw new Error("Definition repository is required");
+        const projectId = (
+          await createProject(harness, `${prefix}-configuration-digest`)
+        ).snapshot().id;
+        const otherId = (
+          await createProject(harness, `${prefix}-configuration-other`)
+        ).snapshot().id;
+        // Mixed case, punctuation, key order, Unicode and empty text exercise
+        // collation and JSON storage differences between providers.
+        const owned = [
+          entry("roles", "b", { title: "\u00e9 \u{1F600}", id: "b" }),
+          entry("roles", "B", { id: "B", description: "" }),
+          entry("roles", "b-1", { id: "b-1" }),
+          entry("roles", "b.1", { id: "b.1" }, false),
+          entry("taskTypes", "Task", { id: "Task" }),
+          entry("workflows", "flow", {
+            stages: [
+              { role: "b", id: "z-last-written-first" },
+              { id: "a", role: "B" },
+            ],
+            taskType: "Task",
+            id: "flow",
+          }),
+        ];
+        const stored = await harness.definitions.replace(
+          { projectId, revision: 0, owned, overrides: [] },
+          0,
+          now,
+        );
+        const result = await reader().read(projectId);
+        const expected = resolveProjectConfiguration({
+          projectId: "provider-independent",
+          binding: {
+            projectId: "provider-independent",
+            configurationRevision: 0,
+            packs: [],
+          },
+          definitions: {
+            projectId: "provider-independent",
+            revision: 1,
+            owned: [...owned].reverse(),
+            overrides: [],
+          },
+          catalog: emptyCatalog,
+          coreContractVersion: 1,
+        });
+        expect(result).toEqual(expected);
+        expect(result.configurationDigest).toBe(
+          "sha256:82bb4212df2f7c6250d97085f490769c94dd282e89dc8452379405d97d2fc583",
+        );
+        expect(
+          result.projectOwnedDefinitions.map((item) => item.localId),
+        ).toEqual(["B", "b", "b-1", "b.1", "Task", "flow"]);
+        expect(result.disabledDefinitions).toEqual(["project:roles/b.1"]);
+        expect(result.resolvedWorkflowReferences[0]!.stages).toEqual([
+          { id: "z-last-written-first", roleId: "project:roles/b" },
+          { id: "a", roleId: "project:roles/B" },
+        ]);
+        // Reading is side-effect free and never crosses projects.
+        expect(await harness.definitions.get(projectId)).toEqual(stored);
+        expect((await reader().read(otherId)).configurationDigest).toBe(
+          "sha256:c272fa286a92c8d3732e97fec7b0373c3a7854cb70e4a108a7690acb92bd7b19",
+        );
+      });
+    });
 }
 
 async function createProject(

@@ -143,7 +143,7 @@ const descriptiveKinds: readonly ContributionKind[] = [
   "knowledge",
   "prompts",
 ];
-const projectOwnedKinds: readonly ContributionKind[] = [
+export const projectOwnedKinds: readonly ContributionKind[] = [
   ...descriptiveKinds,
   "workflows",
 ];

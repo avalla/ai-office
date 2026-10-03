@@ -15,9 +15,19 @@ import {
   type PackIdentity,
 } from "../ports/installed-domain-pack-catalog.port.ts";
 import type { ProjectPackBinding } from "../ports/project-pack-binding-repository.port.ts";
-import type {
-  ProjectDefinitionState,
-  ProjectDefinitionPayload,
+import {
+  compareExactSources,
+  compareOwnedDefinitions,
+  parseDefinitionMutation,
+  ProjectDefinitionConflictError,
+  projectOwnedKinds,
+  type DescriptiveDefinition,
+  type ExactPackDefinitionSource,
+  type OverrideOperation,
+  type ProjectDefinitionOverride,
+  type ProjectDefinitionPayload,
+  type ProjectDefinitionState,
+  type ProjectOwnedDefinition,
 } from "./project-definition.ts";
 import { resolveInstalledPacks } from "./resolve-installed-packs.ts";
 
@@ -152,33 +162,93 @@ function packFailure(error: DomainPackCatalogError): never {
   );
 }
 
-function validateRevision(value: number): void {
-  if (!Number.isSafeInteger(value) || value < 0)
+function validateRevision(value: number, minimum = 0): void {
+  if (!Number.isSafeInteger(value) || value < minimum)
     failure("configuration_invariant", "Invalid source revision");
 }
 
-function validOverridePayload(
-  value: unknown,
-  id: string,
-  partial: boolean,
-): boolean {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    return false;
-  const item = value as Record<string, unknown>;
-  if (
-    Object.keys(item).some(
-      (key) => !["id", "title", "description"].includes(key),
-    )
-  )
-    return false;
-  if (partial ? item.id !== undefined : item.id !== id) return false;
-  if (partial && item.title === undefined && item.description === undefined)
-    return false;
-  return ["title", "description"].every(
-    (key) =>
-      item[key] === undefined ||
-      (typeof item[key] === "string" && item[key].length <= 16_000),
-  );
+/**
+ * One canonical order for every derived list: pack sources in GP-07's exact
+ * source tuple order, then project-owned entries in GP-07's kind/ID order.
+ */
+function compareProvenance(
+  left: DefinitionProvenance,
+  right: DefinitionProvenance,
+): number {
+  if (left.origin === "pack_owned" && right.origin === "pack_owned")
+    return compareExactSources(
+      { ...left.pack, kind: left.kind, localId: left.localId },
+      { ...right.pack, kind: right.kind, localId: right.localId },
+    );
+  if (left.origin === "project_owned" && right.origin === "project_owned")
+    return compareOwnedDefinitions(
+      { kind: left.kind, id: left.localId },
+      { kind: right.kind, id: right.localId },
+    );
+  return left.origin === "pack_owned" ? -1 : 1;
+}
+
+/** Stored entries are re-checked against GP-07's own mutation contract. */
+function storedOwnedDefinition(entry: ProjectOwnedDefinition): {
+  readonly kind: ContributionKind;
+  readonly id: string;
+  readonly enabled: boolean;
+  readonly payload: ProjectDefinitionPayload;
+} {
+  if (!contributionKinds.some((kind) => kind === entry?.kind))
+    failure(
+      "configuration_invariant",
+      "Stored project definition has an unknown kind",
+    );
+  if (!projectOwnedKinds.includes(entry.kind))
+    failure(
+      "unsupported_security_composition",
+      `Project definition kind ${entry.kind} has no schema-1 ownership contract`,
+    );
+  validateRevision(entry.revision, 1);
+  try {
+    const parsed = parseDefinitionMutation({
+      action: "put_owned",
+      kind: entry.kind,
+      id: entry.id,
+      payload: entry.payload,
+      enabled: entry.enabled,
+    });
+    if (parsed.action !== "put_owned") throw new TypeError("unreachable");
+    return parsed;
+  } catch (error) {
+    if (error instanceof ProjectDefinitionConflictError)
+      failure(
+        "configuration_invariant",
+        `Stored project definition violates the definition contract: ${error.code}`,
+      );
+    throw error;
+  }
+}
+
+function storedOverride(entry: ProjectDefinitionOverride): {
+  readonly source: ExactPackDefinitionSource;
+  readonly operation: OverrideOperation;
+  readonly payload?: DescriptiveDefinition;
+} {
+  try {
+    const parsed = parseDefinitionMutation({
+      action: "put_override",
+      source: entry?.source,
+      operation: entry?.operation,
+      ...(entry?.payload === undefined ? {} : { payload: entry.payload }),
+    });
+    if (parsed.action !== "put_override") throw new TypeError("unreachable");
+    validateRevision(entry.revision, 1);
+    return parsed;
+  } catch (error) {
+    if (error instanceof ProjectDefinitionConflictError)
+      failure(
+        "unresolved_override",
+        `Stored override violates the override contract: ${error.code}`,
+      );
+    throw error;
+  }
 }
 
 /** Pure derived resolution over an explicit, coherent authoritative input set. */
@@ -258,11 +328,17 @@ export function resolveProjectConfiguration(input: {
     manifests.set(tupleKey(pack), manifest);
   }
 
-  const byKind = Object.fromEntries(
-    contributionKinds.map((kind) => [kind, []]),
-  ) as unknown as Record<ContributionKind, ResolvedDefinition[]>;
+  if (new Set(binding.packs.map(tupleKey)).size !== binding.packs.length)
+    failure("configuration_invariant", "Duplicate selected pack tuple");
+  const selectedById = new Map(selectedPacks.map((pack) => [pack.id, pack]));
+
   const origins: Record<string, DefinitionProvenance> = {};
   const source = new Map<string, ResolvedDefinition>();
+  // Bare kind/local-ID occurrences across all namespaces, for collision and
+  // ambiguity diagnostics only. Lookups always use a qualified effective ID.
+  const bareCount = new Map<string, number>();
+  const bareKey = (kind: ContributionKind, localId: string): string =>
+    `${kind}\u0000${localId}`;
   const add = (
     definition: ResolvedDefinition,
     provenance: DefinitionProvenance,
@@ -273,8 +349,9 @@ export function resolveProjectConfiguration(input: {
         `Duplicate effective definition ${definition.effectiveId}`,
       );
     source.set(definition.effectiveId, definition);
-    byKind[definition.kind].push(definition);
     origins[definition.effectiveId] = provenance;
+    const bare = bareKey(definition.kind, definition.localId);
+    bareCount.set(bare, (bareCount.get(bare) ?? 0) + 1);
   };
 
   for (const pack of resolvedPacks) {
@@ -295,31 +372,22 @@ export function resolveProjectConfiguration(input: {
   }
 
   const ownedDefinitions: ResolvedDefinition[] = [];
-  for (const entry of [...definitions.owned].sort((a, b) =>
-    compare(`${a.kind}\u0000${a.id}`, `${b.kind}\u0000${b.id}`),
-  )) {
-    if (
-      ![
-        "roles",
-        "taskTypes",
-        "workflows",
-        "agents",
-        "artifactTypes",
-        "evidenceTypes",
-        "knowledge",
-        "prompts",
-      ].includes(entry.kind)
-    )
+  const checkedOwned = definitions.owned.map((entry) => ({
+    ...storedOwnedDefinition(entry),
+    revision: entry.revision,
+  }));
+  for (const entry of checkedOwned.sort(compareOwnedDefinitions)) {
+    const effectiveId = projectId(entry.kind, entry.id);
+    if (source.has(effectiveId))
       failure(
-        "unsupported_security_composition",
-        `Project definition kind ${entry.kind} has no schema-1 ownership contract`,
+        "duplicate_effective_definition",
+        `Duplicate project definition ${entry.kind}/${entry.id}`,
       );
-    if (byKind[entry.kind].some((item) => item.localId === entry.id))
+    if (bareCount.has(bareKey(entry.kind, entry.id)))
       failure(
         "duplicate_effective_definition",
         `Project definition ${entry.kind}/${entry.id} collides with a selected pack source`,
       );
-    const effectiveId = projectId(entry.kind, entry.id);
     const definition = {
       effectiveId,
       kind: entry.kind,
@@ -341,13 +409,17 @@ export function resolveProjectConfiguration(input: {
     operation: string;
     revision: number;
   }[] = [];
-  for (const entry of [...definitions.overrides].sort((a, b) =>
-    compare(
-      packId(a.source, a.source.kind, a.source.localId),
-      packId(b.source, b.source.kind, b.source.localId),
-    ),
+  const overridden = new Set<string>();
+  const checkedOverrides = definitions.overrides.map((entry) => ({
+    ...storedOverride(entry),
+    revision: entry.revision,
+  }));
+  for (const entry of checkedOverrides.sort((a, b) =>
+    compareExactSources(a.source, b.source),
   )) {
-    const pack = resolvedPacks.find((item) => item.id === entry.source.id);
+    // GP-07 pins overrides to an explicitly selected pack. A pack that is only
+    // a transitive dependency of the closure is not an override source.
+    const pack = selectedById.get(entry.source.id);
     if (
       !pack ||
       pack.version !== entry.source.version ||
@@ -355,50 +427,29 @@ export function resolveProjectConfiguration(input: {
     )
       failure(
         "unresolved_override",
-        `Override source pack ${entry.source.id}@${entry.source.version} is not in the exact resolved closure`,
+        `Override source pack ${entry.source.id}@${entry.source.version} is not an exact selected pack`,
       );
-    const effectiveId = packId(
-      entry.source,
-      entry.source.kind,
-      entry.source.localId,
-    );
+    const effectiveId = packId(pack, entry.source.kind, entry.source.localId);
     const current = source.get(effectiveId);
     if (!current)
       failure(
         "unresolved_override",
         `Override source ${entry.source.kind}/${entry.source.localId} is missing`,
       );
-    if (appliedOverrides.some((item) => item.effectiveId === effectiveId))
+    if (overridden.has(effectiveId))
       failure(
         "duplicate_effective_definition",
         `Duplicate override for ${effectiveId}`,
       );
+    overridden.add(effectiveId);
     const payload = entry.payload;
     let next: ResolvedDefinition;
-    if (
-      entry.operation === "disable" &&
-      entry.source.kind === "prompts" &&
-      payload === undefined
-    )
-      next = { ...current, enabled: false };
-    else if (
-      entry.operation === "replace" &&
-      payload &&
-      validOverridePayload(payload, entry.source.localId, false) &&
-      entry.source.kind !== "workflows" &&
-      entry.source.kind !== "policies" &&
-      entry.source.kind !== "capabilities" &&
-      entry.source.kind !== "validators"
-    )
+    if (entry.operation === "disable") next = { ...current, enabled: false };
+    else if (entry.operation === "replace" && payload)
       next = { ...current, payload };
     else if (
       entry.operation === "extend" &&
       payload &&
-      validOverridePayload(payload, entry.source.localId, true) &&
-      entry.source.kind !== "workflows" &&
-      entry.source.kind !== "policies" &&
-      entry.source.kind !== "capabilities" &&
-      entry.source.kind !== "validators" &&
       (payload.title === undefined ||
         (current.payload as Contribution).title === undefined) &&
       (payload.description === undefined ||
@@ -411,9 +462,6 @@ export function resolveProjectConfiguration(input: {
         `Unsupported override operation for ${effectiveId}`,
       );
     source.set(effectiveId, next);
-    byKind[entry.source.kind] = byKind[entry.source.kind].map((item) =>
-      item.effectiveId === effectiveId ? next : item,
-    );
     origins[effectiveId] = {
       origin: "pack_owned",
       pack,
@@ -428,34 +476,37 @@ export function resolveProjectConfiguration(input: {
     });
   }
 
+  const provenanceOf = (effectiveId: string): DefinitionProvenance => {
+    const provenance = origins[effectiveId];
+    if (!provenance)
+      failure("configuration_invariant", "Definition provenance is missing");
+    return provenance;
+  };
+  const compareIds = (left: string, right: string): number =>
+    compareProvenance(provenanceOf(left), provenanceOf(right));
+  const byKind = Object.fromEntries(
+    contributionKinds.map((kind) => [kind, []]),
+  ) as unknown as Record<ContributionKind, ResolvedDefinition[]>;
+  for (const effectiveId of [...source.keys()].sort(compareIds)) {
+    const definition = source.get(effectiveId)!;
+    byKind[definition.kind].push(definition);
+  }
+
+  // A workflow's bare references stay inside its own namespace: the exact
+  // originating pack tuple, or the project-owned definitions.
   const resolveReference = (
     workflow: ResolvedDefinition,
     kind: "taskTypes" | "roles",
     localId: string,
   ): string => {
-    const provenance = origins[workflow.effectiveId];
-    if (!provenance)
-      failure("configuration_invariant", "Workflow provenance is missing");
-    const candidates = byKind[kind].filter((item) => {
-      if (item.localId !== localId) return false;
-      const origin = origins[item.effectiveId];
-      if (!origin)
-        failure("configuration_invariant", "Definition provenance is missing");
-      return provenance.origin === "project_owned"
-        ? origin.origin === "project_owned"
-        : origin.origin === "pack_owned" &&
-            origin.pack.id === provenance.pack.id;
-    });
-    if (candidates.length > 1)
-      failure(
-        "ambiguous_reference",
-        `Ambiguous ${kind}/${localId} in workflow ${workflow.effectiveId}`,
-      );
-    if (!candidates.length) {
-      const externalMatches = byKind[kind].filter(
-        (item) => item.localId === localId,
-      );
-      if (externalMatches.length > 1)
+    const provenance = provenanceOf(workflow.effectiveId);
+    const target = source.get(
+      provenance.origin === "project_owned"
+        ? projectId(kind, localId)
+        : packId(provenance.pack, kind, localId),
+    );
+    if (!target) {
+      if ((bareCount.get(bareKey(kind, localId)) ?? 0) > 1)
         failure(
           "ambiguous_reference",
           `Bare ${kind}/${localId} crosses pack namespaces in workflow ${workflow.effectiveId}`,
@@ -465,12 +516,12 @@ export function resolveProjectConfiguration(input: {
         `Missing ${kind}/${localId} in workflow ${workflow.effectiveId}`,
       );
     }
-    if (!candidates[0]!.enabled)
+    if (!target.enabled)
       failure(
         "disabled_required_definition",
         `Disabled ${kind}/${localId} in workflow ${workflow.effectiveId}`,
       );
-    return candidates[0]!.effectiveId;
+    return target.effectiveId;
   };
   const resolvedWorkflowReferences: ResolvedWorkflowReferences[] = [];
   for (const workflow of byKind.workflows) {
@@ -485,19 +536,16 @@ export function resolveProjectConfiguration(input: {
       })),
     });
   }
-  resolvedWorkflowReferences.sort((a, b) =>
-    compare(a.workflowId, b.workflowId),
-  );
 
-  for (const kind of contributionKinds)
-    byKind[kind].sort((a, b) => compare(a.effectiveId, b.effectiveId));
   const sortedOrigins = Object.fromEntries(
-    Object.entries(origins).sort(([a], [b]) => compare(a, b)),
+    Object.keys(origins)
+      .sort(compareIds)
+      .map((effectiveId) => [effectiveId, origins[effectiveId]!]),
   );
   const disabledDefinitions = [...source.values()]
     .filter((item) => !item.enabled)
     .map((item) => item.effectiveId)
-    .sort(compare);
+    .sort(compareIds);
   const material = {
     formatVersion: configurationFormatVersion,
     coreContractVersion,

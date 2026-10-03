@@ -237,9 +237,21 @@ Effective IDs are `pack:<id>@<version>#<manifestDigest>/<kind>/<localId>` and
 project row ID cannot affect the digest. Pack sources remain immutable. A
 project-owned entry with the same kind and local ID as a selected pack entry
 is rejected; distinct packs may use the same local ID under different qualified
-IDs. Definitions and origins are sorted by qualified identity. Exact project
-overrides apply after independent project definitions, using GP-07's replace,
-extend and prompt-disable matrix. No import or registration order wins.
+IDs. Every derived list uses one locale-independent order: pack sources in
+GP-07's exact source tuple order (pack ID, version, manifest digest, kind,
+local ID, compared by code unit), then project-owned entries in GP-07's
+kind/ID order. Exact project overrides apply after independent project
+definitions, using GP-07's replace, extend and prompt-disable matrix. No
+import or registration order wins.
+
+The resolver treats stored definition state as untrusted input. Each owned
+entry and override is re-checked against GP-07's mutation contract (kind,
+local ID, payload fields, workflow stage bound, entry revision) before it can
+appear in the view; a violation fails with `configuration_invariant` or
+`unresolved_override` and a diagnostic that names only the violated contract
+code. As in GP-07, an override source must be an explicitly selected pack
+tuple: a pack present only as a transitive dependency of the closure is not an
+override source, and a duplicate selected tuple is rejected.
 
 Schema-1 pack workflow references resolve only within the originating pack.
 Project-owned schema-1 workflow references resolve only project-owned task
@@ -276,7 +288,8 @@ intersection, accumulating denials, and ordered bounds need a typed policy
 contract before they can govern execution.
 
 `project:configuration:show --project <id> [--json]` returns the derived view
-or a sanitized typed diagnostic through the Runtime socket. Empty bindings and
+or a sanitized typed diagnostic through the Runtime socket. An unknown project
+is reported as not found, like the other project commands. Empty bindings and
 definitions resolve to a valid empty view. Existing OfficeManifest scheduling,
 roles, agents, pipelines and run pins retain their current behavior.
 

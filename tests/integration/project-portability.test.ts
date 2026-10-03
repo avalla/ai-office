@@ -60,7 +60,9 @@ import { LocalProjectBindingAdapter } from "@ai-office/runtime-host/local-projec
 import { LocalProjectScanner } from "@ai-office/runtime-host/local-project-scanner.ts";
 import {
   computeArtifactDigest,
+  computeManifestDigest,
   parseDomainPackId,
+  parseDomainPackManifest,
   parseDomainPackVersion,
   parseManifestDigest,
 } from "../../packages/domain-pack-contracts/src/index.ts";
@@ -284,6 +286,56 @@ describe("project portability", () => {
     expect(after.configurationDigest).toBe(before.configurationDigest);
     expect(after.effectiveDefinitions).toEqual(before.effectiveDefinitions);
     expect(after.origins).toEqual(before.origins);
+    expect(after).toEqual(before);
+    expect(JSON.stringify(after)).not.toMatch(/-install/u);
+
+    // A destination without the exact pack, or with different content under
+    // the same ID and version, fails instead of deriving another configuration.
+    const writes = () =>
+      destination.database
+        .query<{ changes: number }, []>("SELECT total_changes() AS changes")
+        .get()!.changes;
+    const writesBefore = writes();
+    const emptyCatalog = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    await expect(
+      reader(destination, emptyCatalog).read(restored.projectId),
+    ).rejects.toMatchObject({ code: "pack_unavailable" });
+    const draft = parseDomainPackManifest(bytes);
+    const changedManifest = {
+      ...draft,
+      metadata: { ...draft.metadata, description: "Changed after restore" },
+    };
+    const changedBytes = new TextEncoder().encode(
+      JSON.stringify({
+        ...changedManifest,
+        manifestDigest: computeManifestDigest(changedManifest),
+      }),
+    );
+    const changedCatalog = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    changedCatalog.register({
+      bytes: changedBytes,
+      artifactDigest: computeArtifactDigest(changedBytes),
+      provenance: { installerId: "local-distribution", reference: "changed" },
+    });
+    await expect(
+      reader(destination, changedCatalog).read(restored.projectId),
+    ).rejects.toMatchObject({ code: "pack_unavailable" });
+    expect(
+      await reader(destination, installedAgain.catalog).read(
+        restored.projectId,
+      ),
+    ).toEqual(before);
+    // Neither successful nor failed resolution writes a single row.
+    expect(writes()).toBe(writesBefore);
+    expect(
+      await new SqliteProjectDefinitionRepository(destination.database).get(
+        restored.projectId,
+      ),
+    ).toMatchObject({ revision: 1, owned: [{ id: "operator" }] });
     origin.database.close();
     destination.database.close();
   });
