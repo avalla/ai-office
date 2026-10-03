@@ -392,9 +392,8 @@ another roadmap milestone.
 Every GP key is also a project requirement key. Each row gives the task's
 objective, smallest delivery slice, acceptance, artifact/verification, and
 explicit exclusion. The linked AI Office task and requirement descriptions
-carry the same fields. GP-01 through GP-05 have passed review and merged.
-GP-07 is implemented in its review branch; GP-06 remains dependent on GP-07
-completion.
+carry the same fields. GP-01 through GP-05 and GP-07 have passed review and
+merged; GP-06 builds on the merged GP-07 state.
 
 | ID and title                                       | Depends on                      | Slice and acceptance                                                                                                                                                                                                     | Artifact / verification                                                                                              | Non-goal                                                  |
 | -------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |

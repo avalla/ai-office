@@ -1675,10 +1675,9 @@ See [Professional-work verticals](professional-work-verticals.md).
 ## M16 — Generic Core & Domain Packs
 
 Status: active in AI Office and in progress. GP-03 public contracts, GP-04
-host-local catalog/resolver and GP-05 exact project binding are merged. GP-07
-authoritative definition ownership and source-pinned overrides are implemented
-in a review branch. Effective configuration and pack-driven Runtime behavior
-remain planned.
+host-local catalog/resolver, GP-05 exact project binding and GP-07
+authoritative definition ownership with source-pinned overrides are merged.
+Effective configuration and pack-driven Runtime behavior remain planned.
 
 AI Office is transitioning from a software-development-oriented implementation
 into a domain-neutral operational core. Domain-specific semantics are supplied
