@@ -220,3 +220,50 @@ agents:
     await runtime.close();
   }
 });
+
+test("a managed-workspace Codex login fails the run before any Codex process and is not rerouted", async () => {
+  const runtime = await runRuntime();
+  const ambient = {
+    PATH: process.env.PATH,
+    CODEX_HOME: process.env.CODEX_HOME,
+  };
+  try {
+    const fake = installFakeCodex(runtime.root);
+    process.env.PATH = `${fake.bin}:${ambient.PATH ?? ""}`;
+    process.env.CODEX_HOME = createOperatorCodexHome(
+      runtime.root,
+      "sk-managed",
+      "enterprise",
+    );
+    const runId = (
+      await runtime.schedule(await runtime.task())
+    ).stdout[0]!.replace("Agent run scheduled: ", "");
+    const tick = await runtime.command([
+      "run:tick",
+      "--project",
+      runtime.projectId,
+      "--worker",
+      "codex",
+      "--json",
+    ]);
+    expect(tick.stdout.join("\n") + tick.stderr.join("\n")).toContain(
+      "WORKER_UNAVAILABLE",
+    );
+    expect(fake.calls()).toEqual([]);
+    // The run is not completed by another executor.
+    const { run: detail } = (await (
+      await fetch(`http://localhost/api/runs/${runId}`, {
+        unix: runtime.socketPath,
+      })
+    ).json()) as {
+      run: { run: { status: string }; workerOutput: unknown };
+    };
+    expect(detail.run.status).not.toBe("completed");
+    expect(detail.workerOutput ?? null).toBeNull();
+  } finally {
+    for (const [name, value] of Object.entries(ambient))
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    await runtime.close();
+  }
+});

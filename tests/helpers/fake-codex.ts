@@ -42,11 +42,62 @@ export interface FakeCodexReport {
   projectSkills: string[];
 }
 
+/** A JWT-shaped token carrying only the claims the worker and CLI read. */
+export function codexToken(plan: unknown): string {
+  const part = (value: unknown) =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  return [
+    part({ alg: "none", typ: "JWT" }),
+    part({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "account-fixture",
+        ...(plan === undefined ? {} : { chatgpt_plan_type: plan }),
+      },
+    }),
+    "c2lnbmF0dXJl",
+  ].join(".");
+}
+
+/** A file-backed ChatGPT login as codex-cli 0.160.0 stores it. */
+export function codexLogin(plan: unknown, secret: string): string {
+  return JSON.stringify({
+    auth_mode: "chatgpt",
+    OPENAI_API_KEY: null,
+    tokens: {
+      id_token: codexToken(plan),
+      access_token: codexToken(plan),
+      refresh_token: secret,
+      account_id: "account-fixture",
+    },
+    last_refresh: "2026-10-01T00:00:00.000000000Z",
+  });
+}
+
+/**
+ * Plans for which codex-cli 0.160.0 was observed to download a
+ * workspace-managed configuration bundle once authenticated.
+ */
+export const managedBundlePlans = [
+  "business",
+  "ent26",
+  "enterprise_cbp_automation",
+  "enterprise_cbp_usage_based",
+  "enterprise",
+  "hc",
+  "edu",
+  "education",
+  "edu_pro",
+] as const;
+
 /**
  * A stand-in `codex` executable that records the environment, working
  * directory and Codex home it was started with before answering.
  */
-export function installFakeCodex(root: string) {
+export function installFakeCodex(
+  root: string,
+  /** Origin of a stand-in ChatGPT backend serving `/wham/config/bundle`. */
+  backend?: string,
+) {
   const bin = join(root, "bin");
   const reportPath = join(root, "codex-report.json");
   const modePath = join(root, "codex-mode");
@@ -61,7 +112,21 @@ export function installFakeCodex(root: string) {
 const fs = require("node:fs");
 const path = require("node:path");
 const args = process.argv.slice(2);
+const calls = ${JSON.stringify(join(root, "codex-calls.log"))};
+fs.appendFileSync(calls, args[0] + "\\n");
 if (args[0] === "--version") { console.log("codex-cli 0.160.0"); process.exit(0); }
+// What 0.160.0 does once it has a login of a managed plan: download the
+// workspace configuration bundle and start the MCP servers it defines.
+const login = (() => { try { return JSON.parse(fs.readFileSync(path.join(process.env.CODEX_HOME, "auth.json"), "utf8")); } catch { return null; } })();
+const plan = (() => { try { return JSON.parse(Buffer.from(login.tokens.id_token.split(".")[1], "base64url").toString("utf8"))["https://api.openai.com/auth"].chatgpt_plan_type; } catch { return undefined; } })();
+if (${JSON.stringify(backend ?? "")} !== "" && ${JSON.stringify(managedBundlePlans)}.includes(plan) && (args[0] === "features" || args[0] === "exec")) {
+  const bundle = await (await fetch(${JSON.stringify(backend ?? "")} + "/backend-api/wham/config/bundle")).json();
+  for (const fragment of bundle.config_toml?.enterprise_managed ?? []) {
+    const command = /^command = (".*")$/m.exec(fragment.contents);
+    const argv = /^args = (\\[.*\\])$/m.exec(fragment.contents);
+    if (command !== null) require("node:child_process").spawnSync(JSON.parse(command[1]), argv === null ? [] : JSON.parse(argv[1]), { stdio: "ignore" });
+  }
+}
 if (args[0] === "features") {
   const off = new Set(args.filter((_, i) => args[i - 1] === "--disable"));
   const lines = fs.readFileSync(${JSON.stringify(listingPath)}, "utf8").split("\\n");
@@ -127,6 +192,16 @@ process.exit(0);
     executable,
     setMode: (mode: FakeCodexMode) => writeFileSync(modePath, mode),
     setFeatureListing: (listing: string) => writeFileSync(listingPath, listing),
+    /** Every invocation's first argument, in order; empty when none ran. */
+    calls: () => {
+      try {
+        return readFileSync(join(root, "codex-calls.log"), "utf8")
+          .trim()
+          .split("\n");
+      } catch {
+        return [];
+      }
+    },
     helperPid: () =>
       Number(readFileSync(join(root, "codex-helper.pid"), "utf8")),
     report: () =>
@@ -135,14 +210,16 @@ process.exit(0);
 }
 
 /** An operator Codex home holding a login plus state the worker must not see. */
-export function createOperatorCodexHome(root: string, secret: string): string {
+export function createOperatorCodexHome(
+  root: string,
+  secret: string,
+  plan: unknown = "pro",
+): string {
   const home = join(root, "operator-codex-home");
   mkdirSync(join(home, "skills", "ambient"), { recursive: true });
-  writeFileSync(
-    join(home, "auth.json"),
-    JSON.stringify({ OPENAI_API_KEY: secret }),
-    { mode: 0o600 },
-  );
+  writeFileSync(join(home, "auth.json"), codexLogin(plan, secret), {
+    mode: 0o600,
+  });
   writeFileSync(join(home, "AGENTS.md"), "AMBIENT GLOBAL INSTRUCTIONS");
   writeFileSync(join(home, "AGENTS.override.md"), "AMBIENT OVERRIDE");
   writeFileSync(join(home, "config.toml"), 'model = "ambient-model"\n');

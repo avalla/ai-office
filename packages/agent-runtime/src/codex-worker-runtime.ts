@@ -157,16 +157,69 @@ export function verifyCodexFeatureIsolation(listing: string): void {
 }
 
 /**
- * Copies only the operator's file-backed Codex login into the isolated home.
- * Keyring logins and anything that is not the caller's own regular file fail
- * closed; the source is opened read-only and `auth.json` itself is never
- * followed when it is a link (a linked Codex home directory still resolves).
+ * ChatGPT plan claims of personal accounts, as written by audited
+ * `codex-cli` 0.160.0 into the login's token claims. Membership is exact and
+ * is the whole policy: team, business, enterprise, education and every other
+ * or future plan is refused. For several of those plans the CLI downloads
+ * workspace-managed configuration after authenticating and applies it to the
+ * session, including MCP servers it then starts as host processes.
  */
-async function materializeAuth(
-  operatorHome: string,
-  isolatedHome: string,
-): Promise<void> {
-  let bytes: Buffer;
+export const supportedPersonalPlanClaims: ReadonlySet<string> = new Set([
+  "free",
+  "go",
+  "plus",
+  "pro",
+  "prolite",
+  "promax",
+]);
+const loginFields: ReadonlySet<string> = new Set([
+  "auth_mode",
+  "OPENAI_API_KEY",
+  "tokens",
+  "last_refresh",
+]);
+
+/** The plan claim of one token; nothing else is read and nothing is kept. */
+function planClaim(token: unknown): string | null {
+  if (typeof token !== "string") return null;
+  const parts = token.split(".");
+  if (parts.length !== 3 || !/^[A-Za-z0-9_-]+$/.test(parts[1]!)) return null;
+  const claims = record(
+    JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as unknown,
+  );
+  const plan = record(
+    claims?.["https://api.openai.com/auth"],
+  )?.chatgpt_plan_type;
+  return typeof plan === "string" ? plan : null;
+}
+
+/**
+ * Admits only a ChatGPT login of a supported personal plan. The claims are
+ * read locally and are not verified: this decides which logins the worker
+ * hands to Codex, it does not authenticate them. The provider still does.
+ */
+function admitLogin(login: Record<string, unknown>): void {
+  const tokens = record(login.tokens);
+  const plan = planClaim(tokens?.id_token);
+  if (
+    Object.keys(login).some((field) => !loginFields.has(field)) ||
+    login.auth_mode !== "chatgpt" ||
+    (login.OPENAI_API_KEY ?? null) !== null ||
+    plan === null ||
+    !supportedPersonalPlanClaims.has(plan) ||
+    planClaim(tokens?.access_token) !== plan
+  )
+    throw new Error("unsupported login");
+}
+
+/**
+ * Reads and admits the operator's file-backed Codex login without starting
+ * Codex. Keyring logins, anything that is not the caller's own regular file,
+ * and every login outside the supported personal plans fail closed. The source
+ * is opened read-only and `auth.json` itself is never followed when it is a
+ * link (a linked Codex home directory still resolves).
+ */
+async function readOperatorLogin(operatorHome: string): Promise<Buffer> {
   try {
     if (!isAbsolute(operatorHome)) throw new Error("relative home");
     // Non-blocking, so a FIFO or device cannot stall the open; the type is
@@ -175,6 +228,7 @@ async function materializeAuth(
       join(operatorHome, authFileName),
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     );
+    let bytes: Buffer;
     try {
       const info = await source.stat();
       if (
@@ -202,15 +256,13 @@ async function materializeAuth(
     } finally {
       await source.close();
     }
-    if (record(JSON.parse(bytes.toString("utf8")) as unknown) === null)
-      throw new Error("auth content");
+    const login = record(JSON.parse(bytes.toString("utf8")) as unknown);
+    if (login === null) throw new Error("auth content");
+    admitLogin(login);
+    return bytes;
   } catch {
     throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
   }
-  await writeFile(join(isolatedHome, authFileName), bytes, {
-    mode: 0o600,
-    flag: "wx",
-  });
 }
 
 const outputSchema = {
@@ -375,9 +427,16 @@ export class CodexWorkerRuntime implements WorkerRuntime {
   }
 
   inspect(): Promise<{ version: string }> {
-    this.inspection ??= this.inIsolation(async ({ cwd, env }) => {
-      if (this.platform === "win32")
-        throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
+    this.inspection ??= this.inspectAdmitted();
+    return this.inspection;
+  }
+
+  /** The login is admitted before any Codex process, probes included. */
+  private async inspectAdmitted(): Promise<{ version: string }> {
+    if (this.platform === "win32")
+      throw new WorkerRuntimeError("WORKER_UNAVAILABLE");
+    await readOperatorLogin(this.operatorHome());
+    return this.inIsolation(async ({ cwd, env }) => {
       const probe = (args: readonly string[]) =>
         this.runner({
           executable: this.executable,
@@ -413,7 +472,16 @@ export class CodexWorkerRuntime implements WorkerRuntime {
       verifyCodexFeatureIsolation(listing);
       return { version };
     });
-    return this.inspection;
+  }
+
+  private operatorHome(): string {
+    const configured = process.env.CODEX_HOME;
+    return (
+      this.operatorCodexHome ??
+      (configured === undefined || configured === ""
+        ? join(homedir(), ".codex")
+        : configured)
+    );
   }
 
   async execute(
@@ -429,13 +497,11 @@ export class CodexWorkerRuntime implements WorkerRuntime {
     const model = selection?.model ?? this.model;
     await this.inspect();
     return this.inIsolation(async ({ cwd, codexHome, env }) => {
-      const configuredHome = process.env.CODEX_HOME;
-      await materializeAuth(
-        this.operatorCodexHome ??
-          (configuredHome === undefined || configuredHome === ""
-            ? join(homedir(), ".codex")
-            : configuredHome),
-        codexHome,
+      // Read and admitted again here: these are the bytes Codex will use.
+      await writeFile(
+        join(codexHome, authFileName),
+        await readOperatorLogin(this.operatorHome()),
+        { mode: 0o600, flag: "wx" },
       );
       const schemaPath = join(cwd, "answer.schema.json");
       await writeFile(schemaPath, JSON.stringify(outputSchema), {

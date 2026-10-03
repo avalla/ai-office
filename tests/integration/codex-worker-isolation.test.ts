@@ -23,8 +23,10 @@ import {
 } from "@ai-office/agent-runtime/codex-worker-runtime.ts";
 import {
   codexFeatureListing,
+  codexLogin,
   createOperatorCodexHome,
   installFakeCodex,
+  managedBundlePlans,
 } from "../helpers/fake-codex.ts";
 
 const secret = "sk-operator-secret-credential";
@@ -114,7 +116,7 @@ describe.skipIf(process.platform === "win32")(
       expect(report.home).toEqual({ entries: [], mode: 0o700 });
       expect(report.cwdEntries).toEqual(["answer.schema.json"]);
       expect(report.auth).toEqual({
-        content: JSON.stringify({ OPENAI_API_KEY: secret }),
+        content: readFileSync(join(operatorHome, "auth.json"), "utf8"),
         mode: 0o600,
       });
       expect(report.prompt).not.toContain("AMBIENT");
@@ -379,6 +381,96 @@ describe.skipIf(process.platform === "win32")(
       rmSync(auth, { force: true });
       symlinkSync("/dev/zero", auth);
       await refusedQuickly();
+    });
+
+    test("a managed-workspace login is refused before Codex can fetch or apply its configuration", async () => {
+      // A stand-in ChatGPT backend whose workspace bundle defines an MCP
+      // server; started, that server leaves a file behind.
+      const sideEffect = join(root, "mcp-side-effect");
+      let bundleRequests = 0;
+      const backend = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: (request) => {
+          if (new URL(request.url).pathname.endsWith("/wham/config/bundle"))
+            bundleRequests += 1;
+          return Response.json({
+            config_toml: {
+              enterprise_managed: [
+                {
+                  id: "fragment",
+                  name: "fragment",
+                  contents: [
+                    "[mcp_servers.managed]",
+                    `command = ${JSON.stringify(process.execPath)}`,
+                    `args = ${JSON.stringify(["-e", `require("node:fs").writeFileSync(${JSON.stringify(sideEffect)}, "started")`])}`,
+                  ].join("\n"),
+                },
+              ],
+            },
+            requirements_toml: { enterprise_managed: [] },
+          });
+        },
+      });
+      try {
+        fake = installFakeCodex(root, `http://127.0.0.1:${backend.port}`);
+        const auth = join(operatorHome, "auth.json");
+
+        // Control: handed such a login, the client downloads the bundle and
+        // starts the server. This is what the admission must prevent.
+        const direct = join(scratch, "direct");
+        mkdirSync(direct);
+        writeFileSync(
+          join(direct, "auth.json"),
+          codexLogin("enterprise", secret),
+        );
+        await runWorkerProcess({
+          executable: fake.executable,
+          args: ["features", "list"],
+          cwd: direct,
+          input: "",
+          timeoutMs: 10000,
+          env: {
+            PATH: process.env.PATH ?? "",
+            HOME: direct,
+            CODEX_HOME: direct,
+          },
+        });
+        expect(bundleRequests).toBe(1);
+        expect(readFileSync(sideEffect, "utf8")).toBe("started");
+        rmSync(direct, { recursive: true });
+        rmSync(sideEffect);
+        rmSync(join(root, "codex-calls.log"));
+        bundleRequests = 0;
+
+        for (const plan of [...managedBundlePlans, "team", "plan_of_2027"]) {
+          writeFileSync(auth, codexLogin(plan, secret));
+          await expect(
+            worker().execute(context, limits),
+            plan,
+          ).rejects.toMatchObject({ code: "WORKER_UNAVAILABLE" });
+          await expect(worker().inspect(), plan).rejects.toMatchObject({
+            code: "WORKER_UNAVAILABLE",
+          });
+          // No Codex process at all: nothing could fetch or apply the bundle.
+          expect(fake.calls(), plan).toEqual([]);
+          expect(bundleRequests, plan).toBe(0);
+          expect(existsSync(sideEffect), plan).toBe(false);
+          cleaned();
+        }
+
+        // A supported personal plan still takes the normal path.
+        writeFileSync(auth, codexLogin("prolite", secret));
+        expect(await worker().execute(context, limits)).toMatchObject({
+          summary: "Codex analysis",
+        });
+        expect(fake.calls()).toEqual(["--version", "features", "exec"]);
+        expect(bundleRequests).toBe(0);
+        expect(existsSync(sideEffect)).toBe(false);
+        cleaned();
+      } finally {
+        await backend.stop(true);
+      }
     });
 
     test("the shared runner gives the Claude worker no Codex state", async () => {

@@ -134,7 +134,49 @@ allowlist in the adapter. The only audited version is `0.160.0`: an older,
 newer, pre-release or unparseable version fails with `WORKER_UNAVAILABLE`
 before any task is dispatched, until that version is audited and added. No
 version range is accepted and no other worker is tried. The worker also needs
-that CLI on the Runtime host PATH and a file-backed Codex login.
+that CLI on the Runtime host PATH and a file-backed ChatGPT login of a
+supported personal plan.
+
+Only explicitly audited personal ChatGPT account classes are supported. The
+adapter reads the plan claim (`chatgpt_plan_type`) from the login's tokens and
+admits exactly `free`, `go`, `plus`, `pro`, `prolite` and `promax`, the values
+`codex-cli` 0.160.0 writes for personal plans. Managed organizational
+workspaces are intentionally unsupported: Team, Business, Enterprise,
+Education and their variants, any plan the adapter does not list, a missing
+plan and a malformed token or claim all fail with `WORKER_UNAVAILABLE` before
+any Codex process is started, the version and feature probes included, and no
+other worker is tried. An API-key login and every other credential kind in
+`auth.json` are refused the same way; provider API credentials belong to the
+gateway worker, which has its own trust model.
+
+The restriction exists because `codex-cli` 0.160.0, once authenticated with a
+managed-workspace login, downloads provider-controlled workspace configuration
+and applies it to the session. In a local reproduction such configuration
+defined an MCP server that Codex started as a host process under this worker's
+exact flags, `mcp_servers={}` included, and turned on a feature that was not
+disabled on the command line. The download was observed for the `business`, `ent26`,
+`enterprise`, `enterprise_cbp_automation`, `enterprise_cbp_usage_based`, `hc`,
+`edu`, `education` and `edu_pro` claims; the allowlist does not depend on that
+list. The check is made by AI Office itself while it validates `auth.json`.
+An authenticated Codex probe is deliberately not used as the boundary, since
+fetching and applying managed configuration can have side effects before the
+Runtime could inspect the result.
+
+The claims are read locally and their signature is not verified. This decides
+which stored logins the worker will hand to Codex; it does not authenticate
+them, and the provider still does when Codex uses the login. It relies on the
+login file being what the operator's own `codex login` wrote, on Codex 0.160.0
+deciding from the same claim, and on the provider not treating a personal plan
+as a managed workspace. It says nothing about the safety of account classes
+that have not been audited, and a provider-side change for an admitted plan
+would not be detected. Both tokens in the file must name the same admitted
+plan. Only the plan claim is read; nothing decoded is logged or stored.
+
+A managed-workspace Codex executor would need its own capability and trust
+design rather than reuse of this worker. Executor credentials are not yet
+modelled by trust mode (personal subscription, provider API key, managed
+workspace, Runtime-owned credential); that is follow-up work outside this
+adapter.
 
 Every `codex` process it starts, including the version and feature probes, runs
 in a fresh private temporary tree (mode `0700`). The tree holds an empty `HOME`,
@@ -166,16 +208,17 @@ blocking, checked on the opened descriptor, read up to a fixed size, and never
 rewritten. `auth.json` itself is not followed when it is a symbolic link; a
 Codex home directory that is a link still resolves. A keyring-only login, a
 missing, empty, oversized or non-JSON file, a FIFO, socket, device or
-directory in its place, and a relative `CODEX_HOME` fail with
-`WORKER_UNAVAILABLE` before the task is sent; the worker never falls back to
+directory in its place, a relative `CODEX_HOME` and a login outside the
+supported personal plans fail with `WORKER_UNAVAILABLE` before any Codex
+process starts. The login is read and admitted again immediately before it is
+copied, so the copied bytes are the admitted ones; the worker never falls back to
 the operator's home, and `OPENAI_API_KEY`/`CODEX_API_KEY` are not used. Because
 only that file is copied, the operator's `AGENTS.md`, `AGENTS.override.md`,
 `config.toml`, skills, rules, MCP and plugin configuration, memories and
 session history are not loaded. The copy is deleted with the tree, which is
 ordinary file removal, not secure erasure. If Codex refreshes a ChatGPT login
 during a run, the refreshed token is discarded with the copy and the operator's
-`auth.json` keeps the old one, so the operator may have to log in again; an
-API-key login is unaffected.
+`auth.json` keeps the old one, so the operator may have to log in again.
 
 `codex exec` runs with `--ephemeral`, `--ignore-user-config`,
 `--strict-config`, `--sandbox read-only`, web search disabled, no MCP servers,
@@ -202,8 +245,10 @@ stays enabled, or an enabled feature the adapter has never audited (for example
 one added by a newer CLI) fails with `WORKER_UNAVAILABLE`. In 0.160.0
 `--disable unified_exec` is accepted but has no effect; `shell_tool` is what
 removes the shell tools, and the check requires it to be off. The probe runs
-without the login; `codex exec` runs with it. Anything Codex loads only for an
-authenticated session is therefore not covered by the probe (see below).
+without the login; `codex exec` runs with it. What Codex loads only for an
+authenticated session is therefore not covered by the probe: managed workspace
+configuration is kept out by the plan allowlist above, and provider-supplied
+model metadata is a stated limitation below.
 
 What this does not achieve:
 
@@ -211,17 +256,6 @@ What this does not achieve:
   instructions, sandbox notice and an environment block naming the temporary
   working directory, shell, date and timezone. The recorded `inputHash` covers
   the Runtime context only.
-- A ChatGPT login whose workspace distributes managed configuration is not
-  supported and must not be used with this worker. For such a login
-  (observed with an `enterprise` plan claim) Codex downloads a workspace
-  configuration bundle at startup and applies it to the authenticated
-  session. In a local reproduction with a stand-in backend, an MCP server
-  defined in that bundle was started as a process on the Runtime host under
-  this worker's exact flags, `mcp_servers={}` included; features disabled
-  on the command line stayed off, but one not disabled there was turned on. The
-  feature probe is unauthenticated and does not see any of this. The worker
-  does not yet detect or refuse such a login; that is an open defect, not an
-  accepted limitation.
 - Provider-supplied model metadata is not pinned. With a ChatGPT login Codex
   fetches the model list from the provider at session start and uses it in the
   same run; it can change the model-visible tools and the base instructions

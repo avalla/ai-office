@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,13 +19,17 @@ import {
   auditedCodexVersions,
   codexDisabledFeatures,
   parseCodexWorkerOutput,
+  supportedPersonalPlanClaims,
   verifyCodexFeatureIsolation,
 } from "@ai-office/agent-runtime/codex-worker-runtime.ts";
 import type { WorkerProcessRequest } from "@ai-office/agent-runtime/claude-worker-runtime.ts";
 import {
   codexFeatureListing,
   codexFeatureListingAfter,
+  codexLogin,
+  codexToken,
   createOperatorCodexHome,
+  managedBundlePlans,
 } from "../helpers/fake-codex.ts";
 
 const selection: AgentRunModelSelection = {
@@ -276,9 +281,11 @@ describe("bounded Codex worker", () => {
         ? "codex-cli 0.159.0\n"
         : inspection(request)!,
     );
+    // A missing login is refused before any process, the probes included.
     rmSync(join(operatorHome, "auth.json"));
+    const before = dispatched.length;
     await refuses(async (request) => inspection(request)!);
-    expect(dispatched.at(-1)).toBe("features");
+    expect(dispatched).toHaveLength(before);
     await expect(
       new CodexWorkerRuntime(
         "codex-test",
@@ -350,6 +357,166 @@ describe("bounded Codex worker", () => {
         result: "WORKER_UNAVAILABLE",
         calls: ["--version"],
       });
+  });
+
+  test("only a ChatGPT login of an audited personal plan is admitted, before any Codex process", async () => {
+    expect([...supportedPersonalPlanClaims]).toEqual([
+      "free",
+      "go",
+      "plus",
+      "pro",
+      "prolite",
+      "promax",
+    ]);
+    const auth = join(operatorHome, "auth.json");
+    const attempt = async (login: string) => {
+      writeFileSync(auth, login, { mode: 0o600 });
+      const calls: string[] = [];
+      const runner = async (request: WorkerProcessRequest) => {
+        calls.push(request.args[0]!);
+        return inspection(request) ?? jsonl(events);
+      };
+      const outcome = (work: Promise<unknown>) =>
+        work.then(
+          () => "admitted",
+          (error: unknown) => (error as WorkerRuntimeError).code,
+        );
+      // Both entry points: the executor inspects before it executes.
+      const inspected = await outcome(runtime(runner).inspect());
+      const probes = [...calls];
+      calls.length = 0;
+      const executed = await outcome(runtime(runner).execute(context, limits));
+      return { inspected, probes, executed, calls };
+    };
+    const admitted = {
+      inspected: "admitted",
+      probes: ["--version", "features"],
+      executed: "admitted",
+      calls: ["--version", "features", "exec"],
+    };
+    const refused = {
+      inspected: "WORKER_UNAVAILABLE",
+      probes: [],
+      executed: "WORKER_UNAVAILABLE",
+      calls: [],
+    };
+    for (const plan of supportedPersonalPlanClaims)
+      expect(await attempt(codexLogin(plan, "s")), plan).toEqual(admitted);
+
+    // Every other class, known or not, is refused with zero Codex processes.
+    for (const plan of [
+      "team",
+      "business",
+      "self_serve_business_prolite",
+      "self_serve_business_usage_based",
+      "ent26",
+      "enterprise",
+      "enterprise_cbp_automation",
+      "enterprise_cbp_usage_based",
+      "hc",
+      "edu",
+      "education",
+      "edu_pro",
+      ...managedBundlePlans,
+      "unknown",
+      "plan_of_2027",
+      "Pro",
+      "PRO",
+      " pro",
+      "pro ",
+      "pro\n",
+      "",
+      undefined,
+      null,
+      5,
+      true,
+      ["pro"],
+      { plan: "pro" },
+    ])
+      expect(await attempt(codexLogin(plan, "s")), String(plan)).toEqual(
+        refused,
+      );
+
+    // Malformed tokens and claims, and logins that are not plain ChatGPT.
+    const login = (change: (value: Record<string, unknown>) => void) => {
+      const value = JSON.parse(codexLogin("pro", "s")) as Record<
+        string,
+        unknown
+      >;
+      change(value);
+      return JSON.stringify(value);
+    };
+    const tokens = (change: (value: Record<string, unknown>) => void) =>
+      login((value) => change(value.tokens as Record<string, unknown>));
+    const encoded = (value: string) => Buffer.from(value).toString("base64url");
+    const pro = codexToken("pro");
+    for (const [label, text] of [
+      ["id token missing", tokens((t) => delete t.id_token)],
+      ["id token not a string", tokens((t) => (t.id_token = 5))],
+      ["id token opaque", tokens((t) => (t.id_token = "opaque"))],
+      ["id token two parts", tokens((t) => (t.id_token = "a.b"))],
+      ["id token four parts", tokens((t) => (t.id_token = `${pro}.x`))],
+      ["payload not base64url", tokens((t) => (t.id_token = "a.b+c/d=.c"))],
+      ["payload empty", tokens((t) => (t.id_token = "a..c"))],
+      [
+        "payload not JSON",
+        tokens((t) => (t.id_token = `a.${encoded("not json")}.c`)),
+      ],
+      [
+        "payload an array",
+        tokens((t) => (t.id_token = `a.${encoded('["pro"]')}.c`)),
+      ],
+      [
+        "claim not an object",
+        tokens(
+          (t) =>
+            (t.id_token = `a.${encoded('{"https://api.openai.com/auth":"pro"}')}.c`),
+        ),
+      ],
+      [
+        "plan outside the claim",
+        tokens(
+          (t) => (t.id_token = `a.${encoded('{"chatgpt_plan_type":"pro"}')}.c`),
+        ),
+      ],
+      // The two tokens must agree: neither may name another class.
+      [
+        "access token of a managed plan",
+        tokens((t) => (t.access_token = codexToken("enterprise"))),
+      ],
+      [
+        "id token of a managed plan",
+        tokens((t) => (t.id_token = codexToken("enterprise"))),
+      ],
+      [
+        "access token of another personal plan",
+        tokens((t) => (t.access_token = codexToken("plus"))),
+      ],
+      ["access token missing", tokens((t) => delete t.access_token)],
+      ["access token opaque", tokens((t) => (t.access_token = "opaque"))],
+      ["tokens missing", login((value) => delete value.tokens)],
+      ["tokens not an object", login((value) => (value.tokens = "x"))],
+      // API-key and other credential kinds are separate trust models.
+      ["API-key login", JSON.stringify({ OPENAI_API_KEY: "sk-key" })],
+      [
+        "API-key auth mode",
+        JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "sk-key" }),
+      ],
+      [
+        "API key next to tokens",
+        login((value) => (value.OPENAI_API_KEY = "sk-key")),
+      ],
+      ["auth mode missing", login((value) => delete value.auth_mode)],
+      ["auth mode unknown", login((value) => (value.auth_mode = "sso"))],
+      [
+        "personal access token",
+        login((value) => (value.personal_access_token = "pat")),
+      ],
+      ["agent identity", login((value) => (value.agent_identity = {}))],
+      ["bedrock key", login((value) => (value.bedrock_api_key = {}))],
+      ["unknown field", login((value) => (value.future_credential = 1))],
+    ] as const)
+      expect(await attempt(text), label).toEqual(refused);
   });
 
   test("routes only exact OpenAI models and never substitutes one", async () => {
