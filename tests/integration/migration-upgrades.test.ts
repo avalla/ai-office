@@ -127,6 +127,7 @@ describe("migration upgrades", () => {
         .all();
       expect(migrate(database, migrations).applied).toEqual([
         "0042_project_definition_ownership.sql",
+        "0043_requirement_updated_event.sql",
       ]);
       expect(
         database.query("SELECT * FROM role WHERE id='role'").get(),
@@ -243,6 +244,7 @@ describe("migration upgrades", () => {
       expect(migrate(database, migrations).applied).toEqual([
         "0041_project_pack_binding.sql",
         "0042_project_definition_ownership.sql",
+        "0043_requirement_updated_event.sql",
       ]);
       expect(
         database
@@ -434,7 +436,7 @@ describe("migration upgrades", () => {
         .run(definition, timestamp, timestamp);
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0042_project_definition_ownership.sql",
+        "0043_requirement_updated_event.sql",
       );
       const stored = database
         .query<{ manifest_json: string }, []>(
@@ -519,7 +521,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0042_project_definition_ownership.sql",
+        "0043_requirement_updated_event.sql",
       );
       expect(
         database
@@ -596,6 +598,76 @@ describe("migration upgrades", () => {
     database.close();
   });
 
+  test("upgrades governance events to accept requirement updates and preserves history", () => {
+    const root = mkdtempSync(
+      join(tmpdir(), "ai-office-requirement-event-upgrade-"),
+    );
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort()) {
+      if (file <= "0042_project_definition_ownership.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    }
+
+    const database = openDatabase(join(root, "project.sqlite"));
+    migrate(database, partial);
+    const at = "2026-08-05T00:00:00.000Z";
+    database
+      .prepare(
+        `INSERT INTO project(id,name,description,created_at,updated_at)
+         VALUES ('project','Preserved',NULL,?,?)`,
+      )
+      .run(at, at);
+    const insertEvent = database.prepare(
+      `INSERT INTO governance_event(
+         id,project_id,event_type,aggregate_id,metadata_json,occurred_at
+       ) VALUES (?,'project',?,'requirement',?,?)`,
+    );
+    insertEvent.run("created", "requirement.created", '{"key":"REQ-1"}', at);
+    expect(() =>
+      insertEvent.run("early", "requirement.updated", "{}", at),
+    ).toThrow();
+
+    expect(migrate(database, migrations).applied).toEqual([
+      "0043_requirement_updated_event.sql",
+    ]);
+    insertEvent.run(
+      "updated",
+      "requirement.updated",
+      JSON.stringify({ key: "REQ-1", descriptionUpdated: "true" }),
+      "2026-08-06T00:00:00.000Z",
+    );
+
+    expect(
+      database
+        .query<{ id: string; event_type: string; metadata_json: string }, []>(
+          `SELECT id, event_type, metadata_json FROM governance_event
+           ORDER BY occurred_at, id`,
+        )
+        .all(),
+    ).toEqual([
+      {
+        id: "created",
+        event_type: "requirement.created",
+        metadata_json: '{"key":"REQ-1"}',
+      },
+      {
+        id: "updated",
+        event_type: "requirement.updated",
+        metadata_json: '{"key":"REQ-1","descriptionUpdated":"true"}',
+      },
+    ]);
+    expect(() =>
+      database.exec("UPDATE governance_event SET aggregate_id = 'other'"),
+    ).toThrow("governance_event is append-only");
+    expect(() => database.exec("DELETE FROM governance_event")).toThrow(
+      "governance_event is append-only",
+    );
+    expect(migrate(database, migrations).applied).toEqual([]);
+    database.close();
+  });
+
   test("preserves legacy deterministic onboarding questions with explicit provenance", () => {
     const root = mkdtempSync(join(tmpdir(), "ai-office-onboarding-upgrade-"));
     roots.push(root);
@@ -652,6 +724,7 @@ describe("migration upgrades", () => {
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
+      "0043_requirement_updated_event.sql",
     ]);
     expect(
       database
@@ -730,6 +803,7 @@ describe("migration upgrades", () => {
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
+      "0043_requirement_updated_event.sql",
     ]);
     expect(
       database
@@ -888,6 +962,7 @@ describe("migration upgrades", () => {
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
+      "0043_requirement_updated_event.sql",
     ]);
     expect(
       database
@@ -950,6 +1025,7 @@ describe("migration upgrades", () => {
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
+      "0043_requirement_updated_event.sql",
     ]);
     database
       .prepare(
@@ -1286,6 +1362,7 @@ describe("migration upgrades", () => {
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
+      "0043_requirement_updated_event.sql",
     ]);
     expect(
       upgraded
@@ -1350,6 +1427,7 @@ describe("migration upgrades", () => {
       "0040_task_execution_history.sql",
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
+      "0043_requirement_updated_event.sql",
     ]);
     expect(
       database

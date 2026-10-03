@@ -3,6 +3,7 @@ import type {
   GovernanceEventRecord,
   GovernanceRepository,
   GovernanceSnapshot,
+  RequirementText,
   ReviewDecisionResult,
 } from "@ai-office/application/ports/governance-repository.port.ts";
 import type {
@@ -251,6 +252,54 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
         throw new DuplicateRequirementKeyError(value.key);
       throw error;
     }
+  }
+
+  async updateRequirementText(
+    id: string,
+    projectId: string,
+    expected: RequirementText,
+    next: RequirementText,
+    now: Date,
+    event: { id: string; metadata: Record<string, string> },
+  ): Promise<boolean> {
+    return this.database.transaction(async () => {
+      await this.assertProjectTenant(projectId);
+      // The application decides editability; the status predicate only
+      // fences a transition racing this write.
+      const rows = await this.database.query<{ id: string }>(
+        `
+          UPDATE core.requirement
+          SET title = $1, description = $2, updated_at = $3
+          WHERE id = $4 AND project_id = $5 AND status = 'proposed'
+            AND title = $6 AND description = $7
+            AND EXISTS (
+              SELECT 1 FROM core.project
+              WHERE id = $5 AND tenant_id = $8
+            )
+          RETURNING id
+        `,
+        [
+          next.title,
+          next.description,
+          now,
+          id,
+          projectId,
+          expected.title,
+          expected.description,
+          this.tenantId,
+        ],
+      );
+      if (rows.length !== 1) return false;
+      await this.appendEvent({
+        id: event.id,
+        projectId,
+        eventType: "requirement.updated",
+        aggregateId: id,
+        metadata: event.metadata,
+        occurredAt: now,
+      });
+      return true;
+    });
   }
 
   async saveAdr(value: AdrRecord): Promise<void> {

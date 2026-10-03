@@ -164,6 +164,7 @@ const projectScopedCommands = new Set([
   "requirement:create",
   "requirement:list",
   "requirement:validate",
+  "requirement:update",
   "requirement:set-status",
   "adr:create",
   "adr:set-status",

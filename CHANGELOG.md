@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add `ai-office requirement:update` to correct the descriptive text of a
+  requirement that is still `proposed` without replacing its identity. It
+  takes `--project`, `--requirement` and at least one of `--title` and
+  `--description`. Key, milestone, status, project and creation metadata
+  cannot be changed through it, and task links are untouched. A requirement in
+  any other status is refused with a typed error. Each effective change
+  appends one `requirement.updated` governance event in the same transaction;
+  title changes are recorded verbatim and description prose is not copied into
+  the event. SQLite migration `0043` and PostgreSQL migration `20261003000200`
+  extend the governance event type and preserve existing history.
 - Retire the CairnKeep adapter, configuration, diagnostics and legacy import
   commands after the AK-06 import window. Native agent knowledge remains the
   only worker retrieval and reviewed admission path. Imported legacy records

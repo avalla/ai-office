@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { DuplicateRequirementKeyError } from "@ai-office/application/governance-errors.ts";
+import { ManageGovernance } from "@ai-office/application/commands/manage-governance.ts";
+import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
+import {
+  DuplicateRequirementKeyError,
+  GovernanceSubjectNotFoundError,
+  RequirementNotEditableError,
+} from "@ai-office/application/governance-errors.ts";
+import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import type {
   GovernanceEventRecord,
   GovernanceRepository,
@@ -172,6 +179,279 @@ export function defineGovernanceRepositoryContracts(
       eventType: "milestone.description_changed",
       metadata: { descriptionUpdated: "true" },
     });
+  });
+
+  test("updates proposed requirement text with one audit event per change", async () => {
+    const project = await createProject(harness, `${prefix}-update-project`);
+    const milestone: MilestoneRecord = {
+      id: `${prefix}-update-milestone`,
+      projectId: project.id,
+      title: "Milestone",
+      status: "planned",
+      createdAt: date("2026-01-01T00:00:00.000Z"),
+      updatedAt: date("2026-01-01T00:00:00.000Z"),
+    };
+    await harness.governance.saveMilestone(milestone);
+    const original: RequirementRecord = {
+      ...requirement(project.id, `${prefix}-update`, "REQ-UPD"),
+      milestoneId: milestone.id,
+    };
+    await harness.governance.saveRequirement(original);
+    const changedAt = date("2026-01-02T00:00:00.000Z");
+    const service = governanceService(harness, changedAt, `${prefix}-event`);
+    const stored = async () =>
+      (await harness.governance.getSnapshot(project.id)).requirements;
+    const updates = async () =>
+      (await harness.governance.listEvents(project.id)).filter(
+        (event) => event.eventType === "requirement.updated",
+      );
+
+    await service.updateRequirement({
+      projectId: project.id,
+      requirementId: original.id,
+      title: "  New title  ",
+    });
+    expect(await stored()).toEqual([
+      { ...original, title: "New title", updatedAt: changedAt },
+    ]);
+
+    await service.updateRequirement({
+      projectId: project.id,
+      requirementId: original.id,
+      description: "New wording \u{1F600}",
+    });
+    await service.updateRequirement({
+      projectId: project.id,
+      requirementId: original.id,
+      title: "Final title",
+      description: "Final wording",
+    });
+    // Identity, key, milestone, status and creation metadata never move.
+    expect(await stored()).toEqual([
+      {
+        ...original,
+        title: "Final title",
+        description: "Final wording",
+        updatedAt: changedAt,
+      },
+    ]);
+
+    // Resubmitting the stored text is not a change and is not audited.
+    await service.updateRequirement({
+      projectId: project.id,
+      requirementId: original.id,
+      title: "Final title",
+      description: "Final wording",
+    });
+    expect(
+      (await updates()).map(({ id, aggregateId, metadata, occurredAt }) => ({
+        id,
+        aggregateId,
+        metadata,
+        occurredAt,
+      })),
+    ).toEqual([
+      {
+        id: `${prefix}-event-1`,
+        aggregateId: original.id,
+        metadata: {
+          key: "REQ-UPD",
+          titleFrom: "REQ-UPD",
+          titleTo: "New title",
+        },
+        occurredAt: changedAt,
+      },
+      {
+        id: `${prefix}-event-2`,
+        aggregateId: original.id,
+        metadata: { key: "REQ-UPD", descriptionUpdated: "true" },
+        occurredAt: changedAt,
+      },
+      {
+        id: `${prefix}-event-3`,
+        aggregateId: original.id,
+        metadata: {
+          key: "REQ-UPD",
+          titleFrom: "New title",
+          titleTo: "Final title",
+          descriptionUpdated: "true",
+        },
+        occurredAt: changedAt,
+      },
+    ]);
+    expect(JSON.stringify(await updates())).not.toContain("wording");
+  });
+
+  test("rejects requirement updates without a field, with blank text, or outside the project", async () => {
+    const project = await createProject(harness, `${prefix}-reject-project`);
+    const other = await createProject(harness, `${prefix}-reject-other`);
+    const original = requirement(project.id, `${prefix}-reject`, "REQ-REJ");
+    await harness.governance.saveRequirement(original);
+    const foreign = requirement(other.id, `${prefix}-foreign`, "REQ-REJ");
+    await harness.governance.saveRequirement(foreign);
+    const service = governanceService(
+      harness,
+      date("2026-01-02T00:00:00.000Z"),
+      `${prefix}-event`,
+    );
+
+    await expect(
+      service.updateRequirement({
+        projectId: project.id,
+        requirementId: original.id,
+      }),
+    ).rejects.toBeInstanceOf(DomainValidationError);
+    for (const blank of [{ title: "  " }, { description: "" }])
+      await expect(
+        service.updateRequirement({
+          projectId: project.id,
+          requirementId: original.id,
+          ...blank,
+        }),
+      ).rejects.toBeInstanceOf(DomainValidationError);
+    await expect(
+      service.updateRequirement({
+        projectId: project.id,
+        requirementId: `${prefix}-missing`,
+        title: "Missing",
+      }),
+    ).rejects.toBeInstanceOf(GovernanceSubjectNotFoundError);
+    // A requirement of another project is indistinguishable from an unknown one.
+    await expect(
+      service.updateRequirement({
+        projectId: project.id,
+        requirementId: foreign.id,
+        title: "Cross-project",
+      }),
+    ).rejects.toBeInstanceOf(GovernanceSubjectNotFoundError);
+    await expect(
+      service.updateRequirement({
+        projectId: `${prefix}-no-project`,
+        requirementId: original.id,
+        title: "No project",
+      }),
+    ).rejects.toBeInstanceOf(ProjectNotFoundError);
+    expect(
+      await harness.governance.updateRequirementText(
+        foreign.id,
+        project.id,
+        { title: foreign.title, description: foreign.description },
+        { title: "Cross-project", description: foreign.description },
+        date("2026-01-02T00:00:00.000Z"),
+        { id: `${prefix}-cross-event`, metadata: {} },
+      ),
+    ).toBe(false);
+
+    expect(
+      (await harness.governance.getSnapshot(project.id)).requirements,
+    ).toEqual([original]);
+    expect(
+      (await harness.governance.getSnapshot(other.id)).requirements,
+    ).toEqual([foreign]);
+    for (const id of [project.id, other.id])
+      expect(
+        (await harness.governance.listEvents(id)).map(
+          (event) => event.eventType,
+        ),
+      ).toEqual(["requirement.created"]);
+  });
+
+  test.each([
+    ["accepted", ["accepted"]],
+    ["implemented", ["accepted", "implemented"]],
+    ["verified", ["accepted", "implemented", "verified"]],
+    ["rejected", ["rejected"]],
+  ] as const)(
+    "refuses to update a %s requirement",
+    async (status, transitions) => {
+      const project = await createProject(harness, `${prefix}-${status}`);
+      const original = requirement(project.id, `${prefix}-${status}`, "REQ");
+      await harness.governance.saveRequirement(original);
+      const changedAt = date("2026-01-02T00:00:00.000Z");
+      const service = governanceService(harness, changedAt, `${prefix}-event`);
+      for (const next of transitions)
+        await service.setStatus({
+          projectId: project.id,
+          kind: "requirement",
+          id: original.id,
+          status: next,
+        });
+      const settled = (await harness.governance.getSnapshot(project.id))
+        .requirements;
+      expect(settled[0]?.status).toBe(status);
+
+      const error = await service
+        .updateRequirement({
+          projectId: project.id,
+          requirementId: original.id,
+          title: "Too late",
+          description: "Too late",
+        })
+        .catch((reason: unknown) => reason);
+      expect(error).toBeInstanceOf(RequirementNotEditableError);
+      expect((error as Error).message).toContain(status);
+      // The storage fence holds even when the application guard is skipped.
+      expect(
+        await harness.governance.updateRequirementText(
+          original.id,
+          project.id,
+          { title: original.title, description: original.description },
+          { title: "Too late", description: original.description },
+          changedAt,
+          { id: `${prefix}-forced-event`, metadata: {} },
+        ),
+      ).toBe(false);
+
+      expect(
+        (await harness.governance.getSnapshot(project.id)).requirements,
+      ).toEqual(settled);
+      expect(
+        (await harness.governance.listEvents(project.id)).filter(
+          (event) => event.eventType === "requirement.updated",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  test("a stale requirement text expectation loses and writes no audit event", async () => {
+    const project = await createProject(harness, `${prefix}-stale-project`);
+    const original = requirement(project.id, `${prefix}-stale`, "REQ-STALE");
+    await harness.governance.saveRequirement(original);
+    const changedAt = date("2026-01-02T00:00:00.000Z");
+    const expected = {
+      title: original.title,
+      description: original.description,
+    };
+    expect(
+      await harness.governance.updateRequirementText(
+        original.id,
+        project.id,
+        expected,
+        { ...expected, description: "First writer" },
+        changedAt,
+        { id: `${prefix}-first-event`, metadata: { key: original.key } },
+      ),
+    ).toBe(true);
+    expect(
+      await harness.governance.updateRequirementText(
+        original.id,
+        project.id,
+        expected,
+        { ...expected, description: "Second writer" },
+        changedAt,
+        { id: `${prefix}-second-event`, metadata: { key: original.key } },
+      ),
+    ).toBe(false);
+    expect(
+      (await harness.governance.getSnapshot(project.id)).requirements,
+    ).toEqual([
+      { ...original, description: "First writer", updatedAt: changedAt },
+    ]);
+    expect(
+      (await harness.governance.listEvents(project.id))
+        .filter((event) => event.eventType === "requirement.updated")
+        .map((event) => event.id),
+    ).toEqual([`${prefix}-first-event`]);
   });
 
   test("rejects duplicate requirement keys within a project", async () => {
@@ -432,6 +712,20 @@ export function defineGovernanceRepositoryContracts(
       `milestone:${blockedId}:created`,
     ]);
   });
+}
+
+function governanceService(
+  harness: GovernanceRepositoryContractHarness,
+  now: Date,
+  idPrefix: string,
+): ManageGovernance {
+  let next = 0;
+  return new ManageGovernance(
+    harness.projects,
+    harness.governance,
+    { generate: () => `${idPrefix}-${++next}` },
+    { now: () => now },
+  );
 }
 
 async function createProject(

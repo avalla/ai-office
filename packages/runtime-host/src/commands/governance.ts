@@ -75,6 +75,28 @@ export async function handleGovernanceCommand(
     io.stdout(`Requirement created: ${id}`);
     return 0;
   }
+  if (command === "requirement:update") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "requirement", "title", "description"]),
+    );
+    const projectId = requiredOption(parsed, "project");
+    const requirementId = requiredOption(parsed, "requirement");
+    const title = parsed.options.get("title");
+    const description = parsed.options.get("description");
+    if (title === undefined && description === undefined)
+      throw new CliUsageError(
+        "requirement:update requires --title, --description or both",
+      );
+    await service.updateRequirement({
+      projectId,
+      requirementId,
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+    });
+    io.stdout("Requirement updated.");
+    return 0;
+  }
   if (command === "adr:create") {
     const parsed = parseArguments(
       args,

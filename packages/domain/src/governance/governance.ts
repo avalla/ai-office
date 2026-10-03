@@ -97,6 +97,12 @@ export interface GovernanceStatusByKind {
   adr: AdrStatus;
 }
 
+// A requirement's wording is still under negotiation only while it is
+// proposed; once accepted it is the baseline later work is judged against.
+export function isRequirementEditable(status: RequirementStatus): boolean {
+  return status === "proposed";
+}
+
 export function isGovernanceTransitionAllowed<K extends GovernanceKind>(
   kind: K,
   from: GovernanceStatusByKind[K],

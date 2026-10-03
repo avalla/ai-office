@@ -4,6 +4,7 @@ import type {
   GovernanceEventRecord,
   GovernanceRepository,
   GovernanceSnapshot,
+  RequirementText,
   ReviewDecisionResult,
 } from "@ai-office/application/ports/governance-repository.port.ts";
 import type {
@@ -189,6 +190,46 @@ export class SqliteGovernanceRepository implements GovernanceRepository {
         throw new DuplicateRequirementKeyError(value.key);
       throw error;
     }
+  }
+
+  async updateRequirementText(
+    id: string,
+    projectId: string,
+    expected: RequirementText,
+    next: RequirementText,
+    now: Date,
+    event: { id: string; metadata: Record<string, string> },
+  ): Promise<boolean> {
+    // The application decides editability; the status predicate only fences
+    // a transition racing this write.
+    return this.immediate(() => {
+      const result = this.database
+        .prepare(
+          `UPDATE requirement
+           SET title=?, description=?, updated_at=?
+           WHERE id=? AND project_id=? AND status='proposed'
+             AND title=? AND description=?`,
+        )
+        .run(
+          next.title,
+          next.description,
+          now.toISOString(),
+          id,
+          projectId,
+          expected.title,
+          expected.description,
+        );
+      if (result.changes !== 1) return false;
+      this.appendEvent({
+        id: event.id,
+        projectId,
+        eventType: "requirement.updated",
+        aggregateId: id,
+        metadata: event.metadata,
+        occurredAt: now,
+      });
+      return true;
+    });
   }
 
   async saveAdr(value: AdrRecord): Promise<void> {

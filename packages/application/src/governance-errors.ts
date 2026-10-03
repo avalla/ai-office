@@ -1,4 +1,7 @@
-import type { ReviewSubjectType } from "@ai-office/domain/governance/governance.ts";
+import type {
+  RequirementStatus,
+  ReviewSubjectType,
+} from "@ai-office/domain/governance/governance.ts";
 
 export class GovernanceCrossProjectReferenceError extends Error {
   constructor(reference: string) {
@@ -25,6 +28,15 @@ export class ReviewAlreadyFinalizedError extends Error {
   constructor(id: string) {
     super(`Review ${id} is already finalized`);
     this.name = "ReviewAlreadyFinalizedError";
+  }
+}
+
+export class RequirementNotEditableError extends Error {
+  constructor(id: string, status: RequirementStatus) {
+    super(
+      `Requirement ${id} is ${status}; only a proposed requirement can be updated`,
+    );
+    this.name = "RequirementNotEditableError";
   }
 }
 
