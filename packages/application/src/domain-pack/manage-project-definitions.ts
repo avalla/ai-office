@@ -15,6 +15,10 @@ import {
 } from "./project-definition.ts";
 import { resolveInstalledPacks } from "./resolve-installed-packs.ts";
 import {
+  CapturedPackManifestError,
+  resolveInstalledPackManifests,
+} from "./resolve-installed-pack-manifests.ts";
+import {
   DomainPackCatalogError,
   type InstalledDomainPackCatalog,
 } from "../ports/installed-domain-pack-catalog.port.ts";
@@ -139,6 +143,49 @@ export class ManageProjectDefinitions {
     return [];
   }
 
+  /**
+   * GP-06 rejects a project-owned entry whose kind and local ID also exist in
+   * the resolved pack closure. Report that before the mutation is accepted,
+   * over the same closure and exact code-unit identity. A closure that cannot
+   * be resolved is already unresolvable and is not this mutation's conflict.
+   */
+  private async ownedCollisionIssues(
+    projectId: string,
+    mutation: Extract<ProjectDefinitionMutation, { action: "put_owned" }>,
+  ): Promise<ProjectDefinitionIssue[]> {
+    const binding = await this.dependencies.bindings.get(projectId);
+    let closure;
+    try {
+      closure = resolveInstalledPackManifests(
+        this.dependencies.catalog,
+        binding.packs,
+      );
+    } catch (error) {
+      if (
+        error instanceof DomainPackCatalogError ||
+        error instanceof CapturedPackManifestError
+      )
+        return [];
+      throw error;
+    }
+    const colliding = closure
+      .filter(({ manifest }) =>
+        manifest.contributions[mutation.kind].some(
+          (entry) => entry.id === mutation.id,
+        ),
+      )
+      .map(({ identity }) => `${identity.id}@${identity.version}`)
+      .sort();
+    return colliding[0] === undefined
+      ? []
+      : [
+          {
+            code: "pack_definition_collision",
+            message: `Project definition ${mutation.kind}/${mutation.id} collides with pack ${colliding[0]} in the resolved pack closure`,
+          },
+        ];
+  }
+
   private async sourceIssues(
     projectId: string,
     item: ProjectDefinitionOverride,
@@ -241,6 +288,8 @@ export class ManageProjectDefinitions {
         code: "conflicting_ownership_metadata",
         message: "Entry does not exist",
       });
+    if (mutation.action === "put_owned" && checkInstalledSource)
+      issues.push(...(await this.ownedCollisionIssues(projectId, mutation)));
     if (mutation.action === "put_override") {
       const candidate: ProjectDefinitionOverride = {
         origin: "project_override",

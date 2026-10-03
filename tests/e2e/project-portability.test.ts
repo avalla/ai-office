@@ -94,163 +94,171 @@ afterEach(() => {
 });
 
 describe("portable project CLI", () => {
-  test("rejects a checksummed format-6 archive with invalid definition Unicode before restore", async () => {
-    const workspace = temporaryRoot("ai-office-portability-unicode-");
-    const projectA = join(workspace, "source");
-    const projectB = join(workspace, "destination");
-    mkdirSync(projectA);
-    mkdirSync(projectB);
-    writeFileSync(join(projectA, "package.json"), '{"name":"source"}\n');
-    writeFileSync(join(projectB, "package.json"), '{"name":"destination"}\n');
-    const archivePath = join(workspace, "project.aioffice");
+  test.each([
+    { name: "a lone surrogate", text: "\ud800", escaped: "\\ud800" },
+    { name: "U+0000", text: "a\u0000", escaped: "\\u0000" },
+  ])(
+    "rejects a checksummed format-6 archive with $name in definition text before restore",
+    async ({ text, escaped }) => {
+      const workspace = temporaryRoot("ai-office-portability-unicode-");
+      const projectA = join(workspace, "source");
+      const projectB = join(workspace, "destination");
+      mkdirSync(projectA);
+      mkdirSync(projectB);
+      writeFileSync(join(projectA, "package.json"), '{"name":"source"}\n');
+      writeFileSync(join(projectB, "package.json"), '{"name":"destination"}\n');
+      const archivePath = join(workspace, "project.aioffice");
 
-    const sourceSocket = createTestUnixSocket();
-    roots.push(sourceSocket.root);
-    const source = await start(
-      join(workspace, "source-runtime"),
-      sourceSocket.socketPath,
-    );
-    try {
-      const installed = await command({
-        runtimePaths: source.runtimePaths,
-        socketPath: sourceSocket.socketPath,
-        workingDirectory: projectA,
-        args: ["install", ".", "--json"],
-      });
-      expect([0, 2]).toContain(installed.exitCode);
-      const projectId = (
-        JSON.parse(installed.stdout[0]!) as {
-          project: { id: string };
-        }
-      ).project.id;
-      const applied = await command({
-        runtimePaths: source.runtimePaths,
-        socketPath: sourceSocket.socketPath,
-        workingDirectory: projectA,
-        args: [
-          "project:definition:apply",
-          "--project",
-          projectId,
-          "--mutation",
-          JSON.stringify({
-            action: "put_owned",
-            kind: "roles",
-            id: "custom",
-            enabled: true,
-            payload: { id: "custom", title: "Valid" },
-          }),
-          "--expected-revision",
-          "0",
-          "--json",
-        ],
-      });
-      expect(applied.exitCode).toBe(0);
-      expect(
-        (
-          await command({
-            runtimePaths: source.runtimePaths,
-            socketPath: sourceSocket.socketPath,
-            workingDirectory: projectA,
-            args: ["project:backup", "--output", archivePath, "--json"],
-          })
-        ).exitCode,
-      ).toBe(0);
-    } finally {
-      source.controller.abort();
-      await source.running;
-    }
-
-    const archive = JSON.parse(
-      readFileSync(archivePath, "utf8"),
-    ) as PortableProjectArchive;
-    expect(archive.manifest.formatVersion).toBe(6);
-    const definitions = archive.state.definitions!;
-    expect(definitions.owned).toHaveLength(1);
-    const state = {
-      ...archive.state,
-      definitions: {
-        ...definitions,
-        owned: definitions.owned.map((entry) => ({
-          ...entry,
-          payload: { ...entry.payload, title: "\ud800" },
-        })),
-      },
-    };
-    const manifest = {
-      ...archive.manifest,
-      revision: {
-        ...archive.manifest.revision,
-        stateChecksum: portableStateChecksum(state),
-      },
-    };
-    const forged = {
-      manifest,
-      state,
-      integrity: {
-        algorithm: "sha256" as const,
-        checksum: sha256Canonical({ manifest, state }),
-      },
-    };
-    const serialized = serializePortableProjectArchive(forged);
-    expect(serialized).toContain("\\ud800");
-    writeFileSync(archivePath, serialized);
-
-    const destinationSocket = createTestUnixSocket();
-    roots.push(destinationSocket.root);
-    const destination = await start(
-      join(workspace, "destination-runtime"),
-      destinationSocket.socketPath,
-    );
-    const counts = () => {
-      const database = new Database(
-        destination.runtimePaths.projectDatabasePath,
-        {
-          readonly: true,
-        },
+      const sourceSocket = createTestUnixSocket();
+      roots.push(sourceSocket.root);
+      const source = await start(
+        join(workspace, "source-runtime"),
+        sourceSocket.socketPath,
       );
       try {
-        return [
-          "project",
-          "project_definition_head",
-          "project_owned_definition",
-          "project_definition_override",
-          "project_pack_binding",
-        ].map(
-          (table) =>
-            database
-              .query<{ count: number }, []>(
-                `SELECT count(*) AS count FROM ${table}`,
-              )
-              .get()!.count,
+        const installed = await command({
+          runtimePaths: source.runtimePaths,
+          socketPath: sourceSocket.socketPath,
+          workingDirectory: projectA,
+          args: ["install", ".", "--json"],
+        });
+        expect([0, 2]).toContain(installed.exitCode);
+        const projectId = (
+          JSON.parse(installed.stdout[0]!) as {
+            project: { id: string };
+          }
+        ).project.id;
+        const applied = await command({
+          runtimePaths: source.runtimePaths,
+          socketPath: sourceSocket.socketPath,
+          workingDirectory: projectA,
+          args: [
+            "project:definition:apply",
+            "--project",
+            projectId,
+            "--mutation",
+            JSON.stringify({
+              action: "put_owned",
+              kind: "roles",
+              id: "custom",
+              enabled: true,
+              payload: { id: "custom", title: "Valid" },
+            }),
+            "--expected-revision",
+            "0",
+            "--json",
+          ],
+        });
+        expect(applied.exitCode).toBe(0);
+        expect(
+          (
+            await command({
+              runtimePaths: source.runtimePaths,
+              socketPath: sourceSocket.socketPath,
+              workingDirectory: projectA,
+              args: ["project:backup", "--output", archivePath, "--json"],
+            })
+          ).exitCode,
+        ).toBe(0);
+      } finally {
+        source.controller.abort();
+        await source.running;
+      }
+
+      const archive = JSON.parse(
+        readFileSync(archivePath, "utf8"),
+      ) as PortableProjectArchive;
+      expect(archive.manifest.formatVersion).toBe(6);
+      const definitions = archive.state.definitions!;
+      expect(definitions.owned).toHaveLength(1);
+      const state = {
+        ...archive.state,
+        definitions: {
+          ...definitions,
+          owned: definitions.owned.map((entry) => ({
+            ...entry,
+            payload: { ...entry.payload, title: text },
+          })),
+        },
+      };
+      const manifest = {
+        ...archive.manifest,
+        revision: {
+          ...archive.manifest.revision,
+          stateChecksum: portableStateChecksum(state),
+        },
+      };
+      const forged = {
+        manifest,
+        state,
+        integrity: {
+          algorithm: "sha256" as const,
+          checksum: sha256Canonical({ manifest, state }),
+        },
+      };
+      const serialized = serializePortableProjectArchive(forged);
+      expect(serialized).toContain(escaped);
+      writeFileSync(archivePath, serialized);
+
+      const destinationSocket = createTestUnixSocket();
+      roots.push(destinationSocket.root);
+      const destination = await start(
+        join(workspace, "destination-runtime"),
+        destinationSocket.socketPath,
+      );
+      const counts = () => {
+        const database = new Database(
+          destination.runtimePaths.projectDatabasePath,
+          {
+            readonly: true,
+          },
+        );
+        try {
+          return [
+            "project",
+            "project_definition_head",
+            "project_owned_definition",
+            "project_definition_override",
+            "project_pack_binding",
+          ].map(
+            (table) =>
+              database
+                .query<{ count: number }, []>(
+                  `SELECT count(*) AS count FROM ${table}`,
+                )
+                .get()!.count,
+          );
+        } finally {
+          database.close();
+        }
+      };
+      try {
+        const before = counts();
+        expect(before).toEqual([0, 0, 0, 0, 0]);
+        const restored = await command({
+          runtimePaths: destination.runtimePaths,
+          socketPath: destinationSocket.socketPath,
+          workingDirectory: projectB,
+          args: ["project:restore", archivePath, "--json"],
+        });
+        expect(restored.exitCode).toBe(1);
+        expect(restored.stdout).toEqual([]);
+        expect(restored.stderr.join("\n")).toContain(
+          "Portable project archive",
+        );
+        expect(restored.stderr.join("\n")).not.toMatch(
+          /\\ud800|\\u0000|\0|JCS|Zod|SQLITE|SELECT |\.ts:|\bat .+:\d+:\d+/u,
+        );
+        expect(counts()).toEqual(before);
+        expect(existsSync(join(projectB, ".ai-office", "project.json"))).toBe(
+          false,
         );
       } finally {
-        database.close();
+        destination.controller.abort();
+        await destination.running;
       }
-    };
-    try {
-      const before = counts();
-      expect(before).toEqual([0, 0, 0, 0, 0]);
-      const restored = await command({
-        runtimePaths: destination.runtimePaths,
-        socketPath: destinationSocket.socketPath,
-        workingDirectory: projectB,
-        args: ["project:restore", archivePath, "--json"],
-      });
-      expect(restored.exitCode).toBe(1);
-      expect(restored.stdout).toEqual([]);
-      expect(restored.stderr.join("\n")).toContain("Portable project archive");
-      expect(restored.stderr.join("\n")).not.toMatch(
-        /\\ud800|JCS|Zod|SQLITE|SELECT |\.ts:|\bat .+:\d+:\d+/u,
-      );
-      expect(counts()).toEqual(before);
-      expect(existsSync(join(projectB, ".ai-office", "project.json"))).toBe(
-        false,
-      );
-    } finally {
-      destination.controller.abort();
-      await destination.running;
-    }
-  });
+    },
+  );
 
   test("moves project state between separate runtimes and checkout paths", async () => {
     const workspace = temporaryRoot("ai-office-portability-e2e-");

@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
 import {
   contributionKinds,
-  DomainPackManifestError,
-  verifyDomainPackManifest,
   type Contribution,
   type ContributionKind,
   type DomainPackManifest,
@@ -29,7 +27,11 @@ import {
   type ProjectDefinitionState,
   type ProjectOwnedDefinition,
 } from "./project-definition.ts";
-import { resolveInstalledPacks } from "./resolve-installed-packs.ts";
+import {
+  CapturedPackManifestError,
+  resolveInstalledPackManifests,
+  type ResolvedPackManifest,
+} from "./resolve-installed-pack-manifests.ts";
 
 export const configurationFormatVersion = 1 as const;
 
@@ -284,55 +286,34 @@ export function resolveProjectConfiguration(input: {
   validateRevision(binding.configurationRevision);
   validateRevision(definitions.revision);
 
-  // Capture exactly the artifacts examined by the public GP-04 resolver. A
-  // second catalog read could observe another registration after validation.
-  const captured = new Map<string, Uint8Array>();
-  const verifiedCatalog: InstalledDomainPackCatalog = {
-    coreContractVersion,
-    list: () => catalog.list(),
-    trusts: (provenance) => catalog.trusts(provenance),
-    read: (id, version) => {
-      const artifact = catalog.read(id, version);
-      if (artifact)
-        captured.set(`${id}\u0000${version}`, new Uint8Array(artifact.bytes));
-      return artifact;
-    },
-  };
-  let closure;
+  // The shared helper runs the public GP-04 resolver and returns the manifests
+  // of exactly the artifacts that resolver examined.
+  let closure: readonly ResolvedPackManifest[];
   try {
-    closure = resolveInstalledPacks(verifiedCatalog, binding.packs);
+    closure = resolveInstalledPackManifests(catalog, binding.packs);
   } catch (error) {
     if (error instanceof DomainPackCatalogError) packFailure(error);
-    throw error;
-  }
-  const selectedPacks = sortedPacks(binding.packs);
-  const resolvedPacks = sortedPacks(closure.map((entry) => entry.identity));
-  const manifests = new Map<string, DomainPackManifest>();
-  for (const pack of resolvedPacks) {
-    const bytes = captured.get(`${pack.id}\u0000${pack.version}`);
-    if (!bytes)
+    if (!(error instanceof CapturedPackManifestError)) throw error;
+    if (error.code === "artifact_not_captured")
       failure(
         "configuration_invariant",
         "Verified pack artifact was not captured",
       );
-    let manifest: DomainPackManifest;
-    try {
-      manifest = verifyDomainPackManifest(bytes);
-    } catch (error) {
-      if (error instanceof DomainPackManifestError)
-        failure(
-          "pack_unavailable",
-          `Captured pack manifest failed verification: ${error.code}`,
-        );
-      throw error;
-    }
-    if (manifest.manifestDigest !== pack.manifestDigest)
+    if (error.code === "manifest_unverified")
       failure(
-        "binding_source_mismatch",
-        "Verified manifest differs from resolved pack tuple",
+        "pack_unavailable",
+        `Captured pack manifest failed verification: ${error.manifestErrorCode}`,
       );
-    manifests.set(tupleKey(pack), manifest);
+    failure(
+      "binding_source_mismatch",
+      "Verified manifest differs from resolved pack tuple",
+    );
   }
+  const selectedPacks = sortedPacks(binding.packs);
+  const resolvedPacks = sortedPacks(closure.map((entry) => entry.identity));
+  const manifests = new Map<string, DomainPackManifest>(
+    closure.map((entry) => [tupleKey(entry.identity), entry.manifest]),
+  );
 
   if (new Set(binding.packs.map(tupleKey)).size !== binding.packs.length)
     failure("configuration_invariant", "Duplicate selected pack tuple");
@@ -392,7 +373,7 @@ export function resolveProjectConfiguration(input: {
     if (bareCount.has(bareKey(entry.kind, entry.id)))
       failure(
         "duplicate_effective_definition",
-        `Project definition ${entry.kind}/${entry.id} collides with a selected pack source`,
+        `Project definition ${entry.kind}/${entry.id} collides with the resolved pack closure`,
       );
     const definition = {
       effectiveId,

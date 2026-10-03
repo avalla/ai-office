@@ -184,6 +184,21 @@ may declare at most 1,000 stages, the same bound portable archive format 6
 enforces, so every accepted definition stays exportable. Mutation results and
 later reads list entries in the same code-unit order on both storage backends.
 
+Definition titles and descriptions follow one text rule, shared by GP-07
+mutation validation and portable archive format 6: at most 16,000 UTF-16 code
+units, no lone surrogate and no U+0000. Text is not normalized, and valid
+non-BMP characters are accepted. The rule runs before storage, so SQLite and
+PostgreSQL accept and reject the same text with the same typed diagnostic.
+
+Previewing or applying a project-owned definition also checks the resolved
+pack closure of the current binding, selected packs and their transitive
+dependencies alike. A matching kind and local ID, compared exactly by code
+unit, is reported as `pack_definition_collision` and nothing is written. The
+check reads the closure through the same GP-04 resolution GP-06 uses and runs
+before the mutation transaction. When the closure cannot be resolved the check
+is skipped. GP-06 remains the authority: it rejects a collision that appears
+later, for example after the binding changes or through restore.
+
 | Schema-1 pack contribution                                           | `replace`               | `extend`                      | `disable`   |
 | -------------------------------------------------------------------- | ----------------------- | ----------------------------- | ----------- |
 | Roles, task types, agents, artifact types, evidence types, knowledge | Descriptive fields only | Absent title/description only | Unsupported |
@@ -235,9 +250,9 @@ fail resolution without changing the binding or pinned overrides.
 Effective IDs are `pack:<id>@<version>#<manifestDigest>/<kind>/<localId>` and
 `project:<kind>/<localId>`. Project context is implicit, so a restored local
 project row ID cannot affect the digest. Pack sources remain immutable. A
-project-owned entry with the same kind and local ID as a selected pack entry
-is rejected; distinct packs may use the same local ID under different qualified
-IDs. Every derived list uses one locale-independent order: pack sources in
+project-owned entry with the same kind and local ID as an entry anywhere in
+the resolved pack closure, including transitive dependencies, is rejected;
+distinct packs may use the same local ID under different qualified IDs. Every derived list uses one locale-independent order: pack sources in
 GP-07's exact source tuple order (pack ID, version, manifest digest, kind,
 local ID, compared by code unit), then project-owned entries in GP-07's
 kind/ID order. Exact project overrides apply after independent project

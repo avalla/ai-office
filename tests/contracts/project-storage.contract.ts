@@ -11,6 +11,7 @@ import {
   type ProjectPackBindingRepository,
 } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
 import type { PackIdentity } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
+import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
 import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import { resolveProjectConfiguration } from "@ai-office/application/domain-pack/resolve-project-configuration.ts";
 import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
@@ -958,6 +959,96 @@ export function defineProjectStorageContracts(
           owned: 0,
           overrides: 0,
         });
+      });
+
+      test("U+0000 definition text is rejected before storage and non-BMP text is stored unchanged", async () => {
+        if (
+          !harness.packBindings ||
+          !harness.definitions ||
+          !harness.definitionRowCounts
+        )
+          throw new Error("Definition repositories and probes are required");
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-text`)
+        ).snapshot().id;
+        const audited: string[] = [];
+        let sequence = 0;
+        const service = new ManageProjectDefinitions({
+          projects: harness.projects,
+          definitions: harness.definitions,
+          bindings: harness.packBindings,
+          catalog: emptyCatalog,
+          auditEvents: {
+            append: async (event) => {
+              audited.push(event.snapshot().eventType);
+            },
+          },
+          transactions: harness.transactions,
+          clock: { now: () => now },
+          ids: { generate: () => `${prefix}-audit-${++sequence}` },
+        });
+        const put = (payload: object, kind = "roles") =>
+          service.apply({
+            projectId,
+            mutation: {
+              action: "put_owned",
+              kind,
+              id: "custom",
+              enabled: true,
+              payload: { id: "custom", ...payload },
+            },
+            expectedRevision: 0,
+            actorId: "operator",
+          });
+        for (const attempt of [
+          () => put({ title: "a\u0000" }),
+          () => put({ description: "a\u0000b" }),
+          () =>
+            put({ title: "\u0000", taskType: "task", stages: [] }, "workflows"),
+        ])
+          await expect(attempt()).rejects.toMatchObject({
+            name: "ProjectDefinitionConflictError",
+            code: "malformed_origin_reference",
+          });
+        // The provider never saw the rejected text: no head, entry or audit.
+        expect(await harness.definitionRowCounts(projectId)).toEqual({
+          heads: 0,
+          owned: 0,
+          overrides: 0,
+        });
+        expect(audited).toEqual([]);
+
+        const text = "e\u0301 \u{1F600} \u{10FFFF}";
+        await put({ title: text, description: text });
+        const stored = await harness.definitions.get(projectId);
+        expect(stored.owned.map((item) => item.payload)).toEqual([
+          { id: "custom", title: text, description: text },
+        ]);
+        expect(audited).toEqual(["project.definition_changed"]);
+        expect((await reader().read(projectId)).configurationDigest).toBe(
+          resolveProjectConfiguration({
+            projectId: "provider-independent",
+            binding: {
+              projectId: "provider-independent",
+              configurationRevision: 0,
+              packs: [],
+            },
+            definitions: {
+              projectId: "provider-independent",
+              revision: 1,
+              owned: [
+                entry("roles", "custom", {
+                  description: text,
+                  title: text,
+                  id: "custom",
+                }),
+              ],
+              overrides: [],
+            },
+            catalog: emptyCatalog,
+            coreContractVersion: 1,
+          }).configurationDigest,
+        );
       });
 
       test("stored definitions resolve to the provider-independent digest and order", async () => {

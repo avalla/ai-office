@@ -250,6 +250,14 @@ describe("project portability", () => {
       override("replace", { id: "custom", description: "\udc00" }),
       override("extend", { title: "\ud800" }),
       override("extend", { description: "\udc00" }),
+      owned("roles", { id: "custom", title: "a\u0000" }),
+      owned("roles", { id: "custom", description: "\u0000" }),
+      owned("workflows", workflow({ title: "a\u0000" })),
+      owned("workflows", workflow({ description: "a\u0000b" })),
+      override("replace", { id: "custom", title: "a\u0000" }),
+      override("replace", { id: "custom", description: "a\u0000" }),
+      override("extend", { title: "a\u0000" }),
+      override("extend", { description: "a\u0000" }),
     ])
       expect(schema.safeParse(state).success).toBe(false);
 

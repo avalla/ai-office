@@ -55,7 +55,15 @@ test("GP-06 configuration remains derived and outside scheduling and portable au
     ),
     "utf8",
   );
-  expect(resolver).toContain("resolveInstalledPacks");
+  const manifests = readFileSync(
+    join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/resolve-installed-pack-manifests.ts",
+    ),
+    "utf8",
+  );
+  expect(resolver).toContain("resolveInstalledPackManifests");
+  expect(manifests).toContain("resolveInstalledPacks(");
   expect(reader).toContain("resolveProjectConfiguration");
   expect(storagePort).not.toContain("ResolvedProjectConfiguration");
   expect(archive).not.toContain("ResolvedProjectConfiguration");

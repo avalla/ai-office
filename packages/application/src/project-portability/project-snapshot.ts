@@ -14,8 +14,11 @@ import {
   parseDomainPackVersion,
   parseManifestDigest,
 } from "../../../domain-pack-contracts/src/index.ts";
-import { hasLoneSurrogate } from "../../../domain-pack-contracts/src/jcs.ts";
-import { maximumWorkflowStages } from "../domain-pack/project-definition.ts";
+import {
+  isDefinitionText,
+  maximumDefinitionTextLength,
+  maximumWorkflowStages,
+} from "../domain-pack/project-definition.ts";
 
 export const portableProjectFormat = "ai-office-project" as const;
 
@@ -250,9 +253,9 @@ const portableOwnedKind = z.union([
 const portableDefinitionId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u);
 const portableDefinitionText = z
   .string()
-  .max(16_000)
-  .refine((value) => !hasLoneSurrogate(value), {
-    message: "must be valid Unicode text",
+  .max(maximumDefinitionTextLength)
+  .refine(isDefinitionText, {
+    message: "must be valid Unicode text without U+0000",
   });
 const portableDescriptivePayload = z.strictObject({
   id: portableDefinitionId,
