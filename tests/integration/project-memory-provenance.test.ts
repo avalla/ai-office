@@ -203,6 +203,7 @@ test("upgrading an existing database adds provenance without touching historical
     "0040_task_execution_history.sql",
     "0041_project_pack_binding.sql",
     "0042_project_definition_ownership.sql",
+    "0043_requirement_updated_event.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   expect(
@@ -329,6 +330,7 @@ test("upgrading 0028 provenance keeps its context digest and leaves the unreport
     "0040_task_execution_history.sql",
     "0041_project_pack_binding.sql",
     "0042_project_definition_ownership.sql",
+    "0043_requirement_updated_event.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   const repository = new SqliteProjectMemoryProvenanceRepository(db);
@@ -338,12 +340,14 @@ test("upgrading 0028 provenance keeps its context digest and leaves the unreport
     outcome: "retrieved",
     contextQuerySha256: "d".repeat(64),
     providerQuerySha256: null,
-    references: [{
-      rank: 1,
-      referenceId: "decisions/storage",
-      contentDigest: `sha256:${"b".repeat(64)}`,
-      injected: true,
-    }],
+    references: [
+      {
+        rank: 1,
+        referenceId: "decisions/storage",
+        contentDigest: `sha256:${"b".repeat(64)}`,
+        injected: true,
+      },
+    ],
   });
   expect(await repository.findRetrieval("legacy-failed")).toMatchObject({
     provider: "cairnkeep",

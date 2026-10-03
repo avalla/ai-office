@@ -38,6 +38,7 @@ import {
 } from "@ai-office/application/errors.ts";
 import {
   DuplicateRequirementKeyError,
+  RequirementNotEditableError,
   GovernanceCrossProjectReferenceError,
   GovernanceSubjectNotFoundError,
   ReviewAlreadyFinalizedError,
@@ -279,6 +280,7 @@ const commands = [
   "requirement:create",
   "requirement:list",
   "requirement:validate",
+  "requirement:update",
   "adr:create",
   "milestone:set-status",
   "requirement:set-status",
@@ -456,6 +458,7 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ReviewNotFoundError ||
     error instanceof ReviewAlreadyFinalizedError ||
     error instanceof DuplicateRequirementKeyError ||
+    error instanceof RequirementNotEditableError ||
     error instanceof ResourceNotFoundError ||
     error instanceof ResourceDisabledError ||
     error instanceof CapabilityGrantNotFoundError ||

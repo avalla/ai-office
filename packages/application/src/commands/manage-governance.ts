@@ -8,11 +8,15 @@ import type {
   RequirementRecord,
   ReviewRecord,
 } from "@ai-office/domain/governance/governance.ts";
-import { isGovernanceTransitionAllowed } from "@ai-office/domain/governance/governance.ts";
+import {
+  isGovernanceTransitionAllowed,
+  isRequirementEditable,
+} from "@ai-office/domain/governance/governance.ts";
 import { DomainValidationError } from "@ai-office/domain/errors.ts";
 import {
   GovernanceCrossProjectReferenceError,
   GovernanceSubjectNotFoundError,
+  RequirementNotEditableError,
   ReviewAlreadyFinalizedError,
   ReviewNotFoundError,
 } from "../governance-errors.ts";
@@ -162,6 +166,70 @@ export class ManageGovernance {
     };
     await this.governance.saveRequirement(v);
     return id;
+  }
+  async updateRequirement(input: {
+    projectId: string;
+    requirementId: string;
+    title?: string;
+    description?: string;
+  }): Promise<void> {
+    await this.project(input.projectId);
+    if (input.title === undefined && input.description === undefined)
+      throw new DomainValidationError(
+        "Requirement update requires a title or description",
+      );
+    const title =
+      input.title === undefined
+        ? undefined
+        : required(input.title, "Requirement title");
+    const description =
+      input.description === undefined
+        ? undefined
+        : required(input.description, "Requirement description");
+    const requirement = (
+      await this.governance.getSnapshot(input.projectId)
+    ).requirements.find((value) => value.id === input.requirementId);
+    if (requirement === undefined)
+      throw new GovernanceSubjectNotFoundError(
+        "requirement",
+        input.requirementId,
+      );
+    if (!isRequirementEditable(requirement.status))
+      throw new RequirementNotEditableError(requirement.id, requirement.status);
+    const expected = {
+      title: requirement.title,
+      description: requirement.description,
+    };
+    const next = {
+      title: title ?? expected.title,
+      description: description ?? expected.description,
+    };
+    const titleChanged = next.title !== expected.title;
+    const descriptionChanged = next.description !== expected.description;
+    if (!titleChanged && !descriptionChanged) return;
+    // Titles are short labels and are audited verbatim; description prose
+    // stays out of event metadata, as for milestones.
+    const updated = await this.governance.updateRequirementText(
+      requirement.id,
+      input.projectId,
+      expected,
+      next,
+      this.clock.now(),
+      {
+        id: this.ids.generate(),
+        metadata: {
+          key: requirement.key,
+          ...(titleChanged
+            ? { titleFrom: expected.title, titleTo: next.title }
+            : {}),
+          ...(descriptionChanged ? { descriptionUpdated: "true" } : {}),
+        },
+      },
+    );
+    if (!updated)
+      throw new DomainValidationError(
+        `requirement ${requirement.id} was modified concurrently`,
+      );
   }
   async createAdr(input: {
     projectId: string;

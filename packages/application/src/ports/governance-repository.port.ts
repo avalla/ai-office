@@ -26,6 +26,7 @@ export interface GovernanceEventRecord {
     | "milestone.description_changed"
     | "milestone.status_changed"
     | "requirement.created"
+    | "requirement.updated"
     | "requirement.status_changed"
     | "adr.created"
     | "adr.status_changed"
@@ -34,6 +35,11 @@ export interface GovernanceEventRecord {
   aggregateId: string;
   metadata: Record<string, string>;
   occurredAt: Date;
+}
+
+export interface RequirementText {
+  title: string;
+  description: string;
 }
 
 export type ReviewDecisionResult =
@@ -58,6 +64,19 @@ export interface GovernanceRepository {
     eventId: string,
   ): Promise<boolean>;
   saveRequirement(value: RequirementRecord): Promise<void>;
+  /**
+   * Replaces the descriptive text of a proposed requirement and appends one
+   * audit event in the same transaction. Returns false when the stored text
+   * or status no longer matches `expected`.
+   */
+  updateRequirementText(
+    id: string,
+    projectId: string,
+    expected: RequirementText,
+    next: RequirementText,
+    now: Date,
+    event: { id: string; metadata: Record<string, string> },
+  ): Promise<boolean>;
   saveAdr(value: AdrRecord): Promise<void>;
   saveReview(value: ReviewRecord): Promise<void>;
   findMilestoneProject(id: string): Promise<string | null>;

@@ -205,7 +205,11 @@ Use the existing semantic Runtime commands to act on that snapshot:
 `task:update` for descriptions, `task:start|submit-review|complete|block|fail|cancel`
 for lifecycle, `milestone:set-status` and `requirement:set-status` for
 governance, and `requirement:list --json` to resolve exact requirement UUIDs
-before linking. Use `requirement:validate --requirement <uuid> --model
+before linking. Use `requirement:update` to correct only the title and/or
+description of a requirement that is still `proposed`; its identity, key,
+project, milestone and status are immutable through this command, and once a
+requirement is accepted or later in its lifecycle its wording can no longer be
+edited this way. Use `requirement:validate --requirement <uuid> --model
 <provider:model>` for metered, advisory LLM validation; it never changes stored
 status. Use `run:schedule`, `run:show`, `run:cancel`, or `run:tick` for agent
 execution. Ask for confirmation before consequential changes when the user has

@@ -210,6 +210,129 @@ limits:
       expect(
         (
           await run([
+            "task:link-requirement",
+            "--project",
+            projectId,
+            "--task",
+            taskId,
+            "--requirement",
+            requirementId,
+          ])
+        ).exitCode,
+      ).toBe(0);
+      const storedRequirement = async () => {
+        const workspace = JSON.parse(
+          (
+            await run([
+              "office:workspace",
+              "--project",
+              projectId,
+              "--status",
+              "all",
+              "--json",
+            ])
+          ).stdout.join("\n"),
+        ) as {
+          project: {
+            requirements: {
+              requirementId: string;
+              key: string;
+              title: string;
+              description: string;
+              status: string;
+              milestoneId: string | null;
+              createdAt: string;
+              taskReferences: { taskId: string }[];
+            }[];
+          };
+        };
+        return workspace.project.requirements.find(
+          (value) => value.requirementId === requirementId,
+        )!;
+      };
+      const beforeUpdate = await storedRequirement();
+      const update = (...options: string[]) =>
+        run([
+          "requirement:update",
+          "--project",
+          projectId,
+          "--requirement",
+          requirementId,
+          ...options,
+        ]);
+      expect((await update("--title", "Requirement renamed")).stdout).toEqual([
+        "Requirement updated.",
+      ]);
+      expect(
+        (await update("--description", "Corrected wording")).exitCode,
+      ).toBe(0);
+      expect(
+        (await update("--title", "Final", "--description", "Final wording"))
+          .exitCode,
+      ).toBe(0);
+      // Only the text moves: identity, key, milestone, status, creation
+      // metadata and the task link are untouched.
+      expect(await storedRequirement()).toEqual({
+        ...beforeUpdate,
+        title: "Final",
+        description: "Final wording",
+        updatedAt: expect.any(String) as string,
+      });
+      expect(beforeUpdate).toMatchObject({
+        key: "REQ-1",
+        status: "proposed",
+        milestoneId,
+        taskReferences: [{ taskId }],
+      });
+
+      const noFields = await update();
+      expect(noFields.exitCode).toBe(1);
+      expect(noFields.stderr.join("\n")).toContain(
+        "requirement:update requires --title, --description or both",
+      );
+      // No option exists to move key, milestone or status through this command.
+      for (const immutable of [
+        ["--key", "REQ-2"],
+        ["--milestone", milestoneId],
+        ["--status", "verified"],
+      ]) {
+        const rejected = await update("--title", "Smuggled", ...immutable);
+        expect(rejected.exitCode).toBe(1);
+        expect(rejected.stderr.join("\n")).toContain(immutable[0]!);
+      }
+      const unknown = await run([
+        "requirement:update",
+        "--project",
+        projectId,
+        "--requirement",
+        "missing-requirement",
+        "--title",
+        "Missing",
+      ]);
+      expect(unknown.exitCode).toBe(1);
+      expect(unknown.stderr.join("\n")).toContain("was not found");
+      const otherProject = await run(["project:create", "Other"]);
+      const otherProjectId =
+        otherProject.stdout[0]!.match(/[0-9a-f-]{36}/u)![0];
+      const crossProject = await run([
+        "requirement:update",
+        "--project",
+        otherProjectId,
+        "--requirement",
+        requirementId,
+        "--title",
+        "Cross-project",
+      ]);
+      expect(crossProject.exitCode).toBe(1);
+      expect(crossProject.stderr.join("\n")).toContain("was not found");
+      expect(await storedRequirement()).toMatchObject({
+        title: "Final",
+        description: "Final wording",
+      });
+
+      expect(
+        (
+          await run([
             "adr:create",
             "--project",
             projectId,
@@ -262,6 +385,31 @@ limits:
       expect(
         existsSync(join(root, ".ai-office", "generated", "governance.md")),
       ).toBe(true);
+
+      expect(
+        (
+          await run([
+            "requirement:set-status",
+            "--project",
+            projectId,
+            "--requirement",
+            requirementId,
+            "--status",
+            "accepted",
+          ])
+        ).exitCode,
+      ).toBe(0);
+      const accepted = await update("--description", "Too late");
+      expect(accepted.exitCode).toBe(1);
+      expect(accepted.stderr.join("\n")).toContain(
+        "only a proposed requirement can be updated",
+      );
+      expect(await storedRequirement()).toMatchObject({
+        status: "accepted",
+        title: "Final",
+        description: "Final wording",
+        taskReferences: [{ taskId }],
+      });
 
       const duplicate = await run(requirementArgs);
       expect(duplicate.exitCode).toBe(1);
