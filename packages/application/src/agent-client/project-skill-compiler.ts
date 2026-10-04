@@ -26,7 +26,7 @@ Use the authenticated Codex or Claude host for conversation, adaptive onboarding
 
 ## Help
 
-Run \`ai-office --help\` whenever syntax or available commands are uncertain. Lead with lifecycle, status, \`next\`, handover, task operation, and safe uninstall. Explain machine-oriented families only as needed: \`project:*\`, \`office:*\`, \`client:*\`, \`task:*\`, \`agent:*\`, \`run:*\`, pricing and budget, governance, \`memory:*\`, resources, capabilities, and controlled \`action:*\`. Do not make the user understand runtime, import, or integration roots unless troubleshooting requires it.
+Run \`ai-office --help\` whenever syntax or available commands are uncertain. Lead with lifecycle, status, \`next\`, handover, task operation, and safe uninstall. Explain machine-oriented families only as needed: \`project:*\`, \`office:*\`, \`client:*\`, \`task:*\`, \`agent:*\`, \`run:*\`, pricing and budget, governance, \`memory:*\`, \`knowledge:*\`, resources, capabilities, and controlled \`action:*\`. Do not make the user understand runtime, import, or integration roots unless troubleshooting requires it.
 
 ## Install or inspect
 

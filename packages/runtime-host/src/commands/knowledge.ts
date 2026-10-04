@@ -3,6 +3,7 @@ import {
   type KnowledgeAdmissionKind,
   type KnowledgeAdmissionSourceInput,
 } from "@ai-office/application/agent-knowledge/manage-knowledge-admission.ts";
+import { knowledgeRetrievalLimits } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import {
   CliUsageError,
   parseArguments,
@@ -115,8 +116,12 @@ export async function handleKnowledgeCommand(
         "knowledge:search only accepts named options; quote a multi-word --query",
       );
     const limit = parsed.options.get("limit");
-    if (limit !== undefined && !/^[1-5]$/u.test(limit))
-      throw new CliUsageError("Knowledge search limit must be 1 to 5");
+    const maxLimit = knowledgeRetrievalLimits.maxResults;
+    if (
+      limit !== undefined &&
+      (!/^[1-9]\d*$/u.test(limit) || Number(limit) > maxLimit)
+    )
+      throw new CliUsageError(`Knowledge search limit must be 1 to ${maxLimit}`);
     const agentId = parsed.options.get("agent");
     const hits = await service.search({
       projectId: requiredOption(parsed, "project"),

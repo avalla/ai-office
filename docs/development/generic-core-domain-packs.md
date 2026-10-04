@@ -557,9 +557,35 @@ Acceptance, `project:pack:preview` and `project:pack:apply`:
   in the prospective resolved closure, selected packs and transitive
   dependencies alike;
 - identity comparison is exact, case-sensitive and locale-independent;
-- a collision is rejected with a typed, deterministic diagnostic;
-- preview and apply agree;
+- a collision is rejected deterministically with the typed diagnostic
+  `pack_definition_collision`;
+- preview and apply agree for a changed selection;
 - a failed apply leaves the binding revision and state unchanged.
+
+Collision diagnostic. The preflight reports `pack_definition_collision`, the
+code GP-07 already uses for the same `(kind, localId)` conflict before a
+mutation. Binding preview, binding apply and the restore preflight share it as
+the machine-readable code. `duplicate_effective_definition` stays GP-06's
+effective-resolution backstop diagnostic and is not emitted by the preflight.
+Apply carries the code through a typed error whose code type includes it. The
+error class restore uses is an implementation decision, but restore exposes the
+same code.
+
+Unchanged selection. GP-22 preserves the existing GP-05 behavior: applying the
+exact currently active selection at the current revision is a no-op. It
+performs no resolution and no composition preflight, does not increment the
+binding revision and adds no audit event, even when the artifacts are
+unavailable locally or the persisted composition already collides. Such a
+latent collision stays visible through `project:pack:preview` and GP-06
+effective resolution once the closure resolves. A changed selection always requires fresh resolution and
+the preflight.
+
+Restore scope. The preflight runs only on the restore path that is about to
+write binding and definition state, a restore that creates the project and
+yields `restored`. It does not apply to the existing `attached` and
+`unchanged` outcomes, which write no binding or definition state, so rerunning
+the same restore after a partial failure stays possible. Archive structural
+and integrity validation stays separate and does not require pack resolution.
 
 Acceptance, portable restore when the exact closure is locally resolvable.
 After archive structural and integrity validation and before authoritative
@@ -574,7 +600,8 @@ state is committed:
 - restore stays atomic and leaves no partial project, binding or definition
   state.
 
-Acceptance, portable restore when the exact closure is not locally resolvable:
+Acceptance, portable restore when the exact closure is not locally resolvable,
+for any existing GP-04 resolution failure:
 
 - restore remains allowed; the archive is not rejected merely because selected
   or dependency pack artifacts are unavailable locally;
@@ -587,9 +614,33 @@ Acceptance, portable restore when the exact closure is not locally resolvable:
   for an absent selected pack and `pack_dependency_failure` for an absent
   dependency, and a composition error such as `duplicate_effective_definition`
   once the exact closure becomes resolvable and conflicts with project-owned
-  definitions.
+  definitions;
+- GP-06 owns these resolution diagnostics; GP-22 does not invent, rename or
+  normalize them into one code.
 
-GP-06 also remains the defensive fail-closed backstop for corrupt state and
+Resolution and transaction boundary. Exact pack closure resolution and catalog
+access happen before, and outside, the authoritative database transaction. No
+transaction is held open during resolution, and the catalog is not read from
+inside the transaction to repeat it.
+
+Binding apply:
+
+1. resolves the exact prospective closure outside the transaction;
+2. enters the transaction;
+3. keeps the existing expected-revision compare-and-set on the binding;
+4. re-reads the current project-owned definitions inside the transaction;
+5. compares them against the already resolved closure;
+6. commits only if the composition is still valid.
+
+Restore compares the archive's own binding and project-owned definitions,
+which do not change, against the closure resolved before the transaction. No
+new concurrency mechanism is introduced unless implementation evidence shows
+the existing revision check is insufficient. A host-local catalog change
+between resolution and commit is not prevented.
+
+GP-06 remains the defensive fail-closed backstop for that case, for a
+project-owned definition whose own preflight passed against the previous
+binding and which commits after the binding apply, for corrupt state and for
 non-conforming adapters.
 
 Acceptance tests cover at minimum:
@@ -599,8 +650,12 @@ Acceptance tests cover at minimum:
 - a different kind with the same local ID is allowed;
 - a different case is not a collision;
 - removal and replacement scenarios remain possible where appropriate;
-- preview/apply consistency;
+- preview/apply consistency and the `pack_definition_collision` code;
 - binding revision unchanged after a rejected apply;
+- an unchanged-selection apply stays a no-op with no revision increment and no
+  audit event;
+- a project-owned definition written between preflight and commit is caught by
+  the in-transaction comparison;
 - restore with an available closure and a direct collision is rejected
   atomically, for a checksummed archive;
 - restore with an available closure and a transitive collision is rejected
@@ -613,7 +668,10 @@ Acceptance tests cover at minimum:
 - when the exact artifacts later become available, a valid composition
   resolves normally and a colliding composition fails closed;
 - no fallback to another installed version or digest is permitted;
-- existing portability behavior covered by the repository tests is preserved;
+- a restore yielding `attached` or `unchanged` is not rejected by the
+  preflight;
+- existing portability behavior covered by the repository tests, including
+  restore into an empty catalog, is preserved;
 - SQLite and PostgreSQL behave equivalently where the binding path supports
   both.
 

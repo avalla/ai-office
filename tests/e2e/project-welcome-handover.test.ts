@@ -547,5 +547,9 @@ describe("client integration", () => {
     expect(guide).toContain(
       "Handover transfers organizational context ownership; it grants no capability and bypasses no approval",
     );
+    // The canonical instructions every client reads route knowledge work to
+    // the governed skill workflow instead of leaving it undiscoverable.
+    expect(guide).toContain("ai-office knowledge:search");
+    expect(guide).toContain("never write to the knowledge store directly");
   });
 });

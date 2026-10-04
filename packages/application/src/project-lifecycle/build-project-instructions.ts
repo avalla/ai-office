@@ -6,6 +6,7 @@ function configuredWorkflow(manifest: OfficeManifest): string[] {
     "Run `ai-office next` to read the recommended next action before proposing work; it reports the real handover state, not a guess",
     "When asked to take this project in charge, hand it over, or onboard it, follow the handover workflow in the repository-local `ai-office` skill instead of improvising one",
     "Handover transfers organizational context ownership; it grants no capability and bypasses no approval",
+    "When work yields durable, non-authoritative project knowledge, follow the Durable project knowledge workflow in the repository-local `ai-office` skill: search with `ai-office knowledge:search`, propose through `knowledge:plan`, review with the user, then `knowledge:admit`; never write to the knowledge store directly",
     "Pipeline guidance describes expected work; it is not the security boundary",
     "When an enforced runtime pipeline is active, AI Office authorization, assignments, approvals, and stage transitions are authoritative",
     "Protected operations must use action requests and must not bypass runtime gates",

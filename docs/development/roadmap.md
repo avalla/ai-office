@@ -667,7 +667,7 @@ historical CairnKeep retrieval path. See
 | AK-10 | Durable project knowledge policy in agent guidance; `knowledge:search`       | AK-05, AK-08                      |
 | AK-11 | Governed non-run knowledge admission provenance                              | AK-05, AK-10                      |
 
-AK-01–AK-09 each map to one reviewed PR. AK-09 was delivered as one operational
+AK-01–AK-10 each map to one reviewed PR. AK-09 was delivered as one operational
 task with four delivery slices below, tracked by one requirement and task.
 Completion required proven retrieval, writes,
 legacy-data disposition, failure behavior, documentation, and operational
@@ -729,7 +729,8 @@ tells agents to classify what they learned, search existing knowledge, and
 propose verified, non-authoritative, project-specific context through the
 existing `knowledge:plan` → review → `knowledge:admit` path. Both skill
 surfaces embed it verbatim and the handover workflow carries the matching
-boundary. The only product change is the read-only `knowledge:search` command,
+boundary, and the generated project instructions (`AI-OFFICE.md`) route every
+client to the policy. The only new command is the read-only `knowledge:search`,
 needed because no CLI surface could check for an existing record before a new
 plan. See [durable project knowledge policy](agent-knowledge.md#durable-project-knowledge-policy-ak-10).
 
@@ -1893,6 +1894,12 @@ depends on the other, and no other GP task depends on them.
   closed once the exact closure becomes resolvable. Binding mutation stays
   strict.
   Both use the existing shared resolver; no second resolver is introduced.
+  The preflight rejects with `pack_definition_collision`, the code GP-07
+  already uses; `duplicate_effective_definition` stays GP-06's backstop
+  diagnostic. Applying the unchanged active selection remains a GP-05 no-op.
+  The restore preflight runs only on the path that writes binding and
+  definition state (outcome `restored`), and closure resolution stays outside
+  the database transaction.
   GP-06 stays the fail-closed backstop.
 - GP-23 — Pack manifest U+0000 policy assessment. Project definition text
   rejects U+0000 because PostgreSQL `jsonb` cannot represent it consistently

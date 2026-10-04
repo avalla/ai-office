@@ -16,7 +16,7 @@ Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Andrea Valla.
 - **Controlled actions**: deny-by-default capabilities, project-scoped resources, approval gates, and audited filesystem operations.
 - **Operations**: read-only dashboard, operational read models, Runtime health, native per-user service management on Linux and macOS.
 - **Storage abstraction**: SQLite is the default and complete local project authority; PostgreSQL/Supabase support exists behind the storage port but is still incomplete for full Runtime authority.
-- **Agent Knowledge**: optional native SurrealDB-backed knowledge retrieval and reviewed admission with provenance. CairnKeep is retired.
+- **Agent Knowledge**: optional native SurrealDB-backed knowledge retrieval, read-only search and reviewed admission with provenance. CairnKeep is retired.
 - **Queue-backed orchestration**: optional BullMQ with Redis/Valkey. Queue jobs are disposable wake-ups; authoritative state remains in project storage.
 - **Codex and Claude Code integration** through shared project guidance and repository-local skills. Client detection is informational and does not own project lifecycle.
 

@@ -20,6 +20,22 @@
   3 in place on the next Runtime start; existing records are unchanged. The
   skill policy and handover guidance describe the three sources, so installed
   repositories receive an updated skill on the next `ai-office install`.
+- Route durable project knowledge work through the governed workflow from the
+  generated `AI-OFFICE.md` project instructions, so every client reaches the
+  skill's durable project knowledge workflow. Correct the policy: a failed
+  `knowledge:search` means the duplicate check did not happen, so agents stop
+  and report the error code; agents report wrong or outdated records instead of
+  admitting contradicting corrections, because no command supersedes or
+  retracts an admitted record; the policy states the full `knowledge:plan`
+  syntax for both kinds; and it describes search precision: at most `--limit`
+  hits (five by default) where a full page may mean more, imported legacy hits
+  carry their import time as `createdAt`, and matching is one lowercased
+  literal substring. Skill help lists include the `knowledge:*` commands, and
+  `--help` shows the complete `knowledge:plan`/`knowledge:admit` syntax.
+  `bun run validate:skills` rejects duplicate policy copies and tolerates CRLF
+  line endings. The `knowledge:search` limit bound is derived from the
+  retrieval limit. Installed repositories refresh on the next
+  `ai-office install`.
 - Make durable project knowledge an explicit part of agent work. The AI Office
   skill now carries one canonical policy, embedded verbatim in the distribution
   skill and the skill projected into installed repositories: classify what was

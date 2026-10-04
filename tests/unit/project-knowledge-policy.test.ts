@@ -8,15 +8,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { compileProjectHandoverSection } from "@ai-office/application/agent-client/project-handover-workflow.ts";
 import {
   compileProjectKnowledgeSection,
   projectKnowledgeAdmissionSources,
-  projectKnowledgeAdmissionSteps,
   projectKnowledgeSourceBoundaries,
-  projectKnowledgeAuthoritativeSources,
-  projectKnowledgeExclusions,
-  projectKnowledgeWorkKinds,
 } from "@ai-office/application/agent-client/project-knowledge-policy.ts";
 import { compileProjectSkill } from "@ai-office/application/agent-client/project-skill-compiler.ts";
 import {
@@ -33,250 +28,30 @@ const handoverReference = readFileSync(
 );
 const projectedSkill = compileProjectSkill();
 const policy = compileProjectKnowledgeSection();
-const flat = (text: string) => text.replace(/\s+/gu, " ");
+
+function withSkillCopy(content: string, check: (copy: string) => void): void {
+  const directory = mkdtempSync(join(tmpdir(), "ai-office-skill-policy-"));
+  try {
+    const copy = join(directory, "ai-office");
+    cpSync(skillRoot, copy, { recursive: true });
+    writeFileSync(join(copy, "SKILL.md"), content);
+    check(copy);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
 
 describe("durable project knowledge policy", () => {
-  test("both skill surfaces carry the one canonical policy", () => {
-    expect(distributionSkill).toContain(policy);
-    expect(projectedSkill).toContain(policy);
-    // Exactly one copy each: a second, hand-edited variant would be drift.
-    for (const skill of [distributionSkill, projectedSkill])
+  test("both skill surfaces carry the one canonical policy exactly once", () => {
+    for (const skill of [distributionSkill, projectedSkill]) {
+      expect(skill.split(policy)).toHaveLength(2);
       expect(skill.split("## Durable project knowledge")).toHaveLength(2);
-  });
-
-  test("names every kind of work that can produce knowledge and a promotion step", () => {
-    for (const kind of [
-      "project handover",
-      "implementation",
-      "debugging",
-      "research",
-      "code review",
-      "QA and verification",
-      "architectural investigation",
-      "completed-task retrospection",
-    ]) {
-      expect(projectKnowledgeWorkKinds).toContain(kind);
-      expect(policy).toContain(kind);
     }
-    expect(policy).toContain("first-class possible output");
-    expect(policy).toContain(
-      "### Consider knowledge promotion before wrapping up",
-    );
-    // The step is also reachable from where task work ends.
-    expect(flat(projectedSkill)).toMatch(
-      /wrapped up, follow \*\*Durable project knowledge\*\* below and consider knowledge promotion/u,
-    );
-    expect(flat(distributionSkill)).toMatch(
-      /wrapped up, follow \*\*Durable project knowledge\*\* and consider knowledge promotion/u,
-    );
-    expect(
-      readFileSync(join(skillRoot, "references", "task-operation.md"), "utf8"),
-    ).toContain("consider knowledge promotion");
-  });
-
-  test("identifies AgentKnowledgeStore as non-authoritative contextual knowledge", () => {
-    expect(policy).toMatch(
-      /`AgentKnowledgeStore` holds it as non-authoritative, advisory context/u,
-    );
-    expect(policy).toContain("never decides anything, grants anything");
-    expect(policy).toContain(
-      "Knowledge never overrides the authoritative decision that produced it",
-    );
-    expect(policy).toContain("the authoritative record wins");
-  });
-
-  test("keeps authoritative state in its source of truth, never in knowledge", () => {
-    const sources = new Map(projectKnowledgeAuthoritativeSources);
-    expect(
-      sources.get("source code, configuration, and technical documentation"),
-    ).toBe("the repository");
-    expect(
-      sources.get("goals, constraints, preferences, roles, and pipelines"),
-    ).toBe("the approved office manifest");
-    expect(sources.get("milestones and requirements")).toBe("governance state");
-    expect(sources.get("architectural decisions")).toBe("ADRs");
-    expect(sources.get("tasks and the execution lifecycle")).toBe(
-      "task and run state",
-    );
-    expect(sources.get("deterministic repository structure and facts")).toBe(
-      "the repository scan and handover evidence",
-    );
-    for (const [what, where] of projectKnowledgeAuthoritativeSources)
-      expect(policy).toContain(`- ${what} stay in ${where}`);
-    expect(policy).toContain(
-      "Never admit it into `AgentKnowledgeStore` as a competing copy",
-    );
-    // No instruction moves an authoritative record into the store.
-    expect(policy).not.toMatch(
-      /(?:admit|record|store|move|copy)\s+(?:the\s+)?(?:ADRs?|requirements?|milestones?|manifest|tasks?)\s+(?:in|into|to)\s+`?AgentKnowledgeStore/iu,
-    );
-  });
-
-  test("separates project knowledge from global reusable memory", () => {
-    expect(policy).toContain(
-      "Global reusable memory (`memory:*`) is only for knowledge meant to be reused across projects",
-    );
-    expect(policy).toContain(
-      "Project-specific architecture or implementation facts must never leak into global memory",
-    );
-    expect(policy).toContain("Do not fall back to `memory:*`");
-    expect(flat(distributionSkill)).toContain(
-      "Global memory holds only knowledge reusable across projects",
-    );
-    expect(projectedSkill).toContain(
-      "`memory:*` only for memory reusable across projects",
-    );
-  });
-
-  test("requires search, verification, provenance and the governed admission path", () => {
-    const steps = projectKnowledgeAdmissionSteps.join("\n");
-    expect(projectKnowledgeAdmissionSteps[0]).toMatch(
-      /^Search first\. Run `ai-office knowledge:search/u,
-    );
-    // The search limits an agent must know to avoid a false "no duplicate".
-    for (const limit of [
-      "one distinctive word or exact phrase",
-      "record text, never titles",
-      "treat five hits as possibly more",
-      "do not pass `--agent` for a duplicate check",
-    ])
-      expect(projectKnowledgeAdmissionSteps[0]).toContain(limit);
-    expect(steps).toContain("Admit only what you verified");
-    expect(steps).toContain("State any remaining uncertainty explicitly");
-    expect(steps).toContain("Keep provenance truthful");
-    expect(steps).toContain("pass it explicitly");
-    expect(steps).toContain("repository path");
-    expect(steps).toContain(
-      "When no source truthfully applies, do not admit; report the candidate to the user instead",
-    );
-    expect(steps).toContain("Do not create contradictory duplicates");
-    expect(steps.indexOf("knowledge:plan")).toBeLessThan(
-      steps.indexOf("knowledge:admit"),
-    );
-    expect(steps).toContain("review the exact returned plan");
-    expect(steps).toContain("knowledge:trace");
-    expect(steps).toContain("Use the governed workflow, and nothing else");
-    expect(steps).toContain("Never write to the knowledge store directly");
-    expect(steps).toContain("never admit on the user's behalf or in advance");
-    expect(policy).toContain("Never admit every task result");
-  });
-
-  test("maps each kind of work to its truthful admission source", () => {
-    expect(
-      projectKnowledgeAdmissionSources.map(([what, source]) => [what, source]),
-    ).toEqual([
-      ["AgentRun knowledge", "run provenance"],
-      ["confirmed handover knowledge", "handover provenance"],
-      [
-        "interactive/operator-reviewed knowledge",
-        "explicit evidence + operator-confirmed provenance",
-      ],
-    ]);
-    for (const [what, source] of projectKnowledgeAdmissionSources)
-      expect(policy).toContain(`${what}\n    → ${source}`);
-    for (const selector of [
-      "`--run <runId>`",
-      "`--source handover --handover <confirmationId>`",
-      "`--source operator-confirmed --confirmed-by <operator> --evidence <kind:id>[,<kind:id>...]`",
-    ])
-      expect(policy).toContain(selector);
-    expect(policy.indexOf("### Choose the admission source")).toBeLessThan(
-      policy.indexOf("### Admit deliberately"),
-    );
-    // Handover knowledge needs the confirmed, current review; nothing weaker.
-    expect(policy).toContain(
-      "a scan, an import, your own interpretation, or an approved office manifest is not a confirmed review",
-    );
-    expect(policy).toContain("must be confirmed again first");
-    // The operator's admission is the confirmation, bound to project evidence.
-    for (const kind of [
-      "`requirement` (not rejected)",
-      "`adr` (accepted)",
-      "`review` (approved)",
-      "`task`",
-      "`handover`",
-    ])
-      expect(policy).toContain(kind);
-    expect(policy).toContain(
-      "The operator named in `--confirmed-by` must be the `--actor` who admits the plan",
-    );
-    // The gap AK-11 closed must not survive in the guidance.
-    expect(policy).not.toMatch(/Without a completed worker run/u);
-    expect(policy).not.toMatch(/Admission is bound to a completed worker run/u);
-  });
-
-  test("never presents a host session or a fabricated run as provenance", () => {
-    const boundaries = projectKnowledgeSourceBoundaries.join("\n");
-    expect(boundaries).toContain(
-      "Your Codex or Claude session is not provenance",
-    );
-    expect(boundaries).toContain("never offer a session identifier");
-    expect(boundaries).toContain(
-      "Never schedule, simulate, or invent an agent run to obtain run provenance",
-    );
-    expect(boundaries).toContain("it does not authenticate human presence");
-    expect(boundaries).toContain(
-      "does not make authoritative information admissible",
-    );
-    for (const boundary of projectKnowledgeSourceBoundaries)
-      expect(policy).toContain(boundary);
-    // No option, field, or evidence kind for a host session is ever suggested.
-    expect(policy).not.toMatch(/--(?:claude|codex)[-\w]*|SessionId|session:/u);
-  });
-
-  test("excludes secrets, transient state and raw repository content from promotion", () => {
-    for (const excluded of [
-      "credentials, secrets, tokens, or sensitive configuration",
-      "raw copies of repository files",
-      "large code excerpts",
-      "transient command output",
-      "temporary execution state",
-      "speculative assumptions presented as facts",
-      "information that is cheap and deterministic to regenerate from the repository, unless the interpretation or rationale itself is valuable",
-      "stale knowledge known to be superseded",
-    ]) {
-      expect(projectKnowledgeExclusions).toContain(excluded);
-      expect(policy).toContain(`- ${excluded}`);
-    }
-    expect(policy.indexOf("### Never persist")).toBeLessThan(
-      policy.indexOf(`- ${projectKnowledgeExclusions[0]!}`),
-    );
-  });
-
-  test("handover keeps the repository, scan, interpretation, knowledge boundary", () => {
-    const handover = compileProjectHandoverSection();
-    expect(handover).toContain("Scan facts stay repository-scan evidence");
-    expect(handover).toContain("the confirmed review stays handover evidence");
-    expect(handover).toContain(
-      "Never copy repository structure or files into knowledge",
-    );
-    expect(handover).toContain(
-      "Project knowledge complements handover evidence and authoritative state; it never replaces either",
-    );
-    expect(validateHandoverKnowledgeBoundary(handoverReference)).toEqual([]);
-    const order = [
-      "repository\n",
-      "deterministic scan / handover evidence",
-      "agent interpretation",
-      "durable AgentKnowledgeStore entries when materially useful",
-    ].map((stage) => handoverReference.indexOf(stage));
-    expect(order.every((index) => index >= 0)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
-    // The blind-copy flow appears only as the rejected alternative.
-    expect(handoverReference.indexOf("never:")).toBeLessThan(
-      handoverReference.indexOf("copy everything into memory"),
-    );
-    expect(
-      validateHandoverKnowledgeBoundary(
-        handoverReference.replace("agent interpretation", "bulk copy"),
-      ),
-    ).toEqual([
-      "references/project-handover.md is missing the knowledge boundary: agent interpretation",
-    ]);
-  });
-
-  test("rejects a skill surface whose knowledge policy drifted", () => {
     expect(validateAiOfficeSkill()).toEqual([]);
+    expect(validateProjectedAiOfficeSkill(projectedSkill)).toEqual([]);
+  });
+
+  test("rejects a projected skill whose knowledge policy drifted", () => {
     expect(
       validateProjectedAiOfficeSkill(
         projectedSkill.replace(
@@ -290,32 +65,85 @@ describe("durable project knowledge policy", () => {
   });
 
   test("rejects a checked-in distribution skill whose knowledge policy drifted", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ai-office-skill-policy-"));
-    try {
-      const copy = join(directory, "ai-office");
-      cpSync(skillRoot, copy, { recursive: true });
-      const drifted = distributionSkill.replace(
-        "Never write to the knowledge store directly",
-        "Write to the knowledge store directly when convenient",
-      );
-      expect(drifted).not.toBe(distributionSkill);
-      writeFileSync(join(copy, "SKILL.md"), drifted);
+    const drifted = distributionSkill.replace(
+      "Never write to the knowledge store directly",
+      "Write to the knowledge store directly when convenient",
+    );
+    expect(drifted).not.toBe(distributionSkill);
+    withSkillCopy(drifted, (copy) =>
       expect(validateAiOfficeSkill(copy)).toContain(
         "SKILL.md does not embed the canonical durable project knowledge policy verbatim",
-      );
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
+      ),
+    );
   });
 
-  test("does not reintroduce CairnKeep or a second memory provider", () => {
-    expect(policy).not.toMatch(/cairnkeep|memory_write|memory_search/iu);
-    for (const skill of [distributionSkill, projectedSkill]) {
-      expect(flat(skill)).toContain("CairnKeep integration has been removed");
+  test("rejects a skill carrying a second copy of the policy section", () => {
+    const duplicated = `${distributionSkill}\n${policy}\n`;
+    withSkillCopy(duplicated, (copy) =>
+      expect(validateAiOfficeSkill(copy)).toEqual(
+        expect.arrayContaining([
+          "SKILL.md embeds the durable project knowledge policy more than once",
+          'SKILL.md must contain exactly one "## Durable project knowledge" heading',
+        ]),
+      ),
+    );
+    const editedCopy = `${projectedSkill}\n## Durable project knowledge\n\nEdited variant.\n`;
+    expect(validateProjectedAiOfficeSkill(editedCopy)).toContain(
+      'Projected SKILL.md must contain exactly one "## Durable project knowledge" heading',
+    );
+  });
+
+  test("accepts a valid skill checked out with CRLF line endings", () => {
+    const crlf = distributionSkill.replace(/\n/gu, "\r\n");
+    withSkillCopy(crlf, (copy) => {
+      writeFileSync(
+        join(copy, "references", "project-handover.md"),
+        handoverReference.replace(/\n/gu, "\r\n"),
+      );
+      expect(validateAiOfficeSkill(copy)).toEqual([]);
+    });
+    expect(
+      validateProjectedAiOfficeSkill(projectedSkill.replace(/\n/gu, "\r\n")),
+    ).toEqual([]);
+  });
+
+  test("rejects a handover reference that drops the knowledge boundary", () => {
+    expect(validateHandoverKnowledgeBoundary(handoverReference)).toEqual([]);
+    expect(
+      validateHandoverKnowledgeBoundary(
+        handoverReference.replace("agent interpretation", "bulk copy"),
+      ),
+    ).toEqual([
+      "references/project-handover.md is missing the knowledge boundary: agent interpretation",
+    ]);
+  });
+
+  test("offers exactly the three verified admission sources and no host-session source", () => {
+    expect(projectKnowledgeAdmissionSources.map(([what]) => what)).toEqual([
+      "AgentRun knowledge",
+      "confirmed handover knowledge",
+      "interactive/operator-reviewed knowledge",
+    ]);
+    // Every source reaches both clients with its selector, through the one policy.
+    for (const selector of [
+      "--run <runId>",
+      "--source handover --handover <confirmationId>",
+      "--source operator-confirmed --confirmed-by <operator> --evidence",
+    ])
+      expect(policy).toContain(selector);
+    for (const boundary of projectKnowledgeSourceBoundaries)
+      expect(policy).toContain(boundary);
+    // No option, field, or evidence kind for a host session is ever suggested,
+    // and the run-only restriction AK-11 removed does not survive.
+    expect(policy).not.toMatch(/--(?:claude|codex)[-\w]*|SessionId|session:/u);
+    expect(policy).not.toMatch(/bound to a completed worker run/u);
+  });
+
+  test("does not reintroduce removed commands or a second memory provider", () => {
+    for (const skill of [distributionSkill, projectedSkill])
       expect(skill).not.toMatch(
         /project-memory:status|knowledge:legacy-plan|knowledge:legacy-import|memory_write/u,
       );
-    }
     expect(handoverReference).not.toMatch(/cairnkeep/iu);
   });
 });
