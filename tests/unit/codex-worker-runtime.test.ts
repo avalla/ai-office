@@ -186,6 +186,12 @@ describe("bounded Codex worker", () => {
     expect(value("--model")).toBe("gpt-5.5");
     expect(request.args).toContain('model_reasoning_effort="high"');
     expect(request.input).toContain("Review evidence");
+    // The client still offers `apply_patch`, so the prompt must not claim a
+    // tool-free worker; it forbids the use instead.
+    expect(request.input).not.toMatch(/You have no .*tools/);
+    expect(request.input).toContain(
+      "Do not inspect or modify host files and do not call editing or other tools",
+    );
 
     // Every process, including the probes, gets its own private homes.
     for (const call of calls) {

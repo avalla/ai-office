@@ -219,9 +219,13 @@ server. Two controls prevent this:
 - The child's `CODEX_REFRESH_TOKEN_URL_OVERRIDE` is always
   `http://127.0.0.1:0/ai-office-refresh-disabled`, a loopback address nothing
   can listen on. 0.160.0 sends every refresh there, whether it is triggered by
-  a token near expiry or by the provider answering `401`, so the refresh fails,
-  no new tokens are installed and the run fails closed instead of changing
-  identity. This is the boundary.
+  a token near expiry or by the provider answering `401`, so the refresh fails
+  and no new tokens are installed. This is the boundary: the admitted
+  credential generation cannot change. It does not by itself end the run.
+  After a failed refresh 0.160.0 goes on with the tokens it already has; if
+  the provider still accepts them the run can complete, on the admitted
+  identity, and if the provider answers `401` the turn fails and the run ends
+  in `WORKER_FAILED`.
 - A login is admitted only if its access token's `exp` claim satisfies
   `exp > now + run timeout + 5 minutes + 1 minute`. The run timeout is the
   role timeout of the run; five minutes is the window before expiry in which
@@ -232,8 +236,9 @@ server. Two controls prevent this:
   `exp` is refused. This keeps predictably stale runs from starting; it is
   not what stops a refresh.
 
-An expired or nearly expired login therefore fails with `WORKER_UNAVAILABLE`.
-The operator refreshes it by running or logging in with Codex outside AI
+An expired or nearly expired login is therefore refused at admission with
+`WORKER_UNAVAILABLE`; that is the adapter's own check, made before Codex
+starts, not something the client does. The operator refreshes it by running or logging in with Codex outside AI
 Office, then retries. AI Office does not call the refresh endpoint itself and
 does not use an authenticated Codex probe to refresh and inspect the result,
 since either would let provider-controlled managed configuration become active
@@ -351,8 +356,9 @@ What this does not achieve:
   enabling a capability the worker has not anticipated would not be detected.
 - Feature flags do not remove tools that Codex derives from model metadata,
   and a model-visible tool is not always a refused one. On 0.160.0 the admitted
-  model is shown `apply_patch` and `request_user_input`; `apply_patch` is
-  refused by the read-only sandbox. Models with other metadata are shown
+  model is shown `apply_patch` and `request_user_input`. `apply_patch` cannot
+  write, but it is executable and it reads host files; see the filesystem
+  section below. Models with other metadata are shown
   `exec`, `wait` and the collaboration tools: `exec` is refused because its
   host is disabled, while the collaboration tools were executable until the
   controls above. Codex emits no JSONL item for a refused call, nor for a
@@ -368,6 +374,80 @@ What this does not achieve:
 - This narrows what the Codex client loads and offers. It is not a boundary
   against another process of the same user, which can read the temporary copy
   while it exists, as it can read the operator's own login.
+
+### Filesystem: no writes, no read confidentiality
+
+Codex runs under its read-only filesystem sandbox. Read-only prevents writes;
+it does not hide the filesystem. Built-in client tools can inspect host paths
+before a write is refused, and the worker is not a confidentiality boundary
+for the files the Runtime user can read.
+
+The known case is `apply_patch`. `codex-cli` 0.160.0 offers it to the admitted
+model because the model's metadata declares it, and no supported setting
+removes it: there is no feature key for it (`apply_patch_freeform` is a
+removed flag with no effect), `--strict-config` rejects every configuration
+key tried, and the only switch is the model metadata itself, which is the
+provider's and which the worker does not rewrite. The tool opens and reads its
+target, then the sandbox refuses the write. The answer returned to the model
+depends on what was read. With the real CLI and the worker's exact flags:
+
+| Patch                                              | Answer to the model                                |
+| -------------------------------------------------- | -------------------------------------------------- |
+| update or delete a path that does not exist        | `No such file or directory`                        |
+| update a file the Runtime user cannot read         | `Permission denied`                                |
+| update a directory                                 | `is not a file`                                    |
+| update a file that is not UTF-8                    | `invalid utf-8 sequence`, with the byte offset     |
+| update with a guessed line that is not in the file | `Failed to find expected lines`, echoing the guess |
+| update with a guessed line that is in the file     | `writing is blocked by read-only sandbox`          |
+
+So a model that is prompted to, by task content for example, can learn
+whether a host path exists, what kind of object it is, whether it is readable,
+and whether a guessed line is in it, for any path the Runtime user can read,
+symbolic links included. Guessed lines are compared whole, ignoring
+surrounding whitespace; several guessed lines confirm that they are adjacent
+and in that order, and an end-of-file marker confirms the last line. In the
+probes made, a prefix or substring of a line did not match, a refusal echoed
+only the guess and never file content, and each call tested one guess. This
+confirms low-entropy content such as a setting or a user name; it did not give
+a way to read out content that cannot be guessed line by line. No file was
+created, changed or deleted. These answers go to the provider as part of the
+conversation and can shape the run's output.
+
+None of this is visible to the Runtime. Codex emits no JSONL item for these
+calls, the run is accepted as a normal result, and the number of calls is
+limited only by the run timeout. The behavior is pinned by
+`tests/integration/codex-apply-patch-oracle.test.ts`, which keeps the recorded
+answers of the real CLI and can replay them against it.
+
+The worker prompt tells the model to produce only the requested content and
+not to inspect or modify host files or use editing or other tools, since such
+capabilities are outside the AI Office contract even where the client offers
+them. That is a normative instruction to the model, not an enforced
+capability boundary, and a model following injected task content may ignore
+it. The enforced boundaries are the ones this section and the ones above
+describe.
+
+What the bounded Codex worker guarantees, for the audited CLI version:
+
+- no host file modification through the admitted worker;
+- no shell or process execution capability available to the model;
+- no execution with a managed-workspace login;
+- no native sub-agent execution;
+- no change or refresh of the admitted credential;
+- one routed model and reasoning effort, recorded as the run's provenance.
+
+What it does not guarantee:
+
+- confidentiality of the Runtime user's readable files from the Codex client
+  and, through the oracle above, from the model and the provider;
+- protection against existence and matching oracles in built-in client tools;
+- isolation from other readable host state at the operating-system level.
+
+Strong filesystem confidentiality needs an outer operating-system or container
+filesystem boundary around the executor. That is follow-up work recorded in
+the roadmap, not part of this worker. Until then, run the Codex worker only
+where the Runtime user's readable files may be probed in this way by the
+selected provider's model.
 
 The adapter accepts exactly one completed JSONL turn with exactly one
 schema-constrained `{summary, content}` message. Reasoning items, non-fatal
@@ -422,7 +502,9 @@ It receives no repository path, resource tools, role source files, or skills.
 The trusted, pinned role guidance is injected separately from the generic Runtime
 system constraints; task text remains data in the user/task context. Tool
 declarations in a role do not grant tools to this adapter. Filesystem reads/writes, shell tests, commits and connectors are not
-part of this worker contract.
+part of this worker contract. That describes what the Runtime supplies and
+accepts; what the external client can itself do on the host is bounded per
+worker, and for Codex it includes the read oracle described above.
 
 The application pins adapter/version and the SHA-256 of this bounded context
 before dispatch, renews the task lease and checks authority while running.
