@@ -36,6 +36,15 @@
   line endings. The `knowledge:search` limit bound is derived from the
   retrieval limit. Installed repositories refresh on the next
   `ai-office install`.
+- Fix truncated CLI output when stdout is a pipe. Every Runtime client command
+  opened an interactive prompt reader on `process.stdout` up front, which in
+  Bun makes a pipe on stdout non-blocking; `console.log` then wrote only what
+  the pipe buffer could hold at once (64 KiB on Linux), silently dropped the
+  rest and still exited `0`, so `office:workspace --json` or
+  `requirement:list --json` piped to another program produced invalid JSON.
+  The prompt reader now opens only when the Runtime asks a question, and from
+  then on output goes through the same backpressure-aware stream. Prompt
+  answers piped on stdin are no longer lost to the early reader.
 - Make durable project knowledge an explicit part of agent work. The AI Office
   skill now carries one canonical policy, embedded verbatim in the distribution
   skill and the skill projected into installed repositories: classify what was

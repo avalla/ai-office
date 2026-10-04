@@ -1,4 +1,4 @@
-import { createInterface } from "node:readline/promises";
+import { createInterface, type Interface } from "node:readline/promises";
 import { resolve } from "node:path";
 import { isLocalVersionInvocation } from "@ai-office/command-support/version.ts";
 import { runVersionCli } from "./version-cli.ts";
@@ -79,8 +79,25 @@ export interface RuntimeCliOptions {
 /** @deprecated Use RuntimeCliOptions. */
 export type DaemonCliOptions = RuntimeCliOptions;
 
+/**
+ * Creating the `process.stdout` stream makes a pipe on fd 1 non-blocking in
+ * Bun, after which `console.log` silently drops whatever the pipe cannot take
+ * in one write. Default stdout therefore stays on `console.log` until an
+ * interactive prompt opens that stream, and then writes through the stream,
+ * which honors backpressure and drains before the process exits naturally.
+ */
+let promptStdout: typeof process.stdout | undefined;
+
+function openPromptReader(): Interface {
+  promptStdout = process.stdout;
+  return createInterface({ input: process.stdin, output: promptStdout });
+}
+
 const defaultIo: CliIo = {
-  stdout: (message) => console.log(message),
+  stdout: (message) => {
+    if (promptStdout === undefined) console.log(message);
+    else promptStdout.write(`${message}\n`);
+  },
   stderr: (message) => console.error(message),
 };
 
@@ -458,12 +475,11 @@ export async function runRuntimeCli(
             "--project",
             await resolveDiscoveredProject(client, prepared.discoveredRoot),
           ];
-    const reader =
-      io.prompt === undefined
-        ? createInterface({ input: process.stdin, output: process.stdout })
-        : undefined;
+    // Opened only when the Runtime asks a question; see `promptStdout`.
+    let reader: Interface | undefined;
     const prompt =
-      io.prompt ?? ((message: string) => reader!.question(message));
+      io.prompt ??
+      ((message: string) => (reader ??= openPromptReader()).question(message));
     let answer: string | undefined;
     let previousPromptContext: string[] = [];
 
