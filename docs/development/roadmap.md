@@ -648,9 +648,8 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: AK-01–AK-10 merged; AK-11 implemented and independently reviewed,
-pending pipeline verification and merge. AK-12 (knowledge record lifecycle) is
-a candidate, not yet planned.
+Status: AK-01–AK-11 merged. AK-12 (knowledge record lifecycle) is a candidate,
+not yet planned; the milestone stays open to it.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
@@ -693,9 +692,12 @@ never deleted by AI Office. See the same guide.
 
 ### AK-11 — Governed non-run knowledge admission provenance
 
-**Status:** implemented and independently reviewed in PR #99; pending pipeline
-verification and merge. Decision recorded in
+**Status:** implemented on `main` via PR #99, verified through the enforced
+delivery pipeline. Decision recorded in
 [ADR-0030](../adr/ADR-0030-typed-governed-knowledge-admission-provenance.md).
+The Implement stage was closed by an audited pipeline override because no
+developer model profile was configured; the change was host-implemented,
+reviewed by a reviewer run with operator approval, and verified by a QA run.
 AK-10 left one gap: admission required a completed worker run, so durable
 knowledge learned during handover or an interactive Codex/Claude session could
 only be reported to the user. AK-11 replaces the run-only model with a closed,
