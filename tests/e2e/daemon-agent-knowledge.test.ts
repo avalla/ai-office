@@ -341,7 +341,16 @@ describe("Runtime agent knowledge composition", () => {
             ["--project", projectId, "--query", "rollout", "--limit", "6"],
             "Knowledge search limit must be 1 to 5",
           ],
-          [["--project", projectId], "query"],
+          [["--project", projectId], "Missing required option --query"],
+          [
+            ["--project", projectId, "--query", "staged", "rollout"],
+            "knowledge:search only accepts named options",
+          ],
+          [
+            ["--project", projectId, "--query", "rollout", "--kind", "memory"],
+            "--kind",
+          ],
+          [["--project", projectId, "--query", "a", "--query", "b"], "--query"],
           [
             ["--project", "missing", "--query", "rollout"],
             "KNOWLEDGE_PROJECT_NOT_FOUND",

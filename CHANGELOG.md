@@ -12,7 +12,9 @@
   gains the matching step, so installed repositories receive an updated skill
   on the next `ai-office install`. Add the read-only
   `ai-office knowledge:search` (`--project`, `--query`, optional `--limit` and
-  `--agent`) to find existing records before a new plan; it uses the existing bounded literal search and writes nothing. No store,
+  `--agent`) to find existing records before a new plan; it uses the existing bounded literal search on record text, rejects
+  positional arguments so an unquoted multi-word query cannot silently search
+  its first word, and writes nothing. No store,
   provider, automatic ingestion or write path is added.
 - Add `ai-office requirement:update` to correct the descriptive text of a
   requirement that is still `proposed` without replacing its identity. It

@@ -223,8 +223,11 @@ superseded.
    knowledge nor audit state. It uses the retrieval contract above unchanged:
    one literal substring, at most five hits, newest first, superseded decisions
    excluded, scoped by the Runtime-bound tenant and the project's portable
-   repository binding. The command applies no term selection, so the caller
-   supplies one distinctive term and repeats the search with another. Output is
+   repository binding. It matches record text only, never titles, and `--agent`
+   excludes imported legacy records, which carry no agent. The command applies
+   no term selection and rejects positional arguments, so the caller supplies
+   one distinctive word or exact, quoted phrase and repeats the search with
+   another. Output carries no truncation marker: five hits may mean more. Output is
    `{ schemaVersion: 1, hits }`; each hit has `id`, `kind`, `title`, `text`,
    `agentId`, `runId`, `taskId`, `source`, `createdAt` and a `legacy` flag for
    imported records. It never returns the tenant, endpoint or credentials. A
@@ -269,8 +272,10 @@ knowledge never satisfies a readiness dimension.
 - No command supersedes or relates records. The policy tells agents not to add
   a contradictory duplicate, to report an outdated record to the user, and to
   name the replaced record in the text of a correction.
-- Search is literal substring matching with five results. It can miss a
-  differently worded duplicate.
+- Search is literal substring matching on record text with five results and
+  no truncation marker. It can miss a differently worded duplicate, a record
+  whose distinctive term appears only in its title, older matches beyond the
+  five newest, and, with `--agent`, every imported legacy record.
 - The policy is agent guidance. The Runtime enforces the admission path,
   scope, bounds and audit; it does not classify content or detect secrets in
   submitted text. The user's review of the exact plan is the control.

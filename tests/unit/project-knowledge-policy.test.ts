@@ -1,4 +1,11 @@
-import { readFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { compileProjectHandoverSection } from "@ai-office/application/agent-client/project-handover-workflow.ts";
@@ -124,6 +131,14 @@ describe("durable project knowledge policy", () => {
     expect(projectKnowledgeAdmissionSteps[0]).toMatch(
       /^Search first\. Run `ai-office knowledge:search/u,
     );
+    // The search limits an agent must know to avoid a false "no duplicate".
+    for (const limit of [
+      "one distinctive word or exact phrase",
+      "record text, never titles",
+      "treat five hits as possibly more",
+      "do not pass `--agent` for a duplicate check",
+    ])
+      expect(projectKnowledgeAdmissionSteps[0]).toContain(limit);
     expect(steps).toContain("Admit only what you verified");
     expect(steps).toContain("State any remaining uncertainty explicitly");
     expect(steps).toContain("bound to a completed worker run");
@@ -210,6 +225,25 @@ describe("durable project knowledge policy", () => {
     ).toContain(
       "Projected SKILL.md does not embed the canonical durable project knowledge policy verbatim",
     );
+  });
+
+  test("rejects a checked-in distribution skill whose knowledge policy drifted", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ai-office-skill-policy-"));
+    try {
+      const copy = join(directory, "ai-office");
+      cpSync(skillRoot, copy, { recursive: true });
+      const drifted = distributionSkill.replace(
+        "Never write to the knowledge store directly",
+        "Write to the knowledge store directly when convenient",
+      );
+      expect(drifted).not.toBe(distributionSkill);
+      writeFileSync(join(copy, "SKILL.md"), drifted);
+      expect(validateAiOfficeSkill(copy)).toContain(
+        "SKILL.md does not embed the canonical durable project knowledge policy verbatim",
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("does not reintroduce CairnKeep or a second memory provider", () => {

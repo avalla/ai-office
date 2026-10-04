@@ -45,6 +45,12 @@ export async function handleKnowledgeCommand(
       args,
       new Set(["project", "query", "limit", "agent"]),
     );
+    // An unquoted multi-word query would otherwise search only its first word
+    // and report a false "no duplicate".
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError(
+        "knowledge:search only accepts named options; quote a multi-word --query",
+      );
     const limit = parsed.options.get("limit");
     if (limit !== undefined && !/^[1-5]$/u.test(limit))
       throw new CliUsageError("Knowledge search limit must be 1 to 5");

@@ -473,6 +473,13 @@ describe("governed knowledge admission", () => {
       { tenantId: "tenant-1", repositoryId: "repo-1" },
       { text: "rollout", limit: 3, agentId: "agent-1" },
     );
+    // The query bound is inclusive and counts code points, not UTF-16 units.
+    for (const text of ["x".repeat(200), "😀".repeat(200)]) {
+      f.findKnowledge.mockResolvedValueOnce([]);
+      await expect(
+        f.service.search({ projectId: "project-1", text }),
+      ).resolves.toEqual([]);
+    }
     expect(f.recordMemory).not.toHaveBeenCalled();
     expect(f.recordDecision).not.toHaveBeenCalled();
     expect(f.append).not.toHaveBeenCalled();
@@ -498,7 +505,7 @@ describe("governed knowledge admission", () => {
     const disabled = fixture({ knowledge: { state: "disabled" } });
     await expect(
       disabled.service.search({ projectId: "project-1", text: "rollout" }),
-    ).rejects.toBeInstanceOf(KnowledgeAdmissionError);
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_STORE_NOT_CONNECTED" });
     expect(disabled.findKnowledge).not.toHaveBeenCalled();
   });
 });
