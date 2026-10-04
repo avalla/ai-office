@@ -444,8 +444,9 @@ What it does not guarantee:
 - isolation from other readable host state at the operating-system level.
 
 Strong filesystem confidentiality needs an outer operating-system or container
-filesystem boundary around the executor. That is follow-up work recorded in
-the roadmap, not part of this worker. Until then, run the Codex worker only
+filesystem boundary around the executor. That is follow-up work planned as
+[M18](m18-strong-executor-filesystem-confinement.md), not part of this worker
+and not implemented. Until then, run the Codex worker only
 where the Runtime user's readable files may be probed in this way by the
 selected provider's model.
 

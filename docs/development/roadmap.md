@@ -1319,6 +1319,9 @@ isolated `HOME`/`CODEX_HOME` and explicitly mounted inputs, make arbitrary
 host paths invisible so that absolute-path probes cannot distinguish host
 state, keep provider networking working, keep credential handling bounded and
 keep cleanup deterministic.
+This follow-up is now planned as
+[M18 — Strong Executor Filesystem Confinement](#m18--strong-executor-filesystem-confinement);
+nothing of it is implemented.
 
 Other follow-ups recorded from the bounded Codex worker review, none of them
 addressed yet: the process-group wait has no upper bound when the Runtime is
@@ -2075,7 +2078,73 @@ renaming AgentRun everywhere for naming purity; inferred assignment of external
 sessions; hook-driven pipeline authority; every executor/provider; or production
 human/robot/machine/service adapters.
 
-## M11-M17 dependency summary and open design questions
+## M18 — Strong Executor Filesystem Confinement
+
+Status: planned; requirements, delivery tasks and proposed ADR only. No
+confinement provider, policy model, run root or admission change is
+implemented, and the bounded Codex and Claude workers are unchanged.
+
+Goal: an executor can observe only filesystem paths explicitly exposed to its
+run by AI Office. The bounded Codex worker (PR #94) showed that restrictions
+applied through the client do not give read confidentiality: the client's
+built-in `apply_patch` answers existence, type, access and guessed-line probes
+about host paths, invisibly to the Runtime (see
+[agent runtime](agent-runtime.md#filesystem-no-writes-no-read-confidentiality)).
+M18 adds the outer boundary, built by the Runtime around the executor process
+and independent of Codex, Claude Code, prompts or client flags.
+
+Confinement is generic core, not executor- or pack-specific. Roles, stages and
+domain packs request capabilities; the Runtime resolves the request against
+detected provider capability into an effective admitted policy and records it
+as provenance. Providers sit behind one application port: Linux native
+(Bubblewrap and namespaces), macOS native at the level it reliably enforces,
+and an OCI container provider behind a runtime-neutral port. Windows reports
+strong confinement as unsupported. Proposed machine-readable levels are
+`none`, `process_owned`, `write_restricted` and `filesystem_confidential`; a
+client-enforced restriction never raises the level, so the current workers
+remain `process_owned` until migrated. A run whose required level cannot be
+enforced fails with `WORKER_UNAVAILABLE` before dispatch; there is no silent
+downgrade, client-sandbox fallback or worker substitution.
+
+The [M18 delivery plan](m18-strong-executor-filesystem-confinement.md) records
+SFC-REQ-01–SFC-REQ-20, SFC-01–SFC-14, task dependencies, requirement coverage,
+the per-run filesystem root, credential, environment and process rules, stale
+run-root recovery, provenance, the adversarial suite with the `apply_patch`
+oracle regression against real Codex, CI and rollout. The
+[proposed ADR-0029](../adr/ADR-0029-executor-confinement-and-filesystem-trust-boundary.md)
+is the first decision gate, not current architecture. The AI Office project
+record has a planned M18 milestone with those requirements and tasks, their
+links, and typed dependency edges between SFC tasks.
+
+M18 is numbered after M17 because roadmap identifiers follow planning order.
+It depends only on the existing bounded worker port (ADR-0017) and may start
+before M12–M17 complete; SFC-02 must be checked against the M12 worker port as
+delivered by then. It is separate from M10, which hardens controlled mutations
+against a hostile same-UID process: M18 does not make the Runtime host a
+same-UID boundary and does not replace controlled actions. It also resolves,
+for confined runs, the unbounded process-group wait and the stale temporary
+run state recorded from the bounded Codex worker.
+
+Strong confinement is a prerequisite for enabling production autonomous
+Developer agents with repository write access (M14). Delegated child runs must
+inherit or narrow the parent policy; M18 records that rule and does not
+implement delegation. Rollout is staged and opt-in first: existing executions
+are not required to be strongly confined when the capability is introduced.
+
+Exit: a run requiring `filesystem_confidential` is admitted only with a
+verified provider; the real Codex and Claude workers then see only their run
+root; the oracle regression and adversarial suite pass on each platform
+claimed, against real OS or container backends; provenance shows the effective
+policy; stale roots are recovered; operator documentation matches tested
+hosts.
+
+Non-goals: Codex-, Claude- or pack-specific confinement; a same-UID boundary
+or other M10 scope; replacing controlled actions, approvals or grants; child
+delegation; enabling repository-editing execution; a Windows provider; microVM
+or distributed sandboxing; requiring strong confinement for every existing
+execution.
+
+## M11-M18 dependency summary and open design questions
 
 ```text
 M6E office definitions + M6 policy/actions + M8.5 context
@@ -2100,6 +2169,14 @@ M6E office definitions + M6 policy/actions + M8.5 context
                           |
                           v
        M17 Execution Observability & Heterogeneous Actors
+
+ADR-0017 bounded worker port
+          |
+          v
+M18 Strong Executor Filesystem Confinement
+          |
+          v
+autonomous repository-write Developer roles (M14)
 ```
 
 These milestones intentionally defer:
@@ -2134,4 +2211,4 @@ These questions require milestone-specific assessments and, where a durable
 architectural choice is ready, an ADR. The accepted M16 ADR records the pack
 boundary; later tasks must implement it without silently changing existing
 project semantics. This roadmap direction does not itself select an
-implementation or authorize work on M11-M17.
+implementation or authorize work on M11-M18.
