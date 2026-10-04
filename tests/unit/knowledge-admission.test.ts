@@ -6,6 +6,7 @@ import {
 import type {
   AgentKnowledgeStore,
   KnowledgeProvenance,
+  RunKnowledgeProvenance,
   RuntimeAgentKnowledge,
   SearchKnowledgeHit,
 } from "../../packages/application/src/ports/agent-knowledge-store.port.ts";
@@ -15,6 +16,8 @@ import type { TaskRepository } from "../../packages/application/src/ports/task-r
 import type { RepositoryIdentityRepository } from "../../packages/application/src/ports/repository-identity-repository.port.ts";
 import type { RecordAuditEvent } from "../../packages/application/src/commands/record-audit-event.ts";
 import type { Clock } from "../../packages/application/src/ports/clock.port.ts";
+import type { GovernanceRepository } from "../../packages/application/src/ports/governance-repository.port.ts";
+import type { ProjectProfileRepository } from "../../packages/application/src/ports/project-profile-repository.port.ts";
 
 const completedAt = new Date("2026-09-30T10:00:00.000Z");
 
@@ -86,6 +89,18 @@ function fixture(
     knowledge,
     { execute: append } as unknown as RecordAuditEvent,
     { now: () => new Date("2026-09-30T11:00:00.000Z") } as Clock,
+    {
+      listActiveProfileEntries: vi.fn(async () => []),
+    } as unknown as ProjectProfileRepository,
+    {
+      getSnapshot: vi.fn(async () => ({
+        milestones: [],
+        requirements: [],
+        adrs: [],
+        reviews: [],
+        approvals: [],
+      })),
+    } as unknown as GovernanceRepository,
   );
   return {
     service,
@@ -100,7 +115,8 @@ function fixture(
 
 function trace(
   plan: Awaited<ReturnType<ManageKnowledgeAdmission["plan"]>>,
-): KnowledgeProvenance {
+): RunKnowledgeProvenance {
+  if (plan.schemaVersion !== 1) throw new Error("expected a run-backed plan");
   const source = plan.source;
   return {
     knowledge: {

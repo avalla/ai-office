@@ -1,18 +1,72 @@
 import {
   ManageKnowledgeAdmission,
   type KnowledgeAdmissionKind,
+  type KnowledgeAdmissionSourceInput,
 } from "@ai-office/application/agent-knowledge/manage-knowledge-admission.ts";
 import {
   CliUsageError,
   parseArguments,
   requiredOption,
   type CommandContext,
+  type ParsedArguments,
 } from "./shared.ts";
 
 function kind(value: string): KnowledgeAdmissionKind {
   if (value !== "memory" && value !== "decision")
     throw new CliUsageError("Knowledge kind must be memory or decision");
   return value;
+}
+
+const sourceOptions = {
+  "agent-run": ["run"],
+  handover: ["handover"],
+  "operator-confirmed": ["confirmed-by", "evidence"],
+} as const;
+
+/**
+ * The source is selected explicitly; `--run` alone keeps meaning a run. An
+ * option that belongs to another source is a usage error, never ignored, so a
+ * plan cannot silently carry provenance its reviewer did not select.
+ */
+function admissionSource(
+  parsed: ParsedArguments,
+): KnowledgeAdmissionSourceInput {
+  const selected = parsed.options.get("source") ?? "agent-run";
+  if (!(selected in sourceOptions))
+    throw new CliUsageError(
+      "Knowledge source must be agent-run, handover, or operator-confirmed",
+    );
+  const kind = selected as keyof typeof sourceOptions;
+  for (const [other, names] of Object.entries(sourceOptions))
+    for (const name of names)
+      if (other !== kind && parsed.options.has(name))
+        throw new CliUsageError(
+          `Option --${name} is not accepted with --source ${kind}`,
+        );
+  if (kind === "agent-run")
+    return { kind: "agent_run", runId: requiredOption(parsed, "run") };
+  if (kind === "handover")
+    return {
+      kind: "handover",
+      confirmationId: requiredOption(parsed, "handover"),
+    };
+  return {
+    kind: "operator_confirmed",
+    confirmedBy: requiredOption(parsed, "confirmed-by"),
+    evidence: requiredOption(parsed, "evidence")
+      .split(",")
+      .map((reference) => {
+        const separator = reference.indexOf(":");
+        if (separator < 1 || separator === reference.length - 1)
+          throw new CliUsageError(
+            "Knowledge evidence must be a comma-separated list of <kind>:<id>",
+          );
+        return {
+          kind: reference.slice(0, separator),
+          id: reference.slice(separator + 1),
+        };
+      }),
+  };
 }
 
 export async function handleKnowledgeCommand(
@@ -29,15 +83,24 @@ export async function handleKnowledgeCommand(
     context.agentKnowledge ?? { state: "disabled" },
     context.audit,
     context.clock,
+    context.profiles,
+    context.governance,
   );
   if (command === "knowledge:trace") {
     const parsed = parseArguments(args, new Set(["project", "kind", "id"]));
-    const trace = await service.trace(
+    const explanation = await service.explain(
       requiredOption(parsed, "project"),
       kind(requiredOption(parsed, "kind")),
       requiredOption(parsed, "id"),
     );
-    context.io.stdout(JSON.stringify({ schemaVersion: 1, provenance: trace }));
+    context.io.stdout(
+      JSON.stringify({
+        schemaVersion: 1,
+        provenance: explanation?.provenance ?? null,
+        admissionSource: explanation?.admissionSource ?? null,
+        admission: explanation?.admission ?? null,
+      }),
+    );
     return 0;
   }
   if (command === "knowledge:search") {
@@ -75,6 +138,12 @@ export async function handleKnowledgeCommand(
           source: hit.source,
           createdAt: hit.createdAt.toISOString(),
           legacy: "legacy" in hit,
+          provenanceKind:
+            "legacy" in hit
+              ? "legacy_import"
+              : hit.runId === null
+                ? hit.provenance.kind
+                : "agent_run",
         })),
       }),
     );
@@ -83,11 +152,25 @@ export async function handleKnowledgeCommand(
   if (command === "knowledge:plan" || command === "knowledge:admit") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "run", "kind", "title", "text", "approve", "actor"]),
+      new Set([
+        "project",
+        "source",
+        "run",
+        "handover",
+        "confirmed-by",
+        "evidence",
+        "kind",
+        "title",
+        "text",
+        "approve",
+        "actor",
+      ]),
     );
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError(`${command} only accepts named options`);
     const input = {
       projectId: requiredOption(parsed, "project"),
-      runId: requiredOption(parsed, "run"),
+      source: admissionSource(parsed),
       kind: kind(requiredOption(parsed, "kind")),
       text: requiredOption(parsed, "text"),
       ...(parsed.options.get("title") === undefined
@@ -113,6 +196,7 @@ export async function handleKnowledgeCommand(
         id: plan.id,
         kind: plan.kind,
         planHash: plan.planHash,
+        provenanceKind: plan.provenance.kind,
         outcome: plan.outcome,
       }),
     );

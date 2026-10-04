@@ -25,6 +25,8 @@ export const maximumRepositoryReviewSummaryLength = 4000;
 export interface RepositoryUnderstandingConfirmation {
   schemaVersion: 1;
   projectId: string;
+  /** Identifies this confirmation as `knowledge:plan --source handover` evidence. */
+  confirmationId: string;
   fingerprint: string;
   scanId: string | null;
   confirmedAt: string;
@@ -81,6 +83,7 @@ export class ConfirmRepositoryUnderstanding {
       summary,
     };
 
+    const confirmationId = this.ids.generate();
     await this.transactions.run(async () => {
       await this.profiles.supersedeProfileEntries(
         input.projectId,
@@ -89,7 +92,7 @@ export class ConfirmRepositoryUnderstanding {
         now,
       );
       await this.profiles.saveProfileEntry({
-        id: this.ids.generate(),
+        id: confirmationId,
         projectId: input.projectId,
         category: handoverReviewCategory,
         key: handoverReviewKey,
@@ -105,6 +108,7 @@ export class ConfirmRepositoryUnderstanding {
     return {
       schemaVersion: 1,
       projectId: input.projectId,
+      confirmationId,
       fingerprint: review.fingerprint,
       scanId: review.scanId,
       confirmedAt: now.toISOString(),

@@ -1,4 +1,4 @@
-import type { DecisionInput, KnowledgeScope, MemoryInput } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import type { DecisionInput, KnowledgeScope, MemoryInput, NonRunKnowledgeInput } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import { knowledgeCompatibilitySearchTerm } from "@ai-office/application/context/knowledge-search-term.ts";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { RecordId, Surreal } from "../../packages/storage-surrealdb/node_modules/surrealdb";
@@ -10,6 +10,8 @@ import type { AgentRuntimeRepository } from "../../packages/application/src/port
 import type { RepositoryIdentityRepository } from "../../packages/application/src/ports/repository-identity-repository.port.ts";
 import type { RecordAuditEvent } from "../../packages/application/src/commands/record-audit-event.ts";
 import type { Clock } from "../../packages/application/src/ports/clock.port.ts";
+import type { GovernanceRepository } from "../../packages/application/src/ports/governance-repository.port.ts";
+import type { ProjectProfileRepository } from "../../packages/application/src/ports/project-profile-repository.port.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { SurrealAgentKnowledgeStoreImpl } from "../../packages/storage-surrealdb/src/surreal-agent-knowledge.store.ts";
 
@@ -154,6 +156,8 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
         },
       } as unknown as RecordAuditEvent,
       { now: () => new Date("2026-09-30T11:00:00.000Z") } as Clock,
+      {} as ProjectProfileRepository,
+      {} as GovernanceRepository,
     );
     const input = {
       projectId: "project-1",
@@ -162,6 +166,7 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
       text: "Use the verified rollout",
     };
     const plan = await service.plan(input);
+    if (plan.schemaVersion !== 1) throw new Error("expected a run-backed plan");
     expect(plan.id).toBe(`ak_${plan.planHash}`);
     expect(plan.source.locator).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(await store.traceMemoryProvenance(scopeA, plan.id)).toBeNull();
@@ -659,4 +664,220 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     expect(await store.findKnowledge(scopeA, { text: "cleanup" })).toEqual([]);
     expect(await store.findKnowledge(scopeSameTenantOtherProject, { text: "cleanup" })).toHaveLength(1);
   });
+});
+
+describe.skipIf(!enabled)("SurrealDB non-run knowledge provenance (AK-11)", () => {
+  const scope = { tenantId: "tenant-a", repositoryId: "repo-ak11" } satisfies KnowledgeScope;
+  const otherScope = { tenantId: "tenant-a", repositoryId: "repo-ak11-other" } satisfies KnowledgeScope;
+  const confirmedAt = new Date("2026-10-01T09:00:00.000Z");
+  const fingerprint = "f".repeat(64);
+  let provenanceStore: typeof store;
+  let closeProvenanceStore: () => Promise<void>;
+  let raw: Surreal;
+
+  function fromHandover(id: string, text = "The daemon owns every knowledge write"): NonRunKnowledgeInput {
+    return {
+      ...scope, id, kind: "memory", text,
+      source: { kind: "handover", id: "confirmation-1", label: "Confirmed handover review confirmation-1", locator: `sha256:${fingerprint}` },
+      createdAt: confirmedAt,
+      provenance: { kind: "handover", confirmationId: "confirmation-1", fingerprint, scanId: "scan-1", confirmedAt },
+    };
+  }
+
+  function fromOperator(id: string, text = "Every knowledge write crosses the daemon"): NonRunKnowledgeInput {
+    return {
+      ...scope, id, kind: "decision", title: "Knowledge write boundary", text,
+      source: { kind: "operator", id: "andrea", label: "Operator confirmation by andrea", locator: `sha256:${"e".repeat(64)}` },
+      createdAt: new Date("2026-10-02T11:00:00.000Z"),
+      provenance: {
+        kind: "operator_confirmed", confirmedBy: "andrea",
+        evidence: [
+          { kind: "requirement", id: "req-1", label: "Requirement AK-11" },
+          { kind: "task", id: "task-1", label: "Task task-1" },
+        ],
+      },
+    };
+  }
+
+  beforeAll(async () => {
+    const database = `ak11_${randomUUID().replaceAll("-", "")}`;
+    const connection = await connectSurrealAgentKnowledgeStore({ endpoint: endpoint!, namespace: "ai_office_test", database, username: "root", password: "root" });
+    provenanceStore = connection.store;
+    closeProvenanceStore = connection.close;
+    raw = new Surreal();
+    await raw.connect(endpoint!);
+    await raw.signin({ username: "root", password: "root" });
+    await raw.use({ namespace: "ai_office_test", database });
+  });
+
+  afterEach(async () => {
+    await provenanceStore.deleteProjectKnowledge(scope);
+    await provenanceStore.deleteProjectKnowledge(otherScope);
+  });
+
+  afterAll(async () => {
+    await closeProvenanceStore?.();
+    await raw?.close();
+  });
+
+  it("stores each provenance kind as typed, traceable evidence without a run graph", async () => {
+    await provenanceStore.recordNonRunKnowledge(fromHandover("ak_handover"));
+    await provenanceStore.recordNonRunKnowledge({ ...fromHandover("ak_handover_unscanned"), provenance: { kind: "handover", confirmationId: "confirmation-1", fingerprint, scanId: null, confirmedAt } });
+    await provenanceStore.recordNonRunKnowledge(fromOperator("ak_operator"));
+
+    const handover = await provenanceStore.traceMemoryProvenance(scope, "ak_handover");
+    expect(handover).toMatchObject({
+      runId: null, taskId: null, agentId: null,
+      source: { kind: "handover", id: "confirmation-1", locator: `sha256:${fingerprint}` },
+      knowledge: {
+        id: "ak_handover", kind: "memory", title: null, runId: null, taskId: null, agentId: null,
+        provenance: { kind: "handover", confirmationId: "confirmation-1", fingerprint, scanId: "scan-1", confirmedAt },
+      },
+    });
+    expect((await provenanceStore.traceMemoryProvenance(scope, "ak_handover_unscanned"))?.knowledge)
+      .toMatchObject({ provenance: { scanId: null } });
+    expect((await provenanceStore.traceDecisionProvenance(scope, "ak_operator"))?.knowledge).toMatchObject({
+      title: "Knowledge write boundary", runId: null,
+      provenance: fromOperator("ak_operator").provenance,
+    });
+
+    // No run, task, agent, or source node was manufactured for these records.
+    for (const table of ["knowledge_run", "knowledge_task", "knowledge_agent", "knowledge_source"]) {
+      expect((await raw.query(`SELECT * FROM ${table}`))[0]).toEqual([]);
+    }
+    // Scope still isolates them.
+    expect(await provenanceStore.traceMemoryProvenance(otherScope, "ak_handover")).toBeNull();
+  });
+
+  it("searches across run, handover, operator-confirmed, and legacy records", async () => {
+    await provenanceStore.recordMemory({ ...memory(scope, "ak_run", "The daemon schedules every worker run"), createdAt: new Date("2026-09-27T10:00:00.000Z") });
+    await provenanceStore.recordNonRunKnowledge(fromHandover("ak_handover"));
+    await provenanceStore.recordNonRunKnowledge(fromOperator("ak_operator"));
+    await seedLegacy(raw, scope, "ak_legacy", "The daemon predates the CLI split", "notes/daemon");
+
+    const hits = await provenanceStore.findKnowledge(scope, { text: "DAEMON" });
+    expect(hits.map((hit) => [hit.id, "legacy" in hit ? "legacy_import" : hit.runId === null ? hit.provenance.kind : "agent_run"])).toEqual([
+      ["ak_operator", "operator_confirmed"],
+      ["ak_handover", "handover"],
+      ["ak_legacy", "legacy_import"],
+      ["ak_run", "agent_run"],
+    ]);
+    // Agent-scoped retrieval only ever returns records an agent run produced.
+    expect((await provenanceStore.findKnowledge(scope, { text: "daemon", agentId: "agent-1" })).map((hit) => hit.id)).toEqual(["ak_run"]);
+    expect((await provenanceStore.listAgentKnowledge(scope, "agent-1")).map((hit) => hit.id)).toEqual(["ak_run"]);
+  });
+
+  it("keeps admitted provenance immutable and a conflicting write atomic", async () => {
+    const original = fromOperator("ak_operator");
+    await provenanceStore.recordNonRunKnowledge(original);
+    await provenanceStore.recordNonRunKnowledge(original);
+
+    const provenance = original.provenance as Extract<NonRunKnowledgeInput["provenance"], { kind: "operator_confirmed" }>;
+    for (const changed of [
+      { ...original, text: "Changed text" },
+      { ...original, title: "Changed title" },
+      { ...original, provenance: { ...provenance, evidence: provenance.evidence.slice(0, 1) } },
+      { ...original, provenance: { ...provenance, evidence: [{ ...provenance.evidence[0]!, label: "Requirement X-1" }, provenance.evidence[1]!] } },
+      { ...original, source: { ...original.source, id: "someone-else" }, provenance: { ...provenance, confirmedBy: "someone-else" } },
+      { ...fromHandover("ak_operator"), kind: "decision" as const, title: original.title! },
+    ]) {
+      await expect(provenanceStore.recordNonRunKnowledge(changed)).rejects.toThrow();
+    }
+    // A run-backed write cannot take over the identity either, and creates no graph.
+    await expect(provenanceStore.recordDecision(decision(scope, "ak_operator", "task-1", original.text))).rejects.toThrow();
+    expect((await raw.query("SELECT * FROM knowledge_run"))[0]).toEqual([]);
+    expect((await provenanceStore.traceDecisionProvenance(scope, "ak_operator"))?.knowledge).toMatchObject({
+      text: original.text, title: original.title, provenance: original.provenance,
+    });
+
+    // Nor can non-run provenance replace a run-backed record.
+    await provenanceStore.recordMemory(memory(scope, "ak_run"));
+    await expect(provenanceStore.recordNonRunKnowledge({ ...fromHandover("ak_run"), text: memory(scope, "ak_run").text })).rejects.toThrow();
+    expect((await provenanceStore.traceMemoryProvenance(scope, "ak_run"))?.runId).toBe("run-ak_run");
+  });
+
+  it("rejects malformed or mixed provenance before writing", async () => {
+    const handover = fromHandover("ak_invalid");
+    const operator = fromOperator("ak_invalid");
+    for (const invalid of [
+      { ...handover, provenance: { ...handover.provenance, runId: "run-1" } },
+      { ...handover, provenance: { ...handover.provenance, fingerprint: "short" } },
+      { ...handover, source: operator.source },
+      { ...handover, source: { ...handover.source, id: "another-confirmation" } },
+      { ...handover, title: "A memory has no title" },
+      { ...operator, title: undefined },
+      { ...operator, provenance: { kind: "operator_confirmed", confirmedBy: "andrea", evidence: [] } },
+      { ...operator, provenance: { kind: "operator_confirmed", confirmedBy: "andrea", evidence: [{ kind: "claude_session", id: "session-1", label: "Session" }] } },
+      { ...operator, provenance: { kind: "session", claudeSessionId: "session-1" } },
+      { ...operator, provenance: { ...operator.provenance, confirmationId: "confirmation-1" } },
+    ]) {
+      await expect(provenanceStore.recordNonRunKnowledge(invalid as never)).rejects.toThrow();
+    }
+    expect(await provenanceStore.traceMemoryProvenance(scope, "ak_invalid")).toBeNull();
+    expect(await provenanceStore.traceDecisionProvenance(scope, "ak_invalid")).toBeNull();
+  });
+
+  it("fails closed on a persisted row whose provenance is mixed, incomplete, or unknown", async () => {
+    await provenanceStore.recordNonRunKnowledge(fromHandover("ak_handover"));
+    await provenanceStore.recordMemory(memory(scope, "ak_run"));
+    const handoverRow = record(scope, "knowledge_memory", "ak_handover");
+    const runRow = record(scope, "knowledge_memory", "ak_run");
+
+    // The schema refuses a field that belongs to another provenance kind.
+    for (const [row, statement] of [
+      [handoverRow, "UPDATE $row SET run_id = 'run-1'"],
+      [handoverRow, "UPDATE $row SET confirmed_by = 'andrea'"],
+      [handoverRow, "UPDATE $row SET evidence = [{ kind: 'task', id: 'task-1', label: 'Task task-1' }]"],
+      [handoverRow, "UPDATE $row SET provenance_kind = 'claude_session'"],
+      [runRow, "UPDATE $row SET handover_confirmation_id = 'confirmation-1'"],
+      [runRow, "UPDATE $row SET provenance_kind = 'handover'"],
+    ] as const) {
+      await expect(raw.query(statement, { row }), statement).rejects.toThrow();
+    }
+    expect((await provenanceStore.traceMemoryProvenance(scope, "ak_handover"))?.knowledge).toMatchObject({ provenance: { kind: "handover" } });
+    expect((await provenanceStore.traceMemoryProvenance(scope, "ak_run"))?.runId).toBe("run-ak_run");
+
+    // The adapter refuses a row that lost a field its own kind requires.
+    await raw.query("UPDATE $row SET handover_fingerprint = NONE", { row: handoverRow });
+    await expect(provenanceStore.traceMemoryProvenance(scope, "ak_handover")).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+    await expect(provenanceStore.findKnowledge(scope, { text: "daemon" })).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+    await raw.query("UPDATE $row SET run_id = NONE", { row: runRow });
+    await expect(provenanceStore.traceMemoryProvenance(scope, "ak_run")).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
+  });
+
+  it("deletes non-run records with their project", async () => {
+    await provenanceStore.recordNonRunKnowledge(fromHandover("ak_handover"));
+    await provenanceStore.recordNonRunKnowledge({ ...fromOperator("ak_other"), ...otherScope });
+    await provenanceStore.deleteProjectKnowledge(scope);
+    expect(await provenanceStore.traceMemoryProvenance(scope, "ak_handover")).toBeNull();
+    expect((await provenanceStore.traceDecisionProvenance(otherScope, "ak_other"))?.knowledge.id).toBe("ak_other");
+  });
+});
+
+it.skipIf(!enabled)("upgrades a v2 knowledge database in place and keeps its run-backed records", async () => {
+  const upgradeDb = new Surreal();
+  const scope = { tenantId: "tenant-a", repositoryId: "repo-upgrade" } satisfies KnowledgeScope;
+  try {
+    await upgradeDb.connect(endpoint!);
+    await upgradeDb.signin({ username: "root", password: "root" });
+    await upgradeDb.use({ namespace: "ai_office_test", database: `ak11_upgrade_${randomUUID().replaceAll("-", "")}` });
+    // The v2 definitions as released: run, task, and agent were required strings.
+    for (const table of ["knowledge_memory", "knowledge_decision"]) {
+      await upgradeDb.query(`DEFINE TABLE ${table} SCHEMAFULL TYPE NORMAL; DEFINE FIELD agent_id ON ${table} TYPE string; DEFINE FIELD run_id ON ${table} TYPE string; DEFINE FIELD task_id ON ${table} TYPE string;`);
+    }
+    const upgraded = await SurrealAgentKnowledgeStoreImpl.create(upgradeDb);
+    await upgraded.recordMemory(memory(scope, "ak_before"));
+    // A second start re-applies the same definitions without touching rows.
+    const restarted = await SurrealAgentKnowledgeStoreImpl.create(upgradeDb);
+    expect((await restarted.traceMemoryProvenance(scope, "ak_before"))).toMatchObject({ runId: "run-ak_before", taskId: "task-ak_before", agentId: "agent-1" });
+    await restarted.recordNonRunKnowledge({
+      ...scope, id: "ak_after", kind: "memory", text: "Admitted after the upgrade",
+      source: { kind: "handover", id: "confirmation-1", label: "Confirmed handover review confirmation-1" },
+      createdAt: new Date("2026-10-01T09:00:00.000Z"),
+      provenance: { kind: "handover", confirmationId: "confirmation-1", fingerprint: "a".repeat(64), scanId: null, confirmedAt: new Date("2026-10-01T09:00:00.000Z") },
+    });
+    expect((await restarted.findKnowledge(scope, { text: "e" })).map((hit) => hit.id).sort()).toEqual(["ak_after", "ak_before"]);
+  } finally {
+    await upgradeDb.close();
+  }
 });

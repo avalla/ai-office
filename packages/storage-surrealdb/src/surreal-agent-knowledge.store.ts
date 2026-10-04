@@ -7,12 +7,15 @@ import {
   assertKnowledgeSearchQuery,
   knowledgeRetrievalLimits,
   isKnowledgeIdentifier,
+  isNonRunKnowledgeProvenance,
   type AgentKnowledgeStore,
   type DecisionInput,
   type KnowledgeHit,
   type KnowledgeScope,
   type KnowledgeSearchQuery,
   type MemoryInput,
+  type NonRunKnowledgeHit,
+  type NonRunKnowledgeInput,
   type KnowledgeProvenance,
   type LegacyKnowledgeHit,
   type SearchKnowledgeHit,
@@ -64,6 +67,36 @@ function assertKnowledge(input: MemoryInput | DecisionInput): void {
   if ("title" in input && !input.title.trim()) {
     throw new Error("AgentKnowledgeStore requires a decision title");
   }
+}
+
+const nonRunSourceKind = { handover: "handover", operator_confirmed: "operator" } as const;
+const nonRunProvenanceFields = ["handover_confirmation_id", "handover_fingerprint", "handover_scan_id", "handover_confirmed_at", "confirmed_by", "evidence"] as const;
+
+function assertNonRunKnowledge(input: NonRunKnowledgeInput): void {
+  assertKnowledgeScope(input);
+  for (const [name, value] of Object.entries({ id: input.id, text: input.text, sourceId: input.source?.id, sourceLabel: input.source?.label })) {
+    if (typeof value !== "string" || !value.trim()) throw new Error(`AgentKnowledgeStore requires provenance ${name}`);
+  }
+  if (!(input.createdAt instanceof Date) || Number.isNaN(input.createdAt.getTime())) {
+    throw new Error("AgentKnowledgeStore requires a valid createdAt timestamp");
+  }
+  if (input.kind !== "memory" && input.kind !== "decision") {
+    throw new Error("AgentKnowledgeStore requires a supported knowledge kind");
+  }
+  if (input.kind === "decision" ? typeof input.title !== "string" || !input.title.trim() : input.title !== undefined) {
+    throw new Error("AgentKnowledgeStore requires a title for a decision only");
+  }
+  if (!isNonRunKnowledgeProvenance(input.provenance) ||
+    input.source.kind !== nonRunSourceKind[input.provenance.kind] ||
+    input.source.id !== (input.provenance.kind === "handover" ? input.provenance.confirmationId : input.provenance.confirmedBy)) {
+    throw new Error("AgentKnowledgeStore requires typed non-run provenance matching its source");
+  }
+}
+
+function toDate(value: unknown): Date {
+  return value instanceof DateTime ? value.toDate()
+    : value instanceof Date ? value
+      : typeof value === "string" ? new Date(value) : new Date(Number.NaN);
 }
 
 function immutableRecordGuard(variable: string, table: string, record: string, fields: Record<string, string>, message: string): string {
@@ -167,6 +200,42 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
     );
   }
 
+  async recordNonRunKnowledge(input: NonRunKnowledgeInput): Promise<void> {
+    assertNonRunKnowledge(input);
+    const table = `knowledge_${input.kind}`;
+    const key = scopedId(input, input.kind, input.id);
+    const provenance = input.provenance;
+    const content = {
+      tenant_id: input.tenantId, project_id: input.repositoryId, external_id: input.id,
+      text: input.text, ...(input.kind === "decision" ? { title: input.title } : {}),
+      source_id: input.source.id, source_kind: input.source.kind,
+      source_label: input.source.label, source_locator: input.source.locator ?? "",
+      created_at: input.createdAt, provenance_kind: provenance.kind,
+      ...(provenance.kind === "handover"
+        ? {
+            handover_confirmation_id: provenance.confirmationId,
+            handover_fingerprint: provenance.fingerprint,
+            ...(provenance.scanId === null ? {} : { handover_scan_id: provenance.scanId }),
+            handover_confirmed_at: provenance.confirmedAt,
+          }
+        : {
+            confirmed_by: provenance.confirmedBy,
+            evidence: provenance.evidence.map(({ kind, id, label }) => ({ kind, id, label })),
+          }),
+    };
+    // One statement set, one transaction: the record and its provenance are the
+    // same row, so neither can exist without the other. A row that already holds
+    // this ID must match in every field, including run fields it must not have.
+    await this.execute(
+      `BEGIN TRANSACTION;
+       LET $existing = (SELECT * FROM ${table} WHERE id = $record LIMIT 1);
+       IF array::len($existing) > 0 AND (array::sort(object::keys($existing[0])) != $expected_keys OR ${Object.keys(content).map((field) => `$existing[0].${field} != $content.${field}`).join(" OR ")}) { THROW 'Knowledge identity conflict'; };
+       UPSERT $record CONTENT $content;
+       COMMIT TRANSACTION;`,
+      { record: new RecordId(table, key), content, expected_keys: [...Object.keys(content), "id"].sort() },
+    );
+  }
+
   async supersedeDecision(scope: KnowledgeScope, currentId: string, priorId: string): Promise<void> {
     assertKnowledgeScope(scope);
     assertKnowledgeIdentifier(currentId);
@@ -252,7 +321,7 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
       "SELECT * FROM knowledge_decision WHERE tenant_id = $tenant AND project_id = $project AND id IN (SELECT VALUE in FROM affects WHERE out = type::record('knowledge_task', $task_key) AND tenant_id = $tenant AND project_id = $project) AND id NOT IN (SELECT VALUE out FROM supersedes WHERE tenant_id = $tenant AND project_id = $project) ORDER BY created_at DESC, external_id ASC LIMIT $limit",
       { tenant: scope.tenantId, project: scope.repositoryId, task_key: scopedId(scope, "task", taskId), limit },
     );
-    return rows.map((row) => this.hit(row, "decision", scope));
+    return rows.map((row) => this.runHit(row, "decision", scope));
   }
 
   async listTaskDependencies(scope: KnowledgeScope, taskId: string, limit = knowledgeRetrievalLimits.maxGraphResults): Promise<string[]> {
@@ -284,7 +353,7 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
       this.rows("SELECT * FROM knowledge_memory WHERE tenant_id = $tenant AND project_id = $project AND agent_id = $agent_id ORDER BY created_at DESC, external_id ASC LIMIT $limit", params),
       this.rows("SELECT * FROM knowledge_decision WHERE tenant_id = $tenant AND project_id = $project AND agent_id = $agent_id AND id NOT IN (SELECT VALUE out FROM supersedes WHERE tenant_id = $tenant AND project_id = $project) ORDER BY created_at DESC, external_id ASC LIMIT $limit", params),
     ]);
-    return [...memories.map((row) => this.hit(row, "memory", scope)), ...decisions.map((row) => this.hit(row, "decision", scope))]
+    return [...memories.map((row) => this.runHit(row, "memory", scope)), ...decisions.map((row) => this.runHit(row, "decision", scope))]
       .sort(sortKnowledge).slice(0, limit);
   }
 
@@ -339,6 +408,10 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
     if (hit.id !== id || !this.sameRecord(row.id, knowledgeRecord)) {
       throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
     }
+    // A non-run record is self-contained: it has no run, task, or agent graph to verify.
+    if (hit.runId === null) {
+      return { knowledge: hit, source: hit.source, runId: null, taskId: null, agentId: null };
+    }
 
     const sourceRecord = new RecordId("knowledge_source", scopedId(scope, "source", hit.source.id));
     const runRecord = new RecordId("knowledge_run", scopedId(scope, "run", hit.runId));
@@ -379,48 +452,92 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
     }
   }
 
-  private hit(row: Row, kind: KnowledgeHit["kind"], scope: KnowledgeScope): KnowledgeHit {
-    const fields = ["external_id", "text", "agent_id", "run_id", "task_id", "source_id", "source_label"] as const;
+  private runHit(row: Row, kind: KnowledgeHit["kind"], scope: KnowledgeScope): KnowledgeHit {
+    const hit = this.hit(row, kind, scope);
+    if (hit.runId === null) throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    return hit;
+  }
+
+  /** Validates the fields of the row's own provenance kind and rejects any field of another kind. */
+  private hit(row: Row, kind: KnowledgeHit["kind"], scope: KnowledgeScope): KnowledgeHit | NonRunKnowledgeHit {
+    const invalid = new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
     if (
       !this.inScope(row, scope) ||
-      fields.some((field) => typeof row[field] !== "string" || !(row[field] as string).trim()) ||
-      ["external_id", "agent_id", "run_id", "task_id", "source_id"].some((field) => !isKnowledgeIdentifier(row[field])) ||
+      ["external_id", "text", "source_id", "source_label"].some((field) => typeof row[field] !== "string" || !(row[field] as string).trim()) ||
+      !isKnowledgeIdentifier(row.external_id) || !isKnowledgeIdentifier(row.source_id) ||
       !this.sameRecord(row.id, new RecordId(`knowledge_${kind}`, scopedId(scope, kind, String(row.external_id)))) ||
-      !["requirement", "task", "decision", "run", "external"].includes(String(row.source_kind)) ||
       (kind === "decision" && (typeof row.title !== "string" || !row.title.trim())) ||
       (row.source_locator != null && typeof row.source_locator !== "string")
     ) {
-      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+      throw invalid;
     }
-    const createdAt = row.created_at instanceof DateTime
-      ? row.created_at.toDate()
-      : row.created_at instanceof Date
-        ? row.created_at
-        : typeof row.created_at === "string"
-          ? new Date(row.created_at)
-          : new Date(Number.NaN);
-    if (Number.isNaN(createdAt.getTime())) {
-      throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
-    }
-    return {
+    const createdAt = toDate(row.created_at);
+    if (Number.isNaN(createdAt.getTime())) throw invalid;
+    const common = {
       tenantId: scope.tenantId,
       repositoryId: scope.repositoryId,
       id: row.external_id as string,
       kind,
       text: row.text as string,
       title: kind === "decision" ? row.title as string : null,
-      agentId: row.agent_id as string,
-      runId: row.run_id as string,
-      taskId: row.task_id as string,
-      source: {
-        id: row.source_id as string,
-        kind: row.source_kind as KnowledgeHit["source"]["kind"],
-        label: row.source_label as string,
-        ...(typeof row.source_locator === "string" && row.source_locator.length > 0
-          ? { locator: row.source_locator }
-          : {}),
-      },
       createdAt,
+    };
+    const source = (sourceKind: KnowledgeHit["source"]["kind"]) => ({
+      id: row.source_id as string,
+      kind: sourceKind,
+      label: row.source_label as string,
+      ...(typeof row.source_locator === "string" && row.source_locator.length > 0
+        ? { locator: row.source_locator }
+        : {}),
+    });
+    const runFields = ["agent_id", "run_id", "task_id"] as const;
+    if (row.provenance_kind == null) {
+      if (
+        runFields.some((field) => !isKnowledgeIdentifier(row[field])) ||
+        nonRunProvenanceFields.some((field) => row[field] != null) ||
+        !["requirement", "task", "decision", "run", "external"].includes(String(row.source_kind))
+      ) {
+        throw invalid;
+      }
+      return {
+        ...common,
+        agentId: row.agent_id as string,
+        runId: row.run_id as string,
+        taskId: row.task_id as string,
+        source: source(row.source_kind as KnowledgeHit["source"]["kind"]),
+      };
+    }
+    const provenance: unknown = row.provenance_kind === "handover"
+      ? {
+          kind: "handover",
+          confirmationId: row.handover_confirmation_id,
+          fingerprint: row.handover_fingerprint,
+          scanId: row.handover_scan_id ?? null,
+          confirmedAt: toDate(row.handover_confirmed_at),
+        }
+      : row.provenance_kind === "operator_confirmed"
+        ? { kind: "operator_confirmed", confirmedBy: row.confirmed_by, evidence: row.evidence }
+        : null;
+    if (
+      !isNonRunKnowledgeProvenance(provenance) ||
+      runFields.some((field) => row[field] != null) ||
+      (provenance.kind === "handover"
+        ? row.confirmed_by != null || row.evidence != null
+        : nonRunProvenanceFields.slice(0, 4).some((field) => row[field] != null)) ||
+      row.source_kind !== nonRunSourceKind[provenance.kind] ||
+      row.source_id !== (provenance.kind === "handover" ? provenance.confirmationId : provenance.confirmedBy)
+    ) {
+      throw invalid;
+    }
+    return {
+      ...common,
+      agentId: null,
+      runId: null,
+      taskId: null,
+      source: source(nonRunSourceKind[provenance.kind]),
+      provenance: provenance.kind === "handover"
+        ? provenance
+        : { ...provenance, evidence: provenance.evidence.map(({ kind: evidenceKind, id, label }) => ({ kind: evidenceKind, id, label })) },
     };
   }
 

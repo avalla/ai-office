@@ -11,7 +11,9 @@ import { describe, expect, test } from "vitest";
 import { compileProjectHandoverSection } from "@ai-office/application/agent-client/project-handover-workflow.ts";
 import {
   compileProjectKnowledgeSection,
+  projectKnowledgeAdmissionSources,
   projectKnowledgeAdmissionSteps,
+  projectKnowledgeSourceBoundaries,
   projectKnowledgeAuthoritativeSources,
   projectKnowledgeExclusions,
   projectKnowledgeWorkKinds,
@@ -141,15 +143,12 @@ describe("durable project knowledge policy", () => {
       expect(projectKnowledgeAdmissionSteps[0]).toContain(limit);
     expect(steps).toContain("Admit only what you verified");
     expect(steps).toContain("State any remaining uncertainty explicitly");
-    expect(steps).toContain("bound to a completed worker run");
-    for (const evidence of [
-      "ADR",
-      "requirement",
-      "review",
-      "repository path",
-      "explicit user confirmation",
-    ])
-      expect(steps).toContain(evidence);
+    expect(steps).toContain("Keep provenance truthful");
+    expect(steps).toContain("pass it explicitly");
+    expect(steps).toContain("repository path");
+    expect(steps).toContain(
+      "When no source truthfully applies, do not admit; report the candidate to the user instead",
+    );
     expect(steps).toContain("Do not create contradictory duplicates");
     expect(steps.indexOf("knowledge:plan")).toBeLessThan(
       steps.indexOf("knowledge:admit"),
@@ -160,6 +159,69 @@ describe("durable project knowledge policy", () => {
     expect(steps).toContain("Never write to the knowledge store directly");
     expect(steps).toContain("never admit on the user's behalf or in advance");
     expect(policy).toContain("Never admit every task result");
+  });
+
+  test("maps each kind of work to its truthful admission source", () => {
+    expect(
+      projectKnowledgeAdmissionSources.map(([what, source]) => [what, source]),
+    ).toEqual([
+      ["AgentRun knowledge", "run provenance"],
+      ["confirmed handover knowledge", "handover provenance"],
+      [
+        "interactive/operator-reviewed knowledge",
+        "explicit evidence + operator-confirmed provenance",
+      ],
+    ]);
+    for (const [what, source] of projectKnowledgeAdmissionSources)
+      expect(policy).toContain(`${what}\n    → ${source}`);
+    for (const selector of [
+      "`--run <runId>`",
+      "`--source handover --handover <confirmationId>`",
+      "`--source operator-confirmed --confirmed-by <operator> --evidence <kind:id>[,<kind:id>...]`",
+    ])
+      expect(policy).toContain(selector);
+    expect(policy.indexOf("### Choose the admission source")).toBeLessThan(
+      policy.indexOf("### Admit deliberately"),
+    );
+    // Handover knowledge needs the confirmed, current review; nothing weaker.
+    expect(policy).toContain(
+      "a scan, an import, your own interpretation, or an approved office manifest is not a confirmed review",
+    );
+    expect(policy).toContain("must be confirmed again first");
+    // The operator's admission is the confirmation, bound to project evidence.
+    for (const kind of [
+      "`requirement`",
+      "`adr`",
+      "`review` (decided)",
+      "`task`",
+      "`handover`",
+    ])
+      expect(policy).toContain(kind);
+    expect(policy).toContain(
+      "The operator named in `--confirmed-by` must be the `--actor` who admits the plan",
+    );
+    // The gap AK-11 closed must not survive in the guidance.
+    expect(policy).not.toMatch(/Without a completed worker run/u);
+    expect(policy).not.toMatch(/Admission is bound to a completed worker run/u);
+  });
+
+  test("never presents a host session or a fabricated run as provenance", () => {
+    const boundaries = projectKnowledgeSourceBoundaries.join("\n");
+    expect(boundaries).toContain(
+      "Your Codex or Claude session is not provenance",
+    );
+    expect(boundaries).toContain("never offer a session identifier");
+    expect(boundaries).toContain(
+      "Never schedule, simulate, or invent an agent run to obtain run provenance",
+    );
+    expect(boundaries).toContain("it does not authenticate human presence");
+    expect(boundaries).toContain(
+      "does not make authoritative information admissible",
+    );
+    for (const boundary of projectKnowledgeSourceBoundaries)
+      expect(policy).toContain(boundary);
+    // No option, field, or evidence kind for a host session is ever suggested.
+    expect(policy).not.toMatch(/--(?:claude|codex)[-\w]*|SessionId|session:/u);
   });
 
   test("excludes secrets, transient state and raw repository content from promotion", () => {

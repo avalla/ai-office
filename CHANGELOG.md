@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Admit native project knowledge from verified non-run sources (AK-11).
+  `knowledge:plan` and `knowledge:admit` take an explicit source:
+  `--run <runId>` as before, `--source handover --handover <confirmationId>`
+  for the project's current user-confirmed repository review, or
+  `--source operator-confirmed --confirmed-by <operator> --evidence
+<kind:id>[,…]` citing requirements, ADRs, decided reviews, tasks or that
+  review. The Runtime resolves every reference inside the project and refuses
+  unconfirmed, superseded, stale and other-project evidence; no agent run is
+  fabricated and no Codex or Claude session identifier is accepted. Provenance
+  is part of the plan hash, stored as typed immutable fields, and recorded in
+  the admission audit events. Run-backed plans keep their hash and identity.
+  `handover:confirm` returns `confirmationId`; `knowledge:trace` adds
+  `admissionSource` and `admission`; `knowledge:search` hits and the admission
+  result add `provenanceKind`. `knowledge:plan` and `knowledge:admit` now
+  reject positional arguments. The SurrealDB knowledge schema moves to version
+  3 in place on the next Runtime start; existing records are unchanged. The
+  skill policy and handover guidance describe the three sources, so installed
+  repositories receive an updated skill on the next `ai-office install`.
 - Make durable project knowledge an explicit part of agent work. The AI Office
   skill now carries one canonical policy, embedded verbatim in the distribution
   skill and the skill projected into installed repositories: classify what was

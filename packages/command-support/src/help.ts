@@ -23,7 +23,7 @@ Commands:
   next [path] [--json]
     reports project handover readiness and the recommended next action
     exit 0: assessed; exit 1: authoritative state unavailable
-  handover:confirm --project <id> --summary <text> [--json]
+  handover:confirm --project <id> --summary <text> [--json]  # returns the confirmation ID
     records a confirmed handover repository review; evidence only, grants nothing
   uninstall [path] [--approve <plan-hash>] [--json]
   runtime start   # foreground persistent host; linkable ai-office entry point
@@ -135,9 +135,14 @@ Commands:
   memory:references --project <id> [--json]
   memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]  # version required for roles and patterns
   knowledge:search --project <id> --query <literal-text> [--limit <1..5>] [--agent <id>]  # matches record text, not titles; --agent excludes imported legacy records
-  knowledge:plan --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>]
-  knowledge:admit --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>] --approve <plan-hash> --actor <reviewer>
-  knowledge:trace --project <id> --kind <memory|decision> --id <knowledge-id>
+  knowledge:plan --project <id> <source> --kind <memory|decision> --text <text> [--title <title>]
+    <source> is exactly one of:
+      --run <completed-run-id>                                        # worker AgentRun; same as --source agent-run --run <id>
+      --source handover --handover <confirmation-id>                  # the current confirmed handover review (handover:confirm)
+      --source operator-confirmed --confirmed-by <operator> --evidence <kind:id>[,<kind:id>...]
+                                                                      # evidence kinds: requirement, adr, review, task, handover; all in this project
+  knowledge:admit --project <id> <source> --kind <memory|decision> --text <text> [--title <title>] --approve <plan-hash> --actor <reviewer>  # operator-confirmed: --actor must equal --confirmed-by
+  knowledge:trace --project <id> --kind <memory|decision> --id <knowledge-id>  # reports the admission source, its evidence, and the admission audit reference
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>
   resource:disable --project <id> --resource <id>

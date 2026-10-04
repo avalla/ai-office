@@ -148,9 +148,164 @@ reviewer identity is supplied by the caller and is not proof of human presence.
 
 The limit is 4,000 Unicode code points and 16 KiB of text, with a 200 code
 point decision title. Knowledge remains advisory; approval does not grant a
-capability or change task, run, or project authority. This slice admits new
-run-sourced records only. The historical AK-06 import used a distinct
-provenance policy.
+capability or change task, run, or project authority. AK-05 admitted
+run-sourced records only; [AK-11](#admission-provenance-ak-11) adds two further
+verified sources under the same plan, approval and audit sequence. The
+historical AK-06 import used a distinct provenance policy.
+
+## Admission provenance (AK-11)
+
+Every admitted record names the source that actually produced it. The set is
+closed and typed; the caller selects one explicitly and the Runtime verifies it
+against authoritative project state before it returns a plan.
+
+```text
+KnowledgeRecord
+    provenance -> KnowledgeAdmissionSource
+                  agent_run | handover | operator_confirmed
+```
+
+| Source               | Use it for                                                      | CLI selector                                                                              | Verified evidence stored with the record                   |
+| -------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `agent_run`          | Knowledge a completed worker run of the project produced        | `--run <runId>` (or `--source agent-run --run <runId>`)                                   | run, task, agent, digest of the run result                 |
+| `handover`           | Interpretation learned during a confirmed project handover      | `--source handover --handover <confirmationId>`                                           | confirmation ID, repository fingerprint, scan ID, time     |
+| `operator_confirmed` | Knowledge from interactive Codex/Claude or operator-guided work | `--source operator-confirmed --confirmed-by <operator> --evidence <kind:id>[,<kind:id>…]` | confirming operator, 1–8 resolved project evidence records |
+
+### Why no run is fabricated
+
+A run, task and agent on a record assert that a specific worker execution
+produced it. Knowledge learned during handover or an interactive session has no
+such execution, so manufacturing one would make the provenance false and would
+pollute run, cost and pipeline history. Non-run records therefore carry `null`
+run, task and agent references and their own typed evidence instead. An
+external Codex or Claude session is likewise not provenance: AI Office neither
+authenticates nor owns it, so no session identifier is accepted as a source, as
+evidence, or as a stored field. Unknown options and unknown evidence kinds are
+rejected.
+
+### Agent run
+
+Unchanged from AK-05. The plan keeps `schemaVersion: 1`, its hashed shape and
+therefore its plan hash and deterministic `ak_<planHash>` ID, so records
+admitted before AK-11 still reconcile on an exact retry. The plan output adds a
+`provenance` object that restates the run, task and agent; it is not part of
+the version 1 hash because those fields already are.
+
+### Confirmed handover review
+
+`handover:confirm` records the user-confirmed repository review as a
+user-origin profile entry and now returns its `confirmationId`. A handover
+admission is planned only when that ID is the project's **active** confirmed
+review and its stored fingerprint equals the fingerprint of the current scan
+evidence. Each of the following fails closed:
+
+- the repository was only scanned or imported, an agent produced an
+  interpretation, or an office manifest was approved
+  (`KNOWLEDGE_HANDOVER_NOT_CONFIRMED`);
+- the ID is a superseded confirmation or belongs to another project
+  (`KNOWLEDGE_HANDOVER_NOT_CONFIRMED`);
+- the repository evidence changed after the confirmation
+  (`KNOWLEDGE_HANDOVER_STALE`); confirm the review again first.
+
+The provenance is the confirmation ID, the confirmed fingerprint, the scan ID
+when one was recorded, and the confirmation time, which also dates the record.
+The existing distinction between discovery, repository review, user
+confirmation and the approved organizational model is unchanged: only the
+third is admission evidence, and knowledge never makes a readiness dimension
+ready.
+
+### Operator-confirmed evidence
+
+For knowledge learned outside a run and outside handover, the provenance states
+only what AI Office can verify: which project records support the knowledge and
+which operator explicitly confirmed it. Evidence is one to eight unique
+references of kind `requirement`, `adr`, `review`, `task` or `handover`. The
+Runtime resolves each inside the project: governance state for requirements,
+ADRs and decided reviews (a pending review supports nothing yet), the task
+repository for tasks, and the current confirmed review for `handover`. A
+reference that is missing, belongs to another project, or is a stale handover
+fails with `KNOWLEDGE_EVIDENCE_UNAVAILABLE`. Each stored reference carries a
+Runtime-derived label, never caller text. Other supporting material, such as a
+repository path, is named in the knowledge text.
+
+The confirmation boundary is `knowledge:admit` itself. The plan names the
+confirming operator (`--confirmed-by`), that name is part of the plan hash, and
+admission requires `--actor` to equal it (`KNOWLEDGE_CONFIRMATION_MISMATCH`
+otherwise). The approval is appended to authoritative audit state before any
+store write. Nothing else counts as confirmation: not invoking a client, not a
+repository change, not an agent message, not an unrelated command. This is the
+existing trusted-local, single-user operator model: the Runtime records the
+supplied identity and cannot authenticate human presence or distinguish one
+same-UID process from another.
+
+An operator-confirmed record has no earlier authoritative timestamp, so the
+plan reports `createdAt: null` and the record is dated at admission.
+
+### Plan, hash and approval
+
+Non-run plans are `schemaVersion: 2`. Their hash covers the content, project,
+repository binding, tenant and the complete typed provenance, with evidence in
+canonical `(kind, id)` order so that argument order never matters. Admission
+recomputes the plan from current authority: a changed source, a re-confirmed or
+stale handover review, changed evidence, or a different confirming operator
+produces a different hash or a typed refusal, and the earlier approval no
+longer applies. The source is selected explicitly; `--run` alone means
+`agent-run`, and an option that belongs to another source is a usage error
+rather than being ignored.
+
+### Storage
+
+Provenance is typed fields on the knowledge row, not a metadata blob.
+`knowledge_memory` and `knowledge_decision` gain `provenance_kind` and the
+kind-specific fields `handover_confirmation_id`, `handover_fingerprint`,
+`handover_scan_id`, `handover_confirmed_at`, `confirmed_by` and `evidence[]`
+(`kind`, `id`, `label`). A row without `provenance_kind` is a run record and
+keeps its verified run, task, agent and source graph. Schema version 3 relaxes
+`run_id`, `task_id` and `agent_id` to optional on existing databases without
+rewriting rows. Schema assertions reject a field that belongs to another kind;
+because SurrealDB does not evaluate an assertion for an absent optional value,
+the adapter enforces on every write and read that each kind's own fields are
+present, and a mixed or incomplete row fails with `KNOWLEDGE_INVALID_RESULT`.
+
+A non-run record and its provenance are one row written in one transaction, so
+neither exists without the other and no run, task, agent or source node is
+created. Provenance is immutable: a write to an existing ID must match every
+field, including provenance, and a run-backed write cannot take over a non-run
+ID or the reverse.
+
+### Trace, search and audit
+
+`knowledge:trace` keeps its `provenance` object and adds:
+
+- `admissionSource`: the source kind, the originating project and the
+  source-specific evidence (`agent_run`: run, task, agent; `handover`:
+  confirmation, fingerprint, scan, time; `operator_confirmed`: operator and
+  evidence; `legacy_import`: the imported CairnKeep scope, key and digest);
+- `admission`: the plan hash and the audit aggregate (`agent_knowledge`, the
+  record ID) under which the approval and outcome events were recorded. It is
+  `null` for an imported legacy record, which no governed admission wrote.
+
+`knowledge:search` works across all kinds and adds `provenanceKind` to each
+hit. Non-run hits have `null` run, task and agent, so `--agent` and agent-scoped
+retrieval return run-backed records only.
+
+Each admission appends `knowledge.admission.approved` before the write and
+`knowledge.admission.recorded` or `knowledge.admission.failed` after it. For
+every source the events carry the reviewer as actor, the project, the record
+ID, the plan hash, the provenance kind and the evidence identifiers, and never
+the knowledge text. Together they answer who requested the admission, from
+which source and evidence, under which exact plan, which record resulted, and
+when. `knowledge:trace` points at these events; it does not read them back.
+
+### Authority boundaries
+
+Only the Runtime validates and persists knowledge. Workers, skills, host
+clients, repository hooks and dashboard clients have no write path; the worker
+context still receives bounded advisory excerpts only. A provenance source is
+evidence about the project. It grants no capability, approves no action, and
+does not make authoritative information admissible: the
+[classification](#what-native-project-knowledge-is-and-is-not) applies to every
+source.
 
 ## Durable project knowledge policy (AK-10)
 
@@ -239,11 +394,11 @@ superseded.
    hash, then `knowledge:admit`, as described under governed admission.
    `knowledge:trace` shows the stored provenance.
 
-Provenance is what AK-05 records: the completed worker run, with task and agent
-derived by the Runtime. Further evidence such as an ADR, requirement, review,
-repository path or user confirmation is named in the text. The reviewer is the
-user; the trusted-local limits on reviewer identity described above still
-apply.
+Provenance is the verified [admission source](#admission-provenance-ak-11):
+a completed worker run, a confirmed handover review, or operator-confirmed
+project evidence. Further evidence such as a repository path is named in the
+text. The reviewer is the user; the trusted-local limits on reviewer identity
+described above still apply.
 
 ### Relation to handover
 
@@ -260,15 +415,24 @@ durable AgentKnowledgeStore entries when materially useful
 Scan facts remain repository-scan evidence in the project profile. The
 confirmed review remains handover evidence recorded by `handover:confirm`.
 Only interpretation may become knowledge, through the same workflow as any
-other work. Handover never copies repository structure into knowledge, and
-knowledge never satisfies a readiness dimension.
+other work and with handover provenance once the review is confirmed. Handover
+never copies repository structure into knowledge, never starts a run to obtain
+a source, and knowledge never satisfies a readiness dimension.
 
 ### Current limits
 
-- Admission needs a completed worker run of the project. Knowledge learned in
-  an interactive host session, or during handover, which starts no run, has no
-  admissible provenance; the policy tells the agent to report it to the user
-  as a candidate rather than admit it.
+- Admission needs one of the three verified sources. Knowledge with none, for
+  example an interpretation before the handover review is confirmed or an
+  interactive finding no project record supports, is reported to the user as a
+  candidate rather than admitted.
+- Operator confirmation and reviewer identity are trusted-local. They are not
+  cryptographic human-presence authentication.
+- Evidence is checked when the plan is computed and again at admission, not
+  afterwards: a record is not invalidated when a cited requirement, task or
+  handover review later changes. `knowledge:trace` shows what was verified at
+  admission.
+- `knowledge:trace` reports the audit aggregate and plan hash but does not
+  read the audit events back.
 - No command supersedes or relates records. The policy tells agents not to add
   a contradictory duplicate, to report an outdated record to the user, and to
   name the replaced record in the text of a correction.
