@@ -1,7 +1,7 @@
 # ADR-0025: AgentKnowledgeStore nativo per la conoscenza degli agenti
 
 - **Data**: 2026-09-28
-- **Stato**: accettata; adozione per slice AK-01–AK-08
+- **Stato**: accettata; adozione per slice AK-01–AK-10
 - **Decisori**: AI Office maintainers
 - **Tag**: conoscenza, memoria, SurrealDB, Runtime
 

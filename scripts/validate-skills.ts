@@ -11,7 +11,10 @@ import { fileURLToPath } from "node:url";
 import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
 import { compileProjectSkill } from "@ai-office/application/agent-client/project-skill-compiler.ts";
 import { compileProjectHandoverSection } from "@ai-office/application/agent-client/project-handover-workflow.ts";
-import { compileProjectKnowledgeSection } from "@ai-office/application/agent-client/project-knowledge-policy.ts";
+import {
+  compileProjectKnowledgeSection,
+  projectKnowledgeSectionHeading,
+} from "@ai-office/application/agent-client/project-knowledge-policy.ts";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSkillRoot = resolve(
@@ -92,9 +95,22 @@ function validateKnowledgeGuidance(source: string, label: string): string[] {
     errors.push(`${label} recommends writing new knowledge to CairnKeep`);
   // The durable project knowledge policy has one canonical definition in the
   // application layer. Both skill surfaces must carry it verbatim.
-  if (!source.includes(compileProjectKnowledgeSection()))
+  const canonical = compileProjectKnowledgeSection();
+  const embedded = source.split(canonical).length - 1;
+  if (embedded === 0)
     errors.push(
       `${label} does not embed the canonical durable project knowledge policy verbatim`,
+    );
+  else if (embedded > 1)
+    errors.push(
+      `${label} embeds the durable project knowledge policy more than once`,
+    );
+  const headings = source
+    .split("\n")
+    .filter((line) => line.trimEnd() === projectKnowledgeSectionHeading).length;
+  if (headings !== 1)
+    errors.push(
+      `${label} must contain exactly one "${projectKnowledgeSectionHeading}" heading`,
     );
   for (const command of [
     "project-memory:status",
@@ -180,7 +196,8 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
   if (!existsSync(skillPath) || !statSync(skillPath).isFile())
     return ["SKILL.md is missing"];
 
-  const source = readFileSync(skillPath, "utf8");
+  // Normalize CRLF so a core.autocrlf checkout matches the LF canonical text.
+  const source = readFileSync(skillPath, "utf8").replace(/\r\n/gu, "\n");
   const frontmatter = parseFrontmatter(source, errors);
   if (frontmatter !== null) {
     const name = frontmatter.name;
@@ -231,7 +248,7 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
   if (existsSync(handoverReferencePath))
     errors.push(
       ...validateHandoverKnowledgeBoundary(
-        readFileSync(handoverReferencePath, "utf8"),
+        readFileSync(handoverReferencePath, "utf8").replace(/\r\n/gu, "\n"),
       ),
     );
 
@@ -284,8 +301,9 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
   return errors;
 }
 
-export function validateProjectedAiOfficeSkill(source: string): string[] {
+export function validateProjectedAiOfficeSkill(rawSource: string): string[] {
   const errors: string[] = [];
+  const source = rawSource.replace(/\r\n/gu, "\n");
   const frontmatter = parseFrontmatter(source, errors);
   if (frontmatter !== null) {
     if (frontmatter.name !== "ai-office")

@@ -1,7 +1,13 @@
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentKnowledgeStore } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import {
+  KnowledgeStoreError,
+  type AgentKnowledgeStore,
+  type KnowledgeScope,
+  type KnowledgeSearchQuery,
+  type SearchKnowledgeHit,
+} from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { AgentKnowledgeConfiguration } from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
 import { runtimeHomeAgentKnowledgePath } from "@ai-office/runtime-paths/agent-knowledge-location.ts";
 import {
@@ -382,6 +388,142 @@ describe("Runtime agent knowledge composition", () => {
     );
   });
 
+  it("publishes legacy and empty results, bounds limits, and hides store failures over the Runtime socket", async () => {
+    const repositories = ["a", "b"].map((name) => {
+      const repository = mkdtempSync(
+        join(tmpdir(), `ai-office-knowledge-repo-${name}-`),
+      );
+      roots.push(repository);
+      writeFileSync(join(repository, "README.md"), `# ${name}\n`);
+      return repository;
+    });
+    let next: () => Promise<SearchKnowledgeHit[]> = async () => [];
+    const findKnowledge = vi.fn(
+      async (_scope: KnowledgeScope, _query: KnowledgeSearchQuery) => next(),
+    );
+    const store = { findKnowledge } as unknown as AgentKnowledgeStore;
+    await withHost(
+      {
+        agentKnowledgeConfiguration: configuration,
+        connectAgentKnowledge: async () => ({ store, close: async () => {} }),
+      },
+      async (client) => {
+        const projectIds: string[] = [];
+        for (const repository of repositories) {
+          const imported = await client.execute([
+            "project:import",
+            repository,
+            "--json",
+          ]);
+          expect(imported.exitCode).toBe(0);
+          const output: { projectId: string } = JSON.parse(imported.stdout[0]!);
+          projectIds.push(output.projectId);
+        }
+        const [projectId, otherProjectId] = projectIds as [string, string];
+        const search = (...args: string[]) =>
+          client.execute(["knowledge:search", "--project", projectId, ...args]);
+
+        next = async () => [
+          {
+            tenantId: "tenant-a",
+            repositoryId: "repo",
+            id: "legacy_1",
+            kind: "memory",
+            text: "Legacy rollout note",
+            title: null,
+            agentId: null,
+            runId: null,
+            taskId: null,
+            source: { id: "legacy_1", kind: "external", label: "Imported" },
+            createdAt: new Date("2026-01-02T03:04:05.000Z"),
+            legacy: {
+              sourceScope: "hidden-scope-x",
+              sourceKey: "hidden-key-y",
+              sourceSha256: "hidden-sha-z",
+            },
+          },
+        ];
+        const legacy = await search("--query", "rollout");
+        expect(legacy.exitCode).toBe(0);
+        expect(JSON.parse(legacy.stdout.join("\n"))).toEqual({
+          schemaVersion: 1,
+          hits: [
+            {
+              id: "legacy_1",
+              kind: "memory",
+              title: null,
+              text: "Legacy rollout note",
+              agentId: null,
+              runId: null,
+              taskId: null,
+              source: { id: "legacy_1", kind: "external", label: "Imported" },
+              createdAt: "2026-01-02T03:04:05.000Z",
+              legacy: true,
+            },
+          ],
+        });
+        expect(legacy.stdout.join("\n")).not.toMatch(/hidden-/u);
+
+        next = async () => [];
+        const empty = await search("--query", "nothing");
+        expect(empty.exitCode).toBe(0);
+        expect(empty.stdout).toEqual(['{"schemaVersion":1,"hits":[]}']);
+
+        findKnowledge.mockClear();
+        expect((await search("--query", "x", "--agent", "agent-7")).exitCode).toBe(0);
+        expect(findKnowledge).toHaveBeenCalledWith(expect.anything(), {
+          text: "x",
+          agentId: "agent-7",
+        });
+
+        findKnowledge.mockClear();
+        for (const limit of ["1", "5"]) {
+          expect((await search("--query", "x", "--limit", limit)).exitCode).toBe(0);
+        }
+        expect(findKnowledge.mock.calls.map(([, query]) => query.limit)).toEqual([1, 5]);
+        for (const limit of ["0", "1.5", "05", "6"]) {
+          const refused = await search("--query", "x", "--limit", limit);
+          expect(refused.exitCode).toBe(1);
+          expect(refused.stderr.join("\n")).toContain(
+            "Knowledge search limit must be 1 to 5",
+          );
+        }
+        expect(findKnowledge).toHaveBeenCalledTimes(2);
+
+        next = async () => {
+          throw new KnowledgeStoreError("KNOWLEDGE_QUERY_FAILED");
+        };
+        const typed = await search("--query", "x");
+        expect(typed.exitCode).toBe(1);
+        expect(typed.stderr.join("\n")).toContain("KNOWLEDGE_QUERY_FAILED");
+
+        next = async () => {
+          throw new Error("secret endpoint password");
+        };
+        const untyped = await search("--query", "x");
+        expect(untyped.exitCode).toBe(1);
+        expect(untyped.stdout.join("\n") + untyped.stderr.join("\n")).not.toMatch(
+          /secret|endpoint|password/u,
+        );
+
+        next = async () => [];
+        findKnowledge.mockClear();
+        await search("--query", "x");
+        await client.execute([
+          "knowledge:search",
+          "--project",
+          otherProjectId,
+          "--query",
+          "x",
+        ]);
+        const [first, second] = findKnowledge.mock.calls.map(([scope]) => scope);
+        expect(first?.tenantId).toBe("tenant-a");
+        expect(second?.tenantId).toBe("tenant-a");
+        expect(first?.repositoryId).not.toBe(second?.repositoryId);
+      },
+    );
+  });
+
   it("composes an explicit secondary store and closes it with the host", async () => {
     const close = vi.fn(async () => {});
     const connect = vi.fn(async () => ({
@@ -465,6 +607,20 @@ describe("Runtime agent knowledge composition", () => {
         });
         expect(JSON.stringify(health)).not.toContain("secret");
         expect((await client.execute(["client:detect"])).exitCode).toBe(0);
+        const search = await client.execute([
+          "knowledge:search",
+          "--project",
+          "any",
+          "--query",
+          "rollout",
+        ]);
+        expect(search.exitCode).toBe(1);
+        expect(search.stderr.join("\n")).toContain(
+          "KNOWLEDGE_STORE_NOT_CONNECTED",
+        );
+        expect(search.stdout.join("\n") + search.stderr.join("\n")).not.toMatch(
+          /secret|password/u,
+        );
       },
     );
   });

@@ -648,7 +648,7 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: AK-01–AK-09 merged; AK-10 implemented, pending merge.
+Status: AK-01–AK-10 merged.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
@@ -666,7 +666,7 @@ historical CairnKeep retrieval path. See
 | AK-09 | Managed Agent Knowledge configuration and SurrealDB deployment support       | AK-03–AK-05; AK-08 for final docs |
 | AK-10 | Durable project knowledge policy in agent guidance; `knowledge:search`       | AK-05, AK-08                      |
 
-AK-01–AK-09 each map to one reviewed PR. AK-09 was delivered as one operational
+AK-01–AK-10 each map to one reviewed PR. AK-09 was delivered as one operational
 task with four delivery slices below, tracked by one requirement and task.
 Completion required proven retrieval, writes,
 legacy-data disposition, failure behavior, documentation, and operational
@@ -690,14 +690,15 @@ never deleted by AI Office. See the same guide.
 
 ### AK-10 — Durable project knowledge policy
 
-**Status:** implemented; pending merge. AK-10 closes a behavioral gap, not a
+**Status:** implemented on `main` via PR #98. AK-10 closes a behavioral gap, not a
 storage one: agents were not told to identify durable knowledge learned during
 project work, so it was rediscovered across runs. One canonical policy now
 tells agents to classify what they learned, search existing knowledge, and
 propose verified, non-authoritative, project-specific context through the
 existing `knowledge:plan` → review → `knowledge:admit` path. Both skill
 surfaces embed it verbatim and the handover workflow carries the matching
-boundary. The only product change is the read-only `knowledge:search` command,
+boundary, and the generated project instructions (`AI-OFFICE.md`) route every
+client to the policy. The only new command is the read-only `knowledge:search`,
 needed because no CLI surface could check for an existing record before a new
 plan. See [durable project knowledge policy](agent-knowledge.md#durable-project-knowledge-policy-ak-10).
 

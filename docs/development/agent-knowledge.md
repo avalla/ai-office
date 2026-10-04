@@ -221,23 +221,46 @@ superseded.
 1. Search first with `knowledge:search --project <id> --query <literal-text>`,
    optionally `--limit <1..5>` and `--agent <id>`. It is read-only and writes neither
    knowledge nor audit state. It uses the retrieval contract above unchanged:
-   one literal substring, at most five hits, newest first, superseded decisions
-   excluded, scoped by the Runtime-bound tenant and the project's portable
-   repository binding. It matches record text only, never titles, and `--agent`
-   excludes imported legacy records, which carry no agent. The command applies
+   one contiguous literal substring matched against lowercased record text (not
+   full Unicode case folding), at most `--limit` hits (five by default), newest
+   first, superseded decisions excluded, scoped by the Runtime-bound tenant and
+   the project's portable repository binding. It matches record text only,
+   never titles, and `--agent` excludes imported legacy records, which carry no
+   agent, so a duplicate check never passes `--agent`. The command applies
    no term selection and rejects positional arguments, so the caller supplies
    one distinctive word or exact, quoted phrase and repeats the search with
-   another. Output carries no truncation marker: five hits may mean more. Output is
+   another. Option values beginning with `--` are rejected, so a flag-like term
+   drops its leading dashes (`--query no-verify`). Output carries no truncation
+   marker: a full page (hits equal to `--limit`) may mean more, so narrow the
+   term. Output is
    `{ schemaVersion: 1, hits }`; each hit has `id`, `kind`, `title`, `text`,
    `agentId`, `runId`, `taskId`, `source`, `createdAt` and a `legacy` flag for
-   imported records. It never returns the tenant, endpoint or credentials. A
-   disconnected store fails with `KNOWLEDGE_STORE_NOT_CONNECTED`.
+   imported records; a legacy hit carries its import time as `createdAt`. It
+   never returns the tenant, endpoint or credentials. Failures are typed:
+   `KNOWLEDGE_STORE_NOT_CONNECTED` (no connected store),
+   `KNOWLEDGE_PROJECT_NOT_FOUND`, `KNOWLEDGE_PROVENANCE_UNAVAILABLE` (the
+   project has no portable repository binding; run `ai-office install .`),
+   `KNOWLEDGE_INVALID_QUERY`, `KNOWLEDGE_QUERY_FAILED` and
+   `KNOWLEDGE_INVALID_RESULT`. Any failure means the duplicate check did not
+   happen: the agent does not plan and reports the candidate and error code.
 2. Classify the candidate against the table above.
 3. Propose only verified content. A record has no confidence field, so
    remaining uncertainty is stated in the text.
-4. Plan, review, admit: `knowledge:plan`, user review of the exact plan and
-   hash, then `knowledge:admit`, as described under governed admission.
-   `knowledge:trace` shows the stored provenance.
+4. Do not create contradictory duplicates. When a hit already covers the
+   candidate, nothing is admitted. No governed command supersedes or retracts
+   an admitted record, so a correction would leave both records live; agents
+   tell the user which record is wrong or outdated and why, and admit nothing
+   that contradicts it.
+5. Plan, review, admit: `knowledge:plan --project <id> --run <completed-run-id>`
+   with `--kind memory --text <text>` or
+   `--kind decision --title <title> --text <text>` (a title is required for a
+   decision and rejected for a memory), user review of the exact plan and
+   hash, then `knowledge:admit` with identical options plus
+   `--approve <plan-hash> --actor <reviewer>`, as described under governed
+   admission. `knowledge:trace` shows the stored provenance.
+
+The generated `AI-OFFICE.md` project instructions point every client at this
+workflow; agents never write the store directly.
 
 Provenance is what AK-05 records: the completed worker run, with task and agent
 derived by the Runtime. Further evidence such as an ADR, requirement, review,

@@ -54,7 +54,7 @@ AI Office keeps different kinds of documentation separate so current product tru
   compatibility boundaries, changelog, and release gates.
 - [Agent runtime](development/agent-runtime.md): run lifecycle, controlled-action bridge, and current executor limitations.
 - [Bounded external worker](adr/ADR-0017-bounded-external-worker.md): explicit executor selection, input/output provenance, client limits and resource boundaries.
-- [Native agent knowledge](development/agent-knowledge.md): current retrieval, reviewed admission, imported-record reads and provenance.
+- [Native agent knowledge](development/agent-knowledge.md): current retrieval, read-only search, reviewed admission, durable project knowledge policy, imported-record reads and provenance.
 - [Persistent Agent Knowledge deployment](development/agent-knowledge-deployment.md): managed Runtime-home configuration, protected credentials, local SurrealDB operation, backup and recovery.
 - [Legacy project memory](development/project-memory.md): historical CairnKeep migration and retained data.
 - [Optional project memory provider](adr/ADR-0018-optional-non-authoritative-project-memory-provider.md): historical CairnKeep retrieval boundary.

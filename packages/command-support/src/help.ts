@@ -135,8 +135,8 @@ Commands:
   memory:references --project <id> [--json]
   memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]  # version required for roles and patterns
   knowledge:search --project <id> --query <literal-text> [--limit <1..5>] [--agent <id>]  # matches record text, not titles; --agent excludes imported legacy records
-  knowledge:plan --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>]
-  knowledge:admit --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>] --approve <plan-hash> --actor <reviewer>
+  knowledge:plan --project <id> --run <completed-run-id> (--kind memory --text <text> | --kind decision --title <title> --text <text>)
+  knowledge:admit --project <id> --run <completed-run-id> (--kind memory --text <text> | --kind decision --title <title> --text <text>) --approve <plan-hash> --actor <reviewer>
   knowledge:trace --project <id> --kind <memory|decision> --id <knowledge-id>
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>

@@ -80,7 +80,11 @@ function fixture(
     } as unknown as AgentRuntimeRepository,
     {
       findRepositoryId: vi.fn(async (id: string) =>
-        id === "unbound" ? null : (overrides.repositoryId ?? "repo-1"),
+        id === "unbound"
+          ? null
+          : id === "project-2"
+            ? "repo-2"
+            : (overrides.repositoryId ?? "repo-1"),
       ),
     } as unknown as RepositoryIdentityRepository,
     knowledge,
@@ -485,14 +489,45 @@ describe("governed knowledge admission", () => {
     expect(f.append).not.toHaveBeenCalled();
   });
 
+  it("scopes each project search to its own repository identity", async () => {
+    const f = fixture();
+    await f.service.search({ projectId: "project-1", text: "rollout" });
+    await f.service.search({ projectId: "project-2", text: "rollout" });
+    expect(f.findKnowledge.mock.calls).toEqual([
+      [{ tenantId: "tenant-1", repositoryId: "repo-1" }, { text: "rollout" }],
+      [{ tenantId: "tenant-1", repositoryId: "repo-2" }, { text: "rollout" }],
+    ]);
+  });
+
+  it("rejects a memory with a title and a decision without one", async () => {
+    const f = fixture();
+    const base = { projectId: "project-1", runId: "run-1", text: "Body" };
+    for (const input of [
+      { ...base, kind: "memory" as const, title: "Title" },
+      { ...base, kind: "decision" as const },
+    ])
+      await expect(f.service.plan(input)).rejects.toMatchObject({
+        code: "KNOWLEDGE_INVALID_TITLE",
+      });
+    expect(f.append).not.toHaveBeenCalled();
+  });
+
   it("refuses an invalid, unscoped or disconnected search before reaching the store", async () => {
     const f = fixture();
     for (const text of ["", " padded ", "x".repeat(201)])
       await expect(
         f.service.search({ projectId: "project-1", text }),
       ).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+    for (const limit of [0, 2.5, 6])
+      await expect(
+        f.service.search({ projectId: "project-1", text: "rollout", limit }),
+      ).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
     await expect(
-      f.service.search({ projectId: "project-1", text: "rollout", limit: 6 }),
+      f.service.search({
+        projectId: "project-1",
+        text: "rollout",
+        agentId: " a",
+      }),
     ).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
     await expect(
       f.service.search({ projectId: "missing", text: "rollout" }),
