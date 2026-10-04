@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Make durable project knowledge an explicit part of agent work. The AI Office
+  skill now carries one canonical policy, embedded verbatim in the distribution
+  skill and the skill projected into installed repositories: classify what was
+  learned, keep authoritative information in its source of truth, keep
+  project-specific knowledge out of global `memory:*`, consider knowledge
+  promotion before wrapping up substantial work, and admit only through
+  `knowledge:plan`, user review and `knowledge:admit`. The handover workflow
+  gains the matching step, so installed repositories receive an updated skill
+  on the next `ai-office install`. Add the read-only
+  `ai-office knowledge:search` (`--project`, `--query`, optional `--limit` and
+  `--agent`) to find existing records before a new plan; it uses the existing bounded literal search on record text, rejects
+  positional arguments so an unquoted multi-word query cannot silently search
+  its first word, and writes nothing. No store,
+  provider, automatic ingestion or write path is added.
 - Add `ai-office requirement:update` to correct the descriptive text of a
   requirement that is still `proposed` without replacing its identity. It
   takes `--project`, `--requirement` and at least one of `--title` and

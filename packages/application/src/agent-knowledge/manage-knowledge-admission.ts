@@ -5,11 +5,13 @@ import {
 } from "@ai-office/domain/capability/canonical-json.ts";
 import {
   assertKnowledgeIdentifier,
+  assertKnowledgeSearchQuery,
   type DecisionInput,
   type KnowledgeProvenance,
   type LegacyKnowledgeHit,
   type MemoryInput,
   type RuntimeAgentKnowledge,
+  type SearchKnowledgeHit,
 } from "../ports/agent-knowledge-store.port.ts";
 import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
@@ -329,6 +331,37 @@ export class ManageKnowledgeAdmission {
     return (
       (await state.store.traceMemoryProvenance(scope, id)) ??
       state.store.traceLegacyMemory(scope, id)
+    );
+  }
+
+  /**
+   * Read-only duplicate check before a new plan: one literal substring in the
+   * project's trusted scope, with the store's fixed bounds. It writes nothing.
+   */
+  async search(input: {
+    projectId: string;
+    text: string;
+    limit?: number;
+    agentId?: string;
+  }): Promise<SearchKnowledgeHit[]> {
+    const state = this.connected();
+    assertKnowledgeIdentifier(input.projectId);
+    const query = {
+      text: input.text,
+      ...(input.limit === undefined ? {} : { limit: input.limit }),
+      ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+    };
+    assertKnowledgeSearchQuery(query);
+    if ((await this.projects.findById(input.projectId)) === null)
+      throw new KnowledgeAdmissionError("KNOWLEDGE_PROJECT_NOT_FOUND");
+    const repositoryId = await this.identities.findRepositoryId(
+      input.projectId,
+    );
+    if (repositoryId === null)
+      throw new KnowledgeAdmissionError("KNOWLEDGE_PROVENANCE_UNAVAILABLE");
+    return state.store.findKnowledge(
+      { tenantId: state.tenantId, repositoryId },
+      query,
     );
   }
 

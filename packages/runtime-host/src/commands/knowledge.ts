@@ -40,6 +40,46 @@ export async function handleKnowledgeCommand(
     context.io.stdout(JSON.stringify({ schemaVersion: 1, provenance: trace }));
     return 0;
   }
+  if (command === "knowledge:search") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "query", "limit", "agent"]),
+    );
+    // An unquoted multi-word query would otherwise search only its first word
+    // and report a false "no duplicate".
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError(
+        "knowledge:search only accepts named options; quote a multi-word --query",
+      );
+    const limit = parsed.options.get("limit");
+    if (limit !== undefined && !/^[1-5]$/u.test(limit))
+      throw new CliUsageError("Knowledge search limit must be 1 to 5");
+    const agentId = parsed.options.get("agent");
+    const hits = await service.search({
+      projectId: requiredOption(parsed, "project"),
+      text: requiredOption(parsed, "query"),
+      ...(limit === undefined ? {} : { limit: Number(limit) }),
+      ...(agentId === undefined ? {} : { agentId }),
+    });
+    context.io.stdout(
+      JSON.stringify({
+        schemaVersion: 1,
+        hits: hits.map((hit) => ({
+          id: hit.id,
+          kind: hit.kind,
+          title: hit.title,
+          text: hit.text,
+          agentId: hit.agentId,
+          runId: hit.runId,
+          taskId: hit.taskId,
+          source: hit.source,
+          createdAt: hit.createdAt.toISOString(),
+          legacy: "legacy" in hit,
+        })),
+      }),
+    );
+    return 0;
+  }
   if (command === "knowledge:plan" || command === "knowledge:admit") {
     const parsed = parseArguments(
       args,

@@ -1,4 +1,5 @@
 import { compileProjectHandoverSection } from "./project-handover-workflow.ts";
+import { compileProjectKnowledgeSection } from "./project-knowledge-policy.ts";
 
 export const managedProjectSkillMarker =
   "<!-- ai-office:managed repository-skill v1 -->";
@@ -6,7 +7,7 @@ export const managedProjectSkillMarker =
 export function compileProjectSkill(): string {
   return `---
 name: ai-office
-description: Install, inspect, hand over, onboard, configure, operate, troubleshoot, and safely remove AI Office for this repository. Use when the user wants AI Office status, wants to hand this project over to the virtual office, or asks about office design, task workflows, client integration, controlled actions, memory, or lifecycle help.
+description: Install, inspect, hand over, onboard, configure, operate, troubleshoot, and safely remove AI Office for this repository. Use when the user wants AI Office status, wants to hand this project over to the virtual office, or asks about office design, task workflows, client integration, controlled actions, memory, durable project knowledge, or lifecycle help.
 ---
 
 ${managedProjectSkillMarker}
@@ -46,13 +47,14 @@ Onboarding is the office-configuration part of the handover above. Run install, 
 
 ## Operate
 
-Classify tasks as feature, bugfix, maintenance, research, or release and resolve \`ai-office office:pipeline --project <projectId> --task-kind <kind>\` before operating them. Guidance-only definitions describe expected work. For an enforced definition, use \`pipeline:start\`, inspect \`pipeline:status\`, bind only the assigned registered agent, and use explicit runtime transitions. Runtime authorization is authoritative: never bypass assignments, stage capabilities, approvals, separation rules, \`action:*\` requests, or controlled execution. Use \`task:*\` and \`run:*\` for work, \`client:*\` only for manual integration recovery, and \`memory:*\` for reusable memory. Never launch Codex or Claude implicitly.
+Classify tasks as feature, bugfix, maintenance, research, or release and resolve \`ai-office office:pipeline --project <projectId> --task-kind <kind>\` before operating them. Guidance-only definitions describe expected work. For an enforced definition, use \`pipeline:start\`, inspect \`pipeline:status\`, bind only the assigned registered agent, and use explicit runtime transitions. Runtime authorization is authoritative: never bypass assignments, stage capabilities, approvals, separation rules, \`action:*\` requests, or controlled execution. Use \`task:*\` and \`run:*\` for work, \`client:*\` only for manual integration recovery, and \`memory:*\` only for memory reusable across projects. Never launch Codex or Claude implicitly.
 
-For new agent knowledge, use a connected AgentKnowledgeStore through
-\`knowledge:plan\` and \`knowledge:admit\` after reviewing the exact plan hash;
-inspect provenance with \`knowledge:trace\`. CairnKeep integration has been
-removed. Existing imported records remain readable through native knowledge
-retrieval and \`knowledge:trace\`; use \`AgentKnowledgeStore\` for new knowledge.
+Before treating substantial work as wrapped up, follow **Durable project knowledge** below and consider knowledge promotion.
+
+${compileProjectKnowledgeSection()}
+CairnKeep integration has been removed. Existing imported records remain
+readable through native knowledge retrieval and \`knowledge:trace\`; use
+\`AgentKnowledgeStore\` for new knowledge.
 
 ## Browse and follow up
 

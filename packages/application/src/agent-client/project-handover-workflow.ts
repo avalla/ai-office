@@ -30,6 +30,7 @@ export const projectHandoverSteps: readonly string[] = Object.freeze([
   'Only after you have actually read the repository, compared it with the stored state, shown the user the result, and had the user confirm or correct it, record the review with `ai-office handover:confirm --project <projectId> --summary "<what the office understood>"`. An approved office manifest never certifies repository understanding, so never record this confirmation on the user\'s behalf or in advance.',
   "Answer open project questions through `project:answer` instead of guessing; unanswered goal and constraint questions keep the handover incomplete.",
   "Never invent missing information, never delete or rewrite committed project state to fit a proposal, and never start an agent run as part of handover.",
+  "Consider durable project knowledge. Scan facts stay repository-scan evidence and the confirmed review stays handover evidence; only your own interpretation that a later agent could not cheaply rebuild from the repository may be proposed, through the **Durable project knowledge** workflow. Never copy repository structure or files into knowledge.",
   "Finish by restating the recommended next action from `ai-office next`.",
 ]);
 
@@ -38,6 +39,7 @@ export const projectHandoverBoundaries: readonly string[] = Object.freeze([
   "Handover transfers organizational context ownership, not authority.",
   "It grants no capability, bypasses no approval, changes no policy, and starts no autonomous work.",
   "Discovery, proposal, and committed project state must stay clearly distinguishable to the user.",
+  "Project knowledge complements handover evidence and authoritative state; it never replaces either.",
 ]);
 
 function bullets(items: readonly string[]): string {
