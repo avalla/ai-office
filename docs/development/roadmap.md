@@ -648,7 +648,9 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: AK-01–AK-10 merged; AK-11 implemented, pending review and merge.
+Status: AK-01–AK-10 merged; AK-11 implemented and independently reviewed,
+pending pipeline verification and merge. AK-12 (knowledge record lifecycle) is
+a candidate, not yet planned.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
@@ -691,7 +693,9 @@ never deleted by AI Office. See the same guide.
 
 ### AK-11 — Governed non-run knowledge admission provenance
 
-**Status:** implemented; pending independent review, verification and merge.
+**Status:** implemented and independently reviewed in PR #99; pending pipeline
+verification and merge. Decision recorded in
+[ADR-0030](../adr/ADR-0030-typed-governed-knowledge-admission-provenance.md).
 AK-10 left one gap: admission required a completed worker run, so durable
 knowledge learned during handover or an interactive Codex/Claude session could
 only be reported to the user. AK-11 replaces the run-only model with a closed,
@@ -718,7 +722,18 @@ reintroducing CairnKeep; any change to authoritative SQLite/PostgreSQL state.
 **Known limits:** operator confirmation is trusted-local, not human-presence
 authentication; evidence is verified at plan and admission time and not
 re-validated afterwards; `knowledge:trace` references the admission audit
-events without reading them back.
+events without reading them back; a confirmed handover review restored from a
+portable snapshot is accepted while it is still the current review.
+
+**Deferred, found in review:**
+
+- AK-12 candidate: `supersedeDecision` compares task IDs to keep supersession
+  within one task, and two non-run decisions both have none, so it would treat
+  them as the same task. No command reaches it today; supersede, relate and
+  deprecate must define their rule for records without a task.
+- Follow-up: `knowledge:trace` prints the tenant ID that `knowledge:search`
+  hides. This predates AK-11 and now also applies to non-run records; removing
+  it changes an existing output contract and needs its own decision.
 
 ### AK-10 — Durable project knowledge policy
 

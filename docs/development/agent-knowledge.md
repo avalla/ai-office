@@ -155,7 +155,9 @@ historical AK-06 import used a distinct provenance policy.
 
 ## Admission provenance (AK-11)
 
-Every admitted record names the source that actually produced it. The set is
+[ADR-0030](../adr/ADR-0030-typed-governed-knowledge-admission-provenance.md)
+records this decision. Every admitted record names the source that actually
+produced it. The set is
 closed and typed; the caller selects one explicitly and the Runtime verifies it
 against authoritative project state before it returns a plan.
 

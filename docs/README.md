@@ -59,6 +59,7 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Legacy project memory](development/project-memory.md): historical CairnKeep migration and retained data.
 - [Optional project memory provider](adr/ADR-0018-optional-non-authoritative-project-memory-provider.md): historical CairnKeep retrieval boundary.
 - [Native AgentKnowledgeStore decision](adr/ADR-0025-native-agent-knowledge-store.md): staged knowledge migration with SurrealDB kept outside operational authority.
+- [Typed knowledge admission provenance](adr/ADR-0030-typed-governed-knowledge-admission-provenance.md): accepted AK-11 decision that knowledge is admitted from a closed set of verified sources (agent run, confirmed handover, operator-confirmed evidence) and never from a fabricated run or a host session.
 - [LLM gateway, cost control and model routing](development/llm-cost-control.md): provider registry, metering, budgets, host model profiles, precedence and diagnostics.
 - [Agent model routing](adr/ADR-0019-agent-model-routing.md): policy vs profile vs resolved model, precedence, immutable run selection, cost and portability boundaries.
 - [Managed provider credential boundary](adr/ADR-0020-managed-provider-credential-boundary.md): owner-only Runtime home credential files, managed vs foreground precedence, systemd/launchd markers and leakage boundaries.
