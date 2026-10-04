@@ -191,10 +191,36 @@ copy everything into memory
 
 Proposing knowledge follows the same **Durable project knowledge** workflow as
 any other work: search with `knowledge:search`, plan with `knowledge:plan`,
-review the exact plan with the user, then `knowledge:admit`. Admission is bound
-to a completed worker run, and handover never starts one. When no completed run
-supports an interpretation, report it to the user as a candidate instead of
-admitting it.
+review the exact plan with the user, then `knowledge:admit`.
+
+Handover knowledge is admitted with handover provenance, never with a run:
+
+```text
+repository
+    ↓
+deterministic scan
+    ↓
+agent repository review
+    ↓
+user confirmation
+    ↓
+handover:confirm            → returns the confirmation ID
+    ↓
+knowledge:plan --source handover --handover <confirmationId>
+    ↓
+user review of the exact plan
+    ↓
+knowledge:admit --approve <planHash> --actor <reviewer>
+```
+
+The Runtime accepts that source only while the confirmation is the project's
+current confirmed repository review. A scanned or imported repository, an
+agent's reading of it, and an approved office manifest are not confirmed reviews. A
+superseded confirmation, another project's confirmation, and a confirmation
+whose repository evidence has since changed are refused; confirm the review
+again first. Handover never starts or invents an agent run to give knowledge a
+source, and before the review is confirmed an interpretation is only a
+candidate to report to the user.
 
 ## What handover never does
 

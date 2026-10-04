@@ -134,6 +134,9 @@ const requiredHandoverKnowledgeSnippets = [
   "knowledge:search",
   "knowledge:plan",
   "knowledge:admit",
+  "knowledge:plan --source handover --handover <confirmationId>",
+  "current confirmed repository review",
+  "never starts or invents an agent run",
 ] as const;
 
 /** The handover reference must keep scan evidence, review, and knowledge apart. */

@@ -8,7 +8,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { compileProjectKnowledgeSection } from "@ai-office/application/agent-client/project-knowledge-policy.ts";
+import {
+  compileProjectKnowledgeSection,
+  projectKnowledgeAdmissionSources,
+  projectKnowledgeSourceBoundaries,
+} from "@ai-office/application/agent-client/project-knowledge-policy.ts";
 import { compileProjectSkill } from "@ai-office/application/agent-client/project-skill-compiler.ts";
 import {
   validateAiOfficeSkill,
@@ -25,10 +29,7 @@ const handoverReference = readFileSync(
 const projectedSkill = compileProjectSkill();
 const policy = compileProjectKnowledgeSection();
 
-function withSkillCopy(
-  content: string,
-  check: (copy: string) => void,
-): void {
+function withSkillCopy(content: string, check: (copy: string) => void): void {
   const directory = mkdtempSync(join(tmpdir(), "ai-office-skill-policy-"));
   try {
     const copy = join(directory, "ai-office");
@@ -115,6 +116,27 @@ describe("durable project knowledge policy", () => {
     ).toEqual([
       "references/project-handover.md is missing the knowledge boundary: agent interpretation",
     ]);
+  });
+
+  test("offers exactly the three verified admission sources and no host-session source", () => {
+    expect(projectKnowledgeAdmissionSources.map(([what]) => what)).toEqual([
+      "AgentRun knowledge",
+      "confirmed handover knowledge",
+      "interactive/operator-reviewed knowledge",
+    ]);
+    // Every source reaches both clients with its selector, through the one policy.
+    for (const selector of [
+      "--run <runId>",
+      "--source handover --handover <confirmationId>",
+      "--source operator-confirmed --confirmed-by <operator> --evidence",
+    ])
+      expect(policy).toContain(selector);
+    for (const boundary of projectKnowledgeSourceBoundaries)
+      expect(policy).toContain(boundary);
+    // No option, field, or evidence kind for a host session is ever suggested,
+    // and the run-only restriction AK-11 removed does not survive.
+    expect(policy).not.toMatch(/--(?:claude|codex)[-\w]*|SessionId|session:/u);
+    expect(policy).not.toMatch(/bound to a completed worker run/u);
   });
 
   test("does not reintroduce removed commands or a second memory provider", () => {

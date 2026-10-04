@@ -4,8 +4,11 @@ import { join } from "node:path";
 import {
   KnowledgeStoreError,
   type AgentKnowledgeStore,
+  type KnowledgeProvenance,
   type KnowledgeScope,
   type KnowledgeSearchQuery,
+  type NonRunKnowledgeHit,
+  type NonRunKnowledgeInput,
   type SearchKnowledgeHit,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { AgentKnowledgeConfiguration } from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
@@ -332,6 +335,7 @@ describe("Runtime agent knowledge composition", () => {
               source: { id: "run-1", kind: "run", label: "Agent run run-1" },
               createdAt: "2026-09-30T10:00:00.000Z",
               legacy: false,
+              provenanceKind: "agent_run",
             },
           ],
         });
@@ -459,6 +463,7 @@ describe("Runtime agent knowledge composition", () => {
               source: { id: "legacy_1", kind: "external", label: "Imported" },
               createdAt: "2026-01-02T03:04:05.000Z",
               legacy: true,
+              provenanceKind: "legacy_import",
             },
           ],
         });
@@ -470,7 +475,9 @@ describe("Runtime agent knowledge composition", () => {
         expect(empty.stdout).toEqual(['{"schemaVersion":1,"hits":[]}']);
 
         findKnowledge.mockClear();
-        expect((await search("--query", "x", "--agent", "agent-7")).exitCode).toBe(0);
+        expect(
+          (await search("--query", "x", "--agent", "agent-7")).exitCode,
+        ).toBe(0);
         expect(findKnowledge).toHaveBeenCalledWith(expect.anything(), {
           text: "x",
           agentId: "agent-7",
@@ -478,9 +485,13 @@ describe("Runtime agent knowledge composition", () => {
 
         findKnowledge.mockClear();
         for (const limit of ["1", "5"]) {
-          expect((await search("--query", "x", "--limit", limit)).exitCode).toBe(0);
+          expect(
+            (await search("--query", "x", "--limit", limit)).exitCode,
+          ).toBe(0);
         }
-        expect(findKnowledge.mock.calls.map(([, query]) => query.limit)).toEqual([1, 5]);
+        expect(
+          findKnowledge.mock.calls.map(([, query]) => query.limit),
+        ).toEqual([1, 5]);
         for (const limit of ["0", "1.5", "05", "6"]) {
           const refused = await search("--query", "x", "--limit", limit);
           expect(refused.exitCode).toBe(1);
@@ -502,9 +513,9 @@ describe("Runtime agent knowledge composition", () => {
         };
         const untyped = await search("--query", "x");
         expect(untyped.exitCode).toBe(1);
-        expect(untyped.stdout.join("\n") + untyped.stderr.join("\n")).not.toMatch(
-          /secret|endpoint|password/u,
-        );
+        expect(
+          untyped.stdout.join("\n") + untyped.stderr.join("\n"),
+        ).not.toMatch(/secret|endpoint|password/u);
 
         next = async () => [];
         findKnowledge.mockClear();
@@ -516,10 +527,392 @@ describe("Runtime agent knowledge composition", () => {
           "--query",
           "x",
         ]);
-        const [first, second] = findKnowledge.mock.calls.map(([scope]) => scope);
+        const [first, second] = findKnowledge.mock.calls.map(
+          ([scope]) => scope,
+        );
         expect(first?.tenantId).toBe("tenant-a");
         expect(second?.tenantId).toBe("tenant-a");
         expect(first?.repositoryId).not.toBe(second?.repositoryId);
+      },
+    );
+  });
+
+  it("admits handover and operator-confirmed knowledge over the Runtime socket with real evidence only", async () => {
+    const repository = mkdtempSync(join(tmpdir(), "ai-office-knowledge-repo-"));
+    roots.push(repository);
+    writeFileSync(join(repository, "README.md"), "# Demo\n");
+    writeFileSync(join(repository, "index.ts"), "export {};\n");
+
+    // A minimal store: the Runtime, not this fake, owns every admission rule.
+    const records = new Map<string, NonRunKnowledgeHit>();
+    const trace = async (
+      _scope: unknown,
+      id: string,
+    ): Promise<KnowledgeProvenance | null> => {
+      const knowledge = records.get(id);
+      return knowledge === undefined
+        ? null
+        : {
+            knowledge,
+            source: knowledge.source,
+            runId: null,
+            taskId: null,
+            agentId: null,
+          };
+    };
+    const recordNonRunKnowledge = vi.fn(
+      async ({ title, ...input }: NonRunKnowledgeInput) => {
+        records.set(input.id, {
+          ...input,
+          title: title ?? null,
+          agentId: null,
+          runId: null,
+          taskId: null,
+        });
+      },
+    );
+    const store = {
+      recordNonRunKnowledge,
+      recordMemory: vi.fn(),
+      recordDecision: vi.fn(),
+      traceMemoryProvenance: trace,
+      traceDecisionProvenance: trace,
+      traceLegacyMemory: async () => null,
+      findKnowledge: async (_scope: unknown, query: { text: string }) =>
+        [...records.values()].filter((hit) =>
+          hit.text.toLowerCase().includes(query.text.toLowerCase()),
+        ),
+    } as unknown as AgentKnowledgeStore;
+
+    await withHost(
+      {
+        agentKnowledgeConfiguration: configuration,
+        connectAgentKnowledge: async () => ({ store, close: async () => {} }),
+      },
+      async (client) => {
+        interface Output {
+          projectId: string;
+          confirmationId: string;
+          fingerprint: string;
+          scanId: string | null;
+          confirmedAt: string;
+          id: string;
+          planHash: string;
+          provenanceKind: string;
+          provenance: Record<string, unknown>;
+          admissionSource: Record<string, unknown>;
+          hits: Array<Record<string, unknown>>;
+        }
+        const json = async (args: string[]) => {
+          const result = await client.execute(args);
+          expect(result.stderr.join("\n")).toBe("");
+          expect(result.exitCode).toBe(0);
+          return JSON.parse(result.stdout.join("\n")) as Output;
+        };
+        const refused = async (args: string[], message: string) => {
+          const result = await client.execute(args);
+          expect(result.exitCode, args.join(" ")).toBe(1);
+          expect(result.stderr.join("\n")).toContain(message);
+        };
+        const { projectId } = await json([
+          "project:import",
+          repository,
+          "--json",
+        ]);
+        const content = [
+          "--project",
+          projectId,
+          "--kind",
+          "memory",
+          "--text",
+          "The daemon owns every knowledge write",
+        ];
+
+        // A scanned, imported repository is not a confirmed review.
+        await refused(
+          [
+            "knowledge:plan",
+            ...content,
+            "--source",
+            "handover",
+            "--handover",
+            "any",
+          ],
+          "KNOWLEDGE_HANDOVER_NOT_CONFIRMED",
+        );
+        const confirmed = await json([
+          "handover:confirm",
+          "--project",
+          projectId,
+          "--summary",
+          "TypeScript library with a README",
+          "--json",
+        ]);
+        expect(confirmed.confirmationId).toEqual(expect.any(String));
+        const handover = [
+          ...content,
+          "--source",
+          "handover",
+          "--handover",
+          confirmed.confirmationId,
+        ];
+        const plan = await json(["knowledge:plan", ...handover]);
+        expect(plan).toMatchObject({
+          schemaVersion: 2,
+          runId: null,
+          taskId: null,
+          agentId: null,
+          provenance: {
+            kind: "handover",
+            confirmationId: confirmed.confirmationId,
+            fingerprint: confirmed.fingerprint,
+            scanId: confirmed.scanId,
+            confirmedAt: confirmed.confirmedAt,
+          },
+        });
+        expect(recordNonRunKnowledge).not.toHaveBeenCalled();
+        await refused(
+          [
+            "knowledge:admit",
+            ...handover,
+            "--approve",
+            "0".repeat(64),
+            "--actor",
+            "operator",
+          ],
+          "KNOWLEDGE_APPROVAL_MISMATCH",
+        );
+        expect(
+          await json([
+            "knowledge:admit",
+            ...handover,
+            "--approve",
+            plan.planHash,
+            "--actor",
+            "operator",
+          ]),
+        ).toEqual({
+          schemaVersion: 1,
+          id: plan.id,
+          kind: "memory",
+          planHash: plan.planHash,
+          provenanceKind: "handover",
+          outcome: "recorded",
+        });
+
+        // Operator-confirmed evidence must be a record of this project.
+        const created = await client.execute([
+          "task:create",
+          "--project",
+          projectId,
+          "--title",
+          "Investigate the knowledge boundary",
+        ]);
+        const taskId = /Task created: (\S+)/u.exec(
+          created.stdout.join("\n"),
+        )![1]!;
+        const operatorContent = [
+          "--project",
+          projectId,
+          "--kind",
+          "decision",
+          "--title",
+          "Knowledge write boundary",
+          "--text",
+          "Agents propose; only the daemon persists knowledge",
+          "--source",
+          "operator-confirmed",
+          "--confirmed-by",
+          "andrea",
+        ];
+        const evidence = `task:${taskId},handover:${confirmed.confirmationId}`;
+        const operatorPlan = await json([
+          "knowledge:plan",
+          ...operatorContent,
+          "--evidence",
+          evidence,
+        ]);
+        expect(operatorPlan.provenance).toEqual({
+          kind: "operator_confirmed",
+          confirmedBy: "andrea",
+          evidence: [
+            {
+              kind: "handover",
+              id: confirmed.confirmationId,
+              label: `Handover review ${confirmed.confirmationId}`,
+            },
+            { kind: "task", id: taskId, label: `Task ${taskId}` },
+          ],
+        });
+        await refused(
+          [
+            "knowledge:admit",
+            ...operatorContent,
+            "--evidence",
+            evidence,
+            "--approve",
+            operatorPlan.planHash,
+            "--actor",
+            "claude-code",
+          ],
+          "KNOWLEDGE_CONFIRMATION_MISMATCH",
+        );
+        await refused(
+          [
+            "knowledge:admit",
+            ...operatorContent,
+            "--evidence",
+            `task:${taskId}`,
+            "--approve",
+            operatorPlan.planHash,
+            "--actor",
+            "andrea",
+          ],
+          "KNOWLEDGE_APPROVAL_MISMATCH",
+        );
+        expect(recordNonRunKnowledge).toHaveBeenCalledTimes(1);
+        expect(
+          (
+            await json([
+              "knowledge:admit",
+              ...operatorContent,
+              "--evidence",
+              evidence,
+              "--approve",
+              operatorPlan.planHash,
+              "--actor",
+              "andrea",
+            ])
+          ).provenanceKind,
+        ).toBe("operator_confirmed");
+
+        // Host sessions, unknown records, and mixed sources are never provenance.
+        for (const [args, message] of [
+          [
+            [...operatorContent, "--evidence", "claude_session:session_01Xo"],
+            "KNOWLEDGE_INVALID_PROVENANCE",
+          ],
+          [
+            [...operatorContent, "--evidence", "task:missing"],
+            "KNOWLEDGE_EVIDENCE_UNAVAILABLE",
+          ],
+          [[...operatorContent, "--evidence", "task"], "<kind>:<id>"],
+          [[...operatorContent], "Missing required option --evidence"],
+          [
+            [...operatorContent, "--evidence", evidence, "--run", "run-1"],
+            "--run is not accepted with --source operator-confirmed",
+          ],
+          [
+            [...handover, "--confirmed-by", "andrea"],
+            "--confirmed-by is not accepted with --source handover",
+          ],
+          [
+            [
+              ...content,
+              "--run",
+              "run-1",
+              "--handover",
+              confirmed.confirmationId,
+            ],
+            "--handover is not accepted with --source agent-run",
+          ],
+          [
+            [...content, "--source", "claude-session", "--run", "run-1"],
+            "Knowledge source must be",
+          ],
+          [[...content], "Missing required option --run"],
+          [
+            [...content, "--claude-session", "session_01Xo"],
+            "--claude-session",
+          ],
+        ] as const) {
+          await refused(["knowledge:plan", ...args], message);
+        }
+        expect(recordNonRunKnowledge).toHaveBeenCalledTimes(2);
+
+        const traced = await json([
+          "knowledge:trace",
+          "--project",
+          projectId,
+          "--kind",
+          "memory",
+          "--id",
+          plan.id,
+        ]);
+        expect(traced).toMatchObject({
+          schemaVersion: 1,
+          provenance: {
+            runId: null,
+            source: { kind: "handover", id: confirmed.confirmationId },
+          },
+          admissionSource: { projectId, ...plan.provenance },
+          admission: {
+            planHash: plan.planHash,
+            audit: { aggregateType: "agent_knowledge", aggregateId: plan.id },
+          },
+        });
+        expect(
+          (
+            await json([
+              "knowledge:trace",
+              "--project",
+              projectId,
+              "--kind",
+              "decision",
+              "--id",
+              operatorPlan.id,
+            ])
+          ).admissionSource,
+        ).toEqual({ projectId, ...operatorPlan.provenance });
+        expect(
+          await json([
+            "knowledge:trace",
+            "--project",
+            projectId,
+            "--kind",
+            "memory",
+            "--id",
+            "ak_missing",
+          ]),
+        ).toEqual({
+          schemaVersion: 1,
+          provenance: null,
+          admissionSource: null,
+          admission: null,
+        });
+
+        const found = await json([
+          "knowledge:search",
+          "--project",
+          projectId,
+          "--query",
+          "daemon",
+        ]);
+        expect(
+          found.hits
+            .map((hit) => [hit.id, hit.provenanceKind, hit.runId])
+            .sort(),
+        ).toEqual(
+          [
+            [plan.id, "handover", null],
+            [operatorPlan.id, "operator_confirmed", null],
+          ].sort(),
+        );
+
+        // New repository evidence makes the confirmed review stale for admission.
+        writeFileSync(join(repository, "tool.py"), "print('x')\n");
+        await json(["project:import", repository, "--json"]);
+        await refused(
+          ["knowledge:plan", ...handover],
+          "KNOWLEDGE_HANDOVER_STALE",
+        );
+        await refused(
+          ["knowledge:plan", ...operatorContent, "--evidence", evidence],
+          "KNOWLEDGE_EVIDENCE_UNAVAILABLE",
+        );
+        expect(recordNonRunKnowledge).toHaveBeenCalledTimes(2);
+        expect(store.recordMemory).not.toHaveBeenCalled();
+        expect(store.recordDecision).not.toHaveBeenCalled();
       },
     );
   });

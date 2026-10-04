@@ -407,10 +407,16 @@ source scope, key and content digest; no run, task or agent link is inferred.
 They join bounded retrieval as advisory context and remain traceable. No current
 Runtime command reads the external CairnKeep database.
 
-New knowledge admission runs through an application use case. It validates an
-authoritative completed worker run and project binding, requires an operator
-review of an exact content hash, records an audit attempt before the SurrealDB
-write, and verifies the stored provenance graph afterward. The knowledge store
+New knowledge admission runs through an application use case. It validates
+the project binding and one explicit, typed admission source against
+authoritative state: a completed worker run, the project's current confirmed
+handover review, or operator-confirmed evidence that resolves to requirements,
+ADRs, reviews, tasks or that review. It never fabricates a run for knowledge no
+run produced and never treats an external client session as a source. It
+requires an operator review of an exact hash that covers content and
+provenance, records an audit attempt before the SurrealDB write, and verifies
+the stored provenance afterward. See
+[admission provenance](../development/agent-knowledge.md#admission-provenance-ak-11). The knowledge store
 remains secondary; no SurrealDB transaction holds operational authority.
 
 `knowledge:search` is the read-only companion: one bounded literal search in

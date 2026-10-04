@@ -5,6 +5,7 @@ import {
   KnowledgeStoreError,
   type AgentKnowledgeStore,
   type KnowledgeHit,
+  type NonRunKnowledgeHit,
   type RuntimeAgentKnowledge,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { ProjectMemoryRetrievalRecord } from "@ai-office/application/ports/project-memory-provenance-repository.port.ts";
@@ -82,6 +83,46 @@ function connected(
 }
 
 describe("native knowledge run context", () => {
+  test("injects run, handover, and operator-confirmed knowledge alike as advisory context", async () => {
+    const nonRun = { agentId: null, runId: null, taskId: null } as const;
+    const fromHandover: NonRunKnowledgeHit = {
+      ...hit,
+      ...nonRun,
+      id: "memory-handover",
+      kind: "memory",
+      title: null,
+      text: "Authentication is terminated at the gateway.",
+      source: { id: "confirmation-1", kind: "handover", label: "Review" },
+      provenance: {
+        kind: "handover",
+        confirmationId: "confirmation-1",
+        fingerprint: "f".repeat(64),
+        scanId: null,
+        confirmedAt: new Date("2026-09-27T00:00:00.000Z"),
+      },
+    };
+    const fromOperator: NonRunKnowledgeHit = {
+      ...hit,
+      ...nonRun,
+      id: "decision-operator",
+      text: "Authentication tokens are never logged.",
+      source: { id: "andrea", kind: "operator", label: "Operator" },
+      provenance: {
+        kind: "operator_confirmed",
+        confirmedBy: "andrea",
+        evidence: [{ kind: "task", id: "task-9", label: "Task task-9" }],
+      },
+    };
+    const f = fixture(
+      connected(vi.fn(async () => [hit, fromHandover, fromOperator])),
+    );
+    const result = await f.assembler.assemble(input);
+    expect(
+      result.projectMemory?.results.map((entry) => entry.referenceId),
+    ).toEqual(["decision-1", "memory-handover", "decision-operator"]);
+    expect(f.records[0]).toMatchObject({ resultCount: 3, injectedCount: 3 });
+  });
+
   test("disabled knowledge does not search or record provenance", async () => {
     const f = fixture({ state: "disabled" });
     expect(await f.assembler.assemble(input)).toEqual({ memory: [] });
@@ -191,9 +232,11 @@ describe("native knowledge run context", () => {
   });
 
   test("a synchronous store failure still records the attempted literal term", async () => {
-    const f = fixture(connected(() => {
-      throw new KnowledgeStoreError("KNOWLEDGE_QUERY_FAILED");
-    }));
+    const f = fixture(
+      connected(() => {
+        throw new KnowledgeStoreError("KNOWLEDGE_QUERY_FAILED");
+      }),
+    );
     expect(await f.assembler.assemble(input)).toEqual({ memory: [] });
     expect(f.records[0]).toMatchObject({
       outcome: "failed",
@@ -277,9 +320,14 @@ describe("native knowledge run context", () => {
     vi.useFakeTimers();
     try {
       let resolveSearch: (hits: KnowledgeHit[]) => void = () => {};
-      const f = fixture(connected(() => new Promise<KnowledgeHit[]>((resolve) => {
-        resolveSearch = resolve;
-      })));
+      const f = fixture(
+        connected(
+          () =>
+            new Promise<KnowledgeHit[]>((resolve) => {
+              resolveSearch = resolve;
+            }),
+        ),
+      );
       const pending = f.assembler.assemble(input);
       await vi.advanceTimersByTimeAsync(5_000);
       expect(await pending).toEqual({ memory: [] });

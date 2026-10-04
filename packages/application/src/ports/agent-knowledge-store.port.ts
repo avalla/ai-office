@@ -101,9 +101,110 @@ export function assertKnowledgeLimit(limit: number, maximum: number): void {
 
 export interface KnowledgeSourceReference {
   id: string;
-  kind: "requirement" | "task" | "decision" | "run" | "external";
+  kind:
+    | "requirement"
+    | "task"
+    | "decision"
+    | "run"
+    | "external"
+    | "handover"
+    | "operator";
   label: string;
   locator?: string;
+}
+
+/**
+ * Authoritative project records an operator-confirmed admission may cite. The
+ * set is closed: the Runtime resolves each reference inside the project before
+ * planning, so an identifier it cannot verify, such as a host-client session
+ * ID, is never evidence.
+ */
+export const knowledgeEvidenceKinds = [
+  "adr",
+  "handover",
+  "requirement",
+  "review",
+  "task",
+] as const;
+export type KnowledgeEvidenceKind = (typeof knowledgeEvidenceKinds)[number];
+export const knowledgeEvidenceLimit = 8;
+
+export interface KnowledgeEvidenceReference {
+  readonly kind: KnowledgeEvidenceKind;
+  readonly id: string;
+  /** Runtime-derived stable label of the referenced record, never caller text. */
+  readonly label: string;
+}
+
+/** Evidence of a handover repository review the user actually confirmed. */
+export interface HandoverKnowledgeProvenance {
+  readonly kind: "handover";
+  readonly confirmationId: string;
+  readonly fingerprint: string;
+  readonly scanId: string | null;
+  readonly confirmedAt: Date;
+}
+
+/**
+ * Evidence the trusted-local operator explicitly confirmed. `confirmedBy` is
+ * the supplied operator identity, not authenticated human presence, and no
+ * external model session is represented.
+ */
+export interface OperatorConfirmedKnowledgeProvenance {
+  readonly kind: "operator_confirmed";
+  readonly confirmedBy: string;
+  readonly evidence: readonly KnowledgeEvidenceReference[];
+}
+
+export type NonRunKnowledgeProvenance =
+  HandoverKnowledgeProvenance | OperatorConfirmedKnowledgeProvenance;
+
+export function isKnowledgeEvidenceReference(
+  value: unknown,
+): value is KnowledgeEvidenceReference {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    Object.keys(candidate).length === 3 &&
+    knowledgeEvidenceKinds.includes(candidate.kind as KnowledgeEvidenceKind) &&
+    isKnowledgeIdentifier(candidate.id) &&
+    isKnowledgeIdentifier(candidate.label)
+  );
+}
+
+/** Source-specific fields are required and no other field is accepted. */
+export function isNonRunKnowledgeProvenance(
+  value: unknown,
+): value is NonRunKnowledgeProvenance {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return false;
+  const candidate = value as Record<string, unknown>;
+  if (candidate.kind === "handover") {
+    return (
+      Object.keys(candidate).length === 5 &&
+      isKnowledgeIdentifier(candidate.confirmationId) &&
+      typeof candidate.fingerprint === "string" &&
+      /^[0-9a-f]{64}$/u.test(candidate.fingerprint) &&
+      (candidate.scanId === null || isKnowledgeIdentifier(candidate.scanId)) &&
+      candidate.confirmedAt instanceof Date &&
+      !Number.isNaN(candidate.confirmedAt.getTime())
+    );
+  }
+  if (candidate.kind === "operator_confirmed") {
+    const evidence = candidate.evidence;
+    return (
+      Object.keys(candidate).length === 3 &&
+      isKnowledgeIdentifier(candidate.confirmedBy) &&
+      Array.isArray(evidence) &&
+      evidence.length >= 1 &&
+      evidence.length <= knowledgeEvidenceLimit &&
+      evidence.every(isKnowledgeEvidenceReference) &&
+      new Set(evidence.map((item) => `${item.kind}:${item.id}`)).size ===
+        evidence.length
+    );
+  }
+  return false;
 }
 
 export interface AgentKnowledgeInput extends KnowledgeScope {
@@ -148,15 +249,54 @@ export interface LegacyKnowledgeHit extends KnowledgeScope {
   legacy: { sourceScope: string; sourceKey: string; sourceSha256: string };
 }
 
-export type SearchKnowledgeHit = KnowledgeHit | LegacyKnowledgeHit;
+/**
+ * Knowledge admitted from a confirmed handover review or explicit operator
+ * confirmation. It never carries a run, task, or agent: none produced it.
+ */
+export interface NonRunKnowledgeHit extends KnowledgeScope {
+  id: string;
+  kind: "memory" | "decision";
+  text: string;
+  title: string | null;
+  agentId: null;
+  runId: null;
+  taskId: null;
+  source: KnowledgeSourceReference;
+  createdAt: Date;
+  provenance: NonRunKnowledgeProvenance;
+}
 
-export interface KnowledgeProvenance {
+export interface NonRunKnowledgeInput extends KnowledgeScope {
+  id: string;
+  kind: "memory" | "decision";
+  text: string;
+  /** Required for a decision and absent for a memory. */
+  title?: string;
+  source: KnowledgeSourceReference;
+  createdAt: Date;
+  provenance: NonRunKnowledgeProvenance;
+}
+
+export type SearchKnowledgeHit =
+  KnowledgeHit | NonRunKnowledgeHit | LegacyKnowledgeHit;
+
+export interface RunKnowledgeProvenance {
   knowledge: KnowledgeHit;
   source: KnowledgeSourceReference;
   runId: string;
   taskId: string;
   agentId: string;
 }
+
+export interface NonRunKnowledgeTrace {
+  knowledge: NonRunKnowledgeHit;
+  source: KnowledgeSourceReference;
+  runId: null;
+  taskId: null;
+  agentId: null;
+}
+
+export type KnowledgeProvenance = RunKnowledgeProvenance | NonRunKnowledgeTrace;
 
 /**
  * Secondary knowledge persistence; this port does not confer Runtime authority.
@@ -171,6 +311,12 @@ export interface KnowledgeProvenance {
 export interface AgentKnowledgeStore {
   recordMemory(input: MemoryInput): Promise<void>;
   recordDecision(input: DecisionInput): Promise<void>;
+  /**
+   * Writes one record and its typed provenance atomically, without any run,
+   * task, or agent node. An existing record with the same ID and different
+   * content or provenance is rejected.
+   */
+  recordNonRunKnowledge(input: NonRunKnowledgeInput): Promise<void>;
   traceLegacyMemory(
     scope: KnowledgeScope,
     id: string,

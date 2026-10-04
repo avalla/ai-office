@@ -648,7 +648,9 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: AK-01–AK-10 merged.
+Status: AK-01–AK-10 merged; AK-11 implemented and independently reviewed,
+pending pipeline verification and merge. AK-12 (knowledge record lifecycle) is
+a candidate, not yet planned.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
@@ -665,6 +667,7 @@ historical CairnKeep retrieval path. See
 | AK-08 | CairnKeep implementation removal and final docs                              | AK-07 merged                      |
 | AK-09 | Managed Agent Knowledge configuration and SurrealDB deployment support       | AK-03–AK-05; AK-08 for final docs |
 | AK-10 | Durable project knowledge policy in agent guidance; `knowledge:search`       | AK-05, AK-08                      |
+| AK-11 | Governed non-run knowledge admission provenance                              | AK-05, AK-10                      |
 
 AK-01–AK-10 each map to one reviewed PR. AK-09 was delivered as one operational
 task with four delivery slices below, tracked by one requirement and task.
@@ -688,6 +691,50 @@ key and content digest without inventing run provenance. Imported records and
 historical run retrieval evidence remain readable; external CairnKeep data is
 never deleted by AI Office. See the same guide.
 
+### AK-11 — Governed non-run knowledge admission provenance
+
+**Status:** implemented and independently reviewed in PR #99; pending pipeline
+verification and merge. Decision recorded in
+[ADR-0030](../adr/ADR-0030-typed-governed-knowledge-admission-provenance.md).
+AK-10 left one gap: admission required a completed worker run, so durable
+knowledge learned during handover or an interactive Codex/Claude session could
+only be reported to the user. AK-11 replaces the run-only model with a closed,
+typed admission source: `agent_run` (unchanged, including its plan hash),
+`handover` (the project's current user-confirmed repository review), and
+`operator_confirmed` (project evidence the Runtime resolves, explicitly
+confirmed by the named operator at `knowledge:admit`). Provenance is validated
+per source, bound into the plan hash, stored as typed immutable fields with the
+record, and explained by `knowledge:trace`. See
+[admission provenance](agent-knowledge.md#admission-provenance-ak-11).
+
+**Delivered:** explicit `--source` selection on `knowledge:plan` and
+`knowledge:admit`; `confirmationId` in `handover:confirm` output; SurrealDB
+knowledge schema version 3 with an in-place upgrade; `admissionSource` and
+`admission` in `knowledge:trace`; `provenanceKind` in `knowledge:search` and
+the admission result; provenance in admission audit events; updated canonical
+skill policy and handover guidance for Codex and Claude.
+
+**Non-goals:** fabricating agent runs; trusting host-session identifiers;
+automatic persistence of handover or session findings; supersede, relate or
+deprecate; a confidence schema; retrieval redesign; another backend;
+reintroducing CairnKeep; any change to authoritative SQLite/PostgreSQL state.
+
+**Known limits:** operator confirmation is trusted-local, not human-presence
+authentication; evidence is verified at plan and admission time and not
+re-validated afterwards; `knowledge:trace` references the admission audit
+events without reading them back; a confirmed handover review restored from a
+portable snapshot is accepted while it is still the current review.
+
+**Deferred, found in review:**
+
+- AK-12 candidate: `supersedeDecision` compares task IDs to keep supersession
+  within one task, and two non-run decisions both have none, so it would treat
+  them as the same task. No command reaches it today; supersede, relate and
+  deprecate must define their rule for records without a task.
+- Follow-up: `knowledge:trace` prints the tenant ID that `knowledge:search`
+  hides. This predates AK-11 and now also applies to non-run records; removing
+  it changes an existing output contract and needs its own decision.
+
 ### AK-10 — Durable project knowledge policy
 
 **Status:** implemented on `main` via PR #98. AK-10 closes a behavioral gap, not a
@@ -707,10 +754,10 @@ automatic ingestion of task results or repository content; making
 `AgentKnowledgeStore` authoritative; any worker-side write path; changing
 admission provenance, approval or the store contract.
 
-**Known limits, not addressed here:** admission still requires a completed
-worker run, so knowledge from interactive host sessions and handover is
-reported to the user rather than admitted; there is no supersede or relate
-command; search remains literal and bounded.
+**Known limits, not addressed here:** admission required a completed worker
+run, so knowledge from interactive host sessions and handover was reported to
+the user rather than admitted (closed by AK-11); there is no supersede or
+relate command; search remains literal and bounded.
 
 ### AK-09 — Managed Agent Knowledge configuration and SurrealDB deployment support
 

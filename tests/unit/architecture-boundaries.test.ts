@@ -829,3 +829,30 @@ test("raw provider credential values are reachable only at the gateway provider 
         valueModules.push(relative(repositoryRoot, file));
   expect(valueModules).toEqual([]);
 });
+
+test("only the Runtime admission service writes native knowledge", () => {
+  const writes =
+    /\.(?:recordMemory|recordDecision|recordNonRunKnowledge)\s*\(/u;
+  const callers = ["packages", "apps", "scripts"]
+    .flatMap((directory) => typescriptFiles(join(repositoryRoot, directory)))
+    .filter((file) => writes.test(readFileSync(file, "utf8")))
+    .map((file) => relative(repositoryRoot, file));
+  // Workers, skills, host clients, hooks and the dashboard have no write path.
+  expect(callers).toEqual([
+    "packages/application/src/agent-knowledge/manage-knowledge-admission.ts",
+  ]);
+  // The admission service itself is reachable only through Runtime commands.
+  const importers = ["packages", "apps", "scripts"]
+    .flatMap((directory) => typescriptFiles(join(repositoryRoot, directory)))
+    .filter((file) =>
+      /from\s+"[^"]*agent-knowledge\/manage-knowledge-admission\.ts"/u.test(
+        readFileSync(file, "utf8"),
+      ),
+    )
+    .map((file) => relative(repositoryRoot, file))
+    .sort();
+  expect(importers).toEqual([
+    "packages/runtime-host/src/commands/knowledge.ts",
+    "packages/runtime-host/src/runtime-command.ts",
+  ]);
+});

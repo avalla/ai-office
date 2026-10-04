@@ -124,7 +124,12 @@ function isRecordedReview(value: unknown): value is RecordedRepositoryReview {
  */
 export function readRecordedRepositoryReview(
   entries: readonly ProjectProfileEntry[],
-): { review: RecordedRepositoryReview; confirmedAt: Date } | null {
+): {
+  review: RecordedRepositoryReview;
+  confirmedAt: Date;
+  /** The profile entry that recorded the confirmation. */
+  entry: ProjectProfileEntry;
+} | null {
   const candidates = entries
     .filter(
       (entry) =>
@@ -144,5 +149,6 @@ export function readRecordedRepositoryReview(
     : {
         review: latest.value as RecordedRepositoryReview,
         confirmedAt: latest.confirmedAt ?? latest.createdAt,
+        entry: latest,
       };
 }

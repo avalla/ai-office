@@ -259,6 +259,7 @@ export async function handleLifecycleCommand(
     else {
       context.io.stdout("Handover repository review confirmed.");
       context.io.stdout(`  project: ${result.projectId}`);
+      context.io.stdout(`  confirmation: ${result.confirmationId}`);
       context.io.stdout(`  scan: ${result.scanId ?? "not recorded"}`);
       context.io.stdout(`  evidence: ${result.fingerprint.slice(0, 16)}`);
       context.io.stdout(
