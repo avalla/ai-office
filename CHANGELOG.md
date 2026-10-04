@@ -36,6 +36,18 @@
   line endings. The `knowledge:search` limit bound is derived from the
   retrieval limit. Installed repositories refresh on the next
   `ai-office install`.
+- Let `ai-office task:update` change a task's priority. It now takes
+  `--project`, `--task` and at least one of `--description` and
+  `--priority <integer>`; both may be given in one command and land in one
+  transaction. Lifecycle status is untouched. Description updates still append
+  `task.description_updated` exactly as before; a priority update appends
+  `task.priority_updated` with the explicit `from` and `to` priority. Priority
+  semantics are now documented: any safe integer, default `0`, higher sorts
+  first. `task:create --priority` and `task:update --priority` share one
+  parser and refuse anything but plain decimal integer text (for example `""`,
+  `1e3`, `0x10`, `1.5`) with a usage error; `task:create` previously accepted
+  `Number()` notation such as `1e3` or an empty value (stored as `0`). No
+  migration is required.
 - Fix truncated CLI output when stdout is a pipe. Every Runtime client command
   opened an interactive prompt reader on `process.stdout` up front, which in
   Bun makes a pipe on stdout non-blocking; `console.log` then wrote only what

@@ -279,7 +279,7 @@ describe("task lifecycle CLI", () => {
     ]);
   });
 
-  test("requires a description for task:update", async () => {
+  test("requires a description or a priority for task:update", async () => {
     const { root, projectId } = await board();
     const taskId = await newTask(root, projectId, "Ship it");
 
@@ -292,9 +292,52 @@ describe("task lifecycle CLI", () => {
     ]);
     expect(result.code).toBe(1);
     expect(result.stderr.join("\n")).toContain(
-      "Missing required option --description",
+      "task:update requires --description and/or --priority",
     );
+    expect(auditTrail(root)).toEqual([]);
   });
+
+  test.each(["", "1.5", "1e3", "0x10", " 7", "high", "9007199254740992"])(
+    "refuses --priority %j on task:create and task:update as a usage error",
+    async (priority) => {
+      const { root, projectId } = await board();
+      const taskId = await newTask(root, projectId, "Ship it");
+
+      for (const args of [
+        ["task:create", "--project", projectId, "--title", "Never"],
+        [
+          "task:update",
+          "--project",
+          projectId,
+          "--task",
+          taskId,
+          "--description",
+          "Never",
+        ],
+      ]) {
+        const result = await cli(root, [...args, "--priority", priority]);
+        expect(result).toMatchObject({ code: 1, stdout: [] });
+        expect(result.stderr).toEqual([
+          "Option --priority must be a safe integer",
+        ]);
+      }
+
+      const database = openDatabase(join(root, ".ai-office", "project.sqlite"));
+      try {
+        expect(
+          database
+            .query<
+              { id: string; description: string | null; priority: number },
+              []
+            >("SELECT id, description, priority FROM task")
+            .all(),
+        ).toEqual([{ id: taskId, description: null, priority: 0 }]);
+      } finally {
+        database.close();
+      }
+      expect(auditTrail(root)).toEqual([]);
+    },
+  );
 
   test("refuses an impossible transition and names what is allowed", async () => {
     const { root, projectId } = await board();

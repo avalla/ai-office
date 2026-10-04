@@ -131,6 +131,21 @@ export function normalizeTaskReason(value: string, label: string): string {
   return reason;
 }
 
+/**
+ * Task priority is an ordering key, not a category. Any safe integer is
+ * allowed, including zero and negative values; a higher value is more urgent
+ * and sorts first in every task list. Tasks created without one get
+ * {@link defaultTaskPriority}.
+ */
+export const defaultTaskPriority = 0;
+
+/** The single priority rule shared by creation and update. */
+export function validateTaskPriority(priority: number): number {
+  if (!Number.isSafeInteger(priority))
+    throw new DomainValidationError("Task priority must be a safe integer");
+  return priority;
+}
+
 export interface TaskProps {
   id: TaskId;
   projectId: ProjectId;
@@ -159,11 +174,7 @@ export class Task {
       throw new DomainValidationError("Task title cannot be empty");
     }
 
-    const priority = input.priority ?? 0;
-
-    if (!Number.isSafeInteger(priority)) {
-      throw new DomainValidationError("Task priority must be a safe integer");
-    }
+    const priority = validateTaskPriority(input.priority ?? defaultTaskPriority);
 
     return new Task({
       id: input.id,
@@ -186,6 +197,15 @@ export class Task {
   /** Updates descriptive content without changing lifecycle state. */
   updateDescription(description: string, now: Date): void {
     this.props = { ...this.props, description, updatedAt: now };
+  }
+
+  /** Changes the ordering key without changing lifecycle state. */
+  updatePriority(priority: number, now: Date): void {
+    this.props = {
+      ...this.props,
+      priority: validateTaskPriority(priority),
+      updatedAt: now,
+    };
   }
 
   /** Work has begun. Driven by `pipeline:start` and by `task:start`. */

@@ -615,6 +615,40 @@ export function defineProjectStorageContracts(
         ),
       ).toEqual([`${prefix}-high-a`, `${prefix}-high-b`, `${prefix}-low`]);
     });
+
+    test("persists an updated priority and reorders the project list", async () => {
+      const project = await createProject(harness, `${prefix}-reorder-project`);
+      const created = new Date("2026-02-02T00:00:00.000Z");
+      const first = Task.create({
+        id: `${prefix}-reorder-first`,
+        projectId: project.snapshot().id,
+        title: "First",
+        priority: 5,
+        now: created,
+      });
+      const second = Task.create({
+        id: `${prefix}-reorder-second`,
+        projectId: project.snapshot().id,
+        title: "Second",
+        priority: 1,
+        now: created,
+      });
+      await harness.tasks.save(first);
+      await harness.tasks.save(second);
+
+      const updatedAt = new Date("2026-02-03T00:00:00.000Z");
+      second.updatePriority(9, updatedAt);
+      await harness.tasks.save(second);
+
+      expect(
+        (await harness.tasks.findById(second.snapshot().id))?.snapshot(),
+      ).toEqual(second.snapshot());
+      expect(
+        (await harness.tasks.listByProject(project.snapshot().id)).map(
+          (task) => task.snapshot().id,
+        ),
+      ).toEqual([`${prefix}-reorder-second`, `${prefix}-reorder-first`]);
+    });
   });
 
   describe("TaskDependencyRepository", () => {

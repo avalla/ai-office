@@ -71,7 +71,7 @@ Commands:
   client:uninstall --client <codex|claude> --root <path> [--approve <plan-hash>]
   update [--approve <plan-hash>] [--json]  # source maintenance; relevant Runtime hosts must be stopped
   runtime:purge [--approve <plan-hash>]  # local; daemon must be stopped
-  task:create --project <id> --title <title> [--description <description>] [--priority <integer>]
+  task:create --project <id> --title <title> [--description <description>] [--priority <integer>]  # priority default 0; higher sorts first
   project:pack:show --project <id> [--json]
   project:pack:preview --project <id> --packs <exact-tuples-json> [--json]
   project:pack:apply --project <id> --packs <exact-tuples-json> --expected-revision <integer> [--json]
@@ -79,7 +79,7 @@ Commands:
   project:definition:preview --project <id> --mutation <json> [--json]
   project:definition:apply --project <id> --mutation <json> --expected-revision <integer> [--json]
   project:configuration:show --project <id> [--json]  # read-only derived configuration
-  task:update --project <id> --task <id> --description <description>
+  task:update --project <id> --task <id> [--description <description>] [--priority <integer>]  # at least one; audited
   task:list --project <id>
   task:transitions --project <id> --task <id> [--json]   # read-only preflight
   task:dependency:add --project <id> --task <id> --depends-on <task-id> [--json]

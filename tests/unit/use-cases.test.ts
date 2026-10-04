@@ -1,4 +1,12 @@
 import { describe, expect, test } from "vitest";
+import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
+import { TaskNotFoundError } from "@ai-office/application/commands/schedule-agent-run.ts";
+import { UpdateTask } from "@ai-office/application/commands/update-task.ts";
+import type { AuditEventRepository } from "@ai-office/application/ports/audit-event-repository.port.ts";
+import { DomainValidationError } from "@ai-office/domain/errors.ts";
+import type { AuditEvent } from "@ai-office/domain/event/audit-event.ts";
+import { Project as ProjectAggregate } from "@ai-office/domain/project/project.ts";
+import { Task as TaskAggregate } from "@ai-office/domain/task/task.ts";
 import { CreateProject } from "@ai-office/application/commands/create-project.ts";
 import { CreateTask } from "@ai-office/application/commands/create-task.ts";
 import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
@@ -142,5 +150,171 @@ describe("project and task use cases", () => {
       createTask.execute({ projectId: "missing", title: "Task" }),
     ).rejects.toBeInstanceOf(ProjectNotFoundError);
     expect(tasks.values.size).toBe(0);
+  });
+});
+
+class RecordedAuditEvents implements AuditEventRepository {
+  readonly values: AuditEvent[] = [];
+
+  async append(event: AuditEvent): Promise<void> {
+    this.values.push(event);
+  }
+}
+
+describe("UpdateTask", () => {
+  const created = new Date("2026-08-01T00:00:00.000Z");
+
+  async function fixture() {
+    const projects = new InMemoryProjects();
+    const tasks = new InMemoryTasks();
+    const events = new RecordedAuditEvents();
+    await projects.save(
+      ProjectAggregate.create({ id: "project-1", name: "Demo", now: created }),
+    );
+    await tasks.save(
+      TaskAggregate.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Ship it",
+        description: "Original",
+        priority: 2,
+        now: created,
+      }),
+    );
+    const clock = new FixedClock();
+    const service = new UpdateTask(
+      projects,
+      tasks,
+      new RecordAuditEvent(events, new SequenceIds(), clock),
+      clock,
+      new InMemoryTransactions(),
+    );
+    const audit = () =>
+      events.values.map((event) => {
+        const value = event.snapshot();
+        return {
+          eventType: value.eventType,
+          actorId: value.actorId,
+          aggregateId: value.aggregateId,
+          payload: value.payload,
+        };
+      });
+    const stored = async () => {
+      const task = await tasks.findById("task-1");
+      if (task === null) throw new Error("task-1 disappeared");
+      return task.snapshot();
+    };
+    return { service, audit, stored };
+  }
+
+  const target = { projectId: "project-1", taskId: "task-1", actorId: "op" };
+
+  test("updates only the description and audits it exactly as before", async () => {
+    const { service, audit, stored } = await fixture();
+
+    const result = await service.execute({
+      ...target,
+      description: "Rewritten",
+    });
+
+    expect(result).toEqual({
+      taskId: "task-1",
+      description: "Rewritten",
+      priority: 2,
+      updatedAt: new FixedClock().now(),
+    });
+    expect(await stored()).toMatchObject({
+      description: "Rewritten",
+      priority: 2,
+      status: "pending",
+    });
+    expect(audit()).toEqual([
+      {
+        eventType: "task.description_updated",
+        actorId: "op",
+        aggregateId: "task-1",
+        payload: { descriptionUpdated: true },
+      },
+    ]);
+  });
+
+  test("updates only the priority and audits explicit before and after", async () => {
+    const { service, audit, stored } = await fixture();
+
+    await service.execute({ ...target, priority: -5 });
+
+    expect(await stored()).toMatchObject({
+      description: "Original",
+      priority: -5,
+      status: "pending",
+      updatedAt: new FixedClock().now(),
+    });
+    expect(audit()).toEqual([
+      {
+        eventType: "task.priority_updated",
+        actorId: "op",
+        aggregateId: "task-1",
+        payload: { from: 2, to: -5 },
+      },
+    ]);
+  });
+
+  test("records an unchanged priority like an unchanged description", async () => {
+    const { service, audit } = await fixture();
+
+    await service.execute({ ...target, priority: 2 });
+
+    expect(audit()).toEqual([
+      expect.objectContaining({
+        eventType: "task.priority_updated",
+        payload: { from: 2, to: 2 },
+      }),
+    ]);
+  });
+
+  test("applies description and priority together with one event each", async () => {
+    const { service, audit, stored } = await fixture();
+
+    const result = await service.execute({
+      ...target,
+      description: "Both",
+      priority: 9,
+    });
+
+    expect(result).toMatchObject({ description: "Both", priority: 9 });
+    expect(await stored()).toMatchObject({ description: "Both", priority: 9 });
+    expect(
+      audit().map(({ eventType, payload }) => ({ eventType, payload })),
+    ).toEqual([
+      {
+        eventType: "task.description_updated",
+        payload: { descriptionUpdated: true },
+      },
+      { eventType: "task.priority_updated", payload: { from: 2, to: 9 } },
+    ]);
+  });
+
+  test("refuses an invalid priority before changing or auditing anything", async () => {
+    const { service, audit, stored } = await fixture();
+    const before = await stored();
+
+    await expect(
+      service.execute({ ...target, description: "Never", priority: 1.5 }),
+    ).rejects.toBeInstanceOf(DomainValidationError);
+
+    expect(await stored()).toEqual(before);
+    expect(audit()).toEqual([]);
+  });
+
+  test("refuses a missing project or a task outside the project", async () => {
+    const { service, audit } = await fixture();
+
+    await expect(
+      service.execute({ ...target, projectId: "missing", priority: 1 }),
+    ).rejects.toBeInstanceOf(ProjectNotFoundError);
+    await expect(
+      service.execute({ ...target, taskId: "task-2", priority: 1 }),
+    ).rejects.toBeInstanceOf(TaskNotFoundError);
+    expect(audit()).toEqual([]);
   });
 });

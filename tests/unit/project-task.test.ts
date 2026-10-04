@@ -57,4 +57,52 @@ describe("Task", () => {
       })
     ).toThrow(DomainValidationError);
   });
+
+  test("defaults priority to zero and accepts negative priorities", () => {
+    const base = { projectId: "project-1", title: "Order me", now };
+    expect(Task.create({ id: "task-1", ...base }).snapshot().priority).toBe(0);
+    expect(
+      Task.create({ id: "task-2", priority: -3, ...base }).snapshot().priority,
+    ).toBe(-3);
+  });
+
+  test("updates priority without changing lifecycle state", () => {
+    const task = Task.create({
+      id: "task-1",
+      projectId: "project-1",
+      title: "Reprioritize",
+      description: "Keep me",
+      priority: 1,
+      now,
+    });
+    task.start(now);
+    const later = new Date("2026-08-05T00:05:00.000Z");
+
+    task.updatePriority(-7, later);
+
+    expect(task.snapshot()).toMatchObject({
+      status: "running",
+      description: "Keep me",
+      priority: -7,
+      updatedAt: later,
+    });
+  });
+
+  test.each([1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1])(
+    "refuses to update priority to %s and leaves the task unchanged",
+    (priority) => {
+      const task = Task.create({
+        id: "task-1",
+        projectId: "project-1",
+        title: "Reprioritize",
+        priority: 4,
+        now,
+      });
+
+      expect(() =>
+        task.updatePriority(priority, new Date("2026-08-05T00:05:00.000Z")),
+      ).toThrow(new DomainValidationError("Task priority must be a safe integer"));
+      expect(task.snapshot()).toMatchObject({ priority: 4, updatedAt: now });
+    },
+  );
 });

@@ -1,5 +1,8 @@
 import { CreateTask } from "@ai-office/application/commands/create-task.ts";
-import { UpdateTask } from "@ai-office/application/commands/update-task.ts";
+import {
+  UpdateTask,
+  type UpdateTaskInput,
+} from "@ai-office/application/commands/update-task.ts";
 import { manageAgentRuns } from "./run-services.ts";
 import { ManageTaskLifecycle } from "@ai-office/application/commands/manage-task-lifecycle.ts";
 import { ManageTaskRequirements } from "@ai-office/application/commands/manage-task-requirements.ts";
@@ -46,6 +49,20 @@ const reasonOptional = new Set<LifecycleCommand>(["task:cancel"]);
 
 function isLifecycleCommand(value: string): value is LifecycleCommand {
   return Object.hasOwn(lifecycleCommands, value);
+}
+
+/**
+ * `--priority` as written by an operator: a plain decimal integer within the
+ * domain's safe-integer range. Notation `Number()` would also accept — `""`,
+ * `1e3`, `0x10`, `1.0` — is refused rather than silently reinterpreted, the
+ * same text rule the `office:workspace --priority` filter applies.
+ */
+function priorityOption(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const priority = Number(value);
+  if (!/^-?\d+$/u.test(value) || !Number.isSafeInteger(priority))
+    throw new CliUsageError("Option --priority must be a safe integer");
+  return priority;
 }
 
 /** `2/3 verified` — never a status, always progress beside one. */
@@ -213,9 +230,7 @@ export async function handleTaskCommand(
     );
     if (parsed.positionals.length > 0)
       throw new CliUsageError("task:create only accepts named options");
-    const priorityValue = parsed.options.get("priority");
-    const priority =
-      priorityValue === undefined ? undefined : Number(priorityValue);
+    const priority = priorityOption(parsed.options.get("priority"));
     const description = parsed.options.get("description");
     const id = await new CreateTask(projects, tasks, ids, clock).execute({
       projectId: requiredOption(parsed, "project"),
@@ -230,22 +245,36 @@ export async function handleTaskCommand(
   if (command === "task:update") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "task", "description"]),
+      new Set(["project", "task", "description", "priority"]),
     );
     if (parsed.positionals.length > 0)
       throw new CliUsageError("task:update only accepts named options");
+    const target = {
+      projectId: requiredOption(parsed, "project"),
+      taskId: requiredOption(parsed, "task"),
+      actorId: principal.id,
+    };
+    const description = parsed.options.get("description");
+    const priority = priorityOption(parsed.options.get("priority"));
+    let input: UpdateTaskInput;
+    if (description !== undefined)
+      input = {
+        ...target,
+        description,
+        ...(priority === undefined ? {} : { priority }),
+      };
+    else if (priority !== undefined) input = { ...target, priority };
+    else
+      throw new CliUsageError(
+        "task:update requires --description and/or --priority",
+      );
     const result = await new UpdateTask(
       projects,
       tasks,
       audit,
       clock,
       transactions,
-    ).execute({
-      projectId: requiredOption(parsed, "project"),
-      taskId: requiredOption(parsed, "task"),
-      description: requiredOption(parsed, "description"),
-      actorId: principal.id,
-    });
+    ).execute(input);
     io.stdout(`Task updated: ${result.taskId}`);
     return 0;
   }

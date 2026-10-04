@@ -328,6 +328,27 @@ record work that happened outside the record. The audit event is
 rationale, and the evidence the operator was shown — never `task.status_changed`,
 so no fabricated `start` can appear in the trail.
 
+## Task priority
+
+`task.priority` is an ordering key, not a category or a lifecycle input. It is
+any safe integer — zero and negative values included — defaulting to `0` when a
+task is created without one. **A higher value is more urgent**: the task
+repositories of every storage adapter, `task:list`, and the operational task
+read order by `priority DESC`, then creation time, then ID, and the
+`task_project_status_priority_idx` index stores it descending. The paged
+`office:workspace` and dashboard task views sort by milestone or short name and
+offer priority as an exact-match filter. There is no bound beyond the
+safe-integer range the domain enforces.
+
+`task:create --priority <integer>` sets it; `task:update --priority <integer>`
+changes it without touching lifecycle status. Both accept only plain decimal
+integer text and refuse anything else with a usage error. `task:update` takes
+`--description`, `--priority`, or both in one transaction; each supplied field
+appends its own audit event — `task.description_updated` and
+`task.priority_updated`, the latter carrying the explicit `from` and `to`
+priority. Like a description update, a priority update is recorded even when
+the value is unchanged.
+
 ## Agent-run states
 
 ```text
