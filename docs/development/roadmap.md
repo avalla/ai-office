@@ -1210,11 +1210,52 @@ draft version actually approved.
 
 Status: future.
 
-A bounded precursor is implemented: explicit `run:tick --worker claude`, an
+A bounded precursor is implemented: explicit `run:tick --worker claude|codex`, an
 application worker port, tool-free task/stage context, immutable dispatch
 provenance and inspectable generated output. It does not deliver the complete
-M12 organization profiles or M14 software vertical. See
+M12 organization profiles, repository-editing Codex execution, or M14 software vertical. See
 [agent runtime](agent-runtime.md) and [ADR-0017](../adr/ADR-0017-bounded-external-worker.md).
+
+Follow-up recorded from the bounded Codex worker: delegation must become
+governed child execution rather than executor-internal work. The Codex worker
+refuses every model for which the client can start native sub-agents, because
+such a child ran on another model outside the run's provenance and usage. A
+governed design needs a child AgentRun with `parent_run_id`, a delegated role
+and purpose, its own executor identity, model routing and reasoning effort, a
+delegated capability subset, a token and cost budget with aggregated usage,
+limits on children and depth, cancellation and failure propagation,
+provenance, fencing, lifecycle and queue integration, and an execution tree in
+the dashboard. Native Codex or Claude delegation should require Runtime
+admission. Executor credentials should likewise be modelled by trust mode.
+
+Follow-up recorded from the bounded Codex worker: executor-level filesystem
+confinement. The worker runs Codex under its read-only sandbox, which prevents
+writes but not reads: the client's built-in `apply_patch` reveals whether a
+host path exists and whether a guessed line is in it, invisibly to the
+Runtime, and `codex-cli` 0.160.0 has no supported setting that removes the
+tool (see [agent runtime](agent-runtime.md)). Confidentiality of the Runtime
+user's files therefore needs an outer boundary built by the executor, not by
+the client. Candidates to investigate: on Linux, Bubblewrap or user
+namespaces with explicit read-only roots, the host home, configuration and
+secrets hidden, and only the system libraries and certificates the client
+needs; on macOS, a Seatbelt policy with explicit read roots and the minimum
+platform reads; alternatively a containerized executor with a deliberately
+constructed filesystem view. The boundary must show the worker only its
+isolated `HOME`/`CODEX_HOME` and explicitly mounted inputs, make arbitrary
+host paths invisible so that absolute-path probes cannot distinguish host
+state, keep provider networking working, keep credential handling bounded and
+keep cleanup deterministic.
+
+Other follow-ups recorded from the bounded Codex worker review, none of them
+addressed yet: the process-group wait has no upper bound when the Runtime is
+itself the reaper of orphaned processes; an unrouted run without
+`--worker-model` is refused with `WORKER_MODEL_REQUIRED` only at execution,
+after probes and dispatch provenance, rather than before dispatch; the tests
+do not fail when the `O_NOFOLLOW` open or the owner check of the login file
+is removed; the collaboration and provider-metadata refusals are tested
+against a fake CLI, so they are re-verified by hand for each audited version;
+and the client's own outbound connections to the provider's hosts during a
+run, attributed to its analytics, have not been enumerated.
 
 Goal: make worker execution replaceable and extend onboarding from office
 description to an explicit, reviewable organization-to-runtime mapping.

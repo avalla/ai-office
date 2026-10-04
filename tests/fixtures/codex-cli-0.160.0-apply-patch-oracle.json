@@ -1,0 +1,85 @@
+{
+  "cli": "codex-cli 0.160.0",
+  "probes": [
+    {
+      "name": "missing file",
+      "patch": "*** Begin Patch\n*** Update File: $FX/missing.txt\n@@\n-a\n+b\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to read file to update $FX/missing.txt: No such file or directory (os error 2)"
+    },
+    {
+      "name": "wrong guess",
+      "patch": "*** Begin Patch\n*** Update File: $FX/known.txt\n@@\n-wrong-guess\n+b\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to find expected lines in $FX/known.txt:\nwrong-guess"
+    },
+    {
+      "name": "correct whole line",
+      "patch": "*** Begin Patch\n*** Update File: $FX/known.txt\n@@\n-SYNTH-SECRET=7f3a9c-synthetic\n+b\n*** End Patch\n",
+      "response": "patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"
+    },
+    {
+      "name": "line prefix",
+      "patch": "*** Begin Patch\n*** Update File: $FX/known.txt\n@@\n-SYNTH-SECRET=\n+b\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to find expected lines in $FX/known.txt:\nSYNTH-SECRET="
+    },
+    {
+      "name": "context prefix",
+      "patch": "*** Begin Patch\n*** Update File: $FX/known.txt\n@@ SYNTH-SECRET=\n-alpha-line-one\n+b\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to find context 'SYNTH-SECRET=' in $FX/known.txt"
+    },
+    {
+      "name": "two adjacent lines",
+      "patch": "*** Begin Patch\n*** Update File: $FX/known.txt\n@@\n-alpha-line-one\n-SYNTH-SECRET=7f3a9c-synthetic\n+b\n*** End Patch\n",
+      "response": "patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"
+    },
+    {
+      "name": "two lines that are not adjacent",
+      "patch": "*** Begin Patch\n*** Update File: $FX/known.txt\n@@\n-alpha-line-one\n-gamma-line-three\n+b\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to find expected lines in $FX/known.txt:\nalpha-line-one\ngamma-line-three"
+    },
+    {
+      "name": "last line at end of file",
+      "patch": "*** Begin Patch\n*** Update File: $FX/known.txt\n@@\n-gamma-line-three\n+b\n*** End of File\n*** End Patch\n",
+      "response": "patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"
+    },
+    {
+      "name": "first line at end of file",
+      "patch": "*** Begin Patch\n*** Update File: $FX/known.txt\n@@\n-alpha-line-one\n+b\n*** End of File\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to find expected lines in $FX/known.txt:\nalpha-line-one"
+    },
+    {
+      "name": "correct line through a symlink",
+      "patch": "*** Begin Patch\n*** Update File: $FX/link.txt\n@@\n-SYNTH-SECRET=7f3a9c-synthetic\n+b\n*** End Patch\n",
+      "response": "patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"
+    },
+    {
+      "name": "delete existing file",
+      "patch": "*** Begin Patch\n*** Delete File: $FX/known.txt\n*** End Patch\n",
+      "response": "patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"
+    },
+    {
+      "name": "delete missing file",
+      "patch": "*** Begin Patch\n*** Delete File: $FX/missing.txt\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to read $FX/missing.txt: No such file or directory (os error 2)"
+    },
+    {
+      "name": "add new file",
+      "patch": "*** Begin Patch\n*** Add File: $FX/new.txt\n+x\n*** End Patch\n",
+      "response": "patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"
+    },
+    {
+      "name": "unreadable file",
+      "patch": "*** Begin Patch\n*** Update File: $FX/unreadable.txt\n@@\n-x\n+b\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to read file to update $FX/unreadable.txt: Permission denied (os error 13)"
+    },
+    {
+      "name": "directory",
+      "patch": "*** Begin Patch\n*** Update File: $FX/dir\n@@\n-a\n+b\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to read file to update $FX/dir: path `$FX/dir` is not a file"
+    },
+    {
+      "name": "not UTF-8",
+      "patch": "*** Begin Patch\n*** Update File: $FX/binary.bin\n@@\n-a\n+b\n*** End Patch\n",
+      "response": "apply_patch verification failed: Failed to read file to update $FX/binary.bin: invalid utf-8 sequence of 1 bytes from index 0"
+    }
+  ]
+}

@@ -6,6 +6,10 @@ import {
   type AgentExecutor,
 } from "@ai-office/agent-runtime/executor.ts";
 import { ClaudeWorkerRuntime } from "@ai-office/agent-runtime/claude-worker-runtime.ts";
+import {
+  CodexWorkerRuntime,
+  auditedBoundedCodexModels,
+} from "@ai-office/agent-runtime/codex-worker-runtime.ts";
 import { GatewayWorkerRuntime } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import { WorkerAgentExecutor } from "@ai-office/application/commands/worker-agent-executor.ts";
 import { RunContextAssembler } from "@ai-office/application/context/run-context-assembler.ts";
@@ -232,9 +236,14 @@ export async function handleRunCommand(
           ? [selected]
           : [];
     const worker = parsed.options.get("worker");
-    if (worker !== undefined && worker !== "claude" && worker !== "gateway")
+    if (
+      worker !== undefined &&
+      worker !== "claude" &&
+      worker !== "codex" &&
+      worker !== "gateway"
+    )
       throw new CliUsageError(
-        "Unsupported worker. Available workers: claude, gateway",
+        "Unsupported worker. Available workers: claude, codex, gateway",
       );
     const model = parsed.options.get("worker-model");
     if (parsed.flags.has("simulate") && worker !== undefined)
@@ -247,10 +256,19 @@ export async function handleRunCommand(
       throw new CliUsageError(
         "--worker-model requires a worker and a valid model name",
       );
+    // The Codex worker runs audited bounded models only; none is substituted.
+    if (
+      worker === "codex" &&
+      model !== undefined &&
+      !auditedBoundedCodexModels.has(model)
+    )
+      throw new CliUsageError(
+        `The codex worker cannot execute ${model}: only models audited as bounded single-agent models are supported (${[...auditedBoundedCodexModels].join(", ")}). No runs were started.`,
+      );
     // The gateway worker has no default model: it executes assigned models only.
     if (model !== undefined && worker === "gateway")
       throw new CliUsageError(
-        "--worker-model applies only to --worker claude; the gateway worker executes each run's assigned model and accepts no model option. No runs were started.",
+        "--worker-model applies only to --worker claude or codex; the gateway worker executes each run's assigned model and accepts no model option. No runs were started.",
       );
     if (
       context.agentExecutor === undefined &&
@@ -259,11 +277,15 @@ export async function handleRunCommand(
       queued.some((run) => run.snapshot().actionIntent === undefined)
     )
       throw new CliUsageError(
-        "Queued tasks need a real worker: use --worker claude or --worker gateway, or explicitly use --simulate for a test run. No runs were started.",
+        "Queued tasks need a real worker: use --worker claude, --worker codex or --worker gateway, or explicitly use --simulate for a test run. No runs were started.",
       );
     const claude =
       worker === "claude"
         ? new ClaudeWorkerRuntime("claude", undefined, model)
+        : undefined;
+    const codex =
+      worker === "codex"
+        ? new CodexWorkerRuntime("codex", undefined, model)
         : undefined;
     const gateway =
       worker === "gateway"
@@ -297,16 +319,18 @@ export async function handleRunCommand(
           );
         continue;
       }
-      if (claude === undefined || routing?.status !== "resolved") continue;
-      const support = claude.supportsModel(routing.selection);
+      const clientWorker = claude ?? codex;
+      if (clientWorker === undefined || routing?.status !== "resolved")
+        continue;
+      const support = clientWorker.supportsModel(routing.selection);
       if (!support.supported)
         throw new CliUsageError(
           support.code === "WORKER_MODEL_CONFLICT"
             ? `Run ${snapshot.id} is assigned ${routing.selection.modelRef}; --worker-model cannot replace an assigned model. No runs were started.`
-            : `Run ${snapshot.id} is assigned ${routing.selection.modelRef}, which the claude worker cannot execute with its assigned parameters. Cancel it with run:cancel or correct model routing before scheduling. No runs were started.`,
+            : `Run ${snapshot.id} is assigned ${routing.selection.modelRef}, which the ${worker} worker cannot execute with its assigned parameters. Cancel it with run:cancel or correct model routing before scheduling. No runs were started.`,
         );
     }
-    const realWorker = claude ?? gateway;
+    const realWorker = claude ?? codex ?? gateway;
     const selectedExecutor: AgentExecutor =
       realWorker !== undefined
         ? new WorkerAgentExecutor(

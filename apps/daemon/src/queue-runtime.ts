@@ -32,7 +32,7 @@ export class QueueRuntime {
     outbox: JobOutboxRepository,
     private readonly queue: JobQueue & JobQueueConsumer,
     clock: Clock,
-    private readonly worker?: "claude" | "gateway",
+    private readonly worker?: "claude" | "codex" | "gateway",
   ) {
     this.dispatcher = new DispatchJobOutbox(outbox, queue, clock);
   }

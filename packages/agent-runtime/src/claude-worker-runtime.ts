@@ -21,6 +21,12 @@ export interface WorkerProcessRequest {
   timeoutMs: number;
   signal?: AbortSignal;
   platform?: WorkerPlatform;
+  /**
+   * The complete child environment, built by the executor that owns the
+   * process. When present nothing is inherited from the Runtime host; when
+   * omitted the default allowlist below applies.
+   */
+  env?: Readonly<Record<string, string>>;
 }
 
 export type WorkerPlatform = "posix" | "win32";
@@ -32,6 +38,19 @@ export function currentWorkerPlatform(): WorkerPlatform {
 export type WorkerProcessRunner = (
   request: WorkerProcessRequest,
 ) => Promise<string>;
+/**
+ * Inherited by a worker that supplies no environment of its own: executable
+ * lookup, the login home and the Claude Code configuration directory. Another
+ * client's state never belongs here; its executor passes `env` instead.
+ */
+const defaultInheritedEnvironment = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "USER",
+  "LOGNAME",
+  "CLAUDE_CONFIG_DIR",
+] as const;
 const terminationGraceMs = 2000;
 const inspectionTimeoutMs = 10000;
 const processTreePollMs = 10;
@@ -105,18 +124,12 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
       reject(new DOMException("Execution cancelled", "AbortError"));
       return;
     }
-    const env: Record<string, string> = {};
-    for (const name of [
-      "PATH",
-      "HOME",
-      "TMPDIR",
-      "USER",
-      "LOGNAME",
-      "CLAUDE_CONFIG_DIR",
-    ]) {
-      const value = process.env[name];
-      if (value !== undefined) env[name] = value;
-    }
+    const env: Record<string, string> = { ...request.env };
+    if (request.env === undefined)
+      for (const name of defaultInheritedEnvironment) {
+        const value = process.env[name];
+        if (value !== undefined) env[name] = value;
+      }
     let child: ReturnType<typeof spawn>;
     try {
       child = spawn(request.executable, [...request.args], {
@@ -148,12 +161,14 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
     };
     const finish = () => {
       if (!closed) return;
+      // The group is owned on every outcome: a descendant that outlives a
+      // successful parent is killed too, and nothing returns while one runs.
       if (
-        failure !== undefined &&
         posixProcessGroup &&
         child.pid !== undefined &&
         processGroupAlive(child.pid)
       ) {
+        signalTree("SIGKILL");
         groupPollTimer = setTimeout(finish, processTreePollMs);
         return;
       }
@@ -199,7 +214,7 @@ export const runWorkerProcess: WorkerProcessRunner = (request) =>
       clearTimeout(deadline);
       if (failure === undefined && code !== 0)
         failure = new WorkerRuntimeError("WORKER_FAILED");
-      if (failure !== undefined && posixProcessGroup) signalTree("SIGKILL");
+      if (posixProcessGroup) signalTree("SIGKILL");
       finish();
     });
     child.stdin?.end(request.input);

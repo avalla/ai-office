@@ -294,7 +294,9 @@ Scheduling validates project, task, and agent, acquires a task lock, persists a
 queued run and optional immutable action intent, and records state transitions.
 The controlled-action executor invokes only its gateway contract and persists
 the returned action ID and status in the run result. Normal tasks explicitly
-select a tool-free external worker or simulator. The application pins dispatch
+select an external worker, to which the Runtime grants no tools, or a
+simulator. What the external client can itself do on the host is bounded per
+worker and documented in [agent runtime](../development/agent-runtime.md). The application pins dispatch
 provenance before invocation and persists bounded output; the worktree manager
 remains a test implementation. See [ADR-0017](../adr/ADR-0017-bounded-external-worker.md).
 
