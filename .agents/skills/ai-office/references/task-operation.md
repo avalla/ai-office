@@ -9,5 +9,6 @@ Use the configured pipeline as a responsibility and quality-gate contract, not a
 5. When a controlled action reaches `approval_pending`, inspect it with `ai-office action:show`, show the proposed operation, and wait for explicit approval before `ai-office action:approve` and `ai-office action:execute`.
 6. Run each stage's checks and report failures before issuing the explicit stage-completion transition.
 7. Treat `requiresApproval` as a workflow checkpoint and use the pipeline transition command for its operator decision. It does not approve a controlled action or grant a capability.
+8. Before treating substantial work as wrapped up, consider knowledge promotion through the **Durable project knowledge** section of the skill: search existing knowledge, keep authoritative outcomes in their source of truth, and propose only verified, non-authoritative context through `knowledge:plan`, user review, and `knowledge:admit`. A completed task is not by itself a reason to admit anything.
 
 An enforced runtime run persists stage-by-stage progress and is authoritative for assignments, stage capabilities, approvals, and transitions. Guidance-only definitions remain host-followed instructions.

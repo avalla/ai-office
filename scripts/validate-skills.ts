@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { parseOfficeManifestJson } from "@ai-office/application/office/office-manifest-schema.ts";
 import { compileProjectSkill } from "@ai-office/application/agent-client/project-skill-compiler.ts";
 import { compileProjectHandoverSection } from "@ai-office/application/agent-client/project-handover-workflow.ts";
+import { compileProjectKnowledgeSection } from "@ai-office/application/agent-client/project-knowledge-policy.ts";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSkillRoot = resolve(
@@ -68,6 +69,8 @@ const requiredProjectedSkillSnippets = [
 
 const requiredKnowledgeGuidanceSnippets = [
   "CairnKeep integration has been removed",
+  "consider knowledge promotion",
+  "knowledge:search",
   "knowledge:plan",
   "knowledge:admit",
   "knowledge:trace",
@@ -87,6 +90,12 @@ function validateKnowledgeGuidance(source: string, label: string): string[] {
     )
   )
     errors.push(`${label} recommends writing new knowledge to CairnKeep`);
+  // The durable project knowledge policy has one canonical definition in the
+  // application layer. Both skill surfaces must carry it verbatim.
+  if (!source.includes(compileProjectKnowledgeSection()))
+    errors.push(
+      `${label} does not embed the canonical durable project knowledge policy verbatim`,
+    );
   for (const command of [
     "project-memory:status",
     "knowledge:legacy-plan",
@@ -95,6 +104,31 @@ function validateKnowledgeGuidance(source: string, label: string): string[] {
     if (normalized.includes(command))
       errors.push(`${label} references removed command: ${command}`);
   return errors;
+}
+
+const requiredHandoverKnowledgeSnippets = [
+  "## Handover and project knowledge",
+  "deterministic scan / handover evidence",
+  "agent interpretation",
+  "durable AgentKnowledgeStore entries when materially useful",
+  "remain repository-scan evidence",
+  "remains handover evidence",
+  "never copies repository structure, files, or scan output into knowledge",
+  "complements handover evidence and authoritative state",
+  "knowledge:search",
+  "knowledge:plan",
+  "knowledge:admit",
+] as const;
+
+/** The handover reference must keep scan evidence, review, and knowledge apart. */
+export function validateHandoverKnowledgeBoundary(source: string): string[] {
+  const normalized = source.replace(/\s+/gu, " ");
+  return requiredHandoverKnowledgeSnippets
+    .filter((snippet) => !normalized.includes(snippet))
+    .map(
+      (snippet) =>
+        `references/project-handover.md is missing the knowledge boundary: ${snippet}`,
+    );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -188,6 +222,18 @@ export function validateAiOfficeSkill(skillRoot = defaultSkillRoot): string[] {
     if (!existsSync(absolutePath) || !statSync(absolutePath).isFile())
       errors.push(`Required skill file is missing: ${requiredPath}`);
   }
+
+  const handoverReferencePath = resolve(
+    skillRoot,
+    "references",
+    "project-handover.md",
+  );
+  if (existsSync(handoverReferencePath))
+    errors.push(
+      ...validateHandoverKnowledgeBoundary(
+        readFileSync(handoverReferencePath, "utf8"),
+      ),
+    );
 
   const linkPattern = /\[[^\]]*\]\(([^)]+)\)/g;
   for (const match of source.matchAll(linkPattern)) {

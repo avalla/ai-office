@@ -413,6 +413,11 @@ review of an exact content hash, records an audit attempt before the SurrealDB
 write, and verifies the stored provenance graph afterward. The knowledge store
 remains secondary; no SurrealDB transaction holds operational authority.
 
+`knowledge:search` is the read-only companion: one bounded literal search in
+the same trusted scope, used to find existing records before a new plan. The
+agent-facing [durable project knowledge policy](../development/agent-knowledge.md#durable-project-knowledge-policy-ak-10)
+decides what may be proposed; it adds no write path.
+
 ## Operational read models
 
 Operational state is computed once, in the application layer, and published as

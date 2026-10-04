@@ -648,7 +648,7 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: AK-01–AK-09 merged.
+Status: AK-01–AK-09 merged; AK-10 implemented, pending merge.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
@@ -664,6 +664,7 @@ historical CairnKeep retrieval path. See
 | AK-07 | CairnKeep deprecation in guidance and setup                                  | AK-06 merged                      |
 | AK-08 | CairnKeep implementation removal and final docs                              | AK-07 merged                      |
 | AK-09 | Managed Agent Knowledge configuration and SurrealDB deployment support       | AK-03–AK-05; AK-08 for final docs |
+| AK-10 | Durable project knowledge policy in agent guidance; `knowledge:search`       | AK-05, AK-08                      |
 
 AK-01–AK-09 each map to one reviewed PR. AK-09 was delivered as one operational
 task with four delivery slices below, tracked by one requirement and task.
@@ -686,6 +687,29 @@ idempotent import of one bounded CairnKeep named scope, preserving its scope,
 key and content digest without inventing run provenance. Imported records and
 historical run retrieval evidence remain readable; external CairnKeep data is
 never deleted by AI Office. See the same guide.
+
+### AK-10 — Durable project knowledge policy
+
+**Status:** implemented; pending merge. AK-10 closes a behavioral gap, not a
+storage one: agents were not told to identify durable knowledge learned during
+project work, so it was rediscovered across runs. One canonical policy now
+tells agents to classify what they learned, search existing knowledge, and
+propose verified, non-authoritative, project-specific context through the
+existing `knowledge:plan` → review → `knowledge:admit` path. Both skill
+surfaces embed it verbatim and the handover workflow carries the matching
+boundary. The only product change is the read-only `knowledge:search` command,
+needed because no CLI surface could check for an existing record before a new
+plan. See [durable project knowledge policy](agent-knowledge.md#durable-project-knowledge-policy-ak-10).
+
+**Non-goals:** another memory subsystem or provider; reintroducing CairnKeep;
+automatic ingestion of task results or repository content; making
+`AgentKnowledgeStore` authoritative; any worker-side write path; changing
+admission provenance, approval or the store contract.
+
+**Known limits, not addressed here:** admission still requires a completed
+worker run, so knowledge from interactive host sessions and handover is
+reported to the user rather than admitted; there is no supersede or relate
+command; search remains literal and bounded.
 
 ### AK-09 — Managed Agent Knowledge configuration and SurrealDB deployment support
 

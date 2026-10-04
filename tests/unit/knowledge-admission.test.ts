@@ -7,6 +7,7 @@ import type {
   AgentKnowledgeStore,
   KnowledgeProvenance,
   RuntimeAgentKnowledge,
+  SearchKnowledgeHit,
 } from "../../packages/application/src/ports/agent-knowledge-store.port.ts";
 import type { AgentRuntimeRepository } from "../../packages/application/src/ports/agent-runtime-repository.port.ts";
 import type { ProjectRepository } from "../../packages/application/src/ports/project-repository.port.ts";
@@ -40,7 +41,9 @@ function fixture(
   const traceDecisionProvenance = vi.fn(
     async (): Promise<KnowledgeProvenance | null> => null,
   );
+  const findKnowledge = vi.fn(async (): Promise<SearchKnowledgeHit[]> => []);
   const store = {
+    findKnowledge,
     recordMemory,
     recordDecision,
     traceMemoryProvenance,
@@ -52,7 +55,9 @@ function fixture(
     store,
   };
   const service = new ManageKnowledgeAdmission(
-    { findById: vi.fn(async () => ({})) } as unknown as ProjectRepository,
+    {
+      findById: vi.fn(async (id: string) => (id === "missing" ? null : {})),
+    } as unknown as ProjectRepository,
     {
       findById: vi.fn(async () => ({
         snapshot: () => ({ projectId: overrides.taskProjectId ?? "project-1" }),
@@ -74,7 +79,9 @@ function fixture(
       findAgent: vi.fn(async (id: string) => ({ id, projectId: "project-1" })),
     } as unknown as AgentRuntimeRepository,
     {
-      findRepositoryId: vi.fn(async () => overrides.repositoryId ?? "repo-1"),
+      findRepositoryId: vi.fn(async (id: string) =>
+        id === "unbound" ? null : (overrides.repositoryId ?? "repo-1"),
+      ),
     } as unknown as RepositoryIdentityRepository,
     knowledge,
     { execute: append } as unknown as RecordAuditEvent,
@@ -82,6 +89,7 @@ function fixture(
   );
   return {
     service,
+    findKnowledge,
     append,
     recordMemory,
     recordDecision,
@@ -435,5 +443,62 @@ describe("governed knowledge admission", () => {
     }
     expect(f.recordDecision).not.toHaveBeenCalled();
     expect(f.append).not.toHaveBeenCalled();
+  });
+
+  it("searches existing knowledge in the trusted project scope without writing", async () => {
+    const f = fixture();
+    const hit = {
+      tenantId: "tenant-1",
+      repositoryId: "repo-1",
+      id: "ak_1",
+      kind: "memory" as const,
+      text: "Use the staged rollout",
+      title: null,
+      agentId: "agent-1",
+      runId: "run-1",
+      taskId: "task-1",
+      source: { id: "run-1", kind: "run" as const, label: "Agent run run-1" },
+      createdAt: completedAt,
+    };
+    f.findKnowledge.mockResolvedValueOnce([hit]);
+    await expect(
+      f.service.search({
+        projectId: "project-1",
+        text: "rollout",
+        limit: 3,
+        agentId: "agent-1",
+      }),
+    ).resolves.toEqual([hit]);
+    expect(f.findKnowledge).toHaveBeenCalledWith(
+      { tenantId: "tenant-1", repositoryId: "repo-1" },
+      { text: "rollout", limit: 3, agentId: "agent-1" },
+    );
+    expect(f.recordMemory).not.toHaveBeenCalled();
+    expect(f.recordDecision).not.toHaveBeenCalled();
+    expect(f.append).not.toHaveBeenCalled();
+  });
+
+  it("refuses an invalid, unscoped or disconnected search before reaching the store", async () => {
+    const f = fixture();
+    for (const text of ["", " padded ", "x".repeat(201)])
+      await expect(
+        f.service.search({ projectId: "project-1", text }),
+      ).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+    await expect(
+      f.service.search({ projectId: "project-1", text: "rollout", limit: 6 }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+    await expect(
+      f.service.search({ projectId: "missing", text: "rollout" }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_PROJECT_NOT_FOUND" });
+    await expect(
+      f.service.search({ projectId: "unbound", text: "rollout" }),
+    ).rejects.toMatchObject({ code: "KNOWLEDGE_PROVENANCE_UNAVAILABLE" });
+    expect(f.findKnowledge).not.toHaveBeenCalled();
+
+    const disabled = fixture({ knowledge: { state: "disabled" } });
+    await expect(
+      disabled.service.search({ projectId: "project-1", text: "rollout" }),
+    ).rejects.toBeInstanceOf(KnowledgeAdmissionError);
+    expect(disabled.findKnowledge).not.toHaveBeenCalled();
   });
 });

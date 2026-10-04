@@ -296,6 +296,7 @@ const commands = [
   "memory:pattern:adopt",
   "memory:references",
   "memory:deprecate",
+  "knowledge:search",
   "knowledge:plan",
   "knowledge:admit",
   "knowledge:trace",

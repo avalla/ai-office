@@ -134,6 +134,7 @@ Commands:
   memory:pattern:adopt --project <id> --pattern <id> --version <n> [--query <text>]
   memory:references --project <id> [--json]
   memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]  # version required for roles and patterns
+  knowledge:search --project <id> --query <literal-text> [--limit <1..5>] [--agent <id>]
   knowledge:plan --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>]
   knowledge:admit --project <id> --run <completed-run-id> --kind <memory|decision> --text <text> [--title <title>] --approve <plan-hash> --actor <reviewer>
   knowledge:trace --project <id> --kind <memory|decision> --id <knowledge-id>

@@ -266,6 +266,113 @@ describe("Runtime agent knowledge composition", () => {
     );
   });
 
+  it("searches scoped knowledge read-only over the Runtime socket", async () => {
+    const repository = mkdtempSync(join(tmpdir(), "ai-office-knowledge-repo-"));
+    roots.push(repository);
+    writeFileSync(join(repository, "README.md"), "# Demo\n");
+    const findKnowledge = vi.fn(async () => [
+      {
+        tenantId: "tenant-a",
+        repositoryId: "ignored-by-output",
+        id: "ak_1",
+        kind: "memory" as const,
+        text: "Use the staged rollout",
+        title: null,
+        agentId: "agent-1",
+        runId: "run-1",
+        taskId: "task-1",
+        source: { id: "run-1", kind: "run" as const, label: "Agent run run-1" },
+        createdAt: new Date("2026-09-30T10:00:00.000Z"),
+      },
+    ]);
+    const store = { findKnowledge } as unknown as AgentKnowledgeStore;
+    await withHost(
+      {
+        agentKnowledgeConfiguration: configuration,
+        connectAgentKnowledge: async () => ({ store, close: async () => {} }),
+      },
+      async (client) => {
+        const imported = await client.execute([
+          "project:import",
+          repository,
+          "--json",
+        ]);
+        expect(imported.exitCode).toBe(0);
+        const { projectId } = JSON.parse(imported.stdout[0]!) as {
+          projectId: string;
+        };
+
+        const found = await client.execute([
+          "knowledge:search",
+          "--project",
+          projectId,
+          "--query",
+          "rollout",
+          "--limit",
+          "2",
+        ]);
+        expect(found.exitCode).toBe(0);
+        expect(JSON.parse(found.stdout.join("\n"))).toEqual({
+          schemaVersion: 1,
+          hits: [
+            {
+              id: "ak_1",
+              kind: "memory",
+              title: null,
+              text: "Use the staged rollout",
+              agentId: "agent-1",
+              runId: "run-1",
+              taskId: "task-1",
+              source: { id: "run-1", kind: "run", label: "Agent run run-1" },
+              createdAt: "2026-09-30T10:00:00.000Z",
+              legacy: false,
+            },
+          ],
+        });
+        expect(findKnowledge).toHaveBeenCalledTimes(1);
+        expect(findKnowledge).toHaveBeenCalledWith(
+          { tenantId: "tenant-a", repositoryId: expect.any(String) },
+          { text: "rollout", limit: 2 },
+        );
+        expect(found.stdout.join("\n")).not.toMatch(/tenant-a|secret/u);
+
+        for (const [args, message] of [
+          [
+            ["--project", projectId, "--query", "rollout", "--limit", "6"],
+            "Knowledge search limit must be 1 to 5",
+          ],
+          [["--project", projectId], "query"],
+          [
+            ["--project", "missing", "--query", "rollout"],
+            "KNOWLEDGE_PROJECT_NOT_FOUND",
+          ],
+        ] as const) {
+          const refused = await client.execute(["knowledge:search", ...args]);
+          expect(refused.exitCode).toBe(1);
+          expect(refused.stderr.join("\n")).toContain(message);
+        }
+        expect(findKnowledge).toHaveBeenCalledTimes(1);
+      },
+    );
+
+    await withHost(
+      { agentKnowledgeConfiguration: { kind: "disabled" } },
+      async (client) => {
+        const refused = await client.execute([
+          "knowledge:search",
+          "--project",
+          "any",
+          "--query",
+          "rollout",
+        ]);
+        expect(refused.exitCode).toBe(1);
+        expect(refused.stderr.join("\n")).toContain(
+          "KNOWLEDGE_STORE_NOT_CONNECTED",
+        );
+      },
+    );
+  });
+
   it("composes an explicit secondary store and closes it with the host", async () => {
     const close = vi.fn(async () => {});
     const connect = vi.fn(async () => ({

@@ -152,6 +152,129 @@ capability or change task, run, or project authority. This slice admits new
 run-sourced records only. The historical AK-06 import used a distinct
 provenance policy.
 
+## Durable project knowledge policy (AK-10)
+
+AK-10 makes durable project knowledge an explicit, stable part of agent work.
+It is a policy and one read-only command. It adds no store, no provider, no
+automatic ingestion, and no write path beyond AK-05 admission.
+
+The policy has one client-neutral definition,
+`packages/application/src/agent-client/project-knowledge-policy.ts`. The
+checked-in distribution skill and the skill projected into installed
+repositories both embed that section verbatim, and `bun run validate:skills`
+fails when either drifts. Claude reads the same shared skill through its
+bridge, so Codex and Claude receive identical guidance. The canonical handover
+workflow carries the matching step and boundary.
+
+### What native project knowledge is and is not
+
+Native project knowledge is non-authoritative, advisory context held in
+`AgentKnowledgeStore`: project-specific understanding that materially helps a
+later agent and is expensive or non-obvious to rebuild from the repository.
+Typical entries are component responsibilities and relationships,
+project-specific conventions, the rationale behind a non-obvious choice,
+recurring pitfalls, verified workarounds, lasting operational constraints,
+integration relationships, and lessons from completed work.
+
+It is never a competing source of truth:
+
+| Information                                         | Source of truth                       |
+| --------------------------------------------------- | ------------------------------------- |
+| Source code, configuration, technical documentation | repository                            |
+| Goals, constraints, preferences, roles, pipelines   | approved office manifest              |
+| Milestones and requirements                         | governance state                      |
+| Architectural decisions                             | ADRs                                  |
+| Tasks and the execution lifecycle                   | task and run state                    |
+| Deterministic repository structure and facts        | repository scan and handover evidence |
+| Knowledge reusable across projects                  | global memory (`memory:*`)            |
+| Non-authoritative, project-specific context         | `AgentKnowledgeStore`                 |
+
+Global memory in `global.sqlite` holds only knowledge meant for reuse across
+projects: general engineering patterns, reusable practices, role and workflow
+lessons, cross-project conventions. Project-specific architecture or
+implementation facts stay out of it.
+
+A decision and the knowledge around it are separate records. The decision lives
+in an ADR, a requirement, the manifest or governance state; its rationale,
+consequences and lessons may become knowledge. A `decision`-kind knowledge
+record is context about a decision, not the decision. When knowledge and an
+authoritative record disagree, the authoritative record wins.
+
+### When agents create it
+
+Agents treat knowledge as a possible output of project handover,
+implementation, debugging, research, code review, QA and verification,
+architectural investigation, and completed-task retrospection. Before treating
+substantial work as wrapped up they consider knowledge promotion and tell the
+user what they would promote. "Nothing to promote" is a normal outcome; a
+completed task is not by itself a reason to admit anything.
+
+Agents never promote credentials, secrets, tokens or sensitive configuration;
+raw copies of repository files; large code excerpts; transient command output;
+temporary execution state; speculation presented as fact; information that is
+cheap and deterministic to regenerate from the repository unless the
+interpretation or rationale is itself valuable; or knowledge known to be
+superseded.
+
+### Search, provenance and approval
+
+1. Search first with `knowledge:search --project <id> --query <literal-text>`,
+   optionally `--limit <1..5>` and `--agent <id>`. It is read-only and writes neither
+   knowledge nor audit state. It uses the retrieval contract above unchanged:
+   one literal substring, at most five hits, newest first, superseded decisions
+   excluded, scoped by the Runtime-bound tenant and the project's portable
+   repository binding. The command applies no term selection, so the caller
+   supplies one distinctive term and repeats the search with another. Output is
+   `{ schemaVersion: 1, hits }`; each hit has `id`, `kind`, `title`, `text`,
+   `agentId`, `runId`, `taskId`, `source`, `createdAt` and a `legacy` flag for
+   imported records. It never returns the tenant, endpoint or credentials. A
+   disconnected store fails with `KNOWLEDGE_STORE_NOT_CONNECTED`.
+2. Classify the candidate against the table above.
+3. Propose only verified content. A record has no confidence field, so
+   remaining uncertainty is stated in the text.
+4. Plan, review, admit: `knowledge:plan`, user review of the exact plan and
+   hash, then `knowledge:admit`, as described under governed admission.
+   `knowledge:trace` shows the stored provenance.
+
+Provenance is what AK-05 records: the completed worker run, with task and agent
+derived by the Runtime. Further evidence such as an ADR, requirement, review,
+repository path or user confirmation is named in the text. The reviewer is the
+user; the trusted-local limits on reviewer identity described above still
+apply.
+
+### Relation to handover
+
+```text
+repository
+    ↓
+deterministic scan / handover evidence
+    ↓
+agent interpretation
+    ↓
+durable AgentKnowledgeStore entries when materially useful
+```
+
+Scan facts remain repository-scan evidence in the project profile. The
+confirmed review remains handover evidence recorded by `handover:confirm`.
+Only interpretation may become knowledge, through the same workflow as any
+other work. Handover never copies repository structure into knowledge, and
+knowledge never satisfies a readiness dimension.
+
+### Current limits
+
+- Admission needs a completed worker run of the project. Knowledge learned in
+  an interactive host session, or during handover, which starts no run, has no
+  admissible provenance; the policy tells the agent to report it to the user
+  as a candidate rather than admit it.
+- No command supersedes or relates records. The policy tells agents not to add
+  a contradictory duplicate, to report an outdated record to the user, and to
+  name the replaced record in the text of a correction.
+- Search is literal substring matching with five results. It can miss a
+  differently worded duplicate.
+- The policy is agent guidance. The Runtime enforces the admission path,
+  scope, bounds and audit; it does not classify content or detect secrets in
+  submitted text. The user's review of the exact plan is the control.
+
 ## Historical CairnKeep import (AK-06)
 
 AK-06 provided a bounded, explicit, reviewed import of visible CairnKeep named

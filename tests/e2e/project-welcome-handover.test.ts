@@ -18,6 +18,7 @@ import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 import { resolveRuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import { compileProjectHandoverSection } from "@ai-office/application/agent-client/project-handover-workflow.ts";
+import { compileProjectKnowledgeSection } from "@ai-office/application/agent-client/project-knowledge-policy.ts";
 import type { ProjectHandoverReport } from "@ai-office/application/project-lifecycle/assess-project-handover.ts";
 
 interface RunningHarness {
@@ -527,6 +528,7 @@ describe("client integration", () => {
     expect(sharedSkill).toContain(compileProjectHandoverSection());
     expect(sharedSkill).toContain("ai-office next --json");
     expect(sharedSkill).toContain("ai-office handover:confirm");
+    expect(sharedSkill).toContain(compileProjectKnowledgeSection());
 
     const claudeSkill = readFileSync(
       join(harness.projectRoot, ".claude", "skills", "ai-office", "SKILL.md"),
@@ -534,6 +536,8 @@ describe("client integration", () => {
     );
     expect(claudeSkill).toContain(".agents/skills/ai-office/SKILL.md");
     expect(claudeSkill).not.toContain("## Hand the project over");
+    // Claude reads the same shared skill; its bridge carries no second policy.
+    expect(claudeSkill).not.toMatch(/knowledge:|AgentKnowledgeStore|memory:/u);
 
     const guide = readFileSync(
       join(harness.projectRoot, "AI-OFFICE.md"),

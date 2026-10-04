@@ -153,6 +153,49 @@ The repository stays authoritative for code, configuration, and technical
 documentation. Never copy repository files into AI Office to make a dimension
 look complete.
 
+## Handover and project knowledge
+
+Handover evidence and durable project knowledge are different things, and each
+stays where it belongs:
+
+```text
+repository
+    ↓
+deterministic scan / handover evidence
+    ↓
+agent interpretation
+    ↓
+durable AgentKnowledgeStore entries when materially useful
+```
+
+never:
+
+```text
+repository
+    ↓
+copy everything into memory
+```
+
+- Deterministic repository facts remain repository-scan evidence in the project
+  profile. Do not restate them as knowledge.
+- The confirmed repository understanding remains handover evidence, recorded
+  with `handover:confirm`. Do not duplicate the review summary as knowledge.
+- Non-authoritative interpretation discovered while reading the repository —
+  why components relate the way they do, a non-obvious convention, a pitfall —
+  may become durable project knowledge in `AgentKnowledgeStore` when a later
+  agent could not cheaply rebuild it from the repository.
+- Handover never copies repository structure, files, or scan output into
+  knowledge.
+- Knowledge complements handover evidence and authoritative state. It replaces
+  neither, and it never makes a readiness dimension `ready`.
+
+Proposing knowledge follows the same **Durable project knowledge** workflow as
+any other work: search with `knowledge:search`, plan with `knowledge:plan`,
+review the exact plan with the user, then `knowledge:admit`. Admission is bound
+to a completed worker run, and handover never starts one. When no completed run
+supports an interpretation, report it to the user as a candidate instead of
+admitting it.
+
 ## What handover never does
 
 - It does not create or widen capability grants.
@@ -160,3 +203,5 @@ look complete.
 - It does not change pipeline enforcement or approval gates.
 - It does not start agent runs.
 - It does not rewrite committed project state to fit a proposal.
+- It does not admit project knowledge without the reviewed
+  `knowledge:plan` and `knowledge:admit` workflow.
