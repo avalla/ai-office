@@ -582,10 +582,12 @@ Acceptance, portable restore when the exact closure is not locally resolvable:
   existing portability contract;
 - definitions are never guessed, and nothing is resolved against a different
   installed pack version or digest;
-- GP-06 remains the fail-closed backstop: it reports `pack_unavailable` while
-  the exact closure is unavailable, and a composition error such as
-  `duplicate_effective_definition` once the exact closure becomes resolvable
-  and conflicts with project-owned definitions.
+- GP-06 remains the fail-closed backstop: while the exact closure is
+  unavailable it reports its existing typed closure failure, `pack_unavailable`
+  for an absent selected pack and `pack_dependency_failure` for an absent
+  dependency, and a composition error such as `duplicate_effective_definition`
+  once the exact closure becomes resolvable and conflicts with project-owned
+  definitions.
 
 GP-06 also remains the defensive fail-closed backstop for corrupt state and
 non-conforming adapters.
@@ -606,7 +608,8 @@ Acceptance tests cover at minimum:
 - restore with an available closure and no collision succeeds;
 - restore of an exact binding whose pack artifacts are absent succeeds and
   preserves the binding and definitions;
-- after such a restore, GP-06 reports `pack_unavailable`;
+- after such a restore, GP-06 reports `pack_unavailable` for an absent selected
+  pack and `pack_dependency_failure` for an absent dependency;
 - when the exact artifacts later become available, a valid composition
   resolves normally and a colliding composition fails closed;
 - no fallback to another installed version or digest is permitted;
