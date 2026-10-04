@@ -6,7 +6,10 @@ import {
   type AgentExecutor,
 } from "@ai-office/agent-runtime/executor.ts";
 import { ClaudeWorkerRuntime } from "@ai-office/agent-runtime/claude-worker-runtime.ts";
-import { CodexWorkerRuntime } from "@ai-office/agent-runtime/codex-worker-runtime.ts";
+import {
+  CodexWorkerRuntime,
+  auditedBoundedCodexModels,
+} from "@ai-office/agent-runtime/codex-worker-runtime.ts";
 import { GatewayWorkerRuntime } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import { WorkerAgentExecutor } from "@ai-office/application/commands/worker-agent-executor.ts";
 import { RunContextAssembler } from "@ai-office/application/context/run-context-assembler.ts";
@@ -252,6 +255,15 @@ export async function handleRunCommand(
     )
       throw new CliUsageError(
         "--worker-model requires a worker and a valid model name",
+      );
+    // The Codex worker runs audited bounded models only; none is substituted.
+    if (
+      worker === "codex" &&
+      model !== undefined &&
+      !auditedBoundedCodexModels.has(model)
+    )
+      throw new CliUsageError(
+        `The codex worker cannot execute ${model}: only models audited as bounded single-agent models are supported (${[...auditedBoundedCodexModels].join(", ")}). No runs were started.`,
       );
     // The gateway worker has no default model: it executes assigned models only.
     if (model !== undefined && worker === "gateway")

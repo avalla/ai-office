@@ -24,10 +24,23 @@ import {
  * or unparseable version is unavailable until it is audited and added here.
  */
 export const auditedCodexVersions: ReadonlySet<string> = new Set(["0.160.0"]);
+/**
+ * Models positively audited as bounded single-agent models under
+ * `codex-cli` 0.160.0: its bundled metadata declares no multi-agent version
+ * for them, and under this worker's flags every collaboration tool call was
+ * refused by the real CLI. Membership is exact. An audited CLI version does
+ * not make its other models safe: for the models whose metadata declares
+ * `multi_agent_version: "v2"` the CLI runs `spawn_agent` despite the disabled
+ * features, on a model and effort the parent chooses, and reports nothing of
+ * it in its JSONL. Those models, the `v1` ones and every unknown or future
+ * name are refused.
+ */
+export const auditedBoundedCodexModels: ReadonlySet<string> = new Set([
+  "gpt-5.5",
+]);
 const inspectionTimeoutMs = 10000;
 const authFileName = "auth.json";
 const maxAuthBytes = 64 * 1024;
-const modelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/;
 const effortLevels: ReadonlySet<string> = new Set([
   "low",
   "medium",
@@ -132,6 +145,10 @@ const isolationConfig = [
   "mcp_servers={}",
   "skills.bundled.enabled=false",
   "project_doc_max_bytes=0",
+  // Provider-supplied metadata can declare a multi-agent version for any
+  // model, the admitted ones included; this keeps the collaboration tools
+  // refused whatever the metadata says.
+  "agents.enabled=false",
   "project_root_markers=[]",
 ].flatMap((override) => ["--config", override]);
 
@@ -442,7 +459,7 @@ export class CodexWorkerRuntime implements WorkerRuntime {
       } {
     if (
       selection.providerId !== "openai" ||
-      !modelPattern.test(selection.model) ||
+      !auditedBoundedCodexModels.has(selection.model) ||
       selection.maxOutputTokens !== null ||
       (selection.reasoningEffort !== null &&
         !effortLevels.has(selection.reasoningEffort))
@@ -521,7 +538,13 @@ export class CodexWorkerRuntime implements WorkerRuntime {
       const support = this.supportsModel(selection);
       if (!support.supported) throw new WorkerRuntimeError(support.code);
     }
+    // One run, one provider model: with no route the model must be named,
+    // and Codex's own default is never used in its place.
     const model = selection?.model ?? this.model;
+    if (model === undefined)
+      throw new WorkerRuntimeError("WORKER_MODEL_REQUIRED");
+    if (!auditedBoundedCodexModels.has(model))
+      throw new WorkerRuntimeError("WORKER_MODEL_UNSUPPORTED");
     await this.inspect();
     return this.inIsolation(async ({ cwd, codexHome, env }) => {
       // Read and admitted again here: these are the bytes Codex will use.
@@ -557,7 +580,8 @@ export class CodexWorkerRuntime implements WorkerRuntime {
             ]),
         "--output-schema",
         schemaPath,
-        ...(model === undefined ? [] : ["--model", model]),
+        "--model",
+        model,
         "-",
       ];
       const prompt = [

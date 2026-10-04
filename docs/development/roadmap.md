@@ -1216,6 +1216,18 @@ provenance and inspectable generated output. It does not deliver the complete
 M12 organization profiles, repository-editing Codex execution, or M14 software vertical. See
 [agent runtime](agent-runtime.md) and [ADR-0017](../adr/ADR-0017-bounded-external-worker.md).
 
+Follow-up recorded from the bounded Codex worker: delegation must become
+governed child execution rather than executor-internal work. The Codex worker
+refuses every model for which the client can start native sub-agents, because
+such a child ran on another model outside the run's provenance and usage. A
+governed design needs a child AgentRun with `parent_run_id`, a delegated role
+and purpose, its own executor identity, model routing and reasoning effort, a
+delegated capability subset, a token and cost budget with aggregated usage,
+limits on children and depth, cancellation and failure propagation,
+provenance, fencing, lifecycle and queue integration, and an execution tree in
+the dashboard. Native Codex or Claude delegation should require Runtime
+admission. Executor credentials should likewise be modelled by trust mode.
+
 Goal: make worker execution replaceable and extend onboarding from office
 description to an explicit, reviewable organization-to-runtime mapping.
 

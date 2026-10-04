@@ -32,6 +32,8 @@ test("Codex CLI worker runs isolated from the operator's Codex home and persists
       runtime.projectId,
       "--worker",
       "codex",
+      "--worker-model",
+      "gpt-5.5",
       "--json",
     ]);
     expect(result, result.stderr.join("\n")).toMatchObject({ exitCode: 0 });
@@ -97,6 +99,8 @@ test("Codex CLI worker runs isolated from the operator's Codex home and persists
       runtime.projectId,
       "--worker",
       "codex",
+      "--worker-model",
+      "gpt-5.5",
       "--json",
     ]);
     const refusedText = refused.stdout.join("\n") + refused.stderr.join("\n");
@@ -117,8 +121,8 @@ test("Codex executes exactly the persisted OpenAI route and refuses what it cann
       {
         readFile: () => `schema_version: 1
 profiles:
-  openai_default: { model: "openai:gpt-5.6-sol", reasoning_effort: high }
-  capped: { model: "openai:gpt-5.6-sol", max_output_tokens: 2000 }
+  openai_default: { model: "openai:gpt-5.5", reasoning_effort: high }
+  capped: { model: "openai:gpt-5.5", max_output_tokens: 2000 }
 default_profile: openai_default
 agents:
   developer: { profile: capped }
@@ -179,18 +183,19 @@ agents:
     const routed = await tick();
     expect(routed, routed.stderr.join("\n")).toMatchObject({ exitCode: 0 });
     const { args } = fake.report();
-    expect(args[args.indexOf("--model") + 1]).toBe("gpt-5.6-sol");
+    expect(args[args.indexOf("--model") + 1]).toBe("gpt-5.5");
     expect(args).toContain('model_reasoning_effort="high"');
     expect(args.filter((value) => value === "--model")).toHaveLength(1);
     rmSync(reportPath);
 
-    // --worker-model cannot replace it, and nothing is started.
+    // An unaudited --worker-model is refused outright, and nothing is started.
     const pinned = scheduled(await runtime.schedule(await runtime.task()));
-    const conflict = await tick("--worker-model", "gpt-other");
-    expect(conflict.exitCode).toBe(1);
-    expect(conflict.stderr.join(" ")).toContain(
-      "--worker-model cannot replace an assigned model",
+    const unaudited = await tick("--worker-model", "gpt-6-sol");
+    expect(unaudited.exitCode).toBe(1);
+    expect(unaudited.stderr.join(" ")).toContain(
+      "The codex worker cannot execute gpt-6-sol",
     );
+    expect(unaudited.stderr.join(" ")).toContain("No runs were started");
     await queuedThenCancelled(pinned);
 
     // An output-token cap cannot be applied by the client: refused at admission.
@@ -248,6 +253,8 @@ test("a managed-workspace Codex login fails the run before any Codex process and
       runtime.projectId,
       "--worker",
       "codex",
+      "--worker-model",
+      "gpt-5.5",
       "--json",
     ]);
     expect(tick.stdout.join("\n") + tick.stderr.join("\n")).toContain(
@@ -269,5 +276,88 @@ test("a managed-workspace Codex login fails the run before any Codex process and
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     await runtime.close();
+  }
+});
+
+test("a routed multi-agent or unknown model is refused before any Codex process and is not rerouted", async () => {
+  // `gpt-6-astra` declares multi-agent v2 in codex-cli 0.160.0; `gpt-7-sol` is
+  // a name the worker has never audited.
+  for (const model of ["gpt-6-astra", "gpt-5.6-luna", "gpt-7-sol"]) {
+    const runtime = await runRuntime(undefined, {
+      modelRouting: loadModelRoutingState(
+        {
+          AI_OFFICE_MODEL_ROUTING_FILE: "/ai-office-routing/model-routing.yaml",
+        },
+        {
+          readFile: () => `schema_version: 1
+profiles:
+  openai_default: { model: "openai:${model}", reasoning_effort: high }
+default_profile: openai_default
+`,
+        },
+      ),
+    });
+    const ambient = {
+      PATH: process.env.PATH,
+      CODEX_HOME: process.env.CODEX_HOME,
+    };
+    try {
+      const fake = installFakeCodex(runtime.root);
+      process.env.PATH = `${fake.bin}:${ambient.PATH ?? ""}`;
+      process.env.CODEX_HOME = createOperatorCodexHome(
+        runtime.root,
+        "sk-route",
+      );
+      const runId = (
+        await runtime.schedule(await runtime.task())
+      ).stdout[0]!.replace("Agent run scheduled: ", "");
+      const tick = (...extra: string[]) =>
+        runtime.command([
+          "run:tick",
+          "--project",
+          runtime.projectId,
+          "--worker",
+          "codex",
+          ...extra,
+        ]);
+      // The direct tick, a tick naming an admitted model, and the exact
+      // command the queue issues are all refused at admission.
+      for (const attempt of [
+        tick(),
+        tick("--worker-model", "gpt-5.5"),
+        runtime.command([
+          "run:tick",
+          "--project",
+          runtime.projectId,
+          "--run",
+          runId,
+          "--worker",
+          "codex",
+        ]),
+      ]) {
+        const refused = await attempt;
+        expect(refused.exitCode, model).toBe(1);
+        expect(refused.stderr.join(" "), model).toContain(
+          "No runs were started",
+        );
+      }
+      expect(fake.calls(), model).toEqual([]);
+      // Still queued on its persisted route: no other model or executor ran it.
+      const shown = (
+        await runtime.command([
+          "run:show",
+          "--project",
+          runtime.projectId,
+          "--run",
+          runId,
+        ])
+      ).stdout.join("\n");
+      expect(shown, model).toContain("Status: queued");
+    } finally {
+      for (const [name, value] of Object.entries(ambient))
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      await runtime.close();
+    }
   }
 });

@@ -21,6 +21,7 @@ import {
   CodexWorkerRuntime,
   codexDisabledFeatures,
   codexRefreshBlockedUrl,
+  parseCodexWorkerOutput,
 } from "@ai-office/agent-runtime/codex-worker-runtime.ts";
 import {
   codexFeatureListing,
@@ -29,6 +30,7 @@ import {
   createOperatorCodexHome,
   installFakeCodex,
   managedBundlePlans,
+  multiAgentV2Models,
 } from "../helpers/fake-codex.ts";
 
 const secret = "sk-operator-secret-credential";
@@ -93,7 +95,9 @@ describe.skipIf(process.platform === "win32")(
         else process.env[name] = ambient[name];
       rmSync(root, { recursive: true, force: true });
     });
-    const worker = () => new CodexWorkerRuntime(fake.executable);
+    // Unrouted runs name the model; only an audited bounded one is accepted.
+    const worker = () =>
+      new CodexWorkerRuntime(fake.executable, undefined, "gpt-5.5");
     const cleaned = () => expect(readdirSync(scratch)).toEqual([]);
 
     test("the child sees a private auth-only Codex home and no operator state", async () => {
@@ -148,7 +152,10 @@ describe.skipIf(process.platform === "win32")(
         "skills",
       ]);
 
-      expect(output).toMatchObject({ summary: "Codex analysis", model: null });
+      expect(output).toMatchObject({
+        summary: "Codex analysis",
+        model: "gpt-5.5",
+      });
       expect(JSON.stringify(output)).not.toContain(secret);
       expect(existsSync(report.env.CODEX_HOME!)).toBe(false);
       cleaned();
@@ -581,7 +588,7 @@ describe.skipIf(process.platform === "win32")(
           new CodexWorkerRuntime(
             fake.executable,
             undefined,
-            undefined,
+            "gpt-5.5",
             undefined,
             undefined,
             behind,
@@ -606,6 +613,115 @@ describe.skipIf(process.platform === "win32")(
         if (ambientOverride === undefined)
           delete process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE;
         else process.env.CODEX_REFRESH_TOKEN_URL_OVERRIDE = ambientOverride;
+        await backend.stop(true);
+      }
+    });
+
+    test("no run can start a hidden sub-agent on another model", async () => {
+      // A stand-in provider that records every request the client makes.
+      const provider: Record<string, string | undefined>[] = [];
+      const backend = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: async (request) => {
+          const body = (await request.json()) as {
+            model?: string;
+            reasoning?: { effort?: string };
+            parent?: string;
+          };
+          provider.push({
+            model: body.model,
+            effort: body.reasoning?.effort,
+            parent: body.parent,
+          });
+          return Response.json({});
+        },
+      });
+      try {
+        fake = installFakeCodex(root, `http://127.0.0.1:${backend.port}`);
+        fake.setMode("spawn");
+        const direct = async (model: string, ...extra: string[]) => {
+          const work = join(scratch, "direct");
+          mkdirSync(work);
+          const output = await runWorkerProcess({
+            executable: fake.executable,
+            args: ["exec", "--model", model, ...extra, "-"],
+            cwd: work,
+            input: "",
+            timeoutMs: 10000,
+            env: { PATH: process.env.PATH ?? "", HOME: work, CODEX_HOME: work },
+          });
+          rmSync(work, { recursive: true });
+          return output;
+        };
+        const routed = (model: string): WorkerContext => ({
+          ...context,
+          model: {
+            policy: "balanced",
+            profile: "balanced",
+            modelRef: `openai:${model}`,
+            providerId: "openai",
+            model,
+            reasoningEffort: "low",
+            maxOutputTokens: null,
+            source: "role_policy",
+          },
+        });
+        const child = { model: "gpt-6-luna", effort: "xhigh" };
+
+        // Control: on a multi-agent model the client starts a child on
+        // another model and effort, and its output looks like a clean run.
+        const hidden = await direct("gpt-6-astra");
+        expect(provider).toEqual([{ ...child, parent: "gpt-6-astra" }]);
+        expect(hidden).not.toContain("spawn");
+        expect(parseCodexWorkerOutput(hidden, "gpt-6-astra")).toMatchObject({
+          summary: "Codex analysis",
+          model: "gpt-6-astra",
+        });
+        provider.length = 0;
+        rmSync(join(root, "codex-calls.log"));
+
+        // Every multi-agent model is refused before any Codex process.
+        for (const model of multiAgentV2Models) {
+          await expect(
+            new CodexWorkerRuntime(fake.executable).execute(
+              routed(model),
+              limits,
+            ),
+            model,
+          ).rejects.toMatchObject({ code: "WORKER_MODEL_UNSUPPORTED" });
+          await expect(
+            new CodexWorkerRuntime(fake.executable, undefined, model).execute(
+              context,
+              limits,
+            ),
+            model,
+          ).rejects.toMatchObject({ code: "WORKER_MODEL_UNSUPPORTED" });
+        }
+        expect(fake.calls()).toEqual([]);
+        expect(provider).toEqual([]);
+        cleaned();
+
+        // Control: provider metadata can declare an admitted model
+        // multi-agent too, and then the client spawns for it as well.
+        fake.provideMultiAgentMetadata();
+        await direct("gpt-5.5");
+        expect(provider).toEqual([{ ...child, parent: "gpt-5.5" }]);
+        provider.length = 0;
+        rmSync(join(root, "codex-calls.log"));
+
+        // The worker's configuration keeps the admitted model single-agent
+        // whatever the metadata says: one run, one provider model.
+        const output = await new CodexWorkerRuntime(fake.executable).execute(
+          routed("gpt-5.5"),
+          limits,
+        );
+        expect(output).toMatchObject({ model: "gpt-5.5" });
+        expect(fake.report().args).toContain("agents.enabled=false");
+        expect(fake.calls()).toEqual(["--version", "features", "exec"]);
+        expect(provider).toEqual([]);
+        cleaned();
+      } finally {
         await backend.stop(true);
       }
     });

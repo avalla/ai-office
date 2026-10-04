@@ -34,7 +34,8 @@ export type FakeCodexMode =
   | "linger"
   | "reconnect"
   | "gave-up"
-  | "unauthorized";
+  | "unauthorized"
+  | "spawn";
 
 export interface FakeCodexReport {
   args: string[];
@@ -104,6 +105,18 @@ export const managedBundlePlans = [
   "edu",
   "education",
   "edu_pro",
+] as const;
+
+/** Models whose bundled 0.160.0 metadata declares `multi_agent_version: "v2"`. */
+export const multiAgentV2Models = [
+  "gpt-6-astra",
+  "gpt-6.1-sol",
+  "gpt-6-sol",
+  "gpt-6-luna",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-daybreak-blue-latest",
+  "gpt-daybreak-red-latest",
 ] as const;
 
 /**
@@ -198,6 +211,17 @@ fs.writeFileSync(${JSON.stringify(reportPath)}, JSON.stringify({ args, env: proc
 // A real client writes session state into its home; cleanup must remove it.
 fs.writeFileSync(path.join(process.env.CODEX_HOME, "state.sqlite"), "state");
 if (mode === "fail") { console.error("login failed for " + (auth === null ? "nobody" : auth.content)); process.exit(1); }
+if (mode === "spawn") {
+  // What 0.160.0 does when the model calls spawn_agent: for a model whose
+  // metadata (bundled, or supplied by the provider) declares multi-agent v2
+  // it starts a child that talks to the provider on a model and effort of the
+  // parent's choosing, and prints nothing about it. Only agents.enabled=false
+  // makes it refuse the call.
+  const routed = args[args.indexOf("--model") + 1];
+  const declared = ${JSON.stringify(multiAgentV2Models)}.includes(routed) || fs.existsSync(${JSON.stringify(join(root, "codex-provider-multi-agent"))});
+  if (declared && !config.includes("agents.enabled=false"))
+    await fetch(${JSON.stringify((backend ?? "http://127.0.0.1:0") + "/v1/responses")}, { method: "POST", body: JSON.stringify({ model: "gpt-6-luna", reasoning: { effort: "xhigh" }, parent: routed }) }).catch(() => {});
+}
 if (mode === "hang") { setInterval(() => {}, 1000); await new Promise(() => {}); }
 if (mode === "linger") {
   // A helper that outlives a successful parent and keeps writing its home.
@@ -240,6 +264,9 @@ process.exit(0);
         return [];
       }
     },
+    /** Provider metadata now declares multi-agent v2 for every model. */
+    provideMultiAgentMetadata: () =>
+      writeFileSync(join(root, "codex-provider-multi-agent"), ""),
     /** Every URL at which the client tried to refresh its login. */
     refreshAttempts: () => {
       try {

@@ -16,6 +16,7 @@ import {
 } from "@ai-office/application/ports/worker-runtime.port.ts";
 import {
   CodexWorkerRuntime,
+  auditedBoundedCodexModels,
   auditedCodexVersions,
   codexDisabledFeatures,
   codexRefreshBlockedUrl,
@@ -36,9 +37,9 @@ import {
 const selection: AgentRunModelSelection = {
   policy: "balanced",
   profile: "balanced",
-  modelRef: "openai:gpt-5.6-sol",
+  modelRef: "openai:gpt-5.5",
   providerId: "openai",
-  model: "gpt-5.6-sol",
+  model: "gpt-5.5",
   reasoningEffort: "high",
   maxOutputTokens: null,
   source: "role_policy",
@@ -182,7 +183,7 @@ describe("bounded Codex worker", () => {
         .slice(0, overrides(calls[1]!.args).length),
     );
     expect(calls[1]!.args).toContain("project_root_markers=[]");
-    expect(value("--model")).toBe("gpt-5.6-sol");
+    expect(value("--model")).toBe("gpt-5.5");
     expect(request.args).toContain('model_reasoning_effort="high"');
     expect(request.input).toContain("Review evidence");
 
@@ -206,7 +207,7 @@ describe("bounded Codex worker", () => {
     expect(output).toMatchObject({
       summary: "Review",
       content: "Evidence checked",
-      model: "gpt-5.6-sol",
+      model: "gpt-5.5",
       sessionId: "thread-1",
       usage: { inputTokens: 10, outputTokens: 20 },
       estimatedCostUsd: null,
@@ -644,9 +645,71 @@ describe("bounded Codex worker", () => {
     }
   });
 
-  test("routes only exact OpenAI models and never substitutes one", async () => {
-    const worker = runtime(async (request) => inspection(request)!);
+  test("only audited bounded single-agent models run, and none is ever substituted", async () => {
+    expect([...auditedBoundedCodexModels]).toEqual(["gpt-5.5"]);
+    // Classification source: `codex debug models` of codex-cli 0.160.0.
+    const multiAgentV2 = [
+      "gpt-6-astra",
+      "gpt-6.1-sol",
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-daybreak-blue-latest",
+      "gpt-daybreak-red-latest",
+    ];
+    const multiAgentV1 = ["gpt-5.6-luna", "codex-auto-review"];
+    const unaudited = [
+      "gpt-5.5-pro",
+      "gpt-5.5-mini",
+      "gpt-5.6",
+      "gpt-5",
+      "gpt-7-sol",
+      "o3",
+      "plan-of-2027",
+      "GPT-5.5",
+      "Gpt-5.5",
+      " gpt-5.5",
+      "gpt-5.5 ",
+      "gpt-5.5\n",
+      "gpt-5\u200b.5",
+      "gpt-5.5/../gpt-6-sol",
+      'gpt-5.5" --model gpt-6-sol',
+      "--model",
+      "",
+    ];
+    const calls: string[] = [];
+    const runner = async (request: WorkerProcessRequest) => {
+      calls.push(request.args[0]!);
+      return inspection(request) ?? jsonl(events);
+    };
     const unsupported = { supported: false, code: "WORKER_MODEL_UNSUPPORTED" };
+    const { model: _route, ...unrouted } = context;
+
+    for (const model of [...multiAgentV2, ...multiAgentV1, ...unaudited]) {
+      const routed = { ...selection, model, modelRef: `openai:${model}` };
+      // Admission (what run:tick asks before starting anything) refuses it,
+      expect(runtime(runner).supportsModel(routed), model).toEqual(unsupported);
+      // a routed run refuses it,
+      await expect(
+        runtime(runner).execute({ ...context, model: routed }, limits),
+        model,
+      ).rejects.toMatchObject({ code: "WORKER_MODEL_UNSUPPORTED" });
+      // and so does an unrouted run naming it with --worker-model.
+      await expect(
+        runtime(runner, model).execute(unrouted, limits),
+        model,
+      ).rejects.toMatchObject({ code: "WORKER_MODEL_UNSUPPORTED" });
+    }
+    // A run with no model is never handed to Codex's own default.
+    await expect(
+      runtime(runner).execute(unrouted, limits),
+    ).rejects.toMatchObject({ code: "WORKER_MODEL_REQUIRED" });
+    // None of the refusals started a Codex process, the probes included.
+    expect(calls).toEqual([]);
+
+    const worker = runtime(runner);
+    expect(worker.supportsModel(selection)).toEqual({ supported: true });
     expect(
       worker.supportsModel({ ...selection, providerId: "anthropic" }),
     ).toEqual(unsupported);
@@ -656,17 +719,9 @@ describe("bounded Codex worker", () => {
     expect(
       worker.supportsModel({ ...selection, reasoningEffort: "max" }),
     ).toEqual(unsupported);
-    expect(
-      worker.supportsModel({ ...selection, model: 'x" --sandbox=none' }),
-    ).toEqual(unsupported);
-    expect(worker.supportsModel(selection)).toEqual({ supported: true });
 
     // --worker-model never replaces a persisted model, before any process.
-    const calls: string[] = [];
-    const pinned = runtime(async (request) => {
-      calls.push(request.args[0]!);
-      return inspection(request) ?? jsonl(events);
-    }, "gpt-other");
+    const pinned = runtime(runner, "gpt-6-sol");
     expect(pinned.supportsModel(selection)).toEqual({
       supported: false,
       code: "WORKER_MODEL_CONFLICT",
@@ -682,25 +737,30 @@ describe("bounded Codex worker", () => {
     ).rejects.toMatchObject({ code: "WORKER_MODEL_UNSUPPORTED" });
     expect(calls).toEqual([]);
 
-    // An unrouted run uses --worker-model; with neither, no model is claimed.
-    const argsOf = async (model?: string) => {
+    // Each admitted model reaches the client exactly as routed, once.
+    for (const model of auditedBoundedCodexModels) {
       let args: readonly string[] = [];
-      const { model: _unrouted, ...unrouted } = context;
+      calls.length = 0;
       const output = await runtime(async (request) => {
         if (request.args[0] === "exec") args = request.args;
-        return inspection(request) ?? jsonl(events);
-      }, model).execute(unrouted, limits);
-      return { args, output };
-    };
-    const explicit = await argsOf("gpt-other");
-    expect(explicit.args[explicit.args.indexOf("--model") + 1]).toBe(
-      "gpt-other",
-    );
-    expect(explicit.output.model).toBe("gpt-other");
-    expect(explicit.args.join(" ")).not.toContain("model_reasoning_effort");
-    const neither = await argsOf();
-    expect(neither.args).not.toContain("--model");
-    expect(neither.output.model).toBeNull();
+        return runner(request);
+      }).execute({ ...context, model: { ...selection, model } }, limits);
+      expect(args.filter((value) => value === "--model")).toHaveLength(1);
+      expect(args[args.indexOf("--model") + 1]).toBe(model);
+      expect(args).toContain('model_reasoning_effort="high"');
+      expect(args).toContain("agents.enabled=false");
+      expect(output.model).toBe(model);
+      expect(calls).toEqual(["--version", "features", "exec"]);
+    }
+    // An unrouted run named with --worker-model carries no effort override.
+    let unroutedArgs: readonly string[] = [];
+    const output = await runtime(async (request) => {
+      if (request.args[0] === "exec") unroutedArgs = request.args;
+      return runner(request);
+    }, "gpt-5.5").execute(unrouted, limits);
+    expect(unroutedArgs[unroutedArgs.indexOf("--model") + 1]).toBe("gpt-5.5");
+    expect(unroutedArgs.join(" ")).not.toContain("model_reasoning_effort");
+    expect(output.model).toBe("gpt-5.5");
   });
 
   test("accepts one completed turn with one final message and nothing else", () => {
@@ -714,10 +774,10 @@ describe("bounded Codex worker", () => {
     };
     // Real 0.160.0 output for a code-mode model: a notice before the turn.
     const real = [events[0]!, notice, ...events.slice(1)];
-    expect(parseCodexWorkerOutput(jsonl(real), "gpt-5.6-sol")).toMatchObject({
+    expect(parseCodexWorkerOutput(jsonl(real), "gpt-5.5")).toMatchObject({
       summary: "Review",
       sessionId: "thread-1",
-      model: "gpt-5.6-sol",
+      model: "gpt-5.5",
     });
     // The model identity is the routed one, never what the output says.
     expect(

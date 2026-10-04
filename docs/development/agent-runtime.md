@@ -133,7 +133,53 @@ The Codex worker runs only explicitly audited `codex-cli` versions, held in an
 allowlist in the adapter. The only audited version is `0.160.0`: an older,
 newer, pre-release or unparseable version fails with `WORKER_UNAVAILABLE`
 before any task is dispatched, until that version is audited and added. No
-version range is accepted and no other worker is tried. The worker also needs
+version range is accepted and no other worker is tried.
+
+An audited CLI version does not make every model it offers safe to run, so the
+worker has a second, separate gate: the routed model must be one positively
+audited as a bounded single-agent model under that CLI. The only such model is
+`gpt-5.5`. Every other model fails with `WORKER_MODEL_UNSUPPORTED` before any
+Codex process is started: the multi-agent models listed below, any name the
+adapter does not list, and future names. No model is substituted, no default
+is chosen, and no other worker is tried; the persisted route stays
+authoritative and an unsupported route fails. An unrouted run must name its
+model with `--worker-model`, which is held to the same list; without one it
+fails with `WORKER_MODEL_REQUIRED` rather than use Codex's own default model.
+
+The reason is native delegation. `codex-cli` 0.160.0 decides whether to offer
+its collaboration tools from model metadata, not from the `multi_agent` and
+`multi_agent_v2` feature flags the worker disables. Its bundled metadata
+(`codex debug models`) declares `multi_agent_version: "v2"` for `gpt-6-astra`,
+`gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`,
+`gpt-daybreak-blue-latest` and `gpt-daybreak-red-latest`, `"v1"` for
+`gpt-5.6-luna` and `codex-auto-review`, and nothing for `gpt-5.5`. For each
+`v2` model the real CLI, under this worker's flags, accepted `spawn_agent`
+with `fork_turns: "none"`, started a child on a different model and reasoning
+effort chosen by the parent, sent that child's request to the provider with
+the same login, and reported nothing of it in its JSONL. The parser cannot
+see such a child, its usage is not in the recorded result, and the run would
+record only the routed model. For `gpt-5.5` and the `v1` models every
+collaboration call was refused; the `v1` models are still excluded because
+their metadata declares a delegation capability.
+
+Provider-supplied metadata can declare a multi-agent version for any model,
+`gpt-5.5` included, and is used in the same session it is fetched in. The
+worker therefore also sets `agents.enabled=false`. With it the real CLI
+refused `spawn_agent`, `list_agents`, `send_message`, `followup_task`,
+`wait_agent` and `interrupt_agent` for every `v2` model and for `gpt-5.5` under
+provider metadata declaring `v2`, with no child request. This setting is a
+second control, not a replacement for the model list: it is one configuration
+key of one audited CLI version, and it does not remove
+`request_user_input_async`, which those models still accept.
+
+The invariant for every admitted run is one AgentRun, one routed provider
+model and one reasoning effort: no admitted run performs provider work on
+another model outside its recorded provenance. A model for which the client
+can break that is not eligible for the list. Governed delegation, where a
+child is its own AgentRun with its own route, budget and provenance, is
+follow-up work (see the roadmap) and is not provided by this worker.
+
+The worker also needs
 that CLI on the Runtime host PATH and a file-backed ChatGPT login of a
 supported personal plan.
 
@@ -258,7 +304,8 @@ operator's `auth.json` is never rewritten.
 
 `codex exec` runs with `--ephemeral`, `--ignore-user-config`,
 `--strict-config`, `--sandbox read-only`, web search disabled, no MCP servers,
-bundled skills disabled, project instruction files disabled
+bundled skills disabled, native sub-agents disabled (`agents.enabled=false`),
+project instruction files disabled
 (`project_doc_max_bytes=0`) and project-root discovery disabled
 (`project_root_markers=[]`). It disables every default-enabled capability
 feature of the supported CLI: shell and process execution (`shell_tool`,
@@ -297,15 +344,20 @@ What this does not achieve:
   fetches the model list from the provider at session start and uses it in the
   same run; it can change the model-visible tools and the base instructions
   without any change of CLI version, so the version allowlist does not cover
-  it. In every case tried under this worker's flags it changed what the model
-  is shown and told, not what the client will execute.
-- Feature flags do not remove tools that Codex derives from model metadata. On
-  0.160.0 a code-mode model is still shown `exec`, `wait`, `request_user_input`
-  and the sub-agent tools, and other models `apply_patch` and
-  `request_user_input`. In this configuration they were observed to be refused
-  by the client (`exec` because its host is disabled, sub-agents because an
-  ephemeral session has no rollout, `apply_patch` by the read-only sandbox), but
-  they are model-visible and a refused call still costs a model round trip.
+  it. It did change what the client will execute in one case: metadata
+  declaring multi-agent `v2` made `spawn_agent` executable for `gpt-5.5` until
+  `agents.enabled=false` was set. With the worker's current flags, every other
+  variant tried changed only what the model is shown and told. Metadata
+  enabling a capability the worker has not anticipated would not be detected.
+- Feature flags do not remove tools that Codex derives from model metadata,
+  and a model-visible tool is not always a refused one. On 0.160.0 the admitted
+  model is shown `apply_patch` and `request_user_input`; `apply_patch` is
+  refused by the read-only sandbox. Models with other metadata are shown
+  `exec`, `wait` and the collaboration tools: `exec` is refused because its
+  host is disabled, while the collaboration tools were executable until the
+  controls above. Codex emits no JSONL item for a refused call, nor for a
+  sub-agent it starts, so the output cannot prove that no tool ran, and a
+  refused call still costs a model round trip.
 - Host-level Codex configuration under `/etc/codex` (configuration,
   requirements, rules, agents and skills) is controlled by the host
   administrator and is not excluded.
