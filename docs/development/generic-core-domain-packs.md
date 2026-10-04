@@ -559,7 +559,7 @@ Acceptance, `project:pack:preview` and `project:pack:apply`:
 - identity comparison is exact, case-sensitive and locale-independent;
 - a collision is rejected deterministically with the typed diagnostic
   `pack_definition_collision`;
-- preview and apply agree;
+- preview and apply agree for a changed selection;
 - a failed apply leaves the binding revision and state unchanged.
 
 Collision diagnostic. The preflight reports `pack_definition_collision`, the
@@ -577,11 +577,11 @@ performs no resolution and no composition preflight, does not increment the
 binding revision and adds no audit event, even when the artifacts are
 unavailable locally or the persisted composition already collides. Such a
 latent collision stays visible through `project:pack:preview` and GP-06
-effective resolution. A changed selection always requires fresh resolution and
+effective resolution once the closure resolves. A changed selection always requires fresh resolution and
 the preflight.
 
 Restore scope. The preflight runs only on the restore path that is about to
-write authoritative project state, a restore that creates the project and
+write binding and definition state, a restore that creates the project and
 yields `restored`. It does not apply to the existing `attached` and
 `unchanged` outcomes, which write no binding or definition state, so rerunning
 the same restore after a partial failure stays possible. Archive structural
@@ -638,8 +638,10 @@ new concurrency mechanism is introduced unless implementation evidence shows
 the existing revision check is insufficient. A host-local catalog change
 between resolution and commit is not prevented.
 
-GP-06 remains the defensive fail-closed backstop for that case, for corrupt
-state and for non-conforming adapters.
+GP-06 remains the defensive fail-closed backstop for that case, for a
+project-owned definition whose own preflight passed against the previous
+binding and which commits after the binding apply, for corrupt state and for
+non-conforming adapters.
 
 Acceptance tests cover at minimum:
 
