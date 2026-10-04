@@ -1861,6 +1861,12 @@ depends on the other, and no other GP task depends on them.
   closed once the exact closure becomes resolvable. Binding mutation stays
   strict.
   Both use the existing shared resolver; no second resolver is introduced.
+  The preflight rejects with `pack_definition_collision`, the code GP-07
+  already uses; `duplicate_effective_definition` stays GP-06's backstop
+  diagnostic. Applying the unchanged active selection remains a GP-05 no-op.
+  The restore preflight runs only on the path that writes binding and
+  definition state (outcome `restored`), and closure resolution stays outside
+  the database transaction.
   GP-06 stays the fail-closed backstop.
 - GP-23 — Pack manifest U+0000 policy assessment. Project definition text
   rejects U+0000 because PostgreSQL `jsonb` cannot represent it consistently
