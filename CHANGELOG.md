@@ -7,7 +7,7 @@
   `--run <runId>` as before, `--source handover --handover <confirmationId>`
   for the project's current user-confirmed repository review, or
   `--source operator-confirmed --confirmed-by <operator> --evidence
-<kind:id>[,…]` citing requirements, ADRs, decided reviews, tasks or that
+<kind:id>[,…]` citing non-rejected requirements, accepted ADRs, approved reviews, tasks or that
   review. The Runtime resolves every reference inside the project and refuses
   unconfirmed, superseded, stale and other-project evidence; no agent run is
   fabricated and no Codex or Claude session identifier is accepted. Provenance

@@ -299,7 +299,7 @@ interactive/operator-reviewed knowledge
 
 - AgentRun knowledge: `--run <runId>`: a completed worker run of this project. The Runtime derives the task, agent, and run references.
 - Confirmed handover knowledge: `--source handover --handover <confirmationId>`: the confirmation ID returned by `ai-office handover:confirm`. It is accepted only while that confirmed repository review is the current one; a scan, an import, your own interpretation, or an approved office manifest is not a confirmed review, and a review whose repository evidence has since changed must be confirmed again first.
-- Interactive/operator-reviewed knowledge: `--source operator-confirmed --confirmed-by <operator> --evidence <kind:id>[,<kind:id>...]`: one to eight records of this project that the Runtime can resolve, of kind `requirement`, `adr`, `review` (decided), `task`, or `handover`. The operator named in `--confirmed-by` must be the `--actor` who admits the plan; that admission is their explicit confirmation of the evidence.
+- Interactive/operator-reviewed knowledge: `--source operator-confirmed --confirmed-by <operator> --evidence <kind:id>[,<kind:id>...]`: one to eight records of this project that the Runtime can resolve, of kind `requirement` (not rejected), `adr` (accepted), `review` (approved), `task`, or `handover`. The operator named in `--confirmed-by` must be the `--actor` who admits the plan; that admission is their explicit confirmation of the evidence.
 
 - Your Codex or Claude session is not provenance. AI Office does not authenticate or own it, so never offer a session identifier, a transcript, or the fact that you were invoked as evidence.
 - Never schedule, simulate, or invent an agent run to obtain run provenance for knowledge that no run produced.

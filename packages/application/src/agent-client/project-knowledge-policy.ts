@@ -89,7 +89,7 @@ export const projectKnowledgeAdmissionSources: readonly (readonly [
   [
     "interactive/operator-reviewed knowledge",
     "explicit evidence + operator-confirmed provenance",
-    "`--source operator-confirmed --confirmed-by <operator> --evidence <kind:id>[,<kind:id>...]`: one to eight records of this project that the Runtime can resolve, of kind `requirement`, `adr`, `review` (decided), `task`, or `handover`. The operator named in `--confirmed-by` must be the `--actor` who admits the plan; that admission is their explicit confirmation of the evidence.",
+    "`--source operator-confirmed --confirmed-by <operator> --evidence <kind:id>[,<kind:id>...]`: one to eight records of this project that the Runtime can resolve, of kind `requirement` (not rejected), `adr` (accepted), `review` (approved), `task`, or `handover`. The operator named in `--confirmed-by` must be the `--actor` who admits the plan; that admission is their explicit confirmation of the evidence.",
   ],
 ] as const);
 

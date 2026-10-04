@@ -190,9 +190,9 @@ describe("durable project knowledge policy", () => {
     expect(policy).toContain("must be confirmed again first");
     // The operator's admission is the confirmation, bound to project evidence.
     for (const kind of [
-      "`requirement`",
-      "`adr`",
-      "`review` (decided)",
+      "`requirement` (not rejected)",
+      "`adr` (accepted)",
+      "`review` (approved)",
       "`task`",
       "`handover`",
     ])

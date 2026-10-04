@@ -185,10 +185,27 @@ function fixture(
         milestones: [],
         requirements:
           id === "project-1"
-            ? [{ id: "req-1", projectId: "project-1", key: "AK-11" }]
+            ? [
+                { id: "req-1", projectId: "project-1", key: "AK-11" },
+                {
+                  id: "req-rejected",
+                  projectId: "project-1",
+                  key: "AK-0",
+                  status: "rejected",
+                },
+              ]
             : [{ id: "req-other", projectId: "project-2", key: "X-1" }],
         adrs:
-          id === "project-1" ? [{ id: "adr-1", projectId: "project-1" }] : [],
+          id === "project-1"
+            ? [
+                { id: "adr-1", projectId: "project-1", status: "accepted" },
+                ...["proposed", "rejected", "superseded"].map((status) => ({
+                  id: `adr-${status}`,
+                  projectId: "project-1",
+                  status,
+                })),
+              ]
+            : [],
         reviews:
           id === "project-1"
             ? [
@@ -197,6 +214,11 @@ function fixture(
                   id: "review-open",
                   projectId: "project-1",
                   status: "pending",
+                },
+                {
+                  id: "review-rejected",
+                  projectId: "project-1",
+                  status: "rejected",
                 },
               ]
             : [],
@@ -644,6 +666,11 @@ describe("operator-confirmed provenance", () => {
       { kind: "requirement", id: "missing" },
       { kind: "adr", id: "missing" },
       { kind: "review", id: "review-open" },
+      { kind: "review", id: "review-rejected" },
+      { kind: "requirement", id: "req-rejected" },
+      { kind: "adr", id: "adr-proposed" },
+      { kind: "adr", id: "adr-rejected" },
+      { kind: "adr", id: "adr-superseded" },
       { kind: "task", id: "task-other" },
       { kind: "task", id: "missing" },
       { kind: "handover", id: "confirmation-1" },

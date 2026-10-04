@@ -220,9 +220,9 @@ For knowledge learned outside a run and outside handover, the provenance states
 only what AI Office can verify: which project records support the knowledge and
 which operator explicitly confirmed it. Evidence is one to eight unique
 references of kind `requirement`, `adr`, `review`, `task` or `handover`. The
-Runtime resolves each inside the project: governance state for requirements,
-ADRs and decided reviews (a pending review supports nothing yet), the task
-repository for tasks, and the current confirmed review for `handover`. A
+Runtime resolves each inside the project: governance state for requirements
+that were not rejected, accepted ADRs and approved reviews (a pending, rejected
+or superseded conclusion supports nothing), the task repository for tasks, and the current confirmed review for `handover`. A
 reference that is missing, belongs to another project, or is a stale handover
 fails with `KNOWLEDGE_EVIDENCE_UNAVAILABLE`. Each stored reference carries a
 Runtime-derived label, never caller text. Other supporting material, such as a
@@ -426,7 +426,16 @@ a source, and knowledge never satisfies a readiness dimension.
   interactive finding no project record supports, is reported to the user as a
   candidate rather than admitted.
 - Operator confirmation and reviewer identity are trusted-local. They are not
-  cryptographic human-presence authentication.
+  cryptographic human-presence authentication: `--confirmed-by` and `--actor`
+  are caller-supplied, so a same-user process with shell access, including a
+  host Codex or Claude session, can plan and admit an operator-confirmed record
+  itself. The Runtime guarantees that the cited evidence exists in the project
+  and that the admission is audited; it does not judge whether the evidence
+  supports the text. The user's review of the exact plan is the control.
+- A confirmed handover review travels with portable project snapshots. After
+  `project:restore` it is accepted as handover evidence when its fingerprint
+  matches the restored scan evidence, although `handover:confirm` did not run
+  on this Runtime.
 - Evidence is checked when the plan is computed and again at admission, not
   afterwards: a record is not invalidated when a cited requirement, task or
   handover review later changes. `knowledge:trace` shows what was verified at

@@ -32,7 +32,7 @@ function admissionSource(
   parsed: ParsedArguments,
 ): KnowledgeAdmissionSourceInput {
   const selected = parsed.options.get("source") ?? "agent-run";
-  if (!(selected in sourceOptions))
+  if (!Object.hasOwn(sourceOptions, selected))
     throw new CliUsageError(
       "Knowledge source must be agent-run, handover, or operator-confirmed",
     );

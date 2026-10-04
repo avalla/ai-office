@@ -345,11 +345,9 @@ export class ManageKnowledgeAdmission {
       throw invalid();
     const candidate = source as Record<string, unknown>;
     if (candidate.kind === "agent_run") {
-      if (
-        !hasExactKeys(candidate, ["kind", "runId"]) ||
-        !isKnowledgeIdentifier(candidate.runId)
-      )
-        throw invalid();
+      if (!hasExactKeys(candidate, ["kind", "runId"])) throw invalid();
+      // A malformed run ID keeps its AK-05 error.
+      assertKnowledgeIdentifier(candidate.runId);
       return { kind: "agent_run", runId: candidate.runId };
     }
     if (candidate.kind === "handover") {
@@ -533,7 +531,10 @@ export class ManageKnowledgeAdmission {
         async ({ kind, id }): Promise<KnowledgeEvidenceReference> => {
           if (kind === "requirement") {
             const requirement = governance?.requirements.find(
-              (item) => item.id === id && item.projectId === projectId,
+              (item) =>
+                item.id === id &&
+                item.projectId === projectId &&
+                item.status !== "rejected",
             );
             if (
               requirement === undefined ||
@@ -545,20 +546,24 @@ export class ManageKnowledgeAdmission {
           if (kind === "adr") {
             if (
               !governance?.adrs.some(
-                (item) => item.id === id && item.projectId === projectId,
+                (item) =>
+                  item.id === id &&
+                  item.projectId === projectId &&
+                  item.status === "accepted",
               )
             )
               throw unavailable();
             return { kind, id, label: `ADR ${id}` };
           }
           if (kind === "review") {
-            // A pending review has concluded nothing and supports nothing yet.
+            // Only a conclusion that stands supports knowledge: an accepted
+            // ADR, an approved review, a requirement that was not rejected.
             if (
               !governance?.reviews.some(
                 (item) =>
                   item.id === id &&
                   item.projectId === projectId &&
-                  item.status !== "pending",
+                  item.status === "approved",
               )
             )
               throw unavailable();
@@ -671,7 +676,7 @@ export class ManageKnowledgeAdmission {
           payload: {
             ...auditBase.payload,
             outcome,
-            admittedAt: this.clock.now().toISOString(),
+            admittedAt: admittedAt.toISOString(),
           },
         });
       } catch {

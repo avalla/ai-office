@@ -140,7 +140,7 @@ Commands:
       --run <completed-run-id>                                        # worker AgentRun; same as --source agent-run --run <id>
       --source handover --handover <confirmation-id>                  # the current confirmed handover review (handover:confirm)
       --source operator-confirmed --confirmed-by <operator> --evidence <kind:id>[,<kind:id>...]
-                                                                      # evidence kinds: requirement, adr, review, task, handover; all in this project
+                                                                      # evidence: requirement (not rejected), adr (accepted), review (approved), task, handover; all in this project
   knowledge:admit --project <id> <source> --kind <memory|decision> --text <text> [--title <title>] --approve <plan-hash> --actor <reviewer>  # operator-confirmed: --actor must equal --confirmed-by
   knowledge:trace --project <id> --kind <memory|decision> --id <knowledge-id>  # reports the admission source, its evidence, and the admission audit reference
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
