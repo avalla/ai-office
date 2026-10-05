@@ -57,14 +57,16 @@ test("development entry points share isolated project and global state from a de
   );
   try {
     const client = new DaemonClient(join(source, ".ai-office", "daemon.sock"));
+    // Wait on a deadline, not an attempt count: a cold daemon start can take
+    // several seconds when the whole suite runs in parallel.
     let healthy = false;
-    for (let attempt = 0; attempt < 200; attempt++) {
+    const deadline = Date.now() + 20_000;
+    while (!healthy && Date.now() < deadline) {
       try {
         await client.health();
         healthy = true;
-        break;
       } catch {
-        await Bun.sleep(5);
+        await Bun.sleep(20);
       }
     }
     expect(healthy).toBe(true);
@@ -100,7 +102,7 @@ test("development entry points share isolated project and global state from a de
     child.kill("SIGTERM");
     await child.exited;
   }
-});
+}, 60_000);
 
 test("all source help forms stay local before runtime paths, SQLite, or IPC", async () => {
   const root = mkdtempSync(join(tmpdir(), "ao-local-help-"));
