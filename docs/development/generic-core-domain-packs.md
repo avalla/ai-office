@@ -588,6 +588,11 @@ plan and without the `customized` mark, and adds the issue
   role capabilities too, so it narrows GP-05: a version change or an addition
   while the currently selected artifacts are not installed goes through
   `project:pack:upgrade`, which approves the target capability sets.
+  GP-04 availability is checked first and is unchanged: a proposed selection
+  that keeps or names a tuple whose artifact is not installed fails with the
+  GP-04 code, for example `missing_pack`, and the preview then reports no
+  capability change. So a pure removal is applied only when every tuple that
+  remains still resolves.
 - The proposed closure resolves but its manifests cannot be read back.
   `roleCapabilityChanges` is then `unavailable`
   (`proposed_closure_unreadable`).
@@ -595,20 +600,25 @@ plan and without the `customized` mark, and adds the issue
 The code is carried by the preview issue and by the typed application error
 `project:pack:apply` raises. The CLI prints the error message, which names
 `project:pack:upgrade`, on stderr and exits 1, as for other known errors.
-Nothing is written and no audit event is added.
+No selection or definition state is written and no
+`project.pack_binding_applied` event is added; the Runtime's generic command
+journal records the command as for any other.
 
 While the current closure resolves, `project:pack:apply` still applies, as an
 explicit selection change, the addition of a pack that was not selected, the
 removal of a pack, and a version change that only adds or removes roles or
 leaves every existing role's set unchanged; a selection without role
-capabilities behaves as in GP-05. An identical selection remains a no-op that
-reads no artifact, and a stale revision fails first.
+capabilities behaves as in GP-05. Applying an identical selection remains a
+no-op that reads no artifact, and a stale revision fails first; previewing it
+still reports GP-04 availability.
 
 Removing a pack in one `project:pack:apply` and selecting another version of
 it in a later one is, under the current contract, two explicit and audited
 selection changes. Each preview shows the full removal or addition of that
 pack's role capability sets, and neither is treated as a capability change of
-an existing role.
+an existing role. The same holds for a version that drops a role followed by
+a later version that provides it again: each step only removes or adds a
+role, and each preview lists its full capability set as removed or added.
 
 The upgrade report adds two fields, both covered by `planDigest`:
 
