@@ -35,6 +35,9 @@ export const installTargets: readonly InstallTarget[] = [
   },
 ];
 
+/** Files operating systems drop into directories; never part of a skill. */
+const ignoredFileNames = [".DS_Store", "Thumbs.db"];
+
 export class SkillPackageError extends Error {
   override readonly name = "SkillPackageError";
 }
@@ -48,10 +51,12 @@ export function errorMessage(error: unknown): string {
  * `core.autocrlf` clone does not report every installed copy as drifted.
  */
 export function contentHash(content: Uint8Array): string {
+  // latin1 maps every byte to one code unit, so non-UTF-8 content keeps its
+  // identity instead of collapsing into replacement characters.
   const normalized = Buffer.from(content)
-    .toString("utf8")
+    .toString("latin1")
     .replace(/\r\n/gu, "\n");
-  return createHash("sha256").update(normalized, "utf8").digest("hex");
+  return createHash("sha256").update(normalized, "latin1").digest("hex");
 }
 
 /**
@@ -64,6 +69,7 @@ export function listFiles(root: string): string[] {
   const visit = (relativeDirectory: string): void => {
     const absoluteDirectory = join(root, relativeDirectory);
     for (const entry of readdirSync(absoluteDirectory).sort()) {
+      if (ignoredFileNames.includes(entry)) continue;
       const relativePath =
         relativeDirectory === "" ? entry : `${relativeDirectory}/${entry}`;
       const stats = lstatSync(join(root, relativePath));

@@ -25,9 +25,10 @@ evidence is not passed, whatever its apparent state.
   separately, following the [branch policy](branch-policy.md).
 - Confirm the working tree is clean and isolated as the project requires (for
   example a dedicated worktree).
-- Update the base, create the task branch, and run the full verification on the
-  untouched base. A red baseline is a stop condition, not something to fix
-  inside this task.
+- Update the base, create the task branch, and establish a green baseline: run
+  the full verification on the untouched base, or cite an existing green result
+  for that exact base commit. A red baseline is a stop condition, not something
+  to fix inside this task.
 - If the project tracks task state, mark the task as started.
 
 ## 2. Design
@@ -73,8 +74,8 @@ evidence is not passed, whatever its apparent state.
 ## 7. Second Review
 
 - The reviewer reads the hardening diff and the responses to each finding.
-- Any new blocking finding returns the task to Hardening. Two full
-  review-hardening loops without convergence is a stop condition.
+- Any new blocking finding returns the task to Hardening. Returning to
+  Hardening twice from any later stage without convergence is a stop condition.
 
 ## 8. Verification / QA
 
@@ -97,7 +98,8 @@ evidence is not passed, whatever its apparent state.
 
 ## 11. Post-merge verification / completion
 
-- Entered only after the authorizer merges or explicitly authorizes the merge.
+- Entered only after the authorizer merges, or explicitly asks you to merge this
+  pull request and you have done so.
 - Run the full verification on the integration branch at the merge commit.
 - Rebase or retarget branches that were stacked on this one.
 - Update task state, record follow-ups, clean up the branch and workspace.

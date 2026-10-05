@@ -18,8 +18,10 @@ import {
 } from "../../scripts/skills/install.ts";
 import {
   SkillPackageError,
+  contentHash,
   installManifestName,
   listFiles,
+  repositoryRoot,
 } from "../../scripts/skills/shared.ts";
 
 const temporaryDirectories: string[] = [];
@@ -40,7 +42,7 @@ function workspace(): { sourceRoot: string; targetRoot: string } {
   const root = temporaryDirectory();
   const sourceRoot = join(root, "source");
   const targetRoot = join(root, "target");
-  cpSync(join(process.cwd(), "skills"), join(sourceRoot, "skills"), {
+  cpSync(join(repositoryRoot, "skills"), join(sourceRoot, "skills"), {
     recursive: true,
   });
   mkdirSync(targetRoot);
@@ -182,11 +184,15 @@ describe("skill installer", () => {
   test("removes managed files that left the canonical source", () => {
     const { sourceRoot, targetRoot } = workspace();
     const canonical = join(sourceRoot, "skills", "task-delivery");
-    writeFileSync(join(canonical, "references", "extra.md"), "# Extra\n");
     const skillPath = join(canonical, "SKILL.md");
+    const original = readFileSync(skillPath, "utf8");
+    writeFileSync(join(canonical, "references", "extra.md"), "# Extra\n");
     writeFileSync(
       skillPath,
-      `${readFileSync(skillPath, "utf8")}\nSee [extra](references/extra.md).\n`,
+      original.replace(
+        "## Reporting",
+        "See [extra](references/extra.md).\n\n## Reporting",
+      ),
     );
     installSkills({ sourceRoot, targetRoot });
     expect(
@@ -194,13 +200,7 @@ describe("skill installer", () => {
     ).toBe(true);
 
     rmSync(join(canonical, "references", "extra.md"));
-    writeFileSync(
-      skillPath,
-      readFileSync(skillPath, "utf8").replace(
-        "\nSee [extra](references/extra.md).\n",
-        "",
-      ),
-    );
+    writeFileSync(skillPath, original);
     expect(installSkills({ sourceRoot, targetRoot }).ok).toBe(true);
 
     expect(
@@ -246,7 +246,9 @@ describe("skill installer", () => {
 
     expect(report).toMatchObject({ ok: false, applied: false });
     expect(conflicts(report)).toEqual([
-      expect.stringContaining("was not installed by this installer"),
+      expect.stringContaining(
+        "differs from the canonical skill, and was not installed by this installer",
+      ),
     ]);
     expect(existsSync(claudeCopy(targetRoot))).toBe(false);
     expect(readFileSync(join(agentsCopy(targetRoot), "SKILL.md"), "utf8")).toBe(
@@ -352,6 +354,192 @@ describe("skill installer", () => {
     expect(existsSync(join(targetRoot, ".agents"))).toBe(false);
   });
 
+  test("adopts an identical copy that lost its manifest without force", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    installSkills({ sourceRoot, targetRoot });
+    rmSync(join(claudeCopy(targetRoot), installManifestName));
+
+    const report = installSkills({ sourceRoot, targetRoot });
+
+    expect(report).toMatchObject({ ok: true, applied: true });
+    expect(changedPaths(report)).toEqual([
+      `claude:create:${installManifestName}`,
+    ]);
+  });
+
+  test.each([
+    ["corrupt", "{ not json"],
+    [
+      "for another skill",
+      JSON.stringify({ schemaVersion: 1, skill: "other", files: {} }),
+    ],
+  ])(
+    "a %s manifest does not make a modified directory managed",
+    (_label, manifest) => {
+      const { sourceRoot, targetRoot } = workspace();
+      installSkills({ sourceRoot, targetRoot });
+      writeFileSync(
+        join(claudeCopy(targetRoot), installManifestName),
+        manifest,
+      );
+      writeFileSync(join(claudeCopy(targetRoot), "SKILL.md"), "edited\n");
+
+      const report = installSkills({ sourceRoot, targetRoot });
+
+      expect(report).toMatchObject({ ok: false, applied: false });
+      expect(conflicts(report)).toEqual([
+        expect.stringContaining("was not installed by this installer"),
+      ]);
+      expect(
+        readFileSync(join(claudeCopy(targetRoot), "SKILL.md"), "utf8"),
+      ).toBe("edited\n");
+    },
+  );
+
+  test("manifest entries pointing outside the copy are inert", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    installSkills({ sourceRoot, targetRoot });
+    const victim = join(targetRoot, "victim.txt");
+    writeFileSync(victim, "keep me\n");
+    const manifestPath = join(claudeCopy(targetRoot), installManifestName);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      files: Record<string, string>;
+    };
+    manifest.files["../../../victim.txt"] = contentHash(
+      Buffer.from("keep me\n"),
+    );
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+
+    expect(installSkills({ sourceRoot, targetRoot, force: true }).ok).toBe(
+      true,
+    );
+    expect(readFileSync(victim, "utf8")).toBe("keep me\n");
+  });
+
+  test("reports a directory where a file must be written, before writing anything", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    mkdirSync(join(claudeCopy(targetRoot), "references", "lifecycle.md"), {
+      recursive: true,
+    });
+    mkdirSync(join(agentsCopy(targetRoot), installManifestName), {
+      recursive: true,
+    });
+
+    const report = installSkills({ sourceRoot, targetRoot, force: true });
+
+    expect(report).toMatchObject({ ok: false, applied: false });
+    expect(conflicts(report)).toEqual([
+      "references/lifecycle.md exists and is not a regular file; remove or move it",
+      `${installManifestName} exists and is not a regular file; remove or move it`,
+    ]);
+    expect(listFiles(targetRoot)).toEqual([]);
+  });
+
+  test("refuses a symbolic link inside an installed copy", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    installSkills({ sourceRoot, targetRoot });
+    const outside = join(temporaryDirectory(), "outside.md");
+    writeFileSync(outside, "outside\n");
+    const linked = join(claudeCopy(targetRoot), "references", "lifecycle.md");
+    rmSync(linked);
+    symlinkSync(outside, linked);
+
+    const report = installSkills({ sourceRoot, targetRoot, force: true });
+
+    expect(report).toMatchObject({ ok: false, applied: false });
+    expect(conflicts(report)).toEqual([
+      expect.stringContaining("symbolic link"),
+    ]);
+    expect(readFileSync(outside, "utf8")).toBe("outside\n");
+  });
+
+  test("force removes a modified managed file that left the canonical source", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    const canonical = join(sourceRoot, "skills", "task-delivery");
+    const skillPath = join(canonical, "SKILL.md");
+    const original = readFileSync(skillPath, "utf8");
+    writeFileSync(join(canonical, "references", "extra.md"), "# Extra\n");
+    writeFileSync(
+      skillPath,
+      original.replace(
+        "## Reporting",
+        "See [extra](references/extra.md).\n\n## Reporting",
+      ),
+    );
+    installSkills({ sourceRoot, targetRoot });
+    rmSync(join(canonical, "references", "extra.md"));
+    writeFileSync(skillPath, original);
+    const edited = join(claudeCopy(targetRoot), "references", "extra.md");
+    writeFileSync(edited, "# Extra, edited\n");
+
+    const refused = installSkills({ sourceRoot, targetRoot });
+    expect(refused).toMatchObject({ ok: false, applied: false });
+    expect(existsSync(edited)).toBe(true);
+
+    expect(
+      installSkills({ sourceRoot, targetRoot, force: true }),
+    ).toMatchObject({ ok: true, applied: true });
+    expect(existsSync(edited)).toBe(false);
+  });
+
+  test("file names that shadow object properties are ordinary unmanaged files", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    installSkills({ sourceRoot, targetRoot });
+    writeFileSync(join(claudeCopy(targetRoot), "constructor"), "x\n");
+
+    for (const force of [false, true]) {
+      const report = installSkills({ sourceRoot, targetRoot, force });
+      expect(report).toMatchObject({ ok: false, applied: false });
+      expect(conflicts(report)).toEqual([
+        expect.stringContaining("constructor is not managed by the installer"),
+      ]);
+    }
+  });
+
+  test("ignores operating-system files in installed copies", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    installSkills({ sourceRoot, targetRoot });
+    writeFileSync(join(claudeCopy(targetRoot), ".DS_Store"), "junk");
+
+    expect(installSkills({ sourceRoot, targetRoot, check: true }).ok).toBe(
+      true,
+    );
+  });
+
+  test("reports orphaned copies in check mode and never deletes them", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    installSkills({ sourceRoot, targetRoot });
+    const orphan = join(targetRoot, ".agents", "skills", "old-skill");
+    cpSync(agentsCopy(targetRoot), orphan, { recursive: true });
+    // A user skill without a manifest is not an orphan.
+    mkdirSync(join(targetRoot, ".agents", "skills", "mine"));
+    writeFileSync(
+      join(targetRoot, ".agents", "skills", "mine", "SKILL.md"),
+      "mine\n",
+    );
+
+    const check = installSkills({ sourceRoot, targetRoot, check: true });
+    expect(check.ok).toBe(false);
+    expect(check.orphans).toEqual([".agents/skills/old-skill"]);
+
+    expect(installSkills({ sourceRoot, targetRoot }).orphans).toEqual([
+      ".agents/skills/old-skill",
+    ]);
+    expect(existsSync(join(orphan, "SKILL.md"))).toBe(true);
+  });
+
+  test("content identity ignores line endings but not other bytes", () => {
+    expect(contentHash(Buffer.from("a\r\nb\r\n"))).toBe(
+      contentHash(Buffer.from("a\nb\n")),
+    );
+    expect(contentHash(Buffer.from([0xff]))).not.toBe(
+      contentHash(Buffer.from([0xfe])),
+    );
+    expect(contentHash(Buffer.from("è"))).not.toBe(
+      contentHash(Buffer.from("é")),
+    );
+  });
+
   test("installs only the requested scope", () => {
     const { sourceRoot, targetRoot } = workspace();
 
@@ -367,6 +555,9 @@ describe("skill installer", () => {
     expect(() =>
       installSkills({ sourceRoot, targetRoot, scopes: ["nope"] }),
     ).toThrow(SkillPackageError);
+    expect(() => installSkills({ sourceRoot, targetRoot, scopes: [] })).toThrow(
+      /No installation scope was selected/u,
+    );
     expect(() =>
       installSkills({ sourceRoot, targetRoot: join(targetRoot, "missing") }),
     ).toThrow(/Installation root is not a directory/u);
@@ -406,6 +597,7 @@ describe("skill installer CLI", () => {
 
     expect(runInstallCli(["--bogus"], output)).toBe(2);
     expect(runInstallCli(["--root"], output)).toBe(2);
+    expect(runInstallCli(["--scope", ","], output)).toBe(2);
     expect(runInstallCli(["--check", "--force"], output)).toBe(2);
     expect(
       runInstallCli(["--root", join(temporaryDirectory(), "missing")], output),
@@ -423,7 +615,7 @@ describe("skill installer CLI", () => {
         targetRoot,
         "--check",
       ],
-      cwd: process.cwd(),
+      cwd: repositoryRoot,
       stdout: "pipe",
       stderr: "pipe",
     });

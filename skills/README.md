@@ -21,14 +21,14 @@ they need no Runtime, no daemon, and no AI Office project.
 
 ## Commands
 
-| Task                                      | Command                                           |
-| ----------------------------------------- | ------------------------------------------------- |
-| Install or update the copies              | `bun run skills:install`                          |
-| Verify the copies are in sync (no writes) | `bun run skills:check`                            |
-| Validate source and copies (CI)           | `bun run skills:validate`                         |
-| Install into another repository           | `bun run skills:install --root /abs/path/to/repo` |
-| Install for one executor family           | `bun run skills:install --scope agents`           |
-| Run the tests                             | `bunx --bun vitest run tests/unit/skill`          |
+| Task                                      | Command                                                                                               |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Install or update the copies              | `bun run skills:install`                                                                              |
+| Verify the copies are in sync (no writes) | `bun run skills:check`                                                                                |
+| Validate source and copies (CI)           | `bun run skills:validate`                                                                             |
+| Install into another repository           | `bun run skills:install --root /abs/path/to/repo`                                                     |
+| Install for one executor family           | `bun run skills:install --scope agents`                                                               |
+| Run the tests                             | `bunx --bun vitest run tests/unit/skills-install.test.ts tests/unit/skill-package-validation.test.ts` |
 
 `bun run check` runs `skills:validate`, so CI fails on an invalid skill or a
 drifted copy. Exit codes: `0` success or in sync, `1` drift, conflict, or error,
@@ -50,8 +50,15 @@ every file the installer wrote. The installer:
 - refuses a locally modified file, or an existing directory it did not install,
   and writes nothing to any target until the conflict is resolved (`--force`
   overwrites modified files and adopts an existing directory);
+- adopts an existing directory without `--force` only when every file in it
+  already matches the canonical source;
 - never deletes a file it did not write, even with `--force`;
-- refuses to write through symbolic links.
+- refuses to write through symbolic links (a symlinked executor directory is
+  reported as a conflict; use `--scope` to install the other locations);
+- reports installed copies whose canonical skill no longer exists, and leaves
+  their removal to you.
+
+The manifest is the ownership record and is trusted: do not edit it by hand.
 
 ## Using `task-delivery`
 
@@ -77,8 +84,9 @@ verification context, external reviewer), never tools.
   `bun run skills:install`.
 - If its primitives need explaining, add one row to the executor block in
   `SKILL.md` (between `<!-- executors:start -->` and `<!-- executors:end -->`).
-  That block is the only place executor names are allowed; the validator
-  rejects them anywhere else.
+  That block is the only place executor names are allowed. It must stay the
+  last section and short. The validator rejects known executor names anywhere
+  else; that denylist is a tripwire for common slips, not proof of neutrality.
 
 ## Relation to AI Office
 
@@ -96,6 +104,12 @@ The pipeline is the sequence of gates; the executor is whoever performs a
 stage. Changing the executor does not change the pipeline.
 
 ## Known limits
+
+- The validator's content checks (required stages in order, required policy
+  sentences, executor denylist) detect accidental removal, not a rewrite that
+  keeps the words and changes the meaning. Review skill edits like code.
+- `validate:skills` is the older, separate validator of the Runtime-managed
+  `ai-office` skill; `skills:validate` covers the skills in this directory.
 
 - The installer covers project-level locations only, not per-user ones.
 - Independence between implementation, review, and verification is an

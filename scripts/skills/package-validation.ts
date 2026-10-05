@@ -34,10 +34,12 @@ const allowedFrontmatterKeys = [
 ];
 
 const maximumSkillLines = 500;
+const maximumExecutorBlockLines = 40;
 
 /**
  * Executor and product names that must not leak into the vendor-neutral core.
  * They are allowed only between the executor block markers of `SKILL.md`.
+ * A denylist is a tripwire for the common slips, not proof of neutrality.
  */
 const executorSpecificTerms: readonly { label: string; pattern: RegExp }[] = [
   { label: "Claude", pattern: /\bclaude\b/iu },
@@ -60,15 +62,18 @@ interface ContentInvariant {
 
 interface SkillContract {
   readonly requiredFiles: readonly string[];
-  /** Matched against `SKILL.md` with whitespace collapsed to single spaces. */
+  /**
+   * Titles of the numbered `### N. Title` lifecycle headings, in order. Each
+   * heading must start with its title and be numbered consecutively from 1.
+   */
+  readonly stages: readonly string[];
+  /**
+   * Matched against the vendor-neutral core of `SKILL.md` with whitespace
+   * collapsed to single spaces.
+   */
   readonly invariants: readonly ContentInvariant[];
-}
-
-function stage(id: string, title: string): ContentInvariant {
-  return {
-    id: `stage:${id}`,
-    pattern: new RegExp(`#{2,3} \\d+\\. ${title}`, "u"),
-  };
+  /** Names the executor block must mention. */
+  readonly executors: readonly string[];
 }
 
 /** Skill-specific contracts, keyed by skill name. */
@@ -84,18 +89,21 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       "references/configuration.md",
       "assets/pr-template.md",
     ],
+    stages: [
+      "Preflight",
+      "Design",
+      "Implementation",
+      "Pull Request",
+      "Independent Review",
+      "Hardening",
+      "Second Review",
+      "Verification",
+      "External Review",
+      "Ready for Merge",
+      "Post-merge verification",
+    ],
+    executors: ["Claude Code", "Codex", "Pi"],
     invariants: [
-      stage("preflight", "Preflight"),
-      stage("design", "Design"),
-      stage("implementation", "Implementation"),
-      stage("pull-request", "Pull Request"),
-      stage("independent-review", "Independent Review"),
-      stage("hardening", "Hardening"),
-      stage("second-review", "Second Review"),
-      stage("verification", "Verification"),
-      stage("external-review", "External Review"),
-      stage("ready-for-merge", "Ready for Merge"),
-      stage("post-merge", "Post-merge verification"),
       {
         id: "policy:no-automatic-merge",
         pattern: /never merge without explicit authorization/iu,
@@ -125,11 +133,6 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
         id: "policy:scope",
         pattern: /stay in scope/iu,
       },
-      {
-        id: "executor-mapping",
-        pattern:
-          /<!-- executors:start -->.*Claude Code.*Codex.*<!-- executors:end -->/u,
-      },
     ],
   },
 };
@@ -144,29 +147,58 @@ function isInside(root: string, path: string): boolean {
 }
 
 /**
- * Splits `SKILL.md` into its vendor-neutral core and the executor block.
- * Reports malformed or repeated markers.
+ * Splits `SKILL.md` into its vendor-neutral core and the executor block. The
+ * block must be the last thing in the file and short, so it cannot swallow the
+ * workflow it is meant to annotate.
  */
 function splitExecutorBlock(
   source: string,
   errors: string[],
-): { core: string } {
+): { core: string; block: string | null } {
   const starts = source.split(executorBlockStart).length - 1;
   const ends = source.split(executorBlockEnd).length - 1;
-  if (starts === 0 && ends === 0) return { core: source };
+  if (starts === 0 && ends === 0) return { core: source, block: null };
   const startIndex = source.indexOf(executorBlockStart);
   const endIndex = source.indexOf(executorBlockEnd);
   if (starts !== 1 || ends !== 1 || endIndex < startIndex) {
     errors.push(
       "SKILL.md must contain at most one well-formed executor block (executors:start ... executors:end)",
     );
-    return { core: source };
+    return { core: source, block: null };
   }
-  return {
-    core:
-      source.slice(0, startIndex) +
-      source.slice(endIndex + executorBlockEnd.length),
-  };
+  const block = source.slice(startIndex + executorBlockStart.length, endIndex);
+  if (source.slice(endIndex + executorBlockEnd.length).trim() !== "")
+    errors.push("SKILL.md executor block must be the last section of the file");
+  if (block.split("\n").length > maximumExecutorBlockLines)
+    errors.push(
+      `SKILL.md executor block exceeds ${maximumExecutorBlockLines} lines; it maps roles to executor primitives and nothing else`,
+    );
+  return { core: source.slice(0, startIndex), block };
+}
+
+function validateStages(
+  core: string,
+  stages: readonly string[],
+  errors: string[],
+): void {
+  const headings = [...core.matchAll(/^### (\d+)\. (.+)$/gmu)];
+  for (const [index, title] of stages.entries()) {
+    const heading = headings[index];
+    if (
+      heading === undefined ||
+      Number(heading[1]) !== index + 1 ||
+      !heading[2]!.startsWith(title)
+    ) {
+      errors.push(
+        `SKILL.md lifecycle stage ${index + 1} must be "### ${index + 1}. ${title}"`,
+      );
+      return;
+    }
+  }
+  if (headings.length > stages.length)
+    errors.push(
+      `SKILL.md declares ${headings.length} lifecycle stages; the contract defines ${stages.length}`,
+    );
 }
 
 function validateFrontmatter(
@@ -210,11 +242,23 @@ function validateFrontmatter(
     );
 }
 
-/** Relative Markdown link targets of one document, fragments removed. */
+/**
+ * Relative link targets of one Markdown document, fragments removed. Covers
+ * inline links and reference definitions; fenced code blocks are examples,
+ * not links.
+ */
 function relativeLinkTargets(markdown: string): string[] {
+  const prose = markdown.replace(/^(```|~~~)[\s\S]*?^\1.*$/gmu, "");
+  const candidates = [
+    ...[...prose.matchAll(/\[[^\]]*\]\(([^)\s]+)[^)]*\)/gu)].map(
+      (match) => match[1]!,
+    ),
+    ...[...prose.matchAll(/^ {0,3}\[[^\]]+\]:\s*(\S+)/gmu)].map(
+      (match) => match[1]!,
+    ),
+  ];
   const targets: string[] = [];
-  for (const match of markdown.matchAll(/\[[^\]]*\]\(([^)\s]+)[^)]*\)/gu)) {
-    const target = match[1]!;
+  for (const target of candidates) {
     if (target.startsWith("#") || /^[a-z][a-z0-9+.-]*:/iu.test(target))
       continue;
     const withoutFragment = target.split("#", 1)[0]!;
@@ -241,8 +285,14 @@ export function validateSkillPackage(skillRoot: string): string[] {
     throw error;
   }
 
+  const topLevelEntries = new Set(files.map((file) => file.split("/", 1)[0]!));
   for (const entry of readdirSync(skillRoot).sort())
-    if (!allowedTopLevelEntries.includes(entry))
+    if (
+      !allowedTopLevelEntries.includes(entry) &&
+      // Ignored operating-system files are absent from `files`.
+      (topLevelEntries.has(entry) ||
+        statSync(join(skillRoot, entry)).isDirectory())
+    )
       errors.push(
         `Unexpected top-level entry: ${entry} (allowed: ${allowedTopLevelEntries.join(", ")})`,
       );
@@ -257,17 +307,21 @@ export function validateSkillPackage(skillRoot: string): string[] {
     errors.push(
       `SKILL.md exceeds ${maximumSkillLines} lines; move detail into references/`,
     );
-  const { core } = splitExecutorBlock(source, errors);
+  const { core, block } = splitExecutorBlock(source, errors);
 
   const contract = skillContracts[basename(skillRoot)];
   if (contract !== undefined) {
     for (const requiredFile of contract.requiredFiles)
       if (!files.includes(requiredFile))
         errors.push(`Required file is missing: ${requiredFile}`);
-    const normalized = source.replace(/\s+/gu, " ");
+    validateStages(core, contract.stages, errors);
+    const normalized = core.replace(/\s+/gu, " ");
     for (const invariant of contract.invariants)
       if (!invariant.pattern.test(normalized))
         errors.push(`SKILL.md is missing required content: ${invariant.id}`);
+    for (const executor of contract.executors)
+      if (block === null || !block.includes(executor))
+        errors.push(`SKILL.md executor block does not cover: ${executor}`);
   }
 
   const linked = new Set<string>();
@@ -290,9 +344,15 @@ export function validateSkillPackage(skillRoot: string): string[] {
       const linkedPath = resolve(skillRoot, dirname(file), target);
       if (!isInside(skillRoot, linkedPath))
         errors.push(`${file} links outside the skill directory: ${target}`);
-      else if (!existsSync(linkedPath))
+      else if (
+        !statSync(linkedPath, { throwIfNoEntry: false })?.isFile() ||
+        // Exact-case match, so a link that works on a case-insensitive
+        // filesystem cannot break on a case-sensitive one.
+        !files.includes(relative(skillRoot, linkedPath).split(sep).join("/"))
+      )
         errors.push(`${file} links to a missing file: ${target}`);
-      else linked.add(relative(skillRoot, linkedPath).split(sep).join("/"));
+      else if (relative(skillRoot, linkedPath).split(sep).join("/") !== file)
+        linked.add(relative(skillRoot, linkedPath).split(sep).join("/"));
     }
   }
   for (const file of files)

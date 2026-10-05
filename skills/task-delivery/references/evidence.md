@@ -19,8 +19,9 @@ Evidence is something another person can check without trusting you.
 
 ## Rules
 
-- Bind evidence to a commit. New commits invalidate review and verification
-  evidence for the parts they touch; when in doubt, run the gate again.
+- Bind evidence to a commit. Any commit added after a gate invalidates that
+  gate's evidence: run the gate again. A repeated review may read only the new
+  diff; a repeated verification always covers the whole head.
 - Report failures as plainly as successes, with their output.
 - Say what was skipped and why. A skipped gate is reported as skipped, never as
   passed.

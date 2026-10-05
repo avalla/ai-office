@@ -35,6 +35,10 @@ export function validateSkills(root: string = repositoryRoot): string[] {
 
   try {
     const report = installSkills({ sourceRoot, check: true });
+    for (const orphan of report.orphans)
+      errors.push(
+        `${orphan}: installed copy has no canonical skill under ${canonicalSkillsDirectory}/; remove it`,
+      );
     for (const target of report.targets) {
       for (const conflict of target.conflicts)
         errors.push(`${target.directory}: ${conflict}`);

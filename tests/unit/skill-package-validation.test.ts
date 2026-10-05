@@ -14,6 +14,7 @@ import {
   skillContracts,
   validateSkillPackage,
 } from "../../scripts/skills/package-validation.ts";
+import { repositoryRoot } from "../../scripts/skills/shared.ts";
 import { validateSkills } from "../../scripts/skills/validate.ts";
 
 const temporaryDirectories: string[] = [];
@@ -27,7 +28,7 @@ afterEach(() => {
 function repositoryCopy(): { root: string; skillRoot: string } {
   const root = mkdtempSync(join(tmpdir(), "skill-validation-"));
   temporaryDirectories.push(root);
-  cpSync(join(process.cwd(), "skills"), join(root, "skills"), {
+  cpSync(join(repositoryRoot, "skills"), join(root, "skills"), {
     recursive: true,
   });
   return { root, skillRoot: join(root, "skills", "task-delivery") };
@@ -41,7 +42,7 @@ function rewrite(path: string, transform: (source: string) => string): void {
   writeFileSync(path, next);
 }
 
-const canonicalSkillRoot = join(process.cwd(), "skills", "task-delivery");
+const canonicalSkillRoot = join(repositoryRoot, "skills", "task-delivery");
 const canonicalSkill = readFileSync(
   join(canonicalSkillRoot, "SKILL.md"),
   "utf8",
@@ -231,6 +232,78 @@ describe("skill package validation", () => {
     );
   });
 
+  test("the executor block cannot swallow or precede the workflow", () => {
+    const moved = repositoryCopy();
+    rewrite(join(moved.skillRoot, "SKILL.md"), (source) =>
+      source
+        .replace("<!-- executors:start -->\n", "")
+        .replace(
+          "# Task Delivery",
+          "<!-- executors:start -->\n\n# Task Delivery",
+        ),
+    );
+    expect(validateSkillPackage(moved.skillRoot)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("executor block exceeds"),
+        expect.stringContaining("lifecycle stage 1 must be"),
+      ]),
+    );
+
+    const trailing = repositoryCopy();
+    rewrite(
+      join(trailing.skillRoot, "SKILL.md"),
+      (source) => `${source}\n## Afterword\n\nMore workflow text.\n`,
+    );
+    expect(validateSkillPackage(trailing.skillRoot)).toEqual([
+      "SKILL.md executor block must be the last section of the file",
+    ]);
+  });
+
+  test("checks reference-style links and ignores fenced examples and OS files", () => {
+    const { skillRoot } = repositoryCopy();
+    rewrite(
+      join(skillRoot, "references", "lifecycle.md"),
+      (source) =>
+        `${source}\n\`\`\`md\n[example](path/to/file.md)\n\`\`\`\n\n[ref]: nope.md\n[dir]: ../assets\n[case]: QA-Checklist.md\n`,
+    );
+    writeFileSync(join(skillRoot, ".DS_Store"), "junk");
+    writeFileSync(join(skillRoot, "references", ".DS_Store"), "junk");
+
+    expect(validateSkillPackage(skillRoot)).toEqual([
+      "references/lifecycle.md links to a missing file: nope.md",
+      "references/lifecycle.md links to a missing file: ../assets",
+      "references/lifecycle.md links to a missing file: QA-Checklist.md",
+    ]);
+  });
+
+  test("a file linked only from itself is still unreferenced", () => {
+    const { skillRoot } = repositoryCopy();
+    writeFileSync(
+      join(skillRoot, "references", "loop.md"),
+      "# Loop\n\nSee [this page](loop.md).\n",
+    );
+
+    expect(validateSkillPackage(skillRoot)).toEqual([
+      "references/loop.md is not linked from any document in the skill",
+    ]);
+  });
+
+  test("rejects an installed copy whose canonical skill no longer exists", () => {
+    const { root } = repositoryCopy();
+    installSkills({ sourceRoot: root });
+    cpSync(
+      join(root, ".claude", "skills", "task-delivery"),
+      join(root, ".claude", "skills", "old-skill"),
+      { recursive: true },
+    );
+
+    expect(validateSkills(root)).toEqual([
+      expect.stringContaining(
+        ".claude/skills/old-skill: installed copy has no canonical skill",
+      ),
+    ]);
+  });
+
   test("rejects installed copies that are missing or diverge from the source", () => {
     const { root } = repositoryCopy();
     expect(validateSkills(root)).toEqual(
@@ -279,17 +352,6 @@ describe("task-delivery workflow invariants", () => {
   // Each entry removes one gate or policy from the canonical text; the
   // validator must then name the invariant that disappeared.
   const removals: readonly [id: string, removed: string | RegExp][] = [
-    ["stage:preflight", "### 1. Preflight"],
-    ["stage:design", "### 2. Design"],
-    ["stage:implementation", "### 3. Implementation"],
-    ["stage:pull-request", "### 4. Pull Request"],
-    ["stage:independent-review", "### 5. Independent Review"],
-    ["stage:hardening", "### 6. Hardening"],
-    ["stage:second-review", "### 7. Second Review"],
-    ["stage:verification", "### 8. Verification / QA"],
-    ["stage:external-review", "### 9. External Review (optional)"],
-    ["stage:ready-for-merge", "### 10. Ready for Merge"],
-    ["stage:post-merge", "### 11. Post-merge verification / completion"],
     [
       "policy:no-automatic-merge",
       "Never merge without explicit authorization.",
@@ -312,7 +374,6 @@ describe("task-delivery workflow invariants", () => {
       /Implementation, review, and verification must run in independent contexts/u,
     ],
     ["policy:scope", "Stay in scope."],
-    ["executor-mapping", /\| Codex .*\n/u],
   ];
 
   test("every contract invariant has a removal case", () => {
@@ -329,6 +390,68 @@ describe("task-delivery workflow invariants", () => {
 
     expect(validateSkillPackage(skillRoot)).toContain(
       `SKILL.md is missing required content: ${id}`,
+    );
+  });
+
+  test.each(contract.stages.map((title, index) => [index + 1, title]))(
+    "requires lifecycle stage %i: %s",
+    (number, title) => {
+      const { skillRoot } = repositoryCopy();
+      rewrite(join(skillRoot, "SKILL.md"), (source) =>
+        source.replace(new RegExp(`^### ${number}\\. .*$`, "mu"), ""),
+      );
+
+      const errors = validateSkillPackage(skillRoot);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/^SKILL\.md lifecycle stage \d+ must be/u);
+      expect(errors[0]).toContain(
+        number === contract.stages.length
+          ? `### ${number}. ${title}`
+          : `### ${number}. `,
+      );
+    },
+  );
+
+  test("rejects lifecycle stages that are reordered or renumbered", () => {
+    const { skillRoot } = repositoryCopy();
+    rewrite(join(skillRoot, "SKILL.md"), (source) =>
+      source
+        .replace("### 10. Ready for Merge", "### 3. Ready for Merge")
+        .replace("### 3. Implementation", "### 10. Implementation"),
+    );
+
+    expect(validateSkillPackage(skillRoot)).toEqual([
+      'SKILL.md lifecycle stage 3 must be "### 3. Implementation"',
+    ]);
+  });
+
+  test.each(contract.executors)(
+    "requires the executor block to cover %s",
+    (executor) => {
+      const { skillRoot } = repositoryCopy();
+      rewrite(join(skillRoot, "SKILL.md"), (source) =>
+        source.replace(new RegExp(`^\\| ${executor} .*\\n`, "mu"), ""),
+      );
+
+      expect(validateSkillPackage(skillRoot)).toEqual([
+        `SKILL.md executor block does not cover: ${executor}`,
+      ]);
+    },
+  );
+
+  test("policies must be stated in the core, not only in the executor block", () => {
+    const { skillRoot } = repositoryCopy();
+    rewrite(join(skillRoot, "SKILL.md"), (source) =>
+      source
+        .replace("**Stay in scope.**", "**Mind the boundaries.**")
+        .replace(
+          "<!-- executors:end -->",
+          "Stay in scope.\n\n<!-- executors:end -->",
+        ),
+    );
+
+    expect(validateSkillPackage(skillRoot)).toContain(
+      "SKILL.md is missing required content: policy:scope",
     );
   });
 

@@ -3,9 +3,11 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   rmdirSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -45,6 +47,11 @@ export interface TargetReport {
 export interface InstallReport {
   readonly check: boolean;
   readonly targets: readonly TargetReport[];
+  /**
+   * Installed copies whose canonical skill no longer exists (renamed or
+   * removed). Executors keep loading them; they are reported, never deleted.
+   */
+  readonly orphans: readonly string[];
   /** True when changes were written to disk. */
   readonly applied: boolean;
   /** Install: nothing was refused. Check: every target is in sync. */
@@ -147,17 +154,19 @@ function planTarget(
   const installedRoot = join(targetRoot, ...directory.split("/"));
 
   const desired = new Map<string, Buffer>();
-  const hashes: Record<string, string> = {};
+  // Maps, not plain objects: file names such as "constructor" must not
+  // resolve to inherited properties.
+  const hashes = new Map<string, string>();
   for (const file of listFiles(skillRoot)) {
     const content = readFileSync(join(skillRoot, file));
     desired.set(file, content);
-    hashes[file] = contentHash(content);
+    hashes.set(file, contentHash(content));
   }
   const manifestText = renderManifest({
     schemaVersion: 1,
     skill,
     version,
-    files: hashes,
+    files: Object.fromEntries(hashes),
   });
 
   const changes: PlannedChange[] = [];
@@ -178,7 +187,9 @@ function planTarget(
 
   const unsafe = unsafePathReason(targetRoot, directory);
   if (unsafe !== null) {
-    conflicts.push(unsafe);
+    conflicts.push(
+      `${unsafe} (use --scope to install the other locations only)`,
+    );
     return plan();
   }
 
@@ -197,22 +208,47 @@ function planTarget(
   const manifest = hasManifestFile ? readManifest(manifestPath) : null;
   const contentFiles = installed.filter((file) => file !== installManifestName);
 
-  // A directory this installer cannot prove it wrote belongs to the user.
+  // Anything except a regular file where the installer must write one (an
+  // empty directory is invisible to listFiles) would fail halfway through.
+  for (const file of [...desired.keys(), installManifestName]) {
+    const stats = lstatSync(join(installedRoot, ...file.split("/")), {
+      throwIfNoEntry: false,
+    });
+    if (stats !== undefined && !stats.isFile())
+      conflicts.push(
+        `${file} exists and is not a regular file; remove or move it`,
+      );
+  }
+  if (conflicts.length > 0) return plan();
+
+  const actualHashes = new Map(
+    contentFiles.map((file) => [
+      file,
+      contentHash(readFileSync(join(installedRoot, file))),
+    ]),
+  );
+  // A directory this installer cannot prove it wrote belongs to the user. It
+  // is adopted silently only when nothing in it would be overwritten.
   const unmanaged =
     contentFiles.length > 0 && (manifest === null || manifest.skill !== skill);
-  if (unmanaged && !force) {
+  const identical = contentFiles.every(
+    (file) => actualHashes.get(file) === hashes.get(file),
+  );
+  if (unmanaged && !identical && !force) {
     conflicts.push(
-      `${directory} already exists and was not installed by this installer; move it away, or rerun with --force to adopt it`,
+      `${directory} already exists, differs from the canonical skill, and was not installed by this installer; move it away, or rerun with --force to adopt it`,
     );
     return plan();
   }
-  const recorded = unmanaged ? {} : (manifest?.files ?? {});
+  const recorded = new Map(
+    unmanaged ? [] : Object.entries(manifest?.files ?? {}),
+  );
 
   for (const file of contentFiles) {
-    const actualHash = contentHash(readFileSync(join(installedRoot, file)));
-    const wanted = hashes[file];
+    const actualHash = actualHashes.get(file);
+    const wanted = hashes.get(file);
     if (actualHash === wanted) continue;
-    const recordedHash = recorded[file];
+    const recordedHash = recorded.get(file);
     // --force adopts only paths the canonical source also owns.
     const owned =
       recordedHash !== undefined || (unmanaged && wanted !== undefined);
@@ -249,6 +285,29 @@ function planTarget(
   return plan();
 }
 
+function findOrphans(
+  targetRoot: string,
+  targets: readonly InstallTarget[],
+  skills: readonly string[],
+): string[] {
+  const orphans: string[] = [];
+  for (const target of targets) {
+    if (unsafePathReason(targetRoot, target.directory) !== null) continue;
+    const directory = join(targetRoot, ...target.directory.split("/"));
+    if (!existsSync(directory)) continue;
+    for (const entry of readdirSync(directory).sort()) {
+      const manifestPath = join(directory, entry, installManifestName);
+      if (
+        !skills.includes(entry) &&
+        lstatSync(manifestPath, { throwIfNoEntry: false })?.isFile() === true &&
+        readManifest(manifestPath) !== null
+      )
+        orphans.push(`${target.directory}/${entry}`);
+    }
+  }
+  return orphans;
+}
+
 function removeEmptyParents(installedRoot: string, relativePath: string): void {
   let directory = dirname(join(installedRoot, ...relativePath.split("/")));
   while (directory.startsWith(installedRoot) && directory !== installedRoot) {
@@ -262,8 +321,9 @@ function removeEmptyParents(installedRoot: string, relativePath: string): void {
 }
 
 function applyPlan(plan: TargetPlan): void {
-  // The manifest is written last: an interrupted run leaves files the next
-  // run still recognizes through the previous manifest.
+  // The manifest is written last. An interrupted update is still recognized
+  // through the previous manifest; an interrupted first install leaves only
+  // canonical files, which the next run adopts.
   const ordered = [
     ...plan.changes.filter((change) => change.path !== installManifestName),
     ...plan.changes.filter((change) => change.path === installManifestName),
@@ -276,14 +336,23 @@ function applyPlan(plan: TargetPlan): void {
       continue;
     }
     mkdirSync(dirname(absolutePath), { recursive: true });
+    const content = plan.desired.get(change.path);
+    if (content === undefined)
+      throw new SkillPackageError(`No content planned for ${change.path}`);
     const temporaryPath = `${absolutePath}.tmp-${process.pid}`;
-    writeFileSync(temporaryPath, plan.desired.get(change.path)!);
-    renameSync(temporaryPath, absolutePath);
+    try {
+      writeFileSync(temporaryPath, content);
+      renameSync(temporaryPath, absolutePath);
+    } finally {
+      rmSync(temporaryPath, { force: true });
+    }
   }
 }
 
 function selectTargets(scopes: readonly string[] | undefined): InstallTarget[] {
   if (scopes === undefined) return [...installTargets];
+  if (scopes.length === 0)
+    throw new SkillPackageError("No installation scope was selected");
   const selected: InstallTarget[] = [];
   for (const scope of scopes) {
     const target = installTargets.find((candidate) => candidate.id === scope);
@@ -307,7 +376,7 @@ export function installSkills(options: InstallOptions = {}): InstallReport {
   const check = options.check ?? false;
   const targets = selectTargets(options.scopes);
 
-  if (!existsSync(targetRoot) || !lstatSync(targetRoot).isDirectory())
+  if (!statSync(targetRoot, { throwIfNoEntry: false })?.isDirectory())
     throw new SkillPackageError(
       `Installation root is not a directory: ${targetRoot}`,
     );
@@ -335,6 +404,8 @@ export function installSkills(options: InstallOptions = {}): InstallReport {
   const conflicted = plans.some((plan) => plan.conflicts.length > 0);
   const pending = plans.some((plan) => plan.changes.length > 0);
 
+  const orphans = findOrphans(targetRoot, targets, skills);
+
   let applied = false;
   if (!check && !conflicted && pending) {
     for (const plan of plans) applyPlan(plan);
@@ -352,8 +423,9 @@ export function installSkills(options: InstallOptions = {}): InstallReport {
         conflicts,
       }),
     ),
+    orphans,
     applied,
-    ok: !conflicted && (!check || !pending),
+    ok: !conflicted && (!check || (!pending && orphans.length === 0)),
   };
 }
 
@@ -378,6 +450,10 @@ export function formatInstallReport(report: InstallReport): string {
       for (const change of target.changes)
         lines.push(`  - would ${change.kind} ${change.path}`);
   }
+  for (const orphan of report.orphans)
+    lines.push(
+      `${orphan}: ORPHAN - installed by this installer, but its canonical skill no longer exists; remove the directory`,
+    );
   if (report.ok)
     lines.push(
       report.applied
@@ -386,7 +462,8 @@ export function formatInstallReport(report: InstallReport): string {
     );
   else if (report.targets.some((target) => target.conflicts.length > 0))
     lines.push("Nothing was written. Resolve the conflicts above and retry.");
-  else lines.push("Run `bun run skills:install` to synchronize.");
+  else if (report.targets.some((target) => target.changes.length > 0))
+    lines.push("Run `bun run skills:install` to synchronize.");
   return lines.join("\n");
 }
 
@@ -420,7 +497,11 @@ function parseArguments(argv: readonly string[]): InstallOptions | null {
       if (value === undefined || value.startsWith("--"))
         throw new UsageError(`${argument} requires a value`);
       if (argument === "--root") targetRoot = value;
-      else scopes = value.split(",").filter((scope) => scope !== "");
+      else {
+        scopes = value.split(",").filter((scope) => scope !== "");
+        if (scopes.length === 0)
+          throw new UsageError("--scope requires at least one target id");
+      }
     } else throw new UsageError(`Unknown argument: ${argument}`);
   }
   if (check && force)

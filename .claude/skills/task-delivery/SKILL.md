@@ -31,8 +31,10 @@ was not independent.
 
 ## Non-negotiable rules
 
-1. **Never merge without explicit authorization.** Authorization for one pull
-   request does not extend to the next one.
+1. **Never merge without explicit authorization.** The merge belongs to the
+   authorizer. Perform it yourself only when the authorizer explicitly asks you
+   to merge that specific pull request; authorization for one pull request does
+   not extend to the next one.
 2. **READY FOR MERGE != DONE.** A task is DONE only after it is merged and the
    post-merge verification has passed.
 3. **Task dependency != Git branch dependency.** A task may logically depend on
@@ -59,12 +61,17 @@ Run the stages in order. Each stage is detailed, with entry and exit criteria,
 in [lifecycle](references/lifecycle.md). At every stage, check the
 [stop conditions](references/stop-conditions.md) before continuing.
 
+When asked to start part-way - for example to review or verify an existing
+change - first confirm that every earlier stage has evidence for the current
+head commit. Treat a stage without evidence as not passed: perform it, or
+report it as missing. Never assume it.
+
 ### 1. Preflight
 
 Confirm the task is deliverable: acceptance criteria are explicit, logical
 dependencies are satisfied or deliberately deferred, the working tree is clean,
-the base branch is chosen and current, and the full verification command passes
-on the base before you change anything.
+the base branch is chosen and current, and the full verification is green on
+the base commit before you change anything.
 
 ### 2. Design
 
@@ -116,12 +123,12 @@ other review: validate, harden, re-verify. Skip the stage otherwise and say so.
 ### 10. Ready for Merge
 
 Declare READY FOR MERGE only when review, hardening, and verification evidence
-all refer to the current head and no blocking finding is open. Report and wait:
-the merge belongs to the authorizer.
+all refer to the current head and no blocking finding is open. Report and wait
+for the authorizer.
 
 ### 11. Post-merge verification / completion
 
-After an authorized merge, verify the integration branch at the merge commit,
+After the authorized merge, verify the integration branch at the merge commit,
 update dependent branches and task state, and only then declare the task DONE.
 
 ## Reporting

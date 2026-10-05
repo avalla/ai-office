@@ -27,8 +27,9 @@ depend on the answer may continue.
 
 ## Stop after bounded effort
 
-- **Non-converging review.** Two complete review-hardening loops still leave a
-  blocking finding open.
+- **Non-converging loop.** The task has returned to Hardening twice - from
+  review, verification, or external review - and a blocking finding or failure
+  is still open.
 - **Unexplained failure.** A verification failure that cannot be reproduced or
   explained after a focused investigation. Do not retry until green.
 - **Flaky verification.** A check that passes only on retry. Report it; a
