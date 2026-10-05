@@ -435,6 +435,42 @@ describe("skill installer", () => {
     expect(listFiles(targetRoot)).toEqual([]);
   });
 
+  test("reports a file where a directory is expected instead of crashing", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    mkdirSync(claudeCopy(targetRoot), { recursive: true });
+    writeFileSync(join(claudeCopy(targetRoot), "references"), "x\n");
+
+    for (const force of [false, true]) {
+      const report = installSkills({ sourceRoot, targetRoot, force });
+      expect(report).toMatchObject({ ok: false, applied: false });
+      expect(conflicts(report)).toEqual([
+        "references exists and is not a regular directory; remove or move it",
+      ]);
+    }
+    expect(existsSync(agentsCopy(targetRoot))).toBe(false);
+  });
+
+  test("tolerates plain files beside the installed skills", () => {
+    const { sourceRoot, targetRoot } = workspace();
+    for (const directory of [".claude", ".agents"]) {
+      mkdirSync(join(targetRoot, directory, "skills"), { recursive: true });
+      writeFileSync(join(targetRoot, directory, "skills", ".DS_Store"), "x");
+      writeFileSync(join(targetRoot, directory, "skills", "README.md"), "x");
+    }
+
+    expect(installSkills({ sourceRoot, targetRoot })).toMatchObject({
+      ok: true,
+      applied: true,
+    });
+    // Same repository as the source, where orphan detection is active.
+    installSkills({ sourceRoot });
+    writeFileSync(join(sourceRoot, ".claude", "skills", ".gitkeep"), "");
+    expect(installSkills({ sourceRoot, check: true })).toMatchObject({
+      ok: true,
+      orphans: [],
+    });
+  });
+
   test("refuses a symbolic link inside an installed copy", () => {
     const { sourceRoot, targetRoot } = workspace();
     installSkills({ sourceRoot, targetRoot });
@@ -506,26 +542,32 @@ describe("skill installer", () => {
     );
   });
 
-  test("reports orphaned copies in check mode and never deletes them", () => {
+  test("reports orphaned copies in the source repository and never deletes them", () => {
     const { sourceRoot, targetRoot } = workspace();
-    installSkills({ sourceRoot, targetRoot });
-    const orphan = join(targetRoot, ".agents", "skills", "old-skill");
-    cpSync(agentsCopy(targetRoot), orphan, { recursive: true });
+    installSkills({ sourceRoot });
+    const installed = join(sourceRoot, ".agents", "skills");
+    const orphan = join(installed, "old-skill");
+    cpSync(join(installed, "task-delivery"), orphan, { recursive: true });
     // A user skill without a manifest is not an orphan.
-    mkdirSync(join(targetRoot, ".agents", "skills", "mine"));
-    writeFileSync(
-      join(targetRoot, ".agents", "skills", "mine", "SKILL.md"),
-      "mine\n",
-    );
+    mkdirSync(join(installed, "mine"));
+    writeFileSync(join(installed, "mine", "SKILL.md"), "mine\n");
 
-    const check = installSkills({ sourceRoot, targetRoot, check: true });
+    const check = installSkills({ sourceRoot, check: true });
     expect(check.ok).toBe(false);
     expect(check.orphans).toEqual([".agents/skills/old-skill"]);
-
-    expect(installSkills({ sourceRoot, targetRoot }).orphans).toEqual([
+    expect(installSkills({ sourceRoot }).orphans).toEqual([
       ".agents/skills/old-skill",
     ]);
     expect(existsSync(join(orphan, "SKILL.md"))).toBe(true);
+
+    // In another repository the same copy may come from another source.
+    installSkills({ sourceRoot, targetRoot });
+    cpSync(orphan, join(targetRoot, ".agents", "skills", "old-skill"), {
+      recursive: true,
+    });
+    expect(
+      installSkills({ sourceRoot, targetRoot, check: true }),
+    ).toMatchObject({ ok: true, orphans: [] });
   });
 
   test("content identity ignores line endings but not other bytes", () => {

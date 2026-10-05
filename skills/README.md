@@ -110,7 +110,6 @@ stage. Changing the executor does not change the pipeline.
   keeps the words and changes the meaning. Review skill edits like code.
 - `validate:skills` is the older, separate validator of the Runtime-managed
   `ai-office` skill; `skills:validate` covers the skills in this directory.
-
 - The installer covers project-level locations only, not per-user ones.
 - Independence between implementation, review, and verification is an
   instruction to the executor; nothing here enforces it.

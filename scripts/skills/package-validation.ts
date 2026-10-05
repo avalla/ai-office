@@ -248,14 +248,20 @@ function validateFrontmatter(
  * not links.
  */
 function relativeLinkTargets(markdown: string): string[] {
-  const prose = markdown.replace(/^(```|~~~)[\s\S]*?^\1.*$/gmu, "");
+  const prose = markdown
+    .replace(/^([ \t>]*)(```|~~~)[\s\S]*?^[ \t>]*\2.*$/gmu, "")
+    .replace(/`[^`\n]*`/gu, "");
   const candidates = [
-    ...[...prose.matchAll(/\[[^\]]*\]\(([^)\s]+)[^)]*\)/gu)].map(
+    ...[...prose.matchAll(/\[[^\]]*\]\(<?([^)\s>]+)[^)]*\)/gu)].map(
       (match) => match[1]!,
     ),
-    ...[...prose.matchAll(/^ {0,3}\[[^\]]+\]:\s*(\S+)/gmu)].map(
-      (match) => match[1]!,
-    ),
+    // Reference definitions with a path-like target. Footnotes ([^1]: ...)
+    // and bracketed prose ([Note]: text) are not links.
+    ...[
+      ...prose.matchAll(
+        /^ {0,3}\[(?!\^)[^\]]+\]:[ \t]+<?([^\s>]*[./][^\s>]*)>?[ \t]*$/gmu,
+      ),
+    ].map((match) => match[1]!),
   ];
   const targets: string[] = [];
   for (const target of candidates) {
@@ -320,7 +326,10 @@ export function validateSkillPackage(skillRoot: string): string[] {
       if (!invariant.pattern.test(normalized))
         errors.push(`SKILL.md is missing required content: ${invariant.id}`);
     for (const executor of contract.executors)
-      if (block === null || !block.includes(executor))
+      if (
+        block === null ||
+        !new RegExp(`(?<![\\w-])${executor}(?![\\w-])`, "u").test(block)
+      )
         errors.push(`SKILL.md executor block does not cover: ${executor}`);
   }
 

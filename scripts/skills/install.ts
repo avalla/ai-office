@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   rmdirSync,
@@ -48,8 +49,10 @@ export interface InstallReport {
   readonly check: boolean;
   readonly targets: readonly TargetReport[];
   /**
-   * Installed copies whose canonical skill no longer exists (renamed or
+   * Installed copies with no canonical skill in this source (renamed or
    * removed). Executors keep loading them; they are reported, never deleted.
+   * Only looked for when installing into the source repository itself: in
+   * another repository they may come from a different source.
    */
   readonly orphans: readonly string[];
   /** True when changes were written to disk. */
@@ -211,13 +214,20 @@ function planTarget(
   // Anything except a regular file where the installer must write one (an
   // empty directory is invisible to listFiles) would fail halfway through.
   for (const file of [...desired.keys(), installManifestName]) {
-    const stats = lstatSync(join(installedRoot, ...file.split("/")), {
-      throwIfNoEntry: false,
-    });
-    if (stats !== undefined && !stats.isFile())
-      conflicts.push(
-        `${file} exists and is not a regular file; remove or move it`,
-      );
+    // Walk each component: a file where a parent directory is expected must
+    // be reported, and lstat on a path beneath it would throw ENOTDIR.
+    let current = installedRoot;
+    const components = file.split("/");
+    for (const [index, component] of components.entries()) {
+      current = join(current, component);
+      const stats = lstatSync(current, { throwIfNoEntry: false });
+      if (stats === undefined) break;
+      const isLast = index === components.length - 1;
+      if (isLast ? stats.isFile() : stats.isDirectory()) continue;
+      const obstacle = `${components.slice(0, index + 1).join("/")} exists and is not a regular ${isLast ? "file" : "directory"}; remove or move it`;
+      if (!conflicts.includes(obstacle)) conflicts.push(obstacle);
+      break;
+    }
   }
   if (conflicts.length > 0) return plan();
 
@@ -299,6 +309,7 @@ function findOrphans(
       const manifestPath = join(directory, entry, installManifestName);
       if (
         !skills.includes(entry) &&
+        lstatSync(join(directory, entry)).isDirectory() &&
         lstatSync(manifestPath, { throwIfNoEntry: false })?.isFile() === true &&
         readManifest(manifestPath) !== null
       )
@@ -404,7 +415,10 @@ export function installSkills(options: InstallOptions = {}): InstallReport {
   const conflicted = plans.some((plan) => plan.conflicts.length > 0);
   const pending = plans.some((plan) => plan.changes.length > 0);
 
-  const orphans = findOrphans(targetRoot, targets, skills);
+  const orphans =
+    realpathSync(targetRoot) === realpathSync(sourceRoot)
+      ? findOrphans(targetRoot, targets, skills)
+      : [];
 
   let applied = false;
   if (!check && !conflicted && pending) {
@@ -446,13 +460,15 @@ export function formatInstallReport(report: InstallReport): string {
       `${target.skill}@${target.version ?? "unversioned"} -> ${target.directory} [${target.target.executors}]: ${state}`,
     );
     for (const conflict of target.conflicts) lines.push(`  ! ${conflict}`);
-    if (!report.applied)
-      for (const change of target.changes)
+    for (const change of target.changes)
+      if (!report.applied)
         lines.push(`  - would ${change.kind} ${change.path}`);
+      else if (change.kind === "delete")
+        lines.push(`  - removed ${change.path}`);
   }
   for (const orphan of report.orphans)
     lines.push(
-      `${orphan}: ORPHAN - installed by this installer, but its canonical skill no longer exists; remove the directory`,
+      `${orphan}: ORPHAN - installed by this installer, but ${canonicalSkillsDirectory}/ has no such skill; remove the directory if the skill was renamed or removed`,
     );
   if (report.ok)
     lines.push(

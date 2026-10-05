@@ -264,7 +264,7 @@ describe("skill package validation", () => {
     rewrite(
       join(skillRoot, "references", "lifecycle.md"),
       (source) =>
-        `${source}\n\`\`\`md\n[example](path/to/file.md)\n\`\`\`\n\n[ref]: nope.md\n[dir]: ../assets\n[case]: QA-Checklist.md\n`,
+        `${source}\n\`\`\`md\n[example](path/to/file.md)\n\`\`\`\n\n[ref]: nope.md\n[dir]: ../assets\n[case]: QA-Checklist.md\n[angle]: <gone.md>\n[^1]: Footnote text here.\n[Note]: this is prose.\n\n- item\n\n  \`\`\`md\n  [nested](nested/example.md)\n  \`\`\`\n\nWrite \`[text](inline-code.md)\` and [ok](<qa-checklist.md>).\n`,
     );
     writeFileSync(join(skillRoot, ".DS_Store"), "junk");
     writeFileSync(join(skillRoot, "references", ".DS_Store"), "junk");
@@ -273,6 +273,7 @@ describe("skill package validation", () => {
       "references/lifecycle.md links to a missing file: nope.md",
       "references/lifecycle.md links to a missing file: ../assets",
       "references/lifecycle.md links to a missing file: QA-Checklist.md",
+      "references/lifecycle.md links to a missing file: gone.md",
     ]);
   });
 
@@ -438,6 +439,22 @@ describe("task-delivery workflow invariants", () => {
       ]);
     },
   );
+
+  test("executor names are matched as whole words", () => {
+    const { skillRoot } = repositoryCopy();
+    rewrite(join(skillRoot, "SKILL.md"), (source) =>
+      source
+        .replace(/^\| Pi .*\n/mu, "")
+        .replace(
+          "<!-- executors:end -->",
+          "Pipeline note.\n\n<!-- executors:end -->",
+        ),
+    );
+
+    expect(validateSkillPackage(skillRoot)).toEqual([
+      "SKILL.md executor block does not cover: Pi",
+    ]);
+  });
 
   test("policies must be stated in the core, not only in the executor block", () => {
     const { skillRoot } = repositoryCopy();
