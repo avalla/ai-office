@@ -103,8 +103,8 @@ describe("task-delivery configuration contract", () => {
       ),
     ).toEqual(
       expect.arrayContaining([
-        "line 1 contains an invisible or control character (U+000D); remove it",
-        "line 3 contains an invisible or control character (U+000D); remove it",
+        "line 1 contains a character that is not printable ASCII (U+000D); remove it",
+        "line 3 contains a character that is not printable ASCII (U+000D); remove it",
       ]),
     );
     expect(
@@ -144,37 +144,49 @@ describe("task-delivery configuration contract", () => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual(
       expect.arrayContaining([
         expect.stringContaining(
-          `contains an invisible or control character (U+${codePoint})`,
+          `contains a character that is not printable ASCII (U+${codePoint})`,
         ),
       ]),
     );
   });
 
-  test("rejects malformed YAML", () => {
+  test("rejects malformed or mis-indented YAML", () => {
     expect(
       validateTaskDeliveryConfigSource("git:\n  worktree_required: [true\n"),
-    ).toEqual(
-      expect.arrayContaining([expect.stringMatching(/^invalid YAML: /u)]),
-    );
+    ).toEqual([
+      "line 2: git.worktree_required must be a boolean: true or false, lowercase and unquoted",
+    ]);
     expect(
       validateTaskDeliveryConfigSource(
         "git:\n worktree_required: true\n   stacking_allowed: true\n",
+      ),
+    ).toEqual([
+      "line 3 is indented differently from the other keys of git; sections are one level deep",
+    ]);
+    // Accepted line by line, yet not something a YAML parser can read.
+    expect(
+      validateTaskDeliveryConfigSource(
+        "verification:\n  full: make check\nexternal_review:\n  command: review-tool\n integration_branch: main\n",
       ),
     ).not.toEqual([]);
   });
 
   test.each([
-    ["a list", "- integration_branch: main\n"],
-    ["a scalar", "main\n"],
     ["an empty document", ""],
     ["a comment-only document", "# nothing here\n"],
+    ["only a document marker", "---\n"],
+  ])("rejects a root that is %s", (_label, source) => {
+    expect(validateTaskDeliveryConfigSource(source)).toEqual([
+      "the document root must be a mapping with at least one key; delete the file instead of leaving it empty",
+    ]);
+  });
+
+  test.each([
+    ["a list", "- integration_branch: main\n"],
+    ["a scalar", "main\n"],
     ["an empty flow mapping", "{}\n"],
   ])("rejects a root that is %s", (_label, source) => {
-    expect(validateTaskDeliveryConfigSource(source)).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/^the document root must be a mapping/u),
-      ]),
-    );
+    expect(validateTaskDeliveryConfigSource(source)).toEqual([notPlain]);
   });
 
   test("rejects an unknown top-level key", () => {
@@ -195,7 +207,7 @@ describe("task-delivery configuration contract", () => {
 
   test("rejects keys that only exist on Object.prototype", () => {
     expect(
-      validateTaskDeliveryConfigSource("constructor: x\ngit:\n  toString: y\n"),
+      validateTaskDeliveryConfigSource("constructor: x\ngit:\n  toString: z\n"),
     ).toEqual([
       expect.stringContaining("unknown key constructor"),
       expect.stringContaining("unknown key git.toString"),
@@ -485,36 +497,104 @@ describe("task-delivery configuration contract", () => {
   });
 
   test.each([
-    ["True", "git:\n  stacking_allowed: True\n"],
-    ["FALSE", "task_lifecycle:\n  enabled: FALSE\n"],
-  ])("tells the author to write %s in lowercase", (_label, source) => {
-    expect(validateTaskDeliveryConfigSource(source)).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/must be written in lowercase: true or false$/u),
-      ]),
+    ["True", "git:\n  stacking_allowed: True\n", "git.stacking_allowed"],
+    ["FALSE", "task_lifecycle:\n  enabled: FALSE\n", "task_lifecycle.enabled"],
+    [
+      "a quoted boolean",
+      'git:\n  worktree_required: "true"\n',
+      "git.worktree_required",
+    ],
+    ["yes", "task_lifecycle:\n  enabled: yes\n", "task_lifecycle.enabled"],
+    ["on", "git:\n  worktree_required: on\n", "git.worktree_required"],
+    ["a number", "git:\n  stacking_allowed: 1\n", "git.stacking_allowed"],
+    ["nothing", "git:\n  stacking_allowed:\n", "git.stacking_allowed"],
+  ])(
+    "rejects a boolean written as %s and says what the field needs",
+    (_label, source, name) => {
+      expect(validateTaskDeliveryConfigSource(source)).toEqual([
+        `line 2: ${name} must be a boolean: true or false, lowercase and unquoted`,
+      ]);
+    },
+  );
+
+  // Unquoted text some YAML readers would type as a boolean, null, number or
+  // date. It must be quoted to be a string for every reader.
+  test.each([
+    "no",
+    "yes",
+    "on",
+    "off",
+    "Yes",
+    "ON",
+    "y",
+    "n",
+    "null",
+    "true",
+    "False",
+    "~",
+    "7",
+    "1.0",
+    "2024",
+    "2024-01-01",
+    "1:30",
+    "12:30:00",
+    "-1:30",
+    "1_000",
+    "0b101",
+    "0x1F",
+    "0o17",
+    ".inf",
+    ".nan",
+    "._",
+    "=",
+    "<<",
+    "+1",
+    "1e3",
+    "./run",
+    "<placeholder>",
+    "v:",
+    "a: b",
+  ])("rejects the unquoted string value %s", (value) => {
+    const errors = validateTaskDeliveryConfigSource(
+      `integration_branch: ${value}\n`,
     );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatch(
+      /^line 1(?:: integration_branch (?:has an unquoted value that a YAML reader may not take as plain text .*|must be a string; to use the word as text, )wrap the whole value in double quotes| is not a plain "key: value" line)/u,
+    );
+    // Quoted, the same text is an ordinary string.
+    expect(
+      validateTaskDeliveryConfigSource(
+        `integration_branch: "${value.replace(/\\/gu, "\\\\")}"\n`,
+      ),
+    ).toEqual([]);
   });
 
   test("names the line and the fix for common slips", () => {
     expect(
       validateTaskDeliveryConfigSource("verification:\n  full: *.test.ts\n"),
-    ).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(
-          /^line 2: verification\.full has a value starting with YAML syntax .* wrap the whole value in double quotes$/u,
-        ),
-      ]),
-    );
+    ).toEqual([
+      expect.stringMatching(
+        /^line 2: verification\.full has an unquoted value .*it must start with a letter.* wrap the whole value in double quotes$/u,
+      ),
+    ]);
     expect(
       validateTaskDeliveryConfigSource("git:\n\tworktree_required: true\n"),
-    ).toEqual(
-      expect.arrayContaining(["line 2 is indented with a tab; use spaces"]),
-    );
+    ).toEqual(["line 2 contains a tab; use spaces"]);
+    expect(
+      validateTaskDeliveryConfigSource("integration_branch: main\t\n\t\n"),
+    ).toEqual([
+      "line 1 contains a tab; use spaces",
+      "line 2 contains a tab; use spaces",
+    ]);
     expect(
       validateTaskDeliveryConfigSource("verification:\n  full: echo a: b\n"),
     ).toEqual([
       expect.stringContaining("wrap the whole value in double quotes"),
     ]);
+    expect(
+      validateTaskDeliveryConfigSource("integration_branch:main\n"),
+    ).toEqual([expect.stringContaining("with a space after the colon")]);
     expect(
       validateTaskDeliveryConfigSource(
         "--- # settings\ngit:\n  stacking_allowed: true\n",
@@ -522,20 +602,13 @@ describe("task-delivery configuration contract", () => {
     ).toEqual([]);
     expect(
       validateTaskDeliveryConfigSource('verification:\n  full: "a b" && c\n'),
-    ).toEqual(
-      expect.arrayContaining([
-        "line 2: verification.full has text after the closing quote; wrap the whole value in double quotes",
-      ]),
-    );
-  });
-
-  test.each([
-    ["a quoted boolean", 'git:\n  worktree_required: "true"\n'],
-    ["yes instead of true", "task_lifecycle:\n  enabled: yes\n"],
-    ["a number", "git:\n  stacking_allowed: 1\n"],
-  ])("rejects a boolean written as %s", (_label, source) => {
-    expect(validateTaskDeliveryConfigSource(source)).toEqual([
-      expect.stringMatching(/must be a boolean \(true or false, unquoted\)$/u),
+    ).toEqual([
+      "line 2: verification.full has text after the closing quote; wrap the whole value in double quotes",
+    ]);
+    expect(
+      validateTaskDeliveryConfigSource('verification:\n  full: "a\\tb"\n'),
+    ).toEqual([
+      'line 2: verification.full has a double-quoted value with an unsupported escape; only \\" and \\\\ are allowed',
     ]);
   });
 
@@ -558,12 +631,7 @@ describe("task-delivery configuration contract", () => {
     [
       "a boolean where a string is expected",
       "verification:\n  full: true\n",
-      "verification.full must be a string",
-    ],
-    [
-      "a number where a string is expected",
-      "integration_branch: 7\n",
-      "integration_branch must be a string",
+      "line 2: verification.full must be a string; to use the word as text, wrap the whole value in double quotes",
     ],
     [
       "a scalar where a section is expected",
@@ -689,22 +757,20 @@ describe("skills:validate covers the project configuration", () => {
 
   test("reports configuration problems together with skill problems", () => {
     const root = repositoryCopy();
-    writeFileSync(join(root, taskDeliveryConfigName), "- not a mapping\n");
+    writeFileSync(join(root, taskDeliveryConfigName), "extra: x\n");
     rmSync(join(root, "skills", "task-delivery", "assets", "pr-template.md"));
 
     expect(validateSkills(root)).toEqual(
       expect.arrayContaining([
         "skills/task-delivery: Required file is missing: assets/pr-template.md",
-        expect.stringContaining(
-          `${taskDeliveryConfigName}: the document root must be a mapping`,
-        ),
+        expect.stringContaining(`${taskDeliveryConfigName}: unknown key extra`),
       ]),
     );
   });
 
   test("reports the configuration even when no canonical skill is found", () => {
     const missing = temporaryRoot();
-    writeFileSync(join(missing, taskDeliveryConfigName), "bogus: 1\n");
+    writeFileSync(join(missing, taskDeliveryConfigName), "bogus: x\n");
     expect(validateSkills(missing)).toEqual([
       expect.stringContaining("Canonical skills directory is missing"),
       expect.stringContaining("unknown key bogus"),

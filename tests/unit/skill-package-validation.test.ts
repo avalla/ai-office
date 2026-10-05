@@ -312,7 +312,7 @@ describe("skill package validation", () => {
       /record `external reviewer unavailable` with the error and continue\. It never stands in for a required reviewer/u,
     );
     expect(lifecycle).toMatch(
-      /Findings handled; if best effort, recorded unavailability; or skip/u,
+      /Required: completed on the head\. Best effort: result or unavailability/u,
     );
     expect(lifecycle).toMatch(
       /required external review that has not completed successfully on the current head blocks READY FOR MERGE\. A best-effort one that was unavailable does not/u,

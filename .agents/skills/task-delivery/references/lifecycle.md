@@ -3,19 +3,19 @@
 Each stage has entry criteria, work, and exit evidence. A stage without its exit
 evidence is not passed, whatever its apparent state.
 
-| #   | Stage                   | Owner                  | Exit evidence                                                       |
-| --- | ----------------------- | ---------------------- | ------------------------------------------------------------------- |
-| 1   | Preflight               | Implementation context | Clean tree, base commit, green baseline verification                |
-| 2   | Design                  | Implementation context | Written design; authorization for any architectural change          |
-| 3   | Implementation          | Implementation context | Commits, tests, green full verification on the branch head          |
-| 4   | Pull Request            | Implementation context | Open pull request with scope, dependencies, and verification        |
-| 5   | Independent Review      | Independent reviewer   | Findings list, or an explicit statement that none were found        |
-| 6   | Hardening               | Implementation context | Each finding fixed with a test, or rejected with a reason           |
-| 7   | Second Review           | Independent reviewer   | Each prior finding confirmed resolved; no new blocking finding      |
-| 8   | Verification / QA       | Verification context   | Full verification and real exercise of the change on the final head |
-| 9   | External Review         | External reviewer      | Findings handled; if best effort, recorded unavailability; or skip  |
-| 10  | Ready for Merge         | Implementation context | Gate summary bound to the current head commit                       |
-| 11  | Post-merge / completion | Verification context   | Green verification on the integration branch at the merge commit    |
+| #   | Stage                   | Owner                  | Exit evidence                                                          |
+| --- | ----------------------- | ---------------------- | ---------------------------------------------------------------------- |
+| 1   | Preflight               | Implementation context | Clean tree, base commit, green baseline verification                   |
+| 2   | Design                  | Implementation context | Written design; authorization for any architectural change             |
+| 3   | Implementation          | Implementation context | Commits, tests, green full verification on the branch head             |
+| 4   | Pull Request            | Implementation context | Open pull request with scope, dependencies, and verification           |
+| 5   | Independent Review      | Independent reviewer   | Findings list, or an explicit statement that none were found           |
+| 6   | Hardening               | Implementation context | Each finding fixed with a test, or rejected with a reason              |
+| 7   | Second Review           | Independent reviewer   | Each prior finding confirmed resolved; no new blocking finding         |
+| 8   | Verification / QA       | Verification context   | Full verification and real exercise of the change on the final head    |
+| 9   | External Review         | External reviewer      | Required: completed on the head. Best effort: result or unavailability |
+| 10  | Ready for Merge         | Implementation context | Gate summary bound to the current head commit                          |
+| 11  | Post-merge / completion | Verification context   | Green verification on the integration branch at the merge commit       |
 
 ## 1. Preflight
 
@@ -108,8 +108,9 @@ evidence is not passed, whatever its apparent state.
 
 - Confirm every earlier gate has evidence for the **current** head commit. A
   commit pushed after review or verification invalidates that evidence; the
-  only exception is the one the [branch policy](branch-policy.md) makes for
-  review evidence after a clean merge-in.
+  exceptions are the one the [branch policy](branch-policy.md) makes for
+  review evidence after a clean merge-in, and a best-effort external review,
+  which is not repeated.
 - A required external review that has not completed successfully on the
   current head blocks READY FOR MERGE. A best-effort one that was unavailable
   does not.

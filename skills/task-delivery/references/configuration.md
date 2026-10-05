@@ -42,18 +42,23 @@ they are stricter.
 mappings; no other key is allowed at any level. To switch everything off,
 delete the file instead of emptying it.
 
-Only this layout is accepted, so that a repeated or disguised key cannot hide:
-unquoted keys, one `key: value` per line, nested keys indented with spaces at
-one depth under their section, comments, and an optional leading `---`.
+Only this layout is accepted, so that no two readers can take the file
+differently and a repeated or disguised key cannot hide:
+
+- printable ASCII text only: no tabs, control characters, or other characters;
+- unquoted keys, one `key: value` per line with a space after the colon, nested
+  keys indented with spaces at one depth under their section;
+- comments on their own line, after a section header, a boolean, or a quoted
+  value; an optional leading `---`;
+- booleans written `true` or `false`, lowercase and unquoted;
+- a string unquoted only when it starts with a letter, contains no `: ` or
+  ` #`, and is not a word such as `yes`, `no`, `on`, `off`, or `null`;
+  otherwise wrapped whole in double quotes, where `\"` and `\\` are the only
+  escapes.
+
 Quoted keys, flow collections (`{...}`, `[...]`), anchors, aliases, tags, merge
 keys, block scalars, lists, and values continued on a following line are
 rejected.
-
-Write a value plainly when it is simple. Wrap the whole value in double quotes
-when it starts with a special character or contains `: ` or ` #`; a comment
-may follow a boolean or a quoted value, never an unquoted command. Booleans
-are lowercase. Control characters, invisible characters, and spaces other than
-the ordinary space are rejected anywhere in the file.
 
 ## Rules
 

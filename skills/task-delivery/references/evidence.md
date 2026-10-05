@@ -22,9 +22,10 @@ Evidence is something another person can check without trusting you.
 
 - Bind evidence to a commit. Any commit added after a gate invalidates that
   gate's evidence: run the gate again. A repeated review may read only the new
-  diff; a repeated verification always covers the whole head. The one
-  exception, for review evidence after a clean merge-in, is in the
-  [branch policy](branch-policy.md).
+  diff; a repeated verification always covers the whole head. There are two
+  exceptions: review evidence after a clean merge-in, defined in the
+  [branch policy](branch-policy.md), and a best-effort external review, which
+  is not repeated and is reported with the commit it ran on.
 - Running an external review again after an infrastructure error is a new run,
   not a retried check. Its result counts; the earlier error never does.
 - Report failures as plainly as successes, with their output.

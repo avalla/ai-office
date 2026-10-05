@@ -43,7 +43,9 @@ function validateSection(
       else errors.push(`${keyPath} must be a mapping`);
     } else if (expected === "boolean") {
       if (typeof entry !== "boolean")
-        errors.push(`${keyPath} must be a boolean (true or false, unquoted)`);
+        errors.push(
+          `${keyPath} must be a boolean: true or false, lowercase and unquoted`,
+        );
     } else if (typeof entry !== "string") {
       errors.push(`${keyPath} must be a string`);
     } else if (entry.trim() === "") {
@@ -56,9 +58,17 @@ type Scalar = string | boolean | null;
 /** What the layout scan read: scalars, and sections of scalars. */
 type Layout = Map<string, Scalar | Map<string, Scalar>>;
 
+/** Marks a section whose only lines were rejected: written, but unreadable. */
+const unreadable = "\u0000unreadable";
+
 const quoteHint = "wrap the whole value in double quotes";
 
-const afterQuote = "has text after the closing quote";
+/** After a closed quote: nothing, or a comment. */
+const afterClosedQuote = /^(?: +#.*)?$/u;
+
+// Words some YAML readers turn into booleans or null even where a string is
+// meant, so they are never accepted unquoted.
+const typedWord = /^(?:y|n|yes|no|on|off|true|false|null)$/iu;
 
 /** Reads one value, or reports why it is outside the accepted layout. */
 function readValue(raw: string): { value: Scalar } | { problem: string } {
@@ -66,23 +76,20 @@ function readValue(raw: string): { value: Scalar } | { problem: string } {
   if (text === "" || text.startsWith("#")) return { value: null };
   if (text.startsWith('"')) {
     // Closed on the same line; an open quote would swallow the next lines.
-    const match = /^("(?:[^"\\]|\\.)*")(.*)$/u.exec(text);
+    const match = /^"((?:[^"\\]|\\.)*)"(.*)$/u.exec(text);
     if (match === null)
       return {
         problem: "has a double-quoted value that does not end on the same line",
       };
-    if (!/^(?:[ \t]+#.*)?[ \t]*$/u.test(match[2] ?? ""))
-      return { problem: `${afterQuote}; ${quoteHint}` };
-    try {
-      const decoded: unknown = JSON.parse(match[1] ?? "");
-      if (typeof decoded === "string") return { value: decoded };
-    } catch {
-      // Reported below.
-    }
-    return {
-      problem:
-        'has a double-quoted value with an unsupported escape (use \\" \\\\ \\n \\t or \\uXXXX)',
-    };
+    if (!afterClosedQuote.test(match[2] ?? ""))
+      return { problem: `has text after the closing quote; ${quoteHint}` };
+    const body = match[1] ?? "";
+    if (/\\[^"\\]/u.test(body))
+      return {
+        problem:
+          'has a double-quoted value with an unsupported escape; only \\" and \\\\ are allowed',
+      };
+    return { value: body.replace(/\\(["\\])/gu, "$1") };
   }
   if (text.startsWith("'")) {
     const match = /^'((?:[^']|'')*)'(.*)$/u.exec(text);
@@ -90,49 +97,64 @@ function readValue(raw: string): { value: Scalar } | { problem: string } {
       return {
         problem: "has a single-quoted value that does not end on the same line",
       };
-    if (!/^(?:[ \t]+#.*)?[ \t]*$/u.test(match[2] ?? ""))
-      return { problem: `${afterQuote}; ${quoteHint}` };
+    if (!afterClosedQuote.test(match[2] ?? ""))
+      return { problem: `has text after the closing quote; ${quoteHint}` };
     return { value: (match[1] ?? "").replace(/''/gu, "'") };
   }
-  if (/^[{[&*!|>?%@`,]/u.test(text) || /^[-?:](?:[ \t]|$)/u.test(text))
-    return {
-      problem: `has a value starting with YAML syntax (flow collections, anchors, aliases, tags, block scalars, and lists are not allowed); for a literal value, ${quoteHint}`,
-    };
-  // YAML ends a plain value at " #". After a boolean that is clearly a
+  // YAML ends an unquoted value at " #". After a boolean that is clearly a
   // comment; after anything else it may be part of a command, which would be
   // cut short without notice.
-  const plain = text.replace(/[ \t]+#.*$/u, "");
+  const comment = text.indexOf(" #");
+  const plain = (comment < 0 ? text : text.slice(0, comment)).trimEnd();
   if (plain === "true") return { value: true };
   if (plain === "false") return { value: false };
-  if (/^(?:true|false)$/iu.test(plain))
-    return { problem: "must be written in lowercase: true or false" };
-  if (plain !== text)
+  if (comment >= 0)
     return {
       problem: `has an unquoted value followed by " #", which YAML reads as a comment; put the comment on its own line, or ${quoteHint}`,
+    };
+  // Unquoted text is accepted only where every YAML reader sees a string: it
+  // starts with a letter, so it cannot be a number, a date, or YAML syntax.
+  if (
+    !/^[A-Za-z]/u.test(plain) ||
+    typedWord.test(plain) ||
+    plain.includes(": ") ||
+    plain.endsWith(":")
+  )
+    return {
+      problem: `has an unquoted value that a YAML reader may not take as plain text (it must start with a letter, must not be a word such as yes, no, on, off or null, and must not contain ": "); ${quoteHint}`,
     };
   return { value: plain };
 }
 
 /**
- * Characters that make a line look different from what a parser reads: a
- * bare carriage return, other control and format characters, and spaces and
- * blanks that are not the ordinary space. None belongs in a settings file.
+ * The file is plain ASCII text. Anything else - a tab, a bare carriage
+ * return, a control or invisible character, an unusual space, a look-alike
+ * letter - can make a line read differently from what a parser sees, and no
+ * branch name or command in a settings file needs it.
  */
-const deceptiveCharacter = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}\u2800\u3164]/u;
-
 function validateCharacters(source: string, errors: string[]): void {
   for (const [index, line] of source.split("\n").entries()) {
-    const found = [...line].find(
-      (character) =>
-        character !== " " &&
-        character !== "\t" &&
-        deceptiveCharacter.test(character),
+    const found = /[^\x20-\x7E]/u.exec(line);
+    if (found === null) continue;
+    const character = found[0];
+    const codePoint = `U+${(character.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
+    errors.push(
+      character === "\t"
+        ? `line ${index + 1} contains a tab; use spaces`
+        : `line ${index + 1} contains a character that is not printable ASCII (${codePoint}); remove it`,
     );
-    if (found !== undefined)
-      errors.push(
-        `line ${index + 1} contains an invisible or control character (U+${(found.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}); remove it`,
-      );
   }
+}
+
+/** The schema type of a dotted key path, when the schema knows it. */
+function expectedType(path: string): FieldType | "section" | undefined {
+  let node: FieldType | Schema = schema;
+  for (const part of path.split(".")) {
+    if (typeof node !== "object" || !Object.hasOwn(node, part))
+      return undefined;
+    node = node[part] as FieldType | Schema;
+  }
+  return typeof node === "object" ? "section" : node;
 }
 
 /**
@@ -147,31 +169,47 @@ function readLayout(source: string, errors: string[]): Layout {
   let section: { name: string; indent: string | null } | null = null;
   let started = false;
   for (const [index, line] of source.split("\n").entries()) {
-    if (/^[ \t]*(?:#.*)?$/u.test(line)) continue;
+    if (/^ *(?:#.*)?$/u.test(line)) continue;
     const at = `line ${index + 1}`;
-    if (!started && /^---[ \t]*(?:#.*)?$/u.test(line)) {
+    if (!started && /^--- *(?:#.*)?$/u.test(line)) {
       started = true;
       continue;
     }
     started = true;
-    if (/^ *\t/u.test(line)) {
-      errors.push(`${at} is indented with a tab; use spaces`);
-      continue;
-    }
-    const match = /^( *)([A-Za-z_][A-Za-z0-9_]*):(?:[ \t](.*))?$/u.exec(line);
+    const match = /^( *)([A-Za-z_][A-Za-z0-9_]*):(?: (.*))?$/u.exec(line);
     if (match === null) {
       errors.push(
-        `${at} is not a plain "key: value" line (quoted keys, lists, a second document, and values continued from the previous line are not allowed; if the previous value contains ": ", ${quoteHint})`,
+        `${at} is not a plain "key: value" line with a space after the colon (quoted keys, lists, a second document, and values continued from the previous line are not allowed)`,
       );
       continue;
     }
     const indent = match[1] ?? "";
     const key = match[2] ?? "";
+    const name =
+      indent === "" || section === null ? key : `${section.name}.${key}`;
+    // A section with a rejected line is not an empty section.
+    const owner = indent === "" || section === null ? null : section.name;
+    const children = owner === null ? undefined : layout.get(owner);
+    if (children instanceof Map && children.size === 0)
+      children.set(unreadable, null);
     const read = readValue(match[3] ?? "");
+    if (expectedType(name) === "boolean") {
+      // Say what the field needs instead of how to quote a wrong value.
+      if ("problem" in read || typeof read.value !== "boolean") {
+        errors.push(
+          `${at}: ${name} must be a boolean: true or false, lowercase and unquoted`,
+        );
+        continue;
+      }
+    }
     if ("problem" in read) {
-      const name =
-        indent === "" || section === null ? key : `${section.name}.${key}`;
       errors.push(`${at}: ${name} ${read.problem}`);
+      continue;
+    }
+    if (expectedType(name) === "string" && typeof read.value === "boolean") {
+      errors.push(
+        `${at}: ${name} must be a string; to use the word as text, ${quoteHint}`,
+      );
       continue;
     }
     if (indent === "") {
@@ -194,8 +232,8 @@ function readLayout(source: string, errors: string[]): Layout {
       );
       continue;
     }
-    const children = layout.get(section.name);
     if (!(children instanceof Map)) continue;
+    children.delete(unreadable);
     if (children.has(key))
       errors.push(
         `${at}: ${section.name}.${key} is defined more than once; the parser would keep only the last one`,
@@ -218,7 +256,9 @@ function layoutToObject(layout: Layout): Record<string, unknown> {
           ? null
           : Object.assign(
               Object.create(null) as Record<string, unknown>,
-              Object.fromEntries(value),
+              Object.fromEntries(
+                [...value].filter(([child]) => child !== unreadable),
+              ),
             )
         : value;
   return object;
@@ -251,34 +291,34 @@ function agrees(scanned: unknown, parsed: unknown): boolean {
  * problems; an empty array means the configuration respects the contract.
  */
 export function validateTaskDeliveryConfigSource(rawSource: string): string[] {
-  // CRLF is an ordinary line ending. A bare CR is not: some readers treat it
-  // as a line break and others do not, so it is rejected with the rest.
+  // CRLF is an ordinary line ending; a bare CR is rejected with every other
+  // character that is not printable ASCII.
   const source = rawSource.replace(/^\uFEFF/u, "").replace(/\r\n/gu, "\n");
   const errors: string[] = [];
   validateCharacters(source, errors);
+  // Nothing else can be read reliably until those characters are gone.
+  if (errors.length > 0) return errors;
   const scanned = layoutToObject(readLayout(source, errors));
+  // The scan decides what the file says, so the schema is checked against
+  // it; keys whose line was rejected above are simply absent here.
+  validateSection(scanned, schema, "", errors);
+  if (errors.length > 0) return errors;
+  if (Object.keys(scanned).length === 0)
+    return [
+      "the document root must be a mapping with at least one key; delete the file instead of leaving it empty",
+    ];
+  // A file accepted line by line must mean the same to a YAML parser.
   let parsed: unknown;
   try {
     parsed = Bun.YAML.parse(source);
   } catch (error) {
-    return [
-      ...errors,
-      `invalid YAML: ${errorMessage(error)} (if a value contains ": " or starts with a special character, ${quoteHint})`,
-    ];
+    return [`invalid YAML: ${errorMessage(error)}`];
   }
-  if (!isRecord(parsed) || Object.keys(parsed).length === 0)
-    return [
-      ...errors,
-      "the document root must be a mapping with at least one key; delete the file instead of leaving it empty",
-    ];
-  // Only a file the scan accepted line by line can be compared; otherwise the
-  // line errors above already say what to fix.
-  if (errors.length === 0 && !agrees(scanned, parsed))
-    errors.push(
-      `a YAML parser reads this file differently from its plain "key: value" lines; write one unquoted key per line and ${quoteHint} where it contains YAML syntax`,
-    );
-  validateSection(parsed, schema, "", errors);
-  return errors;
+  return agrees(scanned, parsed)
+    ? []
+    : [
+        `a YAML parser reads this file differently from its plain "key: value" lines; ${quoteHint} where it contains YAML syntax`,
+      ];
 }
 
 /**
