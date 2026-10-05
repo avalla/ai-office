@@ -830,6 +830,7 @@ describe("task-delivery workflow invariants", () => {
         "Following a project pipeline does not by itself mean starting anything in the project's systems.",
         "Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage.",
         "If you are not, do not start it: tell the authorizer what the run requires and let them decide how to proceed.",
+        "When you cannot tell whether a run would bind the task, do not start it either: ask the authorizer.",
         "Never start a binding run you cannot finish, and never override or cancel one on your own.",
         "Never pick a milestone or a task yourself.",
         "Once the answer is in, and before showing anything for approval, check the dependencies of the selection.",
@@ -1014,6 +1015,10 @@ describe("task-delivery workflow invariants", () => {
       expect(section).toMatch(
         /Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage\. If you are not, do not start it: tell the authorizer what the run requires and let them decide how to proceed\./u,
       );
+      // In doubt the answer is the same: do not start it, ask.
+      expect(section).toMatch(
+        /When you cannot tell whether a run would bind the task, do not start it either: ask the authorizer\./u,
+      );
       expect(section).toMatch(
         /Never start a binding run you cannot finish, and never override or cancel one on your own\./u,
       );
@@ -1024,7 +1029,7 @@ describe("task-delivery workflow invariants", () => {
         section.indexOf("check the dependencies of the selection"),
       );
       expect(reference("stop-conditions.md")).toMatch(
-        /\*\*Binding run you cannot complete\.\*\* Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not one of them - or such a run is already active for the task\. Do not start, override, or cancel it; report what it requires and wait\./u,
+        /\*\*Binding run you cannot complete\.\*\* Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage you would have to perform - or such a run is already active for the task\. Do not start, override, or cancel it; report what it requires and wait\./u,
       );
     });
 
@@ -1066,7 +1071,7 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
         "SKILL.md: The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
         "configuration.md: A project may bind them to its own role names and to any executor; the pipeline stays the same when the executor changes.",
-        "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not one of them - or such a run is already active for the task.",
+        "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage you would have to perform - or such a run is already active for the task.",
       ]);
     });
 

@@ -22,6 +22,10 @@ task_lifecycle:
   # worktree is not bound and would be refused. No --project is given: the CLI
   # resolves the project from that checkout, and a project id is local to one
   # Runtime. The subshell keeps the caller's working directory unchanged.
+  # These commands use the installed ai-office entry point on purpose: this
+  # project's delivery tasks live in the bound Runtime that AI-OFFICE.md points
+  # to. A checkout that tracks work in an isolated development Runtime needs
+  # different commands.
   start: '(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office task:start --task {task})'
   review: '(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office task:submit-review --task {task})'
   complete: '(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office task:complete --task {task})'

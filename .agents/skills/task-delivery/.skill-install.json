@@ -3,7 +3,7 @@
   "skill": "task-delivery",
   "version": "0.2.0",
   "files": {
-    "SKILL.md": "7a1aa36f28cbaeb2d65227f420a968a91348dd49d098639d525c3de3dbc7473e",
+    "SKILL.md": "feaeeb3e6ca00c0b36ee2aa4f0a658160fb55023c4af978d58e475219f15de6f",
     "assets/pr-template.md": "042cd175402f40447a0f37ca548d9fec08e76f1428e9b9d75262f79613c7c1b7",
     "assets/task-delivery.example.yaml": "f0e3b918d03ad5b88cd11bc51f7c08320a583a40d8c29fb19e42069ce31a09a8",
     "references/branch-policy.md": "9b3d6b8a9007aff5d04f17973d26aef9bdccee96f35b658fd69c31af9d0b1a88",
@@ -12,6 +12,6 @@
     "references/lifecycle.md": "a7c5b5da4ef8e2cad92135cb8364513f1300f3aaf0a3d7e9f4472c60f62e99f1",
     "references/qa-checklist.md": "e9a9419ec6f8a90dd927ee86593b1d56d059b82844d0365450b7f7375ccd07e5",
     "references/review-checklist.md": "216d0dd0175e2acb43aa9600a7c3f8e8792dcf29cf940b50bc3c6de834500862",
-    "references/stop-conditions.md": "40c93a437ecff45c7a837ef7ad9bc38a51c2a208dfc84142894e31f3dad70f86"
+    "references/stop-conditions.md": "11f9f5b4716886d2733a8a5180fb6af32fc04fdc7049f033005570aaf2263e9c"
   }
 }

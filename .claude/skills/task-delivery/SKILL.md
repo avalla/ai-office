@@ -111,7 +111,8 @@ project's systems. Where using it would start a run that binds the task - one
 whose stages only that system's own assigned performers can complete - check
 first that you are such a performer for every stage. If you are not, do not
 start it: tell the authorizer what the run requires and let them decide how to
-proceed. Never start a binding run you cannot finish, and never override or
+proceed. When you cannot tell whether a run would bind the task, do not start
+it either: ask the authorizer. Never start a binding run you cannot finish, and never override or
 cancel one on your own.
 
 Never pick a milestone or a task yourself. Once the answer is in, and before
