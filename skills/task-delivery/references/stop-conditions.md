@@ -38,6 +38,10 @@ depend on the answer may continue.
   explained after a focused investigation. Do not retry until green.
 - **Flaky verification.** A check that passes only on retry. Report it; a
   retried pass is not evidence.
+- **Required external review cannot complete.** A configured or requested
+  external reviewer times out, errors, or is unavailable. Report the error and
+  wait; the task is not READY FOR MERGE until that review completes or the
+  authorizer waives it explicitly.
 - **Reviewer and implementer disagree** on a blocking finding. Escalate to the
   authorizer instead of overruling the reviewer.
 
@@ -46,4 +50,7 @@ depend on the answer may continue.
 - Ordinary errors, timeouts, or tool failures that can be diagnosed and fixed
   within scope.
 - Minor findings that are fixed or recorded as follow-ups.
-- No external reviewer being available: skip that stage and say so.
+- No external reviewer configured, requested, or offered: skip that stage and
+  say so.
+- A best-effort external reviewer that is unavailable: record
+  `external reviewer unavailable` with the error and continue.

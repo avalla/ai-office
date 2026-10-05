@@ -130,6 +130,15 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
           /implementation, review, and verification must run in independent contexts/iu,
       },
       {
+        id: "policy:required-external-review",
+        pattern:
+          /A required review must complete successfully: a timeout, a capacity or execution error, or an unavailable reviewer is a failed gate/u,
+      },
+      {
+        id: "policy:installed-is-not-required",
+        pattern: /Being installed does not make a reviewer required/u,
+      },
+      {
         id: "policy:scope",
         pattern: /stay in scope/iu,
       },

@@ -1,6 +1,6 @@
 ---
 name: task-delivery
-description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, optional external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
+description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
   version: "0.1.0"
@@ -19,7 +19,9 @@ human - and names roles, never tools.
 - **Independent reviewer**: reviews the diff without having written it.
 - **Verification context**: proves the change works, without trusting the
   implementer's claims.
-- **External reviewer, if available**: a second, differently built reviewer.
+- **External reviewer**: a second, differently built reviewer - required when
+  the project configures one or the authorizer asks for one, best effort
+  otherwise.
 - **Authorizer**: the person who owns scope, architecture, and merge decisions.
 
 Implementation, review, and verification must run in independent contexts
@@ -117,12 +119,23 @@ A verification context applies the [QA checklist](references/qa-checklist.md):
 it runs the full verification on the final head, exercises the changed behavior
 for real, and checks every acceptance criterion against observed results.
 
-### 9. External Review (optional)
+### 9. External Review
 
-Run when an external reviewer is available: one the project configures, or
-one the executor mapping below names for the current executor. Treat its
-findings like any other review: validate, harden, re-verify. Skip the stage
-only when no external reviewer is available, and say so.
+An external reviewer is **required** when the project configures one or the
+authorizer explicitly asks for one for this task. A required review must
+complete successfully: a timeout, a capacity or execution error, or an
+unavailable reviewer is a failed gate, and the task cannot become READY FOR
+MERGE.
+
+An external reviewer the executor merely offers - neither configured by the
+project nor requested by the authorizer - is **best effort**. Run it when it
+works. When it is unavailable for infrastructure reasons, record
+`external reviewer unavailable` with the error as evidence and continue. Being
+installed does not make a reviewer required.
+
+With no external reviewer at all, skip the stage and say so. In every case an
+error is never a passed review, and findings are handled like any other
+review: validate, harden, re-verify.
 
 ### 10. Ready for Merge
 
@@ -158,12 +171,9 @@ roles above into the primitives each executor offers.
 For any executor: never pass the implementer's conclusions to the reviewer or
 verifier, and never let the context that wrote a change approve it.
 
-**External reviewer on Claude Code.** When Codex is available in the session -
-a Codex skill or plugin, or the `codex` command - stage 9 is not optional: run
-a Codex review of the branch as an external reviewer, in addition to the
-independent review and to any reviewer the project configures. If Codex is not
-installed, use the project-configured reviewer if there is one, otherwise skip
-the stage and record why. A Codex that is installed but fails to run is a
-failed gate, not a skip: report it.
+**External reviewer on Claude Code.** Codex, when present in the session - a
+Codex skill or plugin, or the `codex` command - is an available external
+reviewer for stage 9. Its presence alone does not make it required: it is best
+effort unless the project configures it or the authorizer requests it.
 
 <!-- executors:end -->

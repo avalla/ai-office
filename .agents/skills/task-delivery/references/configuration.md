@@ -20,17 +20,17 @@ they are stricter.
 
 ## Keys
 
-| Key                       | Meaning                                                           | Default when absent                                                   |
-| ------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `integration_branch`      | Branch that task branches start from and merge into               | The remote's default branch                                           |
-| `verification.full`       | Command that must pass before handoff, at QA, and after merge     | The check command the repository documents; otherwise ask             |
-| `verification.targeted`   | Command template for a narrow test run while iterating            | The repository's test runner on the changed area                      |
-| `git.worktree_required`   | `true` when each task must use an isolated workspace              | `false`                                                               |
-| `git.stacking_allowed`    | `true` when a task branch may be based on an unmerged task branch | `false`                                                               |
-| `external_review.command` | Command that runs the external reviewer on the current branch     | None: stage 9 runs only with a reviewer named by the executor mapping |
-| `task_lifecycle.enabled`  | `true` when task state is tracked in a system outside Git         | `false`                                                               |
-| `task_lifecycle.start`    | Command that marks a task as started                              | None: report the transition instead                                   |
-| `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11       | None: report the transition instead                                   |
+| Key                       | Meaning                                                             | Default when absent                                               |
+| ------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `integration_branch`      | Branch that task branches start from and merge into                 | The remote's default branch                                       |
+| `verification.full`       | Command that must pass before handoff, at QA, and after merge       | The check command the repository documents; otherwise ask         |
+| `verification.targeted`   | Command template for a narrow test run while iterating              | The repository's test runner on the changed area                  |
+| `git.worktree_required`   | `true` when each task must use an isolated workspace                | `false`                                                           |
+| `git.stacking_allowed`    | `true` when a task branch may be based on an unmerged task branch   | `false`                                                           |
+| `external_review.command` | Command of the external reviewer; setting it makes stage 9 required | None: required only if the authorizer asks; otherwise best effort |
+| `task_lifecycle.enabled`  | `true` when task state is tracked in a system outside Git           | `false`                                                           |
+| `task_lifecycle.start`    | Command that marks a task as started                                | None: report the transition instead                               |
+| `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11         | None: report the transition instead                               |
 
 ## Types
 

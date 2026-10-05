@@ -232,25 +232,55 @@ describe("skill package validation", () => {
     );
   });
 
-  test("on Claude Code an available Codex is a mandatory external reviewer", () => {
-    const block = canonicalSkill
-      .slice(canonicalSkill.indexOf("<!-- executors:start -->"))
-      .replace(/\s+/gu, " ");
-    expect(block).toMatch(
-      /External reviewer on Claude Code\.\*\* When Codex is available in the session/u,
-    );
-    expect(block).toMatch(/stage 9 is not optional: run a Codex review/u);
-    expect(block).toMatch(/in addition to the independent review/u);
-    expect(block).toMatch(/and to any reviewer the project configures/u);
-    expect(block).toMatch(
-      /installed but fails to run is a failed gate, not a skip: report it/u,
-    );
-    // The neutral core defers to the mapping without naming any executor.
-    const core = canonicalSkill
-      .slice(0, canonicalSkill.indexOf("<!-- executors:start -->"))
-      .replace(/\s+/gu, " ");
+  test("an external reviewer is required only when configured or requested", () => {
+    const split = canonicalSkill.indexOf("<!-- executors:start -->");
+    const core = canonicalSkill.slice(0, split).replace(/\s+/gu, " ");
+    const block = canonicalSkill.slice(split).replace(/\s+/gu, " ");
+    const reference = (name: string): string =>
+      readFileSync(
+        join(canonicalSkillRoot, "references", name),
+        "utf8",
+      ).replace(/\s+/gu, " ");
+
+    // Required: configured by the project or requested by the authorizer.
     expect(core).toMatch(
-      /one the executor mapping below names for the current executor/u,
+      /\*\*required\*\* when the project configures one or the authorizer explicitly asks for one for this task/u,
+    );
+    expect(core).toMatch(/the task cannot become READY FOR MERGE/u);
+    // Best effort: merely offered by the executor.
+    expect(core).toMatch(
+      /neither configured by the project nor requested by the authorizer - is \*\*best effort\*\*/u,
+    );
+    expect(core).toMatch(
+      /record `external reviewer unavailable` with the error as evidence and continue/u,
+    );
+    expect(core).toMatch(/an error is never a passed review/u);
+
+    // The executor block offers a reviewer without making it a requirement.
+    expect(block).toMatch(
+      /Codex, when present in the session .* is an available external reviewer/u,
+    );
+    expect(block).toMatch(
+      /Its presence alone does not make it required: it is best effort unless the project configures it or the authorizer requests it/u,
+    );
+    expect(block).not.toMatch(/not optional|failed gate|mandatory/iu);
+
+    const lifecycle = reference("lifecycle.md");
+    expect(lifecycle).toMatch(
+      /\*\*Required\*\* when the project configures an external reviewer or the authorizer explicitly asks for one/u,
+    );
+    expect(lifecycle).toMatch(/never count the error as a review/u);
+    expect(lifecycle).toMatch(
+      /required external review that has not completed successfully blocks READY FOR MERGE\. A best-effort one that was unavailable does not/u,
+    );
+    expect(reference("stop-conditions.md")).toMatch(
+      /Required external review cannot complete\.\*\* A configured or requested external reviewer times out, errors, or is unavailable/u,
+    );
+    expect(reference("evidence.md")).toMatch(
+      /external review that ended in a timeout, an error, or a capacity failure/u,
+    );
+    expect(reference("configuration.md")).toMatch(
+      /setting it makes stage 9 required/u,
     );
   });
 
@@ -395,6 +425,14 @@ describe("task-delivery workflow invariants", () => {
     [
       "policy:independent-contexts",
       /Implementation, review, and verification must run in independent contexts/u,
+    ],
+    [
+      "policy:required-external-review",
+      /A required review must\s+complete successfully/u,
+    ],
+    [
+      "policy:installed-is-not-required",
+      /Being\s+installed does not make a reviewer required\./u,
     ],
     ["policy:scope", "Stay in scope."],
   ];

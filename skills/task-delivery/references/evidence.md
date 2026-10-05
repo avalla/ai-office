@@ -16,6 +16,7 @@ Evidence is something another person can check without trusting you.
 - Output from a different commit than the one being judged.
 - A result obtained only after retrying a failing check.
 - The implementer's summary offered in place of an independent review.
+- An external review that ended in a timeout, an error, or a capacity failure.
 
 ## Rules
 
@@ -42,7 +43,7 @@ Verification:    <command> -> <result> on <hash>
 Review:          <n findings: fixed / rejected / open> by <independent | not independent>
 Second review:   <result>
 QA:              <PASS | FAIL> on <hash>
-External review: <result | not available - skipped>
+External review: <required | best effort>: <result | external reviewer unavailable: error | none - skipped>
 Limitations:     <known limits>
 Follow-ups:      <deferred items>
 State:           <READY FOR MERGE | DONE>

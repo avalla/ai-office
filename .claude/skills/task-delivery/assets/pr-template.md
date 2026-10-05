@@ -33,7 +33,7 @@
 - Independent review: <!-- pending / findings and their resolution -->
 - Second review: <!-- pending / result -->
 - QA: <!-- pending / PASS or FAIL on which commit -->
-- External review: <!-- result, or "not available - skipped" -->
+- External review: <!-- required or best effort; result, "external reviewer unavailable" with the error, or "none - skipped" -->
 
 ## Limitations and follow-ups
 

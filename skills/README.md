@@ -63,8 +63,10 @@ The manifest is the ownership record and is trusted: do not edit it by hand.
 ## Using `task-delivery`
 
 - **Claude Code**: discovered from `.claude/skills/task-delivery`. Invoke with
-  `/task-delivery`, or ask to "deliver task X". When Codex is available in the
-  session, the skill requires a Codex review as the external reviewer.
+  `/task-delivery`, or ask to "deliver task X". Codex, when present in the
+  session, is offered as a best-effort external reviewer; it is required only
+  when the project configures it (as this repository does in
+  `.task-delivery.yaml`) or the authorizer asks for it.
 - **Codex**: discovered from `.agents/skills/task-delivery`. Invoke with
   `$task-delivery`.
 - **Pi**: discovered from `.agents/skills/task-delivery`. Invoke with
