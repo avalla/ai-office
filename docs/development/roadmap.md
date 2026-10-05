@@ -1884,7 +1884,13 @@ a derived, digest-pinned, inspectable view without scheduling from it. GP-08
 adds `project:pack:upgrade`: a read-only reconciliation report and a
 digest-approved, audited apply that changes the selection and retargets project
 overrides together, preserves project values, and blocks on unresolved
-conflicts; it adds no migration and no run pinning. Aliases,
+conflicts; it adds no migration and no run pinning. GP-11 defines pack role
+archetypes as a definition layer: a stable role identity independent of pack
+version and presentation, declarative pack-owned role capabilities in the
+schema-1 manifest, project rename, replace, omit and add, and deterministic
+upgrade merge rules with capability changes bound to plan approval. It adds
+forward SQLite and PostgreSQL migrations for role omission and portable archive
+format 7, and creates no Runtime role, grant or binding. Aliases,
 Development Pack parity/extraction, automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
