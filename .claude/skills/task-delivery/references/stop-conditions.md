@@ -11,8 +11,11 @@ depend on the answer may continue.
   security rule that nobody authorized.
 - **Merge without authorization.** Any step that would merge, enable automatic
   merge, or push to the integration branch without explicit authorization.
-- **Destructive or irreversible action.** Rewriting shared history, deleting
-  branches or data you did not create, force-pushing a shared branch.
+- **Destructive or irreversible action.** Rewriting shared or reviewed history
+  (rebasing, amending, or force-pushing a branch others may have fetched or
+  whose review has started), deleting branches or data you did not create.
+- **Invalid configuration.** The project configuration file is present but has
+  an unknown key, a wrong type, or an empty value. Never fall back to defaults.
 - **Unclear acceptance criteria.** The task cannot be judged complete as
   written.
 - **Scope growth.** Satisfying the task would require work clearly outside its

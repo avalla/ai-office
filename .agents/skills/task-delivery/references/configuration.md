@@ -1,9 +1,17 @@
 # Project configuration
 
 The skill reads optional, project-specific settings from a single file at the
-repository root: `.task-delivery.yaml`. The file is never required. Unknown keys
-are ignored. A ready-to-copy example is in
+repository root: `.task-delivery.yaml`. The file is never required, and every
+key in it is optional. A ready-to-copy example is in
 [task-delivery.example.yaml](../assets/task-delivery.example.yaml).
+
+A file that is present must respect this contract exactly. An unknown key, a
+misspelled key, a value of the wrong type, or an empty string is an error, not
+something to ignore: a typo would otherwise silently fall back to a default and
+switch a policy off. The repository that publishes this skill detects such
+errors with its `skills:validate` check. Whoever follows the skill does the
+same when reading the file: on any key or value outside this contract, stop
+and report it instead of continuing with defaults.
 
 The repository's own contributor instructions always win over this file where
 they are stricter.
@@ -21,6 +29,14 @@ they are stricter.
 | `task_lifecycle.enabled`  | `true` when task state is tracked in a system outside Git         | `false`                                                   |
 | `task_lifecycle.start`    | Command that marks a task as started                              | None: report the transition instead                       |
 | `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11       | None: report the transition instead                       |
+
+## Types
+
+`integration_branch`, `verification.*`, `external_review.command`,
+`task_lifecycle.start`, and `task_lifecycle.complete` are non-empty strings.
+`git.*` and `task_lifecycle.enabled` are booleans written unquoted (`true` or
+`false`). `verification`, `git`, `external_review`, and `task_lifecycle` are
+mappings; no other key is allowed at any level.
 
 ## Rules
 

@@ -21,14 +21,14 @@ they need no Runtime, no daemon, and no AI Office project.
 
 ## Commands
 
-| Task                                      | Command                                                                                               |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Install or update the copies              | `bun run skills:install`                                                                              |
-| Verify the copies are in sync (no writes) | `bun run skills:check`                                                                                |
-| Validate source and copies (CI)           | `bun run skills:validate`                                                                             |
-| Install into another repository           | `bun run skills:install --root /abs/path/to/repo`                                                     |
-| Install for one executor family           | `bun run skills:install --scope agents`                                                               |
-| Run the tests                             | `bunx --bun vitest run tests/unit/skills-install.test.ts tests/unit/skill-package-validation.test.ts` |
+| Task                                      | Command                                                                                                                                       |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Install or update the copies              | `bun run skills:install`                                                                                                                      |
+| Verify the copies are in sync (no writes) | `bun run skills:check`                                                                                                                        |
+| Validate source and copies (CI)           | `bun run skills:validate`                                                                                                                     |
+| Install into another repository           | `bun run skills:install --root /abs/path/to/repo`                                                                                             |
+| Install for one executor family           | `bun run skills:install --scope agents`                                                                                                       |
+| Run the tests                             | `bunx --bun vitest run tests/unit/skills-install.test.ts tests/unit/skill-package-validation.test.ts tests/unit/task-delivery-config.test.ts` |
 
 `bun run check` runs `skills:validate`, so CI fails on an invalid skill or a
 drifted copy. Exit codes: `0` success or in sync, `1` drift, conflict, or error,
@@ -71,7 +71,10 @@ The manifest is the ownership record and is trusted: do not edit it by hand.
 
 Project settings are optional and live in `.task-delivery.yaml` at the
 repository root; the contract is in
-[configuration.md](task-delivery/references/configuration.md).
+[configuration.md](task-delivery/references/configuration.md). A present file
+must match the contract exactly: `bun run skills:validate` fails on malformed
+YAML, unknown or misspelled keys at any level, wrong types, and empty strings,
+so a typo cannot silently fall back to a default.
 
 ## Adding an executor
 
@@ -113,5 +116,7 @@ stage. Changing the executor does not change the pipeline.
 - The installer covers project-level locations only, not per-user ones.
 - Independence between implementation, review, and verification is an
   instruction to the executor; nothing here enforces it.
-- `.task-delivery.yaml` is read by the executor following the skill; no script
-  parses or validates it.
+- `.task-delivery.yaml` is validated by `skills:validate` only in a repository
+  that carries these scripts. In a repository that merely received the copies
+  through `--root`, the skill's own instruction applies: stop on any key or
+  value outside the contract.

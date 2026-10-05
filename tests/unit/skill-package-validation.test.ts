@@ -512,6 +512,47 @@ describe("task-delivery workflow invariants", () => {
       /satisfied Git dependency does not satisfy a task dependency/u,
     );
     expect(reference("evidence.md")).toMatch(/Bind evidence to a commit/u);
+  });
+
+  test("stacked-branch handling never prescribes rewriting shared history", () => {
+    const reference = (name: string): string =>
+      readFileSync(
+        join(canonicalSkillRoot, "references", name),
+        "utf8",
+      ).replace(/\s+/gu, " ");
+    const lifecycle = reference("lifecycle.md");
+    const branchPolicy = reference("branch-policy.md");
+    const stopConditions = reference("stop-conditions.md");
+
+    // Post-merge handling defers to the branch policy instead of restating a
+    // looser rule, and no document tells the reader to rebase as a default.
+    expect(lifecycle).toMatch(
+      /stacked on this one, follow the \[branch policy\]\(branch-policy\.md\)/u,
+    );
+    expect(lifecycle).toMatch(/Never rewrite shared or reviewed history/u);
+    for (const text of [lifecycle, branchPolicy, stopConditions])
+      expect(text).not.toMatch(/\brebase or\b|\bor rebase\b/iu);
+    expect(lifecycle).not.toMatch(/\brebase\b/iu);
+
+    expect(branchPolicy).toMatch(
+      /retarget the upper pull request to the integration branch/u,
+    );
+    expect(branchPolicy).toMatch(/merge the integration branch into it/u);
+    expect(branchPolicy).toMatch(
+      /A rebase is allowed only on a branch that has not been shared and whose review has not started/u,
+    );
+    expect(branchPolicy).toMatch(
+      /Any change of base or merge-in invalidates earlier evidence: run verification again/u,
+    );
+    expect(branchPolicy).toMatch(/\[stop condition\]\(stop-conditions\.md\)/u);
+    expect(stopConditions).toMatch(/Rewriting shared or reviewed history/u);
+    expect(stopConditions).toMatch(
+      /Invalid configuration\.\*\* .* Never fall back to defaults/u,
+    );
+    expect(reference("configuration.md")).not.toMatch(/keys are ignored/iu);
+    expect(reference("configuration.md")).toMatch(
+      /stop and report it instead of continuing with defaults/u,
+    );
     expect(reference("qa-checklist.md")).toMatch(/PASS or FAIL/u);
     expect(reference("review-checklist.md")).toMatch(/blocking/u);
     expect(reference("configuration.md")).toMatch(

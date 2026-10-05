@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { installSkills } from "./install.ts";
 import { validateSkillPackage } from "./package-validation.ts";
+import { validateTaskDeliveryConfig } from "./task-delivery-config.ts";
 import {
   SkillPackageError,
   canonicalSkillsDirectory,
@@ -10,9 +11,10 @@ import {
 } from "./shared.ts";
 
 /**
- * Validates every canonical skill under `root` and that the installed executor
- * copies in the same repository are present, managed, and in sync. Returns
- * human-readable problems; an empty array means everything is valid.
+ * Validates every canonical skill under `root`, that the installed executor
+ * copies in the same repository are present, managed, and in sync, and the
+ * repository's optional task-delivery configuration. Returns human-readable
+ * problems; an empty array means everything is valid.
  */
 export function validateSkills(root: string = repositoryRoot): string[] {
   const sourceRoot = resolve(root);
@@ -25,13 +27,17 @@ export function validateSkills(root: string = repositoryRoot): string[] {
   if (skills.length === 0)
     return [`No canonical skills found under ${canonicalSkillsDirectory}/`];
 
-  const errors = skills.flatMap((skill) =>
-    validateSkillPackage(join(sourceRoot, canonicalSkillsDirectory, skill)).map(
-      (problem) => `${canonicalSkillsDirectory}/${skill}: ${problem}`,
+  const errors = [
+    ...skills.flatMap((skill) =>
+      validateSkillPackage(
+        join(sourceRoot, canonicalSkillsDirectory, skill),
+      ).map((problem) => `${canonicalSkillsDirectory}/${skill}: ${problem}`),
     ),
-  );
+    ...validateTaskDeliveryConfig(sourceRoot),
+  ];
   // Installed copies are only comparable against a valid source.
-  if (errors.length > 0) return errors;
+  if (errors.some((error) => error.startsWith(`${canonicalSkillsDirectory}/`)))
+    return errors;
 
   try {
     const report = installSkills({ sourceRoot, check: true });
@@ -63,6 +69,8 @@ if (import.meta.main) {
     );
     process.exitCode = 1;
   } else {
-    console.log("Canonical skills are valid and installed copies are in sync");
+    console.log(
+      "Canonical skills and project configuration are valid; installed copies are in sync",
+    );
   }
 }

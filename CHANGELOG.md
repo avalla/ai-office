@@ -8,7 +8,8 @@
   skill, `task-delivery`, is a vendor-neutral gated delivery workflow usable
   from Claude Code, Codex, Pi and other `SKILL.md` hosts. It is independent of
   the Runtime-managed `ai-office` skill; `bun run check` now fails on an invalid
-  skill or a drifted copy.
+  skill, a drifted copy, or an optional `.task-delivery.yaml` that has unknown
+  keys, wrong types or empty values.
 - Admit native project knowledge from verified non-run sources (AK-11).
   `knowledge:plan` and `knowledge:admit` take an explicit source:
   `--run <runId>` as before, `--source handover --handover <confirmationId>`

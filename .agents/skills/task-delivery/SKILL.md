@@ -53,7 +53,9 @@ was not independent.
 Read the repository's own instructions first; they override this skill where
 they are stricter. Then load the optional project configuration described in
 [configuration](references/configuration.md). Without it, use the defaults
-listed there and ask only when a default cannot be derived.
+listed there and ask only when a default cannot be derived. A configuration
+file that is present but breaks its contract is a stop condition: never guess
+around it.
 
 ## Lifecycle
 

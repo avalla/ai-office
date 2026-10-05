@@ -22,10 +22,16 @@ They are independent. Decide each explicitly and write both in the pull request.
   review covers only its own diff.
 - Do not declare a stacked task READY FOR MERGE while the branch beneath it has
   an open blocking finding.
-- When the lower branch changes, rebase or merge the upper branch and re-run
+- When the lower branch changes, merge it into the upper branch and re-run
   verification; earlier evidence no longer applies to the new head.
 - After the lower branch merges, retarget the upper pull request to the
-  integration branch and verify again.
+  integration branch. Retargeting alone is enough when the upper branch then
+  applies cleanly and shows only its own diff.
+- When the upper branch also needs commits from the integration branch - new
+  work, or the merged form of the lower branch - merge the integration branch
+  into it. Do not rewrite the upper branch to get there.
+- Any change of base or merge-in invalidates earlier evidence: run
+  verification again on the new head.
 - A satisfied Git dependency does not satisfy a task dependency: being stacked
   on A's branch does not mean A's task is accepted.
 - An unrelated task must not inherit another task's unmerged commits.
@@ -36,4 +42,8 @@ They are independent. Decide each explicitly and write both in the pull request.
   or when another task is in progress in the same checkout.
 - Never rewrite history that others may have fetched. After review has started,
   add commits instead of amending, so the hardening diff stays readable.
+- A rebase is allowed only on a branch that has not been shared and whose
+  review has not started. In every other case, merge. Rewriting shared or
+  reviewed history is a [stop condition](stop-conditions.md), not a judgment
+  call.
 - Never push to the integration branch directly.

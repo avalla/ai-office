@@ -101,7 +101,11 @@ evidence is not passed, whatever its apparent state.
 - Entered only after the authorizer merges, or explicitly asks you to merge this
   pull request and you have done so.
 - Run the full verification on the integration branch at the merge commit.
-- Rebase or retarget branches that were stacked on this one.
+- For each pull request that was stacked on this one, follow the
+  [branch policy](branch-policy.md): retarget it to the integration branch,
+  bring in new integration-branch commits by merging them in when needed, and
+  run its verification again on the new base. Never rewrite shared or reviewed
+  history to do so.
 - Update task state, record follow-ups, clean up the branch and workspace.
 - Only now report DONE. If post-merge verification fails, report it at once and
   propose a revert or a fix; do not declare DONE.
