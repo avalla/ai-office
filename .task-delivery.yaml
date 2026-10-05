@@ -1,0 +1,19 @@
+# Project settings for the task-delivery skill (skills/task-delivery).
+# Contract: skills/task-delivery/references/configuration.md
+
+integration_branch: main
+
+verification:
+  full: bun run check
+  targeted: bunx --bun vitest run <test files>
+
+git:
+  worktree_required: true
+  stacking_allowed: true
+
+external_review:
+  # {base} is the branch the task's pull request targets.
+  command: codex review --base origin/{base}
+
+task_lifecycle:
+  enabled: true

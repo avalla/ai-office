@@ -1,0 +1,19 @@
+# Copy to the repository root as .task-delivery.yaml and adjust.
+# Every key is optional; see references/configuration.md for defaults and for
+# when a value must be wrapped in double quotes.
+
+integration_branch: main
+
+verification:
+  full: "<command that runs the whole check suite>"
+  targeted: "<command that runs a narrow test selection>"
+
+git:
+  worktree_required: false
+  stacking_allowed: false
+
+external_review:
+  command: "<command that runs the external reviewer>"
+
+task_lifecycle:
+  enabled: false
