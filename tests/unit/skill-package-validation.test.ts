@@ -537,10 +537,14 @@ describe("task-delivery workflow invariants", () => {
       "policy:approve-summary-before-preflight",
       /Start\s+preflight only after the authorizer\s+approves that summary\./u,
     ],
-    ["policy:ask-project-pipeline", "Do not ask when the project has none."],
+    ["policy:settle-project-pipeline", "Settle which pipeline applies before"],
+    [
+      "policy:run-never-merges-to-unblock",
+      /The run never merges a\s+pull request merely to unblock a later selected task\./u,
+    ],
     [
       "policy:project-pipeline-keeps-gates",
-      /it never\s+removes one, and the non-negotiable rules above still hold\./u,
+      /it never removes a gate of this skill,\s+and the non-negotiable rules above still hold\./u,
     ],
     [
       "policy:never-choose-the-target",
@@ -662,6 +666,26 @@ describe("task-delivery workflow invariants", () => {
         "utf8",
       ).replace(/\s+/gu, " ");
 
+    const documents: [string, string][] = [
+      ["SKILL.md", core],
+      ...[
+        "branch-policy.md",
+        "configuration.md",
+        "evidence.md",
+        "lifecycle.md",
+        "qa-checklist.md",
+        "review-checklist.md",
+        "stop-conditions.md",
+      ].map((name): [string, string] => [name, reference(name)]),
+      [
+        "pr-template.md",
+        readFileSync(
+          join(canonicalSkillRoot, "assets", "pr-template.md"),
+          "utf8",
+        ).replace(/\s+/gu, " "),
+      ],
+    ];
+
     test("a run without a target asks before preflight, with three choices", () => {
       expect(core.indexOf("## What to deliver")).toBeGreaterThan(-1);
       expect(core.indexOf("## What to deliver")).toBeLessThan(
@@ -675,7 +699,7 @@ describe("task-delivery workflow invariants", () => {
       expect(section).toMatch(/wait for the answer/u);
       expect(section).toMatch(/Never pick a milestone or a task yourself\./u);
       expect(section).toMatch(
-        /When the request already names the target, do not ask the question again\./u,
+        /When the request already names the target, do not ask for the target again\./u,
       );
     });
 
@@ -691,7 +715,7 @@ describe("task-delivery workflow invariants", () => {
       expect(summary).toBeGreaterThan(check);
       expect(approval).toBeGreaterThan(summary);
       expect(section).toMatch(
-        /each task goes through the whole lifecycle below, with its own branch, pull request, and evidence/u,
+        /A run that covers several tasks gives each task its own branch, pull request, and evidence\./u,
       );
     });
 
@@ -702,7 +726,7 @@ describe("task-delivery workflow invariants", () => {
     test("the section is exactly these sentences", () => {
       const sentences = section
         .replace(/^## What to deliver /u, "")
-        .split(/(?<=[.:]) (?=[A-Z0-9])/u)
+        .split(/(?<=[.:]) (?=[A-Z0-9]|- )/u)
         .map((sentence) => sentence.trim())
         .filter((sentence) => sentence !== "");
 
@@ -712,11 +736,15 @@ describe("task-delivery workflow invariants", () => {
         "1. **A whole milestone**: every open task of one milestone.",
         "2. **One or more tasks**: the tasks the authorizer names.",
         "3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.",
-        "If the project defines a default delivery pipeline of its own - in its instructions or in the system that tracks its tasks - ask at the same time whether to use it.",
-        "Do not ask when the project has none.",
-        "When the project enforces a pipeline, do not ask either: say which one applies.",
+        "The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
+        "Settle which pipeline applies before preflight, and never choose one yourself:",
+        "- When the project enforces a pipeline, state which one applies; there is no choice to offer.",
+        "- When the project defines a default pipeline, ask whether to use it and wait for the answer.",
+        "- When several pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use.",
+        "- When the project defines no pipeline, do not ask.",
         "A project pipeline that is used decides the stages, assignments, and transitions of the work.",
-        "It may add gates to this skill's lifecycle or rename them; it never removes one, and the non-negotiable rules above still hold.",
+        "Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence.",
+        "A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
         "Never pick a milestone or a task yourself.",
         "Once the answer is in, and before showing anything for approval, check the dependencies of the selection.",
         "The check always runs; when individual tasks were chosen it is done for every selected task: find the tasks it logically depends on and their state, and separate the dependencies that are already DONE, those that are part of the selection, and those that are neither.",
@@ -727,9 +755,14 @@ describe("task-delivery workflow invariants", () => {
         "A selected prerequisite is delivered before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.",
         "Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
         "Start preflight only after the authorizer approves that summary.",
-        "A run that covers several tasks delivers them one at a time: each task goes through the whole lifecycle below, with its own branch, pull request, and evidence.",
-        "When the request already names the target, do not ask the question again.",
-        "The dependency check and the summary still apply whenever it covers more than one task.",
+        "A run that covers several tasks gives each task its own branch, pull request, and evidence.",
+        "Each task's pre-merge delivery ends at READY FOR MERGE.",
+        "The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency.",
+        "The run never merges a pull request merely to unblock a later selected task.",
+        "A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency.",
+        "When the request already names the target, do not ask for the target again.",
+        "The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
+        "The dependency check and the summary still apply whenever the request covers more than one task.",
         "For a single named task, make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
       ]);
     });
@@ -771,25 +804,23 @@ describe("task-delivery workflow invariants", () => {
       ]);
     });
 
-    test("a project pipeline is offered only when there is one, and keeps the gates", () => {
-      const question = section.indexOf(
-        "ask at the same time whether to use it",
+    test("the pipeline is settled before preflight and never chosen by the executor", () => {
+      const settle = section.indexOf(
+        "Settle which pipeline applies before preflight, and never choose one yourself:",
       );
-      expect(question).toBeGreaterThan(
+      expect(settle).toBeGreaterThan(
         section.indexOf("3. **Some tasks of one milestone**"),
       );
-      expect(question).toBeLessThan(
+      expect(settle).toBeLessThan(
         section.indexOf("check the dependencies of the selection"),
       );
+      // One rule per situation: enforced, default, several, none.
       expect(section).toMatch(
-        /If the project defines a default delivery pipeline of its own - in its instructions or in the system that tracks its tasks - ask at the same time whether to use it\. Do not ask when the project has none\. When the project enforces a pipeline, do not ask either: say which one applies\./u,
+        /- When the project enforces a pipeline, state which one applies; there is no choice to offer\. - When the project defines a default pipeline, ask whether to use it and wait for the answer\. - When several pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use\. - When the project defines no pipeline, do not ask\./u,
       );
-      // Using a project pipeline never lowers the bar this skill sets.
+      // A named target skips the target question, not the pipeline.
       expect(section).toMatch(
-        /It may add gates to this skill's lifecycle or rename them; it never removes one, and the non-negotiable rules above still hold\./u,
-      );
-      expect(section).not.toMatch(
-        /pipeline[^.]*\b(?:replaces|instead of|overrides|skips?|waives?)\b/iu,
+        /When the request already names the target, do not ask for the target again\. The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer\./u,
       );
       // The choice is part of what the authorizer approves.
       expect(section).toMatch(
@@ -799,6 +830,55 @@ describe("task-delivery workflow invariants", () => {
       expect(section).not.toMatch(/office|runtime|daemon/iu);
     });
 
+    test("a project pipeline maps onto the gates without removing any", () => {
+      expect(section).toMatch(
+        /Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence\./u,
+      );
+      expect(section).toMatch(
+        /A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold\./u,
+      );
+    });
+
+    // The contract about project pipelines lives in these statements and
+    // nowhere else. The list is closed across the core, the references and
+    // the pull request template, so a statement about pipelines added to
+    // another document - for example one letting a shorter pipeline drop a
+    // gate - has to be added here deliberately. It checks where pipelines
+    // are mentioned, not what any other prose means.
+    test("the statements about pipelines are exactly these", () => {
+      const statements = documents.flatMap(([name, text]) =>
+        text
+          .split(/(?<=[.:]) (?=[A-Z0-9*`[<-])| \| | (?=#{2,3} )/u)
+          .map((part) => part.trim())
+          .filter((part) => /pipeline/iu.test(part))
+          .map((part) => `${name}: ${part}`),
+      );
+
+      expect(statements).toEqual([
+        "SKILL.md: Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge. license:",
+        "SKILL.md: The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
+        "SKILL.md: Settle which pipeline applies before preflight, and never choose one yourself:",
+        "SKILL.md: - When the project enforces a pipeline, state which one applies; there is no choice to offer.",
+        "SKILL.md: - When the project defines a default pipeline, ask whether to use it and wait for the answer.",
+        "SKILL.md: - When several pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use.",
+        "SKILL.md: - When the project defines no pipeline, do not ask.",
+        "SKILL.md: A project pipeline that is used decides the stages, assignments, and transitions of the work.",
+        "SKILL.md: A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
+        "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
+        "SKILL.md: The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
+        "configuration.md: A project may bind them to its own role names and to any executor; the pipeline stays the same when the executor changes.",
+      ]);
+    });
+
+    test("a run over dependent tasks stops at READY FOR MERGE and never merges to unblock", () => {
+      expect(section).toMatch(
+        /Each task's pre-merge delivery ends at READY FOR MERGE\. The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency\. The run never merges a pull request merely to unblock a later selected task\. A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency\./u,
+      );
+      expect(section).not.toMatch(/one at a time|whole lifecycle/iu);
+      expect(core).toMatch(/READY FOR MERGE != DONE/u);
+      expect(core).toMatch(/Never merge without explicit authorization/u);
+    });
+
     // Every sentence, list item and table cell in the skill that speaks of
     // satisfying, resolving or settling something about a dependency, a
     // prerequisite, a base, a branch or stacking. The list is closed: a new
@@ -806,25 +886,6 @@ describe("task-delivery workflow invariants", () => {
     // here deliberately. Like every wording check this is a tripwire for
     // accidental drift; it cannot stop a rewrite that avoids these words.
     test("the statements about satisfying a dependency are exactly these", () => {
-      const documents: [string, string][] = [
-        ["SKILL.md", core],
-        ...[
-          "branch-policy.md",
-          "configuration.md",
-          "evidence.md",
-          "lifecycle.md",
-          "qa-checklist.md",
-          "review-checklist.md",
-          "stop-conditions.md",
-        ].map((name): [string, string] => [name, reference(name)]),
-        [
-          "pr-template.md",
-          readFileSync(
-            join(canonicalSkillRoot, "assets", "pr-template.md"),
-            "utf8",
-          ).replace(/\s+/gu, " "),
-        ],
-      ];
       const statements = documents.flatMap(([name, text]) =>
         text
           .split(/(?<=[.:]) (?=[A-Z0-9*`[<-])| \| | (?=#{2,3} )/u)
@@ -841,6 +902,8 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
         "SKILL.md: Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
         "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
+        "SKILL.md: The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency.",
+        "SKILL.md: A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency.",
         "SKILL.md: For a single named task, make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
         "branch-policy.md: - A satisfied Git dependency does not satisfy a task dependency: being stacked on A's branch does not mean A's task is accepted.",
         "lifecycle.md: A dependency that is not DONE is unresolved: stop until the authorizer decides.",

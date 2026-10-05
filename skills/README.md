@@ -63,8 +63,10 @@ The manifest is the ownership record and is trusted: do not edit it by hand.
 ## Using `task-delivery`
 
 Started without a target, the skill first asks what to deliver: a whole
-milestone, one or more tasks, or some tasks of one milestone - and, when the
-project defines a default delivery pipeline, whether to use it. It then checks
+milestone, one or more tasks, or some tasks of one milestone. It also settles
+which project pipeline applies - stated when enforced, confirmed when there is
+a default, chosen by you when there are several - without ever removing one of
+its own gates. It then checks
 the dependencies of the selection, shows a summary, and waits for the go-ahead.
 
 - **Claude Code**: discovered from `.claude/skills/task-delivery`. Invoke with

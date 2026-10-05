@@ -69,13 +69,24 @@ choices and wait for the answer:
 2. **One or more tasks**: the tasks the authorizer names.
 3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.
 
-If the project defines a default delivery pipeline of its own - in its
-instructions or in the system that tracks its tasks - ask at the same time
-whether to use it. Do not ask when the project has none. When the project
-enforces a pipeline, do not ask either: say which one applies. A project
-pipeline that is used decides the stages, assignments, and transitions of the
-work. It may add gates to this skill's lifecycle or rename them; it never
-removes one, and the non-negotiable rules above still hold.
+The project may define delivery pipelines of its own, in its instructions or
+in the system that tracks its tasks. Settle which pipeline applies before
+preflight, and never choose one yourself:
+
+- When the project enforces a pipeline, state which one applies; there is no
+  choice to offer.
+- When the project defines a default pipeline, ask whether to use it and wait
+  for the answer.
+- When several pipelines could apply and none is the default or enforced, list
+  them and ask the authorizer which one to use.
+- When the project defines no pipeline, do not ask.
+
+A project pipeline that is used decides the stages, assignments, and
+transitions of the work. Its mapping to this skill's lifecycle need not be one
+to one: a project stage may cover several gates of this skill, and each gate
+still keeps its own criteria and its own evidence. A project pipeline may
+group, rename, or add stages and gates; it never removes a gate of this skill,
+and the non-negotiable rules above still hold.
 
 Never pick a milestone or a task yourself. Once the answer is in, and before
 showing anything for approval, check the dependencies of the selection. The
@@ -102,14 +113,24 @@ Then show a summary and ask for the go-ahead: the tasks in the order you
 propose, what each depends on, every unresolved dependency with the proposal
 for it, any Git branch dependency you propose, kept apart from the task
 dependencies, the pipeline that will be used, and anything excluded. Start
-preflight only after the authorizer approves that summary. A run that covers several tasks delivers them one at a
-time: each task goes through the whole lifecycle below, with its own branch,
-pull request, and evidence.
+preflight only after the authorizer approves that summary.
 
-When the request already names the target, do not ask the question again. The
-dependency check and the summary still apply whenever it covers more than one
-task. For a single named task, make the same dependency check in preflight and
-stop on an unresolved dependency until the authorizer decides.
+A run that covers several tasks gives each task its own branch, pull request,
+and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run
+may then continue with another selected task only if that task has no
+unresolved prerequisite that blocks execution, or if the authorizer has
+explicitly approved the required Git branch dependency. The run never merges a
+pull request merely to unblock a later selected task. A stacked branch does
+not make the prerequisite task DONE and does not resolve the logical
+dependency.
+
+When the request already names the target, do not ask for the target again.
+The pipeline is still settled before preflight as described above: an enforced
+pipeline is stated, and a default one is stated and confirmed by the
+authorizer. The dependency check and the summary still apply whenever the
+request covers more than one task. For a single named task, make the same
+dependency check in preflight and stop on an unresolved dependency until the
+authorizer decides.
 
 ## Lifecycle
 
