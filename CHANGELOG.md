@@ -36,6 +36,33 @@
   line endings. The `knowledge:search` limit bound is derived from the
   retrieval limit. Installed repositories refresh on the next
   `ai-office install`.
+- Let `ai-office task:update` change a task's priority. It now takes
+  `--project`, `--task` and at least one of `--description` and
+  `--priority <integer>`; both may be given in one command and land in one
+  transaction. Lifecycle status is untouched. Description updates still append
+  `task.description_updated` exactly as before; a priority update appends
+  `task.priority_updated` with the explicit `from` and `to` priority. Priority
+  semantics are now documented and enforced once in the task domain: an
+  integer from `-2147483648` to `2147483647` (the range every storage adapter,
+  including PostgreSQL `integer`, can store), default `0`, higher sorts first.
+  `task:create --priority` and `task:update --priority` share one parser and
+  refuse anything but plain decimal integer text (for example `""`, `1e3`,
+  `0x10`, `1.5`) with a usage error; `task:create` previously accepted
+  `Number()` notation such as `1e3` or an empty value (stored as `0`) and any
+  JavaScript safe integer, which PostgreSQL storage could not persist. No
+  migration is required; existing rows and `project:restore` archives are not
+  re-validated, so a wider legacy SQLite priority stays until it is updated.
+  The skill describes the new option, so installed repositories receive an
+  updated skill on the next `ai-office install`.
+- Fix truncated CLI output when stdout is a pipe. Every Runtime client command
+  opened an interactive prompt reader on `process.stdout` up front, which in
+  Bun makes a pipe on stdout non-blocking; `console.log` then wrote only what
+  the pipe buffer could hold at once (64 KiB on Linux), silently dropped the
+  rest and still exited `0`, so `office:workspace --json` or
+  `requirement:list --json` piped to another program produced invalid JSON.
+  The prompt reader now opens only when the Runtime asks a question, and from
+  then on output goes through the same backpressure-aware stream. Prompt
+  answers piped on stdin are no longer lost to the early reader.
 - Make durable project knowledge an explicit part of agent work. The AI Office
   skill now carries one canonical policy, embedded verbatim in the distribution
   skill and the skill projected into installed repositories: classify what was

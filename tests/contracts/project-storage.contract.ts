@@ -615,6 +615,78 @@ export function defineProjectStorageContracts(
         ),
       ).toEqual([`${prefix}-high-a`, `${prefix}-high-b`, `${prefix}-low`]);
     });
+
+    test("persists an updated priority and reorders the project list", async () => {
+      const project = await createProject(harness, `${prefix}-reorder-project`);
+      const created = new Date("2026-02-02T00:00:00.000Z");
+      const first = Task.create({
+        id: `${prefix}-reorder-first`,
+        projectId: project.snapshot().id,
+        title: "First",
+        priority: 5,
+        now: created,
+      });
+      const second = Task.create({
+        id: `${prefix}-reorder-second`,
+        projectId: project.snapshot().id,
+        title: "Second",
+        priority: 1,
+        now: created,
+      });
+      await harness.tasks.save(first);
+      await harness.tasks.save(second);
+
+      const updatedAt = new Date("2026-02-03T00:00:00.000Z");
+      second.updatePriority(9, updatedAt);
+      await harness.tasks.save(second);
+
+      expect(
+        (await harness.tasks.findById(second.snapshot().id))?.snapshot(),
+      ).toEqual(second.snapshot());
+      expect(
+        (await harness.tasks.listByProject(project.snapshot().id)).map(
+          (task) => task.snapshot().id,
+        ),
+      ).toEqual([`${prefix}-reorder-second`, `${prefix}-reorder-first`]);
+    });
+
+    test("persists the domain's extreme priorities and orders them", async () => {
+      const project = await createProject(harness, `${prefix}-extreme-project`);
+      const created = new Date("2026-02-02T00:00:00.000Z");
+      const lowest = Task.create({
+        id: `${prefix}-extreme-lowest`,
+        projectId: project.snapshot().id,
+        title: "Lowest",
+        priority: -2147483648,
+        now: created,
+      });
+      const neutral = Task.create({
+        id: `${prefix}-extreme-neutral`,
+        projectId: project.snapshot().id,
+        title: "Neutral",
+        now: created,
+      });
+      const highest = Task.create({
+        id: `${prefix}-extreme-highest`,
+        projectId: project.snapshot().id,
+        title: "Highest",
+        now: created,
+      });
+      for (const task of [lowest, neutral, highest])
+        await harness.tasks.save(task);
+      highest.updatePriority(2147483647, new Date("2026-02-03T00:00:00.000Z"));
+      await harness.tasks.save(highest);
+
+      for (const task of [lowest, neutral, highest])
+        expect(
+          (await harness.tasks.findById(task.snapshot().id))?.snapshot(),
+        ).toEqual(task.snapshot());
+      expect(
+        (await harness.tasks.listByProject(project.snapshot().id)).map(
+          (task) => task.snapshot().priority,
+        ),
+      ).toEqual([2147483647, 0, -2147483648]);
+    });
   });
 
   describe("TaskDependencyRepository", () => {

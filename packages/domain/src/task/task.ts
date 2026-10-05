@@ -131,6 +131,35 @@ export function normalizeTaskReason(value: string, label: string): string {
   return reason;
 }
 
+/**
+ * Task priority is an ordering key, not a category. Any integer in the
+ * portable signed 32-bit range [{@link minTaskPriority},
+ * {@link maxTaskPriority}] is allowed, including zero and negative values; a
+ * higher value is more urgent and sorts first in every task list. Tasks
+ * created without one get {@link defaultTaskPriority}.
+ *
+ * The range is the narrowest native priority column among the storage
+ * adapters (PostgreSQL `integer`), so every adapter can persist any priority
+ * set through {@link Task.create} or {@link Task.updatePriority}.
+ */
+export const minTaskPriority = -2147483648;
+export const maxTaskPriority = 2147483647;
+export const defaultTaskPriority = 0;
+
+/** The single priority rule shared by creation and update. */
+export function validateTaskPriority(priority: number): number {
+  if (
+    !Number.isInteger(priority) ||
+    priority < minTaskPriority ||
+    priority > maxTaskPriority
+  )
+    throw new DomainValidationError(
+      `Task priority must be an integer between ${minTaskPriority} and ${maxTaskPriority}`,
+    );
+  // -0 is a valid integer but would round-trip as 0 in some adapters only.
+  return priority === 0 ? 0 : priority;
+}
+
 export interface TaskProps {
   id: TaskId;
   projectId: ProjectId;
@@ -159,11 +188,7 @@ export class Task {
       throw new DomainValidationError("Task title cannot be empty");
     }
 
-    const priority = input.priority ?? 0;
-
-    if (!Number.isSafeInteger(priority)) {
-      throw new DomainValidationError("Task priority must be a safe integer");
-    }
+    const priority = validateTaskPriority(input.priority ?? defaultTaskPriority);
 
     return new Task({
       id: input.id,
@@ -186,6 +211,15 @@ export class Task {
   /** Updates descriptive content without changing lifecycle state. */
   updateDescription(description: string, now: Date): void {
     this.props = { ...this.props, description, updatedAt: now };
+  }
+
+  /** Changes the ordering key without changing lifecycle state. */
+  updatePriority(priority: number, now: Date): void {
+    this.props = {
+      ...this.props,
+      priority: validateTaskPriority(priority),
+      updatedAt: now,
+    };
   }
 
   /** Work has begun. Driven by `pipeline:start` and by `task:start`. */

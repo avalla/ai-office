@@ -65,9 +65,11 @@ activity. Use --status all, --milestone <milestoneId>, or --sort short_name for
 historical and focused browsing. Re-run it after commands to verify persisted
 state.
 
-Use task:update for descriptions, semantic task lifecycle commands,
-milestone:set-status and requirement:set-status for governance, and
-requirement:list --json to resolve exact requirement UUIDs before linking.
+Use task:update for descriptions and priority (--priority <integer> from
+-2147483648 to 2147483647; higher sorts first, default 0), semantic task
+lifecycle commands, milestone:set-status and requirement:set-status for
+governance, and requirement:list --json to resolve exact requirement UUIDs
+before linking.
 Use requirement:update to correct only the title and/or description of a
 requirement that is still proposed; its identity, key, project, milestone and
 status are immutable through this command, and once a requirement is accepted
