@@ -4,7 +4,8 @@
 
 - `task-delivery` 0.2.0: started without a target, the skill asks whether to
   deliver a whole milestone, one or more tasks, or some tasks of one
-  milestone; it then checks the dependencies of the selection, shows a
+  milestone, and whether to use the project's default delivery pipeline when
+  one is defined; it then checks the dependencies of the selection, shows a
   summary, and waits for the go-ahead before preflight.
 - Add portable agent skills under `skills/` with one canonical source per
   skill and a deterministic installer for the executor copies

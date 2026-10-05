@@ -164,6 +164,16 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
           /Start preflight only after the authorizer approves that summary/u,
       },
       {
+        id: "policy:ask-project-pipeline",
+        pattern:
+          /If the project defines a default delivery pipeline of its own .* ask at the same time whether to use it\. Do not ask when the project has none\./u,
+      },
+      {
+        id: "policy:project-pipeline-keeps-gates",
+        pattern:
+          /It may add gates to this skill's lifecycle or rename them; it never removes one, and the non-negotiable rules above still hold\./u,
+      },
+      {
         id: "policy:never-choose-the-target",
         pattern: /Never pick a milestone or a task yourself/u,
       },

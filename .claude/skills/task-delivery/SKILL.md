@@ -69,6 +69,14 @@ choices and wait for the answer:
 2. **One or more tasks**: the tasks the authorizer names.
 3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.
 
+If the project defines a default delivery pipeline of its own - in its
+instructions or in the system that tracks its tasks - ask at the same time
+whether to use it. Do not ask when the project has none. When the project
+enforces a pipeline, do not ask either: say which one applies. A project
+pipeline that is used decides the stages, assignments, and transitions of the
+work. It may add gates to this skill's lifecycle or rename them; it never
+removes one, and the non-negotiable rules above still hold.
+
 Never pick a milestone or a task yourself. Once the answer is in, and before
 showing anything for approval, check the dependencies of the selection. The
 check always runs; when individual tasks were chosen it is done for every
@@ -93,8 +101,8 @@ dependency on it.
 Then show a summary and ask for the go-ahead: the tasks in the order you
 propose, what each depends on, every unresolved dependency with the proposal
 for it, any Git branch dependency you propose, kept apart from the task
-dependencies, and anything excluded. Start preflight only after the authorizer
-approves that summary. A run that covers several tasks delivers them one at a
+dependencies, the pipeline that will be used, and anything excluded. Start
+preflight only after the authorizer approves that summary. A run that covers several tasks delivers them one at a
 time: each task goes through the whole lifecycle below, with its own branch,
 pull request, and evidence.
 

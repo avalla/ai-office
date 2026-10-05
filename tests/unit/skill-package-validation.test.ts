@@ -535,7 +535,12 @@ describe("task-delivery workflow invariants", () => {
     ],
     [
       "policy:approve-summary-before-preflight",
-      /Start preflight only after the authorizer\s+approves that summary\./u,
+      /Start\s+preflight only after the authorizer\s+approves that summary\./u,
+    ],
+    ["policy:ask-project-pipeline", "Do not ask when the project has none."],
+    [
+      "policy:project-pipeline-keeps-gates",
+      /it never\s+removes one, and the non-negotiable rules above still hold\./u,
     ],
     [
       "policy:never-choose-the-target",
@@ -707,6 +712,11 @@ describe("task-delivery workflow invariants", () => {
         "1. **A whole milestone**: every open task of one milestone.",
         "2. **One or more tasks**: the tasks the authorizer names.",
         "3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.",
+        "If the project defines a default delivery pipeline of its own - in its instructions or in the system that tracks its tasks - ask at the same time whether to use it.",
+        "Do not ask when the project has none.",
+        "When the project enforces a pipeline, do not ask either: say which one applies.",
+        "A project pipeline that is used decides the stages, assignments, and transitions of the work.",
+        "It may add gates to this skill's lifecycle or rename them; it never removes one, and the non-negotiable rules above still hold.",
         "Never pick a milestone or a task yourself.",
         "Once the answer is in, and before showing anything for approval, check the dependencies of the selection.",
         "The check always runs; when individual tasks were chosen it is done for every selected task: find the tasks it logically depends on and their state, and separate the dependencies that are already DONE, those that are part of the selection, and those that are neither.",
@@ -715,7 +725,7 @@ describe("task-delivery workflow invariants", () => {
         "When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, explicitly, a Git branch dependency on that branch, as the [branch policy](references/branch-policy.md) describes.",
         "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
         "A selected prerequisite is delivered before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.",
-        "Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, and anything excluded.",
+        "Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
         "Start preflight only after the authorizer approves that summary.",
         "A run that covers several tasks delivers them one at a time: each task goes through the whole lifecycle below, with its own branch, pull request, and evidence.",
         "When the request already names the target, do not ask the question again.",
@@ -724,7 +734,8 @@ describe("task-delivery workflow invariants", () => {
       ]);
     });
 
-    // Across the whole skill, nothing may be counted or treated as DONE,
+    // Across the core, the references and the pull request template, nothing
+    // may be counted or treated as DONE,
     // satisfied, resolved, merged, delivered or met - the usual shape of a
     // sentence that lets an open pull request, a READY FOR MERGE task or a
     // stacked branch stand in for a finished task. The one sentence that
@@ -743,6 +754,10 @@ describe("task-delivery workflow invariants", () => {
           "review-checklist.md",
           "qa-checklist.md",
         ].map(reference),
+        readFileSync(
+          join(canonicalSkillRoot, "assets", "pr-template.md"),
+          "utf8",
+        ).replace(/\s+/gu, " "),
       ];
       const matches = documents.flatMap((text) =>
         text
@@ -754,6 +769,94 @@ describe("task-delivery workflow invariants", () => {
       expect(matches).toEqual([
         "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
       ]);
+    });
+
+    test("a project pipeline is offered only when there is one, and keeps the gates", () => {
+      const question = section.indexOf(
+        "ask at the same time whether to use it",
+      );
+      expect(question).toBeGreaterThan(
+        section.indexOf("3. **Some tasks of one milestone**"),
+      );
+      expect(question).toBeLessThan(
+        section.indexOf("check the dependencies of the selection"),
+      );
+      expect(section).toMatch(
+        /If the project defines a default delivery pipeline of its own - in its instructions or in the system that tracks its tasks - ask at the same time whether to use it\. Do not ask when the project has none\. When the project enforces a pipeline, do not ask either: say which one applies\./u,
+      );
+      // Using a project pipeline never lowers the bar this skill sets.
+      expect(section).toMatch(
+        /It may add gates to this skill's lifecycle or rename them; it never removes one, and the non-negotiable rules above still hold\./u,
+      );
+      expect(section).not.toMatch(
+        /pipeline[^.]*\b(?:replaces|instead of|overrides|skips?|waives?)\b/iu,
+      );
+      // The choice is part of what the authorizer approves.
+      expect(section).toMatch(
+        /the pipeline that will be used, and anything excluded\. Start preflight only after the authorizer approves that summary\./u,
+      );
+      // The neutral core names no product for it.
+      expect(section).not.toMatch(/office|runtime|daemon/iu);
+    });
+
+    // Every sentence, list item and table cell in the skill that speaks of
+    // satisfying, resolving or settling something about a dependency, a
+    // prerequisite, a base, a branch or stacking. The list is closed: a new
+    // statement on the subject, anywhere in the package, has to be added
+    // here deliberately. Like every wording check this is a tripwire for
+    // accidental drift; it cannot stop a rewrite that avoids these words.
+    test("the statements about satisfying a dependency are exactly these", () => {
+      const documents: [string, string][] = [
+        ["SKILL.md", core],
+        ...[
+          "branch-policy.md",
+          "configuration.md",
+          "evidence.md",
+          "lifecycle.md",
+          "qa-checklist.md",
+          "review-checklist.md",
+          "stop-conditions.md",
+        ].map((name): [string, string] => [name, reference(name)]),
+        [
+          "pr-template.md",
+          readFileSync(
+            join(canonicalSkillRoot, "assets", "pr-template.md"),
+            "utf8",
+          ).replace(/\s+/gu, " "),
+        ],
+      ];
+      const statements = documents.flatMap(([name, text]) =>
+        text
+          .split(/(?<=[.:]) (?=[A-Z0-9*`[<-])| \| | (?=#{2,3} )/u)
+          .map((part) => part.trim())
+          .filter(
+            (part) =>
+              /satisf|resolv|settl/iu.test(part) &&
+              /\bdepend|stack|prerequisite|\bbase\b|branch/iu.test(part),
+          )
+          .map((part) => `${name}: ${part}`),
+      );
+
+      expect(statements).toEqual([
+        "SKILL.md: A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
+        "SKILL.md: Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
+        "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
+        "SKILL.md: For a single named task, make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
+        "branch-policy.md: - A satisfied Git dependency does not satisfy a task dependency: being stacked on A's branch does not mean A's task is accepted.",
+        "lifecycle.md: A dependency that is not DONE is unresolved: stop until the authorizer decides.",
+        "lifecycle.md: Decide the Git base separately, following the [branch policy](branch-policy.md); a stacked base never resolves a task dependency.",
+        "stop-conditions.md: - **Unresolved task dependency.** The task logically depends on a task that is not DONE, and the authorizer has not decided how to proceed.",
+        "stop-conditions.md: Behavior that is available on a stacked base lets work continue only under an approved Git branch dependency; it never satisfies the task dependency.",
+      ]);
+    });
+
+    test("the rule and the table that define the two dependencies are intact", () => {
+      expect(core).toMatch(
+        /3\. \*\*Task dependency != Git branch dependency\.\*\* A task may logically depend on another without its branch being stacked on it, and the reverse\. Decide each one separately; see \[branch policy\]\(references\/branch-policy\.md\)\. 4\./u,
+      );
+      expect(reference("branch-policy.md")).toMatch(
+        /\| Yes \| No \| Wait for A, or stack B on A's head if the project allows stacked work\. \| ## Rules/u,
+      );
     });
 
     test("no part of the section lets a branch settle a task dependency", () => {
