@@ -838,33 +838,32 @@ describe("task-delivery workflow invariants", () => {
     test("no task or dependency is counted or treated as done before it is", () => {
       const equivalence =
         /\b(?:counts?|counted|counting|treat(?:s|ed|ing)?|regard(?:s|ed|ing)?|consider(?:s|ed|ing)?|good|same)\b[^.]{0,80}?\bas (?:done|satisfied|resolved|merged|delivered|met|accepted|completed?)\b/iu;
-      // A statement is one sentence, question, list item, heading or table
-      // cell. Its subject is named in the statement itself; only when the
-      // statement speaks of "it" or "them" does the one before it count.
+      // Statements are read from the Markdown as written: a heading, a list
+      // item, a table row and a paragraph are separate blocks, and a block is
+      // split into sentences at ".", "?" and "!" only - never at a dash or a
+      // colon inside a sentence. A statement's subject is named in the
+      // statement itself; only when it speaks of "it" or "them" does the
+      // statement before it count.
       const subject =
         /\btasks?\b|dependenc|prerequisite|branch|pull request|stack|READY FOR MERGE/iu;
       const pronoun =
         /\b(?:counts?|counted|counting|treat(?:s|ed|ing)?|regard(?:s|ed|ing)?|consider(?:s|ed|ing)?)\s+(?:it|them|this|that|these|those)\b/iu;
-      const texts = [
-        core,
-        ...[
-          "lifecycle.md",
-          "stop-conditions.md",
-          "branch-policy.md",
-          "evidence.md",
-          "configuration.md",
-          "review-checklist.md",
-          "qa-checklist.md",
-        ].map(reference),
-        readFileSync(
-          join(canonicalSkillRoot, "assets", "pr-template.md"),
-          "utf8",
-        ).replace(/\s+/gu, " "),
-      ];
-      const matchesIn = (text: string): string[] => {
-        const statements = text
-          .split(/(?<=[.:?!]) (?=[A-Z0-9*])| (?=- )| (?=#{2,3} )| \| /u)
-          .map((statement) => statement.trim());
+      const statementsOf = (markdown: string): string[] =>
+        markdown
+          // A heading line is a block of its own, with or without blank
+          // lines around it.
+          .replace(/^(#{1,6} .*)$/gmu, "\n\n$1\n\n")
+          .split(/\n{2,}|\n(?=[ \t]*(?:[-*]|\d+\.) )|\n(?=\|)/u)
+          .flatMap((block) => {
+            const text = block.replace(/\s+/gu, " ").trim();
+            return /^#{1,6} /u.test(text)
+              ? [text]
+              : text.split(/(?<=[.?!]) (?=\S)/u);
+          })
+          .map((statement) => statement.replace(/^(?:[-*]|\d+\.) /u, ""))
+          .filter((statement) => statement !== "");
+      const matchesIn = (markdown: string): string[] => {
+        const statements = statementsOf(markdown);
         return statements.filter(
           (statement, index) =>
             equivalence.test(statement) &&
@@ -873,43 +872,82 @@ describe("task-delivery workflow invariants", () => {
                 subject.test(statements[index - 1] ?? ""))),
         );
       };
+      const raw = (path: string[]): string =>
+        readFileSync(join(canonicalSkillRoot, ...path), "utf8");
+      const texts = [
+        canonicalSkill.slice(
+          0,
+          canonicalSkill.indexOf("<!-- executors:start -->"),
+        ),
+        ...[
+          "lifecycle.md",
+          "stop-conditions.md",
+          "branch-policy.md",
+          "evidence.md",
+          "configuration.md",
+          "review-checklist.md",
+          "qa-checklist.md",
+        ].map((name) => raw(["references", name])),
+        raw(["assets", "pr-template.md"]),
+      ];
 
       expect(texts.flatMap(matchesIn)).toEqual([
         "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
       ]);
 
       // The guard itself. Sentence-initial imperatives are caught whatever
-      // their case, with the subject in the statement or just before "it".
+      // their case, with the subject in the statement or just before "it" -
+      // also when that earlier sentence has dashes or a colon in it, and when
+      // it is the list item above.
+      const caught = (markdown: string): string[] => matchesIn(markdown);
       expect(
-        matchesIn(
+        caught(
           "- A prerequisite whose pull request is READY FOR MERGE. Treat it as DONE and continue.",
         ),
       ).toEqual(["Treat it as DONE and continue."]);
       expect(
-        matchesIn("The pull request is open. Count it as merged."),
+        caught(
+          "- A prerequisite whose pull request is open - reviewed or not - is close enough. Treat it as DONE and continue.",
+        ),
+      ).toEqual(["Treat it as DONE and continue."]);
+      expect(
+        caught(
+          "- A prerequisite waits on two checks: 1 review and 1 verification. Treat it as DONE and continue.",
+        ),
+      ).toEqual(["Treat it as DONE and continue."]);
+      expect(
+        caught(
+          "- The pull request is approved - every check is green. Count it as merged.",
+        ),
       ).toEqual(["Count it as merged."]);
       expect(
-        matchesIn("A stacked dependency Counts As Satisfied here."),
+        caught(
+          "- A prerequisite is still open.\n- Treat it as DONE and continue.",
+        ),
+      ).toEqual(["Treat it as DONE and continue."]);
+      expect(
+        caught("A stacked dependency Counts As Satisfied here."),
       ).toHaveLength(1);
+
       // Prose about something else is left alone wherever it is placed:
-      // alone, after a sentence that mentions a task, or inside a list of
-      // questions.
+      // alone, after a sentence or a question that mentions a task, in a
+      // list, directly under a heading that names a dependency or a pull
+      // request, and before text that starts with a code span.
       const unrelated =
         "Always treat a finding as resolved only after its test fails without the fix.";
-      expect(matchesIn(unrelated)).toEqual([]);
-      expect(
-        matchesIn(`Is every changed file needed for this task? ${unrelated}`),
-      ).toEqual([]);
-      expect(
-        matchesIn(
-          `## Tests - Do tests fail without the change and pass with it? - ${unrelated} - Are tests deterministic and isolated from the branch under review?`,
-        ),
-      ).toEqual([]);
-      expect(
-        matchesIn(
-          `Read the code of the pull request. ${unrelated} Report each finding.`,
-        ),
-      ).toEqual([]);
+      for (const markdown of [
+        unrelated,
+        `Is every changed file needed for this task? ${unrelated}`,
+        `Read the code of the pull request. ${unrelated} Report each finding.`,
+        `## Tests\n\n- Do tests fail without the change and pass with it?\n- ${unrelated}\n- Are tests isolated from the branch under review?`,
+        `## Two different dependencies\n\n${unrelated}\n\nA task dependency is logical.`,
+        `## 4. Pull Request\n\n${unrelated}`,
+        `## Dependencies\n${unrelated}`,
+        `# Branch and dependency policy\n\n${unrelated}`,
+        `${unrelated}\n\n\`integration_branch\` names the branch tasks start from.`,
+        `| Task B depends on A | Base for B |\n| --- | --- |\n| No | ${unrelated} |`,
+      ])
+        expect(caught(markdown)).toEqual([]);
     });
 
     test("the pipeline is settled before preflight and never chosen by the executor", () => {
