@@ -547,6 +547,14 @@ describe("task-delivery workflow invariants", () => {
       /it never removes a gate of this skill,\s+and the non-negotiable rules above still hold\./u,
     ],
     [
+      "policy:keep-task-state-true",
+      "Mark the task started in preflight, before the first change.",
+    ],
+    [
+      "policy:refused-transition-stops",
+      /A transition the\s+tracker refuses is a stop condition/u,
+    ],
+    [
       "policy:never-choose-the-target",
       "Never pick a milestone or a task yourself.",
     ],
@@ -650,6 +658,59 @@ describe("task-delivery workflow invariants", () => {
     expect(validateSkillPackage(skillRoot)).toContain(
       "SKILL.md is missing required content: policy:scope",
     );
+  });
+
+  test("task state is kept true: started, in review, done, and never forced", () => {
+    const core = canonicalSkill
+      .slice(0, canonicalSkill.indexOf("<!-- executors:start -->"))
+      .replace(/\s+/gu, " ");
+    const reference = (name: string): string =>
+      readFileSync(
+        join(canonicalSkillRoot, "references", name),
+        "utf8",
+      ).replace(/\s+/gu, " ");
+
+    // The three transitions, in order, each tied to its moment.
+    expect(core).toMatch(
+      /## Task state When the project tracks task state outside Git, keep that state true as the work moves\. Mark the task started in preflight, before the first change\. Mark it in review when its pull request is open\. Mark it done only after stage 11\./u,
+    );
+    // How: configured commands, else the project's documented way, else a
+    // report - and a refusal stops the work.
+    expect(core).toMatch(
+      /Use the commands the project configures for this; without them, use the project's own documented way of changing task state, and only where there is none report each transition for someone else to apply\. A transition the tracker refuses is a stop condition: report what it said, and never work around it\./u,
+    );
+    expect(core.indexOf("## Task state")).toBeLessThan(
+      core.indexOf("## What to deliver"),
+    );
+
+    const lifecycle = reference("lifecycle.md");
+    expect(lifecycle).toMatch(
+      /Where the project tracks task state, mark the task started before the first change\. If the tracker refuses, stop\./u,
+    );
+    expect(lifecycle).toMatch(
+      /Where the project tracks task state, mark the task as in review\. - Do not request merge\./u,
+    );
+    expect(lifecycle).toMatch(
+      /Where the project tracks task state, mark the task done\./u,
+    );
+    // Done is marked in the post-merge stage and nowhere earlier.
+    expect(lifecycle.indexOf("mark the task done")).toBeGreaterThan(
+      lifecycle.indexOf("## 11. Post-merge verification / completion"),
+    );
+    expect(reference("stop-conditions.md")).toMatch(
+      /\*\*Refused task transition\.\*\* The system that tracks the project's tasks refuses to mark the task started, in review, or done\. Report what it said; never work around it or change the state another way\./u,
+    );
+
+    const configuration = reference("configuration.md");
+    for (const key of ["start", "review", "complete"])
+      expect(configuration).toContain(`\`task_lifecycle.${key}\``);
+    expect(configuration).toMatch(
+      /In the `task_lifecycle` commands, `\{task\}` stands for the identifier of the task in the system that tracks it\./u,
+    );
+    expect(configuration).toMatch(
+      /When `task_lifecycle\.enabled` is `true`, every transition is made: with the configured command; without one, in the project's own documented way of changing task state; and only where there is none, by reporting the transition so the tracker's owner can apply it\. A refused transition is a stop condition\./u,
+    );
+    expect(configuration).not.toMatch(/report each transition so/u);
   });
 
   describe("what to deliver", () => {

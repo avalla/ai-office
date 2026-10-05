@@ -26,6 +26,9 @@ depend on the answer may continue.
   available on a stacked base lets work continue only under an approved Git
   branch dependency; it never satisfies the task dependency.
 - **Red baseline.** The full verification fails on the untouched base.
+- **Refused task transition.** The system that tracks the project's tasks
+  refuses to mark the task started, in review, or done. Report what it said;
+  never work around it or change the state another way.
 - **Missing access.** A credential, permission, or environment needed for a
   gate is unavailable. Never work around a deliberate restriction. A
   best-effort external reviewer is not needed for a gate.

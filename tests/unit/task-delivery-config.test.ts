@@ -47,8 +47,9 @@ external_review:
 
 task_lifecycle:
   enabled: true
-  start: tracker start
-  complete: tracker complete
+  start: tracker start {task}
+  review: tracker review {task}
+  complete: tracker complete {task}
 `;
 
 const quoteHint =
@@ -212,6 +213,21 @@ describe("task-delivery configuration contract", () => {
     ["an empty flow mapping", "{}\n"],
   ])("rejects a root that is %s", (_label, source) => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual([notPlain]);
+  });
+
+  test("task lifecycle commands may be given for start, review and complete only", () => {
+    expect(
+      validateTaskDeliveryConfigSource(
+        "task_lifecycle:\n  enabled: true\n  review: tracker review {task}\n",
+      ),
+    ).toEqual([]);
+    expect(
+      validateTaskDeliveryConfigSource(
+        "task_lifecycle:\n  enabled: true\n  reveiw: tracker review {task}\n",
+      ),
+    ).toEqual([
+      "unknown key task_lifecycle.reveiw (allowed in task_lifecycle: enabled, start, review, complete)",
+    ]);
   });
 
   test("rejects an unknown top-level key", () => {
@@ -764,6 +780,20 @@ describe("task-delivery configuration contract", () => {
     expect(validateTaskDeliveryConfig(root)).toEqual([
       `${taskDeliveryConfigName}: must be a regular file`,
     ]);
+  });
+
+  test("this repository marks tasks started, in review and done through its tracker", () => {
+    const source = readFileSync(
+      join(repositoryRoot, taskDeliveryConfigName),
+      "utf8",
+    );
+    const parsed = Bun.YAML.parse(source) as {
+      task_lifecycle: Record<string, unknown>;
+    };
+
+    expect(parsed.task_lifecycle.enabled).toBe(true);
+    for (const key of ["start", "review", "complete"])
+      expect(parsed.task_lifecycle[key]).toMatch(/ --task \{task\}$/u);
   });
 
   test("the repository's own configuration and the shipped example are valid", () => {

@@ -179,6 +179,15 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
           /The run never merges a pull request merely to unblock a later selected task\./u,
       },
       {
+        id: "policy:keep-task-state-true",
+        pattern:
+          /Mark the task started in preflight, before the first change\. Mark it in review when its pull request is open\. Mark it done only after stage 11\./u,
+      },
+      {
+        id: "policy:refused-transition-stops",
+        pattern: /A transition the tracker refuses is a stop condition/u,
+      },
+      {
         id: "policy:never-choose-the-target",
         pattern: /Never pick a milestone or a task yourself/u,
       },

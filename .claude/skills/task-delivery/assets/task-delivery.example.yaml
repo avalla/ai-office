@@ -17,3 +17,6 @@ external_review:
 
 task_lifecycle:
   enabled: false
+  # start: "<command that marks {task} as started>"
+  # review: "<command that marks {task} as in review>"
+  # complete: "<command that marks {task} as done>"

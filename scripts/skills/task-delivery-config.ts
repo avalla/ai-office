@@ -22,7 +22,12 @@ const schema: Schema = {
   verification: { full: "string", targeted: "string" },
   git: { worktree_required: "boolean", stacking_allowed: "boolean" },
   external_review: { command: "string" },
-  task_lifecycle: { enabled: "boolean", start: "string", complete: "string" },
+  task_lifecycle: {
+    enabled: "boolean",
+    start: "string",
+    review: "string",
+    complete: "string",
+  },
 };
 
 function validateSection(

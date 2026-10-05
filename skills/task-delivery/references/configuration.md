@@ -21,22 +21,24 @@ they are stricter.
 
 ## Keys
 
-| Key                       | Meaning                                                             | Default when absent                                               |
-| ------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `integration_branch`      | Branch that task branches start from and merge into                 | The remote's default branch                                       |
-| `verification.full`       | Command that must pass before handoff, at QA, and after merge       | The check command the repository documents; otherwise ask         |
-| `verification.targeted`   | Command template for a narrow test run while iterating              | The repository's test runner on the changed area                  |
-| `git.worktree_required`   | `true` when each task must use an isolated workspace                | `false`                                                           |
-| `git.stacking_allowed`    | `true` when a task branch may be based on an unmerged task branch   | `false`                                                           |
-| `external_review.command` | Command of the external reviewer; setting it makes stage 9 required | None: required only if the authorizer asks; otherwise best effort |
-| `task_lifecycle.enabled`  | `true` when task state is tracked in a system outside Git           | `false`                                                           |
-| `task_lifecycle.start`    | Command that marks a task as started                                | None: report the transition instead                               |
-| `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11         | None: report the transition instead                               |
+| Key                       | Meaning                                                                   | Default when absent                                               |
+| ------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `integration_branch`      | Branch that task branches start from and merge into                       | The remote's default branch                                       |
+| `verification.full`       | Command that must pass before handoff, at QA, and after merge             | The check command the repository documents; otherwise ask         |
+| `verification.targeted`   | Command template for a narrow test run while iterating                    | The repository's test runner on the changed area                  |
+| `git.worktree_required`   | `true` when each task must use an isolated workspace                      | `false`                                                           |
+| `git.stacking_allowed`    | `true` when a task branch may be based on an unmerged task branch         | `false`                                                           |
+| `external_review.command` | Command of the external reviewer; setting it makes stage 9 required       | None: required only if the authorizer asks; otherwise best effort |
+| `task_lifecycle.enabled`  | `true` when task state is tracked in a system outside Git                 | `false`                                                           |
+| `task_lifecycle.start`    | Command that marks a task as started, run in preflight                    | None: the project's documented way, otherwise report              |
+| `task_lifecycle.review`   | Command that marks a task as in review, run when its pull request is open | None: the project's documented way, otherwise report              |
+| `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11               | None: the project's documented way, otherwise report              |
 
 ## Types
 
 `integration_branch`, `verification.*`, `external_review.command`,
-`task_lifecycle.start`, and `task_lifecycle.complete` are non-empty strings.
+`task_lifecycle.start`, `task_lifecycle.review`, and `task_lifecycle.complete`
+are non-empty strings.
 `git.*` and `task_lifecycle.enabled` are booleans written unquoted (`true` or
 `false`). `verification`, `git`, `external_review`, and `task_lifecycle` are
 mappings; no other key is allowed at any level. To switch everything off,
@@ -69,14 +71,20 @@ request targets: the integration branch, or the branch the task is stacked on.
 Replace it before running the command, so that the review covers the task's
 own diff and nothing else.
 
+In the `task_lifecycle` commands, `{task}` stands for the identifier of the
+task in the system that tracks it. Replace it before running the command.
+
 ## Rules
 
 - Configuration selects commands and policies. It never grants authority: no
   key can authorize a merge, widen scope, or waive a gate.
 - Commands are run as written from the repository root. Treat a non-zero exit
   code as a failed gate.
-- When `task_lifecycle.enabled` is `true` and no command is given, report each
-  transition so the tracker's owner can apply it.
+- When `task_lifecycle.enabled` is `true`, every transition is made: with the
+  configured command; without one, in the project's own documented way of
+  changing task state; and only where there is none, by reporting the
+  transition so the tracker's owner can apply it. A refused transition is a
+  stop condition.
 - The roles in the skill are independent of who performs them. A project may
   bind them to its own role names and to any executor; the pipeline stays the
   same when the executor changes.

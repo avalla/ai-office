@@ -3,15 +3,15 @@
   "skill": "task-delivery",
   "version": "0.2.0",
   "files": {
-    "SKILL.md": "3972f7cb10313bfc261a5bfdf1290e6e0d0cd9ea657bbb73690de781f6ee0d5b",
+    "SKILL.md": "a9126ac98cf961bdcdbe858602a68a7d613afa05f548b35b4264ff1450fa9ceb",
     "assets/pr-template.md": "042cd175402f40447a0f37ca548d9fec08e76f1428e9b9d75262f79613c7c1b7",
-    "assets/task-delivery.example.yaml": "25b5657d71fd5230f4e36459a1497420ec0b6cafaa06f6d064a381e143d759eb",
+    "assets/task-delivery.example.yaml": "72dba3468e3937e5c1d201a7ec77e2e4192aa9f2243b4b679290e3a387a37f76",
     "references/branch-policy.md": "9b3d6b8a9007aff5d04f17973d26aef9bdccee96f35b658fd69c31af9d0b1a88",
-    "references/configuration.md": "efed04231462e6487d697a5d25068ae2788d4cb0c88702820534ba027499571b",
+    "references/configuration.md": "53ae5329f7861351da00e91cd1dbbe76d53bb7b645e54d6b874451225cc330c8",
     "references/evidence.md": "1ba1dad8fbc23e10763e81a23904823315505e831873b5bb71c1b4e70d7cf385",
-    "references/lifecycle.md": "dde0301d12c06620f29aa2bb93b906b374cb7d9d115d237dcc911752799e1678",
+    "references/lifecycle.md": "158656ad69102eafeab7921aaf8e1400c575eedc7d617288aed2d03760594054",
     "references/qa-checklist.md": "e9a9419ec6f8a90dd927ee86593b1d56d059b82844d0365450b7f7375ccd07e5",
     "references/review-checklist.md": "216d0dd0175e2acb43aa9600a7c3f8e8792dcf29cf940b50bc3c6de834500862",
-    "references/stop-conditions.md": "8d5519696903bbe90b74474a3565694ef9c920cb5aeaa2d3e2b7fa9948bfd644"
+    "references/stop-conditions.md": "d61a8f446c5f77581ec4fa93c88f94bf2fd7deca537b10e09fe69acd91733c2e"
   }
 }

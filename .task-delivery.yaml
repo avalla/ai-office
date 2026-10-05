@@ -17,3 +17,7 @@ external_review:
 
 task_lifecycle:
   enabled: true
+  # {task} is the task's identifier in AI Office.
+  start: ai-office task:start --project ee567c3d-8e33-40e7-8922-8f2fad4ee644 --task {task}
+  review: ai-office task:submit-review --project ee567c3d-8e33-40e7-8922-8f2fad4ee644 --task {task}
+  complete: ai-office task:complete --project ee567c3d-8e33-40e7-8922-8f2fad4ee644 --task {task}

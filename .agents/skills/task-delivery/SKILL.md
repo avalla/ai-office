@@ -59,6 +59,17 @@ listed there and ask only when a default cannot be derived. A configuration
 file that is present but breaks its contract is a stop condition: never guess
 around it.
 
+## Task state
+
+When the project tracks task state outside Git, keep that state true as the
+work moves. Mark the task started in preflight, before the first change. Mark
+it in review when its pull request is open. Mark it done only after stage 11.
+Use the commands the project configures for this; without them, use the
+project's own documented way of changing task state, and only where there is
+none report each transition for someone else to apply. A transition the
+tracker refuses is a stop condition: report what it said, and never work
+around it. See [configuration](references/configuration.md).
+
 ## What to deliver
 
 When the request does not say what to deliver - the skill was started with no
