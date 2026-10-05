@@ -206,8 +206,9 @@ work. Re-run the command after an execution or follow-up to verify persisted
 state; do not infer completion from a subprocess result.
 
 Use the existing semantic Runtime commands to act on that snapshot:
-`task:update` for descriptions and priority (`--priority <integer>`; higher
-sorts first, default `0`), `task:start|submit-review|complete|block|fail|cancel`
+`task:update` for descriptions and priority (`--priority <integer>` from
+`-2147483648` to `2147483647`; higher sorts first, default `0`),
+`task:start|submit-review|complete|block|fail|cancel`
 for lifecycle, `milestone:set-status` and `requirement:set-status` for
 governance, and `requirement:list --json` to resolve exact requirement UUIDs
 before linking. Use `requirement:update` to correct only the title and/or

@@ -649,6 +649,44 @@ export function defineProjectStorageContracts(
         ),
       ).toEqual([`${prefix}-reorder-second`, `${prefix}-reorder-first`]);
     });
+
+    test("persists the domain's extreme priorities and orders them", async () => {
+      const project = await createProject(harness, `${prefix}-extreme-project`);
+      const created = new Date("2026-02-02T00:00:00.000Z");
+      const lowest = Task.create({
+        id: `${prefix}-extreme-lowest`,
+        projectId: project.snapshot().id,
+        title: "Lowest",
+        priority: -2147483648,
+        now: created,
+      });
+      const neutral = Task.create({
+        id: `${prefix}-extreme-neutral`,
+        projectId: project.snapshot().id,
+        title: "Neutral",
+        now: created,
+      });
+      const highest = Task.create({
+        id: `${prefix}-extreme-highest`,
+        projectId: project.snapshot().id,
+        title: "Highest",
+        now: created,
+      });
+      for (const task of [lowest, neutral, highest])
+        await harness.tasks.save(task);
+      highest.updatePriority(2147483647, new Date("2026-02-03T00:00:00.000Z"));
+      await harness.tasks.save(highest);
+
+      for (const task of [lowest, neutral, highest])
+        expect(
+          (await harness.tasks.findById(task.snapshot().id))?.snapshot(),
+        ).toEqual(task.snapshot());
+      expect(
+        (await harness.tasks.listByProject(project.snapshot().id)).map(
+          (task) => task.snapshot().priority,
+        ),
+      ).toEqual([2147483647, 0, -2147483648]);
+    });
   });
 
   describe("TaskDependencyRepository", () => {

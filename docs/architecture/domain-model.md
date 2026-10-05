@@ -331,20 +331,30 @@ so no fabricated `start` can appear in the trail.
 ## Task priority
 
 `task.priority` is an ordering key, not a category or a lifecycle input. It is
-any safe integer — zero and negative values included — defaulting to `0` when a
-task is created without one. **A higher value is more urgent**: the task
-repositories of every storage adapter, `task:list`, and the operational task
-read order by `priority DESC`, then creation time, then ID, and the
+an integer in the portable signed 32-bit range `-2147483648` to `2147483647`
+(`minTaskPriority`/`maxTaskPriority` in the task domain) — zero and negative
+values included — defaulting to `0` (`defaultTaskPriority`) when a task is
+created without one. **A higher value is more urgent**: the task repositories
+of every storage adapter, `task:list`, and the operational task read order by
+`priority DESC`, then creation time, then ID, and the
 `task_project_status_priority_idx` index stores it descending. The paged
 `office:workspace` and dashboard task views sort by milestone or short name and
-offer priority as an exact-match filter. There is no bound beyond the
-safe-integer range the domain enforces.
+offer priority as an exact-match filter.
+
+The range is a domain rule, enforced once by `validateTaskPriority` whenever a
+task is created or its priority updated. It matches the narrowest native
+priority column among the storage adapters (PostgreSQL `integer`), so SQLite
+and SurrealDB, whose columns could hold wider values, receive the same values
+through those paths. Existing rows and `project:restore` archives are not
+re-validated: a SQLite project written before the bound, or restored from such
+a backup, can still hold a wider safe-integer priority until it is updated.
 
 `task:create --priority <integer>` sets it; `task:update --priority <integer>`
 changes it without touching lifecycle status. Both accept only plain decimal
-integer text and refuse anything else with a usage error. `task:update` takes
-`--description`, `--priority`, or both in one transaction; each supplied field
-appends its own audit event — `task.description_updated` and
+integer text, refusing other notation with a usage error, and leave the range
+check to the domain. `task:update` takes `--description`, `--priority`, or both
+in one transaction; a refused priority leaves the whole update unapplied. Each
+supplied field appends its own audit event — `task.description_updated` and
 `task.priority_updated`, the latter carrying the explicit `from` and `to`
 priority. Like a description update, a priority update is recorded even when
 the value is unchanged.

@@ -297,7 +297,7 @@ describe("task lifecycle CLI", () => {
     expect(auditTrail(root)).toEqual([]);
   });
 
-  test.each(["", "1.5", "1e3", "0x10", " 7", "high", "9007199254740992"])(
+  test.each(["", "1.5", "1e3", "0x10", " 7", "7 ", "+7", "high"])(
     "refuses --priority %j on task:create and task:update as a usage error",
     async (priority) => {
       const { root, projectId } = await board();
@@ -318,7 +318,99 @@ describe("task lifecycle CLI", () => {
         const result = await cli(root, [...args, "--priority", priority]);
         expect(result).toMatchObject({ code: 1, stdout: [] });
         expect(result.stderr).toEqual([
-          "Option --priority must be a safe integer",
+          "Option --priority must be a plain decimal integer",
+        ]);
+      }
+
+      const database = openDatabase(join(root, ".ai-office", "project.sqlite"));
+      try {
+        expect(
+          database
+            .query<
+              { id: string; description: string | null; priority: number },
+              []
+            >("SELECT id, description, priority FROM task")
+            .all(),
+        ).toEqual([{ id: taskId, description: null, priority: 0 }]);
+      } finally {
+        database.close();
+      }
+      expect(auditTrail(root)).toEqual([]);
+    },
+  );
+
+  test.each(["-2147483648", "0", "2147483647"])(
+    "accepts the priority boundary %s on task:create and task:update",
+    async (priority) => {
+      const { root, projectId } = await board();
+      const created = await cli(root, [
+        "task:create",
+        "--project",
+        projectId,
+        "--title",
+        "Edge",
+        "--priority",
+        priority,
+      ]);
+      expect(created.code).toBe(0);
+      const createdId = created.stdout[0]!.replace("Task created: ", "");
+      const updatedId = await newTask(root, projectId, "Moved");
+      const updated = await cli(root, [
+        "task:update",
+        "--project",
+        projectId,
+        "--task",
+        updatedId,
+        "--priority",
+        priority,
+      ]);
+      expect(updated.code).toBe(0);
+
+      const database = openDatabase(join(root, ".ai-office", "project.sqlite"));
+      try {
+        const stored = database
+          .query<{ id: string; priority: number }, []>(
+            "SELECT id, priority FROM task",
+          )
+          .all();
+        expect(stored).toEqual(
+          expect.arrayContaining([
+            { id: createdId, priority: Number(priority) },
+            { id: updatedId, priority: Number(priority) },
+          ]),
+        );
+      } finally {
+        database.close();
+      }
+      expect(auditTrail(root).at(-1)).toEqual({
+        event_type: "task.priority_updated",
+        payload_json: JSON.stringify({ from: 0, to: Number(priority) }),
+      });
+    },
+  );
+
+  test.each(["-2147483649", "2147483648", "9007199254740993"])(
+    "refuses the out-of-range priority %s on task:create and task:update",
+    async (priority) => {
+      const { root, projectId } = await board();
+      const taskId = await newTask(root, projectId, "Ship it");
+
+      for (const args of [
+        ["task:create", "--project", projectId, "--title", "Never"],
+        [
+          "task:update",
+          "--project",
+          projectId,
+          "--task",
+          taskId,
+          "--description",
+          "Never",
+        ],
+      ]) {
+        const result = await cli(root, [...args, "--priority", priority]);
+        expect(result).toMatchObject({ code: 1, stdout: [] });
+        expect(result.stderr).toEqual([
+          "Task priority must be an integer between -2147483648 and 2147483647",
         ]);
       }
 

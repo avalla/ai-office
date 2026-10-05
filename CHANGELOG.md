@@ -42,12 +42,16 @@
   transaction. Lifecycle status is untouched. Description updates still append
   `task.description_updated` exactly as before; a priority update appends
   `task.priority_updated` with the explicit `from` and `to` priority. Priority
-  semantics are now documented: any safe integer, default `0`, higher sorts
-  first. `task:create --priority` and `task:update --priority` share one
-  parser and refuse anything but plain decimal integer text (for example `""`,
-  `1e3`, `0x10`, `1.5`) with a usage error; `task:create` previously accepted
-  `Number()` notation such as `1e3` or an empty value (stored as `0`). No
-  migration is required.
+  semantics are now documented and enforced once in the task domain: an
+  integer from `-2147483648` to `2147483647` (the range every storage adapter,
+  including PostgreSQL `integer`, can store), default `0`, higher sorts first.
+  `task:create --priority` and `task:update --priority` share one parser and
+  refuse anything but plain decimal integer text (for example `""`, `1e3`,
+  `0x10`, `1.5`) with a usage error; `task:create` previously accepted
+  `Number()` notation such as `1e3` or an empty value (stored as `0`) and any
+  JavaScript safe integer, which PostgreSQL storage could not persist. No
+  migration is required; existing rows and `project:restore` archives are not
+  re-validated, so a wider legacy SQLite priority stays until it is updated.
 - Fix truncated CLI output when stdout is a pipe. Every Runtime client command
   opened an interactive prompt reader on `process.stdout` up front, which in
   Bun makes a pipe on stdout non-blocking; `console.log` then wrote only what

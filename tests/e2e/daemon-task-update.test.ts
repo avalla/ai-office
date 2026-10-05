@@ -327,12 +327,25 @@ describe("task:update over the Runtime socket", () => {
     });
   });
 
-  test("refuses invalid or missing fields as usage errors without writing", async () => {
+  test("refuses invalid or missing fields without writing", async () => {
     await withRuntime(async ({ projectRoot, invoke, run }) => {
       const { projectId, high } = await setUp(run);
       const base = ["task:update", "--project", projectId, "--task", high];
 
-      for (const priority of ["1.5", "1e3", "urgent", "9007199254740992"]) {
+      const refusals: [string, string][] = [
+        ["1.5", "Option --priority must be a plain decimal integer"],
+        ["1e3", "Option --priority must be a plain decimal integer"],
+        ["urgent", "Option --priority must be a plain decimal integer"],
+        [
+          "2147483648",
+          "Task priority must be an integer between -2147483648 and 2147483647",
+        ],
+        [
+          "-2147483649",
+          "Task priority must be an integer between -2147483648 and 2147483647",
+        ],
+      ];
+      for (const [priority, message] of refusals) {
         const refused = await invoke([
           ...base,
           "--description",
@@ -341,9 +354,7 @@ describe("task:update over the Runtime socket", () => {
           priority,
         ]);
         expect(refused).toMatchObject({ code: 1, stdout: [] });
-        expect(refused.stderr.join("\n")).toContain(
-          "Option --priority must be a safe integer",
-        );
+        expect(refused.stderr.join("\n")).toContain(message);
       }
       const empty = await invoke(base);
       expect(empty).toMatchObject({ code: 1, stdout: [] });

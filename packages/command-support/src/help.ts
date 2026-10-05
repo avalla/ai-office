@@ -71,7 +71,7 @@ Commands:
   client:uninstall --client <codex|claude> --root <path> [--approve <plan-hash>]
   update [--approve <plan-hash>] [--json]  # source maintenance; relevant Runtime hosts must be stopped
   runtime:purge [--approve <plan-hash>]  # local; daemon must be stopped
-  task:create --project <id> --title <title> [--description <description>] [--priority <integer>]  # priority default 0; higher sorts first
+  task:create --project <id> --title <title> [--description <description>] [--priority <integer>]  # priority -2147483648..2147483647, default 0; higher sorts first
   project:pack:show --project <id> [--json]
   project:pack:preview --project <id> --packs <exact-tuples-json> [--json]
   project:pack:apply --project <id> --packs <exact-tuples-json> --expected-revision <integer> [--json]

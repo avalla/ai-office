@@ -52,17 +52,19 @@ function isLifecycleCommand(value: string): value is LifecycleCommand {
 }
 
 /**
- * `--priority` as written by an operator: a plain decimal integer within the
- * domain's safe-integer range. Notation `Number()` would also accept — `""`,
- * `1e3`, `0x10`, `1.0` — is refused rather than silently reinterpreted, the
- * same text rule the `office:workspace --priority` filter applies.
+ * `--priority` as written by an operator: plain decimal integer text.
+ * Notation `Number()` would also accept — `""`, `1e3`, `0x10`, `1.0`,
+ * surrounding whitespace — is refused rather than silently reinterpreted, the
+ * same text rule the `office:workspace --priority` filter applies. The value
+ * range is the domain's (`validateTaskPriority`), not re-checked here.
  */
 function priorityOption(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
-  const priority = Number(value);
-  if (!/^-?\d+$/u.test(value) || !Number.isSafeInteger(priority))
-    throw new CliUsageError("Option --priority must be a safe integer");
-  return priority;
+  if (!/^-?\d+$/u.test(value))
+    throw new CliUsageError(
+      "Option --priority must be a plain decimal integer",
+    );
+  return Number(value);
 }
 
 /** `2/3 verified` — never a status, always progress beside one. */
