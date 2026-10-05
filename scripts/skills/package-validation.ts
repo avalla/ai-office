@@ -168,6 +168,11 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
         pattern: /Never pick a milestone or a task yourself/u,
       },
       {
+        id: "policy:preflight-dependencies-done",
+        pattern:
+          /logical dependencies are DONE or the authorizer has decided how to proceed/u,
+      },
+      {
         id: "policy:scope",
         pattern: /stay in scope/iu,
       },

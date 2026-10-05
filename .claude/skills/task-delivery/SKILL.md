@@ -80,8 +80,8 @@ postponing the task that needs it. Never drop or reorder a task silently to
 make the selection work.
 
 When the behavior a task needs already exists on a prerequisite branch that is
-not merged, and the project allows stacked work, you may also propose, in so
-many words, a Git branch dependency on that branch, as the
+not merged, and the project allows stacked work, you may also propose,
+explicitly, a Git branch dependency on that branch, as the
 [branch policy](references/branch-policy.md) describes. Stacking neither
 satisfies nor cancels the logical task dependency: record the two dependencies
 separately, keep the task dependency listed as unresolved, and never treat the
