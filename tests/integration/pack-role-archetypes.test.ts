@@ -47,6 +47,7 @@ function packBytes(
   version: string,
   contributions: Record<string, unknown[]>,
   id = packId,
+  dependencies: PackIdentity[] = [],
 ): Uint8Array {
   const draft = {
     schemaVersion: 1,
@@ -55,7 +56,7 @@ function packBytes(
     manifestDigest: `sha256:${"0".repeat(64)}`,
     coreContract: { minInclusive: 1, maxExclusive: 3 },
     metadata: { name: "Legal", description: "Role archetype fixture" },
-    dependencies: [],
+    dependencies,
     contributions: {
       ...Object.fromEntries(contributionKinds.map((kind) => [kind, []])),
       ...contributions,
@@ -1156,6 +1157,8 @@ describe("GP-11 project:pack:apply never changes a role capability set", () => {
     }
     throw new Error("Expected the selection change to be refused");
   };
+  const unverifiable =
+    "The current pack artifacts are not installed, so the selection change cannot be shown to leave role capabilities unchanged; review and approve it with project:pack:upgrade";
   const plain = (version: string, title: string) =>
     packBytes(version, {
       roles: [{ id: "counsel", title }],
@@ -1221,7 +1224,7 @@ describe("GP-11 project:pack:apply never changes a role capability set", () => {
     expect(preview.issues).toEqual([
       {
         code: "role_capability_change_requires_upgrade",
-        message: `The current pack artifacts are not installed, so the version change cannot be shown to keep the capabilities of ${roleId("auditor")}; review and approve it with project:pack:upgrade`,
+        message: unverifiable,
       },
     ]);
     expect(await refusal(apply(h, [h.v2], onlyTarget))).toEqual(
@@ -1322,19 +1325,44 @@ describe("GP-11 project:pack:apply never changes a role capability set", () => {
     expect((await apply(h, [], catalogOf(otherBytes).catalog)).packs).toEqual(
       [],
     );
-    // Adding with the catalog holding only the added pack is still allowed.
+    // With the current artifacts gone, an addition that declares role
+    // capabilities cannot be shown to be new to the project: it is refused
+    // here and goes through the reviewed upgrade, which binds the target sets.
     await h.bind([quality]);
+    const before = await h.authority();
     const { catalog: withoutQuality } = catalogOf(v1Bytes);
+    const blind = await h.selection(withoutQuality).preview("a", [legal]);
+    expect(blind.roleCapabilityChanges).toMatchObject({
+      availability: "unavailable",
+      reason: "previous_closure_unresolved",
+    });
+    expect(blind.issues).toMatchObject([
+      { code: "role_capability_change_requires_upgrade" },
+    ]);
+    expect(await refusal(apply(h, [legal], withoutQuality))).toEqual(
+      blind.issues[0],
+    );
+    // Keeping the unreadable pack does not make the addition provable.
     expect(
-      (await h.selection(withoutQuality).preview("a", [legal])).issues,
-    ).toEqual([]);
+      (await h.selection(withoutQuality).preview("a", [legal, quality])).issues,
+    ).toMatchObject([{ code: "missing_pack" }]);
+    expect(await h.authority()).toEqual(before);
+    const plan = await h
+      .upgrade(withoutQuality)
+      .preview({ projectId: "a", desired: [legal] });
+    expect(plan.issues).toEqual([]);
+    expect(plan.targetRoleCapabilities).toEqual([
+      { roleId: roleId("clerk"), capabilities: ["file"] },
+      { roleId: roleId("counsel"), capabilities: ["draft", "review"] },
+    ]);
     expect(applyAudits(h)).toHaveLength(4);
   });
 
-  test("packs without role capabilities behave exactly as before, with or without the old artifacts", async () => {
-    const first = plain("1.0.0", "Counsel");
-    const second = plain("2.0.0", "Lead counsel");
-    const h = await harness([first, second]);
+  test("packs without role capabilities are applied as before while the current artifacts are installed", async () => {
+    const h = await harness([
+      plain("1.0.0", "Counsel"),
+      plain("2.0.0", "Lead counsel"),
+    ]);
     await h.bind([h.v1]);
 
     const preview = await h.selection().preview("a", [h.v2]);
@@ -1342,43 +1370,211 @@ describe("GP-11 project:pack:apply never changes a role capability set", () => {
       issues: [],
       roleCapabilityChanges: { availability: "available", changes: [] },
     });
-    const { catalog: onlyTarget } = catalogOf(second);
-    const gone = await h.selection(onlyTarget).preview("a", [h.v2]);
-    expect(gone.issues).toEqual([]);
-    expect(gone.roleCapabilityChanges).toMatchObject({
-      availability: "unavailable",
-    });
-    expect((await apply(h, [h.v2], onlyTarget)).packs).toEqual([h.v2]);
+    expect((await apply(h, [h.v2])).packs).toEqual([h.v2]);
+    expect(applyAudits(h)).toHaveLength(1);
   });
 
-  test("with the old artifacts gone, a pack the project keeps is known to be unchanged", async () => {
-    const plainFirst = packBytes(
-      "1.0.0",
-      { roles: [{ id: "host" }] },
-      "org.example.plain",
-    );
-    const plainSecond = packBytes(
-      "2.0.0",
-      { roles: [{ id: "host", title: "Host" }] },
-      "org.example.plain",
-    );
-    const h = await harness([v1Bytes, plainFirst, plainSecond]);
-    const [legal, oldPlain, newPlain] = h.packs as PackIdentity[];
-    await h.bind([legal!, oldPlain!]);
-    // legal declares capabilities but keeps its exact tuple; only the
-    // capability-free pack changes version, and its old artifact is gone.
-    const { catalog: withoutOldPlain } = catalogOf(v1Bytes, plainSecond);
-
-    const preview = await h
-      .selection(withoutOldPlain)
-      .preview("a", [legal!, newPlain!]);
-    expect(preview.roleCapabilityChanges).toMatchObject({
-      availability: "unavailable",
+  test("with the current artifacts gone, an unverifiable capability removal is refused", async () => {
+    // 2.0.0 declares no role capability at all: nothing in the target shows
+    // that counsel and clerk lose the sets 1.0.0 gave them.
+    const stripped = packBytes("2.0.0", {
+      roles: [{ id: "counsel", title: "Counsel" }, { id: "clerk" }],
+      ...flow("counsel"),
     });
-    expect(preview.issues).toEqual([]);
-    expect(
-      (await apply(h, [legal!, newPlain!], withoutOldPlain)).packs,
-    ).toEqual([legal, newPlain]);
+    const h = await harness([v1Bytes, stripped]);
+    await h.bind([h.v1]);
+    const before = await h.authority();
+    const { catalog: onlyTarget } = catalogOf(stripped);
+
+    const preview = await h.selection(onlyTarget).preview("a", [h.v2]);
+    expect(preview.roleCapabilityChanges).toEqual({
+      availability: "unavailable",
+      reason: "previous_closure_unresolved",
+      detail: "missing_pack",
+    });
+    expect(preview.issues).toEqual([
+      {
+        code: "role_capability_change_requires_upgrade",
+        message: unverifiable,
+      },
+    ]);
+    expect(await refusal(apply(h, [h.v2], onlyTarget))).toEqual(
+      preview.issues[0],
+    );
+    expect(await h.authority()).toEqual(before);
+    expect(applyAudits(h)).toEqual([]);
+
+    // With the old artifact installed the removal is named and refused too.
+    const informed = await h.selection().preview("a", [h.v2]);
+    expect(informed.roleCapabilityChanges).toEqual({
+      availability: "available",
+      changes: [
+        { roleId: roleId("clerk"), added: [], removed: ["file"] },
+        { roleId: roleId("counsel"), added: [], removed: ["draft", "review"] },
+      ],
+    });
+    expect(informed.issues).toMatchObject([
+      { code: "role_capability_change_requires_upgrade" },
+    ]);
+    // The reviewed path carries it out even without the old artifact.
+    const plan = await h
+      .upgrade(onlyTarget)
+      .preview({ projectId: "a", desired: [h.v2] });
+    expect(plan.issues).toEqual([]);
+    expect(plan.targetRoleCapabilities).toEqual([]);
+  });
+
+  test("with the current artifacts gone, no route brings a changed dependency's role capabilities in unreviewed", async () => {
+    // base grants role `base` one more capability in 2.0.0.
+    const base = (version: string, capabilities: string[]) =>
+      packBytes(
+        version,
+        {
+          roles: [{ id: "base", capabilities }],
+          capabilities: [{ id: "x" }, { id: "y" }],
+        },
+        "org.example.base",
+      );
+    const dependent = (id: string, version: string, on: PackIdentity) =>
+      packBytes(version, { roles: [{ id: "lead" }] }, id, [on]);
+    const baseOldBytes = base("1.0.0", ["x"]);
+    const baseNewBytes = base("2.0.0", ["x", "y"]);
+    const old = catalogOf(baseOldBytes);
+    const baseOld = old.packs[0]!;
+    const appOldBytes = dependent("org.example.app", "1.0.0", baseOld);
+    const fresh = catalogOf(baseNewBytes);
+    const baseNew = fresh.packs[0]!;
+    const appNewBytes = dependent("org.example.app", "2.0.0", baseNew);
+    const otherBytes = dependent("org.example.other", "1.0.0", baseNew);
+    // The host holds only the new artifacts.
+    const { catalog: onlyNew, packs } = catalogOf(
+      baseNewBytes,
+      appNewBytes,
+      otherBytes,
+    );
+    const [, appNew, other] = packs as PackIdentity[];
+    const everything = catalogOf(
+      baseOldBytes,
+      appOldBytes,
+      baseNewBytes,
+      appNewBytes,
+      otherBytes,
+    );
+    const appOld = everything.packs[1]!;
+    const baseRole = "pack:org.example.base/roles/base";
+
+    for (const [label, current, proposed] of [
+      ["version change of the dependent", [appOld], [appNew!]],
+      ["a: the dependency is also selected", [appOld], [appNew!, baseNew]],
+      ["b: another pack brings the dependency", [appOld], [other!]],
+      ["c: a selected pack becomes a dependency", [baseOld], [appNew!]],
+      ["the selected pack itself", [baseOld], [baseNew]],
+    ] as const) {
+      const h = await harness([baseOldBytes, appOldBytes]);
+      await h.bind([...current]);
+      const before = await h.authority();
+
+      const preview = await h.selection(onlyNew).preview("a", [...proposed]);
+      expect(preview.roleCapabilityChanges, label).toMatchObject({
+        availability: "unavailable",
+        reason: "previous_closure_unresolved",
+      });
+      expect(preview.issues, label).toEqual([
+        {
+          code: "role_capability_change_requires_upgrade",
+          message: unverifiable,
+        },
+      ]);
+      expect(await refusal(apply(h, [...proposed], onlyNew)), label).toEqual(
+        preview.issues[0],
+      );
+      expect(await h.authority(), label).toEqual(before);
+      expect(applyAudits(h), label).toEqual([]);
+
+      // With the old artifacts installed the same change is refused by name.
+      const informed = await h
+        .selection(everything.catalog)
+        .preview("a", [...proposed]);
+      expect(informed.roleCapabilityChanges, label).toEqual({
+        availability: "available",
+        changes: [{ roleId: baseRole, added: ["y"], removed: [] }],
+      });
+      expect(informed.issues, label).toMatchObject([
+        { code: "role_capability_change_requires_upgrade" },
+      ]);
+    }
+  });
+
+  test("with the current artifacts gone, only a pure removal is applied, even for packs without role capabilities", async () => {
+    const pack = (id: string, version: string, title?: string) =>
+      packBytes(
+        version,
+        { roles: [{ id: "guest", ...(title ? { title } : {}) }] },
+        id,
+      );
+    const keptBytes = pack("org.example.kept", "1.0.0");
+    const goneBytes = pack("org.example.gone", "1.0.0");
+    const plainOld = pack("org.example.plain", "1.0.0");
+    const plainNew = pack("org.example.plain", "2.0.0", "Guest");
+    const extraBytes = pack("org.example.extra", "1.0.0");
+    const h = await harness([keptBytes, goneBytes, plainOld]);
+    const [kept, gone, oldPlain] = h.packs as PackIdentity[];
+    // `gone` is no longer installed, so the current closure is unresolvable.
+    const { catalog: partial, packs } = catalogOf(
+      keptBytes,
+      plainOld,
+      plainNew,
+      extraBytes,
+    );
+    const [, , newPlain, extra] = packs as PackIdentity[];
+    const reset = () => h.bind([kept!, gone!, oldPlain!]);
+    await reset();
+
+    // Neither an addition nor a version change can be shown to be neutral.
+    for (const proposed of [
+      [kept!, oldPlain!, extra!],
+      [kept!, newPlain!],
+      // A removal combined with an addition is not a pure removal.
+      [kept!, extra!],
+      [extra!],
+    ]) {
+      const before = await h.authority();
+      const preview = await h.selection(partial).preview("a", proposed);
+      expect(preview.roleCapabilityChanges).toEqual({
+        availability: "unavailable",
+        reason: "previous_closure_unresolved",
+        detail: "missing_pack",
+      });
+      expect(preview.issues).toEqual([
+        {
+          code: "role_capability_change_requires_upgrade",
+          message: unverifiable,
+        },
+      ]);
+      expect(await refusal(apply(h, proposed, partial))).toEqual(
+        preview.issues[0],
+      );
+      expect(await h.authority()).toEqual(before);
+    }
+    expect(applyAudits(h)).toEqual([]);
+
+    // A pure removal leaves only exact tuples the project already selected.
+    for (const proposed of [[kept!, oldPlain!], [kept!], []]) {
+      await reset();
+      const preview = await h.selection(partial).preview("a", proposed);
+      expect(preview.roleCapabilityChanges).toMatchObject({
+        availability: "unavailable",
+        reason: "previous_closure_unresolved",
+      });
+      expect(preview.issues).toEqual([]);
+      expect((await apply(h, proposed, partial)).packs).toEqual(proposed);
+    }
+    // The refused changes go through the reviewed upgrade instead.
+    await reset();
+    const plan = await h
+      .upgrade(partial)
+      .preview({ projectId: "a", desired: [kept!, newPlain!] });
+    expect(plan.issues).toEqual([]);
   });
 
   test("an identical selection stays a no-op that reads no artifact, and a stale revision still fails first", async () => {

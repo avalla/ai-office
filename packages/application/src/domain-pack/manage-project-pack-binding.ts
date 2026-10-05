@@ -29,7 +29,6 @@ import {
 import {
   closureRoleIds,
   roleCapabilityDifferences,
-  roleCapabilitySets,
   type RoleCapabilityDifference,
 } from "./role-capability-changes.ts";
 
@@ -67,7 +66,8 @@ export interface ProjectPackBindingPreview {
    * Role capability differences between the current and the proposed resolved
    * closures, computed as in the upgrade plan. Empty when the selection does
    * not change or cannot be resolved; `unavailable` when the current
-   * artifacts are no longer installed.
+   * artifacts are no longer installed or the proposed manifests cannot be
+   * read back.
    */
   readonly roleCapabilityChanges:
     | {
@@ -76,7 +76,8 @@ export interface ProjectPackBindingPreview {
       }
     | {
         readonly availability: "unavailable";
-        readonly reason: "previous_closure_unresolved";
+        readonly reason:
+          "previous_closure_unresolved" | "proposed_closure_unreadable";
         readonly detail: string;
       };
   readonly issues: readonly { code: string; message: string }[];
@@ -126,28 +127,6 @@ function same(a: PackIdentity, b: PackIdentity): boolean {
 
 const tupleKey = (pack: PackIdentity): string =>
   `${pack.id}\u0000${pack.version}\u0000${pack.manifestDigest}`;
-
-/**
- * Target packs whose content is provably what the project already had: the
- * selected tuples that do not change and their exact-digest dependencies.
- */
-function unchangedPackKeys(
-  target: readonly ResolvedPackManifest[],
-  unchanged: readonly PackIdentity[],
-): Set<string> {
-  const byKey = new Map(
-    target.map((entry) => [tupleKey(entry.identity), entry]),
-  );
-  const seen = new Set<string>();
-  const pending = unchanged.map(tupleKey);
-  for (let key = pending.pop(); key !== undefined; key = pending.pop()) {
-    if (seen.has(key)) continue;
-    seen.add(key);
-    for (const dependency of byKey.get(key)?.manifest.dependencies ?? [])
-      pending.push(tupleKey(dependency));
-  }
-  return seen;
-}
 
 export class ManageProjectPackBinding {
   constructor(
@@ -210,7 +189,7 @@ export class ManageProjectPackBinding {
       issues.length === 0 &&
       added.length + removed.length + changed.length > 0
     ) {
-      const guard = this.roleCapabilityGuard(current.packs, proposed, changed);
+      const guard = this.roleCapabilityGuard(current.packs, proposed);
       roleCapabilityChanges = guard.roleCapabilityChanges;
       if (guard.issue) issues.push(guard.issue);
     }
@@ -228,13 +207,13 @@ export class ManageProjectPackBinding {
   /**
    * A role capability change is never incidental. This command refuses a
    * selection change that alters the capability set of a role present in both
-   * closures, and one it cannot show to be capability-neutral; either goes
-   * through the reviewed `project:pack:upgrade` plan.
+   * closures. When the current closure cannot be resolved it applies only a
+   * pure removal. Everything else goes through the reviewed
+   * `project:pack:upgrade` plan.
    */
   private roleCapabilityGuard(
     currentPacks: readonly PackIdentity[],
     proposed: readonly PackIdentity[],
-    changed: ProjectPackBindingPreview["changed"],
   ): {
     roleCapabilityChanges: ProjectPackBindingPreview["roleCapabilityChanges"];
     issue?: { code: string; message: string };
@@ -262,7 +241,11 @@ export class ManageProjectPackBinding {
     // be read back cannot be shown to be capability-neutral.
     if (typeof target === "string")
       return {
-        roleCapabilityChanges: { availability: "available", changes: [] },
+        roleCapabilityChanges: {
+          availability: "unavailable",
+          reason: "proposed_closure_unreadable",
+          detail: target,
+        },
         issue: refuse(
           `Role capabilities of the proposed selection cannot be read (${target})`,
         ),
@@ -274,35 +257,21 @@ export class ManageProjectPackBinding {
         reason: "previous_closure_unresolved",
         detail: previous,
       } as const;
-      if (changed.length === 0) return { roleCapabilityChanges };
-      // The old sets are unknown. Only tuples the project keeps, and their
-      // exact dependencies, are known to declare what they declared before.
-      const changedIds = new Set(changed.map(({ after }) => after.id));
-      const known = unchangedPackKeys(
-        target,
-        proposed.filter((pack) => !changedIds.has(pack.id)),
-      );
-      // A newly selected pack is an explicit addition, not a version change.
-      const currentIds = new Set(currentPacks.map((pack) => pack.id));
-      const addedKeys = new Set(
-        proposed.filter((pack) => !currentIds.has(pack.id)).map(tupleKey),
-      );
-      const unknown = roleCapabilitySets(
-        target.filter(
-          ({ identity }) =>
-            !known.has(tupleKey(identity)) &&
-            !addedKeys.has(tupleKey(identity)),
-        ),
-      );
+      // Without the old manifests neither an added nor a removed role
+      // capability can be ruled out: a role may have lost a set the target no
+      // longer declares, and a newly selected pack may have been an old
+      // dependency at another version. Only a pure removal, which leaves
+      // nothing but tuples the project already selected, is applied here.
+      const currentKeys = new Set(currentPacks.map(tupleKey));
       return {
         roleCapabilityChanges,
-        ...(unknown[0]
-          ? {
+        ...(proposed.every((pack) => currentKeys.has(tupleKey(pack)))
+          ? {}
+          : {
               issue: refuse(
-                `The current pack artifacts are not installed, so the version change cannot be shown to keep the capabilities of ${unknown[0].roleId}`,
+                "The current pack artifacts are not installed, so the selection change cannot be shown to leave role capabilities unchanged",
               ),
-            }
-          : {}),
+            }),
       };
     }
     const changes = roleCapabilityDifferences(previous, target);
