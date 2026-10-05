@@ -106,6 +106,14 @@ still keeps its own criteria and its own evidence. A project pipeline may
 group, rename, or add stages and gates; it never removes a gate of this skill,
 and the non-negotiable rules above still hold.
 
+Following a project pipeline does not by itself mean starting anything in the
+project's systems. Where using it would start a run that binds the task - one
+whose stages only that system's own assigned performers can complete - check
+first that you are such a performer for every stage. If you are not, do not
+start it: tell the authorizer what the run requires and let them decide how to
+proceed. Never start a binding run you cannot finish, and never override or
+cancel one on your own.
+
 Never pick a milestone or a task yourself. Once the answer is in, and before
 showing anything for approval, check the dependencies of the selection. The
 check always runs; when individual tasks were chosen it is done for every

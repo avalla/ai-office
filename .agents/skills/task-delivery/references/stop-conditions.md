@@ -26,6 +26,10 @@ depend on the answer may continue.
   available on a stacked base lets work continue only under an approved Git
   branch dependency; it never satisfies the task dependency.
 - **Red baseline.** The full verification fails on the untouched base.
+- **Binding run you cannot complete.** Using the project's pipeline would start
+  a run whose stages only the project's own assigned performers can complete,
+  and you are not one of them - or such a run is already active for the task.
+  Do not start, override, or cancel it; report what it requires and wait.
 - **Refused task transition.** The system that tracks the project's tasks
   refuses to mark the task started, in review, or done. Report what it said;
   never work around it or change the state another way.

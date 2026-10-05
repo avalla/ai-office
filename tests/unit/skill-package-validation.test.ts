@@ -555,6 +555,10 @@ describe("task-delivery workflow invariants", () => {
       /A transition the\s+tracker refuses is a stop condition/u,
     ],
     [
+      "policy:no-binding-run-you-cannot-finish",
+      /Never start a binding run you cannot finish/u,
+    ],
+    [
       "policy:never-choose-the-target",
       "Never pick a milestone or a task yourself.",
     ],
@@ -823,6 +827,10 @@ describe("task-delivery workflow invariants", () => {
         "A project pipeline that is used decides the stages, assignments, and transitions of the work.",
         "Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence.",
         "A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
+        "Following a project pipeline does not by itself mean starting anything in the project's systems.",
+        "Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage.",
+        "If you are not, do not start it: tell the authorizer what the run requires and let them decide how to proceed.",
+        "Never start a binding run you cannot finish, and never override or cancel one on your own.",
         "Never pick a milestone or a task yourself.",
         "Once the answer is in, and before showing anything for approval, check the dependencies of the selection.",
         "The check always runs; when individual tasks were chosen it is done for every selected task: find the tasks it logically depends on and their state, and separate the dependencies that are already DONE, those that are part of the selection, and those that are neither.",
@@ -995,6 +1003,31 @@ describe("task-delivery workflow invariants", () => {
       expect(section).not.toMatch(/office|runtime|daemon/iu);
     });
 
+    // An executor that started the project's enforced pipeline run could not
+    // complete its first stage: only the project's own registered performers
+    // could. The skill must check before starting, and never force its way
+    // out afterwards.
+    test("a binding pipeline run is never started by an executor who cannot finish it", () => {
+      expect(section).toMatch(
+        /Following a project pipeline does not by itself mean starting anything in the project's systems\./u,
+      );
+      expect(section).toMatch(
+        /Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage\. If you are not, do not start it: tell the authorizer what the run requires and let them decide how to proceed\./u,
+      );
+      expect(section).toMatch(
+        /Never start a binding run you cannot finish, and never override or cancel one on your own\./u,
+      );
+      // The check comes with the pipeline, before dependencies and preflight.
+      expect(
+        section.indexOf("Never start a binding run you cannot finish"),
+      ).toBeLessThan(
+        section.indexOf("check the dependencies of the selection"),
+      );
+      expect(reference("stop-conditions.md")).toMatch(
+        /\*\*Binding run you cannot complete\.\*\* Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not one of them - or such a run is already active for the task\. Do not start, override, or cancel it; report what it requires and wait\./u,
+      );
+    });
+
     test("a project pipeline maps onto the gates without removing any", () => {
       expect(section).toMatch(
         /Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence\./u,
@@ -1029,9 +1062,11 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: - When the project defines no pipeline, do not ask.",
         "SKILL.md: A project pipeline that is used decides the stages, assignments, and transitions of the work.",
         "SKILL.md: A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
+        "SKILL.md: Following a project pipeline does not by itself mean starting anything in the project's systems.",
         "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
         "SKILL.md: The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
         "configuration.md: A project may bind them to its own role names and to any executor; the pipeline stays the same when the executor changes.",
+        "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not one of them - or such a run is already active for the task.",
       ]);
     });
 

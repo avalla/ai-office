@@ -188,6 +188,11 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
         pattern: /A transition the tracker refuses is a stop condition/u,
       },
       {
+        id: "policy:no-binding-run-you-cannot-finish",
+        pattern:
+          /Never start a binding run you cannot finish, and never override or cancel one on your own\./u,
+      },
+      {
         id: "policy:never-choose-the-target",
         pattern: /Never pick a milestone or a task yourself/u,
       },
