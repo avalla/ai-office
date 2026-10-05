@@ -132,6 +132,7 @@ const projectScopedCommands = new Set([
   "project:pack:show",
   "project:pack:preview",
   "project:pack:apply",
+  "project:pack:upgrade",
   "project:definition:show",
   "project:definition:preview",
   "project:definition:apply",

@@ -72,6 +72,10 @@ archive format 6 carries only this authoritative semantic state. Runtime
 scheduling still uses the existing office, role, agent and pipeline state.
 GP-06 resolves the exact packs and project definitions into a derived,
 digest-pinned, read-only effective configuration; nothing is scheduled from it.
+GP-08 reconciles a selection change with the project overrides that name the
+changed packs: a read-only report, then a digest-approved apply that writes the
+selection and the retargeted overrides in one audited transaction and blocks
+on unresolved conflicts.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

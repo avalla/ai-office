@@ -13,6 +13,8 @@ dependency resolver, but does not activate packs for Runtime projects.
 GP-05 adds explicit authoritative project selection, reviewable through
 `project:pack:show`, `project:pack:preview` and `project:pack:apply`. It does not
 activate pack definitions for Runtime execution.
+GP-08 adds reviewed upgrade and override reconciliation through
+`project:pack:upgrade`.
 The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
 architectural contract, not current Runtime behavior.
 
@@ -226,7 +228,7 @@ carries authoritative entries, including unresolved pinned overrides; formats
 artifacts, credentials and resolved configuration.
 
 GP-06 resolves these sources into an effective configuration and defines
-its digest. GP-08 will handle pack upgrade reconciliation. Aliases, legacy
+its digest. GP-08 handles pack upgrade reconciliation. Aliases, legacy
 Development Pack parity/extraction, automatic selection, downloads, registry,
 executable validators, KnowledgeScopeV2, portable project UIDs and Runtime
 execution from pack definitions remain deferred.
@@ -307,6 +309,91 @@ or a sanitized typed diagnostic through the Runtime socket. An unknown project
 is reported as not found, like the other project commands. Empty bindings and
 definitions resolve to a valid empty view. Existing OfficeManifest scheduling,
 roles, agents, pipelines and run pins retain their current behavior.
+
+## GP-08 pack upgrade and reconciliation
+
+`project:pack:upgrade --project <id> --packs <exact-tuples-json>
+[--resolutions <json>] [--approve <plan-digest>] [--json]` takes the complete
+desired selection, like `project:pack:apply`. It covers a version change, an
+added or detached pack, and overrides left on an old tuple by an earlier
+selection change. Without `--approve` it is read-only and prints the
+reconciliation report. With `--approve` it writes the selection and the
+reconciled project definitions in one transaction with one
+`project.pack_upgrade_applied` audit event. No migration, storage port or
+portable archive format changes: the operation rewrites only GP-05 binding
+tuples and GP-07 override sources through their existing repositories.
+
+The report is a pure function of the binding, the definition state, the desired
+tuples, the supplied resolutions and the installed catalog. Its `planDigest` is
+SHA-256 of `ai-office-pack-upgrade-plan-v1\n` followed by RFC 8785 canonical
+JSON of every other report field, including both authoritative revisions.
+Apply recomputes the report and refuses a digest that does not match
+(`plan_not_approved`), so any change to the project or to the installed
+artifacts since the preview needs a new review. Inside the write transaction
+both revisions are checked again; a concurrent change fails stale and writes
+nothing. `project:pack:apply` keeps its GP-05 meaning and does not reconcile.
+
+Each project override is classified against the pack it names:
+
+| Override source in the desired selection                       | Outcome                                                                                          |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Exact tuple still selected                                     | `unchanged`.                                                                                     |
+| Pack selected at another tuple, definition still provided      | `retargeted` to the new tuple. Operation and payload are carried over; the entry revision rises. |
+| Same, but an `extend` field is now set by the template         | Conflict `extend_conflict`.                                                                      |
+| Same, but another override already names the target definition | Conflict `target_override_exists`.                                                               |
+| Pack selected at another tuple, definition no longer provided  | Conflict `source_definition_removed`.                                                            |
+| Pack no longer selected                                        | Conflict `source_pack_removed`.                                                                  |
+
+A conflict blocks the upgrade (`unresolved_override_conflict`) until the
+operator supplies a resolution for that exact source:
+`retain_as_project_owned` or `remove_override`. Retaining turns a `replace`
+override whose template is gone into a project-owned definition with the same
+kind, local ID and payload. It is refused (`invalid_resolution`) for `extend`
+and `disable`, which do not carry a complete definition, while the pack still
+provides the definition, and when a project-owned definition already uses the
+identity. Nothing is retained, moved or removed without a resolution, and a
+project value is never rewritten. A resolution that matches no conflict is
+listed under `ignoredResolutions` and changes nothing.
+
+The report also lists pack template changes over the old and new resolved
+closures, transitive dependencies included, by pack ID, kind and local ID:
+`added`, `removed` or `changed`, each marked `customized` when a project
+override names it. `upstream` on each override says whether its template is
+`unchanged`, `changed`, `removed` or `unknown`. The old template is
+information only: when the previous artifacts are no longer installed the
+template list is `unavailable` and `upstream` is `unknown`, and the upgrade is
+not blocked, because nothing is derived from the old template.
+
+Before a plan is approvable the reconciled selection and definitions are
+resolved through the GP-06 resolver. A failure blocks the upgrade as
+`prospective_configuration_invalid` with the GP-06 code, for example
+`duplicate_effective_definition` when a new version starts to provide a
+definition the project already owns. An unresolvable desired closure blocks
+as `target_closure_unresolved` with the GP-04 code. A clean plan carries
+`prospectiveConfigurationDigest`, the digest `project:configuration:show`
+returns after apply.
+
+A selection and overrides that already agree are a no-op: no revision change
+and no audit event, whatever digest is passed and even when the artifacts are
+no longer installed, as in GP-05. The audit event records the plan digest,
+previous and new revisions and tuples, every changed override with its source,
+outcome and target, template change counts and the prospective digest. It
+never contains a definition body.
+
+Runs do not pin pack configuration yet: GP-06 exposes `pin` and nothing
+persists it, and the Runtime does not schedule from pack definitions. The
+report states this as `activePins: unavailable`
+(`pack_configuration_run_pins_not_modelled`). Existing OfficeManifest, role,
+agent, pipeline, task and run-pin rows are not read or written. Blocking a
+removal on active pack-pinned runs belongs to the task that persists those
+pins. Policies, capabilities, validators and workflows have no override
+operation in schema 1, so no project customization of them can exist to
+reconcile; the template list still reports their changes.
+
+Aliases, explicit old-to-new definition mappings beyond the two resolutions,
+automatic selection or download of a newer version, Development Pack
+compatibility/extraction and Runtime execution from pack definitions remain
+deferred.
 
 ## Objective and decision boundary
 

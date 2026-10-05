@@ -1880,8 +1880,12 @@ project-owned workflows, exact pack-source overrides, constrained
 replace/extend/disable operations, conflict/security validation, SQLite and
 PostgreSQL persistence, audited checked revisions and portable archive format 6. Existing OfficeManifest, role, agent, pipeline, task, run pin and binding
 state remain unchanged. GP-06 resolves exact packs and project definitions into
-a derived, digest-pinned, inspectable view without scheduling from it. Aliases,
-pack upgrade reconciliation, Development Pack parity/extraction, automatic
+a derived, digest-pinned, inspectable view without scheduling from it. GP-08
+adds `project:pack:upgrade`: a read-only reconciliation report and a
+digest-approved, audited apply that changes the selection and retargets project
+overrides together, preserves project values, and blocks on unresolved
+conflicts; it adds no migration and no run pinning. Aliases,
+Development Pack parity/extraction, automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
 end-to-end exit criteria are met.

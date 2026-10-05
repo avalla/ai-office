@@ -38,7 +38,10 @@ export interface ProjectPackBindingPreview {
   readonly issues: readonly { code: string; message: string }[];
 }
 
-function normalized(packs: readonly PackIdentity[]): PackIdentity[] {
+/** Exact, structurally valid tuples, one per pack ID, in a stable order. */
+export function normalizePackSelection(
+  packs: readonly PackIdentity[],
+): PackIdentity[] {
   if (!Array.isArray(packs))
     throw new DomainPackCatalogError(
       "malformed_request",
@@ -104,7 +107,7 @@ export class ManageProjectPackBinding {
     const issues: { code: string; message: string }[] = [];
     let proposed: PackIdentity[];
     try {
-      proposed = normalized(desired);
+      proposed = normalizePackSelection(desired);
     } catch (error) {
       if (
         !(error instanceof DomainPackCatalogError) ||
@@ -148,7 +151,7 @@ export class ManageProjectPackBinding {
         "malformed_request",
         "Expected a nonnegative project pack configuration revision",
       );
-    const desired = normalized(input.desired);
+    const desired = normalizePackSelection(input.desired);
     const current = await this.read(input.projectId);
     if (current.configurationRevision !== input.expectedRevision)
       throw new StaleProjectPackBindingError(
