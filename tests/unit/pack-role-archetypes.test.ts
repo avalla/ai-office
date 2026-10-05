@@ -152,7 +152,9 @@ const override = (
   source: { ...pack, kind: "roles", localId },
   operation,
   revision: 1,
-  ...(payload === undefined ? {} : { payload: payload as Override["payload"] }),
+  ...(payload === undefined
+    ? {}
+    : { payload: payload as NonNullable<Override["payload"]> }),
   actorId: "operator",
   changedAt: "2026-10-05T00:00:00.000Z",
 });

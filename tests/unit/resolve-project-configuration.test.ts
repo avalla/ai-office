@@ -571,7 +571,14 @@ function independentCanonicalJson(value: unknown): string {
 function independentDigest(
   result: ReturnType<typeof resolveProjectConfiguration>,
 ): string {
-  const { configurationDigest: _digest, pin: _pin, ...material } = result;
+  // The GP-11 role view is derived from the material; it is not part of it.
+  const {
+    configurationDigest: _digest,
+    pin: _pin,
+    roles: _roles,
+    omittedRoles: _omittedRoles,
+    ...material
+  } = result;
   return `sha256:${createHash("sha256")
     .update(
       `ai-office-project-configuration-v1\n${independentCanonicalJson(material)}`,
@@ -1042,7 +1049,7 @@ describe("GP-06 hardening", () => {
         ...entry,
       }) as unknown as ProjectDefinitionState["overrides"][number];
     for (const entry of [
-      override(pack, "roles", "plain", "disable"),
+      override(pack, "taskTypes", "task", "disable"),
       override(pack, "workflows", "flow", "replace", { id: "flow" }),
       override(pack, "workflows", "flow", "extend", { title: "x" }),
       override(pack, "capabilities", "cap", "replace", { id: "cap" }),
@@ -1061,6 +1068,11 @@ describe("GP-06 hardening", () => {
       raw({ source: { ...pack, kind: "roles" } }),
     ])
       expect(attempt(entry), JSON.stringify(entry)).toBe("unresolved_override");
+    // GP-11: a role omission is a supported shape, but `plain` is required by
+    // the enabled workflow, so it still fails closed.
+    expect(attempt(override(pack, "roles", "plain", "disable"))).toBe(
+      "disabled_required_definition",
+    );
     expect(attempt(raw({ revision: 0 }))).toBe("configuration_invariant");
     expect(attempt(raw({ revision: Number.NaN }))).toBe(
       "configuration_invariant",

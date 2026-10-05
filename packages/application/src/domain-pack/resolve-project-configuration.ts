@@ -58,12 +58,33 @@ export class ProjectConfigurationResolutionError extends Error {
   }
 }
 
+/** A pack role keeps the capability references its manifest declares. */
+export interface ResolvedPackRolePayload extends DescriptiveDefinition {
+  readonly capabilities?: readonly string[];
+}
+
 export interface ResolvedDefinition {
   readonly effectiveId: string;
   readonly kind: ContributionKind;
   readonly localId: string;
   readonly enabled: boolean;
-  readonly payload: ProjectDefinitionPayload;
+  readonly payload: ProjectDefinitionPayload | ResolvedPackRolePayload;
+}
+
+/**
+ * The declarative contract of one enabled role. `roleId` is the stable slot
+ * identity: it carries no pack version, digest or presentation, so it survives
+ * rename, replacement and pack upgrade. Capabilities are stable capability
+ * IDs owned by the selected pack version; they grant nothing.
+ */
+export interface ResolvedRole {
+  readonly roleId: string;
+  readonly effectiveId: string;
+  readonly origin: "pack_owned" | "project_owned";
+  readonly title?: string;
+  readonly description?: string;
+  readonly capabilities: readonly string[];
+  readonly customization: "none" | "replace" | "extend";
 }
 
 export interface ResolvedWorkflowReferences {
@@ -110,6 +131,13 @@ export interface ResolvedProjectConfiguration {
   readonly origins: Readonly<Record<string, DefinitionProvenance>>;
   readonly disabledDefinitions: readonly string[];
   readonly resolvedWorkflowReferences: readonly ResolvedWorkflowReferences[];
+  /**
+   * Derived role contract view over `effectiveDefinitions.roles`. It is not
+   * digest material: the effective definitions already determine it.
+   */
+  readonly roles: readonly ResolvedRole[];
+  /** Stable IDs of disabled roles, which are absent from `roles`. */
+  readonly omittedRoles: readonly string[];
   /** The minimum evidence future run records must pin. */
   readonly pin: {
     readonly configurationDigest: string;
@@ -149,6 +177,15 @@ function packId(
 
 function projectId(kind: ContributionKind, id: string): string {
   return `project:${kind}/${id}`;
+}
+
+/** Stable identity of a pack definition: no version, digest or presentation. */
+export function stablePackDefinitionId(
+  pack: string,
+  kind: ContributionKind,
+  id: string,
+): string {
+  return `pack:${pack}/${kind}/${id}`;
 }
 
 function failure(code: ConfigurationIssueCode, message: string): never {
@@ -432,9 +469,19 @@ export function resolveProjectConfiguration(input: {
     const payload = entry.payload;
     let next: ResolvedDefinition;
     if (entry.operation === "disable") next = { ...current, enabled: false };
-    else if (entry.operation === "replace" && payload)
-      next = { ...current, payload };
-    else if (
+    else if (entry.operation === "replace" && payload) {
+      // A replacement substitutes the descriptive envelope only. A role's
+      // capability set stays the pack's: a project payload cannot carry one.
+      const capabilities =
+        current.kind === "roles"
+          ? (current.payload as ResolvedPackRolePayload).capabilities
+          : undefined;
+      next = {
+        ...current,
+        payload:
+          capabilities === undefined ? payload : { ...payload, capabilities },
+      };
+    } else if (
       entry.operation === "extend" &&
       payload &&
       (payload.title === undefined ||
@@ -524,6 +571,56 @@ export function resolveProjectConfiguration(input: {
     });
   }
 
+  const roles: ResolvedRole[] = [];
+  const omittedRoles: string[] = [];
+  const roleIds = new Set<string>();
+  for (const definition of byKind.roles) {
+    const provenance = provenanceOf(definition.effectiveId);
+    const roleId =
+      provenance.origin === "pack_owned"
+        ? stablePackDefinitionId(
+            provenance.pack.id,
+            "roles",
+            definition.localId,
+          )
+        : definition.effectiveId;
+    if (roleIds.has(roleId))
+      failure("configuration_invariant", `Duplicate role identity ${roleId}`);
+    roleIds.add(roleId);
+    if (!definition.enabled) {
+      omittedRoles.push(roleId);
+      continue;
+    }
+    const { title, description } = definition.payload;
+    const operation =
+      provenance.origin === "pack_owned"
+        ? provenance.override?.operation
+        : undefined;
+    roles.push({
+      roleId,
+      effectiveId: definition.effectiveId,
+      origin: provenance.origin,
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      // Only a pack source declares capabilities; they are reported by the
+      // stable ID of the capability the same pack declares.
+      capabilities:
+        provenance.origin === "pack_owned"
+          ? (
+              (definition.payload as ResolvedPackRolePayload).capabilities ?? []
+            ).map((capability) =>
+              stablePackDefinitionId(
+                provenance.pack.id,
+                "capabilities",
+                capability,
+              ),
+            )
+          : [],
+      customization:
+        operation === "replace" || operation === "extend" ? operation : "none",
+    });
+  }
+
   const sortedOrigins = Object.fromEntries(
     Object.keys(origins)
       .sort(compareIds)
@@ -563,6 +660,8 @@ export function resolveProjectConfiguration(input: {
   return {
     ...material,
     configurationDigest,
+    roles,
+    omittedRoles,
     pin: {
       configurationDigest,
       coreContractVersion,

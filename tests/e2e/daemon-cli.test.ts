@@ -1387,6 +1387,8 @@ profiles:
         "disabledDefinitions",
         "resolvedWorkflowReferences",
         "configurationDigest",
+        "roles",
+        "omittedRoles",
         "pin",
       ]);
       expect(

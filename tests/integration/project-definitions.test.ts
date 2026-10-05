@@ -526,8 +526,11 @@ describe("GP-07 authoritative definition ownership", () => {
               : { id: "counsel" },
           kind,
         );
+        // GP-11 widened `disable` from prompts to prompts and roles.
         const supported =
-          operation === "disable" ? kind === "prompts" : descriptive.has(kind);
+          operation === "disable"
+            ? kind === "prompts" || kind === "roles"
+            : descriptive.has(kind);
         if (supported)
           expect(() => parseDefinitionMutation(mutation)).not.toThrow();
         else
@@ -1266,8 +1269,11 @@ describe("GP-07 authoritative definition ownership", () => {
   test("protected fields, unsupported operations, and audit failure cannot mutate authority", async () => {
     const { database, storage, legal, service, bind } = await harness();
     await bind();
+    // A role omission is supported since GP-11; other kinds still are not.
     expect(() =>
-      parseDefinitionMutation(putOverride(legal, "disable", undefined)),
+      parseDefinitionMutation(
+        putOverride(legal, "disable", undefined, "taskTypes", "matter"),
+      ),
     ).toThrow();
     expect(() =>
       parseDefinitionMutation(
