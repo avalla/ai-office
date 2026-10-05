@@ -679,9 +679,6 @@ describe("task-delivery workflow invariants", () => {
     expect(core).toMatch(
       /Where task state is tracked, keep it true as the work moves\. Mark the task started in preflight, before the first change\. Mark it in review when its pull request is open\. Mark it done only after stage 11\./u,
     );
-    expect(core).toMatch(
-      /A task already in the state you would set needs nothing; when you do not know how the tracker identifies the task, ask\./u,
-    );
     // How: configured commands, else the project's documented way, else a
     // report - and a refusal stops the work.
     expect(core).toMatch(
@@ -720,6 +717,13 @@ describe("task-delivery workflow invariants", () => {
     );
     expect(configuration).toMatch(
       /`task_lifecycle\.enabled: false` together with a `task_lifecycle` command is an error: the commands would never run\./u,
+    );
+    // The Keys table states the same default as the core: not "false".
+    expect(configuration).toMatch(
+      /\| `task_lifecycle\.enabled` \| `true`: task state is tracked outside Git\. `false`: it is not, and the skill never touches it \| Tracked when a command below is configured or the project's instructions describe a tracker \|/u,
+    );
+    expect(core).toMatch(
+      /Check the task's current state first: a task already in the state you would set needs nothing; when you do not know how the tracker identifies the task, ask\./u,
     );
     expect(core).toMatch(
       /A transition the tracker refuses is a stop condition: report what it said, and never work around it\./u,

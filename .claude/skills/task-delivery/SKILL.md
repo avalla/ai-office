@@ -71,8 +71,8 @@ started in preflight, before the first change. Mark it in review when its pull
 request is open. Mark it done only after stage 11. Use the commands the
 project configures for this; without them, use the project's own documented
 way of changing task state, and only where there is none report each
-transition for someone else to apply. A task already in the state you would
-set needs nothing; when you do not know how the tracker identifies the task,
+transition for someone else to apply. Check the task's current state first: a task already in the
+state you would set needs nothing; when you do not know how the tracker identifies the task,
 ask. A transition the tracker refuses is a stop condition: report what it
 said, and never work around it. See
 [configuration](references/configuration.md).

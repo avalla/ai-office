@@ -41,8 +41,8 @@ they are stricter.
 are non-empty strings.
 `git.*` and `task_lifecycle.enabled` are booleans written unquoted (`true` or
 `false`). `verification`, `git`, `external_review`, and `task_lifecycle` are
-mappings; no other key is allowed at any level. To switch everything off,
-delete the file instead of emptying it.
+mappings; no other key is allowed at any level. To drop the configuration, delete the file instead of emptying it; task
+state is then tracked or not as the project's own instructions say.
 
 Only this layout is accepted, so that no two readers can take the file
 differently and a repeated or disguised key cannot hide:

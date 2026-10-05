@@ -807,15 +807,22 @@ describe("task-delivery configuration contract", () => {
       "utf8",
     );
     const parsed = Bun.YAML.parse(source) as {
+      git: Record<string, unknown>;
       task_lifecycle: Record<string, unknown>;
     };
 
     expect(parsed.task_lifecycle.enabled).toBe(true);
     for (const key of ["start", "review", "complete"])
       expect(parsed.task_lifecycle[key]).toMatch(/ --task \{task\}$/u);
-    // A project identifier is local to one runtime; the commands resolve the
-    // project from the checkout instead.
+    // A project identifier is local to one runtime, so none is written here.
+    // The commands run from the primary checkout - the one bound to the
+    // runtime - because a task worktree is not bound and would be refused.
     expect(source).not.toMatch(/--project\b/u);
+    for (const key of ["start", "review", "complete"])
+      expect(parsed.task_lifecycle[key]).toMatch(
+        /^cd "\$\(git rev-parse --path-format=absolute --git-common-dir\)\/\.\." && ai-office task:/u,
+      );
+    expect(parsed.git).toMatchObject({ worktree_required: true });
   });
 
   test("the repository's own configuration and the shipped example are valid", () => {
