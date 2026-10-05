@@ -30,8 +30,10 @@ They are independent. Decide each explicitly and write both in the pull request.
 - When the upper branch also needs commits from the integration branch - new
   work, or the merged form of the lower branch - merge the integration branch
   into it. Do not rewrite the upper branch to get there.
-- Any change of base or merge-in invalidates earlier evidence: run
-  verification again on the new head.
+- Any change of base or merge-in invalidates earlier verification evidence: run
+  verification again on the resulting head. Review evidence stays valid for
+  commits that did not change; conflict resolutions are new changes and need
+  review.
 - A satisfied Git dependency does not satisfy a task dependency: being stacked
   on A's branch does not mean A's task is accepted.
 - An unrelated task must not inherit another task's unmerged commits.
@@ -42,8 +44,9 @@ They are independent. Decide each explicitly and write both in the pull request.
   or when another task is in progress in the same checkout.
 - Never rewrite history that others may have fetched. After review has started,
   add commits instead of amending, so the hardening diff stays readable.
-- A rebase is allowed only on a branch that has not been shared and whose
-  review has not started. In every other case, merge. Rewriting shared or
+- A rebase is allowed only on a branch that has not been shared, whose review
+  has not started, and that no other branch is stacked on. In every other
+  case, merge. Rewriting shared or
   reviewed history is a [stop condition](stop-conditions.md), not a judgment
   call.
 - Never push to the integration branch directly.

@@ -232,6 +232,27 @@ describe("skill package validation", () => {
     );
   });
 
+  test("on Claude Code an available Codex is a mandatory external reviewer", () => {
+    const block = canonicalSkill
+      .slice(canonicalSkill.indexOf("<!-- executors:start -->"))
+      .replace(/\s+/gu, " ");
+    expect(block).toMatch(
+      /External reviewer on Claude Code\.\*\* When Codex is available in the session/u,
+    );
+    expect(block).toMatch(/stage 9 is not optional: run a Codex review/u);
+    expect(block).toMatch(/in addition to the independent review/u);
+    expect(block).toMatch(
+      /unavailable or cannot be started, record that in the evidence and skip/u,
+    );
+    // The neutral core defers to the mapping without naming any executor.
+    const core = canonicalSkill
+      .slice(0, canonicalSkill.indexOf("<!-- executors:start -->"))
+      .replace(/\s+/gu, " ");
+    expect(core).toMatch(
+      /one the executor mapping below names for the current executor/u,
+    );
+  });
+
   test("the executor block cannot swallow or precede the workflow", () => {
     const moved = repositoryCopy();
     rewrite(join(moved.skillRoot, "SKILL.md"), (source) =>
@@ -512,6 +533,11 @@ describe("task-delivery workflow invariants", () => {
       /satisfied Git dependency does not satisfy a task dependency/u,
     );
     expect(reference("evidence.md")).toMatch(/Bind evidence to a commit/u);
+    expect(reference("qa-checklist.md")).toMatch(/PASS or FAIL/u);
+    expect(reference("review-checklist.md")).toMatch(/blocking/u);
+    expect(reference("configuration.md")).toMatch(
+      /never grants authority: no key can authorize a merge/u,
+    );
   });
 
   test("stacked-branch handling never prescribes rewriting shared history", () => {
@@ -539,11 +565,12 @@ describe("task-delivery workflow invariants", () => {
     );
     expect(branchPolicy).toMatch(/merge the integration branch into it/u);
     expect(branchPolicy).toMatch(
-      /A rebase is allowed only on a branch that has not been shared and whose review has not started/u,
+      /A rebase is allowed only on a branch that has not been shared, whose review has not started, and that no other branch is stacked on/u,
     );
     expect(branchPolicy).toMatch(
-      /Any change of base or merge-in invalidates earlier evidence: run verification again/u,
+      /Any change of base or merge-in invalidates earlier verification evidence: run verification again on the resulting head/u,
     );
+    expect(lifecycle).toMatch(/verification again on the resulting head/u);
     expect(branchPolicy).toMatch(/\[stop condition\]\(stop-conditions\.md\)/u);
     expect(stopConditions).toMatch(/Rewriting shared or reviewed history/u);
     expect(stopConditions).toMatch(
@@ -552,11 +579,6 @@ describe("task-delivery workflow invariants", () => {
     expect(reference("configuration.md")).not.toMatch(/keys are ignored/iu);
     expect(reference("configuration.md")).toMatch(
       /stop and report it instead of continuing with defaults/u,
-    );
-    expect(reference("qa-checklist.md")).toMatch(/PASS or FAIL/u);
-    expect(reference("review-checklist.md")).toMatch(/blocking/u);
-    expect(reference("configuration.md")).toMatch(
-      /never grants authority: no key can authorize a merge/u,
     );
   });
 });

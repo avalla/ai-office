@@ -42,7 +42,7 @@ Verification:    <command> -> <result> on <hash>
 Review:          <n findings: fixed / rejected / open> by <independent | not independent>
 Second review:   <result>
 QA:              <PASS | FAIL> on <hash>
-External review: <result | not configured - skipped>
+External review: <result | not available - skipped>
 Limitations:     <known limits>
 Follow-ups:      <deferred items>
 State:           <READY FOR MERGE | DONE>

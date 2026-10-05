@@ -5,9 +5,11 @@ repository root: `.task-delivery.yaml`. The file is never required, and every
 key in it is optional. A ready-to-copy example is in
 [task-delivery.example.yaml](../assets/task-delivery.example.yaml).
 
-A file that is present must respect this contract exactly. An unknown key, a
-misspelled key, a value of the wrong type, or an empty string is an error, not
-something to ignore: a typo would otherwise silently fall back to a default and
+A file that is present must respect this contract exactly: a YAML mapping with
+at least one key, written one key per line, each key at most once. Malformed
+YAML, an empty or comment-only file, an unknown or misspelled key, a repeated
+key, a value of the wrong type, or an empty string is an error, not something
+to ignore: a typo would otherwise silently fall back to a default and
 switch a policy off. The repository that publishes this skill detects such
 errors with its `skills:validate` check. Whoever follows the skill does the
 same when reading the file: on any key or value outside this contract, stop
@@ -18,17 +20,17 @@ they are stricter.
 
 ## Keys
 
-| Key                       | Meaning                                                           | Default when absent                                       |
-| ------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------- |
-| `integration_branch`      | Branch that task branches start from and merge into               | The remote's default branch                               |
-| `verification.full`       | Command that must pass before handoff, at QA, and after merge     | The check command the repository documents; otherwise ask |
-| `verification.targeted`   | Command template for a narrow test run while iterating            | The repository's test runner on the changed area          |
-| `git.worktree_required`   | `true` when each task must use an isolated workspace              | `false`                                                   |
-| `git.stacking_allowed`    | `true` when a task branch may be based on an unmerged task branch | `false`                                                   |
-| `external_review.command` | Command that runs the external reviewer on the current branch     | Not configured: stage 9 is skipped                        |
-| `task_lifecycle.enabled`  | `true` when task state is tracked in a system outside Git         | `false`                                                   |
-| `task_lifecycle.start`    | Command that marks a task as started                              | None: report the transition instead                       |
-| `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11       | None: report the transition instead                       |
+| Key                       | Meaning                                                           | Default when absent                                                   |
+| ------------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `integration_branch`      | Branch that task branches start from and merge into               | The remote's default branch                                           |
+| `verification.full`       | Command that must pass before handoff, at QA, and after merge     | The check command the repository documents; otherwise ask             |
+| `verification.targeted`   | Command template for a narrow test run while iterating            | The repository's test runner on the changed area                      |
+| `git.worktree_required`   | `true` when each task must use an isolated workspace              | `false`                                                               |
+| `git.stacking_allowed`    | `true` when a task branch may be based on an unmerged task branch | `false`                                                               |
+| `external_review.command` | Command that runs the external reviewer on the current branch     | None: stage 9 runs only with a reviewer named by the executor mapping |
+| `task_lifecycle.enabled`  | `true` when task state is tracked in a system outside Git         | `false`                                                               |
+| `task_lifecycle.start`    | Command that marks a task as started                              | None: report the transition instead                                   |
+| `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11       | None: report the transition instead                                   |
 
 ## Types
 
@@ -36,7 +38,8 @@ they are stricter.
 `task_lifecycle.start`, and `task_lifecycle.complete` are non-empty strings.
 `git.*` and `task_lifecycle.enabled` are booleans written unquoted (`true` or
 `false`). `verification`, `git`, `external_review`, and `task_lifecycle` are
-mappings; no other key is allowed at any level.
+mappings; no other key is allowed at any level. To switch everything off,
+delete the file instead of emptying it.
 
 ## Rules
 

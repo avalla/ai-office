@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  chmodSync,
   cpSync,
   mkdirSync,
   mkdtempSync,
@@ -81,7 +82,7 @@ describe("task-delivery configuration contract", () => {
     ["a comment-only document", "# nothing here\n"],
   ])("rejects a root that is %s", (_label, source) => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual([
-      "the document root must be a mapping",
+      expect.stringMatching(/^the document root must be a mapping/u),
     ]);
   });
 
@@ -99,6 +100,67 @@ describe("task-delivery configuration contract", () => {
     ).toEqual([
       "unknown key git.worktree_requred (allowed in git: worktree_required, stacking_allowed)",
     ]);
+  });
+
+  test.each([
+    [
+      "a repeated section, which would drop the first block",
+      "git:\n  worktree_required: true\ngit:\n  stacking_allowed: true\n",
+      ["git is defined 2 times; the parser would keep only the last one"],
+    ],
+    [
+      "a repeated nested key",
+      "git:\n  worktree_required: true\n  worktree_required: false\n",
+      [
+        "git.worktree_required is defined 2 times; the parser would keep only the last one",
+      ],
+    ],
+    [
+      "a repeated top-level scalar",
+      "integration_branch: main\nintegration_branch: develop\n",
+      [
+        "integration_branch is defined 2 times; the parser would keep only the last one",
+      ],
+    ],
+    [
+      "a repeated quoted key",
+      'git:\n  "worktree_required": true\n  worktree_required: false\n',
+      [
+        "git.worktree_required is defined 2 times; the parser would keep only the last one",
+      ],
+    ],
+  ])("rejects %s", (_label, source, expected) => {
+    expect(validateTaskDeliveryConfigSource(source)).toEqual(expected);
+  });
+
+  test.each([
+    [
+      "a flow mapping hiding a repeated key",
+      "git: {worktree_required: true, worktree_required: false}\n",
+      "git.worktree_required must be written on its own line in block style",
+    ],
+    [
+      "a flow-style root",
+      '{"integration_branch": "main"}\n',
+      "integration_branch must be written on its own line in block style",
+    ],
+    [
+      "a merge key",
+      "base: &base\n  worktree_required: true\ngit:\n  <<: *base\n",
+      "unknown key base",
+    ],
+  ])("rejects %s", (_label, source, expected) => {
+    expect(validateTaskDeliveryConfigSource(source)).toEqual(
+      expect.arrayContaining([expect.stringContaining(expected)]),
+    );
+  });
+
+  test("accepts a byte-order mark, CRLF line endings, and comments", () => {
+    expect(
+      validateTaskDeliveryConfigSource(
+        `\uFEFF# settings\r\n${completeConfig.replace(/\n/gu, "\r\n")}`,
+      ),
+    ).toEqual([]);
   });
 
   test("rejects keys that only exist on Object.prototype", () => {
@@ -178,13 +240,40 @@ describe("task-delivery configuration contract", () => {
     ).toHaveLength(4);
   });
 
-  test("rejects a configuration file under a name the skill never reads", () => {
-    const root = temporaryRoot();
-    writeFileSync(join(root, ".task-delivery.yml"), completeConfig);
+  test.each([
+    ".task-delivery.yml",
+    "task-delivery.yaml",
+    "task-delivery.yml",
+    ".task-delivery.YAML",
+    ".Task-Delivery.yaml",
+    ".task_delivery.yaml",
+    ".taskdelivery.yaml",
+    ".task-delivery.json",
+  ])(
+    "rejects a configuration named %s, which the skill never reads",
+    (name) => {
+      const root = temporaryRoot();
+      writeFileSync(join(root, name), completeConfig);
 
-    expect(validateTaskDeliveryConfig(root)).toEqual([
-      `.task-delivery.yml: not read by the skill; rename it to ${taskDeliveryConfigName}`,
-    ]);
+      expect(validateTaskDeliveryConfig(root)).toEqual([
+        `${name}: not read by the skill; rename it to ${taskDeliveryConfigName}`,
+      ]);
+    },
+  );
+
+  test("reports an unreadable configuration instead of crashing", () => {
+    const root = temporaryRoot();
+    const path = join(root, taskDeliveryConfigName);
+    writeFileSync(path, completeConfig);
+    chmodSync(path, 0o000);
+    // A privileged user can read the file regardless of its mode.
+    const expected =
+      process.getuid?.() === 0
+        ? []
+        : [expect.stringMatching(/^\.task-delivery\.yaml: cannot be read \(/u)];
+
+    expect(validateTaskDeliveryConfig(root)).toEqual(expected);
+    chmodSync(path, 0o600);
   });
 
   test("rejects a configuration path that is not a regular file", () => {
@@ -258,9 +347,29 @@ describe("skills:validate covers the project configuration", () => {
     expect(validateSkills(root)).toEqual(
       expect.arrayContaining([
         "skills/task-delivery: Required file is missing: assets/pr-template.md",
-        `${taskDeliveryConfigName}: the document root must be a mapping`,
+        expect.stringContaining(
+          `${taskDeliveryConfigName}: the document root must be a mapping`,
+        ),
       ]),
     );
+  });
+
+  test("reports the configuration even when no canonical skill is found", () => {
+    const missing = temporaryRoot();
+    writeFileSync(join(missing, taskDeliveryConfigName), "bogus: 1\n");
+    expect(validateSkills(missing)).toEqual([
+      expect.stringContaining("Canonical skills directory is missing"),
+      expect.stringContaining("unknown key bogus"),
+    ]);
+
+    mkdirSync(join(missing, "skills"));
+    expect(validateSkills(missing)).toEqual([
+      "No canonical skills found under skills/",
+      expect.stringContaining("unknown key bogus"),
+    ]);
+    expect(validateSkills(join(missing, "nowhere"))).toEqual([
+      expect.stringContaining("Canonical skills directory is missing"),
+    ]);
   });
 
   test("the CLI exits non-zero on an invalid configuration", () => {

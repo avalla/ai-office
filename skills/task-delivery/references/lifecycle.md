@@ -13,7 +13,7 @@ evidence is not passed, whatever its apparent state.
 | 6   | Hardening               | Implementation context | Each finding fixed with a test, or rejected with a reason           |
 | 7   | Second Review           | Independent reviewer   | Each prior finding confirmed resolved; no new blocking finding      |
 | 8   | Verification / QA       | Verification context   | Full verification and real exercise of the change on the final head |
-| 9   | External Review         | External reviewer      | Findings handled, or "not configured - skipped"                     |
+| 9   | External Review         | External reviewer      | Findings handled, or "not available - skipped"                      |
 | 10  | Ready for Merge         | Implementation context | Gate summary bound to the current head commit                       |
 | 11  | Post-merge / completion | Verification context   | Green verification on the integration branch at the merge commit    |
 
@@ -86,7 +86,9 @@ evidence is not passed, whatever its apparent state.
 
 ## 9. External Review (optional)
 
-- Run only when the project configures an external reviewer.
+- Run when an external reviewer is available: the project configures one, or
+  the skill's executor mapping names one for the current executor. Otherwise
+  skip the stage and record "not available - skipped".
 - Validate its findings like any others. Changes made in response go through
   Hardening, Second Review, and Verification again.
 
@@ -104,7 +106,7 @@ evidence is not passed, whatever its apparent state.
 - For each pull request that was stacked on this one, follow the
   [branch policy](branch-policy.md): retarget it to the integration branch,
   bring in new integration-branch commits by merging them in when needed, and
-  run its verification again on the new base. Never rewrite shared or reviewed
+  run its verification again on the resulting head. Never rewrite shared or reviewed
   history to do so.
 - Update task state, record follow-ups, clean up the branch and workspace.
 - Only now report DONE. If post-merge verification fails, report it at once and

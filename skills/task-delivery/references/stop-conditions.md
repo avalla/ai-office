@@ -14,8 +14,9 @@ depend on the answer may continue.
 - **Destructive or irreversible action.** Rewriting shared or reviewed history
   (rebasing, amending, or force-pushing a branch others may have fetched or
   whose review has started), deleting branches or data you did not create.
-- **Invalid configuration.** The project configuration file is present but has
-  an unknown key, a wrong type, or an empty value. Never fall back to defaults.
+- **Invalid configuration.** The project configuration file is present but does
+  not respect its contract - for example malformed content, an unknown or
+  repeated key, a wrong type, or an empty value. Never fall back to defaults.
 - **Unclear acceptance criteria.** The task cannot be judged complete as
   written.
 - **Scope growth.** Satisfying the task would require work clearly outside its
@@ -45,4 +46,4 @@ depend on the answer may continue.
 - Ordinary errors, timeouts, or tool failures that can be diagnosed and fixed
   within scope.
 - Minor findings that are fixed or recorded as follow-ups.
-- The absence of an external reviewer: skip that stage and say so.
+- No external reviewer being available: skip that stage and say so.

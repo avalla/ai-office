@@ -72,7 +72,7 @@ interface SkillContract {
    * collapsed to single spaces.
    */
   readonly invariants: readonly ContentInvariant[];
-  /** Names the executor block must mention. */
+  /** Executors that need their own row in the executor block's table. */
   readonly executors: readonly string[];
 }
 
@@ -328,7 +328,8 @@ export function validateSkillPackage(skillRoot: string): string[] {
     for (const executor of contract.executors)
       if (
         block === null ||
-        !new RegExp(`(?<![\\w-])${executor}(?![\\w-])`, "u").test(block)
+        // A row of the mapping table, not a passing mention in prose.
+        !new RegExp(`^\\| ${executor} +\\|`, "mu").test(block)
       )
         errors.push(`SKILL.md executor block does not cover: ${executor}`);
   }

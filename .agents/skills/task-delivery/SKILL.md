@@ -119,8 +119,10 @@ for real, and checks every acceptance criterion against observed results.
 
 ### 9. External Review (optional)
 
-Run only when an external reviewer is configured. Treat its findings like any
-other review: validate, harden, re-verify. Skip the stage otherwise and say so.
+Run when an external reviewer is available: one the project configures, or
+one the executor mapping below names for the current executor. Treat its
+findings like any other review: validate, harden, re-verify. Skip the stage
+only when no external reviewer is available, and say so.
 
 ### 10. Ready for Merge
 
@@ -155,5 +157,12 @@ roles above into the primitives each executor offers.
 
 For any executor: never pass the implementer's conclusions to the reviewer or
 verifier, and never let the context that wrote a change approve it.
+
+**External reviewer on Claude Code.** When Codex is available in the session -
+a Codex skill or plugin, or the `codex` command - stage 9 is not optional: run
+a Codex review of the branch as the external reviewer, in addition to the
+independent review, even when the project configures no external review
+command. If Codex is unavailable or cannot be started, record that in the
+evidence and skip the stage.
 
 <!-- executors:end -->

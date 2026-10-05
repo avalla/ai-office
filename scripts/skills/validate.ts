@@ -18,14 +18,18 @@ import {
  */
 export function validateSkills(root: string = repositoryRoot): string[] {
   const sourceRoot = resolve(root);
+  const configErrors = validateTaskDeliveryConfig(sourceRoot);
   let skills: string[];
   try {
     skills = listCanonicalSkills(sourceRoot);
   } catch (error) {
-    return [errorMessage(error)];
+    return [errorMessage(error), ...configErrors];
   }
   if (skills.length === 0)
-    return [`No canonical skills found under ${canonicalSkillsDirectory}/`];
+    return [
+      `No canonical skills found under ${canonicalSkillsDirectory}/`,
+      ...configErrors,
+    ];
 
   const errors = [
     ...skills.flatMap((skill) =>
@@ -33,7 +37,7 @@ export function validateSkills(root: string = repositoryRoot): string[] {
         join(sourceRoot, canonicalSkillsDirectory, skill),
       ).map((problem) => `${canonicalSkillsDirectory}/${skill}: ${problem}`),
     ),
-    ...validateTaskDeliveryConfig(sourceRoot),
+    ...configErrors,
   ];
   // Installed copies are only comparable against a valid source.
   if (errors.some((error) => error.startsWith(`${canonicalSkillsDirectory}/`)))
@@ -65,7 +69,7 @@ if (import.meta.main) {
   if (errors.length > 0) {
     for (const error of errors) console.error(`- ${error}`);
     console.error(
-      "Skill validation failed. Fix the canonical source, then run `bun run skills:install`.",
+      "Skill validation failed. Fix the files named above; after editing a canonical skill, run `bun run skills:install`.",
     );
     process.exitCode = 1;
   } else {
