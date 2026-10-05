@@ -155,7 +155,10 @@ export interface PackUpgradePlan {
 }
 
 export type ProjectPackUpgradeErrorCode =
-  "malformed_request" | "upgrade_blocked" | "plan_not_approved";
+  | "malformed_request"
+  | "stale_snapshot"
+  | "upgrade_blocked"
+  | "plan_not_approved";
 
 export class ProjectPackUpgradeError extends Error {
   constructor(
@@ -311,8 +314,8 @@ function sameContribution(left: Contribution, right: Contribution): boolean {
 }
 
 /**
- * The definition state after the plan's override outcomes. Operation and
- * payload of every surviving project entry are carried over unchanged.
+ * The definition state after the plan's override outcomes. A surviving override
+ * is carried over whole: only the pack tuple of a retargeted source changes.
  */
 function reconciledDefinitions(
   current: ProjectDefinitionState,
@@ -332,9 +335,6 @@ function reconciledDefinitions(
       kept.push({
         ...override,
         source: outcome.target,
-        revision: override.revision + 1,
-        actorId,
-        changedAt,
       });
     else if (
       outcome.outcome === "retained_as_project_owned" &&
@@ -512,7 +512,31 @@ export function planProjectPackUpgrade(input: {
   const ownedKeys = new Set(
     definitions.owned.map(({ kind, id }) => `${kind}\u0000${id}`),
   );
-  const claimedTargets = new Set<string>();
+  // Overrides that would land on one target definition. No order picks a
+  // winner: all of them conflict until explicit removals leave exactly one.
+  const claimants = new Map<string, number>();
+  const standing = new Map<string, number>();
+  for (const { source } of definitions.overrides) {
+    if (proposedKeys.has(tupleKey(source))) continue;
+    const next = proposedById.get(source.id);
+    if (
+      !next ||
+      !targetManifests
+        .get(tupleKey(next))
+        ?.contributions[source.kind].some(
+          (entry) => entry.id === source.localId,
+        )
+    )
+      continue;
+    const key = sourceKey({
+      ...identity(next),
+      kind: source.kind,
+      localId: source.localId,
+    });
+    claimants.set(key, (claimants.get(key) ?? 0) + 1);
+    if (resolutionBySource.get(sourceKey(source))?.action !== "remove_override")
+      standing.set(key, (standing.get(key) ?? 0) + 1);
+  }
   const overrides: OverrideReconciliation[] = [];
   for (const override of [...definitions.overrides].sort((left, right) =>
     compareExactSources(left.source, right.source),
@@ -563,7 +587,10 @@ export function planProjectPackUpgrade(input: {
     else if (!retarget) conflict = "source_definition_removed";
     else if (
       existingOverrides.has(sourceKey(retarget)) ||
-      claimedTargets.has(sourceKey(retarget))
+      ((claimants.get(sourceKey(retarget)) ?? 0) > 1 &&
+        (standing.get(sourceKey(retarget)) !== 1 ||
+          resolutionBySource.get(sourceKey(source))?.action ===
+            "remove_override"))
     )
       conflict = "target_override_exists";
     else if (
@@ -578,7 +605,6 @@ export function planProjectPackUpgrade(input: {
       conflict = "extend_conflict";
 
     if (conflict === null && retarget) {
-      claimedTargets.add(sourceKey(retarget));
       overrides.push({
         source,
         operation,
@@ -653,9 +679,6 @@ export function planProjectPackUpgrade(input: {
     });
   }
 
-  const definitionsChanged = overrides.some(
-    (item) => item.outcome !== "unchanged" && item.outcome !== "conflict",
-  );
   let prospectiveConfigurationDigest: string | undefined;
   if (issues.length === 0)
     try {
@@ -675,7 +698,8 @@ export function planProjectPackUpgrade(input: {
         },
         definitions: {
           ...prospective,
-          revision: definitions.revision + (definitionsChanged ? 1 : 0),
+          // Apply always writes the definition stream; see apply().
+          revision: definitions.revision + 1,
         },
         catalog,
         coreContractVersion: catalog.coreContractVersion,
@@ -741,7 +765,10 @@ export class ReconcileProjectPackUpgrade {
           binding.configurationRevision ||
         (await definitions.get(input.projectId)).revision !== state.revision
       )
-        throw new StaleProjectDefinitionError(input.projectId, state.revision);
+        throw new ProjectPackUpgradeError(
+          "stale_snapshot",
+          "Project pack selection or definitions changed during the read",
+        );
       return { binding, state };
     });
     return planProjectPackUpgrade({
@@ -780,9 +807,6 @@ export class ReconcileProjectPackUpgrade {
         "plan_not_approved",
         "The approved digest does not match the current upgrade plan; preview it again",
       );
-    const definitionsChanged = plan.overrides.some(
-      (item) => item.outcome !== "unchanged",
-    );
     return this.dependencies.transactions.run(async () => {
       const binding = await this.dependencies.bindings.get(input.projectId);
       if (binding.configurationRevision !== plan.bindingRevision)
@@ -803,18 +827,19 @@ export class ReconcileProjectPackUpgrade {
         plan.proposedPacks,
         now,
       );
-      const definitions = definitionsChanged
-        ? await this.dependencies.definitions.replace(
-            reconciledDefinitions(
-              current,
-              plan.overrides,
-              input.actorId,
-              now.toISOString(),
-            ),
-            plan.definitionRevision,
-            now,
-          )
-        : current;
+      // Written even when no override changes: the repository's revision
+      // fence is what makes a concurrent definition change fail stale on a
+      // read-committed backend, where the read above takes no lock.
+      const definitions = await this.dependencies.definitions.replace(
+        reconciledDefinitions(
+          current,
+          plan.overrides,
+          input.actorId,
+          now.toISOString(),
+        ),
+        plan.definitionRevision,
+        now,
+      );
       await this.dependencies.auditEvents.append(
         AuditEvent.create({
           id: this.dependencies.ids.generate(),

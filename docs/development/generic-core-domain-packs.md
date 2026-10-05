@@ -330,19 +330,23 @@ JSON of every other report field, including both authoritative revisions.
 Apply recomputes the report and refuses a digest that does not match
 (`plan_not_approved`), so any change to the project or to the installed
 artifacts since the preview needs a new review. Inside the write transaction
-both revisions are checked again; a concurrent change fails stale and writes
-nothing. `project:pack:apply` keeps its GP-05 meaning and does not reconcile.
+both revisions are checked again and both streams are written through their
+repositories' revision fences, so every applied upgrade advances the binding
+revision when the selection changes and always advances the definition
+revision. A concurrent selection or definition change therefore fails stale
+and writes nothing on SQLite and on read-committed PostgreSQL alike.
+`project:pack:apply` keeps its GP-05 meaning and does not reconcile.
 
 Each project override is classified against the pack it names:
 
-| Override source in the desired selection                       | Outcome                                                                                          |
-| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Exact tuple still selected                                     | `unchanged`.                                                                                     |
-| Pack selected at another tuple, definition still provided      | `retargeted` to the new tuple. Operation and payload are carried over; the entry revision rises. |
-| Same, but an `extend` field is now set by the template         | Conflict `extend_conflict`.                                                                      |
-| Same, but another override already names the target definition | Conflict `target_override_exists`.                                                               |
-| Pack selected at another tuple, definition no longer provided  | Conflict `source_definition_removed`.                                                            |
-| Pack no longer selected                                        | Conflict `source_pack_removed`.                                                                  |
+| Override source in the desired selection                        | Outcome                                                                                      |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Exact tuple still selected                                      | `unchanged`.                                                                                 |
+| Pack selected at another tuple, definition still provided       | `retargeted` to the new tuple. The entry is carried over whole; only its pack tuple changes. |
+| Same, but an `extend` field is now set by the template          | Conflict `extend_conflict`.                                                                  |
+| Same, but another override names or would reach the same target | Conflict `target_override_exists`, for every competing override.                             |
+| Pack selected at another tuple, definition no longer provided   | Conflict `source_definition_removed`.                                                        |
+| Pack no longer selected                                         | Conflict `source_pack_removed`.                                                              |
 
 A conflict blocks the upgrade (`unresolved_override_conflict`) until the
 operator supplies a resolution for that exact source:
@@ -355,6 +359,13 @@ identity. Nothing is retained, moved or removed without a resolution, and a
 project value is never rewritten. A resolution that matches no conflict is
 listed under `ignoredResolutions` and changes nothing.
 
+Overrides on different old tuples that would land on one target definition all
+conflict: no version or storage order chooses the surviving project value.
+Removing all but one lets the remaining override follow the upgrade. An
+override already on the target tuple stays; one that would join it conflicts.
+A retargeted override keeps its operation, payload, entry revision, author and
+edit time; the audit event records the move and the operator.
+
 The report also lists pack template changes over the old and new resolved
 closures, transitive dependencies included, by pack ID, kind and local ID:
 `added`, `removed` or `changed`, each marked `customized` when a project
@@ -362,7 +373,10 @@ override names it. `upstream` on each override says whether its template is
 `unchanged`, `changed`, `removed` or `unknown`. The old template is
 information only: when the previous artifacts are no longer installed the
 template list is `unavailable` and `upstream` is `unknown`, and the upgrade is
-not blocked, because nothing is derived from the old template.
+not blocked, because nothing is derived from the old template. The template
+list describes this selection change only: when the selection is unchanged and
+only overrides left on an old tuple are reconciled it is empty, while
+`upstream` still compares each override's old template with the current one.
 
 Before a plan is approvable the reconciled selection and definitions are
 resolved through the GP-06 resolver. A failure blocks the upgrade as

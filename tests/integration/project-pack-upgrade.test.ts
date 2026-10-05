@@ -314,15 +314,17 @@ describe("GP-08 pack upgrade reconciliation", () => {
       {
         source: source(h.v2, "greeting", "prompts"),
         operation: "disable",
-        revision: 2,
-        actorId: "operator",
+        revision: 1,
+        actorId: "author",
+        changedAt: now.toISOString(),
       },
       {
         source: source(h.v2, "counsel"),
         operation: "replace",
         payload: { id: "counsel", title: "Our counsel" },
-        revision: 2,
-        actorId: "operator",
+        revision: 1,
+        actorId: "author",
+        changedAt: now.toISOString(),
       },
     ]);
     const resolved = await h.configuration();
@@ -648,6 +650,221 @@ describe("GP-08 pack upgrade reconciliation", () => {
       { source: source(h.v2, "counsel"), outcome: "unchanged" },
     ]);
     expect(plan.issues).toMatchObject([{ detail: "target_override_exists" }]);
+  });
+
+  test("overrides competing for one target all conflict; no order picks the surviving project value", async () => {
+    for (const [first, second, target] of [
+      ["1.0.0", "2.0.0", "3.0.0"],
+      // Code-unit order would put 10.0.0 before 9.0.0.
+      ["9.0.0", "10.0.0", "11.0.0"],
+    ] as const) {
+      const h = await harness();
+      const roles = [{ id: "counsel" }];
+      const {
+        catalog,
+        packs: [a, b, c],
+      } = catalogOf(
+        packBytes(first, { roles }, "org.example.versions"),
+        packBytes(second, { roles }, "org.example.versions"),
+        packBytes(target, { roles }, "org.example.versions"),
+      );
+      const author = new ManageProjectDefinitions({
+        projects: h.storage.projects,
+        definitions: h.storage.definitions,
+        bindings: h.storage.packBindings,
+        catalog,
+        auditEvents: h.storage.auditEvents,
+        transactions: h.storage.transactions,
+        clock: { now: () => now },
+        ids: { generate: () => `author-${first}-${Math.random()}` },
+      });
+      for (const [pack, title] of [
+        [a!, "Old"],
+        [b!, "Newer"],
+      ] as const) {
+        await h.bind([pack]);
+        await author.apply({
+          projectId: "a",
+          expectedRevision: (await h.storage.definitions.get("a")).revision,
+          actorId: "author",
+          mutation: {
+            action: "put_override",
+            source: source(pack, "counsel"),
+            operation: "replace",
+            payload: { id: "counsel", title },
+          },
+        });
+      }
+      const preview = (resolutions: unknown[] = []) =>
+        h.upgrade(catalog).preview({
+          projectId: "a",
+          desired: [c!],
+          resolutions,
+        });
+
+      const blocked = await preview();
+      expect(
+        blocked.overrides.map(({ outcome, conflict }) => [outcome, conflict]),
+      ).toEqual([
+        ["conflict", "target_override_exists"],
+        ["conflict", "target_override_exists"],
+      ]);
+      expect(blocked.issues).toHaveLength(2);
+
+      expect(
+        (
+          await preview([
+            { source: source(a!, "counsel"), action: "remove_override" },
+            { source: source(b!, "counsel"), action: "remove_override" },
+          ])
+        ).overrides.map(({ outcome }) => outcome),
+      ).toEqual(["removed", "removed"]);
+
+      // Either value can be the one that survives; the operator chooses.
+      for (const [removed, kept, title] of [
+        [a!, b!, "Newer"],
+        [b!, a!, "Old"],
+      ] as const) {
+        const plan = await preview([
+          { source: source(removed, "counsel"), action: "remove_override" },
+        ]);
+        expect(plan.issues).toEqual([]);
+        expect(plan.ignoredResolutions).toEqual([]);
+        expect(plan.overrides).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              source: source(removed, "counsel"),
+              outcome: "removed",
+            }),
+            expect.objectContaining({
+              source: source(kept, "counsel"),
+              outcome: "retargeted",
+              target: source(c!, "counsel"),
+            }),
+          ]),
+        );
+        if (title === "Old") {
+          await h.upgrade(catalog).apply({
+            projectId: "a",
+            desired: [c!],
+            resolutions: [
+              { source: source(removed, "counsel"), action: "remove_override" },
+            ],
+            approvedPlanDigest: plan.planDigest,
+            actorId: "operator",
+          });
+          expect(
+            (await h.storage.definitions.get("a")).overrides,
+          ).toMatchObject([
+            { source: source(c!, "counsel"), payload: { title: "Old" } },
+          ]);
+        }
+      }
+    }
+  });
+
+  test("a replacement cannot be retained while the pack still provides it or the project already owns the identity", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    await h.override(h.v1, "counsel", "replace", { id: "counsel" });
+    await h.bind([h.v2]);
+    await h.override(h.v2, "counsel", "replace", { id: "counsel", title: "B" });
+    const provided = await h.upgrade().preview({
+      projectId: "a",
+      desired: [h.v2],
+      resolutions: [
+        { source: source(h.v1, "counsel"), action: "retain_as_project_owned" },
+      ],
+    });
+    expect(provided.issues).toMatchObject([
+      { code: "invalid_resolution", detail: "target_override_exists" },
+    ]);
+    expect(provided.issues[0]!.message).toContain(
+      "the pack still provides this definition",
+    );
+
+    const other = await harness();
+    await other.bind([other.v1]);
+    await other.override(other.v1, "paralegal", "replace", { id: "paralegal" });
+    // A stored owned entry with the identity the override would be retained as.
+    const state = await other.storage.definitions.get("a");
+    await other.storage.definitions.replace(
+      {
+        ...state,
+        owned: [
+          {
+            origin: "project_owned",
+            kind: "roles",
+            id: "paralegal",
+            revision: 1,
+            enabled: true,
+            payload: { id: "paralegal", title: "Mine" },
+            actorId: "author",
+            changedAt: now.toISOString(),
+          },
+        ],
+      },
+      state.revision,
+      now,
+    );
+    const owned = await other.upgrade().preview({
+      projectId: "a",
+      desired: [other.v2],
+      resolutions: [
+        {
+          source: source(other.v1, "paralegal"),
+          action: "retain_as_project_owned",
+        },
+      ],
+    });
+    expect(owned.issues).toMatchObject([
+      { code: "invalid_resolution", detail: "source_definition_removed" },
+    ]);
+    expect(owned.issues[0]!.message).toContain(
+      "a project-owned definition already uses this identity",
+    );
+  });
+
+  test("an upgrade without overrides still advances and fences both revisions", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    const plan = await h.upgrade().preview({ projectId: "a", desired: [h.v2] });
+    const intent = {
+      projectId: "a",
+      desired: [h.v2],
+      approvedPlanDigest: plan.planDigest,
+      actorId: "operator",
+    };
+    // A selection change racing the write: the binding fence fails first.
+    let runs = 0;
+    const racingBinding: TransactionRunner = {
+      run: async (work) => {
+        if (++runs === 2) await h.bind([h.v3]);
+        return h.storage.transactions.run(work);
+      },
+    };
+    await expect(
+      h.upgrade(h.catalog, h.storage.auditEvents, racingBinding).apply(intent),
+    ).rejects.toMatchObject({ name: "StaleProjectPackBindingError" });
+    expect((await h.storage.packBindings.get("a")).packs).toEqual([h.v3]);
+    expect((await h.storage.definitions.get("a")).revision).toBe(0);
+    expect(h.upgradeAudits()).toHaveLength(0);
+
+    await h.bind([h.v1]);
+    const fresh = await h
+      .upgrade()
+      .preview({ projectId: "a", desired: [h.v2] });
+    const result = await h
+      .upgrade()
+      .apply({ ...intent, approvedPlanDigest: fresh.planDigest });
+    expect(result).toMatchObject({
+      result: "applied",
+      bindingRevision: 4,
+      definitionRevision: 1,
+    });
+    expect((await h.configuration()).configurationDigest).toBe(
+      fresh.prospectiveConfigurationDigest,
+    );
   });
 
   test("an unavailable target or an invalid reconciled configuration blocks the upgrade", async () => {
