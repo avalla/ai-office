@@ -75,13 +75,22 @@ individual tasks were chosen this check is mandatory: for every selected task,
 find the tasks it logically depends on and their state, and separate the
 dependencies that are already delivered, those that are part of the selection,
 and those that are neither. A dependency that is neither delivered nor selected
-is unsatisfied: name it, and propose adding it to the run, postponing the task
-that needs it, or going ahead only where the
-[branch policy](references/branch-policy.md) allows. Never drop or reorder a task silently to make the selection work.
+is unresolved: name it, and propose adding it to the run or postponing the
+task that needs it. Never drop or reorder a task silently to make the
+selection work.
+
+When the behavior a task needs already exists on a prerequisite branch that is
+not merged, and the project allows stacked work, you may also propose, in so
+many words, a Git branch dependency on that branch, as the
+[branch policy](references/branch-policy.md) describes. Stacking neither
+satisfies nor cancels the logical task dependency: record the two dependencies
+separately, and never treat the prerequisite as delivered until its own
+lifecycle says so.
 
 Then show a summary and ask for the go-ahead: the tasks in the order you
-propose, what each depends on, every unsatisfied dependency with the proposal
-for it, and anything excluded. Start preflight only after the authorizer
+propose, what each depends on, every unresolved dependency with the proposal
+for it, any Git branch dependency you propose, kept apart from the task
+dependencies, and anything excluded. Start preflight only after the authorizer
 approves that summary. A run that covers several tasks delivers them one at a
 time: each task goes through the whole lifecycle below, with its own branch,
 pull request, and evidence.

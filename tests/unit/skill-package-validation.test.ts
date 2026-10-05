@@ -526,6 +526,14 @@ describe("task-delivery workflow invariants", () => {
       /When\s+individual tasks were chosen this check is mandatory/u,
     ],
     [
+      "policy:unresolved-dependency-proposals",
+      /propose adding it to the run or postponing the\s+task that needs it\./u,
+    ],
+    [
+      "policy:stacking-does-not-satisfy-task-dependency",
+      /Stacking neither\s+satisfies nor cancels the logical task dependency/u,
+    ],
+    [
       "policy:approve-summary-before-preflight",
       /Start preflight only after the authorizer\s+approves that summary\./u,
     ],
@@ -667,13 +675,13 @@ describe("task-delivery workflow invariants", () => {
       /When individual tasks were chosen this check is mandatory: for every selected task, find the tasks it logically depends on and their state/u,
     );
     expect(section).toMatch(
-      /A dependency that is neither delivered nor selected is unsatisfied: name it, and propose adding it to the run, postponing the task that needs it/u,
+      /A dependency that is neither delivered nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it\./u,
     );
     expect(section).toMatch(
       /Never drop or reorder a task silently to make the selection work/u,
     );
     expect(section).toMatch(
-      /the tasks in the order you propose, what each depends on, every unsatisfied dependency with the proposal for it, and anything excluded/u,
+      /the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, and anything excluded/u,
     );
     // Several tasks are never merged into one delivery.
     expect(section).toMatch(
@@ -683,6 +691,56 @@ describe("task-delivery workflow invariants", () => {
     expect(section).toMatch(
       /When the request already names the target, do not ask the question again\. The dependency check and the summary still apply whenever it covers more than one task/u,
     );
+  });
+
+  // A logical task dependency and a Git branch dependency are independent:
+  // stacking on a prerequisite branch never resolves the task dependency.
+  test("an unresolved task dependency is never settled by stacking", () => {
+    const core = canonicalSkill
+      .slice(0, canonicalSkill.indexOf("<!-- executors:start -->"))
+      .replace(/\s+/gu, " ");
+    const section = core.slice(
+      core.indexOf("## What to deliver"),
+      core.indexOf("## Lifecycle"),
+    );
+    const sentences = section.split(/(?<=\.) /u);
+    const sentenceWith = (fragment: string): string => {
+      const found = sentences.filter((sentence) => sentence.includes(fragment));
+      expect(found).toHaveLength(1);
+      return found[0] ?? "";
+    };
+
+    // The proposals for an unresolved dependency are to add it or to
+    // postpone the dependent task - and nothing Git-related.
+    const proposals = sentenceWith("is unresolved");
+    expect(proposals).toMatch(
+      /^A dependency that is neither delivered nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it\.$/u,
+    );
+    expect(proposals).not.toMatch(/branch|stack|go(?:ing)? ahead|allows/iu);
+
+    // Stacking is a separate, explicit proposal with two preconditions.
+    const stacking = sentenceWith("a Git branch dependency on that branch");
+    expect(stacking).toMatch(
+      /^When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, in so many words, a Git branch dependency on that branch/u,
+    );
+    expect(sentenceWith("Stacking neither")).toMatch(
+      /^Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, and never treat the prerequisite as delivered until its own lifecycle says so\.$/u,
+    );
+
+    // No wording anywhere in the section lets the branch policy decide
+    // whether a task dependency may be skipped.
+    expect(section).not.toMatch(
+      /go(?:ing)? ahead only where the branch policy allows/iu,
+    );
+    expect(section).not.toMatch(/\bunsatisfied\b/iu);
+    // The branch policy and the non-negotiable rule say the same thing.
+    expect(core).toMatch(/Task dependency != Git branch dependency/u);
+    expect(
+      readFileSync(
+        join(canonicalSkillRoot, "references", "branch-policy.md"),
+        "utf8",
+      ).replace(/\s+/gu, " "),
+    ).toMatch(/A satisfied Git dependency does not satisfy a task dependency/u);
   });
 
   test("keeps the lifecycle stages in delivery order", () => {
