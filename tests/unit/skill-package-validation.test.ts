@@ -767,16 +767,21 @@ describe("task-delivery workflow invariants", () => {
       ]);
     });
 
-    // Across the core, the references and the pull request template, nothing
-    // may be counted or treated as DONE,
-    // satisfied, resolved, merged, delivered or met - the usual shape of a
-    // sentence that lets an open pull request, a READY FOR MERGE task or a
-    // stacked branch stand in for a finished task. The one sentence that
-    // matches is the rule forbidding it.
-    test("nothing is counted or treated as done before it is", () => {
+    // Across the core, the references and the pull request template, no
+    // statement about a task, a dependency, a prerequisite, a branch or a
+    // pull request may count or treat it as DONE, satisfied, resolved,
+    // merged, delivered or met - the usual shape of a sentence that lets an
+    // open pull request, a READY FOR MERGE task or a stacked branch stand in
+    // for a finished task. The one statement that matches is the rule
+    // forbidding it. Other prose is none of this test's business.
+    test("no task or dependency is counted or treated as done before it is", () => {
       const equivalence =
-        /\b(?:counts?|counted|counting|treat(?:s|ed|ing)?|regard(?:s|ed|ing)?|consider(?:s|ed|ing)?|good|same)\b[^.]{0,80}?\bas (?:DONE|done|satisfied|resolved|merged|delivered|met|accepted|complete[d]?)\b/u;
-      const documents = [
+        /\b(?:counts?|counted|counting|treat(?:s|ed|ing)?|regard(?:s|ed|ing)?|consider(?:s|ed|ing)?|good|same)\b[^.]{0,80}?\bas (?:done|satisfied|resolved|merged|delivered|met|accepted|completed?)\b/iu;
+      // The subject may be named in the sentence itself or in the one before
+      // it ("A prerequisite ... . Treat it as DONE.").
+      const subject =
+        /\btasks?\b|dependenc|prerequisite|branch|pull request|stack|READY FOR MERGE/iu;
+      const texts = [
         core,
         ...[
           "lifecycle.md",
@@ -792,16 +797,36 @@ describe("task-delivery workflow invariants", () => {
           "utf8",
         ).replace(/\s+/gu, " "),
       ];
-      const matches = documents.flatMap((text) =>
-        text
-          .split(/(?<=[.:]) (?=[A-Z0-9*-])/u)
-          .filter((sentence) => equivalence.test(sentence))
-          .map((sentence) => sentence.trim()),
-      );
+      const matchesIn = (text: string): string[] => {
+        const sentences = text.split(/(?<=[.:]) (?=[A-Z0-9*-])/u);
+        return sentences
+          .filter(
+            (sentence, index) =>
+              equivalence.test(sentence) &&
+              subject.test(`${sentences[index - 1] ?? ""} ${sentence}`),
+          )
+          .map((sentence) => sentence.trim());
+      };
 
-      expect(matches).toEqual([
+      expect(texts.flatMap(matchesIn)).toEqual([
         "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
       ]);
+
+      // The guard itself: sentence-initial imperatives are caught whatever
+      // their case, and unrelated prose is left alone.
+      expect(
+        matchesIn(
+          "- A prerequisite whose pull request is READY FOR MERGE. Treat it as DONE and continue.",
+        ),
+      ).toEqual(["Treat it as DONE and continue."]);
+      expect(
+        matchesIn("A stacked dependency Counts As Satisfied here."),
+      ).toHaveLength(1);
+      expect(
+        matchesIn(
+          "Always treat a finding as resolved only after its test fails without the fix.",
+        ),
+      ).toEqual([]);
     });
 
     test("the pipeline is settled before preflight and never chosen by the executor", () => {
