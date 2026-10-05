@@ -777,10 +777,13 @@ describe("task-delivery workflow invariants", () => {
     test("no task or dependency is counted or treated as done before it is", () => {
       const equivalence =
         /\b(?:counts?|counted|counting|treat(?:s|ed|ing)?|regard(?:s|ed|ing)?|consider(?:s|ed|ing)?|good|same)\b[^.]{0,80}?\bas (?:done|satisfied|resolved|merged|delivered|met|accepted|completed?)\b/iu;
-      // The subject may be named in the sentence itself or in the one before
-      // it ("A prerequisite ... . Treat it as DONE.").
+      // A statement is one sentence, question, list item, heading or table
+      // cell. Its subject is named in the statement itself; only when the
+      // statement speaks of "it" or "them" does the one before it count.
       const subject =
         /\btasks?\b|dependenc|prerequisite|branch|pull request|stack|READY FOR MERGE/iu;
+      const pronoun =
+        /\b(?:counts?|counted|counting|treat(?:s|ed|ing)?|regard(?:s|ed|ing)?|consider(?:s|ed|ing)?)\s+(?:it|them|this|that|these|those)\b/iu;
       const texts = [
         core,
         ...[
@@ -798,33 +801,52 @@ describe("task-delivery workflow invariants", () => {
         ).replace(/\s+/gu, " "),
       ];
       const matchesIn = (text: string): string[] => {
-        const sentences = text.split(/(?<=[.:]) (?=[A-Z0-9*-])/u);
-        return sentences
-          .filter(
-            (sentence, index) =>
-              equivalence.test(sentence) &&
-              subject.test(`${sentences[index - 1] ?? ""} ${sentence}`),
-          )
-          .map((sentence) => sentence.trim());
+        const statements = text
+          .split(/(?<=[.:?!]) (?=[A-Z0-9*])| (?=- )| (?=#{2,3} )| \| /u)
+          .map((statement) => statement.trim());
+        return statements.filter(
+          (statement, index) =>
+            equivalence.test(statement) &&
+            (subject.test(statement) ||
+              (pronoun.test(statement) &&
+                subject.test(statements[index - 1] ?? ""))),
+        );
       };
 
       expect(texts.flatMap(matchesIn)).toEqual([
         "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
       ]);
 
-      // The guard itself: sentence-initial imperatives are caught whatever
-      // their case, and unrelated prose is left alone.
+      // The guard itself. Sentence-initial imperatives are caught whatever
+      // their case, with the subject in the statement or just before "it".
       expect(
         matchesIn(
           "- A prerequisite whose pull request is READY FOR MERGE. Treat it as DONE and continue.",
         ),
       ).toEqual(["Treat it as DONE and continue."]);
       expect(
+        matchesIn("The pull request is open. Count it as merged."),
+      ).toEqual(["Count it as merged."]);
+      expect(
         matchesIn("A stacked dependency Counts As Satisfied here."),
       ).toHaveLength(1);
+      // Prose about something else is left alone wherever it is placed:
+      // alone, after a sentence that mentions a task, or inside a list of
+      // questions.
+      const unrelated =
+        "Always treat a finding as resolved only after its test fails without the fix.";
+      expect(matchesIn(unrelated)).toEqual([]);
+      expect(
+        matchesIn(`Is every changed file needed for this task? ${unrelated}`),
+      ).toEqual([]);
       expect(
         matchesIn(
-          "Always treat a finding as resolved only after its test fails without the fix.",
+          `## Tests - Do tests fail without the change and pass with it? - ${unrelated} - Are tests deterministic and isolated from the branch under review?`,
+        ),
+      ).toEqual([]);
+      expect(
+        matchesIn(
+          `Read the code of the pull request. ${unrelated} Report each finding.`,
         ),
       ).toEqual([]);
     });
