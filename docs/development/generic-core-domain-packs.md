@@ -123,8 +123,9 @@ OfficeManifest rows and run pins are left unchanged.
 The application service previews the current and proposed selection, added,
 removed and changed tuples, and any GP-04 availability or dependency error.
 Since GP-11 the preview also reports role capability changes, and preview and
-apply refuse a change to an existing role's capability set
-(`role_capability_change_requires_upgrade`); see the GP-11 section.
+apply refuse (`role_capability_change_requires_upgrade`) a change to an
+existing role's capability set and, while the currently selected artifacts are
+not installed, every change other than a pure removal; see the GP-11 section.
 Preview is read-only. Apply checks the expected revision, validates the exact
 proposed tuples against the public GP-04 resolver, replaces the selection in
 one transaction and appends a project audit event with previous/new revisions,
@@ -572,24 +573,42 @@ approved plan. `project:pack:apply` refuses it. Its preview
 (`project:pack:preview`) reports `roleCapabilityChanges` between the current
 and proposed resolved closures, computed by the same function as the upgrade
 plan and without the `customized` mark, and adds the issue
-`role_capability_change_requires_upgrade` when:
+`role_capability_change_requires_upgrade` in these cases:
 
-- a role present in both closures (same `roleId`) would have a different
-  capability set; or
-- the selection changes the tuple of an already selected pack, the current
-  closure cannot be resolved because its artifacts are no longer installed,
-  and a pack of the proposed closure that is neither a kept exact tuple (or
-  one of its exact dependencies) nor a newly selected pack declares role
-  capabilities. The change cannot then be shown to be capability-neutral.
+- The current closure resolves, and a role present in both closures (same
+  `roleId`) would have a different capability set.
+- The current closure cannot be resolved because its artifacts are no longer
+  installed, and the change is anything but a pure removal. A pure removal
+  proposes only exact tuples the project already selects, with nothing added
+  and no tuple changed. Without the previous manifests neither an added nor a
+  removed role capability can be ruled out: a role may have had a set that the
+  proposed version no longer declares, and a newly selected pack may have been
+  a dependency at another version. `roleCapabilityChanges` is then
+  `unavailable` (`previous_closure_unresolved`). This holds for packs without
+  role capabilities too, so it narrows GP-05: a version change or an addition
+  while the currently selected artifacts are not installed goes through
+  `project:pack:upgrade`, which approves the target capability sets.
+- The proposed closure resolves but its manifests cannot be read back.
+  `roleCapabilityChanges` is then `unavailable`
+  (`proposed_closure_unreadable`).
 
-`project:pack:apply` fails with the same code, writes nothing and names
-`project:pack:upgrade`. It still applies, as an explicit selection change, the
-addition of a pack that was not selected and the removal of a pack, including
-their roles and capabilities, and a version change that only adds or removes
-roles or leaves every existing role's set unchanged. A selection without role
-capabilities behaves as in GP-05, and an identical selection remains a no-op
-that reads no artifact. The preview also reports the issue when the proposed
-closure's manifests cannot be read back.
+The code is carried by the preview issue and by the typed application error
+`project:pack:apply` raises. The CLI prints the error message, which names
+`project:pack:upgrade`, on stderr and exits 1, as for other known errors.
+Nothing is written and no audit event is added.
+
+While the current closure resolves, `project:pack:apply` still applies, as an
+explicit selection change, the addition of a pack that was not selected, the
+removal of a pack, and a version change that only adds or removes roles or
+leaves every existing role's set unchanged; a selection without role
+capabilities behaves as in GP-05. An identical selection remains a no-op that
+reads no artifact, and a stale revision fails first.
+
+Removing a pack in one `project:pack:apply` and selecting another version of
+it in a later one is, under the current contract, two explicit and audited
+selection changes. Each preview shows the full removal or addition of that
+pack's role capability sets, and neither is treated as a capability change of
+an existing role.
 
 The upgrade report adds two fields, both covered by `planDigest`:
 
