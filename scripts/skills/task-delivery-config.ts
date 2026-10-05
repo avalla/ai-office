@@ -52,54 +52,52 @@ function validateSection(
   }
 }
 
-/**
- * The YAML parser keeps the last of two identical keys without complaint, so
- * a repeated `git:` block would silently drop the first one. Every key name in
- * the schema is unique across levels, which makes a line scan sufficient: each
- * key the parser reports must start exactly one line. Zero means a notation
- * this scan cannot vouch for (flow mappings), which is rejected rather than
- * trusted; `validateKeyNotation` rejects the notations that could spell a key
- * the scan would not recognize.
- */
-function validateKeyLines(
-  source: string,
-  value: Record<string, unknown>,
-  section: Schema,
-  path: string,
-  errors: string[],
-): void {
-  for (const [key, entry] of Object.entries(value)) {
-    const expected = Object.hasOwn(section, key) ? section[key] : undefined;
-    if (expected === undefined) continue;
-    const keyPath = path === "" ? key : `${path}.${key}`;
-    const lines = source.match(
-      new RegExp(`^[ \\t]*(["']?)${key}\\1[ \\t]*:(?=[ \\t]|$)`, "gmu"),
-    );
-    const count = lines?.length ?? 0;
-    if (count > 1)
-      errors.push(
-        `${keyPath} is defined ${count} times; the parser would keep only the last one`,
-      );
-    else if (count === 0)
-      errors.push(
-        `${keyPath} must be written on its own line in block style (no flow mappings, merge keys, or aliases for keys)`,
-      );
-    if (typeof expected === "object" && isRecord(entry))
-      validateKeyLines(source, entry, expected, keyPath, errors);
-  }
-}
+// One plain key, then nothing or a value that does not open a flow
+// collection, anchor, alias, tag, block scalar, or explicit key.
+const keyValueLine =
+  /^( *)([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(?![{[&*!|>?]).*)?$/u;
 
 /**
- * Explicit, tagged, anchored, aliased, merged, and escaped keys can all spell
- * a second `git` that the line scan would not count. None is needed for a
- * flat settings file, so they are refused outright.
+ * The YAML parser keeps the last of two identical keys without complaint, so
+ * a repeated `git:` block would silently drop the first one, and YAML offers
+ * many notations that could hide such a repeat. The file is therefore held to
+ * a small layout: every line is one plain `key: value` or a section header,
+ * at most one level deep. Within that layout a repeated key is visible line
+ * by line, and nothing outside it is accepted.
  */
-function validateKeyNotation(source: string, errors: string[]): void {
-  for (const [index, line] of source.split("\n").entries())
-    if (/^[ \t]*(?:[?&*!]|<<|"[^"\n]*\\)/u.test(line))
+function validateLayout(source: string, errors: string[]): void {
+  const seen = new Map<string, number>();
+  let section: string | null = null;
+  let started = false;
+  for (const [index, line] of source.split("\n").entries()) {
+    if (/^\s*(?:#.*)?$/u.test(line)) continue;
+    if (!started && line === "---") {
+      started = true;
+      continue;
+    }
+    started = true;
+    const match = keyValueLine.exec(line);
+    if (match === null) {
       errors.push(
-        `line ${index + 1} uses YAML notation that is not allowed here (explicit, tagged, anchored, aliased, merged, or escaped keys); write plain keys`,
+        `line ${index + 1} is not a plain "key: value" line (quoted keys, flow collections, anchors, aliases, tags, block scalars, and multi-line values are not allowed)`,
       );
+      continue;
+    }
+    const nested = match[1] !== "";
+    const key = match[2] ?? "";
+    if (!nested) section = key;
+    else if (section === null) {
+      errors.push(`line ${index + 1} is indented but belongs to no section`);
+      continue;
+    }
+    const keyPath = nested ? `${section}.${key}` : key;
+    const firstLine = seen.get(keyPath);
+    if (firstLine === undefined) seen.set(keyPath, index + 1);
+    else
+      errors.push(
+        `${keyPath} is defined more than once (lines ${firstLine} and ${index + 1}); the parser would keep only the last one`,
+      );
+  }
 }
 
 /**
@@ -107,21 +105,21 @@ function validateKeyNotation(source: string, errors: string[]): void {
  * problems; an empty array means the configuration respects the contract.
  */
 export function validateTaskDeliveryConfigSource(rawSource: string): string[] {
-  const source = rawSource.replace(/^\uFEFF/u, "").replace(/\r\n/gu, "\n");
+  const source = rawSource.replace(/^\uFEFF/u, "").replace(/\r\n?/gu, "\n");
+  const errors: string[] = [];
+  validateLayout(source, errors);
   let parsed: unknown;
   try {
     parsed = Bun.YAML.parse(source);
   } catch (error) {
-    return [`invalid YAML: ${errorMessage(error)}`];
+    return [...errors, `invalid YAML: ${errorMessage(error)}`];
   }
-  if (!isRecord(parsed))
+  if (!isRecord(parsed) || Object.keys(parsed).length === 0)
     return [
+      ...errors,
       "the document root must be a mapping with at least one key; delete the file instead of leaving it empty",
     ];
-  const errors: string[] = [];
   validateSection(parsed, schema, "", errors);
-  validateKeyLines(source, parsed, schema, "", errors);
-  validateKeyNotation(source, errors);
   return errors;
 }
 

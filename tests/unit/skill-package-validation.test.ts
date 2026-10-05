@@ -252,7 +252,13 @@ describe("skill package validation", () => {
       /neither configured by the project nor requested by the authorizer - is \*\*best effort\*\*/u,
     );
     expect(core).toMatch(
-      /record `external reviewer unavailable` with the error as evidence and continue/u,
+      /When it cannot complete - a timeout, a capacity or execution error, or unavailability - record `external reviewer unavailable` with the error as evidence and continue/u,
+    );
+    expect(core).toMatch(
+      /a best-effort reviewer never stands in for a required one/u,
+    );
+    expect(core).toMatch(
+      /Declare READY FOR MERGE only when .* a required external review has completed successfully/u,
     );
     expect(core).toMatch(/an error is never a passed review/u);
 
@@ -263,25 +269,79 @@ describe("skill package validation", () => {
     expect(block).toMatch(
       /Its presence alone does not make it required: it is best effort unless the project configures it or the authorizer requests it/u,
     );
-    expect(block).not.toMatch(/not optional|failed gate|mandatory/iu);
+    // Nothing in the block may turn presence into an obligation.
+    expect(block).not.toMatch(
+      /not optional|failed gate|mandatory|always|must|block(?:s|ing)\b/iu,
+    );
 
     const lifecycle = reference("lifecycle.md");
     expect(lifecycle).toMatch(
       /\*\*Required\*\* when the project configures an external reviewer or the authorizer explicitly asks for one/u,
     );
-    expect(lifecycle).toMatch(/never count the error as a review/u);
+    expect(lifecycle).toMatch(
+      /unavailable reviewer is a failed gate: report it with the error and do not declare READY FOR MERGE/u,
+    );
+    expect(lifecycle).toMatch(/Never count the error as a review/u);
+    expect(lifecycle).toMatch(
+      /\*\*Best effort\*\* when the executor merely offers a reviewer that nobody configured or requested/u,
+    );
+    expect(lifecycle).toMatch(
+      /record `external reviewer unavailable` with the error and continue\. It never stands in for a required reviewer/u,
+    );
+    expect(lifecycle).toMatch(
+      /Findings handled; if best effort, recorded unavailability; or skip/u,
+    );
     expect(lifecycle).toMatch(
       /required external review that has not completed successfully blocks READY FOR MERGE\. A best-effort one that was unavailable does not/u,
     );
     expect(reference("stop-conditions.md")).toMatch(
       /Required external review cannot complete\.\*\* A configured or requested external reviewer times out, errors, or is unavailable/u,
     );
-    expect(reference("evidence.md")).toMatch(
+    const stopConditions = reference("stop-conditions.md");
+    expect(stopConditions).toMatch(
+      /not READY FOR MERGE until that review completes successfully\./u,
+    );
+    expect(stopConditions).toMatch(
+      /A best-effort external reviewer that cannot complete: record `external reviewer unavailable` with the error and continue/u,
+    );
+    expect(stopConditions).toMatch(
+      /A best-effort external reviewer is not needed for a gate/u,
+    );
+    const evidence = reference("evidence.md");
+    expect(evidence).toMatch(
       /external review that ended in a timeout, an error, or a capacity failure/u,
     );
-    expect(reference("configuration.md")).toMatch(
-      /setting it makes stage 9 required/u,
+    expect(evidence).toMatch(
+      /External review: <required: result on hash \| best effort: result on hash \| best effort: external reviewer unavailable: error \| none - skipped>/u,
     );
+    expect(evidence).toMatch(/the earlier error never does/u);
+    const configuration = reference("configuration.md");
+    expect(configuration).toMatch(/setting it makes stage 9 required/u);
+    expect(configuration).toMatch(
+      /None: required only if the authorizer asks; otherwise best effort/u,
+    );
+    expect(
+      readFileSync(
+        join(canonicalSkillRoot, "assets", "pr-template.md"),
+        "utf8",
+      ),
+    ).toMatch(/best effort: external reviewer unavailable/u);
+    // A required review has exactly one way through; no document offers a
+    // waiver, and none lets an installed reviewer become an obligation.
+    for (const text of [core, block, lifecycle, stopConditions, evidence])
+      expect(text).not.toMatch(/waive/iu);
+    for (const text of [
+      core,
+      block,
+      lifecycle,
+      stopConditions,
+      evidence,
+      configuration,
+    ]) {
+      expect(text).not.toMatch(
+        /installed[^.]*\b(?:is|are|becomes?) required/iu,
+      );
+    }
   });
 
   test("the executor block cannot swallow or precede the workflow", () => {
@@ -432,7 +492,7 @@ describe("task-delivery workflow invariants", () => {
     ],
     [
       "policy:installed-is-not-required",
-      /Being\s+installed does not make a reviewer required\./u,
+      /Being\s+installed does not make a reviewer required/u,
     ],
     ["policy:scope", "Stay in scope."],
   ];

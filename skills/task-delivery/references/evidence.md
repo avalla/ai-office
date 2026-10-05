@@ -22,7 +22,11 @@ Evidence is something another person can check without trusting you.
 
 - Bind evidence to a commit. Any commit added after a gate invalidates that
   gate's evidence: run the gate again. A repeated review may read only the new
-  diff; a repeated verification always covers the whole head.
+  diff; a repeated verification always covers the whole head. The one
+  exception, for review evidence after a clean merge-in, is in the
+  [branch policy](branch-policy.md).
+- Running an external review again after an infrastructure error is a new run,
+  not a retried check. Its result counts; the earlier error never does.
 - Report failures as plainly as successes, with their output.
 - Say what was skipped and why. A skipped gate is reported as skipped, never as
   passed.
@@ -43,7 +47,7 @@ Verification:    <command> -> <result> on <hash>
 Review:          <n findings: fixed / rejected / open> by <independent | not independent>
 Second review:   <result>
 QA:              <PASS | FAIL> on <hash>
-External review: <required | best effort>: <result | external reviewer unavailable: error | none - skipped>
+External review: <required: result on hash | best effort: result on hash | best effort: external reviewer unavailable: error | none - skipped>
 Limitations:     <known limits>
 Follow-ups:      <deferred items>
 State:           <READY FOR MERGE | DONE>

@@ -13,7 +13,7 @@ evidence is not passed, whatever its apparent state.
 | 6   | Hardening               | Implementation context | Each finding fixed with a test, or rejected with a reason           |
 | 7   | Second Review           | Independent reviewer   | Each prior finding confirmed resolved; no new blocking finding      |
 | 8   | Verification / QA       | Verification context   | Full verification and real exercise of the change on the final head |
-| 9   | External Review         | External reviewer      | Findings handled, or or the recorded skip or unavailability         |
+| 9   | External Review         | External reviewer      | Findings handled; if best effort, recorded unavailability; or skip  |
 | 10  | Ready for Merge         | Implementation context | Gate summary bound to the current head commit                       |
 | 11  | Post-merge / completion | Verification context   | Green verification on the integration branch at the merge commit    |
 
@@ -90,12 +90,14 @@ evidence is not passed, whatever its apparent state.
   authorizer explicitly asks for one for this task. It must complete
   successfully. A timeout, a capacity or execution error, or an unavailable
   reviewer is a failed gate: report it with the error and do not declare READY
-  FOR MERGE. Retry later or ask the authorizer; never count the error as a
+  FOR MERGE. Run it again when the reviewer is available: a new run after an
+  infrastructure error is not a retried check. Never count the error as a
   review.
 - **Best effort** when the executor merely offers a reviewer that nobody
-  configured or requested. Run it when it works. When it is unavailable for
-  infrastructure reasons, record `external reviewer unavailable` with the
-  error and continue.
+  configured or requested. Run it when it works. When it cannot complete - a
+  timeout, a capacity or execution error, or unavailability - record
+  `external reviewer unavailable` with the error and continue. It never stands
+  in for a required reviewer.
 - With no external reviewer at all, record "none - skipped".
 - Validate its findings like any others. Changes made in response go through
   Hardening, Second Review, and Verification again.

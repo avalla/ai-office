@@ -6,10 +6,11 @@ key in it is optional. A ready-to-copy example is in
 [task-delivery.example.yaml](../assets/task-delivery.example.yaml).
 
 A file that is present must respect this contract exactly: a YAML mapping with
-at least one key, written one key per line, each key at most once. Malformed
-YAML, an empty or comment-only file, an unknown or misspelled key, a repeated
-key, a value of the wrong type, or an empty string is an error, not something
-to ignore: a typo would otherwise silently fall back to a default and
+at least one key, written as plain `key: value` lines under at most one level
+of section headers, each key at most once. Malformed YAML, an empty or
+comment-only file, an unknown or misspelled key, a repeated key, a value of
+the wrong type, an empty string, or any other YAML notation is an error, not
+something to ignore: a typo would otherwise silently fall back to a default and
 switch a policy off. The repository that publishes this skill detects such
 errors with its `skills:validate` check. Whoever follows the skill does the
 same when reading the file: on any key or value outside this contract, stop
@@ -39,9 +40,13 @@ they are stricter.
 `git.*` and `task_lifecycle.enabled` are booleans written unquoted (`true` or
 `false`). `verification`, `git`, `external_review`, and `task_lifecycle` are
 mappings; no other key is allowed at any level. To switch everything off,
-delete the file instead of emptying it. Keep it flat and plain: no anchors,
-aliases, tags, or merge keys, and no multi-line value containing a line that
-starts with one of the key names.
+delete the file instead of emptying it.
+
+Only this layout is accepted, so that a repeated or disguised key cannot hide:
+unquoted keys, one `key: value` per line, nested keys indented with spaces
+under their section, comments, and an optional leading `---`. Quoted keys,
+flow collections (`{...}`, `[...]`), anchors, aliases, tags, merge keys, block
+scalars, lists, and values continued on a following line are rejected.
 
 ## Rules
 

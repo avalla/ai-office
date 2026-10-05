@@ -129,9 +129,10 @@ MERGE.
 
 An external reviewer the executor merely offers - neither configured by the
 project nor requested by the authorizer - is **best effort**. Run it when it
-works. When it is unavailable for infrastructure reasons, record
-`external reviewer unavailable` with the error as evidence and continue. Being
-installed does not make a reviewer required.
+works. When it cannot complete - a timeout, a capacity or execution error, or
+unavailability - record `external reviewer unavailable` with the error as
+evidence and continue. Being installed does not make a reviewer required, and
+a best-effort reviewer never stands in for a required one.
 
 With no external reviewer at all, skip the stage and say so. In every case an
 error is never a passed review, and findings are handled like any other
@@ -140,8 +141,9 @@ review: validate, harden, re-verify.
 ### 10. Ready for Merge
 
 Declare READY FOR MERGE only when review, hardening, and verification evidence
-all refer to the current head and no blocking finding is open. Report and wait
-for the authorizer.
+all refer to the current head, a required external review has completed
+successfully, and no blocking finding is open. Report and wait for the
+authorizer.
 
 ### 11. Post-merge verification / completion
 

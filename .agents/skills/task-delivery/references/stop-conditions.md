@@ -25,7 +25,8 @@ depend on the answer may continue.
   merged nor available on the chosen base.
 - **Red baseline.** The full verification fails on the untouched base.
 - **Missing access.** A credential, permission, or environment needed for a
-  gate is unavailable. Never work around a deliberate restriction.
+  gate is unavailable. Never work around a deliberate restriction. A
+  best-effort external reviewer is not needed for a gate.
 - **Secrets.** A credential or other secret appears in the diff, logs, or
   evidence.
 
@@ -40,8 +41,8 @@ depend on the answer may continue.
   retried pass is not evidence.
 - **Required external review cannot complete.** A configured or requested
   external reviewer times out, errors, or is unavailable. Report the error and
-  wait; the task is not READY FOR MERGE until that review completes or the
-  authorizer waives it explicitly.
+  wait; the task is not READY FOR MERGE until that review completes
+  successfully.
 - **Reviewer and implementer disagree** on a blocking finding. Escalate to the
   authorizer instead of overruling the reviewer.
 
@@ -52,5 +53,5 @@ depend on the answer may continue.
 - Minor findings that are fixed or recorded as follow-ups.
 - No external reviewer configured, requested, or offered: skip that stage and
   say so.
-- A best-effort external reviewer that is unavailable: record
+- A best-effort external reviewer that cannot complete: record
   `external reviewer unavailable` with the error and continue.
