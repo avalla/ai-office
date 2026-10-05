@@ -17,9 +17,11 @@ external_review:
 
 task_lifecycle:
   enabled: true
-  # {task} is the task's identifier in AI Office. The commands run from the
-  # primary checkout, which is the one bound to the Runtime: a task worktree is
-  # not, and the same command would be refused there.
-  start: 'cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office task:start --task {task}'
-  review: 'cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office task:submit-review --task {task}'
-  complete: 'cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office task:complete --task {task}'
+  # {task} is the task's identifier in AI Office. Each command runs in a
+  # subshell from the primary checkout, the one bound to the Runtime: a task
+  # worktree is not bound and would be refused. No --project is given: the CLI
+  # resolves the project from that checkout, and a project id is local to one
+  # Runtime. The subshell keeps the caller's working directory unchanged.
+  start: '(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office task:start --task {task})'
+  review: '(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office task:submit-review --task {task})'
+  complete: '(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office task:complete --task {task})'

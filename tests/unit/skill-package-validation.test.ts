@@ -839,6 +839,7 @@ describe("task-delivery workflow invariants", () => {
         "The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency.",
         "The run never merges a pull request merely to unblock a later selected task.",
         "A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency.",
+        "Where task state is tracked, the tracker may refuse to start a task whose prerequisite is not DONE even on an approved Git branch dependency; that refusal stands, and the task waits.",
         "When the request already names the target, do not ask for the target again.",
         "The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
         "The dependency check and the summary still apply whenever the request covers more than one task.",
@@ -1039,6 +1040,11 @@ describe("task-delivery workflow invariants", () => {
         /Each task's pre-merge delivery ends at READY FOR MERGE\. The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency\. The run never merges a pull request merely to unblock a later selected task\. A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency\./u,
       );
       expect(section).not.toMatch(/one at a time|whole lifecycle/iu);
+      // The tracker stays authoritative: an approved stack does not let a
+      // task start when the tracker refuses it.
+      expect(section).toMatch(
+        /Where task state is tracked, the tracker may refuse to start a task whose prerequisite is not DONE even on an approved Git branch dependency; that refusal stands, and the task waits\./u,
+      );
       expect(core).toMatch(/READY FOR MERGE != DONE/u);
       expect(core).toMatch(/Never merge without explicit authorization/u);
     });

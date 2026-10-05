@@ -812,16 +812,19 @@ describe("task-delivery configuration contract", () => {
     };
 
     expect(parsed.task_lifecycle.enabled).toBe(true);
-    for (const key of ["start", "review", "complete"])
-      expect(parsed.task_lifecycle[key]).toMatch(/ --task \{task\}$/u);
     // A project identifier is local to one runtime, so none is written here.
     // The commands run from the primary checkout - the one bound to the
     // runtime - because a task worktree is not bound and would be refused.
-    expect(source).not.toMatch(/--project\b/u);
-    for (const key of ["start", "review", "complete"])
-      expect(parsed.task_lifecycle[key]).toMatch(
-        /^cd "\$\(git rev-parse --path-format=absolute --git-common-dir\)\/\.\." && ai-office task:/u,
-      );
+    // Each key runs its own verb, in a subshell that leaves the caller's
+    // working directory alone.
+    const inPrimaryCheckout = (verb: string): string =>
+      `(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office ${verb} --task {task})`;
+    expect(parsed.task_lifecycle).toEqual({
+      enabled: true,
+      start: inPrimaryCheckout("task:start"),
+      review: inPrimaryCheckout("task:submit-review"),
+      complete: inPrimaryCheckout("task:complete"),
+    });
     expect(parsed.git).toMatchObject({ worktree_required: true });
   });
 

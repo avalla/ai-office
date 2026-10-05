@@ -142,7 +142,9 @@ unresolved prerequisite that blocks execution, or if the authorizer has
 explicitly approved the required Git branch dependency. The run never merges a
 pull request merely to unblock a later selected task. A stacked branch does
 not make the prerequisite task DONE and does not resolve the logical
-dependency.
+dependency. Where task state is tracked, the tracker may refuse to start a task
+whose prerequisite is not DONE even on an approved Git branch dependency; that
+refusal stands, and the task waits.
 
 When the request already names the target, do not ask for the target again.
 The pipeline is still settled before preflight as described above: an enforced
