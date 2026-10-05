@@ -75,6 +75,7 @@ Commands:
   project:pack:show --project <id> [--json]
   project:pack:preview --project <id> --packs <exact-tuples-json> [--json]
   project:pack:apply --project <id> --packs <exact-tuples-json> --expected-revision <integer> [--json]
+  project:pack:upgrade --project <id> --packs <exact-tuples-json> [--resolutions <json>] [--approve <plan-digest>] [--json]  # read-only reconciliation report without --approve
   project:definition:show --project <id> [--json]
   project:definition:preview --project <id> --mutation <json> [--json]
   project:definition:apply --project <id> --mutation <json> --expected-revision <integer> [--json]

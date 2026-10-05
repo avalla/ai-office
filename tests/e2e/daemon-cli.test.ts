@@ -573,6 +573,220 @@ profiles:
     }
   });
 
+  test("previews, blocks and applies a pack upgrade over the socket", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-pack-upgrade-cli-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const installedPacks = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    const template = parseDomainPackManifest(
+      readFileSync(
+        new URL("../fixtures/domain-pack/custom.json", import.meta.url),
+      ),
+    );
+    const register = (version: string, roles: { id: string }[]) => {
+      const manifest = {
+        ...template,
+        version,
+        contributions: { ...template.contributions, roles },
+      } as unknown as typeof template;
+      const bytes = new TextEncoder().encode(
+        JSON.stringify({
+          ...manifest,
+          manifestDigest: computeManifestDigest(manifest),
+        }),
+      );
+      return installedPacks.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: {
+          installerId: "local-distribution",
+          reference: `bundled/custom-${version}`,
+        },
+      });
+    };
+    const v1 = register("1.0.0", [{ id: "counsel" }, { id: "paralegal" }]);
+    const v2 = register("2.0.0", [{ id: "counsel" }]);
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+      installedPacks,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+    try {
+      await waitForDaemon(socket.socketPath);
+      const created = await invoke(["project:create", "Upgrade fixture"]);
+      const projectId = created.stdout[0]!.replace("Project created: ", "");
+      expect(
+        (
+          await invoke([
+            "project:pack:apply",
+            "--project",
+            projectId,
+            "--packs",
+            JSON.stringify([v1]),
+            "--expected-revision",
+            "0",
+          ])
+        ).code,
+      ).toBe(0);
+      for (const [revision, localId] of [
+        [0, "counsel"],
+        [1, "paralegal"],
+      ] as const)
+        expect(
+          (
+            await invoke([
+              "project:definition:apply",
+              "--project",
+              projectId,
+              "--mutation",
+              JSON.stringify({
+                action: "put_override",
+                source: { ...v1, kind: "roles", localId },
+                operation: "replace",
+                payload: { id: localId, title: `Our ${localId}` },
+              }),
+              "--expected-revision",
+              String(revision),
+            ])
+          ).code,
+        ).toBe(0);
+      const upgrade = (...extra: string[]) =>
+        invoke([
+          "project:pack:upgrade",
+          "--project",
+          projectId,
+          "--packs",
+          JSON.stringify([v2]),
+          ...extra,
+          "--json",
+        ]);
+
+      const blocked = await upgrade();
+      expect(blocked.code).toBe(1);
+      const blockedPlan = JSON.parse(blocked.stdout[0]!) as {
+        planDigest: string;
+      };
+      expect(blockedPlan).toMatchObject({
+        noop: false,
+        issues: [
+          {
+            code: "unresolved_override_conflict",
+            detail: "source_definition_removed",
+          },
+        ],
+      });
+      const refused = await upgrade("--approve", blockedPlan.planDigest);
+      expect(refused.code).toBe(1);
+      expect(refused.stdout).toEqual([]);
+      expect(refused.stderr).toEqual([
+        `Pack upgrade is blocked: Override of org.example.custom@1.0.0 roles/paralegal needs an explicit resolution`,
+      ]);
+
+      const resolutions = JSON.stringify([
+        {
+          source: { ...v1, kind: "roles", localId: "paralegal" },
+          action: "retain_as_project_owned",
+        },
+      ]);
+      const preview = await upgrade("--resolutions", resolutions);
+      expect(preview.code).toBe(0);
+      const plan = JSON.parse(preview.stdout[0]!) as {
+        planDigest: string;
+        prospectiveConfigurationDigest: string;
+      };
+      expect(plan).toMatchObject({
+        issues: [],
+        overrides: [
+          { outcome: "retargeted", target: { version: "2.0.0" } },
+          { outcome: "retained_as_project_owned" },
+        ],
+      });
+      expect(JSON.stringify(plan)).not.toContain("Our counsel");
+
+      const unapproved = await upgrade(
+        "--resolutions",
+        resolutions,
+        "--approve",
+        blockedPlan.planDigest,
+      );
+      expect(unapproved.code).toBe(1);
+      expect(unapproved.stderr).toEqual([
+        "The approved digest does not match the current upgrade plan; preview it again",
+      ]);
+      expect((await upgrade("--resolutions", "not json")).stderr[0]).toContain(
+        "--resolutions must be a JSON array",
+      );
+
+      const applied = await upgrade(
+        "--resolutions",
+        resolutions,
+        "--approve",
+        plan.planDigest,
+      );
+      expect(applied.code).toBe(0);
+      expect(JSON.parse(applied.stdout[0]!)).toEqual({
+        result: "applied",
+        planDigest: plan.planDigest,
+        bindingRevision: 2,
+        definitionRevision: 3,
+        packs: [v2],
+      });
+      const repeated = await upgrade(
+        "--resolutions",
+        resolutions,
+        "--approve",
+        plan.planDigest,
+      );
+      expect(repeated.code).toBe(0);
+      expect(JSON.parse(repeated.stdout[0]!)).toMatchObject({
+        result: "unchanged",
+        bindingRevision: 2,
+        definitionRevision: 3,
+      });
+
+      const resolved = await invoke([
+        "project:configuration:show",
+        "--project",
+        projectId,
+        "--json",
+      ]);
+      expect(resolved.code).toBe(0);
+      expect(JSON.parse(resolved.stdout[0]!)).toMatchObject({
+        ok: true,
+        configuration: {
+          configurationDigest: plan.prospectiveConfigurationDigest,
+          selectedPacks: [v2],
+          projectOwnedDefinitions: [
+            {
+              effectiveId: "project:roles/paralegal",
+              payload: { title: "Our paralegal" },
+            },
+          ],
+        },
+      });
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
   test("previews and applies an explicit project pack binding over the socket", async () => {
     const projectRoot = mkdtempSync(
       join(tmpdir(), "ai-office-pack-binding-cli-"),

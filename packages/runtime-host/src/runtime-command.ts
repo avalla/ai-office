@@ -174,6 +174,7 @@ import { handleProjectDefinitionCommand } from "./commands/project-definition.ts
 import { ProjectPackBindingProjectNotFoundError } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { InMemoryInstalledDomainPackCatalog } from "./installed-domain-pack-catalog.ts";
 import { handleProjectPackCommand } from "./commands/project-pack.ts";
+import { ProjectPackUpgradeError } from "@ai-office/application/domain-pack/reconcile-project-pack-upgrade.ts";
 import { handleProjectConfigurationCommand } from "./commands/project-configuration.ts";
 import {
   ProjectStorageBootstrap,
@@ -220,6 +221,7 @@ const commands = [
   "project:pack:show",
   "project:pack:preview",
   "project:pack:apply",
+  "project:pack:upgrade",
   "project:definition:show",
   "project:definition:preview",
   "project:definition:apply",
@@ -421,6 +423,7 @@ function formatKnownError(error: unknown): string | null {
     error instanceof DomainPackCatalogError ||
     error instanceof StaleProjectPackBindingError ||
     error instanceof ProjectPackBindingProjectNotFoundError ||
+    error instanceof ProjectPackUpgradeError ||
     error instanceof ProjectDefinitionConflictError ||
     error instanceof StaleProjectDefinitionError ||
     error instanceof ProjectDefinitionProjectNotFoundError ||
