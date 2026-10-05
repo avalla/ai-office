@@ -523,11 +523,11 @@ describe("task-delivery workflow invariants", () => {
     ["policy:ask-what-to-deliver", "3. **Some tasks of one milestone**"],
     [
       "policy:check-dependencies-before-summary",
-      /When\s+individual tasks were chosen this check is mandatory/u,
+      /The\s+check always runs; when individual tasks were chosen/u,
     ],
     [
       "policy:unresolved-dependency-proposals",
-      /propose adding it to the run or postponing the\s+task that needs it\./u,
+      /propose adding it to the run or\s+postponing the task that needs it\./u,
     ],
     [
       "policy:stacking-does-not-satisfy-task-dependency",
@@ -639,7 +639,7 @@ describe("task-delivery workflow invariants", () => {
     );
   });
 
-  test("a run without a target asks what to deliver before preflight", () => {
+  describe("what to deliver", () => {
     const core = canonicalSkill
       .slice(0, canonicalSkill.indexOf("<!-- executors:start -->"))
       .replace(/\s+/gu, " ");
@@ -647,100 +647,103 @@ describe("task-delivery workflow invariants", () => {
       core.indexOf("## What to deliver"),
       core.indexOf("## Lifecycle"),
     );
-
-    // The question comes before any stage, and offers exactly three choices.
-    expect(core.indexOf("## What to deliver")).toBeGreaterThan(-1);
-    expect(core.indexOf("## What to deliver")).toBeLessThan(
-      core.indexOf("### 1. Preflight"),
-    );
-    expect(section).toMatch(/ask before doing anything else/u);
-    expect(section.match(/\b\d\. \*\*/gu)).toHaveLength(3);
-    expect(section).toMatch(/1\. \*\*A whole milestone\*\*/u);
-    expect(section).toMatch(/2\. \*\*One or more tasks\*\*/u);
-    expect(section).toMatch(/3\. \*\*Some tasks of one milestone\*\*/u);
-    expect(section).toMatch(/wait for the answer/u);
-    // Dependencies are checked first, the summary comes second, and the
-    // go-ahead is asked last.
-    const check = section.indexOf("check the dependencies of the selection");
-    const summary = section.indexOf(
-      "Then show a summary and ask for the go-ahead",
-    );
-    const approval = section.indexOf(
-      "Start preflight only after the authorizer approves that summary",
-    );
-    expect(check).toBeGreaterThan(-1);
-    expect(summary).toBeGreaterThan(check);
-    expect(approval).toBeGreaterThan(summary);
-    expect(section).toMatch(
-      /When individual tasks were chosen this check is mandatory: for every selected task, find the tasks it logically depends on and their state/u,
-    );
-    expect(section).toMatch(
-      /A dependency that is neither delivered nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it\./u,
-    );
-    expect(section).toMatch(
-      /Never drop or reorder a task silently to make the selection work/u,
-    );
-    expect(section).toMatch(
-      /the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, and anything excluded/u,
-    );
-    // Several tasks are never merged into one delivery.
-    expect(section).toMatch(
-      /each task goes through the whole lifecycle below, with its own branch, pull request, and evidence/u,
-    );
-    // No interrogation when the target is already known.
-    expect(section).toMatch(
-      /When the request already names the target, do not ask the question again\. The dependency check and the summary still apply whenever it covers more than one task/u,
-    );
-  });
-
-  // A logical task dependency and a Git branch dependency are independent:
-  // stacking on a prerequisite branch never resolves the task dependency.
-  test("an unresolved task dependency is never settled by stacking", () => {
-    const core = canonicalSkill
-      .slice(0, canonicalSkill.indexOf("<!-- executors:start -->"))
-      .replace(/\s+/gu, " ");
-    const section = core.slice(
-      core.indexOf("## What to deliver"),
-      core.indexOf("## Lifecycle"),
-    );
-    const sentences = section.split(/(?<=\.) /u);
-    const sentenceWith = (fragment: string): string => {
-      const found = sentences.filter((sentence) => sentence.includes(fragment));
-      expect(found).toHaveLength(1);
-      return found[0] ?? "";
-    };
-
-    // The proposals for an unresolved dependency are to add it or to
-    // postpone the dependent task - and nothing Git-related.
-    const proposals = sentenceWith("is unresolved");
-    expect(proposals).toMatch(
-      /^A dependency that is neither delivered nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it\.$/u,
-    );
-    expect(proposals).not.toMatch(/branch|stack|go(?:ing)? ahead|allows/iu);
-
-    // Stacking is a separate, explicit proposal with two preconditions.
-    const stacking = sentenceWith("a Git branch dependency on that branch");
-    expect(stacking).toMatch(
-      /^When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, in so many words, a Git branch dependency on that branch/u,
-    );
-    expect(sentenceWith("Stacking neither")).toMatch(
-      /^Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, and never treat the prerequisite as delivered until its own lifecycle says so\.$/u,
-    );
-
-    // No wording anywhere in the section lets the branch policy decide
-    // whether a task dependency may be skipped.
-    expect(section).not.toMatch(
-      /go(?:ing)? ahead only where the branch policy allows/iu,
-    );
-    expect(section).not.toMatch(/\bunsatisfied\b/iu);
-    // The branch policy and the non-negotiable rule say the same thing.
-    expect(core).toMatch(/Task dependency != Git branch dependency/u);
-    expect(
+    const reference = (name: string): string =>
       readFileSync(
-        join(canonicalSkillRoot, "references", "branch-policy.md"),
+        join(canonicalSkillRoot, "references", name),
         "utf8",
-      ).replace(/\s+/gu, " "),
-    ).toMatch(/A satisfied Git dependency does not satisfy a task dependency/u);
+      ).replace(/\s+/gu, " ");
+
+    test("a run without a target asks before preflight, with three choices", () => {
+      expect(core.indexOf("## What to deliver")).toBeGreaterThan(-1);
+      expect(core.indexOf("## What to deliver")).toBeLessThan(
+        core.indexOf("### 1. Preflight"),
+      );
+      expect(section).toMatch(/ask before doing anything else/u);
+      expect(section.match(/\b\d\. \*\*/gu)).toHaveLength(3);
+      expect(section).toMatch(/1\. \*\*A whole milestone\*\*/u);
+      expect(section).toMatch(/2\. \*\*One or more tasks\*\*/u);
+      expect(section).toMatch(/3\. \*\*Some tasks of one milestone\*\*/u);
+      expect(section).toMatch(/wait for the answer/u);
+      expect(section).toMatch(/Never pick a milestone or a task yourself\./u);
+      expect(section).toMatch(
+        /When the request already names the target, do not ask the question again\./u,
+      );
+    });
+
+    test("dependencies are checked, then summarized, then approved", () => {
+      const check = section.indexOf("check the dependencies of the selection");
+      const summary = section.indexOf(
+        "Then show a summary and ask for the go-ahead",
+      );
+      const approval = section.indexOf(
+        "Start preflight only after the authorizer approves that summary",
+      );
+      expect(check).toBeGreaterThan(-1);
+      expect(summary).toBeGreaterThan(check);
+      expect(approval).toBeGreaterThan(summary);
+      expect(section).toMatch(
+        /each task goes through the whole lifecycle below, with its own branch, pull request, and evidence/u,
+      );
+    });
+
+    // A logical task dependency and a Git branch dependency are independent.
+    // Every sentence of the section that speaks about dependencies,
+    // prerequisites, stacking or branches is listed here, so that neither a
+    // rewording nor an added sentence can let one stand in for the other.
+    test("the dependency rules are exactly these sentences", () => {
+      const sentences = section
+        .split(/(?<=[.:]) (?=[A-Z])/u)
+        .map((sentence) => sentence.trim())
+        .filter((sentence) =>
+          /dependenc|prerequisite|stack|branch|unresolved|\bDONE\b/iu.test(
+            sentence,
+          ),
+        );
+
+      expect(sentences).toEqual([
+        "Once the answer is in, and before showing anything for approval, check the dependencies of the selection.",
+        "The check always runs; when individual tasks were chosen it is done for every selected task: find the tasks it logically depends on and their state, and separate the dependencies that are already DONE, those that are part of the selection, and those that are neither.",
+        "A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
+        "When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, in so many words, a Git branch dependency on that branch, as the [branch policy](references/branch-policy.md) describes.",
+        "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
+        "A selected prerequisite is delivered before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.",
+        "Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, and anything excluded.",
+        "A run that covers several tasks delivers them one at a time: each task goes through the whole lifecycle below, with its own branch, pull request, and evidence.",
+        "The dependency check and the summary still apply whenever it covers more than one task.",
+        "For a single named task, make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
+      ]);
+    });
+
+    test("no part of the section lets a branch settle a task dependency", () => {
+      expect(section).not.toMatch(/branch policy (?:allows|permits)/iu);
+      expect(section).not.toMatch(/\bunsatisfied\b|\bdelivered\b(?! before)/iu);
+      expect(section).not.toMatch(
+        /\b(?:counts? as|treat(?:ed)? (?:it|its dependency|the dependency) as|is then) (?:satisfied|resolved|DONE)\b/iu,
+      );
+    });
+
+    test("the rest of the skill says the same about dependencies", () => {
+      expect(core).toMatch(/Task dependency != Git branch dependency/u);
+      expect(core).toMatch(
+        /logical dependencies are DONE or the authorizer has decided how to proceed/u,
+      );
+      expect(core).not.toMatch(/satisfied or deliberately deferred/u);
+
+      const stopConditions = reference("stop-conditions.md");
+      expect(stopConditions).toMatch(
+        /\*\*Unresolved task dependency\.\*\* The task logically depends on a task that is not DONE, and the authorizer has not decided how to proceed\. Behavior that is available on a stacked base lets work continue only under an approved Git branch dependency; it never satisfies the task dependency\./u,
+      );
+      expect(stopConditions).not.toMatch(
+        /neither merged nor available on the chosen base/u,
+      );
+
+      expect(reference("lifecycle.md")).toMatch(
+        /A dependency that is not DONE is unresolved: stop until the authorizer decides\. Decide the Git base separately, following the \[branch policy\]\(branch-policy\.md\); a stacked base never resolves a task dependency\./u,
+      );
+      expect(reference("branch-policy.md")).toMatch(
+        /A satisfied Git dependency does not satisfy a task dependency: being stacked on A's branch does not mean A's task is accepted\./u,
+      );
+    });
   });
 
   test("keeps the lifecycle stages in delivery order", () => {

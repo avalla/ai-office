@@ -146,17 +146,17 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:check-dependencies-before-summary",
         pattern:
-          /before showing anything for approval, check the dependencies of the selection\. When individual tasks were chosen this check is mandatory/u,
+          /before showing anything for approval, check the dependencies of the selection\. The check always runs; when individual tasks were chosen it is done for every selected task/u,
       },
       {
         id: "policy:unresolved-dependency-proposals",
         pattern:
-          /A dependency that is neither delivered nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it\./u,
+          /A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it\./u,
       },
       {
         id: "policy:stacking-does-not-satisfy-task-dependency",
         pattern:
-          /Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, and never treat the prerequisite as delivered until its own lifecycle says so\./u,
+          /Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE\./u,
       },
       {
         id: "policy:approve-summary-before-preflight",

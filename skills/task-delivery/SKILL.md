@@ -70,22 +70,25 @@ choices and wait for the answer:
 3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.
 
 Never pick a milestone or a task yourself. Once the answer is in, and before
-showing anything for approval, check the dependencies of the selection. When
-individual tasks were chosen this check is mandatory: for every selected task,
-find the tasks it logically depends on and their state, and separate the
-dependencies that are already delivered, those that are part of the selection,
-and those that are neither. A dependency that is neither delivered nor selected
-is unresolved: name it, and propose adding it to the run or postponing the
-task that needs it. Never drop or reorder a task silently to make the
-selection work.
+showing anything for approval, check the dependencies of the selection. The
+check always runs; when individual tasks were chosen it is done for every
+selected task: find the tasks it logically depends on and their state, and
+separate the dependencies that are already DONE, those that are part of the
+selection, and those that are neither. A dependency that is neither DONE nor
+selected is unresolved: name it, and propose adding it to the run or
+postponing the task that needs it. Never drop or reorder a task silently to
+make the selection work.
 
 When the behavior a task needs already exists on a prerequisite branch that is
 not merged, and the project allows stacked work, you may also propose, in so
 many words, a Git branch dependency on that branch, as the
 [branch policy](references/branch-policy.md) describes. Stacking neither
 satisfies nor cancels the logical task dependency: record the two dependencies
-separately, and never treat the prerequisite as delivered until its own
-lifecycle says so.
+separately, keep the task dependency listed as unresolved, and never treat the
+prerequisite as DONE until its own lifecycle has reached DONE. A selected
+prerequisite is delivered before the task that needs it, and that task starts
+only once the prerequisite is DONE or the authorizer has approved a Git branch
+dependency on it.
 
 Then show a summary and ask for the go-ahead: the tasks in the order you
 propose, what each depends on, every unresolved dependency with the proposal
@@ -97,7 +100,8 @@ pull request, and evidence.
 
 When the request already names the target, do not ask the question again. The
 dependency check and the summary still apply whenever it covers more than one
-task; for a single named task, preflight does that check.
+task. For a single named task, make the same dependency check in preflight and
+stop on an unresolved dependency until the authorizer decides.
 
 ## Lifecycle
 
@@ -113,9 +117,9 @@ report it as missing. Never assume it.
 ### 1. Preflight
 
 Confirm the task is deliverable: acceptance criteria are explicit, logical
-dependencies are satisfied or deliberately deferred, the working tree is clean,
-the base branch is chosen and current, and the full verification is green on
-the base commit before you change anything.
+dependencies are DONE or the authorizer has decided how to proceed, the
+working tree is clean, the base branch is chosen and current, and the full
+verification is green on the base commit before you change anything.
 
 ### 2. Design
 

@@ -21,8 +21,10 @@ evidence is not passed, whatever its apparent state.
 
 - Restate the task and its acceptance criteria. If they are missing or
   ambiguous, stop and ask.
-- List the task's logical dependencies and their state. Decide the Git base
-  separately, following the [branch policy](branch-policy.md).
+- List the task's logical dependencies and their state. A dependency that is
+  not DONE is unresolved: stop until the authorizer decides. Decide the Git
+  base separately, following the [branch policy](branch-policy.md); a stacked
+  base never resolves a task dependency.
 - Confirm the working tree is clean and isolated as the project requires (for
   example a dedicated worktree).
 - Update the base, create the task branch, and establish a green baseline: run
