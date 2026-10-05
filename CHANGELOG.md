@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add portable agent skills under `skills/` with one canonical source per
+  skill and a deterministic installer for the executor copies
+  (`bun run skills:install`, `skills:check`, `skills:validate`). The first
+  skill, `task-delivery`, is a vendor-neutral gated delivery workflow usable
+  from Claude Code, Codex, Pi and other `SKILL.md` hosts. It is independent of
+  the Runtime-managed `ai-office` skill; `bun run check` now fails on an invalid
+  skill or a drifted copy.
 - Admit native project knowledge from verified non-run sources (AK-11).
   `knowledge:plan` and `knowledge:admit` take an explicit source:
   `--run <runId>` as before, `--source handover --handover <confirmationId>`

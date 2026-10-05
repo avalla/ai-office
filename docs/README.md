@@ -30,6 +30,7 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Shared project guide and repository skills](adr/ADR-0012-shared-project-guide-and-repository-skills.md):
   accepted ownership, discovery, migration, and uninstall contract for
   `AI-OFFICE.md` and Codex/Claude project skills.
+- [Portable agent skills](../skills/README.md): vendor-neutral `SKILL.md` packages with one canonical source under `skills/`, the deterministic installer for executor copies, and the `task-delivery` workflow skill; independent of the Runtime-managed `ai-office` skill.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
 - [M16 Generic Core & Domain Packs plan](development/generic-core-domain-packs.md): reviewed GP-01 source audit, compatibility risks, extraction map, fixtures, and GP delivery sequence; no pack runtime is implemented yet.
 - [M17 execution observability and heterogeneous actors](development/m17-execution-observability.md): planned executor sessions, verified hook telemetry, operational projections, React dashboard coverage and future actor extension seams; not current APIs.
