@@ -230,6 +230,25 @@ describe("task-delivery configuration contract", () => {
     ]);
   });
 
+  test("commands that could never run are rejected", () => {
+    expect(
+      validateTaskDeliveryConfigSource(
+        "task_lifecycle:\n  enabled: false\n  start: tracker start {task}\n",
+      ),
+    ).toEqual([
+      "task_lifecycle.enabled is false but a task_lifecycle command is configured; remove the commands or enable it",
+    ]);
+    // Without the key, a command alone means task state is tracked.
+    expect(
+      validateTaskDeliveryConfigSource(
+        "task_lifecycle:\n  start: tracker start {task}\n",
+      ),
+    ).toEqual([]);
+    expect(
+      validateTaskDeliveryConfigSource("task_lifecycle:\n  enabled: false\n"),
+    ).toEqual([]);
+  });
+
   test("rejects an unknown top-level key", () => {
     expect(
       validateTaskDeliveryConfigSource("integration_brnch: main\n"),
@@ -794,6 +813,9 @@ describe("task-delivery configuration contract", () => {
     expect(parsed.task_lifecycle.enabled).toBe(true);
     for (const key of ["start", "review", "complete"])
       expect(parsed.task_lifecycle[key]).toMatch(/ --task \{task\}$/u);
+    // A project identifier is local to one runtime; the commands resolve the
+    // project from the checkout instead.
+    expect(source).not.toMatch(/--project\b/u);
   });
 
   test("the repository's own configuration and the shipped example are valid", () => {

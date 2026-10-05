@@ -548,7 +548,7 @@ describe("task-delivery workflow invariants", () => {
     ],
     [
       "policy:keep-task-state-true",
-      "Mark the task started in preflight, before the first change.",
+      /Mark the task\s+started in preflight, before the first change\./u,
     ],
     [
       "policy:refused-transition-stops",
@@ -671,13 +671,21 @@ describe("task-delivery workflow invariants", () => {
       ).replace(/\s+/gu, " ");
 
     // The three transitions, in order, each tied to its moment.
+    // One trigger, stated in the core: enabled, or a command, or a tracker
+    // the project documents - and only an explicit switch turns it off.
     expect(core).toMatch(
-      /## Task state When the project tracks task state outside Git, keep that state true as the work moves\. Mark the task started in preflight, before the first change\. Mark it in review when its pull request is open\. Mark it done only after stage 11\./u,
+      /## Task state The project tracks task state when its configuration enables that or configures a command for it, or when its own instructions describe a system that holds its tasks\. Only a configuration that switches it off explicitly says otherwise\. When you cannot tell, ask in preflight instead of skipping it\./u,
+    );
+    expect(core).toMatch(
+      /Where task state is tracked, keep it true as the work moves\. Mark the task started in preflight, before the first change\. Mark it in review when its pull request is open\. Mark it done only after stage 11\./u,
+    );
+    expect(core).toMatch(
+      /A task already in the state you would set needs nothing; when you do not know how the tracker identifies the task, ask\./u,
     );
     // How: configured commands, else the project's documented way, else a
     // report - and a refusal stops the work.
     expect(core).toMatch(
-      /Use the commands the project configures for this; without them, use the project's own documented way of changing task state, and only where there is none report each transition for someone else to apply\. A transition the tracker refuses is a stop condition: report what it said, and never work around it\./u,
+      /Use the commands the project configures for this; without them, use the project's own documented way of changing task state, and only where there is none report each transition for someone else to apply\./u,
     );
     expect(core.indexOf("## Task state")).toBeLessThan(
       core.indexOf("## What to deliver"),
@@ -691,7 +699,7 @@ describe("task-delivery workflow invariants", () => {
       /Where the project tracks task state, mark the task as in review\. - Do not request merge\./u,
     );
     expect(lifecycle).toMatch(
-      /Where the project tracks task state, mark the task done\./u,
+      /After the post-merge verification passes, mark the task done where the project tracks task state\./u,
     );
     // Done is marked in the post-merge stage and nowhere earlier.
     expect(lifecycle.indexOf("mark the task done")).toBeGreaterThan(
@@ -708,9 +716,14 @@ describe("task-delivery workflow invariants", () => {
       /In the `task_lifecycle` commands, `\{task\}` stands for the identifier of the task in the system that tracks it\./u,
     );
     expect(configuration).toMatch(
-      /When `task_lifecycle\.enabled` is `true`, every transition is made: with the configured command; without one, in the project's own documented way of changing task state; and only where there is none, by reporting the transition so the tracker's owner can apply it\. A refused transition is a stop condition\./u,
+      /When task state is tracked - `task_lifecycle\.enabled` is `true`, a command is configured, or the project's instructions describe a tracker and the key is not `false` - every transition is made: with the configured command; without one, in the project's own documented way of changing task state; and only where there is none, by reporting the transition so the tracker's owner can apply it\. A refused transition is a stop condition\./u,
     );
-    expect(configuration).not.toMatch(/report each transition so/u);
+    expect(configuration).toMatch(
+      /`task_lifecycle\.enabled: false` together with a `task_lifecycle` command is an error: the commands would never run\./u,
+    );
+    expect(core).toMatch(
+      /A transition the tracker refuses is a stop condition: report what it said, and never work around it\./u,
+    );
   });
 
   describe("what to deliver", () => {
@@ -810,6 +823,7 @@ describe("task-delivery workflow invariants", () => {
         "Once the answer is in, and before showing anything for approval, check the dependencies of the selection.",
         "The check always runs; when individual tasks were chosen it is done for every selected task: find the tasks it logically depends on and their state, and separate the dependencies that are already DONE, those that are part of the selection, and those that are neither.",
         "A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
+        "A selected prerequisite is planned, not resolved: for the task that needs it, it stays unresolved until it is DONE.",
         "Never drop or reorder a task silently to make the selection work.",
         "When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, explicitly, a Git branch dependency on that branch, as the [branch policy](references/branch-policy.md) describes.",
         "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
@@ -1046,6 +1060,7 @@ describe("task-delivery workflow invariants", () => {
 
       expect(statements).toEqual([
         "SKILL.md: A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
+        "SKILL.md: A selected prerequisite is planned, not resolved: for the task that needs it, it stays unresolved until it is DONE.",
         "SKILL.md: Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
         "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
         "SKILL.md: The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency.",

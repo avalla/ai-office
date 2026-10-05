@@ -130,7 +130,8 @@ evidence is not passed, whatever its apparent state.
   bring in new integration-branch commits by merging them in when needed, and
   run its verification again on the resulting head. Never rewrite shared or
   reviewed history to do so.
-- Where the project tracks task state, mark the task done. Record follow-ups,
-  and clean up the branch and workspace.
+- After the post-merge verification passes, mark the task done where the
+  project tracks task state. Record follow-ups, and clean up the branch and
+  workspace.
 - Only now report DONE. If post-merge verification fails, report it at once and
   propose a revert or a fix; do not declare DONE.

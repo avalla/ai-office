@@ -61,14 +61,21 @@ around it.
 
 ## Task state
 
-When the project tracks task state outside Git, keep that state true as the
-work moves. Mark the task started in preflight, before the first change. Mark
-it in review when its pull request is open. Mark it done only after stage 11.
-Use the commands the project configures for this; without them, use the
-project's own documented way of changing task state, and only where there is
-none report each transition for someone else to apply. A transition the
-tracker refuses is a stop condition: report what it said, and never work
-around it. See [configuration](references/configuration.md).
+The project tracks task state when its configuration enables that or
+configures a command for it, or when its own instructions describe a system
+that holds its tasks. Only a configuration that switches it off explicitly
+says otherwise. When you cannot tell, ask in preflight instead of skipping it.
+
+Where task state is tracked, keep it true as the work moves. Mark the task
+started in preflight, before the first change. Mark it in review when its pull
+request is open. Mark it done only after stage 11. Use the commands the
+project configures for this; without them, use the project's own documented
+way of changing task state, and only where there is none report each
+transition for someone else to apply. A task already in the state you would
+set needs nothing; when you do not know how the tracker identifies the task,
+ask. A transition the tracker refuses is a stop condition: report what it
+said, and never work around it. See
+[configuration](references/configuration.md).
 
 ## What to deliver
 
@@ -106,7 +113,9 @@ selected task: find the tasks it logically depends on and their state, and
 separate the dependencies that are already DONE, those that are part of the
 selection, and those that are neither. A dependency that is neither DONE nor
 selected is unresolved: name it, and propose adding it to the run or
-postponing the task that needs it. Never drop or reorder a task silently to
+postponing the task that needs it. A selected prerequisite is planned,
+not resolved: for the task that needs it, it stays unresolved until it is
+DONE. Never drop or reorder a task silently to
 make the selection work.
 
 When the behavior a task needs already exists on a prerequisite branch that is
