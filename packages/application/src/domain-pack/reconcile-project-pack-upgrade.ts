@@ -45,6 +45,12 @@ import {
   type ResolvedPackManifest,
 } from "./resolve-installed-pack-manifests.ts";
 import {
+  roleCapabilityDifferences,
+  roleCapabilitySets,
+  type RoleCapabilityDifference,
+  type RoleCapabilitySet,
+} from "./role-capability-changes.ts";
+import {
   ProjectConfigurationResolutionError,
   resolveProjectConfiguration,
   stablePackDefinitionId,
@@ -108,21 +114,10 @@ export interface TemplateChange {
   readonly customized: boolean;
 }
 
-/**
- * A role whose declared capability set differs between the old and the new
- * resolved closure. Capabilities are local IDs of the role's own pack.
- */
-export interface RoleCapabilityChange {
-  readonly roleId: string;
-  readonly added: readonly string[];
-  readonly removed: readonly string[];
+/** A role capability difference, marked when a project override names it. */
+export interface RoleCapabilityChange extends RoleCapabilityDifference {
   /** A project override names this role; it cannot alter the set. */
   readonly customized: boolean;
-}
-
-export interface RoleCapabilitySet {
-  readonly roleId: string;
-  readonly capabilities: readonly string[];
 }
 
 export type PackUpgradeIssueCode =
@@ -360,20 +355,6 @@ function sameContribution(left: Contribution, right: Contribution): boolean {
   );
 }
 
-/** Declared capability sets of the roles of one closure, by stable role ID. */
-function roleCapabilitySets(
-  closure: readonly ResolvedPackManifest[],
-): Map<string, readonly string[]> {
-  const sets = new Map<string, readonly string[]>();
-  for (const { identity: pack, manifest } of closure)
-    for (const role of manifest.contributions.roles)
-      if (role.capabilities?.length)
-        sets.set(stablePackDefinitionId(pack.id, "roles", role.id), [
-          ...role.capabilities,
-        ]);
-  return sets;
-}
-
 function roleCapabilityChanges(
   before: readonly ResolvedPackManifest[],
   after: readonly ResolvedPackManifest[],
@@ -386,23 +367,10 @@ function roleCapabilityChanges(
         stablePackDefinitionId(source.id, "roles", source.localId),
       ),
   );
-  const old = roleCapabilitySets(before);
-  const next = roleCapabilitySets(after);
-  const changes: RoleCapabilityChange[] = [];
-  for (const roleId of new Set([...old.keys(), ...next.keys()])) {
-    const previous = old.get(roleId) ?? [];
-    const current = next.get(roleId) ?? [];
-    const added = current.filter((item) => !previous.includes(item));
-    const removed = previous.filter((item) => !current.includes(item));
-    if (added.length || removed.length)
-      changes.push({
-        roleId,
-        added,
-        removed,
-        customized: customized.has(roleId),
-      });
-  }
-  return changes.sort((left, right) => compare(left.roleId, right.roleId));
+  return roleCapabilityDifferences(before, after).map((item) => ({
+    ...item,
+    customized: customized.has(item.roleId),
+  }));
 }
 
 /**
@@ -619,11 +587,7 @@ function reconcileProjectPackUpgrade(input: {
       };
       capabilityChanges = templates;
     }
-  const targetRoleCapabilities: RoleCapabilitySet[] = [
-    ...roleCapabilitySets(target ?? []),
-  ]
-    .map(([roleId, capabilities]) => ({ roleId, capabilities }))
-    .sort((left, right) => compare(left.roleId, right.roleId));
+  const targetRoleCapabilities = roleCapabilitySets(target ?? []);
 
   const targetManifests = new Map<string, DomainPackManifest>(
     (target ?? []).map((entry) => [tupleKey(entry.identity), entry.manifest]),

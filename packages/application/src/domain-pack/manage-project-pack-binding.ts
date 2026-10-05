@@ -21,11 +21,39 @@ import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
 import { resolveInstalledPacks } from "./resolve-installed-packs.ts";
+import {
+  CapturedPackManifestError,
+  resolveInstalledPackManifests,
+  type ResolvedPackManifest,
+} from "./resolve-installed-pack-manifests.ts";
+import {
+  closureRoleIds,
+  roleCapabilityDifferences,
+  roleCapabilitySets,
+  type RoleCapabilityDifference,
+} from "./role-capability-changes.ts";
 
 export class ProjectPackBindingProjectNotFoundError extends Error {
   constructor(projectId: string) {
     super(`Project ${projectId} does not exist`);
     this.name = "ProjectPackBindingProjectNotFoundError";
+  }
+}
+
+export const roleCapabilityChangeRequiresUpgrade =
+  "role_capability_change_requires_upgrade" as const;
+
+/**
+ * A selection change this command does not carry out. A role capability
+ * change is reviewed and approved through `project:pack:upgrade` only.
+ */
+export class ProjectPackBindingRefusedError extends Error {
+  constructor(
+    readonly code: typeof roleCapabilityChangeRequiresUpgrade,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProjectPackBindingRefusedError";
   }
 }
 
@@ -35,6 +63,22 @@ export interface ProjectPackBindingPreview {
   readonly added: readonly PackIdentity[];
   readonly removed: readonly PackIdentity[];
   readonly changed: readonly { before: PackIdentity; after: PackIdentity }[];
+  /**
+   * Role capability differences between the current and the proposed resolved
+   * closures, computed as in the upgrade plan. Empty when the selection does
+   * not change or cannot be resolved; `unavailable` when the current
+   * artifacts are no longer installed.
+   */
+  readonly roleCapabilityChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly RoleCapabilityDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason: "previous_closure_unresolved";
+        readonly detail: string;
+      };
   readonly issues: readonly { code: string; message: string }[];
 }
 
@@ -78,6 +122,31 @@ function same(a: PackIdentity, b: PackIdentity): boolean {
     a.version === b.version &&
     a.manifestDigest === b.manifestDigest
   );
+}
+
+const tupleKey = (pack: PackIdentity): string =>
+  `${pack.id}\u0000${pack.version}\u0000${pack.manifestDigest}`;
+
+/**
+ * Target packs whose content is provably what the project already had: the
+ * selected tuples that do not change and their exact-digest dependencies.
+ */
+function unchangedPackKeys(
+  target: readonly ResolvedPackManifest[],
+  unchanged: readonly PackIdentity[],
+): Set<string> {
+  const byKey = new Map(
+    target.map((entry) => [tupleKey(entry.identity), entry]),
+  );
+  const seen = new Set<string>();
+  const pending = unchanged.map(tupleKey);
+  for (let key = pending.pop(); key !== undefined; key = pending.pop()) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    for (const dependency of byKey.get(key)?.manifest.dependencies ?? [])
+      pending.push(tupleKey(dependency));
+  }
+  return seen;
 }
 
 export class ManageProjectPackBinding {
@@ -134,7 +203,124 @@ export class ManageProjectPackBinding {
         else throw error;
       }
     }
-    return { current, proposed, added, removed, changed, issues };
+    let roleCapabilityChanges: ProjectPackBindingPreview["roleCapabilityChanges"] =
+      { availability: "available", changes: [] };
+    // An unchanged selection reads no further artifact, as before GP-11.
+    if (
+      issues.length === 0 &&
+      added.length + removed.length + changed.length > 0
+    ) {
+      const guard = this.roleCapabilityGuard(current.packs, proposed, changed);
+      roleCapabilityChanges = guard.roleCapabilityChanges;
+      if (guard.issue) issues.push(guard.issue);
+    }
+    return {
+      current,
+      proposed,
+      added,
+      removed,
+      changed,
+      roleCapabilityChanges,
+      issues,
+    };
+  }
+
+  /**
+   * A role capability change is never incidental. This command refuses a
+   * selection change that alters the capability set of a role present in both
+   * closures, and one it cannot show to be capability-neutral; either goes
+   * through the reviewed `project:pack:upgrade` plan.
+   */
+  private roleCapabilityGuard(
+    currentPacks: readonly PackIdentity[],
+    proposed: readonly PackIdentity[],
+    changed: ProjectPackBindingPreview["changed"],
+  ): {
+    roleCapabilityChanges: ProjectPackBindingPreview["roleCapabilityChanges"];
+    issue?: { code: string; message: string };
+  } {
+    const closure = (
+      packs: readonly PackIdentity[],
+    ): readonly ResolvedPackManifest[] | string => {
+      try {
+        return resolveInstalledPackManifests(this.dependencies.catalog, packs);
+      } catch (error) {
+        if (
+          error instanceof DomainPackCatalogError ||
+          error instanceof CapturedPackManifestError
+        )
+          return error.code;
+        throw error;
+      }
+    };
+    const refuse = (reason: string) => ({
+      code: roleCapabilityChangeRequiresUpgrade,
+      message: `${reason}; review and approve it with project:pack:upgrade`,
+    });
+    const target = closure(proposed);
+    // The public resolver just accepted this closure; a manifest that cannot
+    // be read back cannot be shown to be capability-neutral.
+    if (typeof target === "string")
+      return {
+        roleCapabilityChanges: { availability: "available", changes: [] },
+        issue: refuse(
+          `Role capabilities of the proposed selection cannot be read (${target})`,
+        ),
+      };
+    const previous = closure(currentPacks);
+    if (typeof previous === "string") {
+      const roleCapabilityChanges = {
+        availability: "unavailable",
+        reason: "previous_closure_unresolved",
+        detail: previous,
+      } as const;
+      if (changed.length === 0) return { roleCapabilityChanges };
+      // The old sets are unknown. Only tuples the project keeps, and their
+      // exact dependencies, are known to declare what they declared before.
+      const changedIds = new Set(changed.map(({ after }) => after.id));
+      const known = unchangedPackKeys(
+        target,
+        proposed.filter((pack) => !changedIds.has(pack.id)),
+      );
+      // A newly selected pack is an explicit addition, not a version change.
+      const currentIds = new Set(currentPacks.map((pack) => pack.id));
+      const addedKeys = new Set(
+        proposed.filter((pack) => !currentIds.has(pack.id)).map(tupleKey),
+      );
+      const unknown = roleCapabilitySets(
+        target.filter(
+          ({ identity }) =>
+            !known.has(tupleKey(identity)) &&
+            !addedKeys.has(tupleKey(identity)),
+        ),
+      );
+      return {
+        roleCapabilityChanges,
+        ...(unknown[0]
+          ? {
+              issue: refuse(
+                `The current pack artifacts are not installed, so the version change cannot be shown to keep the capabilities of ${unknown[0].roleId}`,
+              ),
+            }
+          : {}),
+      };
+    }
+    const changes = roleCapabilityDifferences(previous, target);
+    const before = closureRoleIds(previous);
+    const after = closureRoleIds(target);
+    const altered = changes.find(
+      ({ roleId }) => before.has(roleId) && after.has(roleId),
+    );
+    return {
+      roleCapabilityChanges: { availability: "available", changes },
+      ...(altered
+        ? {
+            issue: refuse(
+              `The selection changes the capabilities of role ${altered.roleId}`,
+            ),
+          }
+        : {}),
+    };
   }
 
   async apply(input: {
@@ -160,6 +346,11 @@ export class ManageProjectPackBinding {
       );
     if (JSON.stringify(current.packs) !== JSON.stringify(desired)) {
       const preview = await this.preview(input.projectId, desired);
+      if (preview.issues[0]?.code === roleCapabilityChangeRequiresUpgrade)
+        throw new ProjectPackBindingRefusedError(
+          roleCapabilityChangeRequiresUpgrade,
+          preview.issues[0].message,
+        );
       if (preview.issues[0])
         throw new DomainPackCatalogError(
           preview.issues[0].code as DomainPackCatalogError["code"],

@@ -952,6 +952,45 @@ profiles:
         "pack:org.example.custom/roles/clerk",
       ]);
 
+      // A capability change cannot slip through the plain selection command.
+      const direct = await invoke([
+        "project:pack:apply",
+        "--project",
+        projectId,
+        "--packs",
+        JSON.stringify([v2]),
+        "--expected-revision",
+        "1",
+      ]);
+      expect(direct.code).toBe(1);
+      expect(direct.stdout).toEqual([]);
+      expect(direct.stderr).toEqual([
+        "The selection changes the capabilities of role pack:org.example.custom/roles/counsel; review and approve it with project:pack:upgrade",
+      ]);
+      const directPreview = await invoke([
+        "project:pack:preview",
+        "--project",
+        projectId,
+        "--packs",
+        JSON.stringify([v2]),
+        "--json",
+      ]);
+      expect(directPreview.code).toBe(1);
+      expect(JSON.parse(directPreview.stdout[0]!)).toMatchObject({
+        roleCapabilityChanges: {
+          availability: "available",
+          changes: [
+            {
+              roleId: "pack:org.example.custom/roles/counsel",
+              added: ["sign"],
+              removed: [],
+            },
+          ],
+        },
+        issues: [{ code: "role_capability_change_requires_upgrade" }],
+      });
+      expect((await show()).configuration).toEqual(before.configuration);
+
       const upgrade = (...extra: string[]) =>
         invoke([
           "project:pack:upgrade",

@@ -5,13 +5,20 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
+import {
+  ManageProjectPackBinding,
+  ProjectPackBindingRefusedError,
+} from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import {
   ProjectPackUpgradeError,
   ReconcileProjectPackUpgrade,
 } from "@ai-office/application/domain-pack/reconcile-project-pack-upgrade.ts";
 import { ProjectDefinitionConflictError } from "@ai-office/application/domain-pack/project-definition.ts";
-import type { PackIdentity } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
+import type {
+  InstalledDomainPackCatalog,
+  PackIdentity,
+} from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import {
   computeArtifactDigest,
   computeManifestDigest,
@@ -143,7 +150,10 @@ async function harness(artifacts = [v1Bytes, v2Bytes, v3Bytes]) {
   const { catalog, packs } = catalogOf(...artifacts);
   await storage.projects.save(Project.create({ id: "a", name: "A", now }));
   let sequence = 0;
-  const ports = (selected = catalog, clock = now) => ({
+  const ports = (
+    selected: InstalledDomainPackCatalog = catalog,
+    clock = now,
+  ) => ({
     projects: storage.projects,
     definitions: storage.definitions,
     bindings: storage.packBindings,
@@ -157,6 +167,8 @@ async function harness(artifacts = [v1Bytes, v2Bytes, v3Bytes]) {
   const upgrade = (selected = catalog) =>
     new ReconcileProjectPackUpgrade(ports(selected, later));
   const definitions = new ManageProjectDefinitions(ports());
+  const selection = (selected: InstalledDomainPackCatalog = catalog) =>
+    new ManageProjectPackBinding(ports(selected));
   const revision = async () => (await storage.definitions.get("a")).revision;
   const bind = async (selection: PackIdentity[]) => {
     await storage.packBindings.replace(
@@ -220,6 +232,7 @@ async function harness(artifacts = [v1Bytes, v2Bytes, v3Bytes]) {
     v3: packs[2]!,
     packs,
     upgrade,
+    selection,
     definitions,
     revision,
     bind,
@@ -1115,5 +1128,286 @@ describe("GP-11 role archetypes across a pack upgrade", () => {
           .preview({ projectId: "a", desired: [first.v2], resolutions })
       ).planDigest,
     ).toBe(one.planDigest);
+  });
+});
+
+describe("GP-11 project:pack:apply never changes a role capability set", () => {
+  const applyAudits = (h: Awaited<ReturnType<typeof harness>>) =>
+    h.audits("project.pack_binding_applied");
+  const apply = async (
+    h: Awaited<ReturnType<typeof harness>>,
+    desired: PackIdentity[],
+    selected?: InstalledDomainPackCatalog,
+  ) =>
+    h.selection(selected).apply({
+      projectId: "a",
+      desired,
+      expectedRevision: (await h.storage.packBindings.get("a"))
+        .configurationRevision,
+      actorId: "operator",
+    });
+  const refusal = async (work: Promise<unknown>) => {
+    try {
+      await work;
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProjectPackBindingRefusedError);
+      const { code, message } = error as ProjectPackBindingRefusedError;
+      return { code, message };
+    }
+    throw new Error("Expected the selection change to be refused");
+  };
+  const plain = (version: string, title: string) =>
+    packBytes(version, {
+      roles: [{ id: "counsel", title }],
+      ...flow("counsel"),
+    });
+
+  test("a version change that alters a role's capabilities is refused and points to the upgrade", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    const before = await h.authority();
+
+    const preview = await h.selection().preview("a", [h.v2]);
+    expect(preview.changed).toEqual([{ before: h.v1, after: h.v2 }]);
+    expect(preview.roleCapabilityChanges).toEqual({
+      availability: "available",
+      changes: [
+        { roleId: roleId("auditor"), added: ["review"], removed: [] },
+        { roleId: roleId("clerk"), added: [], removed: ["file"] },
+        { roleId: roleId("counsel"), added: ["sign"], removed: [] },
+      ],
+    });
+    // clerk and counsel exist in both versions; auditor is only added.
+    expect(preview.issues).toEqual([
+      {
+        code: "role_capability_change_requires_upgrade",
+        message: `The selection changes the capabilities of role ${roleId("clerk")}; review and approve it with project:pack:upgrade`,
+      },
+    ]);
+
+    expect(await refusal(apply(h, [h.v2]))).toEqual(preview.issues[0]);
+    expect(await h.authority()).toEqual(before);
+    expect(applyAudits(h)).toEqual([]);
+
+    // The reviewed path carries the same change out.
+    const plan = await h.upgrade().preview({ projectId: "a", desired: [h.v2] });
+    expect(plan.roleCapabilityChanges).toMatchObject({
+      changes:
+        preview.roleCapabilityChanges.availability === "available"
+          ? preview.roleCapabilityChanges.changes
+          : [],
+    });
+    await h.upgrade().apply({
+      projectId: "a",
+      desired: [h.v2],
+      approvedPlanDigest: plan.planDigest,
+      actorId: "operator",
+    });
+    expect((await h.storage.packBindings.get("a")).packs).toEqual([h.v2]);
+  });
+
+  test("with the current artifacts gone, a version change to a pack that declares role capabilities is refused", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    const before = await h.authority();
+    const { catalog: onlyTarget } = catalogOf(v2Bytes);
+
+    const preview = await h.selection(onlyTarget).preview("a", [h.v2]);
+    expect(preview.roleCapabilityChanges).toEqual({
+      availability: "unavailable",
+      reason: "previous_closure_unresolved",
+      detail: "missing_pack",
+    });
+    expect(preview.issues).toEqual([
+      {
+        code: "role_capability_change_requires_upgrade",
+        message: `The current pack artifacts are not installed, so the version change cannot be shown to keep the capabilities of ${roleId("auditor")}; review and approve it with project:pack:upgrade`,
+      },
+    ]);
+    expect(await refusal(apply(h, [h.v2], onlyTarget))).toEqual(
+      preview.issues[0],
+    );
+    expect(await h.authority()).toEqual(before);
+    expect(applyAudits(h)).toEqual([]);
+  });
+
+  test("a version change that keeps every capability set is applied as before", async () => {
+    // 3.0.0 changes the workflow only; every role keeps its capabilities.
+    const h = await harness();
+    await h.bind([h.v1]);
+
+    const preview = await h.selection().preview("a", [h.v3]);
+    expect(preview.issues).toEqual([]);
+    expect(preview.roleCapabilityChanges).toEqual({
+      availability: "available",
+      changes: [],
+    });
+    expect((await apply(h, [h.v3])).packs).toEqual([h.v3]);
+    expect(applyAudits(h)).toHaveLength(1);
+    expect(applyAudits(h)[0]?.payload).toEqual({
+      intent: "replace",
+      previousRevision: 1,
+      newRevision: 2,
+      previousPacks: [h.v1],
+      packs: [h.v3],
+      result: "applied",
+    });
+  });
+
+  test("a role that a version adds or removes is not a change to an existing role", async () => {
+    const h = await harness([
+      v1Bytes,
+      // intern is removed and auditor is added with a capability; the roles
+      // present in both versions keep their sets.
+      packBytes("2.0.0", {
+        roles: [
+          {
+            id: "counsel",
+            title: "Counsel",
+            capabilities: ["draft", "review"],
+          },
+          { id: "clerk", capabilities: ["file"] },
+          { id: "paralegal" },
+          { id: "auditor", capabilities: ["review"] },
+        ],
+        ...flow("counsel"),
+        capabilities: [{ id: "draft" }, { id: "file" }, { id: "review" }],
+      }),
+    ]);
+    await h.bind([h.v1]);
+
+    const preview = await h.selection().preview("a", [h.v2]);
+    expect(preview.issues).toEqual([]);
+    expect(preview.roleCapabilityChanges).toEqual({
+      availability: "available",
+      changes: [{ roleId: roleId("auditor"), added: ["review"], removed: [] }],
+    });
+    expect((await apply(h, [h.v2])).packs).toEqual([h.v2]);
+  });
+
+  test("adding and removing a pack that declares role capabilities stays an explicit selection change", async () => {
+    const otherBytes = packBytes(
+      "1.0.0",
+      {
+        roles: [{ id: "inspector", capabilities: ["inspect"] }],
+        capabilities: [{ id: "inspect" }],
+      },
+      "org.example.quality",
+    );
+    const h = await harness([v1Bytes, otherBytes]);
+    const [legal, quality] = h.packs as [PackIdentity, PackIdentity];
+
+    const adding = await h.selection().preview("a", [legal]);
+    expect(adding.issues).toEqual([]);
+    expect(adding.roleCapabilityChanges).toMatchObject({
+      availability: "available",
+      changes: [
+        { roleId: roleId("clerk"), added: ["file"], removed: [] },
+        { roleId: roleId("counsel"), added: ["draft", "review"], removed: [] },
+      ],
+    });
+    expect((await apply(h, [legal])).packs).toEqual([legal]);
+    expect((await apply(h, [legal, quality])).packs).toEqual([legal, quality]);
+
+    const removing = await h.selection().preview("a", [quality]);
+    expect(removing.issues).toEqual([]);
+    expect(removing.roleCapabilityChanges).toMatchObject({
+      changes: [
+        { roleId: roleId("clerk"), added: [], removed: ["file"] },
+        { roleId: roleId("counsel"), added: [], removed: ["draft", "review"] },
+      ],
+    });
+    expect((await apply(h, [quality])).packs).toEqual([quality]);
+    // Removal needs no artifact of the removed pack, as before.
+    expect((await apply(h, [], catalogOf(otherBytes).catalog)).packs).toEqual(
+      [],
+    );
+    // Adding with the catalog holding only the added pack is still allowed.
+    await h.bind([quality]);
+    const { catalog: withoutQuality } = catalogOf(v1Bytes);
+    expect(
+      (await h.selection(withoutQuality).preview("a", [legal])).issues,
+    ).toEqual([]);
+    expect(applyAudits(h)).toHaveLength(4);
+  });
+
+  test("packs without role capabilities behave exactly as before, with or without the old artifacts", async () => {
+    const first = plain("1.0.0", "Counsel");
+    const second = plain("2.0.0", "Lead counsel");
+    const h = await harness([first, second]);
+    await h.bind([h.v1]);
+
+    const preview = await h.selection().preview("a", [h.v2]);
+    expect(preview).toMatchObject({
+      issues: [],
+      roleCapabilityChanges: { availability: "available", changes: [] },
+    });
+    const { catalog: onlyTarget } = catalogOf(second);
+    const gone = await h.selection(onlyTarget).preview("a", [h.v2]);
+    expect(gone.issues).toEqual([]);
+    expect(gone.roleCapabilityChanges).toMatchObject({
+      availability: "unavailable",
+    });
+    expect((await apply(h, [h.v2], onlyTarget)).packs).toEqual([h.v2]);
+  });
+
+  test("with the old artifacts gone, a pack the project keeps is known to be unchanged", async () => {
+    const plainFirst = packBytes(
+      "1.0.0",
+      { roles: [{ id: "host" }] },
+      "org.example.plain",
+    );
+    const plainSecond = packBytes(
+      "2.0.0",
+      { roles: [{ id: "host", title: "Host" }] },
+      "org.example.plain",
+    );
+    const h = await harness([v1Bytes, plainFirst, plainSecond]);
+    const [legal, oldPlain, newPlain] = h.packs as PackIdentity[];
+    await h.bind([legal!, oldPlain!]);
+    // legal declares capabilities but keeps its exact tuple; only the
+    // capability-free pack changes version, and its old artifact is gone.
+    const { catalog: withoutOldPlain } = catalogOf(v1Bytes, plainSecond);
+
+    const preview = await h
+      .selection(withoutOldPlain)
+      .preview("a", [legal!, newPlain!]);
+    expect(preview.roleCapabilityChanges).toMatchObject({
+      availability: "unavailable",
+    });
+    expect(preview.issues).toEqual([]);
+    expect(
+      (await apply(h, [legal!, newPlain!], withoutOldPlain)).packs,
+    ).toEqual([legal, newPlain]);
+  });
+
+  test("an identical selection stays a no-op that reads no artifact, and a stale revision still fails first", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    const before = await h.authority();
+    const unreadable: InstalledDomainPackCatalog = {
+      coreContractVersion: 1,
+      list: () => {
+        throw new Error("the catalog must not be listed");
+      },
+      trusts: () => {
+        throw new Error("the catalog must not be consulted");
+      },
+      read: () => {
+        throw new Error("the catalog must not be read");
+      },
+    };
+
+    expect((await apply(h, [h.v1], unreadable)).packs).toEqual([h.v1]);
+    expect(await h.authority()).toEqual(before);
+    expect(applyAudits(h)).toEqual([]);
+    await expect(
+      h.selection().apply({
+        projectId: "a",
+        desired: [h.v2],
+        expectedRevision: 0,
+        actorId: "operator",
+      }),
+    ).rejects.toMatchObject({ name: "StaleProjectPackBindingError" });
   });
 });
