@@ -19,7 +19,7 @@ human - and names roles, never tools.
 - **Independent reviewer**: reviews the diff without having written it.
 - **Verification context**: proves the change works, without trusting the
   implementer's claims.
-- **External reviewer, if configured**: a second, differently built reviewer.
+- **External reviewer, if available**: a second, differently built reviewer.
 - **Authorizer**: the person who owns scope, architecture, and merge decisions.
 
 Implementation, review, and verification must run in independent contexts
@@ -160,9 +160,10 @@ verifier, and never let the context that wrote a change approve it.
 
 **External reviewer on Claude Code.** When Codex is available in the session -
 a Codex skill or plugin, or the `codex` command - stage 9 is not optional: run
-a Codex review of the branch as the external reviewer, in addition to the
-independent review, even when the project configures no external review
-command. If Codex is unavailable or cannot be started, record that in the
-evidence and skip the stage.
+a Codex review of the branch as an external reviewer, in addition to the
+independent review and to any reviewer the project configures. If Codex is not
+installed, use the project-configured reviewer if there is one, otherwise skip
+the stage and record why. A Codex that is installed but fails to run is a
+failed gate, not a skip: report it.
 
 <!-- executors:end -->

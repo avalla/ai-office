@@ -241,8 +241,9 @@ describe("skill package validation", () => {
     );
     expect(block).toMatch(/stage 9 is not optional: run a Codex review/u);
     expect(block).toMatch(/in addition to the independent review/u);
+    expect(block).toMatch(/and to any reviewer the project configures/u);
     expect(block).toMatch(
-      /unavailable or cannot be started, record that in the evidence and skip/u,
+      /installed but fails to run is a failed gate, not a skip: report it/u,
     );
     // The neutral core defers to the mapping without naming any executor.
     const core = canonicalSkill

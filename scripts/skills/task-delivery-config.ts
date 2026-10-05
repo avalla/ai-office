@@ -57,8 +57,9 @@ function validateSection(
  * a repeated `git:` block would silently drop the first one. Every key name in
  * the schema is unique across levels, which makes a line scan sufficient: each
  * key the parser reports must start exactly one line. Zero means a notation
- * this scan cannot vouch for (flow mappings, merge keys, explicit keys), which
- * is rejected rather than trusted.
+ * this scan cannot vouch for (flow mappings), which is rejected rather than
+ * trusted; `validateKeyNotation` rejects the notations that could spell a key
+ * the scan would not recognize.
  */
 function validateKeyLines(
   source: string,
@@ -89,6 +90,19 @@ function validateKeyLines(
 }
 
 /**
+ * Explicit, tagged, anchored, aliased, merged, and escaped keys can all spell
+ * a second `git` that the line scan would not count. None is needed for a
+ * flat settings file, so they are refused outright.
+ */
+function validateKeyNotation(source: string, errors: string[]): void {
+  for (const [index, line] of source.split("\n").entries())
+    if (/^[ \t]*(?:[?&*!]|<<|"[^"\n]*\\)/u.test(line))
+      errors.push(
+        `line ${index + 1} uses YAML notation that is not allowed here (explicit, tagged, anchored, aliased, merged, or escaped keys); write plain keys`,
+      );
+}
+
+/**
  * Validates the text of a `.task-delivery.yaml`. Returns human-readable
  * problems; an empty array means the configuration respects the contract.
  */
@@ -107,6 +121,7 @@ export function validateTaskDeliveryConfigSource(rawSource: string): string[] {
   const errors: string[] = [];
   validateSection(parsed, schema, "", errors);
   validateKeyLines(source, parsed, schema, "", errors);
+  validateKeyNotation(source, errors);
   return errors;
 }
 

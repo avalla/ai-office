@@ -95,7 +95,9 @@ evidence is not passed, whatever its apparent state.
 ## 10. Ready for Merge
 
 - Confirm every earlier gate has evidence for the **current** head commit. A
-  commit pushed after review or verification invalidates that evidence.
+  commit pushed after review or verification invalidates that evidence; the
+  only exception is the one the [branch policy](branch-policy.md) makes for
+  review evidence after a clean merge-in.
 - Report READY FOR MERGE with the gate summary and stop. Do not merge.
 
 ## 11. Post-merge verification / completion

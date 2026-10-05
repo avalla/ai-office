@@ -39,7 +39,9 @@ they are stricter.
 `git.*` and `task_lifecycle.enabled` are booleans written unquoted (`true` or
 `false`). `verification`, `git`, `external_review`, and `task_lifecycle` are
 mappings; no other key is allowed at any level. To switch everything off,
-delete the file instead of emptying it.
+delete the file instead of emptying it. Keep it flat and plain: no anchors,
+aliases, tags, or merge keys, and no multi-line value containing a line that
+starts with one of the key names.
 
 ## Rules
 

@@ -155,6 +155,29 @@ describe("task-delivery configuration contract", () => {
     );
   });
 
+  test.each([
+    ["an escaped quoted key", '"g\\x69t":\n  worktree_required: true\n'],
+    ["an explicit key", "? git\n: worktree_required: true\n"],
+    ["a tagged key", "!!str git:\n  worktree_required: true\n"],
+    ["an anchored key", "&a git:\n  worktree_required: true\n"],
+    [
+      "an escaped nested key",
+      'git:\n  worktree_required: true\n  "worktree_require\\x64": false\n',
+    ],
+  ])("rejects a second definition hidden behind %s", (_label, hidden) => {
+    const source = hidden.startsWith("git:")
+      ? hidden
+      : `${hidden}git:\n  stacking_allowed: true\n`;
+
+    expect(validateTaskDeliveryConfigSource(source)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /^line \d+ uses YAML notation that is not allowed/u,
+        ),
+      ]),
+    );
+  });
+
   test("accepts a byte-order mark, CRLF line endings, and comments", () => {
     expect(
       validateTaskDeliveryConfigSource(
