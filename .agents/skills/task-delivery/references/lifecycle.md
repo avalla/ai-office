@@ -100,7 +100,8 @@ evidence is not passed, whatever its apparent state.
   in for a required reviewer.
 - With no external reviewer at all, record "none - skipped".
 - Validate its findings like any others. Changes made in response go through
-  Hardening, Second Review, and Verification again.
+  Hardening, Second Review, and Verification again, and a required external
+  review is then run again on the resulting head.
 
 ## 10. Ready for Merge
 
@@ -108,8 +109,8 @@ evidence is not passed, whatever its apparent state.
   commit pushed after review or verification invalidates that evidence; the
   only exception is the one the [branch policy](branch-policy.md) makes for
   review evidence after a clean merge-in.
-- A required external review that has not completed successfully blocks READY
-  FOR MERGE. A best-effort one that was unavailable does not.
+- A required external review that has not completed successfully on the
+  current head blocks READY FOR MERGE. A best-effort one that was unavailable does not.
 - Report READY FOR MERGE with the gate summary and stop. Do not merge.
 
 ## 11. Post-merge verification / completion

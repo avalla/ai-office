@@ -247,6 +247,12 @@ describe("skill package validation", () => {
       /\*\*required\*\* when the project configures one or the authorizer explicitly asks for one for this task/u,
     );
     expect(core).toMatch(/the task cannot become READY FOR MERGE/u);
+    expect(core).toMatch(
+      /\*\*External reviewer\*\*: a second, differently built reviewer - required when the project configures one or the authorizer asks for one, best effort otherwise/u,
+    );
+    expect(core).toMatch(
+      /With no external reviewer at all, skip the stage and say so/u,
+    );
     // Best effort: merely offered by the executor.
     expect(core).toMatch(
       /neither configured by the project nor requested by the authorizer - is \*\*best effort\*\*/u,
@@ -258,7 +264,7 @@ describe("skill package validation", () => {
       /a best-effort reviewer never stands in for a required one/u,
     );
     expect(core).toMatch(
-      /Declare READY FOR MERGE only when .* a required external review has completed successfully/u,
+      /Declare READY FOR MERGE only when .* a required external review has completed successfully on the current head/u,
     );
     expect(core).toMatch(/an error is never a passed review/u);
 
@@ -283,6 +289,12 @@ describe("skill package validation", () => {
     );
     expect(lifecycle).toMatch(/Never count the error as a review/u);
     expect(lifecycle).toMatch(
+      /Run it again when the reviewer is available: a new run after an infrastructure error is not a retried check/u,
+    );
+    expect(lifecycle).toMatch(
+      /a required external review is then run again on the resulting head/u,
+    );
+    expect(lifecycle).toMatch(
       /\*\*Best effort\*\* when the executor merely offers a reviewer that nobody configured or requested/u,
     );
     expect(lifecycle).toMatch(
@@ -292,7 +304,7 @@ describe("skill package validation", () => {
       /Findings handled; if best effort, recorded unavailability; or skip/u,
     );
     expect(lifecycle).toMatch(
-      /required external review that has not completed successfully blocks READY FOR MERGE\. A best-effort one that was unavailable does not/u,
+      /required external review that has not completed successfully on the current head blocks READY FOR MERGE\. A best-effort one that was unavailable does not/u,
     );
     expect(reference("stop-conditions.md")).toMatch(
       /Required external review cannot complete\.\*\* A configured or requested external reviewer times out, errors, or is unavailable/u,
@@ -325,7 +337,9 @@ describe("skill package validation", () => {
         join(canonicalSkillRoot, "assets", "pr-template.md"),
         "utf8",
       ),
-    ).toMatch(/best effort: external reviewer unavailable/u);
+    ).toMatch(
+      /"required: result on commit"; or "best effort: result on commit"; or "best effort: external reviewer unavailable" with the error; or "none - skipped"/u,
+    );
     // A required review has exactly one way through; no document offers a
     // waiver, and none lets an installed reviewer become an obligation.
     for (const text of [core, block, lifecycle, stopConditions, evidence])
@@ -338,8 +352,9 @@ describe("skill package validation", () => {
       evidence,
       configuration,
     ]) {
+      // Presence never creates the obligation.
       expect(text).not.toMatch(
-        /installed[^.]*\b(?:is|are|becomes?) required/iu,
+        /\b(?:installed|exists?|present|available|found)\b[^.]*\b(?:is|are|becomes?) required\b/iu,
       );
     }
   });

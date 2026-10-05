@@ -142,7 +142,7 @@ review: validate, harden, re-verify.
 
 Declare READY FOR MERGE only when review, hardening, and verification evidence
 all refer to the current head, a required external review has completed
-successfully, and no blocking finding is open. Report and wait for the
+successfully on the current head, and no blocking finding is open. Report and wait for the
 authorizer.
 
 ### 11. Post-merge verification / completion

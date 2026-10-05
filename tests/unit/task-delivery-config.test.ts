@@ -51,9 +51,8 @@ task_lifecycle:
   complete: tracker complete
 `;
 
-const notPlain = expect.stringMatching(
-  /^line \d+ is not a plain "key: value" line/u,
-);
+// Every layout problem names the line it was found on.
+const notPlain = expect.stringMatching(/^line \d+\b/u);
 
 describe("task-delivery configuration contract", () => {
   test("an absent configuration is valid", () => {
@@ -154,22 +153,22 @@ describe("task-delivery configuration contract", () => {
     [
       "a repeated section, which would drop the first block",
       "git:\n  worktree_required: true\ngit:\n  stacking_allowed: true\n",
-      "git is defined more than once (lines 1 and 3); the parser would keep only the last one",
+      "line 3: git is defined more than once; the parser would keep only the last one",
     ],
     [
       "a repeated nested key",
       "git:\n  worktree_required: true\n  worktree_required: false\n",
-      "git.worktree_required is defined more than once (lines 2 and 3); the parser would keep only the last one",
+      "line 3: git.worktree_required is defined more than once; the parser would keep only the last one",
     ],
     [
       "a repeated top-level scalar",
       "integration_branch: main\nintegration_branch: develop\n",
-      "integration_branch is defined more than once (lines 1 and 2); the parser would keep only the last one",
+      "line 2: integration_branch is defined more than once; the parser would keep only the last one",
     ],
     [
       "a section repeated after another section",
       "git:\n  worktree_required: true\nverification:\n  full: make\ngit:\n  stacking_allowed: true\n",
-      "git is defined more than once (lines 1 and 5); the parser would keep only the last one",
+      "line 5: git is defined more than once; the parser would keep only the last one",
     ],
   ])("rejects %s", (_label, source, expected) => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual([expected]);
@@ -247,6 +246,185 @@ describe("task-delivery configuration contract", () => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual(
       expect.arrayContaining([notPlain]),
     );
+  });
+
+  // The same notations after two spaces or a space and a tab, where a
+  // one-character lookahead would not see them.
+  test.each([
+    [
+      "a flow mapping after two spaces",
+      "git:  {worktree_required: true, worktree_required: false}\n",
+    ],
+    [
+      "a flow mapping after a space and a tab",
+      "git: \t{worktree_required: true, worktree_required: false}\n",
+    ],
+    [
+      "a flow mapping with a quoted repeat",
+      'external_review:  {command: review-tool, "command": "true"}\n',
+    ],
+    [
+      "a flow mapping with an explicit-key repeat",
+      "git:  {? worktree_required : true, worktree_required: false}\n",
+    ],
+    [
+      "a flow mapping across lines after two spaces",
+      "git:  {worktree_required: true,\n  stacking_allowed: false, worktree_required: false}\n",
+    ],
+    [
+      "an anchored flow mapping after two spaces",
+      "git:  &a {worktree_required: true}\n",
+    ],
+    [
+      "a tagged section after two spaces",
+      "git:  !!map\n  worktree_required: true\n",
+    ],
+    [
+      "a tagged boolean after two spaces",
+      "git:\n  worktree_required:  !!bool true\n",
+    ],
+    [
+      "a block scalar after two spaces",
+      "verification:\n  full:  |\n    targeted: x\n",
+    ],
+    ["an alias after two spaces", "verification:\n  full:  *x\n"],
+  ])("rejects %s", (_label, source) => {
+    expect(validateTaskDeliveryConfigSource(source)).toEqual(
+      expect.arrayContaining([notPlain]),
+    );
+  });
+
+  // An open quote continues over the following lines: a YAML parser reads
+  // them as text, so the keys written there would silently not exist.
+  test.each([
+    [
+      "a double quote swallowing a section",
+      'integration_branch: "main\n external_review:\n   command: review-tool"\ngit:\n  worktree_required: true\n',
+    ],
+    [
+      "a single quote swallowing sibling keys",
+      "task_lifecycle:\n  start: 'tracker start\n    enabled: true\n    complete: x'\n",
+    ],
+    [
+      "a double quote swallowing a sibling key",
+      'verification:\n  full: "make check\n   targeted: make test"\n',
+    ],
+    ["text after a closed quote", 'verification:\n  full: "a b" && c\n'],
+    ["an unsupported escape", 'verification:\n  full: "a\\qb"\n'],
+  ])("rejects %s", (_label, source) => {
+    expect(validateTaskDeliveryConfigSource(source)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /^line \d+: \w+ has a (?:double|single)-quoted value/u,
+        ),
+      ]),
+    );
+  });
+
+  test.each([
+    [
+      "keys indented at different depths",
+      "git:\n  worktree_required: true\n    stacking_allowed: true\n",
+    ],
+    ["a third level", "git:\n  worktree_required:\n    deep: true\n"],
+    ["an indented first key", "  git:\n    worktree_required: true\n"],
+    ["a nested key under a scalar", "integration_branch: main\n  full: make\n"],
+    [
+      "a colon-space inside an unquoted value",
+      "verification:\n  full: echo a: b\n",
+    ],
+    ["a value starting with a list marker", "verification:\n  full: - x\n"],
+  ])("rejects %s", (_label, source) => {
+    expect(validateTaskDeliveryConfigSource(source)).not.toEqual([]);
+  });
+
+  // Whatever is accepted must mean to a YAML parser exactly what its lines
+  // say: same keys, same strings, same booleans.
+  test.each([
+    [
+      "flags and paths",
+      "verification:\n  full: bun run check --bail -x ./a/b\n",
+      "bun run check --bail -x ./a/b",
+    ],
+    [
+      "shell operators mid-value",
+      "verification:\n  full: a | b > c && d * {e} [f] !g\n",
+      "a | b > c && d * {e} [f] !g",
+    ],
+    [
+      "a colon without a space",
+      "verification:\n  full: test --grep foo:bar http://x/y\n",
+      "test --grep foo:bar http://x/y",
+    ],
+    [
+      "a placeholder",
+      "verification:\n  full: run <test files>\n",
+      "run <test files>",
+    ],
+    [
+      "a double-quoted command",
+      'verification:\n  full: "[ -f x ] && y: z # q"\n',
+      "[ -f x ] && y: z # q",
+    ],
+    [
+      "a double-quoted escape",
+      'verification:\n  full: "say \\"hi\\""\n',
+      'say "hi"',
+    ],
+    [
+      "a single-quoted command",
+      "verification:\n  full: 'it''s: fine'\n",
+      "it's: fine",
+    ],
+    [
+      "a trailing comment",
+      "verification:\n  full: make check # all of it\n",
+      "make check",
+    ],
+    [
+      "a quoted value and a comment",
+      'verification:\n  full: "make # not a comment" # comment\n',
+      "make # not a comment",
+    ],
+  ])(
+    "accepts %s and reads it as a YAML parser does",
+    (_label, source, expected) => {
+      expect(validateTaskDeliveryConfigSource(source)).toEqual([]);
+      expect(
+        (Bun.YAML.parse(source) as { verification: { full: string } })
+          .verification.full,
+      ).toBe(expected);
+    },
+  );
+
+  test("names the line and the fix for common slips", () => {
+    expect(
+      validateTaskDeliveryConfigSource("verification:\n  full: *.test.ts\n"),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(
+          /^line 2: full has a value starting with YAML syntax .* wrap the whole value in double quotes$/u,
+        ),
+      ]),
+    );
+    expect(
+      validateTaskDeliveryConfigSource("git:\n\tworktree_required: true\n"),
+    ).toEqual(
+      expect.arrayContaining(["line 2 is indented with a tab; use spaces"]),
+    );
+    expect(
+      validateTaskDeliveryConfigSource("verification:\n  full: echo a: b\n"),
+    ).toEqual([
+      expect.stringContaining("wrap the whole value in double quotes"),
+    ]);
+    expect(
+      validateTaskDeliveryConfigSource(
+        "--- # settings\ngit:\n  stacking_allowed: true\n",
+      ),
+    ).toEqual([]);
+    expect(
+      validateTaskDeliveryConfigSource('integration_branch: "​"\n'),
+    ).toEqual(["integration_branch must not be empty"]);
   });
 
   test.each([

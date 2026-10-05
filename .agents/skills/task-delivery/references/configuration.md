@@ -43,10 +43,15 @@ mappings; no other key is allowed at any level. To switch everything off,
 delete the file instead of emptying it.
 
 Only this layout is accepted, so that a repeated or disguised key cannot hide:
-unquoted keys, one `key: value` per line, nested keys indented with spaces
-under their section, comments, and an optional leading `---`. Quoted keys,
-flow collections (`{...}`, `[...]`), anchors, aliases, tags, merge keys, block
-scalars, lists, and values continued on a following line are rejected.
+unquoted keys, one `key: value` per line, nested keys indented with spaces at
+one depth under their section, comments, and an optional leading `---`.
+Quoted keys, flow collections (`{...}`, `[...]`), anchors, aliases, tags, merge
+keys, block scalars, lists, and values continued on a following line are
+rejected.
+
+Write a value plainly when it is simple. Wrap the whole value in double quotes
+when it starts with a special character or contains `: ` or ` #`: an unquoted
+` #` starts a comment, and the rest of the line is not part of the value.
 
 ## Rules
 

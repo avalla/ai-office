@@ -46,58 +46,163 @@ function validateSection(
         errors.push(`${keyPath} must be a boolean (true or false, unquoted)`);
     } else if (typeof entry !== "string") {
       errors.push(`${keyPath} must be a string`);
-    } else if (entry.trim() === "") {
+    } else if (/^[\s\u200B\uFEFF]*$/u.test(entry)) {
       errors.push(`${keyPath} must not be empty`);
     }
   }
 }
 
-// One plain key, then nothing or a value that does not open a flow
-// collection, anchor, alias, tag, block scalar, or explicit key.
-const keyValueLine =
-  /^( *)([A-Za-z_][A-Za-z0-9_]*):(?:[ \t]+(?![{[&*!|>?]).*)?$/u;
+type Scalar = string | boolean | null;
+/** What the layout scan read: scalars, and sections of scalars. */
+type Layout = Map<string, Scalar | Map<string, Scalar>>;
+
+const quoteHint = "wrap the whole value in double quotes";
+
+/** Reads one value, or reports why it is outside the accepted layout. */
+function readValue(raw: string): { value: Scalar } | { problem: string } {
+  const text = raw.trim();
+  if (text === "" || text.startsWith("#")) return { value: null };
+  if (text.startsWith('"')) {
+    // Closed on the same line; an open quote would swallow the next lines.
+    const match = /^("(?:[^"\\]|\\.)*")[ \t]*(?:[ \t]#.*)?$/u.exec(text);
+    if (match === null)
+      return {
+        problem: "has a double-quoted value that does not end on the same line",
+      };
+    try {
+      const decoded: unknown = JSON.parse(match[1] ?? "");
+      if (typeof decoded === "string") return { value: decoded };
+    } catch {
+      // Reported below.
+    }
+    return { problem: "has a double-quoted value with an unsupported escape" };
+  }
+  if (text.startsWith("'")) {
+    const match = /^'((?:[^']|'')*)'[ \t]*(?:[ \t]#.*)?$/u.exec(text);
+    if (match === null)
+      return {
+        problem: "has a single-quoted value that does not end on the same line",
+      };
+    return { value: (match[1] ?? "").replace(/''/gu, "'") };
+  }
+  if (/^[{[&*!|>?%@`,]/u.test(text) || /^[-?:](?:[ \t]|$)/u.test(text))
+    return {
+      problem: `has a value starting with YAML syntax (flow collections, anchors, aliases, tags, block scalars, and lists are not allowed); for a literal value, ${quoteHint}`,
+    };
+  // YAML ends a plain value at " #".
+  const plain = text.replace(/[ \t]+#.*$/u, "");
+  if (plain === "true") return { value: true };
+  if (plain === "false") return { value: false };
+  return { value: plain };
+}
 
 /**
- * The YAML parser keeps the last of two identical keys without complaint, so
- * a repeated `git:` block would silently drop the first one, and YAML offers
- * many notations that could hide such a repeat. The file is therefore held to
- * a small layout: every line is one plain `key: value` or a section header,
- * at most one level deep. Within that layout a repeated key is visible line
- * by line, and nothing outside it is accepted.
+ * Reads the file as the only layout that is accepted: plain `key: value`
+ * lines and section headers, one level deep. YAML keeps the last of two
+ * identical keys without complaint and offers many notations that can hide
+ * one, so this scan - not the YAML parser - decides what the file says, and
+ * `validateTaskDeliveryConfigSource` then requires the YAML parser to agree.
  */
-function validateLayout(source: string, errors: string[]): void {
-  const seen = new Map<string, number>();
-  let section: string | null = null;
+function readLayout(source: string, errors: string[]): Layout {
+  const layout: Layout = new Map();
+  let section: { name: string; indent: string | null } | null = null;
   let started = false;
   for (const [index, line] of source.split("\n").entries()) {
-    if (/^\s*(?:#.*)?$/u.test(line)) continue;
-    if (!started && line === "---") {
+    if (/^[ \t]*(?:#.*)?$/u.test(line)) continue;
+    const at = `line ${index + 1}`;
+    if (!started && /^---[ \t]*(?:#.*)?$/u.test(line)) {
       started = true;
       continue;
     }
     started = true;
-    const match = keyValueLine.exec(line);
+    if (/^ *\t/u.test(line)) {
+      errors.push(`${at} is indented with a tab; use spaces`);
+      continue;
+    }
+    const match = /^( *)([A-Za-z_][A-Za-z0-9_]*):(?:[ \t](.*))?$/u.exec(line);
     if (match === null) {
       errors.push(
-        `line ${index + 1} is not a plain "key: value" line (quoted keys, flow collections, anchors, aliases, tags, block scalars, and multi-line values are not allowed)`,
+        `${at} is not a plain "key: value" line (quoted keys, lists, a second document, and values continued from the previous line are not allowed; if the previous value contains ": ", ${quoteHint})`,
       );
       continue;
     }
-    const nested = match[1] !== "";
+    const indent = match[1] ?? "";
     const key = match[2] ?? "";
-    if (!nested) section = key;
-    else if (section === null) {
-      errors.push(`line ${index + 1} is indented but belongs to no section`);
+    const read = readValue(match[3] ?? "");
+    if ("problem" in read) {
+      errors.push(`${at}: ${key} ${read.problem}`);
       continue;
     }
-    const keyPath = nested ? `${section}.${key}` : key;
-    const firstLine = seen.get(keyPath);
-    if (firstLine === undefined) seen.set(keyPath, index + 1);
-    else
+    if (indent === "") {
+      section = read.value === null ? { name: key, indent: null } : null;
+      if (layout.has(key))
+        errors.push(
+          `${at}: ${key} is defined more than once; the parser would keep only the last one`,
+        );
+      layout.set(key, read.value === null ? new Map() : read.value);
+      continue;
+    }
+    if (section === null) {
+      errors.push(`${at} is indented but does not follow a section header`);
+      continue;
+    }
+    section.indent ??= indent;
+    if (indent !== section.indent) {
       errors.push(
-        `${keyPath} is defined more than once (lines ${firstLine} and ${index + 1}); the parser would keep only the last one`,
+        `${at} is indented differently from the other keys of ${section.name}; sections are one level deep`,
       );
+      continue;
+    }
+    const children = layout.get(section.name);
+    if (!(children instanceof Map)) continue;
+    if (children.has(key))
+      errors.push(
+        `${at}: ${section.name}.${key} is defined more than once; the parser would keep only the last one`,
+      );
+    children.set(key, read.value);
   }
+  return layout;
+}
+
+/** The layout as the plain object a YAML parser must also produce. */
+function layoutToObject(layout: Layout): Record<string, unknown> {
+  const object: Record<string, unknown> = Object.create(null) as Record<
+    string,
+    unknown
+  >;
+  for (const [key, value] of layout)
+    object[key] =
+      value instanceof Map
+        ? value.size === 0
+          ? null
+          : Object.assign(
+              Object.create(null) as Record<string, unknown>,
+              Object.fromEntries(value),
+            )
+        : value;
+  return object;
+}
+
+/**
+ * True when a YAML parser reads the same keys, and the same strings and
+ * booleans, as the layout scan. Values the parser types differently (numbers,
+ * nulls) are left to the schema check, which reports them by name.
+ */
+function agrees(scanned: unknown, parsed: unknown): boolean {
+  if (isRecord(scanned)) {
+    if (!isRecord(parsed)) return false;
+    const keys = Object.keys(scanned);
+    return (
+      keys.length === Object.keys(parsed).length &&
+      keys.every(
+        (key) =>
+          Object.hasOwn(parsed, key) && agrees(scanned[key], parsed[key]),
+      )
+    );
+  }
+  if (typeof parsed === "string" || typeof parsed === "boolean")
+    return scanned === parsed;
+  return !isRecord(parsed);
 }
 
 /**
@@ -107,18 +212,27 @@ function validateLayout(source: string, errors: string[]): void {
 export function validateTaskDeliveryConfigSource(rawSource: string): string[] {
   const source = rawSource.replace(/^\uFEFF/u, "").replace(/\r\n?/gu, "\n");
   const errors: string[] = [];
-  validateLayout(source, errors);
+  const scanned = layoutToObject(readLayout(source, errors));
   let parsed: unknown;
   try {
     parsed = Bun.YAML.parse(source);
   } catch (error) {
-    return [...errors, `invalid YAML: ${errorMessage(error)}`];
+    return [
+      ...errors,
+      `invalid YAML: ${errorMessage(error)} (if a value contains ": " or starts with a special character, ${quoteHint})`,
+    ];
   }
   if (!isRecord(parsed) || Object.keys(parsed).length === 0)
     return [
       ...errors,
       "the document root must be a mapping with at least one key; delete the file instead of leaving it empty",
     ];
+  // Only a file the scan accepted line by line can be compared; otherwise the
+  // line errors above already say what to fix.
+  if (errors.length === 0 && !agrees(scanned, parsed))
+    errors.push(
+      `a YAML parser reads this file differently from its plain "key: value" lines; write one unquoted key per line and ${quoteHint} where it contains YAML syntax`,
+    );
   validateSection(parsed, schema, "", errors);
   return errors;
 }
