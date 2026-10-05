@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "skill": "task-delivery",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "files": {
-    "SKILL.md": "e0991bcc106b86cb40b42708f6468a0bc1d58829f5fadcbfd2099245c1529b23",
+    "SKILL.md": "1b3ce51466f97557ccd13b819e01924bd15f207a751ce3ae9592485e72f52b4c",
     "assets/pr-template.md": "042cd175402f40447a0f37ca548d9fec08e76f1428e9b9d75262f79613c7c1b7",
     "assets/task-delivery.example.yaml": "25b5657d71fd5230f4e36459a1497420ec0b6cafaa06f6d064a381e143d759eb",
     "references/branch-policy.md": "aadbedb5f95164a6439230f6fa9761d593518d4d74d5ef3e5dc1dd25d96a2fb0",

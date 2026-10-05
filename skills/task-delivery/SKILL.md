@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Task Delivery
@@ -58,6 +58,37 @@ they are stricter. Then load the optional project configuration described in
 listed there and ask only when a default cannot be derived. A configuration
 file that is present but breaks its contract is a stop condition: never guess
 around it.
+
+## What to deliver
+
+When the request does not say what to deliver - the skill was started with no
+task, milestone, or other target - ask before doing anything else. Offer these
+choices and wait for the answer:
+
+1. **A whole milestone**: every open task of one milestone.
+2. **One or more tasks**: the tasks the authorizer names.
+3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.
+
+Never pick a milestone or a task yourself. Once the answer is in, and before
+showing anything for approval, check the dependencies of the selection. When
+individual tasks were chosen this check is mandatory: for every selected task,
+find the tasks it logically depends on and their state, and separate the
+dependencies that are already delivered, those that are part of the selection,
+and those that are neither. A dependency that is neither delivered nor selected
+is unsatisfied: name it, and propose adding it to the run, postponing the task
+that needs it, or going ahead only where the
+[branch policy](references/branch-policy.md) allows. Never drop or reorder a task silently to make the selection work.
+
+Then show a summary and ask for the go-ahead: the tasks in the order you
+propose, what each depends on, every unsatisfied dependency with the proposal
+for it, and anything excluded. Start preflight only after the authorizer
+approves that summary. A run that covers several tasks delivers them one at a
+time: each task goes through the whole lifecycle below, with its own branch,
+pull request, and evidence.
+
+When the request already names the target, do not ask the question again. The
+dependency check and the summary still apply whenever it covers more than one
+task; for a single named task, preflight does that check.
 
 ## Lifecycle
 

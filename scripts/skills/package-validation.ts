@@ -139,6 +139,25 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
         pattern: /Being installed does not make a reviewer required/u,
       },
       {
+        id: "policy:ask-what-to-deliver",
+        pattern:
+          /When the request does not say what to deliver .* ask before doing anything else\. .*A whole milestone.*One or more tasks.*Some tasks of one milestone/u,
+      },
+      {
+        id: "policy:check-dependencies-before-summary",
+        pattern:
+          /before showing anything for approval, check the dependencies of the selection\. When individual tasks were chosen this check is mandatory/u,
+      },
+      {
+        id: "policy:approve-summary-before-preflight",
+        pattern:
+          /Start preflight only after the authorizer approves that summary/u,
+      },
+      {
+        id: "policy:never-choose-the-target",
+        pattern: /Never pick a milestone or a task yourself/u,
+      },
+      {
         id: "policy:scope",
         pattern: /stay in scope/iu,
       },

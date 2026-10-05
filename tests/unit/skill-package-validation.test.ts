@@ -520,6 +520,19 @@ describe("task-delivery workflow invariants", () => {
       "policy:installed-is-not-required",
       /Being\s+installed does not make a reviewer required/u,
     ],
+    ["policy:ask-what-to-deliver", "3. **Some tasks of one milestone**"],
+    [
+      "policy:check-dependencies-before-summary",
+      /When\s+individual tasks were chosen this check is mandatory/u,
+    ],
+    [
+      "policy:approve-summary-before-preflight",
+      /Start preflight only after the authorizer\s+approves that summary\./u,
+    ],
+    [
+      "policy:never-choose-the-target",
+      "Never pick a milestone or a task yourself.",
+    ],
     ["policy:scope", "Stay in scope."],
   ];
 
@@ -615,6 +628,60 @@ describe("task-delivery workflow invariants", () => {
 
     expect(validateSkillPackage(skillRoot)).toContain(
       "SKILL.md is missing required content: policy:scope",
+    );
+  });
+
+  test("a run without a target asks what to deliver before preflight", () => {
+    const core = canonicalSkill
+      .slice(0, canonicalSkill.indexOf("<!-- executors:start -->"))
+      .replace(/\s+/gu, " ");
+    const section = core.slice(
+      core.indexOf("## What to deliver"),
+      core.indexOf("## Lifecycle"),
+    );
+
+    // The question comes before any stage, and offers exactly three choices.
+    expect(core.indexOf("## What to deliver")).toBeGreaterThan(-1);
+    expect(core.indexOf("## What to deliver")).toBeLessThan(
+      core.indexOf("### 1. Preflight"),
+    );
+    expect(section).toMatch(/ask before doing anything else/u);
+    expect(section.match(/\b\d\. \*\*/gu)).toHaveLength(3);
+    expect(section).toMatch(/1\. \*\*A whole milestone\*\*/u);
+    expect(section).toMatch(/2\. \*\*One or more tasks\*\*/u);
+    expect(section).toMatch(/3\. \*\*Some tasks of one milestone\*\*/u);
+    expect(section).toMatch(/wait for the answer/u);
+    // Dependencies are checked first, the summary comes second, and the
+    // go-ahead is asked last.
+    const check = section.indexOf("check the dependencies of the selection");
+    const summary = section.indexOf(
+      "Then show a summary and ask for the go-ahead",
+    );
+    const approval = section.indexOf(
+      "Start preflight only after the authorizer approves that summary",
+    );
+    expect(check).toBeGreaterThan(-1);
+    expect(summary).toBeGreaterThan(check);
+    expect(approval).toBeGreaterThan(summary);
+    expect(section).toMatch(
+      /When individual tasks were chosen this check is mandatory: for every selected task, find the tasks it logically depends on and their state/u,
+    );
+    expect(section).toMatch(
+      /A dependency that is neither delivered nor selected is unsatisfied: name it, and propose adding it to the run, postponing the task that needs it/u,
+    );
+    expect(section).toMatch(
+      /Never drop or reorder a task silently to make the selection work/u,
+    );
+    expect(section).toMatch(
+      /the tasks in the order you propose, what each depends on, every unsatisfied dependency with the proposal for it, and anything excluded/u,
+    );
+    // Several tasks are never merged into one delivery.
+    expect(section).toMatch(
+      /each task goes through the whole lifecycle below, with its own branch, pull request, and evidence/u,
+    );
+    // No interrogation when the target is already known.
+    expect(section).toMatch(
+      /When the request already names the target, do not ask the question again\. The dependency check and the summary still apply whenever it covers more than one task/u,
     );
   });
 
