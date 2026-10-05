@@ -10,8 +10,23 @@ select is(
 select is(
   (select count(*)::integer from pg_constraint
     where conrelid='core.project_definition_override'::regclass and contype='c'
-      and pg_get_constraintdef(oid) like '%disable%' and pg_get_constraintdef(oid) like '%payload_json%'),
-  1, 'exactly one operation/kind/payload constraint remains');
+      and conname='project_definition_override_operation_kind_payload_check'),
+  1, 'the role omission constraint exists under its own name');
+select ok(
+  (select pg_get_constraintdef(oid) like '%roles%' from pg_constraint
+    where conrelid='core.project_definition_override'::regclass
+      and conname='project_definition_override_operation_kind_payload_check'),
+  'the role omission constraint admits roles');
+select is(
+  (select count(*)::integer from pg_constraint
+    where conrelid='core.project_definition_override'::regclass and contype='c'
+      and conname='project_definition_override_check'),
+  0, 'the prompt-only table constraint is gone');
+select is(
+  (select count(*)::integer from pg_constraint
+    where conrelid='core.project_definition_override'::regclass and contype='c'
+      and conname='project_definition_override_operation_check'),
+  1, 'the column check on operation is preserved');
 select has_pk('core', 'project_definition_override', 'override primary key is preserved');
 select is(
   (select count(*)::integer from pg_constraint
@@ -43,6 +58,11 @@ select lives_ok(
   $$insert into core.project_definition_override(project_id,tenant_id,pack_id,pack_version,manifest_digest,kind,local_id,operation,revision,payload_json,actor_id,changed_at)
     values ('gp11-project-a','gp11-tenant-a','org.example.legal','1.0.0','sha256:' || repeat('a',64),'roles','counsel','replace',1,'{"id":"counsel"}','operator','2026-10-05T00:00:00Z')$$,
   'a role replacement is still accepted');
+select throws_ok(
+  $$insert into core.project_definition_override(project_id,tenant_id,pack_id,pack_version,manifest_digest,kind,local_id,operation,revision,payload_json,actor_id,changed_at)
+    values ('gp11-project-a','gp11-tenant-a','org.example.legal','1.0.0','sha256:' || repeat('a',64),'roles','paralegal','merge',1,'{"id":"paralegal"}','operator','2026-10-05T00:00:00Z')$$,
+  '23514', 'new row for relation "project_definition_override" violates check constraint "project_definition_override_operation_check"',
+  'an unknown operation is still rejected by the column check');
 select throws_ok(
   $$insert into core.project_definition_override(project_id,tenant_id,pack_id,pack_version,manifest_digest,kind,local_id,operation,revision,payload_json,actor_id,changed_at)
     values ('gp11-project-a','gp11-tenant-a','org.example.legal','1.0.0','sha256:' || repeat('a',64),'taskTypes','matter','disable',1,null,'operator','2026-10-05T00:00:00Z')$$,
