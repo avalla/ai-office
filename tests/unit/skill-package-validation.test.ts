@@ -690,6 +690,12 @@ describe("task-delivery workflow invariants", () => {
     );
     expect(branchPolicy).toMatch(/merge the integration branch into it/u);
     expect(branchPolicy).toMatch(
+      /Its review covers only its own diff\. An external review command is run against that branch, not against the integration branch/u,
+    );
+    expect(reference("configuration.md")).toMatch(
+      /`\{base\}` stands for the branch the task's pull request targets: the integration branch, or the branch the task is stacked on/u,
+    );
+    expect(branchPolicy).toMatch(
       /A rebase is allowed only on a branch that has not been shared, whose review has not started, and that no other branch is stacked on/u,
     );
     expect(branchPolicy).toMatch(

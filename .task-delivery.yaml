@@ -12,7 +12,8 @@ git:
   stacking_allowed: true
 
 external_review:
-  command: codex review --base origin/main
+  # {base} is the branch the task's pull request targets.
+  command: codex review --base origin/{base}
 
 task_lifecycle:
   enabled: true

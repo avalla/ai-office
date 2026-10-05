@@ -61,14 +61,15 @@ type Layout = Map<string, Scalar | Map<string, Scalar>>;
 /** Marks a section whose only lines were rejected: written, but unreadable. */
 const unreadable = "\u0000unreadable";
 
-const quoteHint = "wrap the whole value in double quotes";
+const quoteHint =
+  "wrap the whole value in quotes: double quotes, writing \\\" and \\\\ for a quote or backslash inside, or single quotes, writing '' for a single quote inside";
 
 /** After a closed quote: nothing, or a comment. */
 const afterClosedQuote = /^(?: +#.*)?$/u;
 
 // Words some YAML readers turn into booleans or null even where a string is
 // meant, so they are never accepted unquoted.
-const typedWord = /^(?:y|n|yes|no|on|off|true|false|null)$/iu;
+const typedWord = /^(?:y|n|yes|no|on|off|true|false|null|e[-+]?[0-9]+)$/iu;
 
 /** Reads one value, or reports why it is outside the accepted layout. */
 function readValue(raw: string): { value: Scalar } | { problem: string } {
@@ -121,7 +122,7 @@ function readValue(raw: string): { value: Scalar } | { problem: string } {
     plain.endsWith(":")
   )
     return {
-      problem: `has an unquoted value that a YAML reader may not take as plain text (it must start with a letter, must not be a word such as yes, no, on, off or null, and must not contain ": "); ${quoteHint}`,
+      problem: `has an unquoted value that a YAML reader may not take as plain text (it must start with a letter, must not be a word such as yes, no, on, off, null or e2, must not contain ": ", and must not end with ":"); ${quoteHint}`,
     };
   return { value: plain };
 }
@@ -171,7 +172,7 @@ function readLayout(source: string, errors: string[]): Layout {
   for (const [index, line] of source.split("\n").entries()) {
     if (/^ *(?:#.*)?$/u.test(line)) continue;
     const at = `line ${index + 1}`;
-    if (!started && /^--- *(?:#.*)?$/u.test(line)) {
+    if (!started && /^---(?: +#.*| *)$/u.test(line)) {
       started = true;
       continue;
     }
@@ -265,25 +266,19 @@ function layoutToObject(layout: Layout): Record<string, unknown> {
 }
 
 /**
- * True when a YAML parser reads the same keys, and the same strings and
- * booleans, as the layout scan. Values the parser types differently (numbers,
- * nulls) are left to the schema check, which reports them by name.
+ * True when a YAML parser reads exactly what the layout scan read: the same
+ * keys, and the same string or boolean under each.
  */
 function agrees(scanned: unknown, parsed: unknown): boolean {
-  if (isRecord(scanned)) {
-    if (!isRecord(parsed)) return false;
-    const keys = Object.keys(scanned);
-    return (
-      keys.length === Object.keys(parsed).length &&
-      keys.every(
-        (key) =>
-          Object.hasOwn(parsed, key) && agrees(scanned[key], parsed[key]),
-      )
-    );
-  }
-  if (typeof parsed === "string" || typeof parsed === "boolean")
-    return scanned === parsed;
-  return !isRecord(parsed);
+  if (!isRecord(scanned)) return scanned === parsed;
+  if (!isRecord(parsed)) return false;
+  const keys = Object.keys(scanned);
+  return (
+    keys.length === Object.keys(parsed).length &&
+    keys.every(
+      (key) => Object.hasOwn(parsed, key) && agrees(scanned[key], parsed[key]),
+    )
+  );
 }
 
 /**
@@ -291,10 +286,16 @@ function agrees(scanned: unknown, parsed: unknown): boolean {
  * problems; an empty array means the configuration respects the contract.
  */
 export function validateTaskDeliveryConfigSource(rawSource: string): string[] {
-  // CRLF is an ordinary line ending; a bare CR is rejected with every other
-  // character that is not printable ASCII.
-  const source = rawSource.replace(/^\uFEFF/u, "").replace(/\r\n/gu, "\n");
+  // No byte-order mark and no CRLF: a tool reading the file line by line
+  // would see a different first key and values ending in a carriage return.
+  const source = rawSource;
   const errors: string[] = [];
+  if (source.startsWith("\uFEFF"))
+    return [
+      "the file starts with a byte-order mark; save it as UTF-8 without BOM",
+    ];
+  if (source.includes("\r\n"))
+    return ["the file uses CRLF line endings; save it with LF line endings"];
   validateCharacters(source, errors);
   // Nothing else can be read reliably until those characters are gone.
   if (errors.length > 0) return errors;

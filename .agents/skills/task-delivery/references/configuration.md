@@ -45,20 +45,29 @@ delete the file instead of emptying it.
 Only this layout is accepted, so that no two readers can take the file
 differently and a repeated or disguised key cannot hide:
 
-- printable ASCII text only: no tabs, control characters, or other characters;
+- printable ASCII text with LF line endings: no byte-order mark, no CRLF, no
+  tabs, no control or other characters, in comments too;
 - unquoted keys, one `key: value` per line with a space after the colon, nested
   keys indented with spaces at one depth under their section;
 - comments on their own line, after a section header, a boolean, or a quoted
   value; an optional leading `---`;
 - booleans written `true` or `false`, lowercase and unquoted;
 - a string unquoted only when it starts with a letter, contains no `: ` or
-  ` #`, and is not a word such as `yes`, `no`, `on`, `off`, or `null`;
-  otherwise wrapped whole in double quotes, where `\"` and `\\` are the only
-  escapes.
+  ` #`, does not end with `:`, and is not a word a YAML reader may type
+  (`y`, `n`, `yes`, `no`, `on`, `off`, `true`, `false`, `null` in any case, or
+  `e` followed by digits);
+- any other string wrapped whole in quotes on one line: double quotes, where
+  `\"` and `\\` are the only escapes, or single quotes, where `''` stands for
+  a single quote.
 
 Quoted keys, flow collections (`{...}`, `[...]`), anchors, aliases, tags, merge
 keys, block scalars, lists, and values continued on a following line are
-rejected.
+rejected. A command that needs several lines belongs in a script.
+
+In `external_review.command`, `{base}` stands for the branch the task's pull
+request targets: the integration branch, or the branch the task is stacked on.
+Replace it before running the command, so that the review covers the task's
+own diff and nothing else.
 
 ## Rules
 

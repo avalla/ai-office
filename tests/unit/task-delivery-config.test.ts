@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   chmodSync,
   cpSync,
@@ -51,6 +51,9 @@ task_lifecycle:
   complete: tracker complete
 `;
 
+const quoteHint =
+  "wrap the whole value in quotes: double quotes, writing \\\" and \\\\ for a quote or backslash inside, or single quotes, writing '' for a single quote inside";
+
 // Every layout problem names the line it was found on.
 const notPlain = expect.stringMatching(/^line \d+\b/u);
 
@@ -86,11 +89,29 @@ describe("task-delivery configuration contract", () => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual([]);
   });
 
-  test("accepts a byte-order mark and CRLF line endings", () => {
+  // A tool reading the file line by line would see a different first key
+  // after a byte-order mark, and values ending in a carriage return.
+  test("rejects a byte-order mark and CRLF line endings", () => {
+    expect(validateTaskDeliveryConfigSource(`\uFEFF${completeConfig}`)).toEqual(
+      ["the file starts with a byte-order mark; save it as UTF-8 without BOM"],
+    );
+    expect(
+      validateTaskDeliveryConfigSource(completeConfig.replace(/\n/gu, "\r\n")),
+    ).toEqual([
+      "the file uses CRLF line endings; save it with LF line endings",
+    ]);
     expect(
       validateTaskDeliveryConfigSource(
-        `\uFEFF${completeConfig.replace(/\n/gu, "\r\n")}`,
+        `integration_branch: main\n\uFEFFgit:\n  stacking_allowed: true\n`,
       ),
+    ).toEqual([
+      "line 2 contains a character that is not printable ASCII (U+FEFF); remove it",
+    ]);
+  });
+
+  test("accepts a file without a final newline", () => {
+    expect(
+      validateTaskDeliveryConfigSource("git:\n  stacking_allowed: true"),
     ).toEqual([]);
   });
 
@@ -163,12 +184,16 @@ describe("task-delivery configuration contract", () => {
     ).toEqual([
       "line 3 is indented differently from the other keys of git; sections are one level deep",
     ]);
-    // Accepted line by line, yet not something a YAML parser can read.
     expect(
       validateTaskDeliveryConfigSource(
         "verification:\n  full: make check\nexternal_review:\n  command: review-tool\n integration_branch: main\n",
       ),
-    ).not.toEqual([]);
+    ).toEqual([
+      "line 5 is indented differently from the other keys of external_review; sections are one level deep",
+    ]);
+    expect(
+      validateTaskDeliveryConfigSource("---#c\nintegration_branch: main\n"),
+    ).toEqual([notPlain]);
   });
 
   test.each([
@@ -483,7 +508,7 @@ describe("task-delivery configuration contract", () => {
   ])("rejects an unquoted value cut short by %s", (_label, source, name) => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual([
       expect.stringContaining(
-        `: ${name} has an unquoted value followed by " #", which YAML reads as a comment; put the comment on its own line, or wrap the whole value in double quotes`,
+        `: ${name} has an unquoted value followed by " #", which YAML reads as a comment; put the comment on its own line, or wrap the whole value in quotes`,
       ),
     ]);
   });
@@ -550,6 +575,10 @@ describe("task-delivery configuration contract", () => {
     "<<",
     "+1",
     "1e3",
+    "e2",
+    "E10",
+    "e-5",
+    "E+0",
     "./run",
     "<placeholder>",
     "v:",
@@ -560,7 +589,7 @@ describe("task-delivery configuration contract", () => {
     );
     expect(errors).toHaveLength(1);
     expect(errors[0]).toMatch(
-      /^line 1(?:: integration_branch (?:has an unquoted value that a YAML reader may not take as plain text .*|must be a string; to use the word as text, )wrap the whole value in double quotes| is not a plain "key: value" line)/u,
+      /^line 1(?:: integration_branch (?:has an unquoted value that a YAML reader may not take as plain text .*|must be a string; to use the word as text, )wrap the whole value in quotes: .*| is not a plain "key: value" line)/u,
     );
     // Quoted, the same text is an ordinary string.
     expect(
@@ -575,7 +604,7 @@ describe("task-delivery configuration contract", () => {
       validateTaskDeliveryConfigSource("verification:\n  full: *.test.ts\n"),
     ).toEqual([
       expect.stringMatching(
-        /^line 2: verification\.full has an unquoted value .*it must start with a letter.* wrap the whole value in double quotes$/u,
+        /^line 2: verification\.full has an unquoted value .*it must start with a letter.* wrap the whole value in quotes: double quotes, .* or single quotes, .*$/u,
       ),
     ]);
     expect(
@@ -589,9 +618,7 @@ describe("task-delivery configuration contract", () => {
     ]);
     expect(
       validateTaskDeliveryConfigSource("verification:\n  full: echo a: b\n"),
-    ).toEqual([
-      expect.stringContaining("wrap the whole value in double quotes"),
-    ]);
+    ).toEqual([expect.stringContaining("wrap the whole value in quotes")]);
     expect(
       validateTaskDeliveryConfigSource("integration_branch:main\n"),
     ).toEqual([expect.stringContaining("with a space after the colon")]);
@@ -603,7 +630,7 @@ describe("task-delivery configuration contract", () => {
     expect(
       validateTaskDeliveryConfigSource('verification:\n  full: "a b" && c\n'),
     ).toEqual([
-      "line 2: verification.full has text after the closing quote; wrap the whole value in double quotes",
+      `line 2: verification.full has text after the closing quote; ${quoteHint}`,
     ]);
     expect(
       validateTaskDeliveryConfigSource('verification:\n  full: "a\\tb"\n'),
@@ -631,7 +658,7 @@ describe("task-delivery configuration contract", () => {
     [
       "a boolean where a string is expected",
       "verification:\n  full: true\n",
-      "line 2: verification.full must be a string; to use the word as text, wrap the whole value in double quotes",
+      `line 2: verification.full must be a string; to use the word as text, ${quoteHint}`,
     ],
     [
       "a scalar where a section is expected",
@@ -646,6 +673,44 @@ describe("task-delivery configuration contract", () => {
     ],
   ])("rejects %s", (_label, source, expected) => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual([expected]);
+  });
+
+  // The line scan decides what the file says; a YAML parser must then read
+  // the same thing. These cases replace the parser to prove the comparison
+  // is what rejects a disagreement.
+  test.each([
+    ["a different value", { integration_branch: "other" }],
+    ["a differently typed value", { integration_branch: 7 }],
+    ["an extra key", { integration_branch: "main", git: {} }],
+    ["a missing key", {}],
+    ["a list", ["main"]],
+    ["nothing", null],
+  ])("rejects a file a YAML parser reads as %s", (_label, parsed) => {
+    const parse = vi.spyOn(Bun.YAML, "parse").mockReturnValue(parsed);
+    try {
+      expect(
+        validateTaskDeliveryConfigSource("integration_branch: main\n"),
+      ).toEqual([
+        expect.stringMatching(
+          /^a YAML parser reads this file differently from its plain "key: value" lines/u,
+        ),
+      ]);
+    } finally {
+      parse.mockRestore();
+    }
+  });
+
+  test("reports a file the YAML parser cannot read", () => {
+    const parse = vi.spyOn(Bun.YAML, "parse").mockImplementation(() => {
+      throw new Error("unexpected token");
+    });
+    try {
+      expect(
+        validateTaskDeliveryConfigSource("integration_branch: main\n"),
+      ).toEqual(["invalid YAML: unexpected token"]);
+    } finally {
+      parse.mockRestore();
+    }
   });
 
   test("reports every problem in one pass", () => {
