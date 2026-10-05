@@ -577,6 +577,13 @@ describe("skill installer", () => {
     expect(contentHash(Buffer.from([0xff]))).not.toBe(
       contentHash(Buffer.from([0xfe])),
     );
+    // In a binary asset 0D 0A is data, not a line ending.
+    expect(contentHash(Buffer.from([0xff, 0x0d, 0x0a]))).not.toBe(
+      contentHash(Buffer.from([0xff, 0x0a])),
+    );
+    expect(contentHash(Buffer.from([0x00, 0x0d, 0x0a]))).not.toBe(
+      contentHash(Buffer.from([0x00, 0x0a])),
+    );
     expect(contentHash(Buffer.from("è"))).not.toBe(
       contentHash(Buffer.from("é")),
     );

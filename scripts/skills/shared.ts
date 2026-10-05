@@ -47,16 +47,19 @@ export function errorMessage(error: unknown): string {
 }
 
 /**
- * Content identity that is stable across LF and CRLF checkouts, so a
+ * Content identity that is stable across LF and CRLF checkouts of text, so a
  * `core.autocrlf` clone does not report every installed copy as drifted.
+ * Anything that is not plain UTF-8 text is hashed byte for byte: in a binary
+ * asset the bytes 0D 0A are data, not a line ending.
  */
 export function contentHash(content: Uint8Array): string {
-  // latin1 maps every byte to one code unit, so non-UTF-8 content keeps its
-  // identity instead of collapsing into replacement characters.
-  const normalized = Buffer.from(content)
-    .toString("latin1")
-    .replace(/\r\n/gu, "\n");
-  return createHash("sha256").update(normalized, "latin1").digest("hex");
+  const bytes = Buffer.from(content);
+  const text = bytes.toString("utf8");
+  const isText =
+    !text.includes("\0") && Buffer.from(text, "utf8").equals(bytes);
+  return createHash("sha256")
+    .update(isText ? Buffer.from(text.replace(/\r\n/gu, "\n"), "utf8") : bytes)
+    .digest("hex");
 }
 
 /**

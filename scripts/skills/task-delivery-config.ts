@@ -46,7 +46,7 @@ function validateSection(
         errors.push(`${keyPath} must be a boolean (true or false, unquoted)`);
     } else if (typeof entry !== "string") {
       errors.push(`${keyPath} must be a string`);
-    } else if (/^[\s\u200B\uFEFF]*$/u.test(entry)) {
+    } else if (entry.trim() === "") {
       errors.push(`${keyPath} must not be empty`);
     }
   }
@@ -58,42 +58,81 @@ type Layout = Map<string, Scalar | Map<string, Scalar>>;
 
 const quoteHint = "wrap the whole value in double quotes";
 
+const afterQuote = "has text after the closing quote";
+
 /** Reads one value, or reports why it is outside the accepted layout. */
 function readValue(raw: string): { value: Scalar } | { problem: string } {
   const text = raw.trim();
   if (text === "" || text.startsWith("#")) return { value: null };
   if (text.startsWith('"')) {
     // Closed on the same line; an open quote would swallow the next lines.
-    const match = /^("(?:[^"\\]|\\.)*")[ \t]*(?:[ \t]#.*)?$/u.exec(text);
+    const match = /^("(?:[^"\\]|\\.)*")(.*)$/u.exec(text);
     if (match === null)
       return {
         problem: "has a double-quoted value that does not end on the same line",
       };
+    if (!/^(?:[ \t]+#.*)?[ \t]*$/u.test(match[2] ?? ""))
+      return { problem: `${afterQuote}; ${quoteHint}` };
     try {
       const decoded: unknown = JSON.parse(match[1] ?? "");
       if (typeof decoded === "string") return { value: decoded };
     } catch {
       // Reported below.
     }
-    return { problem: "has a double-quoted value with an unsupported escape" };
+    return {
+      problem:
+        'has a double-quoted value with an unsupported escape (use \\" \\\\ \\n \\t or \\uXXXX)',
+    };
   }
   if (text.startsWith("'")) {
-    const match = /^'((?:[^']|'')*)'[ \t]*(?:[ \t]#.*)?$/u.exec(text);
+    const match = /^'((?:[^']|'')*)'(.*)$/u.exec(text);
     if (match === null)
       return {
         problem: "has a single-quoted value that does not end on the same line",
       };
+    if (!/^(?:[ \t]+#.*)?[ \t]*$/u.test(match[2] ?? ""))
+      return { problem: `${afterQuote}; ${quoteHint}` };
     return { value: (match[1] ?? "").replace(/''/gu, "'") };
   }
   if (/^[{[&*!|>?%@`,]/u.test(text) || /^[-?:](?:[ \t]|$)/u.test(text))
     return {
       problem: `has a value starting with YAML syntax (flow collections, anchors, aliases, tags, block scalars, and lists are not allowed); for a literal value, ${quoteHint}`,
     };
-  // YAML ends a plain value at " #".
+  // YAML ends a plain value at " #". After a boolean that is clearly a
+  // comment; after anything else it may be part of a command, which would be
+  // cut short without notice.
   const plain = text.replace(/[ \t]+#.*$/u, "");
   if (plain === "true") return { value: true };
   if (plain === "false") return { value: false };
+  if (/^(?:true|false)$/iu.test(plain))
+    return { problem: "must be written in lowercase: true or false" };
+  if (plain !== text)
+    return {
+      problem: `has an unquoted value followed by " #", which YAML reads as a comment; put the comment on its own line, or ${quoteHint}`,
+    };
   return { value: plain };
+}
+
+/**
+ * Characters that make a line look different from what a parser reads: a
+ * bare carriage return, other control and format characters, and spaces and
+ * blanks that are not the ordinary space. None belongs in a settings file.
+ */
+const deceptiveCharacter = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Zs}\u2800\u3164]/u;
+
+function validateCharacters(source: string, errors: string[]): void {
+  for (const [index, line] of source.split("\n").entries()) {
+    const found = [...line].find(
+      (character) =>
+        character !== " " &&
+        character !== "\t" &&
+        deceptiveCharacter.test(character),
+    );
+    if (found !== undefined)
+      errors.push(
+        `line ${index + 1} contains an invisible or control character (U+${(found.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0")}); remove it`,
+      );
+  }
 }
 
 /**
@@ -130,7 +169,9 @@ function readLayout(source: string, errors: string[]): Layout {
     const key = match[2] ?? "";
     const read = readValue(match[3] ?? "");
     if ("problem" in read) {
-      errors.push(`${at}: ${key} ${read.problem}`);
+      const name =
+        indent === "" || section === null ? key : `${section.name}.${key}`;
+      errors.push(`${at}: ${name} ${read.problem}`);
       continue;
     }
     if (indent === "") {
@@ -210,8 +251,11 @@ function agrees(scanned: unknown, parsed: unknown): boolean {
  * problems; an empty array means the configuration respects the contract.
  */
 export function validateTaskDeliveryConfigSource(rawSource: string): string[] {
-  const source = rawSource.replace(/^\uFEFF/u, "").replace(/\r\n?/gu, "\n");
+  // CRLF is an ordinary line ending. A bare CR is not: some readers treat it
+  // as a line break and others do not, so it is rejected with the rest.
+  const source = rawSource.replace(/^\uFEFF/u, "").replace(/\r\n/gu, "\n");
   const errors: string[] = [];
+  validateCharacters(source, errors);
   const scanned = layoutToObject(readLayout(source, errors));
   let parsed: unknown;
   try {

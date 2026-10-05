@@ -33,7 +33,8 @@ They are independent. Decide each explicitly and write both in the pull request.
 - Any change of base or merge-in invalidates earlier verification evidence: run
   verification again on the resulting head. Review evidence stays valid for
   commits that did not change; conflict resolutions are new changes and need
-  review.
+  review. This exception does not cover a required external review, which
+  always runs on the current head.
 - A satisfied Git dependency does not satisfy a task dependency: being stacked
   on A's branch does not mean A's task is accepted.
 - An unrelated task must not inherit another task's unmerged commits.

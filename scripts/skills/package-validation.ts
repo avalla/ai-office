@@ -324,7 +324,11 @@ export function validateSkillPackage(skillRoot: string): string[] {
     );
   const { core, block } = splitExecutorBlock(source, errors);
 
-  const contract = skillContracts[basename(skillRoot)];
+  const skillName = basename(skillRoot);
+  // An own-property lookup: a skill named "constructor" has no contract.
+  const contract = Object.hasOwn(skillContracts, skillName)
+    ? skillContracts[skillName]
+    : undefined;
   if (contract !== undefined) {
     for (const requiredFile of contract.requiredFiles)
       if (!files.includes(requiredFile))

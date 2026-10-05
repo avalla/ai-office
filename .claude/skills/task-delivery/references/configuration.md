@@ -50,8 +50,10 @@ keys, block scalars, lists, and values continued on a following line are
 rejected.
 
 Write a value plainly when it is simple. Wrap the whole value in double quotes
-when it starts with a special character or contains `: ` or ` #`: an unquoted
-` #` starts a comment, and the rest of the line is not part of the value.
+when it starts with a special character or contains `: ` or ` #`; a comment
+may follow a boolean or a quoted value, never an unquoted command. Booleans
+are lowercase. Control characters, invisible characters, and spaces other than
+the ordinary space are rejected anywhere in the file.
 
 ## Rules
 

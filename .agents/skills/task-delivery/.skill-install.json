@@ -3,13 +3,13 @@
   "skill": "task-delivery",
   "version": "0.1.0",
   "files": {
-    "SKILL.md": "3f4fff4983bd5c508eb7e2e300adb0bc9bbc774770cb8e787993aaf5a68c6134",
+    "SKILL.md": "e0991bcc106b86cb40b42708f6468a0bc1d58829f5fadcbfd2099245c1529b23",
     "assets/pr-template.md": "042cd175402f40447a0f37ca548d9fec08e76f1428e9b9d75262f79613c7c1b7",
     "assets/task-delivery.example.yaml": "da4c61f1d449b1d7cf42339f6d9e4e50871e76034d919a9db0bb579b1405a3af",
-    "references/branch-policy.md": "febffd7e4fe940b44dd19fda97fbfc07ddabbda574fb9e5859cc83ee9b425893",
-    "references/configuration.md": "5377977c4f3ce87ee0d64cac08e4f8acea58800509650a6729fa20ade317008e",
+    "references/branch-policy.md": "c72d0a188b359dae51b9c8433d3a7ba48d46f5a2d2ebb26ebe5d2b47cda73819",
+    "references/configuration.md": "70b605fff2a643d6acb60d0ddaceeea80560c0414ac235d079d6419ae1b063ab",
     "references/evidence.md": "9a33d095d7a61bdde24c52c9baf9bce9f827c514fa0b2c52fb484ae3729a8c5f",
-    "references/lifecycle.md": "2a797e38c03a5007be1039e7597256109bd3563f3be1aee8dbfbc96bf67f3772",
+    "references/lifecycle.md": "3bc6ed60c9474a5f625a1a5b1e57b31e0833fa8f970dc359d528918260eb1ed1",
     "references/qa-checklist.md": "e9a9419ec6f8a90dd927ee86593b1d56d059b82844d0365450b7f7375ccd07e5",
     "references/review-checklist.md": "216d0dd0175e2acb43aa9600a7c3f8e8792dcf29cf940b50bc3c6de834500862",
     "references/stop-conditions.md": "dc38631100a3a1a5f643f4c61389f28aea8a5eed1906386b757ec06f60f770ea"

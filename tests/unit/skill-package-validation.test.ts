@@ -54,6 +54,17 @@ describe("skill package validation", () => {
     expect(validateSkills()).toEqual([]);
   });
 
+  test("a skill named like an Object property has no inherited contract", () => {
+    const { root, skillRoot } = repositoryCopy();
+    const renamed = join(root, "skills", "constructor");
+    cpSync(skillRoot, renamed, { recursive: true });
+    rewrite(join(renamed, "SKILL.md"), (source) =>
+      source.replace(/^name: task-delivery$/mu, "name: constructor"),
+    );
+
+    expect(validateSkillPackage(renamed)).toEqual([]);
+  });
+
   test("rejects a missing SKILL.md", () => {
     const { skillRoot } = repositoryCopy();
     rmSync(join(skillRoot, "SKILL.md"));

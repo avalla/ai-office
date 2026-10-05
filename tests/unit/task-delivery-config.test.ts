@@ -86,15 +86,68 @@ describe("task-delivery configuration contract", () => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual([]);
   });
 
-  test("accepts a byte-order mark and CRLF or CR line endings", () => {
+  test("accepts a byte-order mark and CRLF line endings", () => {
     expect(
       validateTaskDeliveryConfigSource(
         `\uFEFF${completeConfig.replace(/\n/gu, "\r\n")}`,
       ),
     ).toEqual([]);
+  });
+
+  // Some readers break a line at a bare carriage return and others do not,
+  // so text after it can be a key for one and a comment for another.
+  test("rejects a bare carriage return that hides keys inside a comment", () => {
+    expect(
+      validateTaskDeliveryConfigSource(
+        "# review is off for now:\rexternal_review: # see docs\r  command: review-tool\ngit:\n  stacking_allowed: false # default\r  worktree_required: true\n",
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "line 1 contains an invisible or control character (U+000D); remove it",
+        "line 3 contains an invisible or control character (U+000D); remove it",
+      ]),
+    );
     expect(
       validateTaskDeliveryConfigSource(completeConfig.replace(/\n/gu, "\r")),
-    ).toEqual([]);
+    ).not.toEqual([]);
+  });
+
+  test.each([
+    [
+      "a word joiner as a command",
+      "external_review:\n  command: \u2060\n",
+      "2060",
+    ],
+    [
+      "a quoted zero-width joiner",
+      'external_review:\n  command: "\u200D"\n',
+      "200D",
+    ],
+    [
+      "a zero-width space inside a name",
+      "integration_branch: ma\u200Bin\n",
+      "200B",
+    ],
+    ["a soft hyphen", "integration_branch: \u00AD\n", "00AD"],
+    ["a Hangul filler", "integration_branch: \u3164\n", "3164"],
+    ["a braille blank", "integration_branch: \u2800\n", "2800"],
+    ["a no-break space", "integration_branch:\u00A0main\n", "00A0"],
+    ["a NUL character", 'integration_branch: "\u0000"\n', "0000"],
+    [
+      "a bidirectional override in a comment",
+      "git:\n  worktree_required: true # \u202Eeslaf\n",
+      "202E",
+    ],
+    ["a line separator", "git:\u2028  worktree_required: true\n", "2028"],
+    ["a form feed", "integration_branch: main\f\n", "000C"],
+  ])("rejects %s", (_label, source, codePoint) => {
+    expect(validateTaskDeliveryConfigSource(source)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          `contains an invisible or control character (U+${codePoint})`,
+        ),
+      ]),
+    );
   });
 
   test("rejects malformed YAML", () => {
@@ -315,7 +368,7 @@ describe("task-delivery configuration contract", () => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual(
       expect.arrayContaining([
         expect.stringMatching(
-          /^line \d+: \w+ has a (?:double|single)-quoted value/u,
+          /^line \d+: [\w.]+ has (?:a (?:double|single)-quoted value|text after the closing quote)/u,
         ),
       ]),
     );
@@ -377,11 +430,6 @@ describe("task-delivery configuration contract", () => {
       "it's: fine",
     ],
     [
-      "a trailing comment",
-      "verification:\n  full: make check # all of it\n",
-      "make check",
-    ],
-    [
       "a quoted value and a comment",
       'verification:\n  full: "make # not a comment" # comment\n',
       "make # not a comment",
@@ -397,13 +445,63 @@ describe("task-delivery configuration contract", () => {
     },
   );
 
+  // YAML cuts an unquoted value at " #". After a boolean that is a comment;
+  // inside a command it would silently run a different command.
+  test.each([
+    [
+      "an issue reference",
+      "verification:\n  targeted: tool issue view #123\n",
+      "verification.targeted",
+    ],
+    [
+      "a hash inside an inner quoted span",
+      'external_review:\n  command: review-tool --title "fix #12"\n',
+      "external_review.command",
+    ],
+    [
+      "a trailing comment on a command",
+      "verification:\n  full: make check # all of it\n",
+      "verification.full",
+    ],
+    [
+      "a trailing comment on a branch name",
+      "integration_branch: main # default\n",
+      "integration_branch",
+    ],
+  ])("rejects an unquoted value cut short by %s", (_label, source, name) => {
+    expect(validateTaskDeliveryConfigSource(source)).toEqual([
+      expect.stringContaining(
+        `: ${name} has an unquoted value followed by " #", which YAML reads as a comment; put the comment on its own line, or wrap the whole value in double quotes`,
+      ),
+    ]);
+  });
+
+  test("still accepts comments after booleans, quoted values, and section headers", () => {
+    expect(
+      validateTaskDeliveryConfigSource(
+        "git: # policy\n  worktree_required: true # always\nverification:\n  full: \"make check\" # all of it\n  targeted: 'make #1' # quoted hash\n",
+      ),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["True", "git:\n  stacking_allowed: True\n"],
+    ["FALSE", "task_lifecycle:\n  enabled: FALSE\n"],
+  ])("tells the author to write %s in lowercase", (_label, source) => {
+    expect(validateTaskDeliveryConfigSource(source)).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/must be written in lowercase: true or false$/u),
+      ]),
+    );
+  });
+
   test("names the line and the fix for common slips", () => {
     expect(
       validateTaskDeliveryConfigSource("verification:\n  full: *.test.ts\n"),
     ).toEqual(
       expect.arrayContaining([
         expect.stringMatching(
-          /^line 2: full has a value starting with YAML syntax .* wrap the whole value in double quotes$/u,
+          /^line 2: verification\.full has a value starting with YAML syntax .* wrap the whole value in double quotes$/u,
         ),
       ]),
     );
@@ -423,8 +521,12 @@ describe("task-delivery configuration contract", () => {
       ),
     ).toEqual([]);
     expect(
-      validateTaskDeliveryConfigSource('integration_branch: "​"\n'),
-    ).toEqual(["integration_branch must not be empty"]);
+      validateTaskDeliveryConfigSource('verification:\n  full: "a b" && c\n'),
+    ).toEqual(
+      expect.arrayContaining([
+        "line 2: verification.full has text after the closing quote; wrap the whole value in double quotes",
+      ]),
+    );
   });
 
   test.each([
