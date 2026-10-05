@@ -383,7 +383,7 @@ export function defineProjectStorageContracts(
           { ...omission, source: { ...omission.source, kind: "agents" } },
           // An omission carries no payload.
           { ...omission, payload: { id: "counsel" } },
-        ] as (typeof omission)[])
+        ] as unknown as (typeof omission)[])
           await expect(
             definitions().replace(
               { projectId, revision: 1, owned: [], overrides: [invalid] },

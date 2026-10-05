@@ -128,6 +128,7 @@ describe("migration upgrades", () => {
       expect(migrate(database, migrations).applied).toEqual([
         "0042_project_definition_ownership.sql",
         "0043_requirement_updated_event.sql",
+        "0044_project_role_omission.sql",
       ]);
       expect(
         database.query("SELECT * FROM role WHERE id='role'").get(),
@@ -245,6 +246,7 @@ describe("migration upgrades", () => {
         "0041_project_pack_binding.sql",
         "0042_project_definition_ownership.sql",
         "0043_requirement_updated_event.sql",
+        "0044_project_role_omission.sql",
       ]);
       expect(
         database
@@ -436,7 +438,7 @@ describe("migration upgrades", () => {
         .run(definition, timestamp, timestamp);
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0043_requirement_updated_event.sql",
+        "0044_project_role_omission.sql",
       );
       const stored = database
         .query<{ manifest_json: string }, []>(
@@ -521,7 +523,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0043_requirement_updated_event.sql",
+        "0044_project_role_omission.sql",
       );
       expect(
         database
@@ -631,6 +633,7 @@ describe("migration upgrades", () => {
 
     expect(migrate(database, migrations).applied).toEqual([
       "0043_requirement_updated_event.sql",
+      "0044_project_role_omission.sql",
     ]);
     insertEvent.run(
       "updated",
@@ -725,6 +728,7 @@ describe("migration upgrades", () => {
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
+      "0044_project_role_omission.sql",
     ]);
     expect(
       database
@@ -804,6 +808,7 @@ describe("migration upgrades", () => {
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
+      "0044_project_role_omission.sql",
     ]);
     expect(
       database
@@ -963,6 +968,7 @@ describe("migration upgrades", () => {
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
+      "0044_project_role_omission.sql",
     ]);
     expect(
       database
@@ -1026,6 +1032,7 @@ describe("migration upgrades", () => {
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
+      "0044_project_role_omission.sql",
     ]);
     database
       .prepare(
@@ -1363,6 +1370,7 @@ describe("migration upgrades", () => {
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
+      "0044_project_role_omission.sql",
     ]);
     expect(
       upgraded
@@ -1428,6 +1436,7 @@ describe("migration upgrades", () => {
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
+      "0044_project_role_omission.sql",
     ]);
     expect(
       database

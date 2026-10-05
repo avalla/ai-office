@@ -121,6 +121,7 @@ test("SQLite upgrade backfills authoritative execution and keeps the marker mono
       "0041_project_pack_binding.sql",
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
+      "0044_project_role_omission.sql",
     ]);
     expect(migrate(database, migrations).applied).toEqual([]);
     const rows = database
