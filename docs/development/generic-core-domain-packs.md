@@ -542,8 +542,10 @@ tuple. The new payload keeps the fields the project set and takes every other
 descriptive field from the new template, so both sides' information is kept
 and the project's presentation wins where they overlap. The outcome is
 `converted_to_replace`. Because the entry changes, its entry revision is
-incremented and the approving operator and time are recorded on it. Any other
-use is an `invalid_resolution` and blocks. A retained role
+incremented and the approving operator and time are recorded on it. For any
+other conflict it is an `invalid_resolution` and blocks; like every
+resolution, one that matches no conflict is listed under `ignoredResolutions`
+and changes nothing. A retained role
 (`retain_as_project_owned`) becomes a project-added role, has a new
 `project:roles/<localId>` identity and no capabilities; the plan lists the
 removal of its pack capabilities.
