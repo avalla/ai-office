@@ -787,6 +787,290 @@ profiles:
     }
   });
 
+  test("omits a role, approves a capability change and converts an extension over the socket", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-role-archetype-cli-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const installedPacks = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    const template = parseDomainPackManifest(
+      readFileSync(
+        new URL("../fixtures/domain-pack/custom.json", import.meta.url),
+      ),
+    );
+    const register = (version: string, roles: object[]) => {
+      const manifest = {
+        ...template,
+        version,
+        contributions: {
+          ...template.contributions,
+          roles,
+          capabilities: [{ id: "draft" }, { id: "review" }, { id: "sign" }],
+        },
+      } as unknown as typeof template;
+      const bytes = new TextEncoder().encode(
+        JSON.stringify({
+          ...manifest,
+          manifestDigest: computeManifestDigest(manifest),
+        }),
+      );
+      return installedPacks.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: {
+          installerId: "local-distribution",
+          reference: `bundled/custom-${version}`,
+        },
+      });
+    };
+    const v1 = register("1.0.0", [
+      { id: "counsel", title: "Counsel", capabilities: ["review", "draft"] },
+      { id: "clerk", capabilities: ["draft"] },
+      { id: "paralegal" },
+    ]);
+    // counsel gains `sign`, clerk changes, paralegal gains a title.
+    const v2 = register("2.0.0", [
+      {
+        id: "counsel",
+        title: "Counsel",
+        capabilities: ["sign", "review", "draft"],
+      },
+      { id: "clerk", title: "Clerk", capabilities: ["draft"] },
+      { id: "paralegal", title: "Paralegal", description: "Assists" },
+    ]);
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+      installedPacks,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+    try {
+      await waitForDaemon(socket.socketPath);
+      const created = await invoke(["project:create", "Role fixture"]);
+      const projectId = created.stdout[0]!.replace("Project created: ", "");
+      expect(
+        (
+          await invoke([
+            "project:pack:apply",
+            "--project",
+            projectId,
+            "--packs",
+            JSON.stringify([v1]),
+            "--expected-revision",
+            "0",
+          ])
+        ).code,
+      ).toBe(0);
+      const define = (revision: number, mutation: object) =>
+        invoke([
+          "project:definition:apply",
+          "--project",
+          projectId,
+          "--mutation",
+          JSON.stringify(mutation),
+          "--expected-revision",
+          String(revision),
+        ]);
+      const source = (pack: typeof v1, localId: string) => ({
+        ...pack,
+        kind: "roles",
+        localId,
+      });
+      // A project payload cannot carry capabilities.
+      const refused = await define(0, {
+        action: "put_override",
+        source: source(v1, "counsel"),
+        operation: "replace",
+        payload: { id: "counsel", capabilities: ["sign"] },
+      });
+      expect(refused.code).toBe(1);
+      expect(
+        (
+          await define(0, {
+            action: "put_override",
+            source: source(v1, "clerk"),
+            operation: "disable",
+          })
+        ).code,
+      ).toBe(0);
+      expect(
+        (
+          await define(1, {
+            action: "put_override",
+            source: source(v1, "paralegal"),
+            operation: "extend",
+            payload: { title: "Our paralegal" },
+          })
+        ).code,
+      ).toBe(0);
+      expect(
+        (
+          await define(2, {
+            action: "put_owned",
+            kind: "roles",
+            id: "liaison",
+            enabled: true,
+            payload: { id: "liaison", title: "Liaison" },
+          })
+        ).code,
+      ).toBe(0);
+      const show = async () =>
+        JSON.parse(
+          (
+            await invoke([
+              "project:configuration:show",
+              "--project",
+              projectId,
+              "--json",
+            ])
+          ).stdout[0]!,
+        ) as {
+          ok: boolean;
+          configuration: {
+            configurationDigest: string;
+            roles: { roleId: string }[];
+            omittedRoles: string[];
+          };
+        };
+      const before = await show();
+      expect(before.configuration.omittedRoles).toEqual([
+        "pack:org.example.custom/roles/clerk",
+      ]);
+
+      const upgrade = (...extra: string[]) =>
+        invoke([
+          "project:pack:upgrade",
+          "--project",
+          projectId,
+          "--packs",
+          JSON.stringify([v2]),
+          ...extra,
+          "--json",
+        ]);
+      const blocked = await upgrade();
+      expect(blocked.code).toBe(1);
+      expect(JSON.parse(blocked.stdout[0]!)).toMatchObject({
+        issues: [
+          { code: "unresolved_override_conflict", detail: "extend_conflict" },
+        ],
+      });
+      const resolutions = JSON.stringify([
+        { source: source(v1, "paralegal"), action: "convert_to_replace" },
+      ]);
+      const preview = await upgrade("--resolutions", resolutions);
+      expect(preview.code).toBe(0);
+      const plan = JSON.parse(preview.stdout[0]!) as {
+        planDigest: string;
+        prospectiveConfigurationDigest: string;
+      };
+      expect(plan).toMatchObject({
+        issues: [],
+        overrides: [
+          { operation: "disable", outcome: "retargeted", upstream: "changed" },
+          { operation: "extend", outcome: "converted_to_replace" },
+        ],
+        roleCapabilityChanges: {
+          availability: "available",
+          changes: [
+            {
+              roleId: "pack:org.example.custom/roles/counsel",
+              added: ["sign"],
+              removed: [],
+              customized: false,
+            },
+          ],
+        },
+        targetRoleCapabilities: [
+          {
+            roleId: "pack:org.example.custom/roles/clerk",
+            capabilities: ["draft"],
+          },
+          {
+            roleId: "pack:org.example.custom/roles/counsel",
+            capabilities: ["draft", "review", "sign"],
+          },
+        ],
+      });
+      expect(JSON.stringify(plan)).not.toContain("Our paralegal");
+      const applied = await upgrade(
+        "--resolutions",
+        resolutions,
+        "--approve",
+        plan.planDigest,
+      );
+      expect(applied.code).toBe(0);
+      expect(JSON.parse(applied.stdout[0]!)).toMatchObject({
+        result: "applied",
+        bindingRevision: 2,
+        definitionRevision: 4,
+        packs: [v2],
+      });
+
+      const after = await show();
+      expect(after).toEqual({
+        ok: true,
+        configuration: expect.objectContaining({
+          configurationDigest: plan.prospectiveConfigurationDigest,
+          selectedPacks: [v2],
+          roles: [
+            {
+              roleId: "pack:org.example.custom/roles/counsel",
+              effectiveId: `pack:org.example.custom@2.0.0#${v2.manifestDigest}/roles/counsel`,
+              origin: "pack_owned",
+              title: "Counsel",
+              capabilities: [
+                "pack:org.example.custom/capabilities/draft",
+                "pack:org.example.custom/capabilities/review",
+                "pack:org.example.custom/capabilities/sign",
+              ],
+              customization: "none",
+            },
+            {
+              roleId: "pack:org.example.custom/roles/paralegal",
+              effectiveId: `pack:org.example.custom@2.0.0#${v2.manifestDigest}/roles/paralegal`,
+              origin: "pack_owned",
+              title: "Our paralegal",
+              description: "Assists",
+              capabilities: [],
+              customization: "replace",
+            },
+            {
+              roleId: "project:roles/liaison",
+              effectiveId: "project:roles/liaison",
+              origin: "project_owned",
+              title: "Liaison",
+              capabilities: [],
+              customization: "none",
+            },
+          ],
+          omittedRoles: ["pack:org.example.custom/roles/clerk"],
+        }) as unknown,
+      });
+      // Stable identities are the same before and after the upgrade.
+      expect(after.configuration.roles.map((role) => role.roleId)).toEqual(
+        before.configuration.roles.map((role) => role.roleId),
+      );
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
   test("previews and applies an explicit project pack binding over the socket", async () => {
     const projectRoot = mkdtempSync(
       join(tmpdir(), "ai-office-pack-binding-cli-"),

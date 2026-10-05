@@ -28,6 +28,9 @@ import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipel
 import {
   createPortableProjectArchive,
   portableProjectArchiveSchemaV6,
+  portableProjectArchiveSchemaV7,
+  portableProjectFormatVersionFor,
+  portableProjectFormatVersions,
   portableProjectManifestFor,
   portableStateAtFormatVersion,
   portableStateChecksum,
@@ -274,6 +277,213 @@ describe("project portability", () => {
         owned("roles", { id: "custom", title: "a".repeat(16_001) }),
       ).success,
     ).toBe(false);
+  });
+
+  test("format 7 carries a role omission; format 6 keeps its prompt-only disable rule", () => {
+    const v6 = portableProjectArchiveSchemaV6.shape.state.shape.definitions;
+    const v7 = portableProjectArchiveSchemaV7.shape.state.shape.definitions;
+    const override = (
+      kind: string,
+      operation: "replace" | "extend" | "disable",
+      payload?: object,
+    ) => ({
+      revision: 1,
+      owned: [],
+      overrides: [
+        {
+          origin: "project_override",
+          source: {
+            id: "org.example.legal",
+            version: "1.0.0",
+            manifestDigest: `sha256:${"a".repeat(64)}`,
+            kind,
+            localId: "custom",
+          },
+          operation,
+          revision: 1,
+          ...(payload === undefined ? {} : { payload }),
+          actorId: "operator",
+          changedAt: "2026-10-05T00:00:00.000Z",
+        },
+      ],
+    });
+    const owned = (payload: object) => ({
+      revision: 1,
+      owned: [
+        {
+          origin: "project_owned",
+          kind: "roles",
+          id: "custom",
+          revision: 1,
+          enabled: true,
+          payload,
+          actorId: "operator",
+          changedAt: "2026-10-05T00:00:00.000Z",
+        },
+      ],
+      overrides: [],
+    });
+    expect(portableProjectFormatVersions).toEqual([1, 2, 3, 4, 5, 6, 7]);
+
+    expect(v6.safeParse(override("roles", "disable")).success).toBe(false);
+    expect(v7.safeParse(override("roles", "disable")).success).toBe(true);
+    for (const schema of [v6, v7]) {
+      expect(schema.safeParse(override("prompts", "disable")).success).toBe(
+        true,
+      );
+      // Every other kind stays without an omission contract in both formats.
+      for (const kind of [
+        "taskTypes",
+        "agents",
+        "artifactTypes",
+        "evidenceTypes",
+        "knowledge",
+      ])
+        expect(schema.safeParse(override(kind, "disable")).success).toBe(false);
+      // An omission carries no payload.
+      expect(
+        schema.safeParse(override("roles", "disable", { id: "custom" }))
+          .success,
+      ).toBe(false);
+      // Capabilities belong to the pack: no project payload may carry them.
+      for (const state of [
+        override("roles", "replace", { id: "custom", capabilities: ["file"] }),
+        override("roles", "replace", { id: "custom", capabilities: [] }),
+        override("roles", "extend", { title: "T", capabilities: ["file"] }),
+        owned({ id: "custom", capabilities: ["file"] }),
+      ])
+        expect(schema.safeParse(state).success).toBe(false);
+      expect(
+        schema.safeParse(override("roles", "replace", { id: "custom" }))
+          .success,
+      ).toBe(true);
+      expect(schema.safeParse(owned({ id: "custom" })).success).toBe(true);
+    }
+  });
+
+  test("a role omission is exported as format 7, round-trips, and cannot be written as format 6", async () => {
+    const source = temporaryRoot("ai-office-gp11-portable-project-");
+    writeFileSync(join(source, "package.json"), '{"name":"gp11"}\n');
+    const origin = openRuntime(
+      temporaryRoot("ai-office-gp11-portable-source-"),
+    );
+    const projectId = (await importProject(origin, source)).projectId;
+    const now = new Date("2026-10-05T00:00:00.000Z");
+    const tuple = {
+      id: parseDomainPackId("org.example.legal"),
+      version: parseDomainPackVersion("1.0.0"),
+      manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+    };
+    const definitions = new SqliteProjectDefinitionRepository(origin.database);
+    const entry = (
+      kind: "roles" | "prompts",
+      localId: string,
+      operation: "replace" | "disable",
+    ) => ({
+      origin: "project_override" as const,
+      source: { ...tuple, kind, localId },
+      operation,
+      revision: 1,
+      ...(operation === "replace" ? { payload: { id: localId } } : {}),
+      actorId: "operator",
+      changedAt: now.toISOString(),
+    });
+    // Without a role omission the state is still written as format 6.
+    await definitions.replace(
+      {
+        projectId,
+        revision: 0,
+        owned: [],
+        overrides: [
+          entry("roles", "counsel", "replace"),
+          entry("prompts", "greeting", "disable"),
+        ],
+      },
+      0,
+      now,
+    );
+    const plain = await origin.service.backup(projectId);
+    expect(plain.archive.manifest.formatVersion).toBe(6);
+    expect(portableProjectFormatVersionFor(plain.archive.state)).toBe(6);
+
+    const omitted = await definitions.replace(
+      {
+        projectId,
+        revision: 1,
+        owned: [],
+        overrides: [
+          entry("roles", "clerk", "disable"),
+          entry("roles", "counsel", "replace"),
+          entry("prompts", "greeting", "disable"),
+        ],
+      },
+      1,
+      now,
+    );
+    const backup = await origin.service.backup(projectId);
+    expect(backup.archive.manifest.formatVersion).toBe(7);
+    expect(backup.archive.manifest.contents).toEqual(
+      plain.archive.manifest.contents,
+    );
+    expect(backup.archive.state.definitions).toEqual({
+      revision: 2,
+      owned: [],
+      overrides: omitted.overrides,
+    });
+
+    // Format 6 cannot carry the omission, as a producer or as a reader.
+    const asFormat = (formatVersion: 6 | 7) =>
+      portableProjectManifestFor({
+        formatVersion,
+        projectIdentity: backup.archive.manifest.projectIdentity,
+        createdAt: backup.archive.manifest.createdAt,
+        revision: backup.archive.manifest.revision,
+      });
+    expect(() =>
+      createPortableProjectArchive({
+        manifest: asFormat(6),
+        state: backup.archive.state,
+      }),
+    ).toThrow(
+      "Portable project archive format version 6 cannot carry a role omission; write format version 7",
+    );
+    const serialized = serializePortableProjectArchive(backup.archive);
+    expect(() =>
+      parsePortableProjectArchive(
+        serialized.replace('"formatVersion":7', '"formatVersion":6'),
+      ),
+    ).toThrow(/Portable project archive state\.definitions\.overrides/u);
+    // The format-6 archive of the earlier state is still readable as written.
+    expect(
+      parsePortableProjectArchive(
+        serializePortableProjectArchive(plain.archive),
+      ),
+    ).toEqual(plain.archive);
+
+    const destination = openRuntime(
+      temporaryRoot("ai-office-gp11-portable-destination-"),
+    );
+    const restored = await destination.service.restore({
+      archive: parsePortableProjectArchive(serialized),
+      rootPath: source,
+    });
+    expect(
+      await new SqliteProjectDefinitionRepository(destination.database).get(
+        restored.projectId,
+      ),
+    ).toEqual({ ...omitted, projectId: restored.projectId });
+    const again = await destination.service.backup(restored.projectId);
+    expect(again.archive.manifest.formatVersion).toBe(7);
+    expect(again.archive.state).toEqual(backup.archive.state);
+    // Restoring the same archive over identical local state is idempotent.
+    await expect(
+      destination.service.restore({
+        archive: parsePortableProjectArchive(serialized),
+        rootPath: source,
+      }),
+    ).resolves.toMatchObject({ projectId: restored.projectId });
+    origin.database.close();
+    destination.database.close();
   });
 
   test("v6 restore recomputes the same derived configuration with a different installer reference", async () => {
