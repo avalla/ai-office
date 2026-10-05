@@ -327,7 +327,6 @@ describe("bounded Claude worker", () => {
         expect(existsSync(root)).toBe(false);
       }
     },
-    30_000,
   );
 
   test.skipIf(process.platform === "win32")(

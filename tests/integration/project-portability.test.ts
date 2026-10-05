@@ -611,7 +611,6 @@ describe("project portability", () => {
     origin.database.close();
     destination.database.close();
   });
-  // Two full backup/restore round trips; slow when the suite runs in parallel.
   test("v5 carries exact selection to an unavailable host; v4 restores empty", async () => {
     const sourceRuntime = temporaryRoot("ai-office-gp05-portable-source-");
     const targetRuntime = temporaryRoot("ai-office-gp05-portable-target-");
@@ -703,7 +702,7 @@ describe("project portability", () => {
         oldDestination.database.close();
       }
     }
-  }, 30_000);
+  });
 
   test("backs up and restores one logical project at a different machine path", async () => {
     const machineA = temporaryRoot("ai-office-portable-a-");

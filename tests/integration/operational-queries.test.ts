@@ -179,8 +179,6 @@ async function seedProject(
     .run(`repo-${id}`, id, now.toISOString());
 }
 
-// Seeds and scans 10,000 tasks twice by design; the default 5 s bound is too
-// tight when the whole suite runs in parallel.
 test("filtered task pages expose linear projection cost during live refresh", async () => {
   const context = await fixture();
   await seedProject(context, "large-project", "Large");
@@ -214,7 +212,7 @@ test("filtered task pages expose linear projection cost during live refresh", as
     taskQuery: { search: "does-not-match" },
   });
   expect(listTaskCalls).toBe(expectedBatches * 2);
-}, 30_000);
+});
 
 async function seedAgent(
   context: Awaited<ReturnType<typeof fixture>>,
