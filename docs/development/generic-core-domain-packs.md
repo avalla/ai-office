@@ -122,6 +122,9 @@ OfficeManifest rows and run pins are left unchanged.
 
 The application service previews the current and proposed selection, added,
 removed and changed tuples, and any GP-04 availability or dependency error.
+Since GP-11 the preview also reports role capability changes, and preview and
+apply refuse a change to an existing role's capability set
+(`role_capability_change_requires_upgrade`); see the GP-11 section.
 Preview is read-only. Apply checks the expected revision, validates the exact
 proposed tuples against the public GP-04 resolver, replaces the selection in
 one transaction and appends a project audit event with previous/new revisions,
@@ -515,8 +518,12 @@ The capability set of a pack role is owned by the selected pack version:
   rejects it in stored state, and the portable archive schema rejects it.
 - Project-added roles have no capabilities in GP-11.
 
-In the role view a capability is reported by its stable ID,
-`pack:<packId>/capabilities/<localId>`, in ascending local-ID order.
+A capability is written in two forms. The role view of
+`project:configuration:show` reports it by its stable ID,
+`pack:<packId>/capabilities/<localId>`, in ascending local-ID order. The
+upgrade plan, the `project:pack:preview` report and the upgrade audit event
+list bare capability local IDs under a `roleId`; the pack is the one named in
+that `roleId`, because a role can only reference capabilities of its own pack.
 
 ### Upgrade and merge semantics
 
@@ -545,7 +552,11 @@ and the project's presentation wins where they overlap. The outcome is
 incremented and the approving operator and time are recorded on it. For any
 other conflict it is an `invalid_resolution` and blocks; like every
 resolution, one that matches no conflict is listed under `ignoredResolutions`
-and changes nothing. A retained role
+and changes nothing. The copied template fields become project values from
+then on: a later upstream change to them is only reported as
+`upstream: changed` and does not replace them. The converted payload is a
+definition body, so it is not in the plan; approval binds it through
+`prospectiveConfigurationDigest`. A retained role
 (`retain_as_project_owned`) becomes a project-added role, has a new
 `project:roles/<localId>` identity and no capabilities; the plan lists the
 removal of its pack capabilities.
@@ -555,8 +566,32 @@ resets an override or drops an upstream change: every upstream change under a
 customization is reported on the override, and every case that cannot keep
 both sides blocks until an operator resolves it.
 
-Role capability changes are never incidental. The upgrade report adds two
-fields, both covered by `planDigest`:
+A change to the capability set of an existing role is never incidental:
+`project:pack:upgrade` is the only command that carries one out, under an
+approved plan. `project:pack:apply` refuses it. Its preview
+(`project:pack:preview`) reports `roleCapabilityChanges` between the current
+and proposed resolved closures, computed by the same function as the upgrade
+plan and without the `customized` mark, and adds the issue
+`role_capability_change_requires_upgrade` when:
+
+- a role present in both closures (same `roleId`) would have a different
+  capability set; or
+- the selection changes the tuple of an already selected pack, the current
+  closure cannot be resolved because its artifacts are no longer installed,
+  and a pack of the proposed closure that is neither a kept exact tuple (or
+  one of its exact dependencies) nor a newly selected pack declares role
+  capabilities. The change cannot then be shown to be capability-neutral.
+
+`project:pack:apply` fails with the same code, writes nothing and names
+`project:pack:upgrade`. It still applies, as an explicit selection change, the
+addition of a pack that was not selected and the removal of a pack, including
+their roles and capabilities, and a version change that only adds or removes
+roles or leaves every existing role's set unchanged. A selection without role
+capabilities behaves as in GP-05, and an identical selection remains a no-op
+that reads no artifact. The preview also reports the issue when the proposed
+closure's manifests cannot be read back.
+
+The upgrade report adds two fields, both covered by `planDigest`:
 
 - `roleCapabilityChanges`: for every role whose capability set differs between
   the old and new resolved closures, including added and removed roles that
