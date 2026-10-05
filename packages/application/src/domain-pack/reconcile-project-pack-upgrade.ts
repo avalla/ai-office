@@ -32,6 +32,7 @@ import {
   compareOwnedDefinitions,
   parseExactSource,
   sourceKey,
+  type DescriptiveDefinition,
   type ExactPackDefinitionSource,
   type OverrideOperation,
   type ProjectDefinitionOverride,
@@ -46,14 +47,22 @@ import {
 import {
   ProjectConfigurationResolutionError,
   resolveProjectConfiguration,
+  stablePackDefinitionId,
 } from "./resolve-project-configuration.ts";
 
 /**
  * An operator's reviewed answer to one override that cannot follow its pack.
- * Nothing is retained, moved or removed without one.
+ * Nothing is retained, converted, moved or removed without one.
+ * `convert_to_replace` answers an `extend_conflict` only.
  */
 export type OverrideResolutionAction =
-  "retain_as_project_owned" | "remove_override";
+  "retain_as_project_owned" | "remove_override" | "convert_to_replace";
+
+const resolutionActions: readonly OverrideResolutionAction[] = [
+  "retain_as_project_owned",
+  "remove_override",
+  "convert_to_replace",
+];
 
 export interface OverrideResolution {
   readonly source: ExactPackDefinitionSource;
@@ -70,6 +79,7 @@ export type OverrideOutcome =
   | "unchanged"
   | "retargeted"
   | "retained_as_project_owned"
+  | "converted_to_replace"
   | "removed"
   | "conflict";
 
@@ -96,6 +106,23 @@ export interface TemplateChange {
   readonly change: "added" | "removed" | "changed";
   /** A project override names this definition; its value is never rewritten. */
   readonly customized: boolean;
+}
+
+/**
+ * A role whose declared capability set differs between the old and the new
+ * resolved closure. Capabilities are local IDs of the role's own pack.
+ */
+export interface RoleCapabilityChange {
+  readonly roleId: string;
+  readonly added: readonly string[];
+  readonly removed: readonly string[];
+  /** A project override names this role; it cannot alter the set. */
+  readonly customized: boolean;
+}
+
+export interface RoleCapabilitySet {
+  readonly roleId: string;
+  readonly capabilities: readonly string[];
 }
 
 export type PackUpgradeIssueCode =
@@ -134,6 +161,25 @@ export interface PackUpgradePlan {
         readonly reason: "previous_closure_unresolved";
         readonly detail: string;
       };
+  /**
+   * Role capability differences over the resolved closures. A capability
+   * change is never incidental: it is reviewed and approved with the plan.
+   */
+  readonly roleCapabilityChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly RoleCapabilityChange[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason: "previous_closure_unresolved";
+        readonly detail: string;
+      };
+  /**
+   * Every role of the target closure that declares capabilities. Approval
+   * binds these sets even when the previous closure cannot be read.
+   */
+  readonly targetRoleCapabilities: readonly RoleCapabilitySet[];
   readonly overrides: readonly OverrideReconciliation[];
   /** Supplied resolutions that matched no conflict; they change nothing. */
   readonly ignoredResolutions: readonly OverrideResolution[];
@@ -211,7 +257,8 @@ function parseResolutions(value: unknown): OverrideResolution[] {
           "Each resolution needs only source and action",
         );
       const { source: rawSource, action } = item as Record<string, unknown>;
-      if (action !== "retain_as_project_owned" && action !== "remove_override")
+      const known = resolutionActions.find((candidate) => candidate === action);
+      if (known === undefined)
         throw new ProjectPackUpgradeError(
           "malformed_request",
           "Unknown override resolution action",
@@ -230,7 +277,7 @@ function parseResolutions(value: unknown): OverrideResolution[] {
           "An override has more than one resolution",
         );
       seen.add(sourceKey(source));
-      return { source, action };
+      return { source, action: known };
     })
     .sort((left, right) => compareExactSources(left.source, right.source));
 }
@@ -313,13 +360,60 @@ function sameContribution(left: Contribution, right: Contribution): boolean {
   );
 }
 
+/** Declared capability sets of the roles of one closure, by stable role ID. */
+function roleCapabilitySets(
+  closure: readonly ResolvedPackManifest[],
+): Map<string, readonly string[]> {
+  const sets = new Map<string, readonly string[]>();
+  for (const { identity: pack, manifest } of closure)
+    for (const role of manifest.contributions.roles)
+      if (role.capabilities?.length)
+        sets.set(stablePackDefinitionId(pack.id, "roles", role.id), [
+          ...role.capabilities,
+        ]);
+  return sets;
+}
+
+function roleCapabilityChanges(
+  before: readonly ResolvedPackManifest[],
+  after: readonly ResolvedPackManifest[],
+  overrides: readonly ProjectDefinitionOverride[],
+): RoleCapabilityChange[] {
+  const customized = new Set(
+    overrides
+      .filter(({ source }) => source.kind === "roles")
+      .map(({ source }) =>
+        stablePackDefinitionId(source.id, "roles", source.localId),
+      ),
+  );
+  const old = roleCapabilitySets(before);
+  const next = roleCapabilitySets(after);
+  const changes: RoleCapabilityChange[] = [];
+  for (const roleId of new Set([...old.keys(), ...next.keys()])) {
+    const previous = old.get(roleId) ?? [];
+    const current = next.get(roleId) ?? [];
+    const added = current.filter((item) => !previous.includes(item));
+    const removed = previous.filter((item) => !current.includes(item));
+    if (added.length || removed.length)
+      changes.push({
+        roleId,
+        added,
+        removed,
+        customized: customized.has(roleId),
+      });
+  }
+  return changes.sort((left, right) => compare(left.roleId, right.roleId));
+}
+
 /**
  * The definition state after the plan's override outcomes. A surviving override
  * is carried over whole: only the pack tuple of a retargeted source changes.
+ * A converted extension is a changed entry and records who changed it.
  */
 function reconciledDefinitions(
   current: ProjectDefinitionState,
   overrides: readonly OverrideReconciliation[],
+  conversions: ReadonlyMap<string, DescriptiveDefinition>,
   actorId: string,
   changedAt: string,
 ): ProjectDefinitionState {
@@ -336,7 +430,20 @@ function reconciledDefinitions(
         ...override,
         source: outcome.target,
       });
-    else if (
+    else if (outcome.outcome === "converted_to_replace" && outcome.target) {
+      const payload = conversions.get(sourceKey(override.source));
+      if (!payload)
+        throw new TypeError("Converted override has no replacement payload");
+      kept.push({
+        origin: "project_override",
+        source: outcome.target,
+        operation: "replace",
+        revision: override.revision + 1,
+        payload,
+        actorId,
+        changedAt,
+      });
+    } else if (
       outcome.outcome === "retained_as_project_owned" &&
       override.payload
     )
@@ -369,6 +476,16 @@ function digestOf(plan: Omit<PackUpgradePlan, "planDigest">): string {
     .digest("hex")}`;
 }
 
+interface UpgradeReconciliation {
+  readonly plan: PackUpgradePlan;
+  /**
+   * Replacement payloads of converted extensions, by old source. They are
+   * definition bodies, so they stay out of the report; the prospective
+   * configuration digest in the plan covers them.
+   */
+  readonly conversions: ReadonlyMap<string, DescriptiveDefinition>;
+}
+
 /**
  * Pure reconciliation of one coherent authoritative snapshot against a desired
  * exact selection. It reads the installed catalog and writes nothing.
@@ -380,6 +497,16 @@ export function planProjectPackUpgrade(input: {
   readonly resolutions: readonly OverrideResolution[];
   readonly catalog: InstalledDomainPackCatalog;
 }): PackUpgradePlan {
+  return reconcileProjectPackUpgrade(input).plan;
+}
+
+function reconcileProjectPackUpgrade(input: {
+  readonly binding: ProjectPackBinding;
+  readonly definitions: ProjectDefinitionState;
+  readonly desired: readonly PackIdentity[];
+  readonly resolutions: readonly OverrideResolution[];
+  readonly catalog: InstalledDomainPackCatalog;
+}): UpgradeReconciliation {
   const { binding, definitions, catalog, resolutions } = input;
   const currentPacks = binding.packs.map(identity);
   const proposedPacks = input.desired.map(identity);
@@ -408,19 +535,22 @@ export function planProjectPackUpgrade(input: {
       reason: "pack_configuration_run_pins_not_modelled",
     },
   } as const;
+  const conversions = new Map<string, DescriptiveDefinition>();
   const finish = (
     rest: Pick<
       PackUpgradePlan,
       | "templates"
+      | "roleCapabilityChanges"
+      | "targetRoleCapabilities"
       | "overrides"
       | "ignoredResolutions"
       | "issues"
       | "noop"
       | "prospectiveConfigurationDigest"
     >,
-  ): PackUpgradePlan => {
+  ): UpgradeReconciliation => {
     const plan = { ...base, ...rest };
-    return { ...plan, planDigest: digestOf(plan) };
+    return { plan: { ...plan, planDigest: digestOf(plan) }, conversions };
   };
 
   // Same selection and every override already on a selected tuple: nothing to
@@ -433,6 +563,9 @@ export function planProjectPackUpgrade(input: {
   )
     return finish({
       templates: { availability: "available", changes: [] },
+      // A no-op reads no artifact, so it has no capability set to report.
+      roleCapabilityChanges: { availability: "available", changes: [] },
+      targetRoleCapabilities: [],
       overrides: definitions.overrides.map(({ source, operation }) => ({
         source,
         operation,
@@ -461,15 +594,20 @@ export function planProjectPackUpgrade(input: {
     availability: "available",
     changes: [],
   };
+  let capabilityChanges: PackUpgradePlan["roleCapabilityChanges"] = {
+    availability: "available",
+    changes: [],
+  };
   if (target && selectionChanged)
     try {
+      const previous = resolveInstalledPackManifests(catalog, currentPacks);
       templates = {
         availability: "available",
-        changes: templateChanges(
-          resolveInstalledPackManifests(catalog, currentPacks),
-          target,
-          definitions.overrides,
-        ),
+        changes: templateChanges(previous, target, definitions.overrides),
+      };
+      capabilityChanges = {
+        availability: "available",
+        changes: roleCapabilityChanges(previous, target, definitions.overrides),
       };
     } catch (error) {
       const detail = closureFailure(error);
@@ -479,7 +617,13 @@ export function planProjectPackUpgrade(input: {
         reason: "previous_closure_unresolved",
         detail,
       };
+      capabilityChanges = templates;
     }
+  const targetRoleCapabilities: RoleCapabilitySet[] = [
+    ...roleCapabilitySets(target ?? []),
+  ]
+    .map(([roleId, capabilities]) => ({ roleId, capabilities }))
+    .sort((left, right) => compare(left.roleId, right.roleId));
 
   const targetManifests = new Map<string, DomainPackManifest>(
     (target ?? []).map((entry) => [tupleKey(entry.identity), entry.manifest]),
@@ -642,6 +786,47 @@ export function planProjectPackUpgrade(input: {
       });
       continue;
     }
+    if (resolution.action === "convert_to_replace") {
+      // Only an extension the new template now overlaps can become a complete
+      // replacement: the project's fields win, the template supplies the rest,
+      // and neither side's information is dropped.
+      if (
+        code !== "extend_conflict" ||
+        !retarget ||
+        !nextEntry ||
+        !override.payload
+      ) {
+        overrides.push({
+          source,
+          operation,
+          outcome: "conflict",
+          upstream,
+          conflict: code,
+        });
+        issues.push({
+          code: "invalid_resolution",
+          detail: code,
+          message: `Override of ${source.id}@${source.version} ${source.kind}/${source.localId} cannot be converted to a replacement: only an extension conflict can`,
+        });
+        continue;
+      }
+      const title = override.payload.title ?? nextEntry.title;
+      const description = override.payload.description ?? nextEntry.description;
+      conversions.set(sourceKey(source), {
+        id: source.localId,
+        ...(title === undefined ? {} : { title }),
+        ...(description === undefined ? {} : { description }),
+      });
+      overrides.push({
+        source,
+        operation,
+        outcome: "converted_to_replace",
+        upstream,
+        target: retarget,
+        conflict: code,
+      });
+      continue;
+    }
     const ownedKey = `${source.kind}\u0000${source.localId}`;
     // Only a complete replacement whose template is gone can stand alone as a
     // project definition; anything else would duplicate or truncate material.
@@ -685,6 +870,7 @@ export function planProjectPackUpgrade(input: {
       const prospective = reconciledDefinitions(
         definitions,
         overrides,
+        conversions,
         "preview",
         "1970-01-01T00:00:00.000Z",
       );
@@ -715,6 +901,8 @@ export function planProjectPackUpgrade(input: {
 
   return finish({
     templates,
+    roleCapabilityChanges: capabilityChanges,
+    targetRoleCapabilities,
     overrides,
     ignoredResolutions: resolutions.filter(
       (item) => !usedResolutions.has(sourceKey(item.source)),
@@ -751,6 +939,14 @@ export class ReconcileProjectPackUpgrade {
     desired: readonly PackIdentity[];
     resolutions?: unknown;
   }): Promise<PackUpgradePlan> {
+    return (await this.reconcile(input)).plan;
+  }
+
+  private async reconcile(input: {
+    projectId: string;
+    desired: readonly PackIdentity[];
+    resolutions?: unknown;
+  }): Promise<UpgradeReconciliation> {
     const desired = normalizePackSelection(input.desired);
     const resolutions = parseResolutions(input.resolutions ?? []);
     const { bindings, definitions, projects } = this.dependencies;
@@ -771,7 +967,7 @@ export class ReconcileProjectPackUpgrade {
         );
       return { binding, state };
     });
-    return planProjectPackUpgrade({
+    return reconcileProjectPackUpgrade({
       binding: snapshot.binding,
       definitions: snapshot.state,
       desired,
@@ -787,7 +983,7 @@ export class ReconcileProjectPackUpgrade {
     approvedPlanDigest: string;
     actorId: string;
   }): Promise<PackUpgradeResult> {
-    const plan = await this.preview(input);
+    const { plan, conversions } = await this.reconcile(input);
     if (plan.noop)
       return {
         result: "unchanged",
@@ -834,6 +1030,7 @@ export class ReconcileProjectPackUpgrade {
         reconciledDefinitions(
           current,
           plan.overrides,
+          conversions,
           input.actorId,
           now.toISOString(),
         ),
@@ -877,6 +1074,9 @@ export class ReconcileProjectPackUpgrade {
                     ).length,
                   }
                 : plan.templates,
+            // Role and capability identities only.
+            roleCapabilityChanges: plan.roleCapabilityChanges,
+            targetRoleCapabilities: plan.targetRoleCapabilities,
             prospectiveConfigurationDigest:
               plan.prospectiveConfigurationDigest ?? null,
             result: "applied",
