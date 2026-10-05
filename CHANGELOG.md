@@ -52,6 +52,8 @@
   JavaScript safe integer, which PostgreSQL storage could not persist. No
   migration is required; existing rows and `project:restore` archives are not
   re-validated, so a wider legacy SQLite priority stays until it is updated.
+  The skill describes the new option, so installed repositories receive an
+  updated skill on the next `ai-office install`.
 - Fix truncated CLI output when stdout is a pipe. Every Runtime client command
   opened an interactive prompt reader on `process.stdout` up front, which in
   Bun makes a pipe on stdout non-blocking; `console.log` then wrote only what
