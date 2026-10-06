@@ -28,14 +28,16 @@ outside the interoperable safe-integer range. Schema 1 requires every envelope
 field and contribution section. Contribution items currently accept only an
 ASCII `id` and optional `title`/`description`; workflow items also have a
 `taskType` and ordered `stages` with `id`/`role`, role items may have
-`capabilities`, and agent items may have `role`, `prompts`, `knowledge` and
-`capabilities` (see below). GP-10B-2 adds descriptive fields to stages,
-roles, prompts and workflows (see below). Unknown fields fail validation,
+`capabilities`, agent items may have `role`, `prompts`, `knowledge` and
+`capabilities`, capability items may have `operations` and `requirement`,
+policy items may have `workflow`, `enforcement` and `stages`, and GP-10B-2 adds
+descriptive fields to stages, roles, prompts and workflows (see below).
+Unknown fields fail validation,
 including executable entry points and embedded credentials. Later GP slices
 must explicitly extend section schemas through a compatible manifest/schema
 decision before they can add fields. The current generic `Contribution` type is
 not the final field-level schema for artifact types, evidence types,
-policies, knowledge, capabilities, prompts or validators, and the agent fields
+knowledge, capabilities, prompts or validators, and the agent fields
 below are not the final agent schema: model, tools, pipeline participation and
 approval eligibility are not expressible.
 
@@ -70,6 +72,53 @@ role's set and any of the fields on another contribution kind fail with
 `invalid_contribution` and the member's path. References are bare local IDs,
 so a definition of another pack, including a dependency, cannot be named. The
 references are declarative: they create no Runtime agent and grant nothing.
+
+A capability item may carry two optional members (GP-16). `operations` is an
+array of `{ "operation", "mode" }` objects: `operation` is a connector
+operation name, `<connectorId>.<name>`, and `mode` is `read` or `mutation`. A
+name is ASCII, at most 128 characters, two or more segments separated by `.`,
+each starting with a letter or digit and continuing with letters, digits, `_`
+or `-`; a wildcard is not a name. The array holds at least one and at most 100
+entries (`maximumCapabilityOperations`) and names an operation once. It is a
+set: the validated manifest holds it in ascending code-unit order of the
+operation name, and that order is what the digest covers. `requirement` is
+`required` or `optional` and is allowed only with `operations`; when
+`operations` is present and `requirement` is absent, the validated manifest
+and the digest input hold `required`, so the default has one canonical form.
+A non-array, empty, over-bound or duplicate list, a malformed name, an unknown
+mode or requirement, `requirement` without `operations`, any other member of
+an operation entry and either field on another contribution kind fail with
+`invalid_contribution` and the member's path. A capability cannot declare
+risk, approval, constraints, a resource, a grant, a principal, a credential
+or a provider version: those are unknown fields. The declaration states a
+need. It grants nothing, and whether a registered provider satisfies it is
+decided by the Runtime host at resolution, not by this package.
+
+A policy item may carry three optional fields (GP-25): `workflow`, one local
+ID naming an item of the same manifest's `contributions.workflows`,
+`enforcement`, whose only value is `"enforced"`, and `stages`, an array of
+`{ stage, requiresApproval?, requiresIndependentApproval?,
+requiresDifferentAgentFrom?, operations? }`. `stage` names a stage of the
+target workflow, the two flags are present only as `true`,
+`requiresDifferentAgentFrom` lists earlier stages of that workflow, and
+`operations` lists at most 64 (`maximumPolicyStageOperations`) operation
+names of the form `^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$` and at most 128
+characters. A policy with `workflow` is typed and must declare `enforcement`
+or `stages`; one manifest declares at most one policy for a workflow. An
+unknown workflow or stage, a duplicate stage entry, a second policy for a
+workflow, a stage entry without a clause, `requiresIndependentApproval`
+without `requiresApproval`, a separation target that is not an earlier stage,
+an empty list, a malformed, duplicate or over-bound operation, a flag or
+`enforcement` with another value, a clause field without `workflow` and any
+of the fields on another contribution kind fail with `invalid_contribution`
+and the member's path. Absent `enforcement` means guidance and absent
+`operations` means that no operation is admitted. `stages`, `operations` and
+`requiresDifferentAgentFrom` are sets: the validated manifest holds them in
+ascending code-unit order (`stages` by `stage`), and that order is what the
+digest covers. Operation names are opaque strings, not references to
+`contributions.capabilities`. The clauses are declarative: they are not
+enforced by this package or by the Runtime and grant nothing. A policy
+without `workflow` still parses as `id`, `title` and `description`.
 
 Descriptive vocabulary (GP-10B-2). A workflow stage may carry `title`,
 `objective` and `checks`; a role item `responsibilities`; a prompt item

@@ -18,6 +18,10 @@ import {
   type ProjectDefinitionOverride,
   type ProjectOwnedDefinition,
 } from "./project-definition.ts";
+import {
+  policyTargetMissing,
+  policyTargetViolations,
+} from "./pack-policy-clauses.ts";
 import { resolveInstalledPacks } from "./resolve-installed-packs.ts";
 import {
   packDefinitionCollision,
@@ -171,6 +175,31 @@ function workflowReferenceIssues(
     ),
     ...roles.flatMap((role) => missing("roles", role)),
   ];
+}
+
+/**
+ * GP-06 rejects a replacement of a governed workflow that no longer carries
+ * every stage its pack policy names, or that moves a separation predecessor
+ * after the stage that names it (GP-25). Report that before the replacement
+ * is stored, against the exact source manifest, once per violation.
+ */
+function workflowPolicyIssues(
+  manifest: DomainPackManifest,
+  payload: WorkflowDefinition,
+): ProjectDefinitionIssue[] {
+  const workflow = `workflows/${payload.id}`;
+  const stageIds = payload.stages.map((stage) => stage.id);
+  return manifest.contributions.policies
+    .filter((policy) => policy.workflow === payload.id)
+    .flatMap((policy) =>
+      policyTargetViolations(policy, stageIds).map((violation) => ({
+        code: policyTargetMissing,
+        message:
+          violation.kind === "stage_missing"
+            ? `Workflow ${workflow} must keep stage ${violation.stage}, which policy policies/${policy.id} of exact source governs`
+            : `Workflow ${workflow} must keep stage ${violation.predecessor} before stage ${violation.stage}, as policy policies/${policy.id} of exact source requires`,
+      })),
+    );
 }
 
 /**
@@ -340,10 +369,13 @@ export class ManageProjectDefinitions {
         item.payload
       )
         // storedOverrideIssues established the workflow envelope above.
-        return workflowReferenceIssues(
-          manifest,
-          item.payload as WorkflowDefinition,
-        );
+        return [
+          ...workflowReferenceIssues(
+            manifest,
+            item.payload as WorkflowDefinition,
+          ),
+          ...workflowPolicyIssues(manifest, item.payload as WorkflowDefinition),
+        ];
       return [];
     } catch (error) {
       return [installedSourceIssue(error)];

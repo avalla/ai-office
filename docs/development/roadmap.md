@@ -1964,9 +1964,27 @@ limits: project text stays bounded at 16,000 UTF-16 code units, below the
 limit cannot be sent. The fields are declarative; nothing in the Runtime
 reads them. The second pull request, development pack `0.3.0` with the
 descriptive defaults, the `maintenance -> delivery` route, role guidance and
-reference prompts, is not delivered yet. Aliases, the Development Pack
-`0.3.0` data and prompts (GP-10B-2, second pull request), pack policy
-contributions (GP-25), evidence and adoption (GP-10C), automatic
+reference prompts, is not delivered yet. GP-25, whose number is now
+confirmed, gives the schema-1 `policies` contribution a typed form: a policy
+targets one workflow of its own pack and declares its `enforcement` and, per
+stage, `requiresApproval`, `requiresIndependentApproval`,
+`requiresDifferentAgentFrom` and the admitted `operations`, which are opaque
+operation names independent of pack capabilities and of GP-16. A pack whose
+policies are all typed resolves, and `project:configuration:show` lists a
+derived `policies` view; a policy without a target workflow still fails
+closed. Policies are pack-owned: a project cannot override or own one, a
+workflow replacement must keep every governed stage and separation order
+(`policy_target_missing`), and the policy of an existing workflow changes
+only through `project:pack:upgrade`, whose plan reports `policyChanges` and
+`targetPolicies` (`project:pack:apply` refuses it with
+`policy_change_requires_upgrade`). It adds no migration and no archive
+format, and nothing is enforced from a policy: the Runtime still reads only
+the OfficeManifest pipelines. The policies of the development reference pack
+and their parity tests are a second GP-25 pull request that follows the pack
+version of GP-10B-2. Aliases, the Development Pack `0.3.0` data and prompts
+(GP-10B-2, second pull request), the development pack's policy data (GP-25, second pull
+request), Runtime enforcement from pack policies (`a45ddb12`), evidence and
+adoption (GP-10C), automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
 end-to-end exit criteria are met.
@@ -2028,6 +2046,35 @@ depends on the other, and no other GP task depends on them.
 
 Scope, exact acceptance criteria and non-goals are in the
 [plan's hardening section](generic-core-domain-packs.md#post-gp-06-hardening-follow-ups).
+
+### GP-16 pack capability contracts
+
+Status: implemented; the contract was approved by the owner on 2026-10-06.
+
+GP-16 is a definition-layer task. A pack capability may declare the operations
+it needs, by connector operation name and mode, as required or optional. The
+Runtime host exposes its registered connector descriptors through a read-only
+application port. Resolution, `project:pack:preview`, `project:pack:apply` and
+`project:pack:upgrade` fail closed with `missing_required_capability_provider`
+or `capability_provider_mismatch` when a required operation has no registered
+provider or the provider offers it in another mode. `project:configuration:show`
+reports each binding in a derived `capabilities` view. A change to an existing
+capability's contract is refused by `project:pack:apply` and reviewed through
+`project:pack:upgrade`, whose plan lists it under `planDigest`.
+
+A binding grants nothing. Grants, constraints, approval and controlled
+execution are unchanged and still separately authorize every use; a request
+for a bound operation without a grant is denied as before. There is no
+scheduler or run gate: rejecting a run for a missing provider belongs to the
+execution parity task `a45ddb12-3159-4b60-9b8b-c26516720834` and GP-24.
+Provider binding is host-local availability and is not part of
+`configurationDigest`, which narrows ADR-0026 on purpose. GP-25 stage
+operations are opaque names and do not reference these declarations. No migration and no portable archive
+format are added, and the development pack is not edited.
+
+The contract, the three meanings of "capability", the owner decisions, the
+acceptance criteria and what is unmet relative to the original wording are in
+the [plan's GP-16 section](generic-core-domain-packs.md#gp-16-pack-capability-contracts).
 
 Exit: development, legal, manufacturing, and empty/custom fixtures run the same
 core lifecycles without changes to core for each domain. Legacy development
