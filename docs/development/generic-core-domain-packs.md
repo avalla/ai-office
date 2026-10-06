@@ -2211,8 +2211,10 @@ GP-10C, or the Runtime execution parity task `a45ddb12` (in full
 | stage        | `requiresIndependentApproval` | GP-10B   | `stage_fields_not_expressible` if used; unused by the defaults |
 | stage        | `requiresDifferentAgentFrom`  | GP-10B   | `stage_fields_not_expressible` if used; unused by the defaults |
 
-The owners above are the ones GP-10A assigned. GP-10B has since been split,
-and the GP-10B-1 section holds the current list with the current owners.
+The owners above are the ones GP-10A assigned. GP-10B has since been split.
+The GP-10B-1 section holds the list as GP-10B-1 left it, and the "GP-10B-2 PR 2
+development pack 0.3.0" section holds the current list with the current
+owners.
 
 `limits` is the Runtime limit set (`maxIterations`, `maxCostMicros`,
 `timeoutSeconds`). `guidance` is the role's system instructions, the shipped
@@ -2519,8 +2521,10 @@ them the 12 that GP-10A assigned to GP-10B; none is removed or merged. Each
 entry now states separately what GP-10B-1 delivers and what remains outside
 the pack, and names the task that owns the residue: GP-10B-2, GP-25, GP-10C
 or the Runtime execution parity task `a45ddb12` (in full
-`a45ddb12-3159-4b60-9b8b-c26516720834`). This table is the current list; the
-table in the GP-10A section shows the owners as GP-10A assigned them.
+`a45ddb12-3159-4b60-9b8b-c26516720834`). This table is the list as GP-10B-1
+left it; the table of the "GP-10B-2 PR 2 development pack 0.3.0" section is
+the current list, and the table in the GP-10A section shows the owners as
+GP-10A assigned them.
 
 | Subject      | Field                         | GP-10B-1 delivers                                                                                                                                            | Residue                                                                           | Owner    | GP-09 gap code                                                 |
 | ------------ | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- | -------- | -------------------------------------------------------------- |
@@ -2708,7 +2712,8 @@ are expressible and are now in the pack, so they are not in the list.
 
 ## GP-10B-2 descriptive workflow and prompt vocabulary
 
-Status: the contract (PR 1) is implemented; PR 2 is not started. The owner approved the scope on 2026-10-06
+Status: the contract (PR 1) is implemented; development pack `0.3.0` (PR 2) is
+specified in the next section. The owner approved the scope on 2026-10-06
 as two pull requests: the contract below, and then development pack `0.3.0`
 with the data and its parity tests (PR 2), which is a separate, later change.
 "Implementation record" at the end of this section records what was built
@@ -3014,7 +3019,8 @@ PR 1, the contract:
     `legacy-development-profile.ts`, the GP-09 fixtures, the pack manifest,
     `migrations/**` or `supabase/**`.
 
-PR 2, development pack `0.3.0`, is not part of this change. Its criteria
+PR 2, development pack `0.3.0`, is not part of this change; see the section
+"GP-10B-2 PR 2 development pack 0.3.0". Its criteria
 (17 to 25 of the approved proposal) cover the pack data, expressible-subset
 parity for the new fields on the GP-09 fixture and the shipped defaults, the
 role guidance and reference prompts, and the residue list.
@@ -3106,6 +3112,309 @@ role guidance and reference prompts, and the residue list.
 - Evidence limits. Nothing shows how a Runtime would use these fields,
   because none does. Parity of the development defaults with these fields is
   PR 2. The 16 KiB argument limit is recorded, not tested.
+
+## GP-10B-2 PR 2 development pack 0.3.0
+
+Status: implemented. The owner approved the contract below on 2026-10-06,
+every decision at its proposed default.
+"Implementation record" at the end of this section records what was built
+where the contract left a choice, and where the evidence stops.
+
+Formal scope:
+
+> Extend the development reference pack `org.ai-office.development` from
+> `0.2.0` to `0.3.0` with the descriptive vocabulary that the merged GP-10B-2
+> contract (PR 1, #118) added to manifest schema 1: role `responsibilities`,
+> workflow stage `title`, `objective` and `checks`, workflow
+> `additionalTaskTypes`, and prompts with `text`. Prove expressible-subset
+> parity over the new fields. No contract change, Runtime consumption,
+> catalog registration, adoption or legacy-path removal occurs in this pull
+> request.
+
+Anti-goal:
+
+> the pack must not become authoritative for Runtime execution without a
+> separately approved task
+
+The property this pull request proves is **expressible-subset parity**: the
+resolved configuration of a project bound to the pack and the GP-09 legacy
+development state are equal over the subset that schema 1 can now represent.
+That subset is the GP-10A and GP-10B-1 subset plus stage title, objective and
+checks, role responsibilities and the full route set, and, for role guidance
+and the reference prompts, text equality with the legacy sources. It is not
+execution parity. A project bound to the pack still runs on the pipelines of
+its OfficeManifest, exactly as before; comparing execution from a resolved
+configuration with legacy execution stays with the Runtime task "Runtime
+resolved-configuration execution parity"
+(`a45ddb12-3159-4b60-9b8b-c26516720834`).
+
+Nothing was removed from the legacy path. The default office manifest, its
+four pipelines, `officeTaskKinds`, `agents/**`, the instruction builder, the
+requirement assessment, the agent definition loader and the agent sync are
+unchanged and remain the only sources the Runtime reads. No Runtime role,
+agent, pipeline, run, pin, approval or guard is created from the pack, no
+instruction file is generated from a prompt of the pack and no prompt of the
+pack is sent to a provider. Pack text is a reference copy; where it and the
+legacy source disagree, the legacy source is what runs, and a test fails.
+
+### Decisions
+
+The owner approved these on 2026-10-06, each at the default of the scope
+proposal. They are the decisions of GP-10B-2 that concern the data.
+
+1. Role guidance attaches through the existing agent `prompts` reference
+   (GP-12). A role gets no guidance field, and an agent of the pack names the
+   guidance prompt of its role.
+2. The per-pipeline line of the generated instruction contract is derived
+   from the pipelines and mixes stage titles with `enforcement` (GP-25). It
+   is recorded as derived and is not a prompt.
+3. `knowledge` (GP-15) and `policies` (GP-25) stay empty, as do
+   `artifactTypes`, `evidenceTypes` and `validators`. No agent names
+   knowledge.
+4. Parity of the requirement-assessment prompt is shown by capturing the
+   provider request of `requirement:validate` with a deterministic provider.
+   `requirement.ts` is not edited and exports nothing new.
+5. The residue list becomes `schemaVersion` 3 with a nullable `residue` and
+   keeps all 19 entries. An entry whose field the pack now delivers in full
+   has `residue: null`; it is not removed.
+6. The route `maintenance -> delivery` is expressed by
+   `additionalTaskTypes: ["maintenance"]` on the `delivery` workflow, beside
+   `taskType: feature`. The pinned literal difference of GP-10B-1 is removed.
+7. Pack text is not trimmed or normalized. A prompt `text` is the exact bytes
+   of its legacy source, including a trailing newline.
+
+### Reference pack
+
+`org.ai-office.development@0.3.0`, schema 1, core contract `[1, 2)`, still
+data only and unregistered. It declares the roles, agents, task types,
+capabilities and workflows of `0.2.0`, with these additions and no other:
+
+| Where                             | Addition                                                                                                                                                             |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Each role                         | `responsibilities`: the responsibilities of the office role of the same ID, in the legacy order                                                                      |
+| Each workflow stage               | `title` (the legacy stage `name`), `objective` and `checks` (in the legacy order)                                                                                    |
+| Workflow `delivery`               | `additionalTaskTypes: ["maintenance"]`                                                                                                                               |
+| Each agent                        | `prompts: ["<id>-guidance"]`                                                                                                                                         |
+| Four guidance prompts             | `architect-guidance`, `developer-guidance`, `reviewer-guidance`, `qa-guidance`: `text` is the bytes of `agents/<id>/system.md`                                       |
+| Six instruction-contract prompts  | `instruction-repository-map`, `instruction-invariants`, `instruction-workflow`, `instruction-testing`, `instruction-documentation`, `instruction-definition-of-done` |
+| One requirement-assessment prompt | `requirement-assessment`                                                                                                                                             |
+
+The instruction-contract prompts are the static text of
+`buildProjectInstructionContract`, one prompt per contract field that has
+static text, its entries joined by `\n`: the repository map, the default
+invariants (the text used when the manifest has no constraints), the static
+entries of the workflow, testing, documentation and definition of done. Three
+parts of the contract are not prompts. `policy` is a set of enumerations and
+booleans, `project.name` and `project.mission` come from the project, and the
+per-pipeline entries of the workflow are derived (decision 2). The
+requirement-assessment prompt is the system message that `requirement:validate`
+sends. Agents name only their guidance prompt; the seven reference prompts are
+referenced by no agent.
+
+### Expressible-subset parity
+
+The comparison shape of GP-10A and GP-10B-1 gains these parts, and both sides
+must be equal on them:
+
+- a role: `responsibilities`, in order;
+- a workflow stage: `title` (the legacy `name`), `objective` and `checks`, in
+  order;
+- a workflow: every task type it routes, its `taskType` and its
+  `additionalTaskTypes`, so the routes are the five legacy routes and the
+  comparison no longer leaves out a task kind.
+
+Two comparisons are made by text and not by the shared shape:
+
+- **Role guidance.** For each default role,
+  `legacyRoleGuidanceDigest(prompt.text)` of the guidance prompt that the
+  agent of the role references equals the guidance digest of the legacy
+  profile, and the prompt text equals the bytes of `agents/<id>/system.md`.
+  This runs on the shipped defaults only. The GP-09 fixture carries synthetic
+  one-line guidance, so its digests are not those of the shipped files, and
+  the test pins that difference rather than hiding it.
+- **Reference prompts.** The instruction-contract prompts equal the output of
+  `buildProjectInstructionContract` for a manifest without constraints, with
+  the derived per-pipeline entries excluded. The requirement-assessment
+  prompt equals the system message that a `requirement:validate` run sends to
+  the provider, captured by a deterministic provider.
+
+The parity comparison runs on the GP-09 fixture state and on legacy state
+built from the shipped defaults, as before. Changing any newly expressible
+legacy field in a copy breaks parity on both the pack side and the legacy
+side. Changing a legacy field that stays residue changes the legacy profile and
+leaves parity equal, and that field is still in the residue list.
+
+### Residue
+
+`outside-pack-vocabulary.json` has `schemaVersion` 3 and still holds the 19
+entries. `residue` is a statement or `null`; `null` means that the pack
+carries the whole field. `delivered` and `owner` are as in GP-10B-1. For an
+entry with no residue, `owner` names the task that delivered it. This table is
+the current list; the tables of the GP-10A and GP-10B-1 sections show the
+owners and deliveries as they were then.
+
+| Subject      | Field                         | GP-10B-2 PR 2 delivers                                                                                                                                                                                                 | Residue                | Owner    | GP-09 gap code                                                 |
+| ------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | -------- | -------------------------------------------------------------- |
+| office role  | `responsibilities`            | The ordered responsibilities of each default role, as the `responsibilities` of the pack role of the same ID.                                                                                                          | none                   | GP-10B-2 | `role_fields_not_expressible`                                  |
+| Runtime role | `name`                        | nothing                                                                                                                                                                                                                | The whole field.       | a45ddb12 | none (missing from GP-09's list)                               |
+| Runtime role | `version`                     | nothing                                                                                                                                                                                                                | The whole field.       | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | capability order              | nothing                                                                                                                                                                                                                | The order of the list. | a45ddb12 | none                                                           |
+| Runtime role | `tools`                       | nothing                                                                                                                                                                                                                | The whole field.       | GP-10C   | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `modelPolicy`                 | nothing                                                                                                                                                                                                                | The whole field.       | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `limits`                      | nothing                                                                                                                                                                                                                | The whole field.       | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `guidance`                    | The guidance text and its digest: the prompt `<role>-guidance`, referenced by the agent of the role, whose text is the bytes of `agents/<role>/system.md`. The guidance version is covered by the separate Runtime role `version` entry. | none                   | GP-10B-2 | `runtime_role_fields_not_expressible`                          |
+| agent        | `enabled`                     | nothing                                                                                                                                                                                                                | The whole field.       | a45ddb12 | none                                                           |
+| task kind    | `pipelineId`                  | All five routes, each as a task type of the workflow of that ID: `taskType` for feature, bugfix, research and release, and `additionalTaskTypes` for maintenance -> delivery.                                          | none                   | GP-10B-2 | none                                                           |
+| pipeline     | `defaultFor`                  | Every task kind of each pipeline, as the task types of its workflow, including both task kinds of the delivery pipeline.                                                                                               | none                   | GP-10B-2 | `pipeline_routes_several_task_kinds`                           |
+| pipeline     | `enforcement`                 | nothing                                                                                                                                                                                                                | The whole field.       | GP-25    | `pipeline_fields_not_expressible`                              |
+| stage        | `name`                        | The stage name, as the stage `title`.                                                                                                                                                                                  | none                   | GP-10B-2 | `stage_fields_not_expressible`                                 |
+| stage        | `objective`                   | The stage objective, as the stage `objective`.                                                                                                                                                                         | none                   | GP-10B-2 | `stage_fields_not_expressible`                                 |
+| stage        | `checks`                      | The ordered checks of the stage, as the stage `checks`.                                                                                                                                                                | none                   | GP-10B-2 | `stage_fields_not_expressible`                                 |
+| stage        | `requiresApproval`            | nothing                                                                                                                                                                                                                | The whole field.       | GP-25    | `stage_fields_not_expressible`                                 |
+| stage        | `capabilities`                | nothing                                                                                                                                                                                                                | The whole field.       | GP-25    | `stage_fields_not_expressible`                                 |
+| stage        | `requiresIndependentApproval` | nothing                                                                                                                                                                                                                | The whole field.       | GP-25    | `stage_fields_not_expressible` if used; unused by the defaults |
+| stage        | `requiresDifferentAgentFrom`  | nothing                                                                                                                                                                                                                | The whole field.       | GP-25    | `stage_fields_not_expressible` if used; unused by the defaults |
+
+Seven entries are delivered in full, the seven that GP-10B-2 owned. The five
+governance entries stay with GP-25, the `tools` entry with GP-10C and the
+other six with the execution parity task `a45ddb12`, each with its residue
+unchanged. The per-pipeline instruction entry is derived (decision 2) and is
+not a legacy field of the list.
+
+### Acceptance
+
+These continue the numbering of the approved scope proposal, whose criteria 1
+to 16 are the contract (PR 1).
+
+17. `packages/domain-pack-development/manifest.json` is
+    `org.ai-office.development@0.3.0`, passes `verifyDomainPackManifest`
+    against core contract 1, and its manifest and file digests are pinned.
+    Roles, agents (apart from `prompts`), task types and capabilities equal
+    those of `0.2.0` by a pinned digest over that subset, with the new role
+    `responsibilities` and agent `prompts` removed.
+18. Parity holds on the GP-09 fixture and on the shipped defaults for stage
+    `title`, `objective` and `checks`, role `responsibilities` and the full
+    route set, including `maintenance -> delivery`. The pinned literal
+    difference of GP-10B-1 is removed.
+19. For each default role, `legacyRoleGuidanceDigest(prompt.text)` equals the
+    guidance digest of the legacy profile, and the prompt text equals the
+    bytes of `agents/<id>/system.md`, on the shipped defaults.
+20. The static instruction-contract texts equal the builder output for a
+    manifest with no constraints, excluding the derived per-pipeline lines.
+    The assessment prompt equals the system message that `requirement:validate`
+    sends, shown by a test that captures the provider request.
+21. Changing any newly expressible legacy field in a copy breaks parity on
+    both sides. Changing a GP-25 or `a45ddb12` field leaves parity equal and
+    the field stays in the residue list.
+22. `knowledge`, `policies`, `artifactTypes`, `evidenceTypes` and `validators`
+    stay empty.
+23. The GP-09 profile digest and every GP-09 fixture file are unchanged. An
+    unbound project resolves to the pinned empty digest. The production
+    catalog holds no pack. The architecture tests pass unmodified.
+24. The residue list and the table above agree entry for entry. The seven
+    GP-10B-2 entries are delivered; the five GP-25 entries and the
+    `a45ddb12` and GP-10C entries keep their owner.
+25. The diff touches only the pack package, tests and documentation. It does
+    not touch `packages/domain-pack-contracts/**`, `packages/application/**`,
+    `packages/runtime-host/**`, the storage packages, `apps/**`,
+    `migrations/**`, `supabase/**`, an archive format, an audit event type, a
+    CLI command, `agents/**`, the default office manifest,
+    `officeTaskKinds`, `build-project-instructions.ts`, `requirement.ts`,
+    `legacy-development-profile.ts` or the GP-09 fixtures.
+
+### Non-goals
+
+- No contract, schema or archive change, and no Runtime consumption.
+- No policy, enforcement, approval, separation or stage capability semantics
+  (GP-25), and no knowledge entry (GP-15).
+- No registration, install or adoption of the pack (GP-10C).
+- No generation of an instruction file or a provider request from a pack
+  prompt, and no change to `requirement.ts` or the instruction builder.
+- No removal or modification of any legacy default.
+- No change to the frozen GP-09 profile, its gap codes or its fixtures.
+
+### Limitations
+
+- Reference text can drift from its source only until a test fails: each
+  prompt is compared with its legacy source, so a change to a source requires
+  a new pack version.
+- Guidance text up to 65,536 UTF-8 bytes fits a pack prompt, but a project
+  cannot copy text over 16,000 UTF-16 code units into a `replace` (GP-10B-2
+  limitation). The shipped guidance is about 2 KiB and fits.
+- The GP-09 fixture's synthetic guidance is not the shipped text, so guidance
+  parity is shown on the shipped defaults only.
+- Parity covers the default legacy state only. Whether a Runtime that
+  executed these workflows would behave like the legacy pipelines is not
+  shown; that is task `a45ddb12-3159-4b60-9b8b-c26516720834`.
+
+### Implementation record
+
+- Manifest. `packages/domain-pack-development/manifest.json` is
+  `org.ai-office.development@0.3.0`, schema 1, `coreContract` `[1, 2)`, no
+  dependency, with 11 prompts, in this order: the four guidance prompts, the
+  six instruction-contract prompts and `requirement-assessment`. It was
+  produced from the legacy sources by a script that is not committed, then
+  formatted; the tests, not the script, are the evidence. The package still
+  holds the same four files and no source file.
+- Pinned. `manifestDigest` is
+  `sha256:4f54452420bae28efd34818451b86b256e4edb785c377104cf8e7636d6f48a35`.
+  The digest of the exact file bytes is
+  `sha256:015c0af5d4be1837f3143f634d8f63a0ad6a91b7a64534002da4ae9955dcbb69`.
+  The roles, agents (without `prompts`), task types and capabilities keep the
+  digest of `0.1.0` and `0.2.0`, `45c8fb314eb56986aefcaaeeb4c90496ec9721f3dba5aa103bf7d23af49ec0e6`, computed with the role
+  `responsibilities` and the agent `prompts` removed. Two older tests pinned
+  digests over the pack file itself; they now read a frozen copy of the
+  `0.2.0` file, `tests/fixtures/domain-pack/development-0.2.0.json`, whose
+  bytes are those committed before this change.
+- Comparison shape. `tests/helpers/development-pack-parity.ts` gains role
+  `responsibilities`, stage `title`, `objective` and `checks`, and every task
+  type of a workflow. The exemption of the `maintenance` task kind and
+  `unexpressedLegacyRoute` are removed, so both sides read all five routes.
+  Guidance is compared by two further functions, not in the shared shape,
+  because the GP-09 fixture's guidance is synthetic: the legacy digest of each
+  role against the digest of the text of the one prompt that the agent of the
+  role references.
+- Completeness by mutation. A mutated legacy field counts as read when the
+  shared shape or the guidance digest changes. The mutated `guidance` record
+  gets another digest, so `runtime_role.guidance` is read through guidance
+  parity.
+- List. `schemaVersion` 3, pack `0.3.0`. The seven GP-10B-2 entries have a
+  `delivered` statement and `residue: null`; `owner` stays `GP-10B-2` for
+  them and names the task that delivered the field. The parser refuses an
+  entry that delivers nothing and states no residue. The other 12 entries are
+  as GP-10B-1 left them. The guidance version is not a separate entry: the
+  Runtime role `version` entry already covers how the Runtime versions
+  guidance.
+- Requirement assessment. `tests/e2e/development-pack-assessment-prompt.test.ts`
+  runs `requirement:validate` over the Unix socket with a deterministic
+  provider and compares the captured system message with the prompt. The
+  provider is a fake and the test needs no credential.
+- Instruction contract. The builder output for the shipped office manifest,
+  which has no constraints, is compared per field: the static entries are the
+  prompts, the last entries of `workflow` are the derived per-pipeline lines,
+  and none of those lines is in any prompt. `policy`, `project.name` and
+  `project.mission` have no static text and are not prompts.
+- Tests changed where the pack changed: the pinned version and digests, the
+  count of prompts, the agent keys, the task-type rename in a copy of the pack
+  (which now renames the additional task type too), the route cases that named
+  `maintenance` as a `taskType`, and the GP-10B-1 tests that pinned the
+  residue table, the README and the one-route difference. The GP-10B-1 table
+  is now checked as history for fields, owners and gap codes. The "leaves
+  parity equal" cases keep only the fields that stay residue.
+- Unchanged. The GP-09 profile digest of the fixture project is the pinned
+  vector before and after the binding, the checksum of each GP-09 fixture
+  file is pinned, an unbound project resolves to the empty configuration at
+  its pinned digest, and the Runtime's own catalog holds no pack. The
+  architecture tests were not edited.
+- Criterion 25 is a property of this change set. It was checked on the diff
+  against the base commit; no test keeps it true afterwards. PostgreSQL: no
+  storage code is reached, so no PostgreSQL-gated suite covers this change and
+  none was added.
+- Evidence limits. Parity is shown for the default legacy state only; guidance
+  parity is shown on the shipped defaults, not on the fixture. The pack is
+  resolved through a catalog a test supplies. Whether a Runtime that executed
+  these workflows, prompts or checks would behave like the legacy path is not
+  shown and is the subject of task `a45ddb12-3159-4b60-9b8b-c26516720834`.
 
 ## GP-25 pack policy contribution contract
 
@@ -3746,7 +4055,9 @@ storage, and AgentKnowledgeStore boundary:
    delivers the first slice as expressible-subset parity over roles, agents
    and task types and removes nothing (see the GP-10A section). GP-10B-1
    delivers the second slice as expressible-subset parity over workflows and
-   removes nothing (see the GP-10B-1 section).
+   removes nothing (see the GP-10B-1 section). GP-10B-2 delivers the third slice,
+   the descriptive fields, role guidance and reference prompts, as
+   expressible-subset parity and removes nothing (see the GP-10B-2 PR 2 section).
 5. **Opt-in adoption:** preview and audit an explicit development-pack binding;
    preserve project edits and in-flight pinned runs. Support old snapshots.
 6. **New projects:** decide separately whether explicit pack selection is the

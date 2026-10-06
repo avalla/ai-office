@@ -440,11 +440,13 @@ describe("GP-10B-2 descriptive vocabulary in the schema-1 manifest", () => {
       expect(verified.manifestDigest, name).toBe(digest);
       expect(computeManifestDigest(verified), name).toBe(digest);
     }
-    // Development pack 0.2.0, which PR 1 does not edit.
+    // Development pack 0.2.0, as committed before PR 2 moved the pack to
+    // 0.3.0: a frozen copy, because the pack file itself changes with its
+    // version.
     const development = verifyDomainPackManifest(
       readFileSync(
         new URL(
-          "../../packages/domain-pack-development/manifest.json",
+          "../fixtures/domain-pack/development-0.2.0.json",
           import.meta.url,
         ),
       ),

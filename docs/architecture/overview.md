@@ -138,6 +138,13 @@ migration and are carried by portable archive format 10; format 9 rejects
 them. They are declarative text and references: the Runtime reads none of
 them, generates no instruction file from them and sends no pack prompt to a
 provider.
+Development pack `0.3.0` (the second GP-10B-2 pull request) carries them as
+data: role responsibilities, stage titles, objectives and checks, the
+`maintenance` route of `delivery`, the role guidance prompts that each agent
+names and reference prompts for the static instruction-contract text and the
+requirement-assessment message. Tests compare that text and those fields with
+the legacy defaults (expressible-subset parity); the Runtime still reads only
+the legacy sources.
 GP-25 types the pack `policies` contribution: a policy
 (`pack:<packId>/policies/<localId>`) targets one workflow of its own pack and
 declares enforcement, approval, independent approval, agent separation and
