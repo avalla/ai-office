@@ -331,9 +331,15 @@ describe("GP-25 pack policy contributions over the Runtime socket", () => {
         "0",
       );
       expect(weakened.exitCode).toBe(1);
+      expect(weakened.stdout).toEqual([]);
+      // The refusal is the governance one, not any other rejection.
+      expect(weakened.stderr).toEqual([
+        "Workflow stage cannot declare governance; a pack policy does",
+      ]);
       expect(
         count("SELECT count(*) AS count FROM project_definition_override"),
       ).toBe(0);
+      expect(events("project.definition_changed")).toBe(0);
       // One that keeps it and adds a stage is stored.
       expect(
         (
