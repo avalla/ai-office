@@ -1,5 +1,8 @@
 import { AuditEvent } from "@ai-office/domain/event/audit-event.ts";
-import { verifyDomainPackManifest } from "../../../domain-pack-contracts/src/index.ts";
+import {
+  verifyDomainPackManifest,
+  type DomainPackManifest,
+} from "../../../domain-pack-contracts/src/index.ts";
 import {
   ProjectDefinitionConflictError,
   StaleProjectDefinitionError,
@@ -7,6 +10,7 @@ import {
   compareOwnedDefinitions,
   parseDefinitionMutation,
   sourceKey,
+  type AgentDefinition,
   type DefinitionIssueCode,
   type ProjectDefinitionMutation,
   type ProjectDefinitionState,
@@ -84,6 +88,53 @@ function installedSourceIssue(error: unknown): ProjectDefinitionIssue {
     message: "Installed pack source cannot be verified",
   };
 }
+
+/**
+ * GP-06 rejects an agent whose references do not resolve in its own pack or
+ * whose requested capabilities exceed its role's declared set. Report that
+ * for a replacement before it is stored, against the exact source manifest.
+ * Whether a referenced definition is disabled depends on the other project
+ * entries and stays with the resolver.
+ */
+function agentReferenceIssues(
+  manifest: DomainPackManifest,
+  payload: AgentDefinition,
+): ProjectDefinitionIssue[] {
+  const agent = `agents/${payload.id}`;
+  const missing = (
+    kind: "roles" | "prompts" | "knowledge" | "capabilities",
+    localId: string,
+  ): ProjectDefinitionIssue[] =>
+    manifest.contributions[kind].some((entry) => entry.id === localId)
+      ? []
+      : [
+          {
+            code: "source_definition_missing",
+            message: `Agent ${agent} references ${kind}/${localId}, which is missing from exact source`,
+          },
+        ];
+  const declared =
+    manifest.contributions.roles.find((role) => role.id === payload.role)
+      ?.capabilities ?? [];
+  return [
+    ...(payload.role === undefined ? [] : missing("roles", payload.role)),
+    ...(payload.prompts ?? []).flatMap((id) => missing("prompts", id)),
+    ...(payload.knowledge ?? []).flatMap((id) => missing("knowledge", id)),
+    ...(payload.capabilities ?? []).flatMap((id) => {
+      const issues = missing("capabilities", id);
+      return issues.length > 0 ||
+        declared.some((capability) => capability === id)
+        ? issues
+        : [
+            {
+              code: "agent_capability_exceeds_role" as const,
+              message: `Agent ${agent} requests capabilities/${id} outside the declared set of its role roles/${payload.role}`,
+            },
+          ];
+    }),
+  ];
+}
+
 export interface ProjectDefinitionPreview {
   readonly current: ProjectDefinitionState;
   readonly mutation: ProjectDefinitionMutation;
@@ -227,6 +278,12 @@ export class ManageProjectDefinitions {
               },
             ];
       }
+      if (
+        item.operation === "replace" &&
+        item.source.kind === "agents" &&
+        item.payload
+      )
+        return agentReferenceIssues(manifest, item.payload);
       return [];
     } catch (error) {
       return [installedSourceIssue(error)];

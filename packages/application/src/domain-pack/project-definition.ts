@@ -37,8 +37,37 @@ export interface WorkflowDefinition extends DescriptiveDefinition {
   readonly stages: readonly { readonly id: string; readonly role: string }[];
 }
 
+/**
+ * The declarative references of an agent (GP-12): bare local IDs that resolve
+ * in the agent's own namespace. `capabilities` are requested capabilities,
+ * bounded by the role's declared set; only an override on a pack agent can
+ * carry them. Each list is a set in ascending code-unit order, absent when
+ * empty.
+ */
+export interface AgentDefinition extends DescriptiveDefinition {
+  readonly role?: string;
+  readonly prompts?: readonly string[];
+  readonly knowledge?: readonly string[];
+  readonly capabilities?: readonly string[];
+}
+
+export const agentReferenceFields = [
+  "role",
+  "prompts",
+  "knowledge",
+  "capabilities",
+] as const;
+
+/** Whether a payload carries any agent reference field. */
+export function hasAgentReferences(payload: object): boolean {
+  return agentReferenceFields.some((field) => Object.hasOwn(payload, field));
+}
+
 export type ProjectDefinitionPayload =
-  DescriptiveDefinition | WorkflowDefinition;
+  DescriptiveDefinition | WorkflowDefinition | AgentDefinition;
+
+/** A `replace` on an agent carries the agent envelope; nothing else does. */
+export type OverridePayload = DescriptiveDefinition | AgentDefinition;
 
 export interface ProjectOwnedDefinition {
   readonly origin: "project_owned";
@@ -57,7 +86,7 @@ export interface ProjectDefinitionOverride {
   readonly source: ExactPackDefinitionSource;
   readonly operation: OverrideOperation;
   readonly revision: number;
-  readonly payload?: DescriptiveDefinition;
+  readonly payload?: OverridePayload;
   readonly actorId: string;
   readonly changedAt: string;
 }
@@ -87,7 +116,7 @@ export type ProjectDefinitionMutation =
       readonly action: "put_override";
       readonly source: ExactPackDefinitionSource;
       readonly operation: OverrideOperation;
-      readonly payload?: DescriptiveDefinition;
+      readonly payload?: OverridePayload;
       readonly expectedEntryRevision?: number;
     }
   | {
@@ -111,6 +140,7 @@ export type DefinitionIssueCode =
   | "source_dependency_conflict"
   | "unsupported_override_operation"
   | "protected_security_invariant"
+  | "agent_capability_exceeds_role"
   | "source_unavailable";
 
 export class ProjectDefinitionConflictError extends Error {
@@ -164,12 +194,14 @@ const descriptiveKinds: readonly ContributionKind[] = [
 ];
 /**
  * Kinds a project may omit with a `disable` override. A role omission (GP-11)
- * removes the role from the resolved configuration; a workflow that still
- * requires it fails resolution.
+ * removes the role from the resolved configuration; a workflow or an enabled
+ * agent that still requires it fails resolution. A disabled agent (GP-12)
+ * leaves the configuration together with its references.
  */
 export const disableableKinds: readonly ContributionKind[] = [
   "prompts",
   "roles",
+  "agents",
 ];
 export const projectOwnedKinds: readonly ContributionKind[] = [
   ...descriptiveKinds,
@@ -266,6 +298,81 @@ export function parseDefinitionPayload(
         `${key} must be bounded text`,
       );
   return item as unknown as DescriptiveDefinition;
+}
+
+/** A non-empty set of local IDs, returned in ascending code-unit order. */
+function referenceList(value: unknown, field: string): string[] {
+  // "None" has one encoding: the absent field.
+  if (!Array.isArray(value) || value.length === 0)
+    throw new ProjectDefinitionConflictError(
+      "malformed_origin_reference",
+      `${field} must be a non-empty list; omit the field instead`,
+    );
+  const parsed = value.map(localId);
+  if (new Set(parsed).size !== parsed.length)
+    throw new ProjectDefinitionConflictError(
+      "conflicting_ownership_metadata",
+      `Duplicate ${field} reference`,
+    );
+  return parsed.sort(compareText);
+}
+
+/**
+ * The complete agent envelope of a `replace` on a pack agent or of a
+ * project-owned agent. Only shape is checked here; whether a reference
+ * resolves, and whether a request stays within its role, is decided against
+ * the definitions the agent can see.
+ */
+function parseAgentPayload(
+  value: unknown,
+  id: string,
+  requestsCapabilities: boolean,
+): AgentDefinition {
+  const item = record(value);
+  if (!requestsCapabilities && item.capabilities !== undefined)
+    throw new ProjectDefinitionConflictError(
+      "protected_security_invariant",
+      "A project-owned agent cannot request capabilities",
+    );
+  if (
+    Object.keys(item).some(
+      (key) =>
+        !["id", "title", "description", ...agentReferenceFields].includes(key),
+    )
+  )
+    throw new ProjectDefinitionConflictError(
+      "protected_security_invariant",
+      "Agent payload may contain only its exact ID, descriptive fields and agent references",
+    );
+  const common = parseDefinitionPayload(
+    {
+      id: item.id,
+      ...(item.title === undefined ? {} : { title: item.title }),
+      ...(item.description === undefined
+        ? {}
+        : { description: item.description }),
+    },
+    id,
+  );
+  // With no role there is no declared set a request could stay within.
+  if (item.capabilities !== undefined && item.role === undefined)
+    throw new ProjectDefinitionConflictError(
+      "agent_capability_exceeds_role",
+      "Requested capabilities need a role",
+    );
+  return {
+    ...common,
+    ...(item.role === undefined ? {} : { role: localId(item.role) }),
+    ...(item.prompts === undefined
+      ? {}
+      : { prompts: referenceList(item.prompts, "prompts") }),
+    ...(item.knowledge === undefined
+      ? {}
+      : { knowledge: referenceList(item.knowledge, "knowledge") }),
+    ...(item.capabilities === undefined
+      ? {}
+      : { capabilities: referenceList(item.capabilities, "capabilities") }),
+  };
 }
 
 function parseWorkflowPayload(value: unknown, id: string): WorkflowDefinition {
@@ -368,7 +475,9 @@ export function parseDefinitionMutation(
         payload:
           kind === "workflows"
             ? parseWorkflowPayload(item.payload, id)
-            : parseDefinitionPayload(item.payload, id),
+            : kind === "agents"
+              ? parseAgentPayload(item.payload, id, false)
+              : parseDefinitionPayload(item.payload, id),
         ...(expectedEntryRevision === undefined
           ? {}
           : { expectedEntryRevision: expectedEntryRevision as number }),
@@ -417,11 +526,16 @@ export function parseDefinitionMutation(
         ...(operation === "disable"
           ? {}
           : {
-              payload: parseDefinitionPayload(
-                item.payload,
-                source.localId,
-                operation === "extend",
-              ),
+              // Only a replacement of an agent carries references; an
+              // extension stays descriptive for every kind.
+              payload:
+                operation === "replace" && source.kind === "agents"
+                  ? parseAgentPayload(item.payload, source.localId, true)
+                  : parseDefinitionPayload(
+                      item.payload,
+                      source.localId,
+                      operation === "extend",
+                    ),
             }),
         ...(expectedEntryRevision === undefined
           ? {}
