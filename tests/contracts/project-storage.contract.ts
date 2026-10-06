@@ -352,6 +352,48 @@ export function defineProjectStorageContracts(
         expect(await definitions().get(projectId)).toEqual(current);
       });
 
+      test("stores a role omission and still rejects a disable on any other kind", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-role-omission`)
+        ).snapshot().id;
+        const omission = {
+          origin: "project_override" as const,
+          source: {
+            id: parseDomainPackId("org.example.legal"),
+            version: parseDomainPackVersion("1.0.0"),
+            manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+            kind: "roles" as const,
+            localId: "counsel",
+          },
+          operation: "disable" as const,
+          revision: 1,
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        const current = await definitions().replace(
+          { projectId, revision: 0, owned: [], overrides: [omission] },
+          0,
+          now,
+        );
+        expect(current.overrides).toEqual([omission]);
+        expect(await definitions().get(projectId)).toEqual(current);
+        for (const invalid of [
+          // Only roles and prompts have an omission contract.
+          { ...omission, source: { ...omission.source, kind: "taskTypes" } },
+          { ...omission, source: { ...omission.source, kind: "agents" } },
+          // An omission carries no payload.
+          { ...omission, payload: { id: "counsel" } },
+        ] as unknown as (typeof omission)[])
+          await expect(
+            definitions().replace(
+              { projectId, revision: 1, owned: [], overrides: [invalid] },
+              1,
+              now,
+            ),
+          ).rejects.toThrow();
+        expect(await definitions().get(projectId)).toEqual(current);
+      });
+
       test("creates, updates and removes ordered owned and exact-source entries", async () => {
         const projectId = (
           await createProject(harness, `${prefix}-definition-lifecycle`)

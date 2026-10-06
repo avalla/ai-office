@@ -15,6 +15,9 @@ GP-05 adds explicit authoritative project selection, reviewable through
 activate pack definitions for Runtime execution.
 GP-08 adds reviewed upgrade and override reconciliation through
 `project:pack:upgrade`.
+GP-11 defines pack role archetypes: stable role identity, declarative role
+capabilities, project rename, replace, omit and add, and their upgrade merge
+rules. It is a definition layer and creates no Runtime role.
 The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
 architectural contract, not current Runtime behavior.
 
@@ -119,6 +122,10 @@ OfficeManifest rows and run pins are left unchanged.
 
 The application service previews the current and proposed selection, added,
 removed and changed tuples, and any GP-04 availability or dependency error.
+Since GP-11 the preview also reports role capability changes, and preview and
+apply refuse (`role_capability_change_requires_upgrade`) a change to an
+existing role's capability set and, while the currently selected artifacts are
+not installed, every change other than a pure removal; see the GP-11 section.
 Preview is read-only. Apply checks the expected revision, validates the exact
 proposed tuples against the public GP-04 resolver, replaces the selection in
 one transaction and appends a project audit event with previous/new revisions,
@@ -201,11 +208,11 @@ before the mutation transaction. When the closure cannot be resolved the check
 is skipped. GP-06 remains the authority: it rejects a collision that appears
 later, for example after the binding changes or through restore.
 
-| Schema-1 pack contribution                                           | `replace`               | `extend`                      | `disable`   |
-| -------------------------------------------------------------------- | ----------------------- | ----------------------------- | ----------- |
-| Roles, task types, agents, artifact types, evidence types, knowledge | Descriptive fields only | Absent title/description only | Unsupported |
-| Prompts                                                              | Descriptive fields only | Absent title/description only | Supported   |
-| Workflows, policies, capabilities, validators                        | Unsupported             | Unsupported                   | Unsupported |
+| Schema-1 pack contribution                                    | `replace`               | `extend`                      | `disable`   |
+| ------------------------------------------------------------- | ----------------------- | ----------------------------- | ----------- |
+| Task types, agents, artifact types, evidence types, knowledge | Descriptive fields only | Absent title/description only | Unsupported |
+| Roles (`disable` since GP-11), prompts                        | Descriptive fields only | Absent title/description only | Supported   |
+| Workflows, policies, capabilities, validators                 | Unsupported             | Unsupported                   | Unsupported |
 
 `replace` supplies the complete schema-1 descriptive envelope; `extend` fills
 only optional title or description fields missing from the exact source. An
@@ -225,7 +232,8 @@ project, identity, origin, operation, exact source when present, revisions,
 actor and timestamp without the definition body. Portable archive format 6
 carries authoritative entries, including unresolved pinned overrides; formats
 1–5 remain readable with their original meanings. Format 6 excludes installed
-artifacts, credentials and resolved configuration.
+artifacts, credentials and resolved configuration. GP-11 adds format 7 for a
+state that omits a role; format 6 keeps its prompt-only `disable` rule.
 
 GP-06 resolves these sources into an effective configuration and defines
 its digest. GP-08 handles pack upgrade reconciliation. Aliases, legacy
@@ -258,7 +266,7 @@ distinct packs may use the same local ID under different qualified IDs. Every de
 GP-07's exact source tuple order (pack ID, version, manifest digest, kind,
 local ID, compared by code unit), then project-owned entries in GP-07's
 kind/ID order. Exact project overrides apply after independent project
-definitions, using GP-07's replace, extend and prompt-disable matrix. No
+definitions, using GP-07's replace, extend and disable matrix. No
 import or registration order wins.
 
 The resolver treats stored definition state as untrusted input. Each owned
@@ -350,7 +358,8 @@ Each project override is classified against the pack it names:
 
 A conflict blocks the upgrade (`unresolved_override_conflict`) until the
 operator supplies a resolution for that exact source:
-`retain_as_project_owned` or `remove_override`. Retaining turns a `replace`
+`retain_as_project_owned` or `remove_override`. GP-11 adds
+`convert_to_replace` for an `extend_conflict` only. Retaining turns a `replace`
 override whose template is gone into a project-owned definition with the same
 kind, local ID and payload. It is refused (`invalid_resolution`) for `extend`
 and `disable`, which do not carry a complete definition, while the pack still
@@ -404,10 +413,258 @@ pins. Policies, capabilities, validators and workflows have no override
 operation in schema 1, so no project customization of them can exist to
 reconcile; the template list still reports their changes.
 
-Aliases, explicit old-to-new definition mappings beyond the two resolutions,
+Aliases, explicit old-to-new definition mappings beyond the listed resolutions,
 automatic selection or download of a newer version, Development Pack
 compatibility/extraction and Runtime execution from pack definitions remain
 deferred.
+
+## GP-11 pack role archetypes
+
+GP-11 defines pack roles as declarative archetypes that a project resolves
+into its own configuration. It is a definition layer only. It creates no
+Runtime `Role` record, activates no tool, enforces or grants no capability and
+binds no agent or run. Existing OfficeManifest, role, agent, pipeline and
+run-pin rows are neither read nor written, and nothing is scheduled from a
+resolved role.
+
+### Identity
+
+Every resolved role has a stable `roleId`:
+
+- `pack:<packId>/roles/<localId>` for a pack role;
+- `project:roles/<localId>` for a project-added role.
+
+The `roleId` contains no pack version, manifest digest, title or description.
+The pack ID and the role local ID are the identity-bearing keys: a pack upgrade
+that keeps both keeps the `roleId`, and changing either is a removal and an
+addition, not a rename. The GP-06 `effectiveId` still carries the exact pack
+tuple and therefore changes with every pack version; it identifies exact
+content, the `roleId` identifies the logical slot. Pack workflow stages name a
+role by its local ID inside the same pack, so a stage keeps resolving to the
+same slot across a rename, a replacement and an upgrade.
+
+`project:configuration:show` exposes a derived role contract view next to the
+GP-06 lists:
+
+- `roles`: one entry for every enabled role, in the GP-06 definition order,
+  with `roleId`, `effectiveId`, `origin` (`pack_owned` or `project_owned`),
+  the effective `title` and `description` when present, `capabilities` and
+  `customization` (`none`, `replace` or `extend`);
+- `omittedRoles`: the `roleId` of every role that is disabled, in the same
+  order.
+
+The view is derived from the effective definitions and is not part of the
+version-1 `configurationDigest` material. The digest format and the documented
+empty-input vector are unchanged. A pack role's declared capabilities are part
+of its pack payload in `effectiveDefinitions`, so the digest of a configuration
+that uses them reflects them through that existing field.
+
+### Project customization
+
+| Intent  | Mechanism                                                 | Effect                                                                                               |
+| ------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Rename  | `replace` or `extend` override setting `title`            | Presentation only. `roleId`, capabilities and workflow references are unchanged.                     |
+| Replace | `replace` override with the complete descriptive envelope | The project's title and description substitute the pack's. The slot, `roleId` and capabilities stay. |
+| Omit    | `disable` override                                        | The role leaves `roles` and is listed in `omittedRoles`.                                             |
+| Add     | project-owned `roles` definition                          | A `project:roles/<localId>` role with no capabilities.                                               |
+
+Omitting fails closed: when an enabled resolved workflow has a stage that
+names the omitted role, resolution fails with `disabled_required_definition`
+and no view is returned. Workflow validation is not weakened. Projects cannot
+replace or disable pack workflows before GP-13, so in GP-11 only a role that no
+enabled pack workflow uses can be omitted. A project-owned role with
+`enabled: false` is listed in `omittedRoles` in the same way.
+
+A project-added role cannot reuse the kind and local ID of a role anywhere in
+the resolved pack closure, as in GP-07 and GP-06. Substituting a pack role is
+a `replace` override, not an omission followed by a same-named project role.
+
+GP-11 widens the GP-07 override matrix by one cell: `disable` is supported for
+roles as well as prompts. The mutation contract, the GP-06 re-check of stored
+state, both storage schemas and the portable archive apply the same rule.
+
+### Declarative capabilities
+
+A schema-1 pack role may carry an optional `capabilities` list of local IDs.
+Each entry names a capability declared in the same manifest's
+`contributions.capabilities`. The contract package rejects, with a typed
+`DomainPackManifestError` (`invalid_contribution`) and the path of the
+offending member: a non-array value, an empty array, a malformed local ID, a
+duplicate, a reference to a capability the manifest does not declare, and the
+field on any other contribution kind, where it remains an unknown field.
+Schema-1 references are bare local IDs, so a cross-pack reference cannot be
+expressed: a capability declared only in a dependency pack is an unknown
+reference. "No capabilities" has exactly one encoding, the absent field.
+
+Capabilities are a set. The validated manifest holds them in ascending
+code-unit order, so `manifestDigest` does not depend on the written order.
+A manifest that omits the field keeps its canonical form and digest; the four
+golden fixture digests are unchanged. This is an additive section-schema
+extension within manifest schema 1 and core contract version 1. A Runtime
+built before GP-11 rejects a manifest that uses the field as an unknown field;
+it never ignores it.
+
+These are declarative associations. They grant nothing, authorize nothing and
+are not checked against registered providers or capability policy. GP-16 owns
+capability contracts and provider binding; controlled-action authorization is
+unchanged.
+
+The capability set of a pack role is owned by the selected pack version:
+
+- `replace`, `extend` and `disable` overrides never change it. The resolver
+  takes the set from the pack source under every operation; a `replace`
+  payload substitutes only the descriptive fields.
+- Project payloads cannot carry a `capabilities` key. `put_override` and
+  `put_owned` reject it (`protected_security_invariant`), the GP-06 resolver
+  rejects it in stored state, and the portable archive schema rejects it.
+- Project-added roles have no capabilities in GP-11.
+
+A capability is written in two forms. The role view of
+`project:configuration:show` reports it by its stable ID,
+`pack:<packId>/capabilities/<localId>`, in ascending local-ID order. The
+upgrade plan, the `project:pack:preview` report and the upgrade audit event
+list bare capability local IDs under a `roleId`; the pack is the one named in
+that `roleId`, because a role can only reference capabilities of its own pack.
+
+### Upgrade and merge semantics
+
+`project:pack:upgrade` (GP-08) carries role customizations across a pack
+version change. Stable `roleId` values are identical before and after.
+
+| Project state of the role  | New pack version                                  | Outcome                                                                                                                             |
+| -------------------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Not customized             | Changed                                           | The new template applies. Reported as a template change.                                                                            |
+| `replace` (rename/replace) | Changed                                           | `retargeted`. The project's title and description win, `upstream: changed` is reported, and the capabilities are the new version's. |
+| `extend`                   | Changed, extended fields still absent upstream    | `retargeted`. The project's fields still fill the gaps.                                                                             |
+| `extend`                   | Now sets a field the project extends              | Blocks as `extend_conflict` until resolved with `convert_to_replace` or `remove_override`.                                          |
+| `disable` (omitted)        | Changed                                           | `retargeted`. The role stays omitted and `upstream: changed` is reported.                                                           |
+| Any override               | Role removed                                      | Blocks as `source_definition_removed`. `retain_as_project_owned` is accepted for `replace` only; otherwise `remove_override`.       |
+| Any override               | Pack removed                                      | Blocks as `source_pack_removed`, resolved the same way.                                                                             |
+| Omitted                    | An enabled pack workflow now requires the role    | Blocks as `prospective_configuration_invalid` (`disabled_required_definition`).                                                     |
+| Project-added role         | Pack starts to provide the same kind and local ID | Blocks as `prospective_configuration_invalid` (`duplicate_effective_definition`). The project role is never discarded.              |
+| Project-added role         | Anything else                                     | Untouched.                                                                                                                          |
+
+`convert_to_replace` is a third explicit resolution, valid only for an
+`extend_conflict`. It turns the extension into a `replace` override on the new
+tuple. The new payload keeps the fields the project set and takes every other
+descriptive field from the new template, so both sides' information is kept
+and the project's presentation wins where they overlap. The outcome is
+`converted_to_replace`. Because the entry changes, its entry revision is
+incremented and the approving operator and time are recorded on it. For any
+other conflict it is an `invalid_resolution` and blocks; like every
+resolution, one that matches no conflict is listed under `ignoredResolutions`
+and changes nothing. The copied template fields become project values from
+then on: a later upstream change to them is only reported as
+`upstream: changed` and does not replace them. The converted payload is a
+definition body, so it is not in the plan; approval binds it through
+`prospectiveConfigurationDigest`. A retained role
+(`retain_as_project_owned`) becomes a project-added role, has a new
+`project:roles/<localId>` identity and no capabilities; the plan lists the
+removal of its pack capabilities.
+
+No upgrade silently recreates an omitted role, discards a project-added role,
+resets an override or drops an upstream change: every upstream change under a
+customization is reported on the override, and every case that cannot keep
+both sides blocks until an operator resolves it.
+
+A change to the capability set of an existing role is never incidental:
+`project:pack:upgrade` is the only command that carries one out, under an
+approved plan. `project:pack:apply` refuses it. Its preview
+(`project:pack:preview`) reports `roleCapabilityChanges` between the current
+and proposed resolved closures, computed by the same function as the upgrade
+plan and without the `customized` mark, and adds the issue
+`role_capability_change_requires_upgrade` in these cases:
+
+- The current closure resolves, and a role present in both closures (same
+  `roleId`) would have a different capability set.
+- The current closure cannot be resolved because its artifacts are no longer
+  installed, and the change is anything but a pure removal. A pure removal
+  proposes only exact tuples the project already selects, with nothing added
+  and no tuple changed. Without the previous manifests neither an added nor a
+  removed role capability can be ruled out: a role may have had a set that the
+  proposed version no longer declares, and a newly selected pack may have been
+  a dependency at another version. `roleCapabilityChanges` is then
+  `unavailable` (`previous_closure_unresolved`). This holds for packs without
+  role capabilities too, so it narrows GP-05: a version change or an addition
+  while the currently selected artifacts are not installed goes through
+  `project:pack:upgrade`, which approves the target capability sets.
+  GP-04 availability is checked first and is unchanged: a proposed selection
+  that keeps or names a tuple whose artifact is not installed fails with the
+  GP-04 code, for example `missing_pack`, and the preview then reports no
+  capability change. So a pure removal is applied only when every tuple that
+  remains still resolves.
+- The proposed closure resolves but its manifests cannot be read back.
+  `roleCapabilityChanges` is then `unavailable`
+  (`proposed_closure_unreadable`).
+
+The code is carried by the preview issue and by the typed application error
+`project:pack:apply` raises. The CLI prints the error message, which names
+`project:pack:upgrade`, on stderr and exits 1, as for other known errors.
+No selection or definition state is written and no
+`project.pack_binding_applied` event is added; the Runtime's generic command
+journal records the command as for any other.
+
+While the current closure resolves, `project:pack:apply` still applies, as an
+explicit selection change, the addition of a pack that was not selected, the
+removal of a pack, and a version change that only adds or removes roles or
+leaves every existing role's set unchanged; a selection without role
+capabilities behaves as in GP-05. Applying an identical selection remains a
+no-op that reads no artifact, and a stale revision fails first; previewing it
+still reports GP-04 availability.
+
+Removing a pack in one `project:pack:apply` and selecting another version of
+it in a later one is, under the current contract, two explicit and audited
+selection changes. Each preview shows the full removal or addition of that
+pack's role capability sets, and neither is treated as a capability change of
+an existing role. The same holds for a version that drops a role followed by
+a later version that provides it again: each step only removes or adds a
+role, and each preview lists its full capability set as removed or added.
+
+The upgrade report adds two fields, both covered by `planDigest`:
+
+- `roleCapabilityChanges`: for every role whose capability set differs between
+  the old and new resolved closures, including added and removed roles that
+  declare capabilities, the `roleId`, the `added` and `removed` capability
+  local IDs and whether a project override names the role (`customized`). It
+  has the same availability rule as the template list: `unavailable` when the
+  previous artifacts are no longer installed, and empty when the selection
+  itself does not change.
+- `targetRoleCapabilities`: the `roleId` and capability local IDs of every
+  role in the target closure that declares capabilities. Approval therefore
+  binds the resulting capability sets even when the previous closure cannot be
+  read.
+
+A no-op plan reads no artifact and carries both fields empty. The
+`project.pack_upgrade_applied` audit event records both fields. They contain
+identities only, never a definition body.
+
+### Persistence
+
+SQLite migration `0044` and PostgreSQL migration `20261005000100` widen the
+`project_definition_override` operation constraint from "`disable` on prompts"
+to "`disable` on prompts or roles". SQLite rebuilds the table and copies every
+row; PostgreSQL replaces the one constraint and leaves tenant ownership, keys
+and RLS policies untouched. `0042` and `20261003000100` are not edited.
+Existing rows keep their values; a `disable` on any other kind is still
+rejected by the constraint.
+
+Portable archive format 7 has the format-6 contents and additionally accepts a
+`disable` override on a role. Formats 1–6 keep their readers and meanings, and
+format 6 still rejects a role omission. A backup is written as format 7 only
+when the project state contains a role `disable` override; every other state
+with definitions is still written as format 6, byte for byte as before.
+
+### Limitations and non-goals
+
+- Project-added roles cannot declare capabilities. This is a GP-11 limitation,
+  not the final role model.
+- Capabilities are local to one manifest. Qualified cross-pack capability
+  references are not expressible in schema 1.
+- A role required by an enabled pack workflow cannot be omitted until GP-13
+  lets a project replace or disable the workflow.
+- No Runtime `Role` record, tool activation, capability enforcement or grant,
+  agent or runtime binding, aliases, or official role names. GP-12 owns agent
+  archetypes, GP-13 workflow templates and GP-16 capability contracts.
 
 ## Objective and decision boundary
 
@@ -603,7 +860,7 @@ carry the same fields. GP-01 through GP-07 have passed review and merged.
 | GP-10A — Development roles and task defaults       | GP-09, GP-11, GP-12             | Move Software Architect/Developer/Reviewer/QA defaults and software task kinds into the development pack; legacy and adopted projects resolve equivalent effective definitions.                                          | Reference pack definitions; old/new manifest, role and agent parity tests.                                           | Runtime identity or task lifecycle redesign.              |
 | GP-10B — Development workflows and prompts         | GP-10A, GP-13                   | Move feature/bugfix/research/release templates and software assessment/instruction prompts behind pack defaults; project pipelines remain editable.                                                                      | Workflow and prompt templates; stage/approval and project-customization parity tests.                                | New pipeline engine or forced workflow.                   |
 | GP-10C — Development evidence and adoption         | GP-10B, GP-14–GP-16             | Put repository/GitHub/commit/PR/CI evidence types, knowledge guidance and capability declarations behind pack contracts; offer previewed explicit adoption while preserving old bindings.                                | Development pack completion and migration report; legacy snapshot, approval, action and provenance regression tests. | Redesign of worker, queue, model routing or governance.   |
-| GP-11 — Pack role archetypes                       | GP-06, GP-07                    | Instantiate, rename, replace, omit and add roles; preserve role identity, permissions and project changes on upgrade.                                                                                                    | Role contracts and customization/upgrade tests.                                                                      | Hard-coded official role names.                           |
+| GP-11 — Pack role archetypes                       | GP-06, GP-07                    | Define pack roles with stable identity and declarative capabilities; rename, replace, omit and add them in project configuration; preserve identity, capabilities and project changes on upgrade.                        | Role contracts and customization/upgrade tests.                                                                      | Official role names; Runtime roles, grants or bindings.   |
 | GP-12 — Pack agent archetypes                      | GP-11                           | Instantiate, replace, disable or add agents; project config controls name, role, model, guidance/prompts, knowledge, tools, capability requests, pipeline participation and approval eligibility within existing limits. | Agent configuration contracts and upgrade/authority tests.                                                           | Pack-owned Runtime identities or model-routing rewrite.   |
 | GP-13 — Pack workflow templates                    | GP-11, GP-12                    | Instantiate, reorder, extend, replace or disable pipelines and stages; preserve generic engine, pinning, approvals and guards.                                                                                           | Pipeline template and project customization tests, including in-flight version changes.                              | Domain-specific pipeline engine.                          |
 | GP-14 — Artifacts, evidence and validators         | GP-03, GP-06; M11.6             | Declare domain types and trusted validator references atop generic version/provenance/review contracts; stale evidence and invalid validator output fail closed.                                                         | Typed fixture schemas and version-bound review/validator tests.                                                      | Running arbitrary pack code.                              |

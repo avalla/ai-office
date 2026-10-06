@@ -75,7 +75,12 @@ digest-pinned, read-only effective configuration; nothing is scheduled from it.
 GP-08 reconciles a selection change with the project overrides that name the
 changed packs: a read-only report, then a digest-approved apply that writes the
 selection and the retargeted overrides in one audited transaction and blocks
-on unresolved conflicts.
+on unresolved conflicts. GP-11 gives pack roles a stable identity
+(`pack:<packId>/roles/<localId>`) and optional declarative capabilities owned
+by the selected pack version; a project may rename, replace, omit or add role
+definitions, and the derived view lists the resulting role contracts. These
+remain definitions: no Runtime role, grant or agent binding is created. A role
+omission is carried by portable archive format 7; format 6 is unchanged.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

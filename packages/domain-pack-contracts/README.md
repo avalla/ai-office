@@ -27,12 +27,30 @@ any depth, lone Unicode surrogates, nonfinite numbers and integer literals
 outside the interoperable safe-integer range. Schema 1 requires every envelope
 field and contribution section. Contribution items currently accept only an
 ASCII `id` and optional `title`/`description`; workflow items also have a
-`taskType` and ordered `stages` with `id`/`role`. Unknown fields fail validation,
+`taskType` and ordered `stages` with `id`/`role`, and role items may have
+`capabilities` (see below). Unknown fields fail validation,
 including executable entry points and embedded credentials. Later GP slices
 must explicitly extend section schemas through a compatible manifest/schema
 decision before they can add fields. The current generic `Contribution` type is
 not the final field-level schema for agents, artifact types, evidence types,
 policies, knowledge, capabilities, prompts or validators.
+
+A role item may carry an optional `capabilities` array of local IDs (GP-11).
+Every entry must be a valid, unique local ID naming an item of the same
+manifest's `contributions.capabilities`. A non-array value, an empty array, a
+malformed or duplicate ID, an undeclared capability and the field on any other
+contribution kind fail with `invalid_contribution` and the member's path. The
+field is omitted when a role has no capabilities; an empty array is not a
+second encoding. References are bare local IDs, so schema 1 cannot express a
+capability of another pack, including a dependency. The list is a set: the
+validated manifest holds it in ascending code-unit order, and that order is
+what the digest covers. The association is declarative and grants nothing.
+
+Versioning and compatibility: this is an additive section-schema extension.
+The manifest stays schema 1 and the core contract version stays 1. A manifest
+that omits the field has the same canonical form and `manifestDigest` as
+before. A reader built before the extension rejects a manifest that uses the
+field as an unknown field; no reader ignores it.
 
 For `manifestDigest`, validation removes only the root `manifestDigest`, sorts
 `dependencies` and each top-level contribution array by unique ASCII `id`,

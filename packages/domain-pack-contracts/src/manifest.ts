@@ -53,6 +53,15 @@ export interface Contribution {
   readonly description?: string;
 }
 
+/**
+ * A role archetype. `capabilities` names capability contributions of the same
+ * manifest; it is a declarative association and grants nothing. The validated
+ * list is a set in ascending code-unit order, absent when empty.
+ */
+export interface RoleContribution extends Contribution {
+  readonly capabilities?: readonly ContributionLocalId[];
+}
+
 export interface WorkflowStage {
   readonly id: ContributionLocalId;
   readonly role: ContributionLocalId;
@@ -66,7 +75,9 @@ export interface WorkflowContribution extends Contribution {
 export type DomainPackContributions = {
   readonly [K in ContributionKind]: readonly (K extends "workflows"
     ? WorkflowContribution
-    : Contribution)[];
+    : K extends "roles"
+      ? RoleContribution
+      : Contribution)[];
 };
 
 export interface DomainPackManifest {
@@ -256,15 +267,46 @@ function localId(
   return value as ContributionLocalId;
 }
 
+const compareCodeUnits = (left: string, right: string): number =>
+  left < right ? -1 : left > right ? 1 : 0;
+
+/**
+ * Shape of a role's capability references. Whether each one names a declared
+ * capability is checked once every section has been read.
+ */
+function roleCapabilities(
+  value: unknown,
+  path: string,
+): readonly ContributionLocalId[] {
+  if (!Array.isArray(value))
+    return fail("invalid_contribution", path, "expected array");
+  // "No capabilities" has one encoding: the absent field.
+  if (value.length === 0)
+    return fail(
+      "invalid_contribution",
+      path,
+      "expected at least one capability; omit the field instead",
+    );
+  const parsed = value.map((entry: unknown, index: number) =>
+    localId(entry, `${path}[${index}]`, "invalid_contribution"),
+  );
+  if (new Set(parsed).size !== parsed.length)
+    fail("invalid_contribution", path, "duplicate capability reference");
+  return parsed;
+}
+
 function contribution(
   value: unknown,
   path: string,
-  workflow: boolean,
-): Contribution | WorkflowContribution {
+  kind: ContributionKind,
+): Contribution | RoleContribution | WorkflowContribution {
   const record = object(value, path, "invalid_contribution");
+  const workflow = kind === "workflows";
   const allowed = workflow
     ? ["id", "title", "description", "taskType", "stages"]
-    : ["id", "title", "description"];
+    : kind === "roles"
+      ? ["id", "title", "description", "capabilities"]
+      : ["id", "title", "description"];
   for (const key of Object.keys(record))
     if (!allowed.includes(key))
       fail("invalid_contribution", `${path}.${key}`, "unknown field");
@@ -286,6 +328,16 @@ function contribution(
           ),
         }),
   };
+  if (kind === "roles")
+    return record.capabilities === undefined
+      ? common
+      : {
+          ...common,
+          capabilities: roleCapabilities(
+            record.capabilities,
+            `${path}.capabilities`,
+          ),
+        };
   if (!workflow) return common;
   if (!Array.isArray(record.stages))
     return fail("invalid_contribution", `${path}.stages`, "expected array");
@@ -386,11 +438,7 @@ export function validateDomainPackManifest(value: unknown): DomainPackManifest {
         "expected array",
       );
     const parsed = items.map((entry: unknown, index: number) =>
-      contribution(
-        entry,
-        `contributions.${kind}[${index}]`,
-        kind === "workflows",
-      ),
+      contribution(entry, `contributions.${kind}[${index}]`, kind),
     );
     if (new Set(parsed.map((entry) => entry.id)).size !== parsed.length)
       fail(
@@ -400,6 +448,26 @@ export function validateDomainPackManifest(value: unknown): DomainPackManifest {
       );
     contributions[kind] = parsed;
   }
+  // Schema-1 references are bare local IDs: a role can only name a capability
+  // this manifest declares, never one of another pack.
+  const declared = new Set(contributions.capabilities.map((entry) => entry.id));
+  contributions.roles = (
+    contributions.roles as readonly RoleContribution[]
+  ).map((role, index) => {
+    if (role.capabilities === undefined) return role;
+    for (const [position, capability] of role.capabilities.entries())
+      if (!declared.has(capability))
+        fail(
+          "invalid_contribution",
+          `contributions.roles[${index}].capabilities[${position}]`,
+          "capability is not declared by this manifest",
+        );
+    // A set: one order, so the digest does not depend on the written order.
+    return {
+      ...role,
+      capabilities: [...role.capabilities].sort(compareCodeUnits),
+    };
+  });
   return {
     schemaVersion: 1,
     id: parseDomainPackId(record.id),

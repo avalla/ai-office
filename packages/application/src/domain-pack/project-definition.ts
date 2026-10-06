@@ -162,6 +162,15 @@ const descriptiveKinds: readonly ContributionKind[] = [
   "knowledge",
   "prompts",
 ];
+/**
+ * Kinds a project may omit with a `disable` override. A role omission (GP-11)
+ * removes the role from the resolved configuration; a workflow that still
+ * requires it fails resolution.
+ */
+export const disableableKinds: readonly ContributionKind[] = [
+  "prompts",
+  "roles",
+];
 export const projectOwnedKinds: readonly ContributionKind[] = [
   ...descriptiveKinds,
   "workflows",
@@ -395,7 +404,7 @@ export function parseDefinitionMutation(
       ]);
       if (
         !descriptiveKinds.includes(source.kind) ||
-        (operation === "disable" && source.kind !== "prompts")
+        (operation === "disable" && !disableableKinds.includes(source.kind))
       )
         throw new ProjectDefinitionConflictError(
           "unsupported_override_operation",
