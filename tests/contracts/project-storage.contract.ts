@@ -15,6 +15,10 @@ import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/man
 import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import { resolveProjectConfiguration } from "@ai-office/application/domain-pack/resolve-project-configuration.ts";
 import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
+import {
+  portableProjectArchiveSchemaV9,
+  portableProjectArchiveSchemaV10,
+} from "@ai-office/application/project-portability/project-snapshot.ts";
 import type {
   LinkedRequirement,
   TaskRequirementRepository,
@@ -719,6 +723,175 @@ export function defineProjectStorageContracts(
             ),
           ).rejects.toThrow();
         expect(await definitions().get(projectId)).toEqual(current);
+      });
+
+      test("stores the descriptive vocabulary unchanged, in list order, and exportable at format 10 only", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-descriptive`)
+        ).snapshot().id;
+        const tuple = {
+          id: parseDomainPackId("org.example.legal"),
+          version: parseDomainPackVersion("1.0.0"),
+          manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+        };
+        const entry = {
+          origin: "project_override" as const,
+          operation: "replace" as const,
+          revision: 1,
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        // Lists in no sort order, with a repeated entry; text with line
+        // breaks, a non-BMP character and the full project text bound.
+        const long = "x".repeat(16_000);
+        const text = `Line one\nLine two 😀\n\n${long.slice(0, 200)}`;
+        const stages = [
+          {
+            id: "z-last",
+            role: "paralegal",
+            title: "Last",
+            objective: long,
+            checks: ["b second", "a first", "b second", "C third"],
+          },
+          { id: "a-first", role: "counsel", checks: ["only"] },
+          { id: "m-middle", role: "clerk" },
+        ];
+        const state = {
+          projectId,
+          revision: 0,
+          owned: [
+            {
+              ...owned,
+              kind: "prompts" as const,
+              id: "house",
+              payload: { id: "house", title: "House", text },
+            },
+            {
+              ...owned,
+              id: "liaison",
+              payload: {
+                id: "liaison",
+                responsibilities: ["z write", "a call", "z write", "M meet"],
+              },
+            },
+            {
+              ...owned,
+              kind: "workflows" as const,
+              id: "ours",
+              payload: {
+                id: "ours",
+                taskType: "errand",
+                additionalTaskTypes: ["Zeta", "appeal", "visit"],
+                stages,
+              },
+            },
+          ],
+          overrides: [
+            {
+              ...entry,
+              source: { ...tuple, kind: "prompts" as const, localId: "brief" },
+              payload: { id: "brief", text: long },
+            },
+            {
+              ...entry,
+              source: { ...tuple, kind: "roles" as const, localId: "counsel" },
+              payload: {
+                id: "counsel",
+                title: "Our counsel",
+                responsibilities: ["z sign", "a advise"],
+              },
+            },
+            {
+              ...entry,
+              source: {
+                ...tuple,
+                kind: "workflows" as const,
+                localId: "review",
+              },
+              payload: {
+                id: "review",
+                taskType: "matter",
+                additionalTaskTypes: ["appeal", "filing"],
+                stages,
+              },
+            },
+          ],
+        };
+        const current = await definitions().replace(state, 0, now);
+        expect(current).toEqual({ ...state, revision: 1 });
+        const read = await definitions().get(projectId);
+        expect(read).toEqual(current);
+        // Order is the stored order, not a sorted one.
+        const payloads = [...read.owned, ...read.overrides].map(
+          (item) => item.payload as unknown as Record<string, unknown>,
+        );
+        expect(payloads[1]?.responsibilities).toEqual([
+          "z write",
+          "a call",
+          "z write",
+          "M meet",
+        ]);
+        expect(payloads[4]?.responsibilities).toEqual(["z sign", "a advise"]);
+        for (const index of [2, 5]) {
+          const stored = payloads[index]?.stages as {
+            id: string;
+            checks?: string[];
+          }[];
+          expect(stored.map((stage) => stage.id)).toEqual([
+            "z-last",
+            "a-first",
+            "m-middle",
+          ]);
+          expect(stored[0]?.checks).toEqual([
+            "b second",
+            "a first",
+            "b second",
+            "C third",
+          ]);
+          expect(Object.hasOwn(stored[2]!, "checks")).toBe(false);
+        }
+        expect(payloads[0]?.text).toBe(text);
+        expect(payloads[3]?.text).toBe(long);
+
+        // What was read back is exportable: it is a valid format-10
+        // definition section, and no earlier format accepts it.
+        const section = {
+          revision: read.revision,
+          owned: read.owned,
+          overrides: read.overrides,
+        };
+        const exported =
+          portableProjectArchiveSchemaV10.shape.state.shape.definitions.safeParse(
+            section,
+          );
+        expect(exported.success).toBe(true);
+        expect(exported.data).toEqual(section);
+        expect(
+          portableProjectArchiveSchemaV9.shape.state.shape.definitions.safeParse(
+            section,
+          ).success,
+        ).toBe(false);
+
+        // An update that drops the fields leaves none behind.
+        const plain = await definitions().replace(
+          {
+            projectId,
+            revision: 1,
+            owned: [
+              {
+                ...owned,
+                id: "liaison",
+                revision: 2,
+                payload: { id: "liaison" },
+              },
+            ],
+            overrides: [],
+          },
+          1,
+          now,
+        );
+        expect(await definitions().get(projectId)).toEqual(plain);
+        expect(plain.owned[0]?.payload).toEqual({ id: "liaison" });
       });
 
       test("creates, updates and removes ordered owned and exact-source entries", async () => {
