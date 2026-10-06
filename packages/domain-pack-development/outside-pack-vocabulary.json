@@ -1,13 +1,14 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "pack": {
     "id": "org.ai-office.development",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "claim": "expressible-subset parity",
-  "description": "Legacy development fields that the schema-1 pack vocabulary cannot express. The development pack does not carry them and the parity comparison does not cover them. Each entry names the task that owns it next. gp09Gap is the GP-09 vocabulary gap code that reports the field in a state that uses it. inDefaultState is true for a field observed in the default legacy state and false for a legacy field the default state does not use, listed so that its owner is on record.",
+  "description": "Legacy development fields that the schema-1 pack vocabulary cannot express, in whole or in part. The parity comparison does not cover the residue. delivered is the part of the field the development pack carries since GP-10B-1, or null when it carries none of it. residue is what stays outside the pack, and owner is the task that owns that residue next. gp09Gap is the GP-09 vocabulary gap code that reports the field in a state that uses it. inDefaultState is true for a field observed in the default legacy state and false for a legacy field the default state does not use, listed so that its owner is on record.",
   "owners": {
-    "GP-10B": "Development workflows and prompts",
+    "GP-10B-2": "Development descriptive contract extension and prompts (Runtime task e890324a-ecd4-4fcc-b1f8-37fdbdaca319)",
+    "GP-25": "Pack policy contribution contract (provisional number; Runtime task 1a883c04-0905-4b36-a57b-12d45fdfd59f)",
     "GP-10C": "Development evidence and adoption",
     "a45ddb12-3159-4b60-9b8b-c26516720834": "Runtime resolved-configuration execution parity"
   },
@@ -15,7 +16,9 @@
     {
       "subject": "office_role",
       "field": "responsibilities",
-      "owner": "GP-10B",
+      "owner": "GP-10B-2",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "role_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Authored responsibility statements of an office role. A pack role has a title and a description only."
@@ -24,6 +27,8 @@
       "subject": "runtime_role",
       "field": "name",
       "owner": "a45ddb12-3159-4b60-9b8b-c26516720834",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": null,
       "inDefaultState": true,
       "reason": "Runtime role name, such as software-architect. Missing from the GP-09 gap list and recorded here; the frozen GP-09 profile is not edited."
@@ -32,6 +37,8 @@
       "subject": "runtime_role",
       "field": "version",
       "owner": "a45ddb12-3159-4b60-9b8b-c26516720834",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "runtime_role_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Definition version of the Runtime role, which also versions its guidance."
@@ -41,6 +48,8 @@
       "field": "capabilities",
       "aspect": "order",
       "owner": "a45ddb12-3159-4b60-9b8b-c26516720834",
+      "delivered": null,
+      "residue": "The order of the list.",
       "gp09Gap": null,
       "inDefaultState": true,
       "reason": "Capability order. The Runtime stores an ordered list and a pack role holds a set; membership is compared, order is not."
@@ -49,6 +58,8 @@
       "subject": "runtime_role",
       "field": "tools",
       "owner": "GP-10C",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "runtime_role_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Tools the Runtime role may call. A pack role declares no tool or integration."
@@ -57,6 +68,8 @@
       "subject": "runtime_role",
       "field": "modelPolicy",
       "owner": "a45ddb12-3159-4b60-9b8b-c26516720834",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "runtime_role_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Model policy of the Runtime role."
@@ -65,6 +78,8 @@
       "subject": "runtime_role",
       "field": "limits",
       "owner": "a45ddb12-3159-4b60-9b8b-c26516720834",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "runtime_role_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Runtime limits and constraints: maxIterations, maxCostMicros and timeoutSeconds."
@@ -72,7 +87,9 @@
     {
       "subject": "runtime_role",
       "field": "guidance",
-      "owner": "GP-10B",
+      "owner": "GP-10B-2",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "runtime_role_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Role guidance, the system instructions shipped as system.md: its text, digest and version."
@@ -81,6 +98,8 @@
       "subject": "agent",
       "field": "enabled",
       "owner": "a45ddb12-3159-4b60-9b8b-c26516720834",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": null,
       "inDefaultState": true,
       "reason": "Whether the Runtime agent is enabled. A pack agent is a declaration and creates no Runtime agent."
@@ -88,15 +107,19 @@
     {
       "subject": "task_kind",
       "field": "pipelineId",
-      "owner": "GP-10B",
+      "owner": "GP-10B-2",
+      "delivered": "The routes feature -> delivery, bugfix -> bugfix, research -> discovery and release -> release, each as the taskType of the workflow of that ID.",
+      "residue": "The route maintenance -> delivery.",
       "gp09Gap": null,
       "inDefaultState": true,
-      "reason": "Routing of a task kind to a pipeline. The pack declares task types and no workflow."
+      "reason": "Routing of a task kind to a pipeline. A pack workflow names one task type, so the second kind of a pipeline that routes two has no place in the pack."
     },
     {
       "subject": "pipeline",
       "field": "defaultFor",
-      "owner": "GP-10B",
+      "owner": "GP-10B-2",
+      "delivered": "One task kind per pipeline, as the taskType of its workflow: the routes feature -> delivery, bugfix -> bugfix, research -> discovery and release -> release.",
+      "residue": "The second task kind of the delivery pipeline: the route maintenance -> delivery.",
       "gp09Gap": "pipeline_routes_several_task_kinds",
       "inDefaultState": true,
       "reason": "One pipeline routes several task kinds; a pack workflow names one task type."
@@ -104,7 +127,9 @@
     {
       "subject": "pipeline",
       "field": "enforcement",
-      "owner": "GP-10B",
+      "owner": "GP-25",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "pipeline_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Whether the pipeline is enforced or guidance."
@@ -112,7 +137,9 @@
     {
       "subject": "stage",
       "field": "name",
-      "owner": "GP-10B",
+      "owner": "GP-10B-2",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Stage name. A pack workflow stage is an ID and a role."
@@ -120,7 +147,9 @@
     {
       "subject": "stage",
       "field": "objective",
-      "owner": "GP-10B",
+      "owner": "GP-10B-2",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Stage objective."
@@ -128,7 +157,9 @@
     {
       "subject": "stage",
       "field": "checks",
-      "owner": "GP-10B",
+      "owner": "GP-10B-2",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Check semantics: the checks a stage must satisfy."
@@ -136,7 +167,9 @@
     {
       "subject": "stage",
       "field": "requiresApproval",
-      "owner": "GP-10B",
+      "owner": "GP-25",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Approval semantics: whether completing the stage requires an approval."
@@ -144,7 +177,9 @@
     {
       "subject": "stage",
       "field": "capabilities",
-      "owner": "GP-10B",
+      "owner": "GP-25",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Capabilities a stage requires."
@@ -152,7 +187,9 @@
     {
       "subject": "stage",
       "field": "requiresIndependentApproval",
-      "owner": "GP-10B",
+      "owner": "GP-25",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": false,
       "reason": "Approval semantics: whether the agent assigned to the stage is barred from deciding its approval. The default state does not use it."
@@ -160,7 +197,9 @@
     {
       "subject": "stage",
       "field": "requiresDifferentAgentFrom",
-      "owner": "GP-10B",
+      "owner": "GP-25",
+      "delivered": null,
+      "residue": "The whole field.",
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": false,
       "reason": "Separation constraint: earlier stages whose agent may not do this stage. The default state does not use it."

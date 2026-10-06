@@ -112,7 +112,11 @@ GP-10A adds `packages/domain-pack-development`, a data-only package with the
 development pack manifest as a reference artifact. No production code imports
 it, the Runtime's catalog does not hold it and nothing is scheduled from it;
 tests compare it with the legacy development defaults over the subset the
-pack contract can express (expressible-subset parity).
+pack contract can express (expressible-subset parity). GP-10B-1 adds the four
+development workflows to that manifest as data. They are compared with the
+legacy default pipelines over the same kind of subset; no pipeline, run, pin,
+approval or guard is created from a pack workflow and nothing is scheduled from
+one.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

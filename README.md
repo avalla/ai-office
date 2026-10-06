@@ -236,7 +236,7 @@ The repository uses Bun, strict TypeScript, ESLint, Prettier, Vitest, SQLite int
 
 ## Project direction
 
-The current Runtime remains software-development-oriented. M15 defined cross-domain professional-work boundaries, and M16 is progressively extracting a generic core plus versioned Domain Packs. GP-05 records exact project pack selection. GP-07 records project-owned definitions and exact, validated pack-source overrides. GP-09 adds `project:configuration:legacy`, a read-only, versioned description of the office, roles, agents and pipelines an existing project runs on today; it is a legacy-state profile, not an executable configuration. GP-10A commits the development pack as a reference artifact that tests compare with the legacy defaults; the Runtime does not read it. Development, legal, manufacturing, and other packs do not yet supply Runtime roles or workflows.
+The current Runtime remains software-development-oriented. M15 defined cross-domain professional-work boundaries, and M16 is progressively extracting a generic core plus versioned Domain Packs. GP-05 records exact project pack selection. GP-07 records project-owned definitions and exact, validated pack-source overrides. GP-09 adds `project:configuration:legacy`, a read-only, versioned description of the office, roles, agents and pipelines an existing project runs on today; it is a legacy-state profile, not an executable configuration. GP-10A commits the development pack as a reference artifact that tests compare with the legacy defaults, and GP-10B-1 adds the four development workflows to it; the Runtime does not read it. Development, legal, manufacturing, and other packs do not yet supply Runtime roles or workflows.
 
 See:
 

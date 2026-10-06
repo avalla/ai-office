@@ -1962,7 +1962,9 @@ in the list.
 
 ## GP-10B-1 development workflow templates
 
-Status: contract approved by the owner on 2026-10-06.
+Status: implemented. The owner approved the contract below on 2026-10-06.
+"Implementation record" at the end of this section records what was built
+where the contract left a choice, and where the evidence stops.
 
 Formal scope:
 
@@ -2179,6 +2181,86 @@ are expressible and are now in the pack, so they are not in the list.
   no scheduling from one.
 - No removal or modification of any legacy default.
 - No change to the frozen GP-09 profile or its gap codes.
+
+### Implementation record
+
+- Manifest. `packages/domain-pack-development/manifest.json` is
+  `org.ai-office.development@0.2.0`, schema 1, `coreContract` `[1, 2)`, no
+  dependency. The four workflows are in the default office manifest's
+  pipeline order, which is not compared. The package still holds the same
+  four files and no source file.
+- Pinned. `manifestDigest` is
+  `sha256:6321bb076a19765ce50f3127914c95487658c44e4cf480c3471337d2983f227e`,
+  and a test pins the digest of the file's exact bytes. A second pin is a
+  digest over the roles, agents, task types and capabilities, computed from
+  the committed `0.1.0` manifest: it shows that those four are unchanged.
+- Comparison shape. `tests/helpers/development-pack-parity.ts` is still test
+  code and the only place the two sides meet. Its shape gains `workflows`
+  and `routes`. On the legacy side a workflow is a profile pipeline; on the
+  pack side it is an enabled workflow of the resolved configuration, by
+  local ID, whatever its origin. The end-to-end GP-10A case over the Unix
+  socket uses the same projection, so it compares the workflows too.
+- Routing is read twice on the legacy side, because the legacy state holds
+  it twice: as `defaultFor` of a pipeline, compared with the workflow's one
+  task type, and as the pipeline of a task kind, compared with the routes.
+  Both leave out the task kind `maintenance`, whatever it routes to. This is
+  a rule by task kind, not by position in `defaultFor`: decision 3 names the
+  kind. A separate test pins, on the unedited state, that every pack route
+  is a legacy route and that the one legacy route missing is exactly
+  `maintenance -> delivery`.
+- Legacy-side changes go through the real derivation. A test edits a copy of
+  the office manifest and derives the GP-09 profile again, so the profile
+  digest changes with each edit. A change to an expressible part must break
+  parity. A change to an attribute outside the subset must change the digest
+  and leave parity equal, and its field must be in the list. On the shipped
+  defaults the edited manifest also passes the real office manifest parser
+  and `ApplyOfficeManifest`.
+- Completeness by mutation now covers pipelines and stages. Three profile
+  fields are skipped as not being legacy fields of their own: the two
+  containers `runtime` and `stages`, and `eligibleAgents`, which GP-09
+  derives from the agents. A field with a delivered part must be read by the
+  projection; a field with none must not be. The pipeline of a task kind and
+  `defaultFor` are read for every kind but `maintenance`, so both are
+  projected and both carry a delivered part and a residue.
+- List. `outside-pack-vocabulary.json` has `schemaVersion` 2, because every
+  entry gained two required keys: `delivered`, a statement or null, and
+  `residue`. `owner` is the task that owns the residue. The entries, their
+  order, their GP-09 codes and `inDefaultState` are those of GP-10A. For an
+  entry with nothing delivered the residue is the whole field.
+- Owners. Decision 7 names the five entries of GP-25. The other seven
+  former GP-10B entries went to GP-10B-2: responsibilities, guidance, stage
+  `name`, `objective` and `checks`, and the two routing entries, whose
+  residue needs a workflow that names more than one task type.
+- GP-10A section. Its table of fields is kept as GP-10A wrote it, with one
+  added sentence that points here. The test that compared that table with
+  the list entry for entry now compares the table above; the GP-10A table is
+  still checked for the same 19 fields in the same order.
+- GP-10A tests changed where the pack changed: the pinned version and
+  digests, the count of workflows, the owners, the classification list, and
+  the task type renamed in a copy of the pack, which is now `maintenance`
+  because every other task type is named by a workflow.
+- Nothing is created from a workflow. On the GP-09 fixture, which has
+  pipeline runs, stage runs and approvals, binding the pack and resolving
+  the four workflows leaves every table but the binding tables and the audit
+  log identical, and the one audit event is the selection. On a project
+  built from the shipped defaults the run, approval and job tables stay
+  empty.
+- Unchanged. The GP-09 profile digest of the fixture project is the pinned
+  vector before and after the binding, the checksum of each GP-09 fixture
+  file is pinned, an unbound project resolves to the empty configuration at
+  its pinned digest, and the Runtime's own catalog holds no pack. The
+  architecture tests were not edited.
+- Criterion 12 is a property of this change set. It was checked on the diff
+  against the base commit: the diff touches the plan, the roadmap, the
+  architecture overview, the README, the pack package and tests. No test
+  keeps it true afterwards.
+- PostgreSQL. Nothing here reaches storage code, so no PostgreSQL-gated
+  suite covers it and none was added.
+- Evidence limits. Parity is shown for the default legacy state only. The
+  pack is resolved through a catalog a test supplies; no production path
+  installs or selects it. Whether a Runtime that executed these workflows
+  would behave like the legacy pipelines is not shown and is the subject of
+  task `a45ddb12-3159-4b60-9b8b-c26516720834`.
 
 ## Objective and decision boundary
 
