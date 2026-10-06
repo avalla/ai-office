@@ -815,14 +815,15 @@ Validation happens in three places:
 - **GP-06 resolution**, which is the authority and fails closed, also for
   state that arrived by restore or changed under a binding change.
 
-Only a `replace` on a pack agent has its references checked before it is
-stored. Every other mutation still passes the GP-07 checks that are not about
-references: the entry and project revisions, the pack closure collision of a
-project-owned definition, the source binding and source existence of an
-override, and the field overlap of an `extend`. Its references to other
-definitions, and its effect on definitions that reference it, are not checked,
-as GP-07 does not check a workflow reference. `project:definition:apply`
-therefore stores:
+Only a `replace` on a pack agent or, since GP-13, on a pack workflow has its
+references checked before it is stored. Every other mutation still passes the
+GP-07 checks that are not about references: the entry and project revisions,
+the pack closure collision of a project-owned definition, the source binding
+and source existence of an override, and the field overlap of an `extend`.
+Its references to other definitions, and its effect on definitions that
+reference it, are not checked. In particular the references of a
+project-owned agent and of a project-owned workflow are not checked at
+mutation time. `project:definition:apply` therefore stores:
 
 - omitting a role, or disabling a prompt, that an enabled agent names;
 - adding a project agent that names a project role, prompt or knowledge entry
@@ -1100,9 +1101,14 @@ Validation happens in three places, as in GP-12:
   source manifest can be read, as GP-07 reads it for every override. A task
   type or a stage role the source manifest does not declare is reported as
   `source_definition_missing`, through the path GP-12 uses for an agent
-  replacement. Nothing is written while an issue is reported.
+  replacement, once per missing reference even when several stages name it.
+  Nothing is written while an issue is reported.
   `project:definition:show` reports the same issues for a stored replacement
-  that arrived without this check, for example through restore.
+  that arrived without this check, for example through restore. It first
+  re-checks every stored override against the mutation contract: an entry
+  that violates it, for example a workflow or agent replacement edited by
+  hand, is reported with the contract's own code and a message that says the
+  stored override violates the override contract, not as an unavailable pack.
 - **GP-06 resolution**, which is the authority and fails closed, also for
   state that arrived by restore or changed under a binding change.
 
@@ -1193,9 +1199,13 @@ stage list is only reported as `upstream: changed`.
 `retain_as_project_owned` is refused (`invalid_resolution`) for every workflow
 override. A retained workflow would become a project-owned workflow, whose
 bare `taskType` and stage roles resolve in the project namespace. The same
-local IDs would then silently name different definitions, or none. The
-operator removes the override instead and, when the workflow is still wanted,
-adds a project-owned workflow that names project definitions.
+local IDs would then silently name different definitions, or none. So when
+the template or the pack of a customized workflow is removed upstream, the
+only accepted resolution is `remove_override`. Neither the upgrade plan nor
+the `project.pack_upgrade_applied` audit event carries a definition body, so
+the removed envelope cannot be recovered from them. An operator who wants to
+reuse it captures it first, with `project:definition:show` or a backup, and
+afterwards adds a project-owned workflow that names project definitions.
 
 No upgrade silently recreates a disabled workflow, discards a project-owned
 workflow, resets an override, reorders stages or drops an upstream change.
