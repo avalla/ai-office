@@ -33,6 +33,7 @@ import { SqliteProjectDefinitionRepository } from "@ai-office/storage-sqlite/rep
 import { SqliteProjectPackBindingRepository } from "@ai-office/storage-sqlite/repositories/sqlite-project-pack-binding.repository.ts";
 import {
   completenessViolations,
+  defaultStateViolations,
   developmentPackBytes,
   developmentPackManifestDigest,
   legacyRoleIds,
@@ -407,6 +408,9 @@ describe("GP-10A expressible-subset parity on the shipped defaults", () => {
     const vocabulary = outsidePackVocabulary();
     expect(completenessViolations(profile, vocabulary)).toEqual([]);
     expect(missingGp09Gaps(profile, vocabulary)).toEqual([]);
+    // The shipped defaults use every listed field marked as used, and none
+    // of the fields marked as unused by the default state.
+    expect(defaultStateViolations(profile, vocabulary)).toEqual([]);
     // The profile carries every field the shipped sources have: a new key in
     // an agent definition or in an office role has to be classified first.
     const profileField: Record<string, string> = {

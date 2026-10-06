@@ -246,8 +246,17 @@ export interface OutsideVocabularyEntry {
   /** Present when only one aspect of the field is outside the vocabulary. */
   readonly aspect?: string;
   readonly owner: OutsideVocabularyOwner;
-  /** The GP-09 `vocabularyGaps` code that reports the field, or null. */
+  /**
+   * The GP-09 `vocabularyGaps` code that reports the field in a state that
+   * uses it, or null.
+   */
   readonly gp09Gap: string | null;
+  /**
+   * Whether the default legacy state uses the field. False marks a legacy
+   * field the pack vocabulary cannot express that the defaults do not use:
+   * it is listed so that its owner is on record, not because it was observed.
+   */
+  readonly inDefaultState: boolean;
   readonly reason: string;
 }
 
@@ -286,6 +295,7 @@ export function parseOutsidePackVocabulary(
       "aspect",
       "owner",
       "gp09Gap",
+      "inDefaultState",
       "reason",
     ];
     for (const key of Object.keys(entry))
@@ -303,6 +313,8 @@ export function parseOutsidePackVocabulary(
       fail("missing or unknown owner");
     if (entry.gp09Gap !== null && typeof entry.gp09Gap !== "string")
       fail("gp09Gap must be a code or null");
+    if (typeof entry.inDefaultState !== "boolean")
+      fail("inDefaultState must be true or false");
     if (typeof entry.reason !== "string" || entry.reason === "")
       fail("missing reason");
   }
@@ -450,4 +462,38 @@ export function missingGp09Gaps(
       if (!listed.has(key)) missing.add(key);
     }
   return [...missing].sort(byCodeUnits);
+}
+
+/**
+ * Entries whose `inDefaultState` disagrees with the profile. An entry that
+ * cites a GP-09 code is in the default state exactly when GP-09 reports its
+ * field under that code. An entry that cites none has nothing to show it
+ * unused, so it must be marked as in the default state; for a role, agent or
+ * task-kind field `completenessViolations` then proves that it exists.
+ */
+export function defaultStateViolations(
+  profile: Pick<LegacyDevelopmentProfile, "vocabularyGaps">,
+  vocabulary: OutsidePackVocabulary,
+): string[] {
+  const reported = new Set(
+    profile.vocabularyGaps.flatMap((gap) =>
+      gap.fields.map(
+        (field) => `${gap.code}:${gapSubjects[gap.code]}.${field}`,
+      ),
+    ),
+  );
+  return vocabulary.entries.flatMap((entry) => {
+    const key = entryKey(entry);
+    if (entry.gp09Gap === null)
+      return entry.inDefaultState
+        ? []
+        : [`${key} is marked unused and cites no GP-09 code`];
+    const used = reported.has(`${entry.gp09Gap}:${key}`);
+    if (entry.inDefaultState === used) return [];
+    return [
+      used
+        ? `${key} is marked unused and the state uses it`
+        : `${key} is marked as used and ${entry.gp09Gap} does not report it`,
+    ];
+  });
 }

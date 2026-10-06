@@ -12,6 +12,7 @@ import {
 import {
   classifyLegacyFields,
   completenessViolations,
+  defaultStateViolations,
   developmentPackBytes,
   developmentPackId,
   developmentPackManifestDigest,
@@ -290,6 +291,8 @@ describe("GP-10A expressible-subset parity on the GP-09 fixture office", () => {
 describe("GP-10A legacy fields outside the pack vocabulary", () => {
   const vocabulary = outsidePackVocabulary();
   const keys = vocabulary.entries.map(entryKey);
+  const stageEntry = (field: string) =>
+    vocabulary.entries.find((entry) => entryKey(entry) === `stage.${field}`)!;
 
   test("the committed list is well formed, names the pack and the claim, and every entry names one of the three owners", () => {
     expect(vocabulary.schemaVersion).toBe(1);
@@ -320,6 +323,11 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
         entries: [{ ...raw.entries[0], owner: "GP-11" }],
       }),
     ).toThrow(/missing or unknown owner/u);
+    // So is an entry that does not say whether the default state uses it.
+    const { inDefaultState: _inDefaultState, ...unmarked } = raw.entries[0]!;
+    expect(() =>
+      parseOutsidePackVocabulary({ ...raw, entries: [unmarked] }),
+    ).toThrow(/inDefaultState must be true or false/u);
   });
 
   test("it holds every field the scope names, with its owner", () => {
@@ -343,7 +351,10 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       ["stage.checks", "GP-10B"],
       ["stage.requiresApproval", "GP-10B"],
       ["stage.capabilities", "GP-10B"],
+      ["stage.requiresIndependentApproval", "GP-10B"],
+      ["stage.requiresDifferentAgentFrom", "GP-10B"],
     ]);
+    expect(keys).toHaveLength(19);
     // The minimum the approved scope requires, named one by one.
     for (const required of [
       "runtime_role.tools",
@@ -360,6 +371,9 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       "pipeline.enforcement",
       "stage.requiresApproval",
       "stage.checks",
+      // Approval and separation fields the defaults do not use.
+      "stage.requiresIndependentApproval",
+      "stage.requiresDifferentAgentFrom",
     ])
       expect(keys).toContain(required);
   });
@@ -389,15 +403,106 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
         ),
       }),
     ).toEqual(["runtime_role_fields_not_expressible:runtime_role.tools"]);
-    // Every GP-09 code an entry cites does report that field.
-    const reported = new Set(
-      fixtureProfile.vocabularyGaps.flatMap((gap) =>
-        gap.fields.map((field) => `${gap.code}:${field}`),
+    // Every GP-09 code an entry cites does report that field, unless the
+    // entry is marked as unused by the default state.
+    expect(defaultStateViolations(fixtureProfile, vocabulary)).toEqual([]);
+    expect(
+      defaultStateViolations(fixtureProfile, {
+        ...vocabulary,
+        entries: [
+          ...vocabulary.entries,
+          { ...stageEntry("checks"), field: "seniority" },
+        ],
+      }),
+    ).toEqual([
+      "stage.seniority is marked as used and stage_fields_not_expressible does not report it",
+    ]);
+  });
+
+  test("the two stage fields the default state does not use are marked as such, and are legacy fields GP-09 reports once a stage uses them", () => {
+    const unused = vocabulary.entries.filter((entry) => !entry.inDefaultState);
+    expect(
+      unused.map((entry) => [entryKey(entry), entry.owner, entry.gp09Gap]),
+    ).toEqual([
+      [
+        "stage.requiresIndependentApproval",
+        "GP-10B",
+        "stage_fields_not_expressible",
+      ],
+      [
+        "stage.requiresDifferentAgentFrom",
+        "GP-10B",
+        "stage_fields_not_expressible",
+      ],
+    ]);
+    for (const entry of unused)
+      expect(entry.reason).toContain("The default state does not use it.");
+    // The default state has neither field on any stage.
+    const stageFields = new Set(
+      fixtureProfile.pipelines.flatMap((pipeline) =>
+        pipeline.stages.flatMap((stage) => Object.keys(stage)),
       ),
     );
-    for (const entry of vocabulary.entries)
-      if (entry.gp09Gap !== null)
-        expect(reported).toContain(`${entry.gp09Gap}:${entry.field}`);
+    expect(stageFields).toContain("requiresApproval");
+    for (const entry of unused) expect(stageFields).not.toContain(entry.field);
+    // An observed field cannot be passed off as unused, and an unused entry
+    // needs a GP-09 code that can show it.
+    const marked = (key: string, gp09Gap: string | null) => ({
+      ...vocabulary,
+      entries: vocabulary.entries.map((entry) =>
+        entryKey(entry) === key
+          ? { ...entry, inDefaultState: false, gp09Gap }
+          : entry,
+      ),
+    });
+    expect(
+      defaultStateViolations(
+        fixtureProfile,
+        marked("stage.checks", "stage_fields_not_expressible"),
+      ),
+    ).toEqual(["stage.checks is marked unused and the state uses it"]);
+    expect(
+      defaultStateViolations(fixtureProfile, marked("agent.enabled", null)),
+    ).toEqual(["agent.enabled is marked unused and cites no GP-09 code"]);
+    // Both are real legacy stage fields: in an office whose stage uses them,
+    // GP-09 reports each under the code its entry cites. An invented field
+    // marked unused is never reported, so it cannot pass this.
+    const input = legacyProfileInput();
+    const manifest = structuredClone(input.office!.manifest);
+    const stages = manifest.pipelines[0]!.stages;
+    expect(stages.length).toBeGreaterThan(1);
+    Object.assign(stages[1]!, {
+      requiresIndependentApproval: true,
+      requiresDifferentAgentFrom: [stages[0]!.id],
+    });
+    const using = deriveLegacyDevelopmentProfile({
+      ...input,
+      office: { revision: 1, manifest },
+    });
+    const invented = {
+      ...vocabulary,
+      entries: [
+        ...vocabulary.entries,
+        { ...unused[0]!, field: "requiresQuorum" },
+      ],
+    };
+    expect(defaultStateViolations(fixtureProfile, invented)).toEqual([]);
+    for (const list of [vocabulary, invented])
+      expect(defaultStateViolations(using, list)).toEqual([
+        "stage.requiresIndependentApproval is marked unused and the state uses it",
+        "stage.requiresDifferentAgentFrom is marked unused and the state uses it",
+      ]);
+    expect(
+      invented.entries
+        .filter((entry) => !entry.inDefaultState)
+        .map(entryKey)
+        .filter(
+          (key) =>
+            !defaultStateViolations(using, invented).includes(
+              `${key} is marked unused and the state uses it`,
+            ),
+        ),
+    ).toEqual(["stage.requiresQuorum"]);
   });
 
   test("the Runtime role name is in the list although GP-09's gap list does not have it", () => {
@@ -529,8 +634,17 @@ describe("GP-10A documentation", () => {
         entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
         entry.gp09Gap === null
           ? expect.stringMatching(/^none/u)
-          : `\`${entry.gp09Gap}\``,
+          : entry.inDefaultState
+            ? `\`${entry.gp09Gap}\``
+            : `\`${entry.gp09Gap}\` if used; unused by the defaults`,
       ]),
+    );
+    expect(rows).toHaveLength(19);
+    expect(prose).toContain(
+      "The last two rows are legacy stage fields that the default state does not use",
+    );
+    expect(prose).toMatch(
+      /The list covers the fields of roles, agents, task kinds, pipelines and stages\. It does not cover the manifest's `office\.name`, `project` model or `provenance`, and the order of roles, agents and task kinds is not compared\./u,
     );
   });
 
