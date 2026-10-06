@@ -13,6 +13,7 @@ import { beforeAll, afterAll, describe, expect, test } from "vitest";
 import type { RequirementStatus } from "@ai-office/domain/governance/governance.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
+import type { TransactionRunner } from "@ai-office/application/ports/transaction-runner.port.ts";
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
 import { StaleProjectDefinitionError } from "@ai-office/application/domain-pack/project-definition.ts";
@@ -66,13 +67,15 @@ function bindingService(
     database,
     tenantId,
   ),
+  transactions: TransactionRunner = new PostgresTransactionRunner(database),
 ) {
   return new ManageProjectPackBinding({
     projects: new PostgresProjectRepository(database, tenantId),
     bindings: new PostgresProjectPackBindingRepository(database, tenantId),
+    definitions: new PostgresProjectDefinitionRepository(database, tenantId),
     catalog,
     auditEvents,
-    transactions: new PostgresTransactionRunner(database),
+    transactions,
     clock: { now: () => new Date("2026-10-02T00:00:00.000Z") },
     ids: { generate: randomUUID },
   });
@@ -294,6 +297,139 @@ describe.skipIf(connectionString === undefined)(
             [projectId],
           ),
         ).toEqual([{ count: "0" }]);
+      } finally {
+        await Promise.all([writer.close(), observer.close()]);
+      }
+    });
+
+    test("binding composition preflight rejects a colliding selection before and inside the transaction (GP-22)", async () => {
+      const writer = new PostgresClient(connectionString!);
+      const observer = new PostgresClient(connectionString!);
+      const { catalog, custom, legal } = installedBindingFixtures();
+      const at = new Date("2026-10-06T00:00:00.000Z");
+      const collision = {
+        code: "pack_definition_collision",
+        message:
+          "Project definition roles/counsel collides with pack org.example.legal@1.0.0 in the proposed pack closure",
+      };
+      try {
+        const bindings = new PostgresProjectPackBindingRepository(
+          observer,
+          tenantId,
+        );
+        const definitions = new PostgresProjectDefinitionRepository(
+          observer,
+          tenantId,
+        );
+        const ownCounsel = async (projectId: string, id: string) => {
+          const current = await definitions.get(projectId);
+          await definitions.replace(
+            {
+              ...current,
+              owned: [
+                {
+                  origin: "project_owned",
+                  kind: "roles",
+                  id,
+                  revision: 1,
+                  enabled: true,
+                  payload: { id },
+                  actorId: "operator",
+                  changedAt: at.toISOString(),
+                },
+              ],
+            },
+            current.revision,
+            at,
+          );
+        };
+        const create = async () => {
+          const projectId = `pack-collision-${randomUUID()}`;
+          await new PostgresProjectRepository(observer, tenantId).save(
+            Project.create({ id: projectId, name: "Collision", now: at }),
+          );
+          return projectId;
+        };
+        const audits = (projectId: string) =>
+          observer.query<{ count: string }>(
+            "SELECT count(*) FROM core.audit_event WHERE project_id = $1 AND event_type = 'project.pack_binding_applied'",
+            [projectId],
+          );
+
+        // Preflight: preview and apply agree and nothing is written.
+        const projectId = await create();
+        await ownCounsel(projectId, "counsel");
+        expect(
+          (await bindingService(writer, catalog).preview(projectId, [legal]))
+            .issues,
+        ).toEqual([collision]);
+        await expect(
+          bindingService(writer, catalog).apply({
+            projectId,
+            desired: [legal],
+            expectedRevision: 0,
+            actorId: "local-operator",
+          }),
+        ).rejects.toMatchObject(collision);
+        expect(await bindings.get(projectId)).toEqual({
+          projectId,
+          configurationRevision: 0,
+          packs: [],
+        });
+        expect(await audits(projectId)).toEqual([{ count: "0" }]);
+        // Case and kind are part of the identity; a pack without the
+        // definition can be selected.
+        await ownCounsel(projectId, "Counsel");
+        expect(
+          await bindingService(writer, catalog).apply({
+            projectId,
+            desired: [custom, legal],
+            expectedRevision: 0,
+            actorId: "local-operator",
+          }),
+        ).toMatchObject({ configurationRevision: 1 });
+        // The unchanged selection is a no-op even once it collides.
+        await ownCounsel(projectId, "counsel");
+        expect(
+          await bindingService(writer, catalog).apply({
+            projectId,
+            desired: [custom, legal],
+            expectedRevision: 1,
+            actorId: "local-operator",
+          }),
+        ).toMatchObject({ configurationRevision: 1 });
+        expect(await audits(projectId)).toEqual([{ count: "1" }]);
+
+        // A definition committed between preflight and commit is caught by
+        // the comparison inside the transaction, and the write rolls back.
+        const racedId = await create();
+        const real = new PostgresTransactionRunner(writer);
+        const racing: TransactionRunner = {
+          run: async (work) => {
+            await ownCounsel(racedId, "counsel");
+            return real.run(work);
+          },
+        };
+        await expect(
+          bindingService(writer, catalog, undefined, racing).apply({
+            projectId: racedId,
+            desired: [legal],
+            expectedRevision: 0,
+            actorId: "local-operator",
+          }),
+        ).rejects.toMatchObject(collision);
+        expect(await bindings.get(racedId)).toEqual({
+          projectId: racedId,
+          configurationRevision: 0,
+          packs: [],
+        });
+        expect(
+          await observer.query<{ count: string }>(
+            "SELECT count(*) FROM core.project_pack_binding WHERE project_id = $1",
+            [racedId],
+          ),
+        ).toEqual([{ count: "0" }]);
+        expect(await audits(racedId)).toEqual([{ count: "0" }]);
       } finally {
         await Promise.all([writer.close(), observer.close()]);
       }

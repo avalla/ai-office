@@ -21,6 +21,8 @@ rules. It is a definition layer and creates no Runtime role.
 GP-12 does the same for pack agents, and GP-13 lets a project replace, extend
 or disable a pack workflow. Both are definition layers: no Runtime agent or
 pipeline is created from them.
+GP-22 makes binding preview/apply and portable restore reject a selection
+whose resolved closure collides with a project-owned definition.
 The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
 architectural contract, not current Runtime behavior.
 
@@ -139,6 +141,10 @@ event. A changed selection still requires fresh GP-04 validation. This keeps
 persisted selection valid when host-local availability changes. Preview reports
 valid selection conflicts and availability failures as issues; structurally
 malformed tuples fail with a typed request error before a preview is returned.
+Since GP-22 preview and apply also reject (`pack_definition_collision`) a
+selection whose resolved closure contains the kind and local ID of a
+project-owned definition; see the GP-22 section for the check and the order of
+issues.
 
 GP-05 introduced portable archive format version 5, including
 only the exact binding tuples and configuration revision. Readers for versions
@@ -208,8 +214,11 @@ dependencies alike. A matching kind and local ID, compared exactly by code
 unit, is reported as `pack_definition_collision` and nothing is written. The
 check reads the closure through the same GP-04 resolution GP-06 uses and runs
 before the mutation transaction. When the closure cannot be resolved the check
-is skipped. GP-06 remains the authority: it rejects a collision that appears
-later, for example after the binding changes or through restore.
+is skipped. Since GP-22 the inverse paths run the same comparison: a binding
+change and a portable restore whose closure resolves are rejected with the same
+code before they commit. GP-06 remains the authority and the backstop: it
+rejects a collision in state that reached storage without either preflight, for
+example a restore onto a host where the packs were not yet installed.
 
 | Schema-1 pack contribution                            | `replace`                                         | `extend`                      | `disable`   |
 | ----------------------------------------------------- | ------------------------------------------------- | ----------------------------- | ----------- |
@@ -1490,13 +1499,17 @@ carry the same fields. GP-01 through GP-07 have passed review and merged.
 
 ## Post-GP-06 hardening follow-ups
 
-GP-22 and GP-23 are planned and not implemented. They harden the merged GP-06
-and GP-07 contracts; they are not unfinished GP-06 or GP-07 acceptance
+GP-22 is implemented. GP-23 is planned and not implemented. They harden the
+merged GP-06 and GP-07 contracts; they are not unfinished GP-06 or GP-07 acceptance
 criteria and do not reopen that work. Each is a project requirement key with
 one linked AI Office task, depends only on GP-06 and GP-07, and can be
 completed without the other. No other GP task depends on them.
 
 ### GP-22 — Binding composition preflight
+
+Status: implemented. The contract below is unchanged; "Implementation" at the
+end of this section records what the code does where the contract left a
+choice.
 
 Depends on: GP-06, GP-07.
 
@@ -1652,6 +1665,54 @@ Acceptance tests cover at minimum:
 Non-goals: pack upgrade reconciliation (GP-08); aliases; automatic pack
 selection; Runtime scheduling from pack definitions; a second configuration
 resolver; making installed pack availability a prerequisite for restore.
+
+Implementation.
+
+- One comparison. `packDefinitionCollisions` is a pure function over a
+  resolved closure and a list of `(kind, localId)`. GP-07's mutation check,
+  binding preview, binding apply (before and inside the transaction) and the
+  restore preflight all call it. It compares kind and local ID with `===`, so
+  identity is exact by code unit. A project-owned definition collides whether
+  it is enabled or disabled, as in GP-06.
+- One resolution. Binding preview resolves the proposed selection once through
+  `resolveInstalledPackManifests`, which wraps the GP-04 resolver and keeps the
+  manifests it verified. That call reports the GP-04 issue as before and
+  supplies the closure for the comparison.
+- Issue order in `project:pack:preview`: a GP-04 selection or availability
+  failure, alone, because nothing else can be computed without the closure;
+  then one `pack_definition_collision` for each colliding project-owned
+  definition, in kind then local-ID code-unit order, each naming the first
+  colliding pack as `<id>@<version>`; then the GP-11 issue
+  `role_capability_change_requires_upgrade`. The GP-11 guard itself is
+  unchanged and `roleCapabilityChanges` is still reported next to a collision.
+  `project:pack:apply` raises the first issue, so a selection that both
+  collides and changes a role's capabilities fails with the collision. The
+  collision comes first because no command can carry out a colliding
+  selection: `project:pack:upgrade`, where the capability refusal points,
+  blocks the same state as `prospective_configuration_invalid` with detail
+  `duplicate_effective_definition`. The upgrade planner is not changed by
+  GP-22 and does not emit `pack_definition_collision`.
+- Typed errors. Apply raises `ProjectPackBindingCollisionError`, whose `code`
+  is `pack_definition_collision`. Restore raises
+  `ProjectRestoreCompositionError`, a `ProjectPortabilityError` with the same
+  `code` and the list of collisions. The CLI prints the message on stderr and
+  exits 1 for both; the restore message contains the code, since restore has
+  no preview that would carry it.
+- Preview of the unchanged active selection runs the comparison when the
+  closure resolves, which is how a latent collision stays visible. Apply of
+  the unchanged selection returns before any resolution.
+- Binding apply re-reads the project-owned definitions after the
+  compare-and-set replacement, in the same transaction, and throws to roll it
+  back. On PostgreSQL's read-committed isolation a definition that commits
+  after that read is not seen; GP-06 is the backstop for it, as stated above.
+- Restore decides before its transaction whether the archive identity is
+  unknown on the host, which is the path that yields `restored`, and runs the
+  preflight only then. A closure that does not resolve for a GP-04 reason, or
+  whose manifests cannot be read back, gives no verdict. An archive without
+  packs or without project-owned definitions is not resolved at all.
+- No migration, archive format, port or dependency is added. The binding
+  service takes the existing definition repository and the portability service
+  the existing installed-catalog port.
 
 ### GP-23 — Pack manifest U+0000 policy assessment
 

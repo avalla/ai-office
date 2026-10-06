@@ -67,7 +67,13 @@ ProjectStorage facts. Selection pins exact `(id, version, manifestDigest)`
 tuples. GP-07 stores project-owned definitions and project overrides separately
 from installed catalog availability; each override pins the exact source kind
 and local ID as well. Mutations use checked project and entry revisions,
-read-only preview, typed conflict validation and transactional audit. Portable
+read-only preview, typed conflict validation and transactional audit. A
+project-owned definition and a definition of the resolved pack closure may not
+share a kind and local ID: a definition mutation, a selection change and a
+portable restore whose exact closure resolves on the host each reject that
+composition with `pack_definition_collision` before they commit, and GP-06
+rejects it when it reaches storage otherwise, for example through a restore
+onto a host where the packs are not installed. Portable
 archive format 6 carries only this authoritative semantic state. Runtime
 scheduling still uses the existing office, role, agent and pipeline state.
 GP-06 resolves the exact packs and project definitions into a derived,

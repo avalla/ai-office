@@ -20,9 +20,10 @@ import {
 } from "./project-definition.ts";
 import { resolveInstalledPacks } from "./resolve-installed-packs.ts";
 import {
-  CapturedPackManifestError,
-  resolveInstalledPackManifests,
-} from "./resolve-installed-pack-manifests.ts";
+  packDefinitionCollision,
+  packDefinitionCollisions,
+  resolvablePackClosure,
+} from "./pack-definition-collisions.ts";
 import {
   DomainPackCatalogError,
   type InstalledDomainPackCatalog,
@@ -266,36 +267,17 @@ export class ManageProjectDefinitions {
     mutation: Extract<ProjectDefinitionMutation, { action: "put_owned" }>,
   ): Promise<ProjectDefinitionIssue[]> {
     const binding = await this.dependencies.bindings.get(projectId);
-    let closure;
-    try {
-      closure = resolveInstalledPackManifests(
-        this.dependencies.catalog,
-        binding.packs,
-      );
-    } catch (error) {
-      if (
-        error instanceof DomainPackCatalogError ||
-        error instanceof CapturedPackManifestError
-      )
-        return [];
-      throw error;
-    }
-    const colliding = closure
-      .filter(({ manifest }) =>
-        manifest.contributions[mutation.kind].some(
-          (entry) => entry.id === mutation.id,
-        ),
-      )
-      .map(({ identity }) => `${identity.id}@${identity.version}`)
-      .sort();
-    return colliding[0] === undefined
-      ? []
-      : [
-          {
-            code: "pack_definition_collision",
-            message: `Project definition ${mutation.kind}/${mutation.id} collides with pack ${colliding[0]} in the resolved pack closure`,
-          },
-        ];
+    const closure = resolvablePackClosure(
+      this.dependencies.catalog,
+      binding.packs,
+    );
+    if (closure === undefined) return [];
+    return packDefinitionCollisions(closure, [mutation]).map(
+      ({ kind, id, pack }) => ({
+        code: packDefinitionCollision,
+        message: `Project definition ${kind}/${id} collides with pack ${pack} in the resolved pack closure`,
+      }),
+    );
   }
 
   private async sourceIssues(

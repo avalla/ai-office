@@ -57,6 +57,7 @@ function harness() {
     new ManageProjectPackBinding({
       projects: storage.projects,
       bindings: storage.packBindings,
+      definitions: storage.definitions,
       catalog,
       auditEvents,
       transactions: storage.transactions,

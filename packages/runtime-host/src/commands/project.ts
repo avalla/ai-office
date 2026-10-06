@@ -46,6 +46,7 @@ export async function handleProjectCommand(
       transactions,
       ids,
       clock,
+      catalog: context.installedPacks,
     }).backup(requiredOption(parsed, "project"));
     const outputPath = requiredOption(parsed, "output");
     await context.projectArchives.write(
@@ -89,6 +90,7 @@ export async function handleProjectCommand(
         transactions,
         ids,
         clock,
+        catalog: context.installedPacks,
       }).restore({
         archive,
         rootPath: requiredOption(parsed, "root"),
