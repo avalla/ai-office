@@ -64,8 +64,8 @@ import {
   type LegacyStores,
 } from "../helpers/legacy-development-fixture.ts";
 
-// GP-10A, GP-10B-1 and GP-10B-2 (pack 0.3.0) expressible-subset parity on
-// stored state: the
+// GP-10A, GP-10B-1, GP-10B-2 (pack 0.3.0) and GP-25 PR 2 (pack 0.4.0)
+// expressible-subset parity on stored state: the
 // resolved configuration of a project bound to the development pack through
 // a catalog that exists only here, against the GP-09 legacy profile of the
 // same project. Once on the frozen GP-09 fixture, once on the defaults the
@@ -766,10 +766,16 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
         mutatedDevelopmentPackBytes(mutate),
       );
       expect(result.pack).not.toEqual(result.legacy);
-      expect({ ...result.pack, workflows: [], routes: [] }).toEqual({
+      expect({
+        ...result.pack,
+        workflows: [],
+        routes: [],
+        governance: [],
+      }).toEqual({
         ...result.legacy,
         workflows: [],
         routes: [],
+        governance: [],
       });
     }
   });
@@ -902,7 +908,7 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
     }
   });
 
-  test("a shipped pipeline, stage or role that changes in what pack 0.3.0 carries breaks parity", async () => {
+  test("a shipped pipeline, stage or role that changes in what pack 0.3.0 added breaks parity", async () => {
     for (const mutate of [
       (office: EditableOffice) => {
         pipelineOf(office, "delivery").stages[0]!.name = "Plan";
@@ -926,12 +932,10 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
       expect((await parityOfShippedCopy(editOffice(mutate))).equal).toBe(false);
   });
 
-  test("a shipped pipeline that changes outside the expressible subset moves the legacy profile and leaves parity equal", async () => {
+  test("a shipped pipeline that changes in its governance moves the legacy profile and breaks parity, and each field is delivered by GP-25", async () => {
     const untouched = await parityOfShippedCopy(() => undefined);
     expect(untouched.equal).toBe(true);
-    const listed = outsidePackVocabulary().entries.map(
-      (entry) => `${entry.subject}.${entry.field}`,
-    );
+    const entries = outsidePackVocabulary().entries;
     for (const [key, mutate] of [
       [
         "stage.requiresApproval",
@@ -940,9 +944,23 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
         },
       ],
       [
+        "stage.requiresApproval",
+        (office: EditableOffice) => {
+          pipelineOf(office, "release").stages[0]!.requiresApproval = true;
+        },
+      ],
+      [
         "stage.capabilities",
         (office: EditableOffice) => {
           pipelineOf(office, "bugfix").stages[1]!.capabilities = ["run_tests"];
+        },
+      ],
+      [
+        "stage.capabilities",
+        (office: EditableOffice) => {
+          pipelineOf(office, "delivery").stages[1]!.capabilities = [
+            "filesystem.read",
+          ];
         },
       ],
       [
@@ -966,20 +984,195 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
           pipelineOf(office, "delivery").enforcement = "guidance";
         },
       ],
+      [
+        "pipeline.enforcement",
+        (office: EditableOffice) => {
+          // An enforced pipeline declares its stage capabilities explicitly.
+          const bugfix = pipelineOf(office, "bugfix");
+          bugfix.enforcement = "enforced";
+          for (const stage of bugfix.stages) stage.capabilities = [];
+        },
+      ],
     ] as const) {
       const result = await parityOfShippedCopy(editOffice(mutate));
-      expect([key, result.equal]).toEqual([key, true]);
+      expect([key, result.equal]).toEqual([key, false]);
       expect([key, result.profile.profileDigest]).not.toEqual([
         key,
         untouched.profile.profileDigest,
       ]);
-      expect(listed).toContain(key);
-      expect(
-        outsidePackVocabulary().entries.find(
-          (entry) => `${entry.subject}.${entry.field}` === key,
-        )!.owner,
-      ).toBe("GP-25");
+      // Only the governance part of the shape differs.
+      expect({ ...result.pack, governance: [] }).toEqual({
+        ...result.legacy,
+        governance: [],
+      });
+      const entry = entries.find(
+        (candidate) => `${candidate.subject}.${candidate.field}` === key,
+      )!;
+      expect(entry.owner).toBe("GP-25");
+      expect(entry.residue).toBeNull();
+      expect(entry.delivered).not.toBeNull();
     }
+  });
+});
+
+describe("GP-25 PR 2 policies on stored state", () => {
+  const governedStage = (stage: string) => ({
+    stage,
+    requiresApproval: true,
+    requiresIndependentApproval: false,
+    requiresDifferentAgentFrom: [],
+    operations: [],
+  });
+  const expectedPolicies = [
+    ["bugfix-governance", "bugfix", "guidance", "review"],
+    ["delivery-governance", "delivery", "enforced", "review"],
+    ["release-governance", "release", "guidance", "verification"],
+  ] as const;
+
+  test.each([
+    ["the GP-09 fixture", true],
+    ["the shipped defaults", false],
+  ])(
+    "a project on %s, bound to the pack, resolves the three policies and their governance equals its legacy governance",
+    async (_name, onFixture) => {
+      const result = await boundProjections(
+        onFixture
+          ? fixtureProject()
+          : await projectFrom(
+              shippedOfficeManifestPath,
+              shippedAgentsDirectory,
+            ),
+        onFixture ? legacyProjectId : shippedProjectId,
+      );
+      expect(result.pack.governance).toEqual(result.legacy.governance);
+      expect(result.pack).toEqual(result.legacy);
+      expect(
+        [...result.configuration.policies]
+          .sort((left, right) => (left.policyId < right.policyId ? -1 : 1))
+          .map((policy) => ({
+            policyId: policy.policyId,
+            workflowId: policy.workflowId,
+            origin: policy.origin,
+            state: policy.state,
+            enforcement: policy.enforcement,
+            stages: policy.stages,
+          })),
+      ).toEqual(
+        expectedPolicies.map(([id, workflow, enforcement, stage]) => ({
+          policyId: `pack:org.ai-office.development/policies/${id}`,
+          workflowId: `pack:org.ai-office.development/workflows/${workflow}`,
+          origin: "pack_owned",
+          state: "active",
+          enforcement,
+          stages: [governedStage(stage)],
+        })),
+      );
+      // The legacy side holds what the policies declare: the three
+      // approvals, one enforced pipeline and empty capabilities.
+      expect(
+        result.profile.pipelines.map((pipeline) => [
+          pipeline.id,
+          pipeline.enforcement ?? "guidance",
+          pipeline.stages
+            .filter((stage) => stage.requiresApproval)
+            .map((stage) => stage.id),
+        ]),
+      ).toEqual([
+        ["bugfix", "guidance", ["review"]],
+        ["delivery", "enforced", ["review"]],
+        ["discovery", "guidance", []],
+        ["release", "guidance", ["verification"]],
+      ]);
+    },
+  );
+
+  test("changing a policy in a copy of the pack breaks parity on stored state and leaves the rest of the shape equal", async () => {
+    const policy = (manifest: RawPackManifest, workflow: string) =>
+      (
+        manifest.contributions.policies as unknown as {
+          workflow: string;
+          enforcement?: string;
+          stages?: Record<string, unknown>[];
+        }[]
+      ).find((candidate) => candidate.workflow === workflow)!;
+    for (const mutate of [
+      (manifest: RawPackManifest) => {
+        delete policy(manifest, "delivery").enforcement;
+      },
+      (manifest: RawPackManifest) => {
+        policy(manifest, "release").stages![0]!.stage = "readiness";
+      },
+      (manifest: RawPackManifest) => {
+        policy(manifest, "bugfix").stages![0]!.operations = ["run_tests"];
+      },
+      (manifest: RawPackManifest) => {
+        policy(manifest, "delivery").stages![0]!.requiresIndependentApproval =
+          true;
+      },
+      (manifest: RawPackManifest) => {
+        policy(manifest, "delivery").stages![0]!.requiresDifferentAgentFrom = [
+          "design",
+        ];
+      },
+    ])
+      for (const onFixture of [true, false]) {
+        const result = await boundProjections(
+          onFixture
+            ? fixtureProject()
+            : await projectFrom(
+                shippedOfficeManifestPath,
+                shippedAgentsDirectory,
+              ),
+          onFixture ? legacyProjectId : shippedProjectId,
+          mutatedDevelopmentPackBytes(mutate),
+        );
+        expect(result.pack.governance).not.toEqual(result.legacy.governance);
+        expect({ ...result.pack, governance: [] }).toEqual({
+          ...result.legacy,
+          governance: [],
+        });
+      }
+  });
+
+  test("binding the pack with policies leaves the GP-09 profile digest, the run, approval and job tables and the fixture state unchanged", async () => {
+    const stores = fixtureProject();
+    const { catalog, pack } = testCatalogWith(developmentPackBytes());
+    const { bind, legacy, resolved } = services(stores, catalog);
+    const before = tableRows(stores.database);
+    expect((await legacy(legacyProjectId)).profileDigest).toBe(
+      fixtureProfileDigest,
+    );
+    await bind(legacyProjectId, pack);
+    expect((await resolved(legacyProjectId)).policies).toHaveLength(3);
+    expect((await legacy(legacyProjectId)).profileDigest).toBe(
+      fixtureProfileDigest,
+    );
+    const after = tableRows(stores.database);
+    for (const table of [
+      "pipeline_run",
+      "pipeline_stage_run",
+      "pipeline_override",
+      "approval",
+      "agent_run",
+      "job_outbox",
+      "office_manifest_revision",
+      "task",
+      "task_lock",
+    ])
+      expect([table, after[table]]).toEqual([table, before[table]]);
+    // The fixture has runs, stage runs and approvals that a policy could
+    // disturb, and the selection and its audit event are the only writes.
+    for (const table of ["pipeline_run", "pipeline_stage_run", "approval"])
+      expect(before[table]!.length).toBeGreaterThan(0);
+    expect(
+      Object.keys(after).filter(
+        (table) => after[table]!.join() !== before[table]!.join(),
+      ),
+    ).toEqual([
+      "audit_event",
+      "project_pack_binding",
+      "project_pack_binding_pack",
+    ]);
   });
 });
 

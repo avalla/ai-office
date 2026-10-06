@@ -47,8 +47,8 @@ import {
 } from "../helpers/development-pack-parity.ts";
 import { legacyProfileInput } from "../helpers/legacy-development-fixture.ts";
 
-// GP-10A, GP-10B-1 and GP-10B-2 (pack 0.3.0): the development pack as a
-// committed reference artifact, and expressible-subset parity with the legacy
+// GP-10A, GP-10B-1, GP-10B-2 (pack 0.3.0) and GP-25 PR 2 (pack 0.4.0): the
+// development pack as a committed reference artifact, and expressible-subset parity with the legacy
 // development defaults. Pure: no storage and no Runtime. The same comparison on stored
 // state and on the shipped defaults is in
 // tests/integration/development-pack-parity.test.ts.
@@ -108,10 +108,10 @@ describe("GP-10A development pack reference artifact", () => {
       manifestDigest: developmentPackManifestDigest,
     });
     expect(developmentPackId).toBe("org.ai-office.development");
-    expect(developmentPackVersion).toBe("0.3.0");
+    expect(developmentPackVersion).toBe("0.4.0");
     // The exact file: a byte that changes at this version fails here.
     expect(computeArtifactDigest(bytes)).toBe(
-      "sha256:015c0af5d4be1837f3143f634d8f63a0ad6a91b7a64534002da4ae9955dcbb69",
+      "sha256:59ce1e5a0596a5958c047c1ae446d046e2efe1c38d26e1e554ad6dc713ab0f00",
     );
     expect(manifest.coreContract).toEqual({ minInclusive: 1, maxExclusive: 2 });
     expect(manifest.dependencies).toEqual([]);
@@ -202,7 +202,7 @@ describe("GP-10A development pack reference artifact", () => {
     );
   });
 
-  test("it holds no knowledge, policy, artifact type, evidence type or validator, and no agent capability or knowledge", () => {
+  test("it holds no knowledge, artifact type, evidence type or validator, and no agent capability or knowledge, and only the three policies of GP-25", () => {
     const { contributions } = verifyDomainPackManifest(developmentPackBytes());
     for (const kind of contributionKinds)
       expect([kind, contributions[kind].length]).toEqual([
@@ -214,6 +214,7 @@ describe("GP-10A development pack reference artifact", () => {
           capabilities: 14,
           workflows: 4,
           prompts: 11,
+          policies: 3,
         }[kind as string] ?? 0,
       ]);
     for (const agent of contributions.agents)
@@ -224,12 +225,12 @@ describe("GP-10A development pack reference artifact", () => {
     ) as RawPackManifest;
     for (const kind of [
       "knowledge",
-      "policies",
       "artifactTypes",
       "evidenceTypes",
       "validators",
     ])
       expect(raw.contributions[kind]).toEqual([]);
+    expect(raw.contributions.policies).toHaveLength(3);
   });
 });
 
@@ -582,7 +583,8 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       { key: "office_role.title", projected: true },
       { key: "pipeline.defaultFor", projected: true },
       { key: "pipeline.description", projected: true },
-      { key: "pipeline.enforcement", projected: false },
+      // GP-25 PR 2: read since pack 0.4.0 carries the governance.
+      { key: "pipeline.enforcement", projected: true },
       { key: "pipeline.id", projected: true },
       { key: "pipeline.name", projected: true },
       { key: "runtime_role.capabilities", projected: true },
@@ -593,12 +595,12 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       { key: "runtime_role.name", projected: false },
       { key: "runtime_role.tools", projected: false },
       { key: "runtime_role.version", projected: false },
-      { key: "stage.capabilities", projected: false },
+      { key: "stage.capabilities", projected: true },
       { key: "stage.checks", projected: true },
       { key: "stage.id", projected: true },
       { key: "stage.name", projected: true },
       { key: "stage.objective", projected: true },
-      { key: "stage.requiresApproval", projected: false },
+      { key: "stage.requiresApproval", projected: true },
       { key: "stage.roleId", projected: true },
       { key: "task_kind.kind", projected: true },
       // Read for every task kind since pack 0.3.0 carries them all.
@@ -635,8 +637,9 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       "office_role.seniority names no legacy field",
     ]);
     // A delivered part is a claim about a field the projection reads: it
-    // cannot be stated for a field the projection ignores, and stating that
-    // nothing of a projected field is delivered puts it in both.
+    // cannot be stated for a field the projection ignores (the Runtime role
+    // `tools`, which stays with GP-10C), and stating that nothing of a
+    // projected field is delivered puts it in both.
     const restated = (key: string, delivered: string | null) => ({
       ...vocabulary,
       entries: vocabulary.entries.map((entry) =>
@@ -646,12 +649,22 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
     expect(
       completenessViolations(
         fixtureProfile,
-        restated("stage.requiresApproval", "The approval of the first stage."),
+        restated("runtime_role.tools", "The tools of the first role."),
       ),
     ).toEqual([
-      "stage.requiresApproval is in neither the projection nor the list",
-      "stage.requiresApproval states a delivered part of a field that is not projected",
+      "runtime_role.tools is in neither the projection nor the list",
+      "runtime_role.tools states a delivered part of a field that is not projected",
     ]);
+    // The five governance fields are read since GP-25 PR 2, so each is in the
+    // list as delivered and putting it back as undelivered puts it in both.
+    for (const key of [
+      "pipeline.enforcement",
+      "stage.requiresApproval",
+      "stage.capabilities",
+    ])
+      expect(
+        completenessViolations(fixtureProfile, restated(key, null)),
+      ).toEqual([`${key} is in both the projection and the list`]);
     // An aspect with no residue is a contradiction: the aspect is what stays.
     expect(
       completenessViolations(fixtureProfile, {
@@ -963,10 +976,10 @@ const pipelineOf = (office: EditableOffice, id: string) =>
   office.pipelines.find((pipeline) => pipeline.id === id)!;
 
 describe("GP-10B-1 development workflows in the reference pack", () => {
-  test("version 0.3.0 keeps the four workflows of 0.2.0 and adds only the descriptive fields and the maintenance route", () => {
+  test("version 0.4.0 keeps the four workflows of 0.2.0 and adds only the descriptive fields and the maintenance route", () => {
     const manifest = verifyDomainPackManifest(developmentPackBytes(), 1);
     expect(`${manifest.id}@${manifest.version}`).toBe(
-      "org.ai-office.development@0.3.0",
+      "org.ai-office.development@0.4.0",
     );
     expect(manifest.manifestDigest).toBe(developmentPackManifestDigest);
     // What 0.2.0 declared is still declared, field for field.
@@ -1292,9 +1305,13 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
       },
     ],
     [
-      "the set of workflows",
+      "the set of workflows, with the policy of the removed one",
       (manifest) => {
         manifest.contributions.workflows!.pop();
+        manifest.contributions.policies =
+          manifest.contributions.policies!.filter(
+            (policy) => policy.workflow !== "release",
+          );
       },
     ],
   ])("changing %s in a copy of the pack breaks parity", (_name, mutate) => {
@@ -1305,10 +1322,16 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
     }).not.toEqual({ workflows: legacy.workflows, routes: legacy.routes });
     // The roles, agents and task types of the copy are still at parity, so
     // the difference is the workflow change.
-    expect({ ...resolved, workflows: [], routes: [] }).toEqual({
+    expect({
+      ...resolved,
+      workflows: [],
+      routes: [],
+      governance: [],
+    }).toEqual({
       ...legacy,
       workflows: [],
       routes: [],
+      governance: [],
     });
   });
 
@@ -1432,10 +1455,24 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
       },
     ],
     [
+      "a stage approval requirement added to another stage",
+      "stage.requiresApproval",
+      (office) => {
+        pipelineOf(office, "bugfix").stages[0]!.requiresApproval = true;
+      },
+    ],
+    [
       "the stage capabilities",
       "stage.capabilities",
       (office) => {
         pipelineOf(office, "delivery").stages[1]!.capabilities = ["run_tests"];
+      },
+    ],
+    [
+      "stage capabilities added to a guidance pipeline",
+      "stage.capabilities",
+      (office) => {
+        pipelineOf(office, "bugfix").stages[1]!.capabilities = ["run_tests"];
       },
     ],
     [
@@ -1456,26 +1493,38 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
       },
     ],
     [
-      "the pipeline enforcement",
+      "the pipeline enforcement, lowered",
       "pipeline.enforcement",
       (office) => {
         pipelineOf(office, "delivery").enforcement = "guidance";
       },
     ],
+    [
+      "the pipeline enforcement, raised on a guidance pipeline",
+      "pipeline.enforcement",
+      (office) => {
+        pipelineOf(office, "release").enforcement = "enforced";
+      },
+    ],
   ])(
-    "changing %s, which schema 1 cannot represent, moves the legacy profile and leaves parity equal, and %s is in the residue list",
+    "changing %s in the legacy office breaks parity, and %s is delivered by GP-25",
     (_name, key, mutate) => {
       const changed = legacyProfileWith(mutate);
       expect(changed.profileDigest).not.toBe(fixtureProfile.profileDigest);
-      expect(projectLegacyProfile(changed)).toEqual(legacy);
-      expect(resolvedSubset(developmentPackBytes())).toEqual(
-        projectLegacyProfile(changed),
-      );
+      // The legacy side moves, and only its governance part does.
+      const projected = projectLegacyProfile(changed);
+      expect(projected.governance).not.toEqual(legacy.governance);
+      expect({ ...projected, governance: [] }).toEqual({
+        ...legacy,
+        governance: [],
+      });
+      expect(resolvedSubset(developmentPackBytes())).not.toEqual(projected);
       const entry = outsidePackVocabulary().entries.find(
         (candidate) => entryKey(candidate) === key,
       )!;
       expect(entry.owner).toBe("GP-25");
-      expect(entry.residue).not.toBeNull();
+      expect(entry.residue).toBeNull();
+      expect(entry.delivered).not.toBeNull();
     },
   );
 
@@ -1543,16 +1592,16 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
   });
 });
 
-describe("GP-10B-2 PR 2 residue list", () => {
+describe("GP-25 PR 2 residue list", () => {
   const routeText = (route: { taskType: string; workflow: string }) =>
     `${route.taskType} -> ${route.workflow}`;
 
-  test("the list is schemaVersion 3, names pack 0.3.0 and still holds the 19 entries, with the seven GP-10B-2 entries delivered in full", () => {
+  test("the list is schemaVersion 3, names pack 0.4.0 and still holds the 19 entries, with the seven GP-10B-2 and the five GP-25 entries delivered in full", () => {
     const vocabulary = outsidePackVocabulary();
     expect(vocabulary.schemaVersion).toBe(3);
     expect(vocabulary.pack).toEqual({
       id: "org.ai-office.development",
-      version: "0.3.0",
+      version: "0.4.0",
     });
     expect(vocabulary.owners["GP-10B-2"]).toContain(descriptiveExtensionTaskId);
     expect(vocabulary.owners["GP-25"]).toContain(policyTaskId);
@@ -1581,16 +1630,17 @@ describe("GP-10B-2 PR 2 residue list", () => {
       ["agent.enabled", executionParityTaskId, "nothing", "residue"],
       ["task_kind.pipelineId", "GP-10B-2", "delivered", "none"],
       ["pipeline.defaultFor", "GP-10B-2", "delivered", "none"],
-      ["pipeline.enforcement", "GP-25", "nothing", "residue"],
+      ["pipeline.enforcement", "GP-25", "delivered", "none"],
       ["stage.name", "GP-10B-2", "delivered", "none"],
       ["stage.objective", "GP-10B-2", "delivered", "none"],
       ["stage.checks", "GP-10B-2", "delivered", "none"],
-      ["stage.requiresApproval", "GP-25", "nothing", "residue"],
-      ["stage.capabilities", "GP-25", "nothing", "residue"],
-      ["stage.requiresIndependentApproval", "GP-25", "nothing", "residue"],
-      ["stage.requiresDifferentAgentFrom", "GP-25", "nothing", "residue"],
+      ["stage.requiresApproval", "GP-25", "delivered", "none"],
+      ["stage.capabilities", "GP-25", "delivered", "none"],
+      ["stage.requiresIndependentApproval", "GP-25", "delivered", "none"],
+      ["stage.requiresDifferentAgentFrom", "GP-25", "delivered", "none"],
     ]);
-    // The five governance entries are the policy task's, and no other.
+    // The five governance entries are the policy task's, and no other. Each
+    // keeps its owner, which for a delivered entry is the delivering task.
     expect(
       vocabulary.entries
         .filter((entry) => entry.owner === "GP-25")
@@ -1608,6 +1658,51 @@ describe("GP-10B-2 PR 2 residue list", () => {
       (candidate) => candidate.delivered === null,
     ))
       expect(entry.residue!.length).toBeGreaterThan(0);
+    // Twelve entries have no residue and the seven that remain are the
+    // Runtime-side fields of the execution parity task and GP-10C.
+    expect(
+      vocabulary.entries.filter((entry) => entry.residue === null),
+    ).toHaveLength(12);
+    expect(
+      vocabulary.entries
+        .filter((entry) => entry.residue !== null)
+        .map((entry) => [entryKey(entry), entry.owner]),
+    ).toEqual([
+      ["runtime_role.name", executionParityTaskId],
+      ["runtime_role.version", executionParityTaskId],
+      ["runtime_role.capabilities#order", executionParityTaskId],
+      ["runtime_role.tools", "GP-10C"],
+      ["runtime_role.modelPolicy", executionParityTaskId],
+      ["runtime_role.limits", executionParityTaskId],
+      ["agent.enabled", executionParityTaskId],
+    ]);
+  });
+
+  test("each of the five governance entries says what the pack carries and that the Runtime enforces nothing, and the two unused fields stay marked as unused by the defaults", () => {
+    const entries = outsidePackVocabulary().entries.filter(
+      (entry) => entry.owner === "GP-25",
+    );
+    expect(entries).toHaveLength(5);
+    for (const entry of entries) {
+      expect(entry.residue).toBeNull();
+      expect(entry.delivered).toContain("nothing is enforced by the Runtime");
+      expect(entry.reason.length).toBeGreaterThan(0);
+    }
+    expect(
+      entries.map((entry) => [entryKey(entry), entry.inDefaultState]),
+    ).toEqual([
+      ["pipeline.enforcement", true],
+      ["stage.requiresApproval", true],
+      ["stage.capabilities", true],
+      ["stage.requiresIndependentApproval", false],
+      ["stage.requiresDifferentAgentFrom", false],
+    ]);
+    // A delivered statement of a field the default state does not use says
+    // that no default stage uses it.
+    for (const entry of entries.filter(
+      (candidate) => !candidate.inDefaultState,
+    ))
+      expect(entry.delivered).toContain("No default stage uses it");
   });
 
   test("the task-kind pipelineId and pipeline defaultFor entries record all five routes as delivered and no residue", () => {
@@ -1667,7 +1762,7 @@ describe("GP-10B-2 PR 2 residue list", () => {
     ).toThrow(/expected schemaVersion 3/u);
   });
 
-  test("every GP-10B-2 entry is read by the projection and every other entry is not, so a delivered claim is checked and a residue cannot be", () => {
+  test("every delivered entry of the default state is read by the projection and every other entry is not, so a delivered claim is checked and a residue cannot be", () => {
     const vocabulary = outsidePackVocabulary();
     expect(completenessViolations(fixtureProfile, vocabulary)).toEqual([]);
     const projected = new Map(
@@ -2031,10 +2126,9 @@ describe("GP-10B-2 PR 2 development pack 0.3.0 data", () => {
     // tests/e2e/development-pack-assessment-prompt.test.ts.
   });
 
-  test("the pack never carries knowledge or policies, and no prompt text is empty", () => {
+  test("the pack never carries knowledge, and no prompt text is empty", () => {
     const { contributions } = verifyDomainPackManifest(developmentPackBytes());
     expect(contributions.knowledge).toEqual([]);
-    expect(contributions.policies).toEqual([]);
     expect(contributions.artifactTypes).toEqual([]);
     expect(contributions.evidenceTypes).toEqual([]);
     expect(contributions.validators).toEqual([]);
@@ -2149,14 +2243,19 @@ describe("GP-10B-2 PR 2 documentation", () => {
       expect(section).toMatch(new RegExp(`\\n${criterion}\\. `, "u"));
   });
 
-  test("the plan section's residue table is the committed list, entry for entry", () => {
+  test("the plan section's residue table is the list as GP-10B-2 PR 2 left it: the same fields, owners and gap codes as the committed list, and the five GP-25 entries still undelivered", () => {
     const rows = tableRows(section, 6);
-    expect(rows).toEqual(
-      outsidePackVocabulary().entries.map((entry) => [
+    expect(rows).toHaveLength(19);
+    // History: the GP-25 PR 2 section holds the current list, in which the
+    // five GP-25 entries are delivered. Subject, field, owner and gap code
+    // have not changed, and the entries of the other owners are as here.
+    const vocabulary = outsidePackVocabulary();
+    expect(
+      rows.map((cells) => [cells[0], cells[1], cells[4], cells[5]]),
+    ).toEqual(
+      vocabulary.entries.map((entry) => [
         subjectLabels[entry.subject],
         fieldLabel(entry),
-        entry.delivered ?? "nothing",
-        entry.residue ?? "none",
         entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
         entry.gp09Gap === null
           ? expect.stringMatching(/^none/u)
@@ -2165,11 +2264,25 @@ describe("GP-10B-2 PR 2 documentation", () => {
             : `\`${entry.gp09Gap}\` if used; unused by the defaults`,
       ]),
     );
-    expect(rows).toHaveLength(19);
+    for (const [index, entry] of vocabulary.entries.entries())
+      if (entry.owner !== "GP-25")
+        expect(rows[index]).toEqual([
+          subjectLabels[entry.subject],
+          fieldLabel(entry),
+          entry.delivered ?? "nothing",
+          entry.residue ?? "none",
+          entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
+          expect.any(String),
+        ]);
     expect(rows.filter((cells) => cells[3] === "none")).toHaveLength(7);
     expect(
       rows.filter((cells) => cells[3] === "none").map((cells) => cells[4]),
     ).toEqual(Array(7).fill("GP-10B-2"));
+    expect(
+      rows
+        .filter((cells) => cells[4] === "GP-25")
+        .map((cells) => [cells[2], cells[3]]),
+    ).toEqual(Array(5).fill(["nothing", "The whole field."]));
   });
 
   test("the plan section's prompt table lists the same prompts as the manifest", () => {
@@ -2192,7 +2305,7 @@ describe("GP-10B-2 PR 2 documentation", () => {
     expect(contract).not.toContain("PR 2 is not started");
     expect(contract).toContain("is specified in the next section");
     const readme = oneLine(read("packages/domain-pack-development/README.md"));
-    expect(readme).toContain("`org.ai-office.development@0.3.0`");
+    expect(readme).toContain("`org.ai-office.development@0.4.0`");
     expect(readme).toContain(antiGoal);
     expect(readme).toContain("nothing was removed from the legacy path");
     expect(readme).toContain(executionParityTaskId);
@@ -2206,6 +2319,617 @@ describe("GP-10B-2 PR 2 documentation", () => {
     const overview = oneLine(read("docs/architecture/overview.md"));
     expect(overview).toMatch(
       /Development pack `0\.3\.0` .*? the Runtime still reads only the legacy sources/u,
+    );
+  });
+});
+
+// GP-25 PR 2: development pack 0.4.0. Typed policies that equal the legacy
+// governance defaults, compared with the legacy sources and with the legacy
+// profile of the GP-09 fixture. Declarations only: nothing is enforced.
+
+const frozenPack030 = () =>
+  readFileSync(
+    join(repositoryRoot, "tests/fixtures/domain-pack/development-0.3.0.json"),
+  );
+
+/** A raw policy of the pack as a test edits it. */
+interface RawPolicy {
+  id: string;
+  workflow?: string;
+  enforcement?: string;
+  stages?: Record<string, unknown>[];
+}
+
+const rawPolicies = (manifest: RawPackManifest) =>
+  manifest.contributions.policies as unknown as RawPolicy[];
+const policyFor = (manifest: RawPackManifest, workflow: string) =>
+  rawPolicies(manifest).find((policy) => policy.workflow === workflow)!;
+
+/** The legacy bounds of `OfficeManifest` (office-manifest-schema.ts). */
+const legacySeparationBound = 16;
+const legacyOperationNameBound = 128;
+
+describe("GP-25 PR 2 development pack 0.4.0 data", () => {
+  test("every contribution but the policies is that of the frozen 0.3.0 file, by comparison and by a pinned digest", () => {
+    const frozen = verifyDomainPackManifest(frozenPack030(), 1);
+    expect(frozen.version).toBe("0.3.0");
+    expect(frozen.manifestDigest).toBe(
+      "sha256:4f54452420bae28efd34818451b86b256e4edb785c377104cf8e7636d6f48a35",
+    );
+    expect(computeArtifactDigest(frozenPack030())).toBe(
+      "sha256:015c0af5d4be1837f3143f634d8f63a0ad6a91b7a64534002da4ae9955dcbb69",
+    );
+    expect(frozen.contributions.policies).toEqual([]);
+    const current = verifyDomainPackManifest(developmentPackBytes(), 1);
+    expect(current.manifestDigest).not.toBe(frozen.manifestDigest);
+    const withoutPolicies = (source: typeof current.contributions) => {
+      const { policies: _policies, ...rest } = source;
+      return rest;
+    };
+    expect(withoutPolicies(current.contributions)).toEqual(
+      withoutPolicies(frozen.contributions),
+    );
+    const digest = (source: typeof current.contributions) =>
+      createHash("sha256")
+        .update(JSON.stringify(withoutPolicies(source)))
+        .digest("hex");
+    const pinned =
+      "80abc78243d343bfde794b205b739392eadd51e383ca8c3047d609ca52047124";
+    expect(digest(current.contributions)).toBe(pinned);
+    expect(digest(frozen.contributions)).toBe(pinned);
+    // The pin sees a change to any other section, a prompt included.
+    expect(
+      digest(
+        verifyDomainPackManifest(
+          mutatedDevelopmentPackBytes((copy) => {
+            copy.contributions.prompts![0]!.text += "x";
+          }),
+        ).contributions,
+      ),
+    ).not.toBe(pinned);
+    // The rest of the envelope is as in 0.3.0 as well.
+    const envelope = (bytes: Uint8Array | Buffer) => {
+      const {
+        version: _version,
+        manifestDigest: _digest,
+        contributions: _contributions,
+        ...rest
+      } = JSON.parse(new TextDecoder().decode(bytes)) as Record<
+        string,
+        unknown
+      >;
+      return rest;
+    };
+    expect(envelope(developmentPackBytes())).toEqual(envelope(frozenPack030()));
+  });
+
+  test("it declares exactly the policies of the contract: delivery enforced with an approval on review, an approval on bugfix review and on release verification, and nothing for discovery", () => {
+    const { contributions } = verifyDomainPackManifest(developmentPackBytes());
+    expect(contributions.policies).toEqual([
+      {
+        id: "delivery-governance",
+        title: "Feature delivery governance",
+        description:
+          "The feature delivery workflow is enforced and its review stage requires an approval",
+        workflow: "delivery",
+        enforcement: "enforced",
+        stages: [{ stage: "review", requiresApproval: true }],
+      },
+      {
+        id: "bugfix-governance",
+        title: "Bug fix governance",
+        description:
+          "The review stage of the bug fix workflow requires an approval",
+        workflow: "bugfix",
+        stages: [{ stage: "review", requiresApproval: true }],
+      },
+      {
+        id: "release-governance",
+        title: "Release governance",
+        description:
+          "The verification stage of the release workflow requires an approval",
+        workflow: "release",
+        stages: [{ stage: "verification", requiresApproval: true }],
+      },
+    ]);
+    // At most one policy for a workflow, none for discovery, and no policy
+    // that is untyped.
+    const targets = contributions.policies.map((policy) => policy.workflow);
+    expect(new Set(targets).size).toBe(targets.length);
+    expect(targets).not.toContain("discovery");
+    expect(targets).not.toContain(undefined);
+  });
+
+  test("no policy declares operations, independent approval or separation, and every list a policy could declare stays within the legacy bounds", () => {
+    const { contributions } = verifyDomainPackManifest(developmentPackBytes());
+    const raw = JSON.parse(
+      new TextDecoder().decode(developmentPackBytes()),
+    ) as RawPackManifest;
+    for (const policy of rawPolicies(raw)) {
+      expect(Object.keys(policy).sort()).toEqual(
+        [
+          "description",
+          "id",
+          "stages",
+          "title",
+          "workflow",
+          ...(policy.enforcement === undefined ? [] : ["enforcement"]),
+        ].sort(),
+      );
+      for (const stage of policy.stages!)
+        expect(Object.keys(stage).sort()).toEqual([
+          "requiresApproval",
+          "stage",
+        ]);
+    }
+    for (const policy of contributions.policies)
+      for (const clause of policy.stages ?? []) {
+        expect(clause.operations ?? []).toEqual([]);
+        expect(clause.requiresIndependentApproval).toBeUndefined();
+        expect(clause.requiresDifferentAgentFrom ?? []).toEqual([]);
+        // Vacuous while nothing is declared, and a guard when something is.
+        expect(
+          (clause.requiresDifferentAgentFrom ?? []).length,
+        ).toBeLessThanOrEqual(legacySeparationBound);
+        for (const operation of clause.operations ?? [])
+          expect(operation.length).toBeLessThanOrEqual(
+            legacyOperationNameBound,
+          );
+      }
+    // Every governed stage is a stage of the workflow the policy targets.
+    for (const policy of contributions.policies) {
+      const workflow = contributions.workflows.find(
+        (candidate) => candidate.id === policy.workflow,
+      )!;
+      for (const clause of policy.stages ?? [])
+        expect(workflow.stages.map((stage) => stage.id)).toContain(
+          clause.stage,
+        );
+    }
+  });
+
+  test("the policies are the governance of the shipped default office manifest, read from its raw pipelines", () => {
+    const { contributions } = verifyDomainPackManifest(developmentPackBytes());
+    for (const pipeline of shippedOffice.pipelines) {
+      const policy = contributions.policies.find(
+        (candidate) => candidate.workflow === pipeline.id,
+      );
+      expect(policy?.enforcement).toBe(
+        pipeline.enforcement === "enforced" ? "enforced" : undefined,
+      );
+      const approved = pipeline.stages
+        .filter((stage) => stage.requiresApproval)
+        .map((stage) => stage.id);
+      expect(
+        (policy?.stages ?? [])
+          .filter((clause) => clause.requiresApproval === true)
+          .map((clause) => clause.stage),
+      ).toEqual(approved);
+      // No legacy stage holds what the pack does not declare.
+      for (const stage of pipeline.stages) {
+        expect(stage.requiresIndependentApproval).toBeUndefined();
+        expect(stage.requiresDifferentAgentFrom).toBeUndefined();
+        expect(stage.capabilities ?? []).toEqual([]);
+      }
+    }
+    // The enforced pipeline declares its capabilities explicitly, all empty,
+    // which is the one reading of an absent `operations`; guidance pipelines
+    // declare none.
+    expect(
+      shippedOffice.pipelines.map((pipeline) => [
+        pipeline.id,
+        pipeline.enforcement ?? "guidance",
+        pipeline.stages.map((stage) => stage.capabilities),
+      ]),
+    ).toEqual([
+      ["delivery", "enforced", [[], [], [], []]],
+      ["bugfix", "guidance", [undefined, undefined, undefined]],
+      ["discovery", "guidance", [undefined]],
+      ["release", "guidance", [undefined, undefined]],
+    ]);
+  });
+
+  test("the resolved policies view lists the three policies as active declarations with stable IDs, every fact stated", () => {
+    const configuration = resolvedConfiguration(developmentPackBytes());
+    const stage = (name: string) => ({
+      stage: name,
+      requiresApproval: true,
+      requiresIndependentApproval: false,
+      requiresDifferentAgentFrom: [],
+      operations: [],
+    });
+    expect(
+      [...configuration.policies]
+        .sort((left, right) => (left.policyId < right.policyId ? -1 : 1))
+        .map((policy) => ({
+          policyId: policy.policyId,
+          origin: policy.origin,
+          workflowId: policy.workflowId,
+          state: policy.state,
+          enforcement: policy.enforcement,
+          stages: policy.stages,
+        })),
+    ).toEqual([
+      {
+        policyId: "pack:org.ai-office.development/policies/bugfix-governance",
+        origin: "pack_owned",
+        workflowId: "pack:org.ai-office.development/workflows/bugfix",
+        state: "active",
+        enforcement: "guidance",
+        stages: [stage("review")],
+      },
+      {
+        policyId: "pack:org.ai-office.development/policies/delivery-governance",
+        origin: "pack_owned",
+        workflowId: "pack:org.ai-office.development/workflows/delivery",
+        state: "active",
+        enforcement: "enforced",
+        stages: [stage("review")],
+      },
+      {
+        policyId: "pack:org.ai-office.development/policies/release-governance",
+        origin: "pack_owned",
+        workflowId: "pack:org.ai-office.development/workflows/release",
+        state: "active",
+        enforcement: "guidance",
+        stages: [stage("verification")],
+      },
+    ]);
+  });
+});
+
+describe("GP-25 PR 2 expressible-subset parity on the GP-09 fixture office", () => {
+  const legacy = projectLegacyProfile(fixtureProfile);
+  const stage = (id: string) => ({
+    id,
+    requiresApproval: true,
+    requiresIndependentApproval: false,
+    requiresDifferentAgentFrom: [],
+    operations: [],
+  });
+  const governance = [
+    { id: "bugfix", enforcement: "guidance", stages: [stage("review")] },
+    { id: "delivery", enforcement: "enforced", stages: [stage("review")] },
+    { id: "discovery", enforcement: "guidance", stages: [] },
+    { id: "release", enforcement: "guidance", stages: [stage("verification")] },
+  ];
+
+  test("the resolved policies equal the legacy governance on enforcement, approval, independent approval, separation and capabilities against operations", () => {
+    const resolved = resolvedSubset(developmentPackBytes());
+    expect(resolved.governance).toEqual(legacy.governance);
+    // What was compared, from the legacy side and from the pack side.
+    expect(legacy.governance).toEqual(governance);
+    expect(resolved.governance).toEqual(governance);
+    expect(resolved).toEqual(legacy);
+    // From the profile itself: three approvals, one enforced pipeline, the
+    // enforced stages' empty capabilities and neither of the unused fields.
+    expect(
+      fixtureProfile.pipelines.map((pipeline) => [
+        pipeline.id,
+        pipeline.enforcement ?? "guidance",
+        pipeline.stages
+          .filter((candidate) => candidate.requiresApproval)
+          .map((candidate) => candidate.id),
+      ]),
+    ).toEqual([
+      ["bugfix", "guidance", ["review"]],
+      ["delivery", "enforced", ["review"]],
+      ["discovery", "guidance", []],
+      ["release", "guidance", ["verification"]],
+    ]);
+    for (const pipeline of fixtureProfile.pipelines)
+      for (const candidate of pipeline.stages) {
+        expect(candidate).not.toHaveProperty("requiresIndependentApproval");
+        expect(candidate).not.toHaveProperty("requiresDifferentAgentFrom");
+        expect(candidate.capabilities ?? []).toEqual([]);
+      }
+  });
+
+  test.each<[string, (manifest: RawPackManifest) => void]>([
+    [
+      "the delivery policy, removed",
+      (manifest) => {
+        manifest.contributions.policies = rawPolicies(manifest).filter(
+          (policy) => policy.workflow !== "delivery",
+        ) as never;
+      },
+    ],
+    [
+      "the bugfix policy, removed",
+      (manifest) => {
+        manifest.contributions.policies = rawPolicies(manifest).filter(
+          (policy) => policy.workflow !== "bugfix",
+        ) as never;
+      },
+    ],
+    [
+      "the release policy, removed",
+      (manifest) => {
+        manifest.contributions.policies = rawPolicies(manifest).filter(
+          (policy) => policy.workflow !== "release",
+        ) as never;
+      },
+    ],
+    [
+      "the delivery enforcement, removed",
+      (manifest) => {
+        delete policyFor(manifest, "delivery").enforcement;
+      },
+    ],
+    [
+      "an enforcement added to a guidance workflow",
+      (manifest) => {
+        policyFor(manifest, "bugfix").enforcement = "enforced";
+      },
+    ],
+    [
+      "the delivery approval, removed",
+      (manifest) => {
+        delete policyFor(manifest, "delivery").stages;
+      },
+    ],
+    [
+      "the delivery approval, moved to another stage",
+      (manifest) => {
+        policyFor(manifest, "delivery").stages![0]!.stage = "implement";
+      },
+    ],
+    [
+      "an approval added to another stage",
+      (manifest) => {
+        policyFor(manifest, "bugfix").stages!.push({
+          stage: "fix",
+          requiresApproval: true,
+        });
+      },
+    ],
+    [
+      "an admitted operation on an enforced stage",
+      (manifest) => {
+        policyFor(manifest, "delivery").stages![0]!.operations = [
+          "filesystem.read",
+        ];
+      },
+    ],
+    [
+      "an admitted operation on a guidance stage",
+      (manifest) => {
+        policyFor(manifest, "release").stages![0]!.operations = ["run_tests"];
+      },
+    ],
+    [
+      "an independent approval, which the defaults do not use",
+      (manifest) => {
+        policyFor(
+          manifest,
+          "delivery",
+        ).stages![0]!.requiresIndependentApproval = true;
+      },
+    ],
+    [
+      "a separation constraint, which the defaults do not use",
+      (manifest) => {
+        policyFor(manifest, "delivery").stages![0]!.requiresDifferentAgentFrom =
+          ["design"];
+      },
+    ],
+    [
+      "a policy for the discovery workflow",
+      (manifest) => {
+        rawPolicies(manifest).push({
+          id: "discovery-governance",
+          workflow: "discovery",
+          stages: [{ stage: "investigate", requiresApproval: true }],
+        });
+      },
+    ],
+  ])("changing %s in a copy of the pack breaks parity", (_name, mutate) => {
+    const resolved = resolvedSubset(mutatedDevelopmentPackBytes(mutate));
+    expect(resolved.governance).not.toEqual(legacy.governance);
+    // Roles, agents, task types, workflows and routes are still at parity, so
+    // the difference is the governance.
+    expect({ ...resolved, governance: [] }).toEqual({
+      ...legacy,
+      governance: [],
+    });
+  });
+
+  test("a legacy stage that holds either unused field is read, and the legacy list of agents to separate from is a set", () => {
+    const using = legacyProfileWith((office) => {
+      const review = pipelineOf(office, "delivery").stages[2]!;
+      review.requiresIndependentApproval = true;
+      review.requiresDifferentAgentFrom = ["implement", "design"];
+    });
+    const delivery = projectLegacyProfile(using).governance.find(
+      (workflow) => workflow.id === "delivery",
+    )!;
+    expect(delivery.stages).toEqual([
+      {
+        id: "review",
+        requiresApproval: true,
+        requiresIndependentApproval: true,
+        requiresDifferentAgentFrom: ["design", "implement"],
+        operations: [],
+      },
+    ]);
+    expect(resolvedSubset(developmentPackBytes())).not.toEqual(
+      projectLegacyProfile(using),
+    );
+    // The order of the legacy list is not compared.
+    const reordered = legacyProfileWith((office) => {
+      const review = pipelineOf(office, "delivery").stages[2]!;
+      review.requiresIndependentApproval = true;
+      review.requiresDifferentAgentFrom = ["design", "implement"];
+    });
+    expect(projectLegacyProfile(reordered)).toEqual(
+      projectLegacyProfile(using),
+    );
+  });
+
+  test("the pack, edited to match a legacy state that uses the two unused fields, is at parity with it", () => {
+    const using = legacyProfileWith((office) => {
+      const review = pipelineOf(office, "delivery").stages[2]!;
+      review.requiresIndependentApproval = true;
+      review.requiresDifferentAgentFrom = ["design", "implement"];
+    });
+    const resolved = resolvedSubset(
+      mutatedDevelopmentPackBytes((manifest) => {
+        const clause = policyFor(manifest, "delivery").stages![0]!;
+        clause.requiresIndependentApproval = true;
+        clause.requiresDifferentAgentFrom = ["implement", "design"];
+      }),
+    );
+    expect(resolved).toEqual(projectLegacyProfile(using));
+  });
+
+  test("an absent legacy enforcement and an absent capabilities list equal the guidance and the empty operations the pack states", () => {
+    // The legacy delivery stages carry an empty `capabilities`; removing it
+    // changes nothing the projection reads.
+    const absent = legacyProfileWith((office) => {
+      for (const stage of pipelineOf(office, "delivery").stages)
+        delete stage.capabilities;
+    });
+    expect(projectLegacyProfile(absent)).toEqual(legacy);
+    const explicit = legacyProfileWith((office) => {
+      pipelineOf(office, "bugfix").enforcement = "guidance";
+      for (const stage of pipelineOf(office, "bugfix").stages)
+        stage.capabilities = [];
+    });
+    expect(projectLegacyProfile(explicit)).toEqual(legacy);
+  });
+});
+
+describe("GP-25 PR 2 documentation", () => {
+  const read = (path: string) =>
+    readFileSync(join(repositoryRoot, path), "utf8");
+  const plan = read("docs/development/generic-core-domain-packs.md");
+  const start = plan.indexOf("\n## GP-25 PR 2 development pack 0.4.0\n");
+  const section = plan.slice(start, plan.indexOf("\n## ", start + 1));
+  const oneLine = (text: string) =>
+    text.replace(/\n>/gu, "\n").replace(/\s+/gu, " ");
+  const prose = oneLine(section);
+  const antiGoal =
+    "the pack must not become authoritative for Runtime execution without a separately approved task";
+
+  test("the plan section names the claim, repeats the anti-goal verbatim, links the execution parity task and states that nothing was removed or enforced", () => {
+    expect(start).toBeGreaterThan(0);
+    expect(section).toMatch(
+      /\n> the pack must not become authoritative for Runtime execution without a\n> separately approved task\n/u,
+    );
+    expect(prose).toContain(antiGoal);
+    expect(prose).toContain("**expressible-subset parity**");
+    expect(prose).toContain("It is not execution parity");
+    expect(prose).toContain(`(\`${executionParityTaskId}\`)`);
+    expect(prose).toContain("Nothing was removed from the legacy path.");
+    expect(prose).toContain("A policy is a declaration.");
+    expect(prose).toContain(
+      "No contract change, Runtime consumption, catalog registration, adoption or legacy-path removal occurs in this pull request.",
+    );
+    expect(prose).toContain("GP-25");
+    expect(section).toContain("### Implementation record");
+    for (const criterion of [18, 19, 20, 21, 22, 23, 24])
+      expect(section).toMatch(new RegExp(`\\n${criterion}\\. `, "u"));
+    expect(section).not.toMatch(/\bmov(?:ed|es|ing)\b/iu);
+  });
+
+  test("the plan section references the known limitations of GP-25 and does not rewrite them", () => {
+    expect(prose).toContain("two-apply walk-around");
+    expect(prose).toContain("ungoverned project-owned twin");
+    expect(prose).toContain("1,000 entries against the legacy 16");
+    const contract = plan.slice(
+      plan.indexOf("\n## GP-25 pack policy contribution contract\n"),
+      plan.indexOf("\n## GP-25 PR 2 development pack 0.4.0\n"),
+    );
+    // The recorded limitations are still the ones the contract states.
+    expect(oneLine(contract)).toContain(
+      "Two selection changes can replace a policy without a policy-level audit record.",
+    );
+    expect(oneLine(contract)).toContain(
+      "A twin of a governed workflow is ungoverned.",
+    );
+    expect(oneLine(contract)).toContain(
+      "The separation list has a wider bound than the legacy one.",
+    );
+  });
+
+  test("the plan section's policy table is the committed policies and its residue table is the committed list, entry for entry", () => {
+    const { contributions } = verifyDomainPackManifest(developmentPackBytes());
+    expect(tableRows(section, 3)).toEqual(
+      contributions.policies.map((policy) => [
+        `\`${policy.id}\``,
+        `\`${policy.workflow}\``,
+        expect.stringContaining(`\`requiresApproval: true\``),
+      ]),
+    );
+    const rows = tableRows(section, 6);
+    expect(rows).toEqual(
+      outsidePackVocabulary().entries.map((entry) => [
+        subjectLabels[entry.subject],
+        fieldLabel(entry),
+        entry.delivered ?? "nothing",
+        entry.residue ?? "none",
+        entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
+        entry.gp09Gap === null
+          ? expect.stringMatching(/^none/u)
+          : entry.inDefaultState
+            ? `\`${entry.gp09Gap}\``
+            : `\`${entry.gp09Gap}\` if used; unused by the defaults`,
+      ]),
+    );
+    expect(rows).toHaveLength(19);
+    expect(rows.filter((cells) => cells[3] === "none")).toHaveLength(12);
+    expect(
+      rows
+        .filter((cells) => cells[3] === "none")
+        .map((cells) => cells[4])
+        .sort(),
+    ).toEqual([...Array(7).fill("GP-10B-2"), ...Array(5).fill("GP-25")].sort());
+    // The GP-10C and execution parity entries keep their owner and residue.
+    expect(
+      rows
+        .filter((cells) => cells[3] !== "none")
+        .map((cells) => [cells[1], cells[4]]),
+    ).toEqual([
+      ["`name`", "a45ddb12"],
+      ["`version`", "a45ddb12"],
+      ["capability order", "a45ddb12"],
+      ["`tools`", "GP-10C"],
+      ["`modelPolicy`", "a45ddb12"],
+      ["`limits`", "a45ddb12"],
+      ["`enabled`", "a45ddb12"],
+    ]);
+  });
+
+  test("the GP-25 contract section, the pack README, the roadmap and the architecture overview no longer say the pack data is pending, and claim nothing more", () => {
+    const contract = oneLine(
+      plan.slice(
+        plan.indexOf("\n## GP-25 pack policy contribution contract\n"),
+        plan.indexOf("\n## GP-25 PR 2 development pack 0.4.0\n"),
+      ),
+    );
+    expect(contract).toContain("Status: implemented.");
+    expect(contract).not.toContain("pack data pending");
+    expect(contract).not.toContain("declares no policy yet");
+    expect(prose).toContain("Status: implemented.");
+    const readme = oneLine(read("packages/domain-pack-development/README.md"));
+    expect(readme).toContain("`org.ai-office.development@0.4.0`");
+    expect(readme).toContain(antiGoal);
+    expect(readme).toContain("nothing was removed from the legacy path");
+    expect(readme).toContain(executionParityTaskId);
+    expect(readme).toContain("it is not execution parity");
+    expect(readme).toContain("`delivery-governance`");
+    expect(readme).toContain("nothing is enforced");
+    const roadmap = oneLine(read("docs/development/roadmap.md"));
+    expect(roadmap).toMatch(
+      /extends the development pack to `0\.4\.0` .*? expressible-subset parity .*? It is not execution parity/u,
+    );
+    expect(roadmap).not.toContain(
+      "are a second GP-25 pull request that follows",
+    );
+    expect(roadmap).not.toContain("policy data (GP-25, second pull request)");
+    const overview = oneLine(read("docs/architecture/overview.md"));
+    expect(overview).toMatch(
+      /Development pack `0\.4\.0` .*? the Runtime still reads only the legacy sources/u,
     );
   });
 });

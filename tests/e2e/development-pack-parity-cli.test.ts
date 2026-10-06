@@ -33,7 +33,9 @@ import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 // task types its legacy profile describes, since GP-10B-1 the workflows its
 // legacy pipelines describe, and since GP-10B-2 their stage descriptions, all
 // five routes and the role guidance. What the Runtime reads to run work stays
-// the same.
+// the same. Since GP-25 PR 2 the pack's policies are resolved too, as
+// declarations whose governance equals the legacy governance of the same
+// project; nothing is enforced from them.
 
 /** `project:configuration:show` of a project with no selection and no definition. */
 const emptyConfiguration = {
@@ -415,6 +417,50 @@ describe("GP-10A development pack over the Runtime socket", () => {
         taskType: "maintenance",
         workflow: "delivery",
       });
+      // GP-25 PR 2: the policies are declarations the socket reports, and
+      // their governance is the legacy governance of the installed defaults.
+      expect(projectResolvedConfiguration(resolved).governance).toEqual(
+        projectLegacyProfile(bound).governance,
+      );
+      expect(
+        [...resolved.policies]
+          .sort((left, right) => (left.policyId < right.policyId ? -1 : 1))
+          .map((policy) => [
+            policy.policyId,
+            policy.workflowId,
+            policy.state,
+            policy.enforcement,
+            policy.stages.map((stage) => [
+              stage.stage,
+              stage.requiresApproval,
+              stage.requiresIndependentApproval,
+              stage.requiresDifferentAgentFrom,
+              stage.operations,
+            ]),
+          ]),
+      ).toEqual([
+        [
+          "pack:org.ai-office.development/policies/bugfix-governance",
+          "pack:org.ai-office.development/workflows/bugfix",
+          "active",
+          "guidance",
+          [["review", true, false, [], []]],
+        ],
+        [
+          "pack:org.ai-office.development/policies/delivery-governance",
+          "pack:org.ai-office.development/workflows/delivery",
+          "active",
+          "enforced",
+          [["review", true, false, [], []]],
+        ],
+        [
+          "pack:org.ai-office.development/policies/release-governance",
+          "pack:org.ai-office.development/workflows/release",
+          "active",
+          "guidance",
+          [["verification", true, false, [], []]],
+        ],
+      ]);
       // GP-10B-2: the guidance prompt of each role has the digest of the
       // guidance that `agent:sync` stored from the shipped directory.
       expect(projectResolvedGuidance(resolved)).toEqual(
