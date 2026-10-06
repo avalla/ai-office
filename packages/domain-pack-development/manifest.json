@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "id": "org.ai-office.development",
-  "version": "0.1.0",
-  "manifestDigest": "sha256:cda1c5fc48b5e04d75905d00f0f5d2b41a69e497eb4cc009a3aa77cfc2dac567",
+  "version": "0.2.0",
+  "manifestDigest": "sha256:6321bb076a19765ce50f3127914c95487658c44e4cf480c3471337d2983f227e",
   "coreContract": {
     "minInclusive": 1,
     "maxExclusive": 2
   },
   "metadata": {
     "name": "Development",
-    "description": "Reference definitions of the software development roles, agents and task types. Not registered in any catalog and not read by the Runtime."
+    "description": "Reference definitions of the software development roles, agents, task types and workflows. Not registered in any catalog and not read by the Runtime."
   },
   "dependencies": [],
   "contributions": {
@@ -61,7 +61,48 @@
       { "id": "research" },
       { "id": "release" }
     ],
-    "workflows": [],
+    "workflows": [
+      {
+        "id": "delivery",
+        "title": "Feature delivery",
+        "description": "Plan, implement, review, and verify product changes",
+        "taskType": "feature",
+        "stages": [
+          { "id": "design", "role": "architect" },
+          { "id": "implement", "role": "developer" },
+          { "id": "review", "role": "reviewer" },
+          { "id": "verify", "role": "qa" }
+        ]
+      },
+      {
+        "id": "bugfix",
+        "title": "Bug fix",
+        "description": "Reproduce, fix, review, and verify a defect",
+        "taskType": "bugfix",
+        "stages": [
+          { "id": "reproduce", "role": "qa" },
+          { "id": "fix", "role": "developer" },
+          { "id": "review", "role": "reviewer" }
+        ]
+      },
+      {
+        "id": "discovery",
+        "title": "Research",
+        "description": "Investigate a question and record an evidence-based recommendation",
+        "taskType": "research",
+        "stages": [{ "id": "investigate", "role": "architect" }]
+      },
+      {
+        "id": "release",
+        "title": "Release",
+        "description": "Review readiness, verify the build, and require a release decision",
+        "taskType": "release",
+        "stages": [
+          { "id": "readiness", "role": "reviewer" },
+          { "id": "verification", "role": "qa" }
+        ]
+      }
+    ],
     "agents": [
       { "id": "architect", "role": "architect" },
       { "id": "developer", "role": "developer" },

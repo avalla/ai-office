@@ -37,6 +37,7 @@ import {
   developmentPackBytes,
   developmentPackManifestDigest,
   legacyRoleIds,
+  legacyRoutes,
   missingGp09Gaps,
   mutatedDevelopmentPackBytes,
   outsidePackVocabulary,
@@ -45,6 +46,7 @@ import {
   shippedAgentsDirectory,
   shippedOfficeManifestPath,
   testCatalogWith,
+  unexpressedLegacyRoute,
   type RawPackManifest,
 } from "../helpers/development-pack-parity.ts";
 import {
@@ -59,10 +61,10 @@ import {
   type LegacyStores,
 } from "../helpers/legacy-development-fixture.ts";
 
-// GP-10A expressible-subset parity on stored state: the resolved
-// configuration of a project bound to the development pack through a catalog
-// that exists only here, against the GP-09 legacy profile of the same
-// project. Once on the frozen GP-09 fixture, once on the defaults the
+// GP-10A and GP-10B-1 expressible-subset parity on stored state: the
+// resolved configuration of a project bound to the development pack through
+// a catalog that exists only here, against the GP-09 legacy profile of the
+// same project. Once on the frozen GP-09 fixture, once on the defaults the
 // repository ships.
 
 /** GP-09's pinned digest of the fixture office (profile version 1). */
@@ -215,6 +217,41 @@ async function boundProjections(
   };
 }
 
+/** A private copy of the shipped defaults that a test may edit. */
+function copyOfShippedDefaults() {
+  const root = temporaryRoot();
+  const agents = join(root, "agents");
+  for (const id of legacyRoleIds)
+    cpSync(join(shippedAgentsDirectory, id), join(agents, id), {
+      recursive: true,
+    });
+  const office = join(root, "default-office-manifest.json");
+  cpSync(shippedOfficeManifestPath, office);
+  return { agents, office };
+}
+
+const edit = (path: string, from: string, to: string) => {
+  const text = readFileSync(path, "utf8");
+  expect(text).toContain(from);
+  writeFileSync(path, text.replace(from, to));
+};
+
+/** Both projections of a project built from an edited copy of the defaults. */
+async function parityOfShippedCopy(
+  change: (copy: ReturnType<typeof copyOfShippedDefaults>) => void,
+) {
+  const copy = copyOfShippedDefaults();
+  change(copy);
+  const result = await boundProjections(
+    await projectFrom(copy.office, copy.agents),
+    shippedProjectId,
+  );
+  return {
+    equal: JSON.stringify(result.pack) === JSON.stringify(result.legacy),
+    ...result,
+  };
+}
+
 describe("GP-10A expressible-subset parity on the GP-09 fixture state", () => {
   test("a fixture project bound to the pack resolves the roles, agents and task types its legacy profile describes", async () => {
     const stores = fixtureProject();
@@ -231,11 +268,10 @@ describe("GP-10A expressible-subset parity on the GP-09 fixture state", () => {
     expect(result.configuration.selectedPacks).toEqual([
       {
         id: "org.ai-office.development",
-        version: "0.1.0",
+        version: "0.2.0",
         manifestDigest: developmentPackManifestDigest,
       },
     ]);
-    expect(result.configuration.workflows).toEqual([]);
     expect(result.configuration.projectOwnedDefinitions).toEqual([]);
     // The fixture's specialist and its unused role stay Runtime-only: they
     // are not development defaults and the pack does not describe them.
@@ -332,6 +368,8 @@ describe("GP-10A expressible-subset parity on the GP-09 fixture state", () => {
     expect(configuration.roles).toEqual([]);
     expect(configuration.agents).toEqual([]);
     expect(configuration.effectiveDefinitions.taskTypes).toEqual([]);
+    expect(configuration.workflows).toEqual([]);
+    expect(configuration.resolvedWorkflowReferences).toEqual([]);
   });
 
   test("changing a title, a capability or an agent role in a copy of the pack breaks parity on stored state", async () => {
@@ -357,24 +395,6 @@ describe("GP-10A expressible-subset parity on the GP-09 fixture state", () => {
 });
 
 describe("GP-10A expressible-subset parity on the shipped defaults", () => {
-  /** A private copy of the shipped defaults that a test may edit. */
-  function copyOfShippedDefaults() {
-    const root = temporaryRoot();
-    const agents = join(root, "agents");
-    for (const id of legacyRoleIds)
-      cpSync(join(shippedAgentsDirectory, id), join(agents, id), {
-        recursive: true,
-      });
-    const office = join(root, "default-office-manifest.json");
-    cpSync(shippedOfficeManifestPath, office);
-    return { agents, office };
-  }
-  const edit = (path: string, from: string, to: string) => {
-    const text = readFileSync(path, "utf8");
-    expect(text).toContain(from);
-    writeFileSync(path, text.replace(from, to));
-  };
-
   test("the shipped agents directory and default office manifest, through the real loader and sync, equal the pack", async () => {
     // The directory is exactly the four default roles: nothing is skipped.
     expect(
@@ -474,20 +494,7 @@ describe("GP-10A expressible-subset parity on the shipped defaults", () => {
   });
 
   test("a shipped default that changes without the pack breaks parity", async () => {
-    const parity = async (
-      change: (copy: ReturnType<typeof copyOfShippedDefaults>) => void,
-    ) => {
-      const copy = copyOfShippedDefaults();
-      change(copy);
-      const result = await boundProjections(
-        await projectFrom(copy.office, copy.agents),
-        shippedProjectId,
-      );
-      return {
-        equal: JSON.stringify(result.pack) === JSON.stringify(result.legacy),
-        ...result,
-      };
-    };
+    const parity = parityOfShippedCopy;
     // The untouched copy is at parity, so each failure below is the edit's.
     const untouched = await parity(() => undefined);
     expect(untouched.equal).toBe(true);
@@ -554,6 +561,384 @@ describe("GP-10A expressible-subset parity on the shipped defaults", () => {
       expect(result.profile.profileDigest).not.toBe(
         untouched.profile.profileDigest,
       );
+    }
+  });
+});
+
+// GP-10B-1: the four development workflows of the pack against the legacy
+// default pipelines, over what a schema-1 workflow can express.
+
+/** An office manifest file as a test edits it. */
+interface EditableOffice {
+  office: { roles: { responsibilities: string[] }[] };
+  pipelines: {
+    id: string;
+    name: string;
+    description: string;
+    enforcement?: string;
+    defaultFor: string[];
+    stages: {
+      id: string;
+      name: string;
+      roleId: string;
+      objective: string;
+      checks: string[];
+      requiresApproval: boolean;
+      capabilities?: string[];
+      requiresIndependentApproval?: boolean;
+      requiresDifferentAgentFrom?: string[];
+    }[];
+  }[];
+}
+
+const editOffice =
+  (mutate: (office: EditableOffice) => void) => (copy: { office: string }) => {
+    const before = readFileSync(copy.office, "utf8");
+    const office = JSON.parse(before) as EditableOffice;
+    mutate(office);
+    const after = `${JSON.stringify(office, null, 2)}\n`;
+    expect(after).not.toBe(`${JSON.stringify(JSON.parse(before), null, 2)}\n`);
+    writeFileSync(copy.office, after);
+  };
+
+const pipelineOf = (office: EditableOffice, id: string) =>
+  office.pipelines.find((pipeline) => pipeline.id === id)!;
+
+const packWorkflowIds = ["bugfix", "delivery", "discovery", "release"];
+
+/** The legacy routes of a profile that are not among the pack routes. */
+const routesMissingFrom = (
+  pack: readonly { taskType: string; workflow: string }[],
+  profile: Pick<LegacyDevelopmentProfile, "taskKinds">,
+) =>
+  legacyRoutes(profile).filter(
+    (route) =>
+      !pack.some(
+        (expressed) =>
+          expressed.taskType === route.taskType &&
+          expressed.workflow === route.workflow,
+      ),
+  );
+
+describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture state", () => {
+  test("a fixture project bound to the pack resolves the four workflows its legacy pipelines describe, and the one route it lacks is maintenance -> delivery", async () => {
+    const result = await boundProjections(fixtureProject(), legacyProjectId);
+    expect(result.pack.workflows).toEqual(result.legacy.workflows);
+    expect(result.pack.routes).toEqual(result.legacy.routes);
+    expect(result.pack.workflows.map((workflow) => workflow.id)).toEqual(
+      packWorkflowIds,
+    );
+    expect(result.legacy.workflows).toEqual(
+      [...result.profile.pipelines]
+        .sort((left, right) => (left.id < right.id ? -1 : 1))
+        .map((pipeline) => ({
+          id: pipeline.id,
+          title: pipeline.name,
+          description: pipeline.description,
+          taskTypes: pipeline.defaultFor.filter(
+            (kind) => kind !== "maintenance",
+          ),
+          stages: pipeline.stages.map((stage) => ({
+            id: stage.id,
+            role: stage.roleId,
+          })),
+        })),
+    );
+    // Stable identity and origin of what was resolved: pack declarations.
+    expect(
+      result.configuration.workflows.map((workflow) => [
+        workflow.workflowId,
+        workflow.origin,
+        workflow.customization,
+      ]),
+    ).toEqual(
+      packWorkflowIds.map((id) => [
+        `pack:org.ai-office.development/workflows/${id}`,
+        "pack_owned",
+        "none",
+      ]),
+    );
+    expect(result.configuration.disabledWorkflows).toEqual([]);
+    // Every pack route is a legacy route; one legacy route is not in the pack.
+    const all = legacyRoutes(result.profile);
+    for (const route of result.pack.routes) expect(all).toContainEqual(route);
+    expect(result.pack.routes).toHaveLength(4);
+    expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual([
+      { taskType: "maintenance", workflow: "delivery" },
+    ]);
+    expect(unexpressedLegacyRoute).toEqual({
+      taskType: "maintenance",
+      workflow: "delivery",
+    });
+  });
+
+  test("binding the pack creates no pipeline, run, pin, approval, guard or job from a workflow", async () => {
+    const stores = fixtureProject();
+    const { catalog, pack } = testCatalogWith(developmentPackBytes());
+    const { bind, resolved } = services(stores, catalog);
+    const before = tableRows(stores.database);
+    await bind(legacyProjectId, pack);
+    // Resolving the four workflows is a read.
+    expect((await resolved(legacyProjectId)).workflows).toHaveLength(4);
+    const after = tableRows(stores.database);
+    const untouched = [
+      "office_manifest_revision",
+      "pipeline_run",
+      "pipeline_stage_run",
+      "pipeline_override",
+      "approval",
+      "task",
+      "task_lock",
+      "agent",
+      "agent_run",
+      "role",
+      "job_outbox",
+      "project_owned_definition",
+      "project_definition_override",
+    ];
+    for (const table of untouched) {
+      expect(Object.keys(before)).toContain(table);
+      expect([table, after[table]]).toEqual([table, before[table]]);
+    }
+    // The fixture has pipeline runs, stage runs and approvals to disturb.
+    for (const table of ["pipeline_run", "pipeline_stage_run", "approval"])
+      expect(before[table]!.length).toBeGreaterThan(0);
+    expect(
+      Object.keys(after).filter(
+        (table) => after[table]!.join() !== before[table]!.join(),
+      ),
+    ).toEqual([
+      "audit_event",
+      "project_pack_binding",
+      "project_pack_binding_pack",
+    ]);
+    // The one audit event is the selection; none names a pipeline or a run.
+    expect(
+      after
+        .audit_event!.slice(before.audit_event!.length)
+        .map((row) => (JSON.parse(row) as { event_type: string }).event_type),
+    ).toEqual(["project.pack_binding_applied"]);
+  });
+
+  test("changing a workflow title, a stage order, a stage role or a route in a copy of the pack breaks parity on stored state", async () => {
+    for (const mutate of [
+      (manifest: RawPackManifest) => {
+        manifest.contributions.workflows![0]!.title = "Delivery";
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.workflows![1]!.stages!.reverse();
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.workflows![3]!.stages![0]!.role = "architect";
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.workflows![0]!.taskType = "maintenance";
+      },
+    ]) {
+      const result = await boundProjections(
+        fixtureProject(),
+        legacyProjectId,
+        mutatedDevelopmentPackBytes(mutate),
+      );
+      expect(result.pack).not.toEqual(result.legacy);
+      expect({ ...result.pack, workflows: [], routes: [] }).toEqual({
+        ...result.legacy,
+        workflows: [],
+        routes: [],
+      });
+    }
+  });
+});
+
+describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaults", () => {
+  test("the shipped default pipelines equal the pack workflows, and a project built from them has no run", async () => {
+    const stores = await projectFrom(
+      shippedOfficeManifestPath,
+      shippedAgentsDirectory,
+    );
+    const result = await boundProjections(stores, shippedProjectId);
+    expect(result.pack.workflows).toEqual(result.legacy.workflows);
+    expect(result.pack.routes).toEqual(result.legacy.routes);
+    expect(result.pack.workflows.map((workflow) => workflow.id)).toEqual(
+      packWorkflowIds,
+    );
+    expect(result.pack.routes).toEqual([
+      { taskType: "bugfix", workflow: "bugfix" },
+      { taskType: "feature", workflow: "delivery" },
+      { taskType: "release", workflow: "release" },
+      { taskType: "research", workflow: "discovery" },
+    ]);
+    // The one shipped route the pack lacks, as a literal: the comparison
+    // drops the route of the `maintenance` task kind whatever it points to,
+    // so only this says that it points to `delivery`.
+    expect(legacyRoutes(result.profile)).toHaveLength(5);
+    expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual([
+      { taskType: "maintenance", workflow: "delivery" },
+    ]);
+    // The shipped manifest has exactly these four pipelines.
+    const shipped = JSON.parse(
+      readFileSync(shippedOfficeManifestPath, "utf8"),
+    ) as EditableOffice;
+    expect(shipped.pipelines.map((pipeline) => pipeline.id).sort()).toEqual(
+      packWorkflowIds,
+    );
+    // Nothing was started from a resolved workflow.
+    const rows = tableRows(stores.database, [
+      "pipeline_run",
+      "pipeline_stage_run",
+      "pipeline_override",
+      "approval",
+      "agent_run",
+      "job_outbox",
+    ]);
+    for (const [table, found] of Object.entries(rows))
+      expect([table, found]).toEqual([table, []]);
+  });
+
+  test("a shipped pipeline that changes in its expressible part without the pack breaks parity", async () => {
+    expect((await parityOfShippedCopy(() => undefined)).equal).toBe(true);
+    for (const mutate of [
+      (office: EditableOffice) => {
+        pipelineOf(office, "delivery").name = "Delivery";
+      },
+      (office: EditableOffice) => {
+        pipelineOf(office, "bugfix").description = "Fix a defect";
+      },
+      (office: EditableOffice) => {
+        pipelineOf(office, "bugfix").stages.reverse();
+      },
+      (office: EditableOffice) => {
+        pipelineOf(office, "discovery").stages[0]!.id = "explore";
+      },
+      (office: EditableOffice) => {
+        pipelineOf(office, "release").stages[1]!.roleId = "reviewer";
+      },
+      // Two expressed routes, swapped.
+      (office: EditableOffice) => {
+        pipelineOf(office, "discovery").defaultFor = ["release"];
+        pipelineOf(office, "release").defaultFor = ["research"];
+      },
+    ])
+      expect((await parityOfShippedCopy(editOffice(mutate))).equal).toBe(false);
+  });
+
+  test("a shipped maintenance route that is removed or points elsewhere leaves parity equal and is no longer the pinned route", async () => {
+    const pinned = [{ taskType: "maintenance", workflow: "delivery" }];
+    const untouched = await parityOfShippedCopy(() => undefined);
+    expect(routesMissingFrom(untouched.pack.routes, untouched.profile)).toEqual(
+      pinned,
+    );
+    for (const [target, missing] of [
+      [null, []],
+      ["bugfix", [{ taskType: "maintenance", workflow: "bugfix" }]],
+      ["discovery", [{ taskType: "maintenance", workflow: "discovery" }]],
+    ] as const) {
+      const result = await parityOfShippedCopy(
+        editOffice((office) => {
+          pipelineOf(office, "delivery").defaultFor = ["feature"];
+          if (target !== null)
+            pipelineOf(office, target).defaultFor.push("maintenance");
+        }),
+      );
+      // Parity does not see the route, and a count of routes sees only its
+      // removal: the literal is what a moved route breaks.
+      expect([target, result.equal]).toEqual([target, true]);
+      expect(legacyRoutes(result.profile)).toHaveLength(
+        target === null ? 4 : 5,
+      );
+      expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual(
+        missing,
+      );
+      expect(missing).not.toEqual(pinned);
+    }
+  });
+
+  test("a shipped pipeline that changes outside the expressible subset moves the legacy profile and leaves parity equal", async () => {
+    const untouched = await parityOfShippedCopy(() => undefined);
+    expect(untouched.equal).toBe(true);
+    const listed = outsidePackVocabulary().entries.map(
+      (entry) => `${entry.subject}.${entry.field}`,
+    );
+    for (const [key, mutate] of [
+      [
+        "stage.name",
+        (office: EditableOffice) => {
+          pipelineOf(office, "delivery").stages[0]!.name = "Plan";
+        },
+      ],
+      [
+        "stage.objective",
+        (office: EditableOffice) => {
+          pipelineOf(office, "bugfix").stages[1]!.objective = "Fix it";
+        },
+      ],
+      [
+        "stage.checks",
+        (office: EditableOffice) => {
+          pipelineOf(office, "release").stages[1]!.checks.push("Signed off");
+        },
+      ],
+      [
+        "stage.requiresApproval",
+        (office: EditableOffice) => {
+          pipelineOf(office, "bugfix").stages[2]!.requiresApproval = false;
+        },
+      ],
+      [
+        "stage.capabilities",
+        (office: EditableOffice) => {
+          pipelineOf(office, "bugfix").stages[1]!.capabilities = ["run_tests"];
+        },
+      ],
+      [
+        "stage.requiresIndependentApproval",
+        (office: EditableOffice) => {
+          pipelineOf(office, "bugfix").stages[2]!.requiresIndependentApproval =
+            true;
+        },
+      ],
+      [
+        "stage.requiresDifferentAgentFrom",
+        (office: EditableOffice) => {
+          pipelineOf(office, "bugfix").stages[2]!.requiresDifferentAgentFrom = [
+            "fix",
+          ];
+        },
+      ],
+      [
+        "pipeline.enforcement",
+        (office: EditableOffice) => {
+          pipelineOf(office, "delivery").enforcement = "guidance";
+        },
+      ],
+      // The maintenance route, removed and moved.
+      [
+        "pipeline.defaultFor",
+        (office: EditableOffice) => {
+          pipelineOf(office, "delivery").defaultFor = ["feature"];
+        },
+      ],
+      [
+        "task_kind.pipelineId",
+        (office: EditableOffice) => {
+          pipelineOf(office, "delivery").defaultFor = ["feature"];
+          pipelineOf(office, "bugfix").defaultFor.push("maintenance");
+        },
+      ],
+      [
+        "office_role.responsibilities",
+        (office: EditableOffice) => {
+          office.office.roles[0]!.responsibilities.push("Write the ADR");
+        },
+      ],
+    ] as const) {
+      const result = await parityOfShippedCopy(editOffice(mutate));
+      expect([key, result.equal]).toEqual([key, true]);
+      expect([key, result.profile.profileDigest]).not.toEqual([
+        key,
+        untouched.profile.profileDigest,
+      ]);
+      expect(listed).toContain(key);
     }
   });
 });

@@ -1935,8 +1935,25 @@ fields outside it (tools, model policy, limits, guidance, responsibilities,
 the Runtime role name, pipeline, approval and check semantics) are listed
 with their owning task. The pack is not registered in any catalog, not
 adopted by any project and not read by the Runtime, and nothing was removed
-from the legacy path. Aliases, Development Pack workflows, prompts, evidence
-and adoption (GP-10B, GP-10C), automatic
+from the legacy path. GP-10B-1 extends the pack to `0.2.0` with the four
+development workflows, `delivery`, `bugfix`, `discovery` and `release`,
+within manifest schema 1. It proves expressible-subset parity for workflows:
+the resolved workflows equal the legacy default pipelines on pipeline ID,
+name, description, the ordered stages by ID and role, and one route per
+workflow, on the GP-09 fixture and on the shipped default office manifest.
+It is not execution parity, and it is not equality of the whole legacy
+pipeline: stage names, objectives and checks, the route
+`maintenance -> delivery`, and every enforcement, approval and separation
+setting stay outside the pack and are listed with what was delivered, what
+remains and the task that owns the residue (GP-10B-2, or the provisionally
+numbered policy task GP-25). Prompts were not delivered, the pack contract
+is unchanged, the pack is still unregistered and unread by the Runtime, and
+nothing was removed from the legacy path; the pack must not become
+authoritative for Runtime execution without a separately approved task. The
+execution parity task `a45ddb12-3159-4b60-9b8b-c26516720834` depends on
+GP-10B-1, GP-10B-2 and the policy task. Aliases, Development Pack prompts
+and the descriptive contract extension (GP-10B-2), pack policy contributions
+(GP-25), evidence and adoption (GP-10C), automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
 end-to-end exit criteria are met.

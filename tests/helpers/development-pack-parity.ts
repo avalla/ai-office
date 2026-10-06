@@ -12,12 +12,12 @@ import {
 } from "../../packages/domain-pack-contracts/src/index.ts";
 
 /**
- * GP-10A, test only. The development pack is a committed reference artifact
- * that no production code reads. These helpers read it, install it in a
- * catalog that exists only in a test, and project the two sides of
- * expressible-subset parity into one shape: the resolved configuration of a
- * project bound to the pack, and the GP-09 legacy development profile of the
- * same project. Nothing here is a Runtime mapping.
+ * GP-10A and GP-10B-1, test only. The development pack is a committed
+ * reference artifact that no production code reads. These helpers read it,
+ * install it in a catalog that exists only in a test, and project the two
+ * sides of expressible-subset parity into one shape: the resolved
+ * configuration of a project bound to the pack, and the GP-09 legacy
+ * development profile of the same project. Nothing here is a Runtime mapping.
  */
 export const repositoryRoot = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -48,12 +48,28 @@ export const shippedOfficeManifestPath = join(
 );
 
 export const developmentPackId = "org.ai-office.development";
-export const developmentPackVersion = "0.1.0";
+export const developmentPackVersion = "0.2.0";
 /** Pinned: it moves only with the pack version. */
 export const developmentPackManifestDigest =
-  "sha256:cda1c5fc48b5e04d75905d00f0f5d2b41a69e497eb4cc009a3aa77cfc2dac567";
+  "sha256:6321bb076a19765ce50f3127914c95487658c44e4cf480c3471337d2983f227e";
 /** The follow-up Runtime task that owns execution parity. */
 export const executionParityTaskId = "a45ddb12-3159-4b60-9b8b-c26516720834";
+/** The Runtime task of GP-10B-2, the descriptive contract extension. */
+export const descriptiveExtensionTaskId =
+  "e890324a-ecd4-4fcc-b1f8-37fdbdaca319";
+/** The Runtime task of the policy task, provisionally numbered GP-25. */
+export const policyTaskId = "1a883c04-0905-4b36-a57b-12d45fdfd59f";
+
+/**
+ * The one legacy route the pack does not express (GP-10B-1): the `delivery`
+ * pipeline is the default for two task kinds and a schema-1 workflow names
+ * one task type. The comparison leaves out the route of this task kind on
+ * the legacy side.
+ */
+export const unexpressedLegacyRoute = {
+  taskType: "maintenance",
+  workflow: "delivery",
+} as const;
 
 export const legacyRoleIds = [
   "architect",
@@ -78,6 +94,8 @@ export interface RawPackManifest {
       description?: string;
       role?: string;
       capabilities?: string[];
+      taskType?: string;
+      stages?: { id: string; role: string }[];
     }[]
   >;
 }
@@ -114,10 +132,16 @@ export function testCatalogWith(bytes: Uint8Array): {
   return { catalog, pack };
 }
 
+export interface ExpressedRoute {
+  readonly taskType: string;
+  readonly workflow: string;
+}
+
 /**
  * The comparison shape of expressible-subset parity: what a schema-1 pack can
- * say about a role, an agent and a task type, and nothing else. Lists are in
- * code-unit order; a capability list is a set.
+ * say about a role, an agent, a task type and a workflow, and nothing else.
+ * Lists are in code-unit order and a capability list is a set. The stages of
+ * a workflow are the exception: their order is compared.
  */
 export interface ExpressibleSubset {
   readonly roles: readonly {
@@ -131,6 +155,16 @@ export interface ExpressibleSubset {
     readonly role: string | null;
   }[];
   readonly taskTypes: readonly string[];
+  readonly workflows: readonly {
+    readonly id: string;
+    readonly title: string | null;
+    readonly description: string | null;
+    /** The task types the workflow is the default for. */
+    readonly taskTypes: readonly string[];
+    readonly stages: readonly { readonly id: string; readonly role: string }[];
+  }[];
+  /** Each task type with the workflow it routes to. */
+  readonly routes: readonly ExpressedRoute[];
 }
 
 const byCodeUnits = (left: string, right: string): number =>
@@ -140,16 +174,49 @@ function byId<T extends { readonly id: string }>(values: readonly T[]): T[] {
   return [...values].sort((left, right) => byCodeUnits(left.id, right.id));
 }
 
+function sortedRoutes(routes: readonly ExpressedRoute[]): ExpressedRoute[] {
+  return [...routes].sort(
+    (left, right) =>
+      byCodeUnits(left.taskType, right.taskType) ||
+      byCodeUnits(left.workflow, right.workflow),
+  );
+}
+
+type ProfileSections = Pick<
+  LegacyDevelopmentProfile,
+  "roles" | "agents" | "taskKinds" | "pipelines"
+>;
+
+/** Every route of the legacy state: each task kind that has a pipeline. */
+export function legacyRoutes(
+  profile: Pick<LegacyDevelopmentProfile, "taskKinds">,
+): ExpressedRoute[] {
+  return sortedRoutes(
+    profile.taskKinds.flatMap((route) =>
+      route.pipelineId === null
+        ? []
+        : [{ taskType: route.kind, workflow: route.pipelineId }],
+    ),
+  );
+}
+
 /**
  * The legacy side. A role is the office role with the capabilities of the
  * Runtime role of the same key as a set; `purpose` is the description. An
  * agent is its name and the office role it serves. Roles and agents outside
  * the office manifest (`runtimeOnly`) are not development defaults and are
  * not projected.
+ *
+ * A workflow is a pipeline: `name` is the title, `roleId` the stage role, and
+ * `defaultFor` the task types. The legacy state holds routing twice, as
+ * `defaultFor` of a pipeline and as the pipeline of a task kind, and both are
+ * read. Neither includes the task kind of `unexpressedLegacyRoute`, whatever
+ * it routes to: that route is residue.
  */
 export function projectLegacyProfile(
-  profile: Pick<LegacyDevelopmentProfile, "roles" | "agents" | "taskKinds">,
+  profile: ProfileSections,
 ): ExpressibleSubset {
+  const expressed = (kind: string) => kind !== unexpressedLegacyRoute.taskType;
   return {
     roles: byId(
       profile.roles.map((role) => ({
@@ -165,26 +232,46 @@ export function projectLegacyProfile(
       profile.agents.map((agent) => ({ id: agent.name, role: agent.roleId })),
     ),
     taskTypes: profile.taskKinds.map((route) => route.kind).sort(byCodeUnits),
+    workflows: byId(
+      profile.pipelines.map((pipeline) => ({
+        id: pipeline.id,
+        title: pipeline.name,
+        description: pipeline.description,
+        taskTypes: pipeline.defaultFor.filter(expressed).sort(byCodeUnits),
+        stages: pipeline.stages.map((stage) => ({
+          id: stage.id,
+          role: stage.roleId,
+        })),
+      })),
+    ),
+    routes: legacyRoutes(profile).filter((route) => expressed(route.taskType)),
   };
 }
 
-/** The local ID of a pack-stable ID such as `pack:<pack>/roles/<id>`. */
+/**
+ * The local ID of a stable ID: `pack:<pack>/<kind>/<id>` or
+ * `project:<kind>/<id>`.
+ */
 function localIdOf(stableId: string, kind: string): string {
+  const projectPrefix = `project:${kind}/`;
+  if (stableId.startsWith(projectPrefix))
+    return stableId.slice(projectPrefix.length);
   const marker = `/${kind}/`;
   const index = stableId.indexOf(marker);
   if (!stableId.startsWith("pack:") || index === -1)
-    throw new Error(`Not a pack ${kind} ID: ${stableId}`);
+    throw new Error(`Not a ${kind} ID: ${stableId}`);
   return stableId.slice(index + marker.length);
 }
 
 /**
- * The pack side: every enabled role, agent and task type of the resolved
- * configuration, whatever its origin, named by its local ID.
+ * The pack side: every enabled role, agent, task type and workflow of the
+ * resolved configuration, whatever its origin, named by its local ID. A
+ * workflow names one task type, which is its one route.
  */
 export function projectResolvedConfiguration(
   configuration: Pick<
     ResolvedProjectConfiguration,
-    "roles" | "agents" | "effectiveDefinitions" | "origins"
+    "roles" | "agents" | "workflows" | "effectiveDefinitions" | "origins"
   >,
 ): ExpressibleSubset {
   const local = (effectiveId: string): string => {
@@ -194,6 +281,18 @@ export function projectResolvedConfiguration(
   };
   const roleLocalIds = new Map(
     configuration.roles.map((role) => [role.roleId, local(role.effectiveId)]),
+  );
+  const workflows = byId(
+    configuration.workflows.map((workflow) => ({
+      id: local(workflow.effectiveId),
+      title: workflow.title ?? null,
+      description: workflow.description ?? null,
+      taskTypes: [localIdOf(workflow.taskTypeId, "taskTypes")],
+      stages: workflow.stages.map((stage) => ({
+        id: stage.id,
+        role: roleLocalIds.get(stage.roleId) ?? stage.roleId,
+      })),
+    })),
   );
   return {
     roles: byId(
@@ -219,11 +318,19 @@ export function projectResolvedConfiguration(
       .filter((definition) => definition.enabled)
       .map((definition) => definition.localId)
       .sort(byCodeUnits),
+    workflows,
+    routes: sortedRoutes(
+      workflows.map((workflow) => ({
+        taskType: workflow.taskTypes[0]!,
+        workflow: workflow.id,
+      })),
+    ),
   };
 }
 
 export const outsideVocabularyOwners = [
-  "GP-10B",
+  "GP-10B-2",
+  "GP-25",
   "GP-10C",
   executionParityTaskId,
 ] as const;
@@ -245,7 +352,15 @@ export interface OutsideVocabularyEntry {
   readonly field: string;
   /** Present when only one aspect of the field is outside the vocabulary. */
   readonly aspect?: string;
+  /** The task that owns the residue next. */
   readonly owner: OutsideVocabularyOwner;
+  /**
+   * The part of the field the pack carries since GP-10B-1, or null when it
+   * carries none of it.
+   */
+  readonly delivered: string | null;
+  /** What stays outside the pack. */
+  readonly residue: string;
   /**
    * The GP-09 `vocabularyGaps` code that reports the field in a state that
    * uses it, or null.
@@ -261,7 +376,7 @@ export interface OutsideVocabularyEntry {
 }
 
 export interface OutsidePackVocabulary {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly pack: { readonly id: string; readonly version: string };
   readonly claim: string;
   readonly description: string;
@@ -279,6 +394,8 @@ export function parseOutsidePackVocabulary(
 ): OutsidePackVocabulary {
   if (!isRecord(value) || !Array.isArray(value.entries))
     throw new Error("outside-pack-vocabulary: expected an entries list");
+  if (value.schemaVersion !== 2)
+    throw new Error("outside-pack-vocabulary: expected schemaVersion 2");
   if (
     Object.keys(value).sort().join() !==
     "claim,description,entries,owners,pack,schemaVersion"
@@ -294,6 +411,8 @@ export function parseOutsidePackVocabulary(
       "field",
       "aspect",
       "owner",
+      "delivered",
+      "residue",
       "gp09Gap",
       "inDefaultState",
       "reason",
@@ -311,6 +430,13 @@ export function parseOutsidePackVocabulary(
       fail("invalid aspect");
     if (!outsideVocabularyOwners.some((owner) => owner === entry.owner))
       fail("missing or unknown owner");
+    if (
+      entry.delivered !== null &&
+      (typeof entry.delivered !== "string" || entry.delivered === "")
+    )
+      fail("delivered must be a statement or null");
+    if (typeof entry.residue !== "string" || entry.residue === "")
+      fail("missing residue");
     if (entry.gp09Gap !== null && typeof entry.gp09Gap !== "string")
       fail("gp09Gap must be a code or null");
     if (typeof entry.inDefaultState !== "boolean")
@@ -335,11 +461,6 @@ export function entryKey(
   return `${entry.subject}.${entry.field}${entry.aspect === undefined ? "" : `#${entry.aspect}`}`;
 }
 
-type ProfileSections = Pick<
-  LegacyDevelopmentProfile,
-  "roles" | "agents" | "taskKinds"
->;
-
 function changed(value: unknown): unknown {
   if (typeof value === "string") return `${value}-gp10a`;
   if (typeof value === "number") return value + 1;
@@ -350,10 +471,24 @@ function changed(value: unknown): unknown {
 }
 
 /**
+ * Fields of the profile that are not legacy fields of their own: the two
+ * containers, whose content is visited as its own subject, and the agents
+ * GP-09 derives for a stage from the agents' role and enablement.
+ */
+const structuralFields: readonly string[] = [
+  "office_role.runtime",
+  "pipeline.stages",
+  "stage.eligibleAgents",
+];
+
+/**
  * Every legacy field of the profile's office roles, their Runtime roles, its
- * agents and its task kinds, each with whether the projection reads it. That
- * is decided by changing the field in a copy and comparing the projections,
- * so the answer cannot disagree with `projectLegacyProfile`.
+ * agents, its task kinds, its pipelines and their stages, each with whether
+ * the projection reads it. That is decided by changing the field in a copy
+ * and comparing the projections, so the answer cannot disagree with
+ * `projectLegacyProfile`. A field counts as read when the change shows on
+ * any record: the pipeline of a task kind is read for every kind but the one
+ * of `unexpressedLegacyRoute`.
  */
 export function classifyLegacyFields(
   profile: ProfileSections,
@@ -367,7 +502,7 @@ export function classifyLegacyFields(
     const record = pick(profile);
     if (record === null) return;
     for (const field of Object.keys(record)) {
-      if (subject === "office_role" && field === "runtime") continue;
+      if (structuralFields.includes(`${subject}.${field}`)) continue;
       const copy = structuredClone(profile);
       const target = pick(copy)!;
       target[field] = changed(target[field]);
@@ -391,21 +526,40 @@ export function classifyLegacyFields(
   profile.taskKinds.forEach((_kind, index) =>
     visit("task_kind", (copy) => record(copy.taskKinds[index])),
   );
+  profile.pipelines.forEach((pipeline, index) => {
+    visit("pipeline", (copy) => record(copy.pipelines[index]));
+    pipeline.stages.forEach((_stage, stageIndex) =>
+      visit("stage", (copy) =>
+        record(copy.pipelines[index]!.stages[stageIndex]),
+      ),
+    );
+  });
   return [...fields]
     .map(([key, projected]) => ({ key, projected }))
     .sort((left, right) => byCodeUnits(left.key, right.key));
 }
 
-const classifiedSubjects: readonly string[] = [
-  "office_role",
-  "runtime_role",
-  "agent",
-  "task_kind",
+/**
+ * Subjects with optional fields, which a state that does not use them does
+ * not hold.
+ */
+const optionalFieldSubjects: readonly OutsideVocabularySubject[] = [
+  "pipeline",
+  "stage",
 ];
 
 /**
  * Violations of "every legacy field is in the projection or in the list,
  * never both and never neither", and list entries that name no legacy field.
+ *
+ * An entry covers a whole field when it names no aspect and delivers
+ * nothing: that field must not be read by the projection. An entry that
+ * names an aspect or a delivered part covers the rest of a field the
+ * projection does read. A pipeline or stage entry marked as unused by the
+ * default state names an optional field the state does not hold, so it
+ * cannot be looked up here; `defaultStateViolations` checks it. Every other
+ * entry is looked up, marked as unused or not: every state holds every field
+ * of a role, an agent and a task kind.
  */
 export function completenessViolations(
   profile: ProfileSections,
@@ -414,7 +568,7 @@ export function completenessViolations(
   const fields = classifyLegacyFields(profile);
   const whole = new Set(
     vocabulary.entries
-      .filter((entry) => entry.aspect === undefined)
+      .filter((entry) => entry.aspect === undefined && entry.delivered === null)
       .map(entryKey),
   );
   const known = new Map(fields.map((field) => [field.key, field.projected]));
@@ -426,15 +580,29 @@ export function completenessViolations(
           `${field.key} is ${field.projected ? "in both the projection and the list" : "in neither the projection nor the list"}`,
       ),
     ...vocabulary.entries
-      .filter((entry) => classifiedSubjects.includes(entry.subject))
+      .filter(
+        (entry) =>
+          entry.inDefaultState ||
+          !optionalFieldSubjects.includes(entry.subject),
+      )
       .flatMap((entry) => {
         const projected = known.get(`${entry.subject}.${entry.field}`);
         if (projected === undefined)
           return [`${entryKey(entry)} names no legacy field`];
-        // An aspect entry covers part of a field the projection reads.
-        return entry.aspect !== undefined && !projected
-          ? [`${entryKey(entry)} is an aspect of a field that is not projected`]
-          : [];
+        if (projected) return [];
+        // A partial entry covers the rest of a field the projection reads.
+        return [
+          ...(entry.aspect === undefined
+            ? []
+            : [
+                `${entryKey(entry)} is an aspect of a field that is not projected`,
+              ]),
+          ...(entry.delivered === null
+            ? []
+            : [
+                `${entryKey(entry)} states a delivered part of a field that is not projected`,
+              ]),
+        ];
       }),
   ];
 }

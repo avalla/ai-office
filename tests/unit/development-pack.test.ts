@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
@@ -18,26 +19,31 @@ import {
   developmentPackManifestDigest,
   developmentPackVersion,
   entryKey,
+  descriptiveExtensionTaskId,
   executionParityTaskId,
   legacyRoleIds,
+  legacyRoutes,
   missingGp09Gaps,
   mutatedDevelopmentPackBytes,
   outsidePackVocabulary,
   outsidePackVocabularyPath,
   parseOutsidePackVocabulary,
+  policyTaskId,
   projectLegacyProfile,
   projectResolvedConfiguration,
   repositoryRoot,
   testCatalogWith,
+  unexpressedLegacyRoute,
   type ExpressibleSubset,
   type RawPackManifest,
 } from "../helpers/development-pack-parity.ts";
 import { legacyProfileInput } from "../helpers/legacy-development-fixture.ts";
 
-// GP-10A: the development pack as a committed reference artifact, and
-// expressible-subset parity with the legacy development defaults. Pure: no
-// storage and no Runtime. The same comparison on stored state and on the
-// shipped defaults is in tests/integration/development-pack-parity.test.ts.
+// GP-10A and GP-10B-1: the development pack as a committed reference
+// artifact, and expressible-subset parity with the legacy development
+// defaults. Pure: no storage and no Runtime. The same comparison on stored
+// state and on the shipped defaults is in
+// tests/integration/development-pack-parity.test.ts.
 
 const legacyCapabilities = [
   "approve_or_reject",
@@ -92,10 +98,10 @@ describe("GP-10A development pack reference artifact", () => {
       manifestDigest: developmentPackManifestDigest,
     });
     expect(developmentPackId).toBe("org.ai-office.development");
-    expect(developmentPackVersion).toBe("0.1.0");
+    expect(developmentPackVersion).toBe("0.2.0");
     // The exact file: a byte that changes at this version fails here.
     expect(computeArtifactDigest(bytes)).toBe(
-      "sha256:1bc115b6caa1f1bce66d65654f6d68ab96dc08b94a924888ee50ffa16db3592d",
+      "sha256:3316f4f9683edafa3c827c11b6b6f1b5a88fc8265e48565b01e2bd0b2dee2518",
     );
     expect(manifest.coreContract).toEqual({ minInclusive: 1, maxExclusive: 2 });
     expect(manifest.dependencies).toEqual([]);
@@ -178,12 +184,12 @@ describe("GP-10A development pack reference artifact", () => {
     );
   });
 
-  test("it holds no GP-10B or GP-10C content and no agent capability", () => {
+  test("it holds no prompt, knowledge, policy, artifact type, evidence type or validator, and no agent capability, prompt or knowledge", () => {
     const { contributions } = verifyDomainPackManifest(developmentPackBytes());
     for (const kind of contributionKinds)
       expect([kind, contributions[kind].length]).toEqual([
         kind,
-        { roles: 4, agents: 4, taskTypes: 5, capabilities: 14 }[
+        { roles: 4, agents: 4, taskTypes: 5, capabilities: 14, workflows: 4 }[
           kind as string
         ] ?? 0,
       ]);
@@ -194,7 +200,6 @@ describe("GP-10A development pack reference artifact", () => {
       new TextDecoder().decode(developmentPackBytes()),
     ) as RawPackManifest;
     for (const kind of [
-      "workflows",
       "prompts",
       "knowledge",
       "policies",
@@ -262,7 +267,8 @@ describe("GP-10A expressible-subset parity on the GP-09 fixture office", () => {
     [
       "a task-type ID",
       (manifest) => {
-        manifest.contributions.taskTypes![4]!.id = "hotfix";
+        // The one task type no workflow names.
+        manifest.contributions.taskTypes![2]!.id = "hotfix";
       },
     ],
   ])("changing %s in a copy of the pack breaks parity", (_name, mutate) => {
@@ -294,15 +300,16 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
   const stageEntry = (field: string) =>
     vocabulary.entries.find((entry) => entryKey(entry) === `stage.${field}`)!;
 
-  test("the committed list is well formed, names the pack and the claim, and every entry names one of the three owners", () => {
-    expect(vocabulary.schemaVersion).toBe(1);
+  test("the committed list is well formed, names the pack and the claim, and every entry names one of the four owners", () => {
+    expect(vocabulary.schemaVersion).toBe(2);
     expect(vocabulary.pack).toEqual({
       id: developmentPackId,
       version: developmentPackVersion,
     });
     expect(vocabulary.claim).toBe("expressible-subset parity");
     expect(Object.keys(vocabulary.owners)).toEqual([
-      "GP-10B",
+      "GP-10B-2",
+      "GP-25",
       "GP-10C",
       executionParityTaskId,
     ]);
@@ -334,25 +341,25 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
     expect(
       vocabulary.entries.map((entry) => [entryKey(entry), entry.owner]),
     ).toEqual([
-      ["office_role.responsibilities", "GP-10B"],
+      ["office_role.responsibilities", "GP-10B-2"],
       ["runtime_role.name", executionParityTaskId],
       ["runtime_role.version", executionParityTaskId],
       ["runtime_role.capabilities#order", executionParityTaskId],
       ["runtime_role.tools", "GP-10C"],
       ["runtime_role.modelPolicy", executionParityTaskId],
       ["runtime_role.limits", executionParityTaskId],
-      ["runtime_role.guidance", "GP-10B"],
+      ["runtime_role.guidance", "GP-10B-2"],
       ["agent.enabled", executionParityTaskId],
-      ["task_kind.pipelineId", "GP-10B"],
-      ["pipeline.defaultFor", "GP-10B"],
-      ["pipeline.enforcement", "GP-10B"],
-      ["stage.name", "GP-10B"],
-      ["stage.objective", "GP-10B"],
-      ["stage.checks", "GP-10B"],
-      ["stage.requiresApproval", "GP-10B"],
-      ["stage.capabilities", "GP-10B"],
-      ["stage.requiresIndependentApproval", "GP-10B"],
-      ["stage.requiresDifferentAgentFrom", "GP-10B"],
+      ["task_kind.pipelineId", "GP-10B-2"],
+      ["pipeline.defaultFor", "GP-10B-2"],
+      ["pipeline.enforcement", "GP-25"],
+      ["stage.name", "GP-10B-2"],
+      ["stage.objective", "GP-10B-2"],
+      ["stage.checks", "GP-10B-2"],
+      ["stage.requiresApproval", "GP-25"],
+      ["stage.capabilities", "GP-25"],
+      ["stage.requiresIndependentApproval", "GP-25"],
+      ["stage.requiresDifferentAgentFrom", "GP-25"],
     ]);
     expect(keys).toHaveLength(19);
     // The minimum the approved scope requires, named one by one.
@@ -426,12 +433,12 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
     ).toEqual([
       [
         "stage.requiresIndependentApproval",
-        "GP-10B",
+        "GP-25",
         "stage_fields_not_expressible",
       ],
       [
         "stage.requiresDifferentAgentFrom",
-        "GP-10B",
+        "GP-25",
         "stage_fields_not_expressible",
       ],
     ]);
@@ -522,7 +529,7 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
     });
   });
 
-  test("every legacy field of the roles, agents and task kinds is in the projection or in the list, never both and never neither", () => {
+  test("every legacy field of the roles, agents, task kinds, pipelines and stages is in the projection or in the list, never both and never neither", () => {
     expect(classifyLegacyFields(fixtureProfile)).toEqual([
       { key: "agent.enabled", projected: false },
       { key: "agent.name", projected: true },
@@ -531,6 +538,11 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       { key: "office_role.purpose", projected: true },
       { key: "office_role.responsibilities", projected: false },
       { key: "office_role.title", projected: true },
+      { key: "pipeline.defaultFor", projected: true },
+      { key: "pipeline.description", projected: true },
+      { key: "pipeline.enforcement", projected: false },
+      { key: "pipeline.id", projected: true },
+      { key: "pipeline.name", projected: true },
       { key: "runtime_role.capabilities", projected: true },
       { key: "runtime_role.guidance", projected: false },
       { key: "runtime_role.limits", projected: false },
@@ -538,8 +550,16 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       { key: "runtime_role.name", projected: false },
       { key: "runtime_role.tools", projected: false },
       { key: "runtime_role.version", projected: false },
+      { key: "stage.capabilities", projected: false },
+      { key: "stage.checks", projected: false },
+      { key: "stage.id", projected: true },
+      { key: "stage.name", projected: false },
+      { key: "stage.objective", projected: false },
+      { key: "stage.requiresApproval", projected: false },
+      { key: "stage.roleId", projected: true },
       { key: "task_kind.kind", projected: true },
-      { key: "task_kind.pipelineId", projected: false },
+      // Read for every task kind but the one whose route is residue.
+      { key: "task_kind.pipelineId", projected: true },
     ]);
     expect(completenessViolations(fixtureProfile, vocabulary)).toEqual([]);
     // Neither: a field dropped from the list.
@@ -565,8 +585,103 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       "office_role.title is in both the projection and the list",
       "office_role.seniority names no legacy field",
     ]);
+    // A delivered part is a claim about a field the projection reads: it
+    // cannot be stated for a field the projection ignores, and stating that
+    // nothing of a projected field is delivered puts it in both.
+    const restated = (key: string, delivered: string | null) => ({
+      ...vocabulary,
+      entries: vocabulary.entries.map((entry) =>
+        entryKey(entry) === key ? { ...entry, delivered } : entry,
+      ),
+    });
+    expect(
+      completenessViolations(
+        fixtureProfile,
+        restated("stage.name", "The name of the first stage."),
+      ),
+    ).toEqual([
+      "stage.name is in neither the projection nor the list",
+      "stage.name states a delivered part of a field that is not projected",
+    ]);
+    expect(
+      completenessViolations(
+        fixtureProfile,
+        restated("task_kind.pipelineId", null),
+      ),
+    ).toEqual(["task_kind.pipelineId is in both the projection and the list"]);
+    // Marking an entry as unused does not excuse it from naming a legacy
+    // field where every state holds every field of the subject: an invented
+    // role, agent or task-kind field is reported although it cites a GP-09
+    // code, which is all `defaultStateViolations` asks of an unused entry.
+    const inventedUnused = {
+      ...vocabulary,
+      entries: [
+        ...vocabulary.entries,
+        ...(
+          [
+            ["office_role", "role_fields_not_expressible"],
+            ["runtime_role", "runtime_role_fields_not_expressible"],
+            ["agent", "runtime_role_fields_not_expressible"],
+            ["task_kind", "pipeline_routes_several_task_kinds"],
+          ] as const
+        ).map(([subject, gp09Gap]) => ({
+          ...vocabulary.entries[0]!,
+          subject,
+          field: "bogus",
+          gp09Gap,
+          inDefaultState: false,
+        })),
+      ],
+    };
+    expect(defaultStateViolations(fixtureProfile, inventedUnused)).toEqual([]);
+    expect(completenessViolations(fixtureProfile, inventedUnused)).toEqual([
+      "office_role.bogus names no legacy field",
+      "runtime_role.bogus names no legacy field",
+      "agent.bogus names no legacy field",
+      "task_kind.bogus names no legacy field",
+    ]);
+    // An existing field of those subjects is still looked up when unused.
+    expect(
+      completenessViolations(fixtureProfile, {
+        ...vocabulary,
+        entries: vocabulary.entries.map((entry) =>
+          entryKey(entry) === "runtime_role.tools"
+            ? { ...entry, inDefaultState: false }
+            : entry,
+        ),
+      }),
+    ).toEqual([]);
   });
 });
+
+const subjectLabels = {
+  office_role: "office role",
+  runtime_role: "Runtime role",
+  agent: "agent",
+  task_kind: "task kind",
+  pipeline: "pipeline",
+  stage: "stage",
+};
+
+const fieldLabel = (entry: { field: string; aspect?: string }): string =>
+  entry.aspect === undefined
+    ? `\`${entry.field}\``
+    : `capability ${entry.aspect}`;
+
+/** The body rows of the Markdown tables of a section with that many cells. */
+function tableRows(section: string, cells: number): string[][] {
+  return section
+    .split("\n")
+    .filter((line) => line.startsWith("| "))
+    .map((line) =>
+      line
+        .split("|")
+        .slice(1, -1)
+        .map((cell) => cell.trim()),
+    )
+    .filter((row) => row.length === cells)
+    .slice(2);
+}
 
 describe("GP-10A documentation", () => {
   const plan = readFileSync(
@@ -605,33 +720,39 @@ describe("GP-10A documentation", () => {
     );
   });
 
-  test("the plan's list of fields outside the pack vocabulary is the committed list, entry for entry", () => {
-    const subjects = {
-      office_role: "office role",
-      runtime_role: "Runtime role",
-      agent: "agent",
-      task_kind: "task kind",
-      pipeline: "pipeline",
-      stage: "stage",
-    };
-    const rows = section
-      .split("\n")
-      .filter((line) => line.startsWith("| "))
-      .map((line) =>
-        line
-          .split("|")
-          .slice(1, -1)
-          .map((cell) => cell.trim()),
-      )
-      .filter((cells) => cells.length === 4)
-      .slice(2);
+  test("the GP-10A table of fields outside the pack vocabulary still names the committed entries, with the owners GP-10A assigned", () => {
+    // The current list, with what GP-10B-1 delivers and the current owners,
+    // is the table of the GP-10B-1 section; it is compared entry for entry
+    // in the GP-10B-1 documentation tests below.
+    const rows = tableRows(section, 4);
+    // Subject, field and GP-09 gap code are still those of the list. The
+    // owner column is history, so it is pinned here and not read from it.
+    const gp10aOwners = [
+      "GP-10B",
+      "a45ddb12",
+      "a45ddb12",
+      "a45ddb12",
+      "GP-10C",
+      "a45ddb12",
+      "a45ddb12",
+      "GP-10B",
+      "a45ddb12",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+    ];
     expect(rows).toEqual(
-      outsidePackVocabulary().entries.map((entry) => [
-        subjects[entry.subject],
-        entry.aspect === undefined
-          ? `\`${entry.field}\``
-          : `capability ${entry.aspect}`,
-        entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
+      outsidePackVocabulary().entries.map((entry, index) => [
+        subjectLabels[entry.subject],
+        fieldLabel(entry),
+        gp10aOwners[index],
         entry.gp09Gap === null
           ? expect.stringMatching(/^none/u)
           : entry.inDefaultState
@@ -640,6 +761,11 @@ describe("GP-10A documentation", () => {
       ]),
     );
     expect(rows).toHaveLength(19);
+    expect(gp10aOwners).toHaveLength(19);
+    expect(rows.filter((cells) => cells[2] === "GP-10B")).toHaveLength(12);
+    expect(prose).toContain(
+      "The owners above are the ones GP-10A assigned. GP-10B has since been split, and the GP-10B-1 section holds the current list with the current owners.",
+    );
     expect(prose).toContain(
       "The last two rows are legacy stage fields that the default state does not use",
     );
@@ -670,5 +796,698 @@ describe("GP-10A documentation", () => {
       /GP-10A defines .*? It proves expressible-subset parity: .*? It is not execution parity: /u,
     );
     expect(roadmap).toContain("nothing was removed from the legacy path");
+  });
+});
+
+// GP-10B-1: the four development workflows in the reference pack, and
+// expressible-subset parity for workflows with the legacy default pipelines.
+
+const packWorkflows = [
+  {
+    id: "delivery",
+    title: "Feature delivery",
+    description: "Plan, implement, review, and verify product changes",
+    taskType: "feature",
+    stages: [
+      { id: "design", role: "architect" },
+      { id: "implement", role: "developer" },
+      { id: "review", role: "reviewer" },
+      { id: "verify", role: "qa" },
+    ],
+  },
+  {
+    id: "bugfix",
+    title: "Bug fix",
+    description: "Reproduce, fix, review, and verify a defect",
+    taskType: "bugfix",
+    stages: [
+      { id: "reproduce", role: "qa" },
+      { id: "fix", role: "developer" },
+      { id: "review", role: "reviewer" },
+    ],
+  },
+  {
+    id: "discovery",
+    title: "Research",
+    description:
+      "Investigate a question and record an evidence-based recommendation",
+    taskType: "research",
+    stages: [{ id: "investigate", role: "architect" }],
+  },
+  {
+    id: "release",
+    title: "Release",
+    description:
+      "Review readiness, verify the build, and require a release decision",
+    taskType: "release",
+    stages: [
+      { id: "readiness", role: "reviewer" },
+      { id: "verification", role: "qa" },
+    ],
+  },
+];
+
+/** The four routes the pack expresses, in task-type order. */
+const packRoutes = [
+  { taskType: "bugfix", workflow: "bugfix" },
+  { taskType: "feature", workflow: "delivery" },
+  { taskType: "release", workflow: "release" },
+  { taskType: "research", workflow: "discovery" },
+];
+
+/** An office manifest as a test edits it. */
+interface EditableOffice {
+  office: { roles: { responsibilities: string[] }[] };
+  pipelines: {
+    id: string;
+    name: string;
+    description: string;
+    enforcement?: string;
+    defaultFor: string[];
+    stages: {
+      id: string;
+      name: string;
+      roleId: string;
+      objective: string;
+      checks: string[];
+      requiresApproval: boolean;
+      capabilities?: string[];
+      requiresIndependentApproval?: boolean;
+      requiresDifferentAgentFrom?: string[];
+    }[];
+  }[];
+}
+
+/**
+ * The legacy profile of the GP-09 fixture office with one edit to its office
+ * manifest, derived by the real derivation, so its digest moves with the edit.
+ */
+function legacyProfileWith(mutate: (office: EditableOffice) => void) {
+  const input = legacyProfileInput();
+  const manifest = structuredClone(input.office!.manifest);
+  mutate(manifest as unknown as EditableOffice);
+  return deriveLegacyDevelopmentProfile({
+    ...input,
+    office: { revision: input.office!.revision, manifest },
+  });
+}
+
+const pipelineOf = (office: EditableOffice, id: string) =>
+  office.pipelines.find((pipeline) => pipeline.id === id)!;
+
+describe("GP-10B-1 development workflows in the reference pack", () => {
+  test("version 0.2.0 declares exactly the four workflows, each with a title, a description, one task type and ordered stages", () => {
+    const manifest = verifyDomainPackManifest(developmentPackBytes(), 1);
+    expect(`${manifest.id}@${manifest.version}`).toBe(
+      "org.ai-office.development@0.2.0",
+    );
+    expect(manifest.manifestDigest).toBe(
+      "sha256:6321bb076a19765ce50f3127914c95487658c44e4cf480c3471337d2983f227e",
+    );
+    expect(manifest.contributions.workflows).toEqual(packWorkflows);
+    // The raw file carries those keys and no other.
+    const raw = JSON.parse(
+      new TextDecoder().decode(developmentPackBytes()),
+    ) as RawPackManifest;
+    for (const workflow of raw.contributions.workflows!) {
+      expect(Object.keys(workflow)).toEqual([
+        "id",
+        "title",
+        "description",
+        "taskType",
+        "stages",
+      ]);
+      for (const stage of workflow.stages!)
+        expect(Object.keys(stage)).toEqual(["id", "role"]);
+    }
+  });
+
+  test("roles, agents, task types and capabilities are those of 0.1.0", () => {
+    const { contributions } = verifyDomainPackManifest(developmentPackBytes());
+    const unchanged = (source: typeof contributions) =>
+      createHash("sha256")
+        .update(
+          JSON.stringify({
+            roles: source.roles,
+            agents: source.agents,
+            taskTypes: source.taskTypes,
+            capabilities: source.capabilities,
+          }),
+        )
+        .digest("hex");
+    // Computed from the committed 0.1.0 manifest before the workflows.
+    const pinned =
+      "45c8fb314eb56986aefcaaeeb4c90496ec9721f3dba5aa103bf7d23af49ec0e6";
+    expect(unchanged(contributions)).toBe(pinned);
+    // The pin sees a change to any of the four.
+    expect(
+      unchanged(
+        verifyDomainPackManifest(
+          mutatedDevelopmentPackBytes((copy) => {
+            copy.contributions.roles![3]!.capabilities = [
+              "derive_test_cases",
+              "report_regressions",
+            ];
+          }),
+        ).contributions,
+      ),
+    ).not.toBe(pinned);
+  });
+
+  test("every workflow names a task type and stage roles the pack declares, and every stage role has an agent", () => {
+    const { contributions } = verifyDomainPackManifest(developmentPackBytes());
+    const roles = contributions.roles.map((role) => role.id);
+    const taskTypes = contributions.taskTypes.map((type) => type.id);
+    for (const workflow of contributions.workflows) {
+      expect(taskTypes).toContain(workflow.taskType);
+      for (const stage of workflow.stages) {
+        expect(roles).toContain(stage.role);
+        expect(contributions.agents.map((agent) => agent.role)).toContain(
+          stage.role,
+        );
+      }
+    }
+  });
+});
+
+describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture office", () => {
+  const legacy = projectLegacyProfile(fixtureProfile);
+
+  test("the resolved workflows equal the legacy pipelines on ID, name as title, description and the ordered stages by ID and role", () => {
+    const resolved = resolvedSubset(developmentPackBytes());
+    expect(resolved.workflows).toEqual(legacy.workflows);
+    expect(resolved.routes).toEqual(legacy.routes);
+    // What was compared, from the legacy side: not an empty shape.
+    expect(legacy.workflows).toEqual(
+      fixtureProfile.pipelines
+        .map((pipeline) => ({
+          id: pipeline.id,
+          title: pipeline.name,
+          description: pipeline.description,
+          taskTypes: pipeline.defaultFor.filter(
+            (kind) => kind !== "maintenance",
+          ),
+          stages: pipeline.stages.map((stage) => ({
+            id: stage.id,
+            role: stage.roleId,
+          })),
+        }))
+        .sort((left, right) => (left.id < right.id ? -1 : 1)),
+    );
+    // And from the pack side, as literals.
+    expect(resolved.workflows).toEqual(
+      packWorkflows
+        .map(({ taskType, ...workflow }) => ({
+          ...workflow,
+          taskTypes: [taskType],
+        }))
+        .sort((left, right) => (left.id < right.id ? -1 : 1)),
+    );
+    expect(resolved.workflows.map((workflow) => workflow.id)).toEqual([
+      "bugfix",
+      "delivery",
+      "discovery",
+      "release",
+    ]);
+  });
+
+  test("every pack route is a legacy route, and the only legacy route missing is maintenance -> delivery", () => {
+    const pack = resolvedSubset(developmentPackBytes()).routes;
+    const all = legacyRoutes(fixtureProfile);
+    expect(pack).toEqual(packRoutes);
+    for (const route of pack) expect(all).toContainEqual(route);
+    expect(
+      all.filter(
+        (route) =>
+          !pack.some(
+            (expressed) =>
+              expressed.taskType === route.taskType &&
+              expressed.workflow === route.workflow,
+          ),
+      ),
+    ).toEqual([{ taskType: "maintenance", workflow: "delivery" }]);
+    expect(unexpressedLegacyRoute).toEqual({
+      taskType: "maintenance",
+      workflow: "delivery",
+    });
+    expect(all).toHaveLength(5);
+  });
+
+  test.each<[string, (manifest: RawPackManifest) => void]>([
+    [
+      "a workflow title",
+      (manifest) => {
+        manifest.contributions.workflows![0]!.title = "Delivery";
+      },
+    ],
+    [
+      "a workflow description",
+      (manifest) => {
+        manifest.contributions.workflows![1]!.description += ".";
+      },
+    ],
+    [
+      "the stage order",
+      (manifest) => {
+        manifest.contributions.workflows![0]!.stages!.reverse();
+      },
+    ],
+    [
+      "a stage ID",
+      (manifest) => {
+        manifest.contributions.workflows![2]!.stages![0]!.id = "explore";
+      },
+    ],
+    [
+      "a stage role",
+      (manifest) => {
+        manifest.contributions.workflows![3]!.stages![1]!.role = "developer";
+      },
+    ],
+    [
+      "an expressed route",
+      (manifest) => {
+        manifest.contributions.workflows![0]!.taskType = "maintenance";
+      },
+    ],
+    [
+      "a workflow ID",
+      (manifest) => {
+        manifest.contributions.workflows![2]!.id = "research";
+      },
+    ],
+    [
+      "the set of workflows",
+      (manifest) => {
+        manifest.contributions.workflows!.pop();
+      },
+    ],
+  ])("changing %s in a copy of the pack breaks parity", (_name, mutate) => {
+    const resolved = resolvedSubset(mutatedDevelopmentPackBytes(mutate));
+    expect({
+      workflows: resolved.workflows,
+      routes: resolved.routes,
+    }).not.toEqual({ workflows: legacy.workflows, routes: legacy.routes });
+    // The roles, agents and task types of the copy are still at parity, so
+    // the difference is the workflow change.
+    expect({ ...resolved, workflows: [], routes: [] }).toEqual({
+      ...legacy,
+      workflows: [],
+      routes: [],
+    });
+  });
+
+  test.each<[string, (office: EditableOffice) => void]>([
+    [
+      "a pipeline name",
+      (office) => {
+        pipelineOf(office, "bugfix").name = "Defect fix";
+      },
+    ],
+    [
+      "a pipeline description",
+      (office) => {
+        pipelineOf(office, "release").description += ".";
+      },
+    ],
+    [
+      "the stage order",
+      (office) => {
+        pipelineOf(office, "delivery").stages.reverse();
+      },
+    ],
+    [
+      "a stage ID",
+      (office) => {
+        pipelineOf(office, "discovery").stages[0]!.id = "explore";
+      },
+    ],
+    [
+      "a stage role",
+      (office) => {
+        pipelineOf(office, "delivery").stages[3]!.roleId = "reviewer";
+      },
+    ],
+    [
+      "an expressed route, moved to another pipeline",
+      (office) => {
+        pipelineOf(office, "delivery").defaultFor = ["maintenance"];
+        pipelineOf(office, "bugfix").defaultFor = ["bugfix", "feature"];
+      },
+    ],
+    [
+      "two expressed routes, swapped",
+      (office) => {
+        pipelineOf(office, "discovery").defaultFor = ["release"];
+        pipelineOf(office, "release").defaultFor = ["research"];
+      },
+    ],
+  ])("changing %s in the legacy office breaks parity", (_name, mutate) => {
+    const changed = legacyProfileWith(mutate);
+    expect(changed.profileDigest).not.toBe(fixtureProfile.profileDigest);
+    expect(resolvedSubset(developmentPackBytes())).not.toEqual(
+      projectLegacyProfile(changed),
+    );
+  });
+
+  test("the unedited legacy office, derived the same way, is at parity", () => {
+    const same = legacyProfileWith(() => undefined);
+    expect(same.profileDigest).toBe(fixtureProfile.profileDigest);
+    expect(resolvedSubset(developmentPackBytes())).toEqual(
+      projectLegacyProfile(same),
+    );
+  });
+
+  test.each<[string, string, (office: EditableOffice) => void]>([
+    [
+      "a stage name",
+      "stage.name",
+      (office) => {
+        pipelineOf(office, "delivery").stages[0]!.name = "Plan";
+      },
+    ],
+    [
+      "a stage objective",
+      "stage.objective",
+      (office) => {
+        pipelineOf(office, "bugfix").stages[1]!.objective = "Fix it";
+      },
+    ],
+    [
+      "the stage checks",
+      "stage.checks",
+      (office) => {
+        pipelineOf(office, "release").stages[1]!.checks.push("Signed off");
+      },
+    ],
+    [
+      "a stage approval requirement",
+      "stage.requiresApproval",
+      (office) => {
+        pipelineOf(office, "delivery").stages[2]!.requiresApproval = false;
+      },
+    ],
+    [
+      "the stage capabilities",
+      "stage.capabilities",
+      (office) => {
+        pipelineOf(office, "delivery").stages[1]!.capabilities = ["run_tests"];
+      },
+    ],
+    [
+      "a stage independent-approval requirement",
+      "stage.requiresIndependentApproval",
+      (office) => {
+        pipelineOf(office, "delivery").stages[2]!.requiresIndependentApproval =
+          true;
+      },
+    ],
+    [
+      "a stage separation constraint",
+      "stage.requiresDifferentAgentFrom",
+      (office) => {
+        pipelineOf(office, "bugfix").stages[2]!.requiresDifferentAgentFrom = [
+          "fix",
+        ];
+      },
+    ],
+    [
+      "the pipeline enforcement",
+      "pipeline.enforcement",
+      (office) => {
+        pipelineOf(office, "delivery").enforcement = "guidance";
+      },
+    ],
+    [
+      "the maintenance route, removed",
+      "pipeline.defaultFor",
+      (office) => {
+        pipelineOf(office, "delivery").defaultFor = ["feature"];
+      },
+    ],
+    [
+      "the maintenance route, moved to another pipeline",
+      "task_kind.pipelineId",
+      (office) => {
+        pipelineOf(office, "delivery").defaultFor = ["feature"];
+        pipelineOf(office, "bugfix").defaultFor = ["bugfix", "maintenance"];
+      },
+    ],
+    [
+      "an office role responsibility",
+      "office_role.responsibilities",
+      (office) => {
+        office.office.roles[0]!.responsibilities.push("Write the ADR");
+      },
+    ],
+  ])(
+    "changing %s, which schema 1 cannot represent, moves the legacy profile and leaves parity equal, and %s is in the residue list",
+    (_name, key, mutate) => {
+      const changed = legacyProfileWith(mutate);
+      expect(changed.profileDigest).not.toBe(fixtureProfile.profileDigest);
+      expect(projectLegacyProfile(changed)).toEqual(legacy);
+      expect(resolvedSubset(developmentPackBytes())).toEqual(
+        projectLegacyProfile(changed),
+      );
+      expect(outsidePackVocabulary().entries.map(entryKey)).toContain(key);
+    },
+  );
+});
+
+describe("GP-10B-1 residue list", () => {
+  const routeText = (route: { taskType: string; workflow: string }) =>
+    `${route.taskType} -> ${route.workflow}`;
+
+  test("the 12 entries GP-10A assigned to GP-10B are all there, each with what GP-10B-1 delivers, what remains and the task that owns the residue", () => {
+    const vocabulary = outsidePackVocabulary();
+    expect(vocabulary.pack).toEqual({
+      id: "org.ai-office.development",
+      version: "0.2.0",
+    });
+    expect(vocabulary.owners["GP-10B-2"]).toContain(descriptiveExtensionTaskId);
+    expect(vocabulary.owners["GP-25"]).toContain(policyTaskId);
+    expect(vocabulary.owners["GP-25"]).toContain("provisional");
+    const formerlyGp10b = vocabulary.entries.filter(
+      (entry) => entry.owner === "GP-10B-2" || entry.owner === "GP-25",
+    );
+    expect(
+      formerlyGp10b.map((entry) => [
+        entryKey(entry),
+        entry.owner,
+        entry.delivered === null ? "nothing" : "part",
+      ]),
+    ).toEqual([
+      ["office_role.responsibilities", "GP-10B-2", "nothing"],
+      ["runtime_role.guidance", "GP-10B-2", "nothing"],
+      ["task_kind.pipelineId", "GP-10B-2", "part"],
+      ["pipeline.defaultFor", "GP-10B-2", "part"],
+      ["pipeline.enforcement", "GP-25", "nothing"],
+      ["stage.name", "GP-10B-2", "nothing"],
+      ["stage.objective", "GP-10B-2", "nothing"],
+      ["stage.checks", "GP-10B-2", "nothing"],
+      ["stage.requiresApproval", "GP-25", "nothing"],
+      ["stage.capabilities", "GP-25", "nothing"],
+      ["stage.requiresIndependentApproval", "GP-25", "nothing"],
+      ["stage.requiresDifferentAgentFrom", "GP-25", "nothing"],
+    ]);
+    expect(formerlyGp10b).toHaveLength(12);
+    expect(vocabulary.entries).toHaveLength(19);
+    // The five governance entries are the policy task's, and no other.
+    expect(
+      vocabulary.entries
+        .filter((entry) => entry.owner === "GP-25")
+        .map(entryKey)
+        .sort(),
+    ).toEqual([
+      "pipeline.enforcement",
+      "stage.capabilities",
+      "stage.requiresApproval",
+      "stage.requiresDifferentAgentFrom",
+      "stage.requiresIndependentApproval",
+    ]);
+    // The entries GP-10B never owned deliver nothing and keep their owner.
+    expect(
+      vocabulary.entries
+        .filter((entry) => !formerlyGp10b.includes(entry))
+        .map((entry) => [entryKey(entry), entry.owner, entry.delivered]),
+    ).toEqual([
+      ["runtime_role.name", executionParityTaskId, null],
+      ["runtime_role.version", executionParityTaskId, null],
+      ["runtime_role.capabilities#order", executionParityTaskId, null],
+      ["runtime_role.tools", "GP-10C", null],
+      ["runtime_role.modelPolicy", executionParityTaskId, null],
+      ["runtime_role.limits", executionParityTaskId, null],
+      ["agent.enabled", executionParityTaskId, null],
+    ]);
+    for (const entry of vocabulary.entries)
+      expect(entry.residue.length).toBeGreaterThan(0);
+  });
+
+  test("the task-kind pipelineId and pipeline defaultFor entries record the four expressed routes as delivered and maintenance -> delivery as residue", () => {
+    const vocabulary = outsidePackVocabulary();
+    const expressed = resolvedSubset(developmentPackBytes()).routes;
+    expect(expressed).toHaveLength(4);
+    for (const key of ["task_kind.pipelineId", "pipeline.defaultFor"]) {
+      const entry = vocabulary.entries.find(
+        (candidate) => entryKey(candidate) === key,
+      )!;
+      for (const route of expressed) {
+        expect(entry.delivered).toContain(routeText(route));
+        expect(entry.residue).not.toContain(routeText(route));
+      }
+      expect(entry.residue).toContain(routeText(unexpressedLegacyRoute));
+      expect(entry.residue).toContain("maintenance -> delivery");
+      expect(entry.delivered).not.toContain("maintenance");
+      expect(entry.owner).toBe("GP-10B-2");
+    }
+  });
+
+  test("a list without the delivered part or the residue of an entry is rejected", () => {
+    const raw = JSON.parse(readFileSync(outsidePackVocabularyPath, "utf8")) as {
+      entries: Record<string, unknown>[];
+    };
+    const { delivered: _delivered, ...undelivered } = raw.entries[0]!;
+    expect(() =>
+      parseOutsidePackVocabulary({ ...raw, entries: [undelivered] }),
+    ).toThrow(/delivered must be a statement or null/u);
+    const { residue: _residue, ...residueless } = raw.entries[0]!;
+    expect(() =>
+      parseOutsidePackVocabulary({ ...raw, entries: [residueless] }),
+    ).toThrow(/missing residue/u);
+    expect(() =>
+      parseOutsidePackVocabulary({
+        ...raw,
+        entries: [{ ...raw.entries[0], owner: "GP-10B" }],
+      }),
+    ).toThrow(/missing or unknown owner/u);
+    expect(() =>
+      parseOutsidePackVocabulary({ ...raw, schemaVersion: 1 }),
+    ).toThrow(/expected schemaVersion 2/u);
+  });
+});
+
+describe("GP-10B-1 documentation", () => {
+  const read = (path: string) =>
+    readFileSync(join(repositoryRoot, path), "utf8");
+  const plan = read("docs/development/generic-core-domain-packs.md");
+  const start = plan.indexOf("\n## GP-10B-1 development workflow templates\n");
+  const section = plan.slice(start, plan.indexOf("\n## ", start + 1));
+  const oneLine = (text: string) =>
+    text.replace(/\n>/gu, "\n").replace(/\s+/gu, " ");
+  const prose = oneLine(section);
+  const antiGoal =
+    "the pack must not become authoritative for Runtime execution without a separately approved task";
+  const row = (prefix: string) =>
+    plan.split("\n").filter((line) => line.startsWith(prefix));
+
+  test("the plan names the claim, repeats the anti-goal verbatim, and states that nothing was removed and that prompts were not delivered", () => {
+    expect(start).toBeGreaterThan(0);
+    expect(section).toMatch(
+      /\n> the pack must not become authoritative for Runtime execution without a\n> separately approved task\n/u,
+    );
+    expect(prose).toContain(antiGoal);
+    expect(prose).toContain("**expressible-subset parity for workflows**");
+    expect(prose).toContain("it is not execution parity");
+    expect(prose).toContain("It is not equality of the whole legacy pipeline");
+    expect(prose).toContain(`(\`${executionParityTaskId}\`)`);
+    expect(prose).toContain("Nothing was removed from the legacy path.");
+    expect(prose).toContain("Prompts were not delivered");
+    expect(prose).toContain(
+      "No contract change, Runtime consumption, catalog registration, adoption or legacy-path removal occurs in GP-10B-1.",
+    );
+    expect(section).not.toMatch(/\bmov(?:ed|es|ing)\b/iu);
+    expect(section).toContain("### Implementation record");
+  });
+
+  test("the plan records the owner decisions: the split, the policy task and the dependencies of execution parity", () => {
+    expect(prose).toContain(descriptiveExtensionTaskId);
+    expect(prose).toContain(policyTaskId);
+    expect(prose).toContain("The number GP-25 is provisional");
+    expect(prose).toContain(
+      `The execution parity task \`${executionParityTaskId}\` depends on GP-10B-1, GP-10B-2 and the policy task (GP-25).`,
+    );
+    expect(prose).toContain(
+      "The frozen GP-09 profile and its gap codes stay untouched.",
+    );
+    expect(row("| GP-10B — ")).toEqual([]);
+    const [first, ...moreFirst] = row("| GP-10B-1 — ");
+    expect(moreFirst).toEqual([]);
+    expect(first).toContain("expressible-subset parity for workflows");
+    expect(first).not.toMatch(/\bmov(?:e|ed|es|ing)\b|behind pack defaults/iu);
+    const [second, ...moreSecond] = row("| GP-10B-2 — ");
+    expect(moreSecond).toEqual([]);
+    expect(second).toContain(descriptiveExtensionTaskId);
+    const [policy, ...morePolicy] = row("| GP-25 — ");
+    expect(morePolicy).toEqual([]);
+    expect(policy).toContain("Pack policy contribution contract");
+    expect(policy).toContain(policyTaskId);
+    expect(policy).toContain("Provisional number");
+    expect(policy).toContain("owner-approved scope proposal");
+    expect(plan).toContain(
+      "GP-10B-1 + GP-10B-2 + GP-25 → Runtime task a45ddb12 execution parity",
+    );
+    const stage = oneLine(
+      plan.slice(
+        plan.indexOf("4. **Extraction:**"),
+        plan.indexOf("5. **Opt-in adoption:**"),
+      ),
+    );
+    expect(stage).toContain(
+      "GP-10B-1 delivers the second slice as expressible-subset parity over workflows and removes nothing",
+    );
+  });
+
+  test("the plan's workflow table is the committed manifest", () => {
+    const { contributions } = verifyDomainPackManifest(developmentPackBytes());
+    expect(tableRows(section, 4)).toEqual(
+      contributions.workflows.map((workflow) => [
+        `\`${workflow.id}\``,
+        workflow.title,
+        `\`${workflow.taskType}\``,
+        workflow.stages
+          .map((stage) => `\`${stage.id}\` (${stage.role})`)
+          .join(", "),
+      ]),
+    );
+  });
+
+  test("the plan's residue table is the committed list, entry for entry", () => {
+    const rows = tableRows(section, 6);
+    expect(rows).toEqual(
+      outsidePackVocabulary().entries.map((entry) => [
+        subjectLabels[entry.subject],
+        fieldLabel(entry),
+        entry.delivered ?? "nothing",
+        entry.residue,
+        entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
+        entry.gp09Gap === null
+          ? expect.stringMatching(/^none/u)
+          : entry.inDefaultState
+            ? `\`${entry.gp09Gap}\``
+            : `\`${entry.gp09Gap}\` if used; unused by the defaults`,
+      ]),
+    );
+    expect(rows).toHaveLength(19);
+    expect(rows.filter((cells) => cells[2] !== "nothing")).toHaveLength(2);
+  });
+
+  test("the pack README, the roadmap and the architecture overview say the same and claim nothing more", () => {
+    const readme = oneLine(read("packages/domain-pack-development/README.md"));
+    expect(readme).toContain("`org.ai-office.development@0.2.0`");
+    expect(readme).toContain(antiGoal);
+    expect(readme).toContain("nothing was removed from the legacy path");
+    expect(readme).toContain("Prompts were not delivered");
+    expect(readme).toContain(executionParityTaskId);
+    expect(readme).toContain("it is not execution parity");
+    const roadmap = oneLine(read("docs/development/roadmap.md"));
+    expect(roadmap).toMatch(
+      /GP-10B-1 extends the pack to `0\.2\.0` .*? expressible-subset parity for workflows.*? It is not execution parity/u,
+    );
+    expect(roadmap).toContain(antiGoal);
+    expect(roadmap).toContain("Prompts were not delivered");
+    const overview = oneLine(read("docs/architecture/overview.md"));
+    expect(overview).toMatch(
+      /GP-10B-1 adds the four development workflows to that manifest.*?nothing is scheduled from/u,
+    );
   });
 });
