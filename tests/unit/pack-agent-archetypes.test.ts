@@ -8,6 +8,7 @@ import {
 import type { ProjectPackBinding } from "../../packages/application/src/ports/project-pack-binding-repository.port.ts";
 import {
   ProjectDefinitionConflictError,
+  maximumAgentReferences,
   parseDefinitionMutation,
   type ProjectDefinitionState,
 } from "../../packages/application/src/domain-pack/project-definition.ts";
@@ -868,6 +869,36 @@ describe("GP-12 agent customization in the mutation contract", () => {
     );
   });
 
+  test("a reference list holds at most 1,000 entries", () => {
+    expect(maximumAgentReferences).toBe(1_000);
+    const names = (count: number) =>
+      Array.from(
+        { length: count },
+        (_, index) => `p${String(index).padStart(4, "0")}`,
+      );
+    for (const field of ["prompts", "knowledge", "capabilities"]) {
+      const payload = (count: number) => ({
+        id: "drafter",
+        role: "counsel",
+        [field]: names(count),
+      });
+      expect(mutationCode(put("replace", payload(1_000))), field).toBe(
+        "accepted",
+      );
+      expect(mutationCode(put("replace", payload(1_001))), field).toBe(
+        "malformed_origin_reference",
+      );
+    }
+    for (const field of ["prompts", "knowledge"]) {
+      expect(mutationCode(own({ id: "helper", [field]: names(1_000) }))).toBe(
+        "accepted",
+      );
+      expect(mutationCode(own({ id: "helper", [field]: names(1_001) }))).toBe(
+        "malformed_origin_reference",
+      );
+    }
+  });
+
   test("the reference fields exist on agents only and never on an extension", () => {
     for (const fields of [
       { role: "counsel" },
@@ -942,6 +973,49 @@ describe("GP-12 stored agent state is re-checked by the resolver", () => {
         ),
       ),
     ).toBe("configuration_invariant");
+  });
+
+  test("a stored list over the bound fails closed; one at the bound resolves", () => {
+    const names = (count: number) =>
+      Array.from(
+        { length: count },
+        (_, index) => `p${String(index).padStart(4, "0")}`,
+      );
+    const target = catalog();
+    const pack = register(
+      target,
+      packBytes("1.0.0", {
+        prompts: names(1_001).map((id) => ({ id })),
+        agents: [{ id: "filer" }],
+      }),
+    );
+    const stored = (count: number) =>
+      state(
+        [],
+        [
+          override(pack, "filer", "replace", {
+            id: "filer",
+            prompts: names(count),
+          }),
+        ],
+      );
+    expect(
+      resolve(target, [pack], stored(1_000)).agents[0]?.prompts,
+    ).toHaveLength(1_000);
+    expect(errorCode(() => resolve(target, [pack], stored(1_001)))).toBe(
+      "unresolved_override",
+    );
+    const ownedWith = (count: number) =>
+      state([
+        owned("agents", "helper", { id: "helper", prompts: names(count) }),
+        ...names(count).map((id) => owned("prompts", id)),
+      ]);
+    expect(
+      resolve(catalog(), [], ownedWith(1_000)).agents[0]?.prompts,
+    ).toHaveLength(1_000);
+    expect(errorCode(() => resolve(catalog(), [], ownedWith(1_001)))).toBe(
+      "configuration_invariant",
+    );
   });
 
   test("stored lists are resolved in one order, whatever order they were stored in", () => {

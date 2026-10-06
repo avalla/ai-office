@@ -533,6 +533,11 @@ describe("project portability", () => {
       ],
       overrides: [],
     });
+    const many = (count: number) =>
+      Array.from(
+        { length: count },
+        (_, index) => `p${String(index).padStart(4, "0")}`,
+      );
     const references = {
       id: "custom",
       title: "Custom",
@@ -567,6 +572,12 @@ describe("project portability", () => {
       expect(v8.safeParse(state).success, JSON.stringify(state)).toBe(true);
       expect(v7.safeParse(state).success, JSON.stringify(state)).toBe(true);
     }
+    for (const state of [
+      override("agents", "replace", { id: "custom", prompts: many(1_000) }),
+      override("agents", "replace", { id: "custom", prompts: ["B", "a"] }),
+      owned("agents", { id: "custom", knowledge: many(1_000) }),
+    ])
+      expect(v8.safeParse(state).success).toBe(true);
     // Forged format-8 state is rejected.
     for (const state of [
       // A disable carries no payload; other kinds have no disable contract.
@@ -591,6 +602,24 @@ describe("project portability", () => {
       override("agents", "replace", { id: "custom", role: "no id" }),
       override("agents", "replace", { id: "custom", role: ["counsel"] }),
       owned("agents", { id: "custom", knowledge: [] }),
+      // One order only: ascending by code unit, as the mutation contract
+      // stores it.
+      override("agents", "replace", { id: "custom", prompts: ["z", "a"] }),
+      override("agents", "replace", {
+        id: "custom",
+        knowledge: ["a", "c", "b"],
+      }),
+      override("agents", "replace", {
+        id: "custom",
+        role: "counsel",
+        capabilities: ["review", "draft"],
+      }),
+      // Code units, not a locale: uppercase sorts first.
+      override("agents", "replace", { id: "custom", prompts: ["a", "B"] }),
+      owned("agents", { id: "custom", prompts: ["voice", "house"] }),
+      // At most 1,000 references per list.
+      override("agents", "replace", { id: "custom", prompts: many(1_001) }),
+      owned("agents", { id: "custom", knowledge: many(1_001) }),
       // The fields exist on agents only and never on an extension.
       override("agents", "extend", { title: "Custom", role: "counsel" }),
       override("roles", "replace", { id: "custom", role: "counsel" }),

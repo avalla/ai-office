@@ -17,6 +17,7 @@ import {
 import {
   hasAgentReferences,
   isDefinitionText,
+  maximumAgentReferences,
   maximumDefinitionTextLength,
   maximumWorkflowStages,
 } from "../domain-pack/project-definition.ts";
@@ -273,13 +274,20 @@ const portableExtensionPayload = z.strictObject({
   title: portableDefinitionText.optional(),
   description: portableDefinitionText.optional(),
 });
-/** A non-empty set of local IDs; "none" is the absent field. */
+/**
+ * A bounded, non-empty set of local IDs in the one order the mutation
+ * contract stores: strictly ascending by code unit, so also duplicate-free.
+ * "None" is the absent field.
+ */
 const portableReferenceList = z
   .array(portableDefinitionId)
   .min(1)
-  .refine((items) => new Set(items).size === items.length, {
-    message: "Duplicate reference",
-  });
+  .max(maximumAgentReferences)
+  .refine(
+    (items) =>
+      items.every((item, index) => index === 0 || items[index - 1]! < item),
+    { message: "References must be unique and in ascending order" },
+  );
 /** The GP-12 agent envelope: descriptive fields and declarative references. */
 const portableAgentPayload = portableDescriptivePayload.extend({
   role: portableDefinitionId.optional(),

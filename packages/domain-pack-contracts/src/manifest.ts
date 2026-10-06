@@ -287,6 +287,14 @@ const compareCodeUnits = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
 
 /**
+ * The most references one list may hold: a role's capabilities, or an agent's
+ * prompts, knowledge or requested capabilities. Shared with the project
+ * mutation contract and the portable archive, so every accepted list stays
+ * storable and exportable.
+ */
+export const maximumContributionReferences = 1_000;
+
+/**
  * Shape of a list of references to contributions of the same manifest: a
  * role's capabilities, or an agent's prompts, knowledge and requested
  * capabilities. Whether each one names a declared contribution is checked once
@@ -305,6 +313,12 @@ function referenceList(
       "invalid_contribution",
       path,
       `expected at least one ${noun}; omit the field instead`,
+    );
+  if (value.length > maximumContributionReferences)
+    return fail(
+      "invalid_contribution",
+      path,
+      `expected at most ${maximumContributionReferences} ${noun} references`,
     );
   const parsed = value.map((entry: unknown, index: number) =>
     localId(entry, `${path}[${index}]`, "invalid_contribution"),

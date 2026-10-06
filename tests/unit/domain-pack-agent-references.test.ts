@@ -5,6 +5,7 @@ import {
   canonicalizeDomainPackManifest,
   computeManifestDigest,
   contributionKinds,
+  maximumContributionReferences,
   parseDomainPackManifest,
   verifyDomainPackManifest,
 } from "../../packages/domain-pack-contracts/src/index.ts";
@@ -293,6 +294,41 @@ describe("GP-12 agent references in the schema-1 manifest", () => {
     expect(failure(withAgent({ id: "drafter", ...fields }))).toEqual({
       code: "invalid_contribution",
       path: `contributions.agents[0].${member}`,
+    });
+  });
+
+  test("a reference list holds at most 1,000 entries, for agents and for roles", () => {
+    expect(maximumContributionReferences).toBe(1_000);
+    const ids = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `p${String(index).padStart(4, "0")}`,
+      }));
+    const names = (count: number) => ids(count).map((entry) => entry.id);
+    const agentWith = (count: number) =>
+      manifest({
+        prompts: ids(1_001),
+        agents: [{ id: "drafter", prompts: names(count) }],
+      });
+    expect(
+      parseDomainPackManifest(bytes(agentWith(1_000))).contributions.agents[0]
+        ?.prompts,
+    ).toHaveLength(1_000);
+    expect(failure(agentWith(1_001))).toEqual({
+      code: "invalid_contribution",
+      path: "contributions.agents[0].prompts",
+    });
+    const roleWith = (count: number) =>
+      manifest({
+        capabilities: ids(1_001),
+        roles: [{ id: "counsel", capabilities: names(count) }],
+      });
+    expect(
+      parseDomainPackManifest(bytes(roleWith(1_000))).contributions.roles[0]
+        ?.capabilities,
+    ).toHaveLength(1_000);
+    expect(failure(roleWith(1_001))).toEqual({
+      code: "invalid_contribution",
+      path: "contributions.roles[0].capabilities",
     });
   });
 

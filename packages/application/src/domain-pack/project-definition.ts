@@ -1,5 +1,6 @@
 import {
   contributionKinds,
+  maximumContributionReferences,
   parseContributionLocalId,
   parseDomainPackId,
   parseDomainPackVersion,
@@ -166,6 +167,12 @@ export class StaleProjectDefinitionError extends Error {
 /** Shared with the portable archive schema so accepted state stays exportable. */
 export const maximumWorkflowStages = 1_000;
 
+/**
+ * Bound of an agent's `prompts`, `knowledge` and `capabilities` lists: the
+ * manifest contract's own bound, shared with the portable archive schema.
+ */
+export const maximumAgentReferences = maximumContributionReferences;
+
 export const maximumDefinitionTextLength = 16_000;
 
 /**
@@ -307,6 +314,11 @@ function referenceList(value: unknown, field: string): string[] {
     throw new ProjectDefinitionConflictError(
       "malformed_origin_reference",
       `${field} must be a non-empty list; omit the field instead`,
+    );
+  if (value.length > maximumAgentReferences)
+    throw new ProjectDefinitionConflictError(
+      "malformed_origin_reference",
+      `${field} may hold at most ${maximumAgentReferences} references`,
     );
   const parsed = value.map(localId);
   if (new Set(parsed).size !== parsed.length)
