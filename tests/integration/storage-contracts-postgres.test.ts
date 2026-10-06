@@ -1829,6 +1829,11 @@ describe.skipIf(connectionString === undefined)(
         JSON.stringify({ id: "nul", title: "private-marker a\u0000b" }),
         "JSON text holding an escaped U+0000, which jsonb cannot store",
       ],
+      [
+        "JSON text with a lone surrogate escape",
+        JSON.stringify({ id: "lone", title: "private-marker \ud800" }),
+        "JSON text that jsonb cannot store",
+      ],
       ["a jsonb number", 7, "jsonb number, not a JSON object"],
     ] as const)(
       "fails closed on %s and converts nothing",
@@ -1924,6 +1929,185 @@ describe.skipIf(connectionString === undefined)(
       },
     );
 
+    test("a repository on an unmigrated database refuses legacy payloads on read and on write", async () => {
+      await withLegacyDatabase(async (database) => {
+        await insertOwned(
+          database,
+          "roles",
+          "role",
+          JSON.stringify({ id: "role", title: "private-marker" }),
+        );
+        await insertOverride(
+          database,
+          "roles",
+          "counsel",
+          "extend",
+          JSON.stringify({ id: "counsel", title: "private-marker" }),
+        );
+        await insertOverride(database, "prompts", "greeting", "disable", null);
+        const before = await storedRows(database);
+        const repository = new PostgresProjectDefinitionRepository(
+          database,
+          tenant,
+        );
+        const ownedMessage = `Stored project definition payload must be a JSON object: core.project_owned_definition (project_id=${project}, kind=roles, local_id=role)`;
+        const overrideMessage = `Stored project definition payload must be a JSON object: core.project_definition_override (project_id=${project}, pack=org.example.legal@1.0.0, manifest_digest=${digest}, kind=roles, local_id=counsel)`;
+
+        // The read names the row by key and returns nothing typed as a
+        // payload; the message never quotes the stored value.
+        const readError = (await repository.get(project).then(
+          () => null,
+          (failure: unknown) => failure,
+        )) as Error;
+        expect(readError).toBeInstanceOf(Error);
+        expect(readError.message).toBe(ownedMessage);
+
+        // A state shaped the way an unguarded read would have returned it,
+        // with JSON text where a payload object belongs, is refused before
+        // any statement runs.
+        const source = {
+          id: "org.example.legal",
+          version: "1.0.0",
+          manifestDigest: digest,
+          kind: "roles",
+          localId: "counsel",
+        };
+        const entry = {
+          revision: 2,
+          actorId: "operator",
+          changedAt: at.toISOString(),
+        };
+        const legacyOwned = {
+          ...entry,
+          origin: "project_owned",
+          kind: "roles",
+          id: "role",
+          enabled: true,
+          payload: JSON.stringify({ id: "role", title: "private-marker" }),
+        };
+        const legacyOverride = {
+          ...entry,
+          origin: "project_override",
+          source,
+          operation: "extend",
+          payload: JSON.stringify({ id: "counsel", title: "private-marker" }),
+        };
+        type State = Parameters<typeof repository.replace>[0];
+        for (const [state, message] of [
+          [{ owned: [legacyOwned], overrides: [] }, ownedMessage],
+          [{ owned: [], overrides: [legacyOverride] }, overrideMessage],
+          [
+            {
+              owned: [{ ...legacyOwned, payload: [{ id: "role" }] }],
+              overrides: [],
+            },
+            ownedMessage,
+          ],
+          [
+            { owned: [{ ...legacyOwned, payload: null }], overrides: [] },
+            ownedMessage,
+          ],
+        ] as const) {
+          const writeError = (await repository
+            .replace(
+              { projectId: project, revision: 1, ...state } as unknown as State,
+              1,
+              at,
+            )
+            .then(
+              () => null,
+              (failure: unknown) => failure,
+            )) as Error;
+          expect(writeError).toBeInstanceOf(Error);
+          expect(writeError.message).toBe(message);
+        }
+        expect(await storedRows(database)).toEqual(before);
+        expect(
+          await database.query(
+            "SELECT revision FROM core.project_definition_head WHERE project_id = $1",
+            [project],
+          ),
+        ).toEqual([{ revision: 1 }]);
+
+        // With the owned row gone the read stops at the override row.
+        await database.query("DELETE FROM core.project_owned_definition");
+        await expect(repository.get(project)).rejects.toThrow(overrideMessage);
+
+        // After the migration the same repository reads the same rows.
+        await insertOwned(
+          database,
+          "roles",
+          "role",
+          JSON.stringify({ id: "role", title: "private-marker" }),
+        );
+        await migratePostgres(database, migrationDirectory);
+        const state = await repository.get(project);
+        expect(state.owned.map((item) => item.payload)).toEqual([
+          { id: "role", title: "private-marker" },
+        ]);
+        expect(
+          state.overrides.map((item) =>
+            "payload" in item ? item.payload : "absent",
+          ),
+        ).toEqual(["absent", { id: "counsel", title: "private-marker" }]);
+      });
+    });
+
+    test("the documented repair advances the head revision, so a writer holding the earlier one fails stale", async () => {
+      await withLegacyDatabase(async (database) => {
+        await insertOwned(database, "roles", "bad", "not json");
+        const repository = new PostgresProjectDefinitionRepository(
+          database,
+          tenant,
+        );
+        // A writer that read the project before the repair holds revision 1.
+        const held = {
+          projectId: project,
+          revision: 1,
+          owned: [
+            {
+              origin: "project_owned" as const,
+              kind: "roles" as const,
+              id: "bad",
+              revision: 1,
+              enabled: true,
+              payload: { id: "bad", title: "Stale writer" },
+              actorId: "operator",
+              changedAt: at.toISOString(),
+            },
+          ],
+          overrides: [],
+        };
+        // The repair of supabase/README.md: the row and the head revision in
+        // one transaction.
+        await database.transaction(async () => {
+          await database.query(
+            `UPDATE core.project_owned_definition
+                SET payload_json = '{"id":"bad","title":"Repaired"}'::jsonb
+              WHERE project_id = '${project}' AND kind = 'roles' AND local_id = 'bad'`,
+          );
+          await database.query(
+            `UPDATE core.project_definition_head
+                SET revision = revision + 1, changed_at = now()
+              WHERE project_id = '${project}'`,
+          );
+        });
+        await expect(repository.replace(held, 1, at)).rejects.toBeInstanceOf(
+          StaleProjectDefinitionError,
+        );
+        expect(
+          (await storedRows(database)).map((row) => row.payload_text),
+        ).toEqual(['{"id": "bad", "title": "Repaired"}']);
+        expect(await migratePostgres(database, migrationDirectory)).toEqual([
+          payloadMigration,
+        ]);
+        expect(await repository.get(project)).toMatchObject({
+          revision: 2,
+          owned: [{ id: "bad", payload: { id: "bad", title: "Repaired" } }],
+        });
+      });
+    });
+
     describe("after the migration", () => {
       let database: PostgresClient;
       const scopedTenant = tenantId;
@@ -2004,6 +2188,37 @@ describe.skipIf(connectionString === undefined)(
         // any repository is reached, so this is a storage backstop only.
         expect(error).toMatchObject({ code: "22P05" });
         // The replacement is one transaction: the earlier state is intact.
+        expect(await repository.get(projectId)).toEqual(kept);
+      });
+
+      test("a state carrying a non-object payload is refused before anything is written", async () => {
+        const { projectId, repository, kept } = await seed();
+        type State = Parameters<typeof repository.replace>[0];
+        for (const invalid of [
+          JSON.stringify({ id: "text", title: "private-marker" }),
+          [{ id: "text" }],
+          null,
+        ]) {
+          const error = (await repository
+            .replace(
+              {
+                ...kept,
+                owned: [
+                  ...kept.owned,
+                  { ...kept.owned[0]!, id: "text", payload: invalid },
+                ],
+              } as unknown as State,
+              1,
+              at,
+            )
+            .then(
+              () => null,
+              (failure: unknown) => failure,
+            )) as Error;
+          expect(error.message).toBe(
+            `Stored project definition payload must be a JSON object: core.project_owned_definition (project_id=${projectId}, kind=roles, local_id=text)`,
+          );
+        }
         expect(await repository.get(projectId)).toEqual(kept);
       });
 
