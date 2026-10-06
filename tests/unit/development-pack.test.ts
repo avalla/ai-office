@@ -984,7 +984,9 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
           id: pipeline.id,
           title: pipeline.name,
           description: pipeline.description,
-          taskTypes: [pipeline.defaultFor[0]],
+          taskTypes: pipeline.defaultFor.filter(
+            (kind) => kind !== "maintenance",
+          ),
           stages: pipeline.stages.map((stage) => ({
             id: stage.id,
             role: stage.roleId,

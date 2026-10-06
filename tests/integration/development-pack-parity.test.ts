@@ -606,6 +606,20 @@ const pipelineOf = (office: EditableOffice, id: string) =>
 
 const packWorkflowIds = ["bugfix", "delivery", "discovery", "release"];
 
+/** The legacy routes of a profile that are not among the pack routes. */
+const routesMissingFrom = (
+  pack: readonly { taskType: string; workflow: string }[],
+  profile: Pick<LegacyDevelopmentProfile, "taskKinds">,
+) =>
+  legacyRoutes(profile).filter(
+    (route) =>
+      !pack.some(
+        (expressed) =>
+          expressed.taskType === route.taskType &&
+          expressed.workflow === route.workflow,
+      ),
+  );
+
 describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture state", () => {
   test("a fixture project bound to the pack resolves the four workflows its legacy pipelines describe, and the one route it lacks is maintenance -> delivery", async () => {
     const result = await boundProjections(fixtureProject(), legacyProjectId);
@@ -621,7 +635,9 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
           id: pipeline.id,
           title: pipeline.name,
           description: pipeline.description,
-          taskTypes: [pipeline.defaultFor[0]],
+          taskTypes: pipeline.defaultFor.filter(
+            (kind) => kind !== "maintenance",
+          ),
           stages: pipeline.stages.map((stage) => ({
             id: stage.id,
             role: stage.roleId,
@@ -647,16 +663,9 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
     const all = legacyRoutes(result.profile);
     for (const route of result.pack.routes) expect(all).toContainEqual(route);
     expect(result.pack.routes).toHaveLength(4);
-    expect(
-      all.filter(
-        (route) =>
-          !result.pack.routes.some(
-            (expressed) =>
-              expressed.taskType === route.taskType &&
-              expressed.workflow === route.workflow,
-          ),
-      ),
-    ).toEqual([{ taskType: "maintenance", workflow: "delivery" }]);
+    expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual([
+      { taskType: "maintenance", workflow: "delivery" },
+    ]);
     expect(unexpressedLegacyRoute).toEqual({
       taskType: "maintenance",
       workflow: "delivery",
@@ -759,7 +768,13 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
       { taskType: "release", workflow: "release" },
       { taskType: "research", workflow: "discovery" },
     ]);
+    // The one shipped route the pack lacks, as a literal: the comparison
+    // drops the route of the `maintenance` task kind whatever it points to,
+    // so only this says that it points to `delivery`.
     expect(legacyRoutes(result.profile)).toHaveLength(5);
+    expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual([
+      { taskType: "maintenance", workflow: "delivery" },
+    ]);
     // The shipped manifest has exactly these four pipelines.
     const shipped = JSON.parse(
       readFileSync(shippedOfficeManifestPath, "utf8"),
@@ -805,6 +820,37 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
       },
     ])
       expect((await parityOfShippedCopy(editOffice(mutate))).equal).toBe(false);
+  });
+
+  test("a shipped maintenance route that is removed or points elsewhere leaves parity equal and is no longer the pinned route", async () => {
+    const pinned = [{ taskType: "maintenance", workflow: "delivery" }];
+    const untouched = await parityOfShippedCopy(() => undefined);
+    expect(routesMissingFrom(untouched.pack.routes, untouched.profile)).toEqual(
+      pinned,
+    );
+    for (const [target, missing] of [
+      [null, []],
+      ["bugfix", [{ taskType: "maintenance", workflow: "bugfix" }]],
+      ["discovery", [{ taskType: "maintenance", workflow: "discovery" }]],
+    ] as const) {
+      const result = await parityOfShippedCopy(
+        editOffice((office) => {
+          pipelineOf(office, "delivery").defaultFor = ["feature"];
+          if (target !== null)
+            pipelineOf(office, target).defaultFor.push("maintenance");
+        }),
+      );
+      // Parity does not see the route, and a count of routes sees only its
+      // removal: the literal is what a moved route breaks.
+      expect([target, result.equal]).toEqual([target, true]);
+      expect(legacyRoutes(result.profile)).toHaveLength(
+        target === null ? 4 : 5,
+      );
+      expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual(
+        missing,
+      );
+      expect(missing).not.toEqual(pinned);
+    }
   });
 
   test("a shipped pipeline that changes outside the expressible subset moves the legacy profile and leaves parity equal", async () => {
