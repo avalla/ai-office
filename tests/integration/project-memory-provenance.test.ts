@@ -205,6 +205,7 @@ test("upgrading an existing database adds provenance without touching historical
     "0042_project_definition_ownership.sql",
     "0043_requirement_updated_event.sql",
     "0044_project_role_omission.sql",
+    "0045_project_agent_disable.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   expect(
@@ -333,6 +334,7 @@ test("upgrading 0028 provenance keeps its context digest and leaves the unreport
     "0042_project_definition_ownership.sql",
     "0043_requirement_updated_event.sql",
     "0044_project_role_omission.sql",
+    "0045_project_agent_disable.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   const repository = new SqliteProjectMemoryProvenanceRepository(db);

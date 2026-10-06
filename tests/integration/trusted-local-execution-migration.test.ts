@@ -191,7 +191,7 @@ describe("M6C-lite migration", () => {
     const directory = root();
     const database = openDatabase(join(directory, "fresh.sqlite"));
     expect(migrate(database, migrationSource).applied.at(-1)).toBe(
-      "0044_project_role_omission.sql",
+      "0045_project_agent_disable.sql",
     );
     expect(
       database
@@ -266,6 +266,7 @@ describe("M6C-lite migration", () => {
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
       "0044_project_role_omission.sql",
+      "0045_project_agent_disable.sql",
     ]);
     expect(
       database

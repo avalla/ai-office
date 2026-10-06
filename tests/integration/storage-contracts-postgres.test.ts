@@ -889,6 +889,7 @@ describe.skipIf(connectionString === undefined)(
           "20261003000100_project_definition_ownership.sql",
           "20261003000200_requirement_updated_event.sql",
           "20261005000100_project_role_omission.sql",
+          "20261006000100_project_agent_disable.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -1257,6 +1258,7 @@ describe.skipIf(connectionString === undefined)(
           "20261003000100_project_definition_ownership.sql",
           "20261003000200_requirement_updated_event.sql",
           "20261005000100_project_role_omission.sql",
+          "20261006000100_project_agent_disable.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(

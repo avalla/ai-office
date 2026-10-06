@@ -420,6 +420,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
       "0044_project_role_omission.sql",
+      "0045_project_agent_disable.sql",
     ]);
     expect(
       database
