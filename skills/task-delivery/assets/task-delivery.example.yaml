@@ -15,5 +15,10 @@ git:
 external_review:
   command: "<command that runs the external reviewer>"
 
-task_lifecycle:
-  enabled: false
+# Leave task_lifecycle out to let the project's own instructions decide
+# whether task state is tracked. "enabled: false" switches it off for good.
+# task_lifecycle:
+#   enabled: true
+#   start: "<command that marks {task} as started>"
+#   review: "<command that marks {task} as in review>"
+#   complete: "<command that marks {task} as done>"

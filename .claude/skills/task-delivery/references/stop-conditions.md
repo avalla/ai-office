@@ -21,9 +21,20 @@ depend on the answer may continue.
   written.
 - **Scope growth.** Satisfying the task would require work clearly outside its
   stated scope.
-- **Unsatisfied logical dependency.** The task needs behavior that is neither
-  merged nor available on the chosen base.
+- **Unresolved task dependency.** The task logically depends on a task that is
+  not DONE, and the authorizer has not decided how to proceed. Behavior that is
+  available on a stacked base lets work continue only under an approved Git
+  branch dependency; it never satisfies the task dependency.
 - **Red baseline.** The full verification fails on the untouched base.
+- **Binding run you cannot complete.** Using the project's pipeline would start
+  a run whose stages only the project's own assigned performers can complete,
+  and you are not assigned to every stage needed to complete it - or such a
+  run is already active for the task and you cannot complete it - or you
+  cannot tell whether either is the case. Do not start, override, or cancel
+  it; report what it requires and wait.
+- **Refused task transition.** The system that tracks the project's tasks
+  refuses to mark the task started, in review, or done. Report what it said;
+  never work around it or change the state another way.
 - **Missing access.** A credential, permission, or environment needed for a
   gate is unavailable. Never work around a deliberate restriction. A
   best-effort external reviewer is not needed for a gate.
