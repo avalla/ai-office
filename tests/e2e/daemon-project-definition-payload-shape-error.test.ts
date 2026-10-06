@@ -137,7 +137,7 @@ describe("daemon rendering of a non-object project definition payload", () => {
           code: 1,
           stdout: [],
           stderr: [
-            `Project definition payload must be a JSON object: ${rowKey}. Classify and repair the row with the query in supabase/README.md.`,
+            `Project definition payload must be a JSON object: ${rowKey}. Classify the row with the query in supabase/README.md and repair it as that section describes.`,
           ],
         });
       }

@@ -148,11 +148,13 @@ driver text, but a database log may hold it. The repository also refuses, on
 read and on write, any payload that is not an object: opened against a
 database that has not been migrated it fails instead of returning or storing
 JSON text. It raises `ProjectDefinitionPayloadShapeError`, whose `rowKey`
-names the row by table and key and which never carries the payload. The
-Runtime lists this error among those it prints: the command fails with
-`Project definition payload must be a JSON object: <row key>. Classify and
-repair the row with the query in supabase/README.md.` Use the query below to
-find the rows.
+names the row by table and key and which never carries the payload. When a
+provider raises it, the Runtime fails the command and prints
+`Project definition payload must be a JSON object: <row key>. Classify the row
+with the query in supabase/README.md and repair it as that section describes.`
+Today only this PostgreSQL repository raises it, and PostgreSQL is not yet a
+complete Runtime provider. The query below classifies the rows; the procedure
+after it repairs them.
 
 `jsonb` keeps array order and does not keep the order of an object's members.
 `project:definition:show` may therefore print the members of a payload in a
