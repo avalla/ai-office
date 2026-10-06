@@ -178,7 +178,7 @@ describe("GP-09 legacy development profile version 1", () => {
     });
   });
 
-  test("task kinds route as the first pipeline naming them, and an unrouted kind is null", () => {
+  test("each task kind routes to the pipeline naming it, and an unrouted kind is null", () => {
     const profile = deriveLegacyDevelopmentProfile(
       changed((value) => {
         pipeline(value.office.manifest, "discovery").defaultFor = ["release"];
@@ -206,6 +206,37 @@ describe("GP-09 legacy development profile version 1", () => {
       code: "task_kind_unrouted",
       subject: "research",
     });
+  });
+
+  test("unvalidated input with two pipelines naming one kind routes it to the first in manifest order", () => {
+    // The manifest schema refuses this input. `GetOfficeContext` would take
+    // the first match on it, so the derivation does too, and here, unlike
+    // for a valid manifest, pipeline order changes the result.
+    const route = (order: readonly string[]) => {
+      const profile = deriveLegacyDevelopmentProfile(
+        changed((value) => {
+          const manifest = value.office.manifest;
+          pipeline(manifest, "discovery").defaultFor = ["research", "release"];
+          expect(pipeline(manifest, "release").defaultFor).toEqual(["release"]);
+          manifest.pipelines = order.map((id) => pipeline(manifest, id));
+        }),
+      );
+      return {
+        release: profile.taskKinds.find((item) => item.kind === "release")!
+          .pipelineId,
+        digest: profile.profileDigest,
+      };
+    };
+    const discoveryFirst = route([
+      "delivery",
+      "bugfix",
+      "discovery",
+      "release",
+    ]);
+    const releaseFirst = route(["release", "discovery", "bugfix", "delivery"]);
+    expect(discoveryFirst.release).toBe("discovery");
+    expect(releaseFirst.release).toBe("release");
+    expect(releaseFirst.digest).not.toBe(discoveryFirst.digest);
   });
 
   test("a stage is eligible for exactly the enabled agents whose role key is its role", () => {

@@ -258,8 +258,12 @@ const expressibleStageFields = new Set(["id", "roleId", "eligibleAgents"]);
 
 /**
  * Derives profile version 1. Pure: no clock, no storage, no project ID. The
- * order of `roles`, `agents`, manifest roles and manifest pipelines does not
- * change the result; stage order and every authored list are kept as given.
+ * order of `roles`, `agents` and manifest roles does not change the result;
+ * stage order and every authored list are kept as given. The order of
+ * manifest pipelines does not change the result when each task kind is named
+ * by at most one pipeline, which the manifest schema requires. For input that
+ * was not validated and has several pipelines naming one kind, the kind
+ * routes to the first of them in manifest order, so there the order counts.
  */
 export function deriveLegacyDevelopmentProfile(
   input: LegacyDevelopmentProfileInput,

@@ -647,7 +647,12 @@ deliberately not delivered by GP-09.
 - Order. Manifest roles, pipelines, Runtime roles and agents are sorted by ID,
   key or name in UTF-16 code-unit order. Stage order and every authored list
   (`responsibilities`, `checks`, `defaultFor`, `capabilities`, `tools`) are
-  kept as given; reordering one of them is a content change.
+  kept as given; reordering one of them is a content change. Routing takes
+  the first pipeline, in manifest order, that names the kind, as
+  `office:pipeline` does. The manifest schema lets at most one pipeline name
+  a kind, so for a valid manifest pipeline order changes nothing; only for
+  unvalidated input with two pipelines naming one kind does it decide the
+  route.
 - Digest. `profileDigest` is `sha256:` over the UTF-8 bytes of
   `ai-office-legacy-development-profile-v1\n` followed by the RFC 8785
   serialization of `profileId`, `profileVersion`, `source`, `office`, `roles`,
@@ -741,9 +746,9 @@ deliberately not delivered by GP-09.
   legacy project projected onto each format by
   `portableStateAtFormatVersion` and written, when the fixture was created,
   by the archive writer under that format's frozen schema. They are not
-  files produced by the
-  releases that wrote those formats: the current exporter cannot write below
-  format 6, and no historical archive is kept in the repository.
+  files produced by the releases that wrote those formats: the current
+  exporter cannot write below format 6, and no historical archive is kept in
+  the repository.
 - Criterion 12 is met in part. Each archive restores, its state at its own
   format equals the archive with the same checksum, a second restore reports
   `unchanged`, and the restored project has its pinned profile. Re-export does
