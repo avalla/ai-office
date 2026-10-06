@@ -115,7 +115,11 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
         },
         operation: row.operation,
         revision: row.revision,
-        ...(row.payload_json === null || row.payload_json === undefined
+        // Only a disable override has no payload (SQL NULL, by the table's
+        // operation check). The driver also returns null for a jsonb null
+        // scalar, which is a payload that is not an object.
+        ...(row.operation === "disable" &&
+        (row.payload_json === null || row.payload_json === undefined)
           ? {}
           : {
               payload: objectPayload<
