@@ -12,18 +12,20 @@ export const policyTargetMissing = "policy_target_missing" as const;
  * does not declare is `false` and a list it does not declare is empty. An
  * empty `operations` list means that no operation is admitted on the stage.
  */
-export interface PolicyStageClauses {
+export type PolicyStageClauses = {
   readonly stage: string;
   readonly requiresApproval: boolean;
   readonly requiresIndependentApproval: boolean;
   readonly requiresDifferentAgentFrom: readonly string[];
   readonly operations: readonly string[];
-}
+};
 
-export interface PolicyClauses {
+// A type alias, like `PolicyStageClauses` and `WorkflowPolicy`: the clause
+// values are plain JSON data and are compared in canonical form.
+export type PolicyClauses = {
   readonly enforcement: "enforced" | "guidance";
   readonly stages: readonly PolicyStageClauses[];
-}
+};
 
 /** The declared clauses of a typed policy, in the manifest's stage order. */
 export function policyClauses(policy: PolicyContribution): PolicyClauses {

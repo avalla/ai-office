@@ -7,10 +7,10 @@ import { stablePackDefinitionId } from "./resolve-project-configuration.ts";
  * The policy a resolved closure declares for one workflow (GP-25): stable
  * identities and clause values, never a title or a description.
  */
-export interface WorkflowPolicy extends PolicyClauses {
+export type WorkflowPolicy = PolicyClauses & {
   readonly policyId: string;
   readonly workflowId: string;
-}
+};
 
 /**
  * A workflow whose policy differs between two resolved closures. `before` is
@@ -101,8 +101,7 @@ export function workflowPolicyDifferences(
     else if (
       previous !== undefined &&
       current !== undefined &&
-      canonicalizeJcsJson(previous as never) !==
-        canonicalizeJcsJson(current as never)
+      canonicalizeJcsJson(previous) !== canonicalizeJcsJson(current)
     )
       differences.push({
         workflowId,
