@@ -28,7 +28,9 @@ import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 // from a catalog a test supplies: the Runtime's own composition holds no pack
 // and no command binds one. With such a catalog, a project installed with
 // the shipped defaults and explicitly bound resolves the roles, agents and
-// task types its legacy profile describes.
+// task types its legacy profile describes, and since GP-10B-1 the workflows
+// its legacy pipelines describe. What the Runtime reads to run work stays the
+// same.
 
 /** `project:configuration:show` of a project with no selection and no definition. */
 const emptyConfiguration = {
@@ -393,6 +395,17 @@ describe("GP-10A development pack over the Runtime socket", () => {
         projectLegacyProfile(bound),
       );
       expect(projectLegacyProfile(bound).roles).toHaveLength(4);
+      // GP-10B-1: the four pack workflows are resolved as declarations, and
+      // they are the legacy pipelines over the expressible subset.
+      expect(
+        projectResolvedConfiguration(resolved).workflows.map(
+          (workflow) => workflow.id,
+        ),
+      ).toEqual(["bugfix", "delivery", "discovery", "release"]);
+      expect(projectResolvedConfiguration(resolved).routes).toEqual(
+        projectLegacyProfile(bound).routes,
+      );
+      expect(projectLegacyProfile(bound).routes).toHaveLength(4);
 
       // The binding is the only thing the legacy profile reports as changed.
       expect(bound.profileDigest).toBe(unbound.profileDigest);
