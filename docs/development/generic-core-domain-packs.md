@@ -23,6 +23,9 @@ or disable a pack workflow. Both are definition layers: no Runtime agent or
 pipeline is created from them.
 GP-22 makes binding preview/apply and portable restore reject a selection
 whose resolved closure collides with a project-owned definition.
+GP-10A defines the development pack as a committed reference artifact and
+proves expressible-subset parity with the legacy development defaults. The
+pack is not registered, not adopted and not read by the Runtime.
 The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
 architectural contract, not current Runtime behavior.
 
@@ -1633,9 +1636,9 @@ pack workflow is deferred to GP-24, the task that persists those pins.
 
 ## GP-10A development roles and task defaults
 
-Status: contract approved by the owner on 2026-10-06. "Implementation
-record" at the end of this section records what was built where the contract
-left a choice.
+Status: implemented. The owner approved the contract below on 2026-10-06.
+"Implementation record" at the end of this section records what was built
+where the contract left a choice, and where the evidence stops.
 
 Formal scope:
 
@@ -1811,7 +1814,7 @@ in the list.
    pinned vector, and the GP-09 frozen fixture files are byte-identical. It
    fails on any change.
 10. `project:configuration:show` for an unbound project and the empty-digest
-    vector are unchanged. It fails if either moves.
+    vector are unchanged. It fails if either changes.
 11. The default production catalog contains no pack and no project gains a
     binding from install, sync or restore. It fails if the pack is resolvable
     without a test-supplied catalog.
@@ -1842,6 +1845,89 @@ in the list.
 - No specialists from `agent-catalog/`.
 - No removal or modification of any legacy default.
 - The pack is not authoritative for Runtime execution.
+
+### Implementation record
+
+- Package. `packages/domain-pack-development/` holds `manifest.json`,
+  `outside-pack-vocabulary.json`, a `package.json` that makes it a workspace
+  member, and a README. It has no source file, so it imports nothing; the
+  architecture test allows a future source file to import only
+  `domain-pack-contracts`. No path alias, dependency or production file
+  names the package or its ID, and `bun.lock` lists it as a workspace only.
+- Manifest. Schema 1, `coreContract` `[1, 2)`, no dependency. Roles are in
+  the default office manifest's order and task types in `officeTaskKinds`
+  order; neither order is compared. A role's capability list is written in
+  code-unit order, the order the contract validates it to. Task types,
+  agents and capabilities carry no title or description: the legacy state
+  has none to copy.
+- Pinned. `manifestDigest` is
+  `sha256:cda1c5fc48b5e04d75905d00f0f5d2b41a69e497eb4cc009a3aa77cfc2dac567`.
+  The test also pins the digest of the file's exact bytes, so a formatting
+  change at version `0.1.0` fails too.
+- Capabilities. The 14 IDs are `approve_or_reject`, `assess_security`,
+  `assess_tradeoffs`, `create_patch`, `decompose_work`, `derive_test_cases`,
+  `inspect_code`, `inspect_diff`, `inspect_project`, `inspect_tests`,
+  `modify_code`, `propose_adr`, `report_regressions` and `run_tests`. They
+  are the union of the four shipped `agent.yaml` capability lists; `run_tests`
+  is held by both `developer` and `qa`.
+- Projection. `tests/helpers/development-pack-parity.ts` is test code and
+  the only place the two sides meet. The legacy side reads the profile's
+  office-derived `roles`, `agents` and `taskKinds`: a role's capabilities are
+  those of the Runtime role of the same key, as a set; an agent is its name
+  and the office role it serves. The pack side reads every enabled role,
+  agent and task type of the resolved configuration by local ID, whatever
+  its origin, so a definition the project adds would break the comparison
+  as it should. `runtimeOnly` roles and agents are not development defaults
+  and are not projected; in the GP-09 fixture that is the `security`
+  specialist and the unused `release-engineer` role.
+- Binding in tests. A test builds an `InMemoryInstalledDomainPackCatalog`
+  with one trusted test installer, registers the committed bytes and binds
+  the project through `ManageProjectPackBinding.apply`, or through
+  `project:pack:apply` over the socket. No production path does either.
+- Two comparisons. On the GP-09 fixture, the committed pre-pack dump is
+  replayed and migrated to head. On the shipped defaults, a project is
+  given the shipped default office manifest through `ApplyOfficeManifest`
+  and the shipped `agents/` directory through `YamlAgentDefinitionLoader`
+  and `SyncAgentDefinitions`; an end-to-end case does the same with
+  `install` and `agent:sync` over the Unix socket. Edited copies of the
+  shipped files show the guard works: a capability added, removed or
+  renamed, a role key, a title or a purpose breaks parity.
+- What the drift guard does not see. A change to a field in the list above
+  (guidance text, model policy, the Runtime role name, for example) leaves
+  the expressible subset equal. The test asserts that too, so the limit of
+  the claim is itself pinned.
+- Completeness is decided by mutation, not by a second hand-written list:
+  each legacy field of the profile is changed in a copy, and the field counts
+  as projected when the projection changes. It must then be absent from the
+  list, and a field that does not change the projection must be in it.
+  Capability order is the one aspect entry: the field is projected as a set
+  and only its order is outside.
+- List of fields outside the vocabulary. `outside-pack-vocabulary.json`
+  holds the table above with a reason per entry. A test checks its shape and
+  owners, that it carries every GP-09 `vocabularyGaps` field of the default
+  state (pipeline and stage gaps included), that each GP-09 code it cites
+  does report that field, and that the table in this section equals it
+  entry for entry.
+- Owners. `tools` is assigned to GP-10C, which puts capability declarations
+  behind pack contracts; Runtime role name, version, capability order, model
+  policy, limits and agent enablement to the execution parity task;
+  responsibilities, guidance, routing and every pipeline and stage field to
+  GP-10B.
+- Unchanged. The legacy profile digest of the fixture project is the GP-09
+  vector before and after the binding, every legacy row is the same, and a
+  test pins the checksum of each GP-09 fixture file. An unbound project
+  still resolves to the empty configuration at its pinned digest, also on a
+  host whose catalog holds the pack.
+- Criteria 14 and 15 are properties of this change set, not of the code.
+  They were checked on the diff against the base commit: it touches only
+  the plan, the roadmap, the architecture overview, the README, `bun.lock`,
+  the new package and tests. No test keeps them true afterwards; a later
+  edit of a legacy default is caught by the drift guard only where it
+  changes the expressible subset.
+- PostgreSQL. Nothing here reaches storage code, so no PostgreSQL-gated
+  suite covers it and none was added.
+- No migration, archive format, audit event type, CLI command, Runtime code
+  or contract-package change was added.
 
 ## Objective and decision boundary
 

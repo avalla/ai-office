@@ -1921,8 +1921,22 @@ leaves `project:configuration:show` unchanged. It is not execution parity:
 comparing execution from a resolved configuration with legacy execution is
 the follow-up Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`, equivalence
 with a real development pack belongs to GP-10A/B, and the derived profile is
-reproducible by digest but leaves no audit record. Aliases,
-Development Pack parity/extraction, automatic
+reproducible by digest but leaves no audit record. GP-10A defines the
+development pack, `org.ai-office.development@0.1.0`, as a committed reference
+artifact in `packages/domain-pack-development`: the four development roles,
+one agent per role, the five task types and the role capabilities as ID-only
+labels. It proves expressible-subset parity: for a project that holds the
+legacy defaults and is bound to the pack through a test-supplied catalog, the
+roles, agents and task types of the resolved configuration equal those of the
+legacy profile, on the GP-09 fixture and on the shipped `agents/` directory
+and default office manifest. It is not execution parity: the comparison
+covers only what the schema-1 pack vocabulary expresses, and the legacy
+fields outside it (tools, model policy, limits, guidance, responsibilities,
+the Runtime role name, pipeline, approval and check semantics) are listed
+with their owning task. The pack is not registered in any catalog, not
+adopted by any project and not read by the Runtime, and nothing was removed
+from the legacy path. Aliases, Development Pack workflows, prompts, evidence
+and adoption (GP-10B, GP-10C), automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
 end-to-end exit criteria are met.

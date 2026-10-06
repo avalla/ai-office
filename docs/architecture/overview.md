@@ -108,6 +108,11 @@ reads (legacy-state parity), states that it is not an executable resolved
 configuration, and is neither stored, pinned nor scheduled from. Runtime roles
 and agents outside the manifest are listed apart with their provenance and are
 never treated as pack content.
+GP-10A adds `packages/domain-pack-development`, a data-only package with the
+development pack manifest as a reference artifact. No production code imports
+it, the Runtime's catalog does not hold it and nothing is scheduled from it;
+tests compare it with the legacy development defaults over the subset the
+pack contract can express (expressible-subset parity).
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

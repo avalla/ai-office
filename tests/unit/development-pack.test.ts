@@ -552,7 +552,9 @@ describe("GP-10A documentation", () => {
       "utf8",
     ).replace(/\s+/gu, " ");
     expect(roadmap).toContain("expressible-subset parity");
-    expect(roadmap).toMatch(/GP-10A [^.]*\. It is not execution parity/u);
+    expect(roadmap).toMatch(
+      /GP-10A defines .*? It proves expressible-subset parity: .*? It is not execution parity: /u,
+    );
     expect(roadmap).toContain("nothing was removed from the legacy path");
   });
 });
