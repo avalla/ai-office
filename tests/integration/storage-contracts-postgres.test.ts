@@ -16,7 +16,10 @@ import { Task } from "@ai-office/domain/task/task.ts";
 import type { TransactionRunner } from "@ai-office/application/ports/transaction-runner.port.ts";
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
-import { StaleProjectDefinitionError } from "@ai-office/application/domain-pack/project-definition.ts";
+import {
+  ProjectDefinitionPayloadShapeError,
+  StaleProjectDefinitionError,
+} from "@ai-office/application/domain-pack/project-definition.ts";
 import type { AuditEventRepository } from "@ai-office/application/ports/audit-event-repository.port.ts";
 import { StaleProjectPackBindingError } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
 import { computeArtifactDigest } from "../../packages/domain-pack-contracts/src/index.ts";
@@ -1929,6 +1932,19 @@ describe.skipIf(connectionString === undefined)(
       },
     );
 
+    /** The typed refusal of a payload that is not a JSON object. */
+    const refusal = async (
+      attempt: Promise<unknown>,
+    ): Promise<{ rowKey: string; message: string }> => {
+      const failure: unknown = await attempt.then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+      expect(failure).toBeInstanceOf(ProjectDefinitionPayloadShapeError);
+      const { rowKey, message } = failure as ProjectDefinitionPayloadShapeError;
+      return { rowKey, message };
+    };
+
     test("a repository on an unmigrated database refuses legacy payloads on read and on write", async () => {
       await withLegacyDatabase(async (database) => {
         await insertOwned(
@@ -1950,17 +1966,15 @@ describe.skipIf(connectionString === undefined)(
           database,
           tenant,
         );
-        const ownedMessage = `Stored project definition payload must be a JSON object: core.project_owned_definition (project_id=${project}, kind=roles, local_id=role)`;
-        const overrideMessage = `Stored project definition payload must be a JSON object: core.project_definition_override (project_id=${project}, pack=org.example.legal@1.0.0, manifest_digest=${digest}, kind=roles, local_id=counsel)`;
+        const ownedKey = `core.project_owned_definition (project_id=${project}, kind=roles, local_id=role)`;
+        const overrideKey = `core.project_definition_override (project_id=${project}, pack=org.example.legal@1.0.0, manifest_digest=${digest}, kind=roles, local_id=counsel)`;
 
         // The read names the row by key and returns nothing typed as a
-        // payload; the message never quotes the stored value.
-        const readError = (await repository.get(project).then(
-          () => null,
-          (failure: unknown) => failure,
-        )) as Error;
-        expect(readError).toBeInstanceOf(Error);
-        expect(readError.message).toBe(ownedMessage);
+        // payload; the error never quotes the stored value.
+        expect(await refusal(repository.get(project))).toEqual({
+          rowKey: ownedKey,
+          message: `Project definition payload must be a JSON object: ${ownedKey}`,
+        });
 
         // A state shaped the way an unguarded read would have returned it,
         // with JSON text where a payload object belongs, is refused before
@@ -1993,34 +2007,37 @@ describe.skipIf(connectionString === undefined)(
           payload: JSON.stringify({ id: "counsel", title: "private-marker" }),
         };
         type State = Parameters<typeof repository.replace>[0];
-        for (const [state, message] of [
-          [{ owned: [legacyOwned], overrides: [] }, ownedMessage],
-          [{ owned: [], overrides: [legacyOverride] }, overrideMessage],
+        for (const [state, rowKey] of [
+          [{ owned: [legacyOwned], overrides: [] }, ownedKey],
+          [{ owned: [], overrides: [legacyOverride] }, overrideKey],
           [
             {
               owned: [{ ...legacyOwned, payload: [{ id: "role" }] }],
               overrides: [],
             },
-            ownedMessage,
+            ownedKey,
           ],
           [
             { owned: [{ ...legacyOwned, payload: null }], overrides: [] },
-            ownedMessage,
+            ownedKey,
           ],
-        ] as const) {
-          const writeError = (await repository
-            .replace(
-              { projectId: project, revision: 1, ...state } as unknown as State,
-              1,
-              at,
-            )
-            .then(
-              () => null,
-              (failure: unknown) => failure,
-            )) as Error;
-          expect(writeError).toBeInstanceOf(Error);
-          expect(writeError.message).toBe(message);
-        }
+        ] as const)
+          expect(
+            await refusal(
+              repository.replace(
+                {
+                  projectId: project,
+                  revision: 1,
+                  ...state,
+                } as unknown as State,
+                1,
+                at,
+              ),
+            ),
+          ).toEqual({
+            rowKey,
+            message: `Project definition payload must be a JSON object: ${rowKey}`,
+          });
         expect(await storedRows(database)).toEqual(before);
         expect(
           await database.query(
@@ -2031,7 +2048,9 @@ describe.skipIf(connectionString === undefined)(
 
         // With the owned row gone the read stops at the override row.
         await database.query("DELETE FROM core.project_owned_definition");
-        await expect(repository.get(project)).rejects.toThrow(overrideMessage);
+        expect((await refusal(repository.get(project))).rowKey).toBe(
+          overrideKey,
+        );
 
         // After the migration the same repository reads the same rows.
         await insertOwned(
@@ -2050,6 +2069,56 @@ describe.skipIf(connectionString === undefined)(
             "payload" in item ? item.payload : "absent",
           ),
         ).toEqual(["absent", { id: "counsel", title: "private-marker" }]);
+      });
+    });
+
+    test("a read refuses every stored payload that is not a JSON object, whatever its jsonb type", async () => {
+      await withLegacyDatabase(async (database) => {
+        const repository = new PostgresProjectDefinitionRepository(
+          database,
+          tenant,
+        );
+        const ownedKey = `core.project_owned_definition (project_id=${project}, kind=roles, local_id=role)`;
+        const overrideKey = `core.project_definition_override (project_id=${project}, pack=org.example.legal@1.0.0, manifest_digest=${digest}, kind=roles, local_id=counsel)`;
+        // Written as jsonb literals: no driver binding decides their type.
+        // The jsonb null scalar is not SQL NULL, and the driver hands both
+        // back as null.
+        for (const [literal, jsonType] of [
+          [`"private-marker"`, "string"],
+          [`[{"id":"private-marker"}]`, "array"],
+          ["7", "number"],
+          ["true", "boolean"],
+          ["null", "null"],
+        ] as const) {
+          await database.query("DELETE FROM core.project_owned_definition");
+          await database.query("DELETE FROM core.project_definition_override");
+          await insertOwned(database, "roles", "role", {});
+          await database.query(
+            "UPDATE core.project_owned_definition SET payload_json = $1::text::jsonb",
+            [literal],
+          );
+          expect(
+            (await storedRows(database)).map((row) => row.json_type),
+          ).toEqual([jsonType]);
+          expect(await refusal(repository.get(project)), jsonType).toEqual({
+            rowKey: ownedKey,
+            message: `Project definition payload must be a JSON object: ${ownedKey}`,
+          });
+
+          await database.query("DELETE FROM core.project_owned_definition");
+          await insertOverride(database, "roles", "counsel", "extend", {});
+          await database.query(
+            "UPDATE core.project_definition_override SET payload_json = $1::text::jsonb",
+            [literal],
+          );
+          expect(
+            (await storedRows(database)).map((row) => row.json_type),
+          ).toEqual([jsonType]);
+          expect(await refusal(repository.get(project)), jsonType).toEqual({
+            rowKey: overrideKey,
+            message: `Project definition payload must be a JSON object: ${overrideKey}`,
+          });
+        }
       });
     });
 
