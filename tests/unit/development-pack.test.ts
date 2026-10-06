@@ -2018,7 +2018,7 @@ describe("GP-10B-2 PR 2 development pack 0.3.0 data", () => {
     ).not.toBe(texts.get("instruction-invariants"));
   });
 
-  test("the requirement-assessment prompt is the four lines of the system message, joined by a newline, and the legacy source still builds it that way", () => {
+  test("the requirement-assessment prompt is the four lines of the system message, joined by a newline", () => {
     expect(promptTexts().get("requirement-assessment")).toBe(
       [
         "You assess a software requirement for clarity and testability.",
