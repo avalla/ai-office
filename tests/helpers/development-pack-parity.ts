@@ -540,15 +540,26 @@ export function classifyLegacyFields(
 }
 
 /**
+ * Subjects with optional fields, which a state that does not use them does
+ * not hold.
+ */
+const optionalFieldSubjects: readonly OutsideVocabularySubject[] = [
+  "pipeline",
+  "stage",
+];
+
+/**
  * Violations of "every legacy field is in the projection or in the list,
  * never both and never neither", and list entries that name no legacy field.
  *
  * An entry covers a whole field when it names no aspect and delivers
  * nothing: that field must not be read by the projection. An entry that
  * names an aspect or a delivered part covers the rest of a field the
- * projection does read. An entry marked as unused by the default state names
- * a field the state does not hold, so it cannot be looked up here;
- * `defaultStateViolations` checks it.
+ * projection does read. A pipeline or stage entry marked as unused by the
+ * default state names an optional field the state does not hold, so it
+ * cannot be looked up here; `defaultStateViolations` checks it. Every other
+ * entry is looked up, marked as unused or not: every state holds every field
+ * of a role, an agent and a task kind.
  */
 export function completenessViolations(
   profile: ProfileSections,
@@ -569,7 +580,11 @@ export function completenessViolations(
           `${field.key} is ${field.projected ? "in both the projection and the list" : "in neither the projection nor the list"}`,
       ),
     ...vocabulary.entries
-      .filter((entry) => entry.inDefaultState)
+      .filter(
+        (entry) =>
+          entry.inDefaultState ||
+          !optionalFieldSubjects.includes(entry.subject),
+      )
       .flatMap((entry) => {
         const projected = known.get(`${entry.subject}.${entry.field}`);
         if (projected === undefined)

@@ -609,6 +609,48 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
         restated("task_kind.pipelineId", null),
       ),
     ).toEqual(["task_kind.pipelineId is in both the projection and the list"]);
+    // Marking an entry as unused does not excuse it from naming a legacy
+    // field where every state holds every field of the subject: an invented
+    // role, agent or task-kind field is reported although it cites a GP-09
+    // code, which is all `defaultStateViolations` asks of an unused entry.
+    const inventedUnused = {
+      ...vocabulary,
+      entries: [
+        ...vocabulary.entries,
+        ...(
+          [
+            ["office_role", "role_fields_not_expressible"],
+            ["runtime_role", "runtime_role_fields_not_expressible"],
+            ["agent", "runtime_role_fields_not_expressible"],
+            ["task_kind", "pipeline_routes_several_task_kinds"],
+          ] as const
+        ).map(([subject, gp09Gap]) => ({
+          ...vocabulary.entries[0]!,
+          subject,
+          field: "bogus",
+          gp09Gap,
+          inDefaultState: false,
+        })),
+      ],
+    };
+    expect(defaultStateViolations(fixtureProfile, inventedUnused)).toEqual([]);
+    expect(completenessViolations(fixtureProfile, inventedUnused)).toEqual([
+      "office_role.bogus names no legacy field",
+      "runtime_role.bogus names no legacy field",
+      "agent.bogus names no legacy field",
+      "task_kind.bogus names no legacy field",
+    ]);
+    // An existing field of those subjects is still looked up when unused.
+    expect(
+      completenessViolations(fixtureProfile, {
+        ...vocabulary,
+        entries: vocabulary.entries.map((entry) =>
+          entryKey(entry) === "runtime_role.tools"
+            ? { ...entry, inDefaultState: false }
+            : entry,
+        ),
+      }),
+    ).toEqual([]);
   });
 });
 
