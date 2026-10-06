@@ -442,9 +442,11 @@ deferred.
 
 ## GP-09 legacy development compatibility
 
-Status: implemented, with criterion 12 met in part. The contract below is
-unchanged; "Implementation record" at the end of this section records what the
-code does where the contract left a choice, and where it stops short.
+Status: implemented. The owner reworded criterion 12 on 2026-10-06, after the
+implementation showed that re-export cannot keep a legacy archive's format;
+the rest of the contract below is unchanged. "Implementation record" at the
+end of this section records what the code does where the contract left a
+choice, and where it stops short.
 
 GP-09 describes, deterministically, what the legacy Runtime uses today. It
 derives a versioned, read-only **legacy development profile** from a project's
@@ -545,10 +547,11 @@ binding metadata is reported beside the profile and is not part of the digest.
 11. A committed pre-pack fixture migrated to head keeps office, role, agent,
     pipeline run, stage run, override, agent run, task, approval, audit and
     repository-identity rows byte-identical. It fails on any difference.
-12. Committed frozen format-1 to format-4 archives restore, re-export selects
-    the same format with equal state, and each produces its expected pinned
-    legacy profile. It fails if a legacy archive is rejected, silently written
-    at a higher format, or yields a different profile.
+12. Restoring a committed frozen format-1 to format-4 archive preserves the
+    state represented by that archive and yields the expected pinned legacy
+    development profile. Re-export format identity is not required. It fails
+    if a legacy archive is rejected, restores a different state, or yields a
+    different profile.
 13. After restore, the legacy project's knowledge scope is still tenant plus
     repository ID and existing records are retrievable. It fails if the scope
     key changes.
@@ -751,15 +754,16 @@ deliberately not delivered by GP-09.
   files produced by the releases that wrote those formats: the current
   exporter cannot write below format 6, and no historical archive is kept in
   the repository.
-- Criterion 12 is met in part. Each archive restores, its state at its own
-  format equals the archive with the same checksum, a second restore reports
-  `unchanged`, and the restored project has its pinned profile. Re-export does
-  not select the same format: since GP-07 the exporter writes format 6 or
-  later for every project, because the binding and definition sections are
-  always present, and existing tests pin that. Writing a legacy project back
-  at format 1 to 4 would change the exporter's format selection, which this
-  task excludes. The test asserts format 6 and equal state at the archive's
-  format.
+- Criterion 12 first required re-export to select the archive's own format.
+  That cannot hold: since GP-07 the exporter writes format 6 or later for
+  every project, because the binding and definition sections are always
+  present, and existing tests pin that. Writing a legacy project back at
+  format 1 to 4 would change the exporter's format selection, which this task
+  excludes. The owner therefore reworded the criterion to what the task can
+  guarantee. Each archive restores, its state at its own format equals the
+  archive with the same checksum, a second restore reports `unchanged`, and
+  the restored project has its pinned profile. The test also records that
+  re-export is at format 6 with equal state at the archive's format.
 - Guidance does not survive an archive. Portable role rows carry no guidance,
   so a restored project's roles have `guidance: null` and its profile digest
   differs from the source project's. The expected restored profile is pinned

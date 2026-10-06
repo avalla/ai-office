@@ -1914,8 +1914,8 @@ legacy-state parity against the Runtime's own readers, and that a pre-pack
 database fixture, its in-flight pipeline runs and format 1–4 archive fixtures
 load unchanged. The evidence has limits, recorded in the GP-09 section of
 `generic-core-domain-packs.md`: the fixtures were synthesized by the code of
-this task, not kept from the releases that wrote those formats, and criterion
-12 is met in part, because a restored archive is re-exported at format 6. It
+this task, not kept from the releases that wrote those formats, and a
+restored archive is re-exported at format 6, not at its own format. It
 infers no pack, adds no migration, archive format or audit event type, and
 leaves `project:configuration:show` unchanged. It is not execution parity:
 comparing execution from a resolved configuration with legacy execution is
