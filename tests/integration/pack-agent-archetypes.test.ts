@@ -437,6 +437,44 @@ describe("GP-12 agent customization in project definitions", () => {
     expect(before.definitions.revision).toBe(0);
   });
 
+  test("project:definition:show reports a stored replacement that exceeds its role", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    // Written past the preview, as a restore would write it.
+    await h.storage.definitions.replace(
+      {
+        projectId: "a",
+        revision: 0,
+        owned: [],
+        overrides: [
+          {
+            origin: "project_override",
+            source: { ...h.v1, kind: "agents", localId: "filer" },
+            operation: "replace",
+            revision: 1,
+            payload: { id: "filer", role: "clerk", capabilities: ["draft"] },
+            actorId: "restore",
+            changedAt: now.toISOString(),
+          },
+        ],
+      },
+      0,
+      now,
+    );
+    const inspected = await h.definitions.inspect("a");
+    expect(inspected.issues).toEqual([
+      {
+        code: "agent_capability_exceeds_role",
+        message: expect.stringContaining("capabilities/draft") as unknown,
+        source: source(h.v1, "filer"),
+      },
+    ]);
+    // The resolver is the authority and fails closed on the same state.
+    await expect(h.configuration()).rejects.toMatchObject({
+      code: "agent_capability_exceeds_role",
+    });
+  });
+
   test("the mutation contract refuses malformed and out-of-scope agent payloads; nothing is written", async () => {
     const h = await harness();
     await h.bind([h.v1]);

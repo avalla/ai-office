@@ -791,7 +791,9 @@ Validation happens in three places:
   prompt, knowledge entry or capability the source manifest does not declare is
   reported as `source_definition_missing`; a requested capability outside the
   named role's declared set is reported as `agent_capability_exceeds_role`.
-  Nothing is written while an issue is reported.
+  Nothing is written while an issue is reported. `project:definition:show`
+  reports the same issues for a stored replacement that arrived without this
+  check, for example through restore.
 - **GP-06 resolution**, which is the authority and fails closed, also for
   state that arrived by restore or changed under a binding change.
 
