@@ -176,8 +176,10 @@ import {
   ProjectPackBindingProjectNotFoundError,
   ProjectPackBindingCollisionError,
   ProjectPackBindingRefusedError,
+  ProjectPackBindingProviderError,
 } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { InMemoryInstalledDomainPackCatalog } from "./installed-domain-pack-catalog.ts";
+import { createOperationProviderCatalog } from "./operation-provider-catalog.ts";
 import { handleProjectPackCommand } from "./commands/project-pack.ts";
 import { ProjectPackUpgradeError } from "@ai-office/application/domain-pack/reconcile-project-pack-upgrade.ts";
 import { handleProjectConfigurationCommand } from "./commands/project-configuration.ts";
@@ -435,6 +437,7 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ProjectPackBindingProjectNotFoundError ||
     error instanceof ProjectPackBindingCollisionError ||
     error instanceof ProjectPackBindingRefusedError ||
+    error instanceof ProjectPackBindingProviderError ||
     error instanceof ProjectPackUpgradeError ||
     error instanceof ProjectDefinitionConflictError ||
     error instanceof StaleProjectDefinitionError ||
@@ -615,6 +618,9 @@ export async function executeRuntimeCommand(
     }
     const ids = new CryptoIdGenerator();
     const clock = new SystemClock();
+    // One registry per composition: the gateway's connectors and the
+    // read-only provider catalog pack commands see are the same set.
+    const connectors = createDefaultConnectorRegistry();
     const context: CommandContext = {
       ...(options.onRunChanged === undefined
         ? {}
@@ -633,7 +639,8 @@ export async function executeRuntimeCommand(
       audit: new RecordAuditEvent(projectStorage.auditEvents, ids, clock),
       ids,
       clock,
-      connectors: createDefaultConnectorRegistry(),
+      connectors,
+      operationProviders: createOperationProviderCatalog(connectors),
       agentClients: options.agentClients ?? new DefaultAgentClientCatalog(),
       projectBindings:
         options.projectBindings ?? new LocalProjectBindingAdapter(),

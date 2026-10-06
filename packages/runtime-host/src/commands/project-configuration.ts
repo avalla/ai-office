@@ -30,6 +30,7 @@ export async function handleProjectConfigurationCommand(
     definitions: context.definitions,
     transactions: context.transactions,
     catalog: context.installedPacks,
+    providers: context.operationProviders,
   });
   try {
     const result = await service.read(requiredOption(parsed, "project"));

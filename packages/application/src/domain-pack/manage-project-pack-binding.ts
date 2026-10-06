@@ -11,6 +11,10 @@ import {
   type PackIdentity,
 } from "../ports/installed-domain-pack-catalog.port.ts";
 import {
+  noOperationProviders,
+  type OperationProviderCatalog,
+} from "../ports/operation-provider-catalog.port.ts";
+import {
   StaleProjectPackBindingError,
   type ProjectPackBinding,
   type ProjectPackBindingRepository,
@@ -33,6 +37,13 @@ import {
 } from "./pack-definition-collisions.ts";
 import type { ProjectOwnedDefinition } from "./project-definition.ts";
 import {
+  bindCapabilityContracts,
+  capabilityContractDifferences,
+  closureCapabilityIds,
+  type CapabilityBindingIssueCode,
+  type CapabilityContractDifference,
+} from "./capability-contracts.ts";
+import {
   closureRoleIds,
   roleCapabilityDifferences,
   type RoleCapabilityDifference,
@@ -48,19 +59,50 @@ export class ProjectPackBindingProjectNotFoundError extends Error {
 export const roleCapabilityChangeRequiresUpgrade =
   "role_capability_change_requires_upgrade" as const;
 
+export const capabilityContractChangeRequiresUpgrade =
+  "capability_contract_change_requires_upgrade" as const;
+
 /**
  * A selection change this command does not carry out. A role capability
- * change is reviewed and approved through `project:pack:upgrade` only.
+ * change, and a change to the operation contract of an existing capability
+ * (GP-16), are reviewed and approved through `project:pack:upgrade` only.
  */
 export class ProjectPackBindingRefusedError extends Error {
   constructor(
-    readonly code: typeof roleCapabilityChangeRequiresUpgrade,
+    readonly code:
+      | typeof roleCapabilityChangeRequiresUpgrade
+      | typeof capabilityContractChangeRequiresUpgrade,
     message: string,
   ) {
     super(message);
     this.name = "ProjectPackBindingRefusedError";
   }
 }
+
+/**
+ * The proposed resolved closure declares an operation this host cannot
+ * provide as declared (GP-16). The selection is not applied; the code is the
+ * one resolution reports for the same closure.
+ */
+export class ProjectPackBindingProviderError extends Error {
+  constructor(
+    readonly code: CapabilityBindingIssueCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProjectPackBindingProviderError";
+  }
+}
+
+const providerIssueCodes: ReadonlySet<string> = new Set([
+  "missing_required_capability_provider",
+  "capability_provider_mismatch",
+  "configuration_invariant",
+] satisfies CapabilityBindingIssueCode[]);
+
+const isProviderIssueCode = (
+  code: string,
+): code is CapabilityBindingIssueCode => providerIssueCodes.has(code);
 
 /**
  * The proposed resolved closure contains a definition with the kind and local
@@ -112,10 +154,27 @@ export interface ProjectPackBindingPreview {
         readonly detail: string;
       };
   /**
+   * Operation contract differences between the current and the proposed
+   * resolved closures (GP-16), computed as in the upgrade plan and available
+   * under the same conditions as `roleCapabilityChanges`.
+   */
+  readonly capabilityContractChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly CapabilityContractDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason:
+          "previous_closure_unresolved" | "proposed_closure_unreadable";
+        readonly detail: string;
+      };
+  /**
    * In order: a GP-04 selection or availability failure, alone; then one
    * `pack_definition_collision` for each project-owned definition that the
-   * proposed closure also contains; then the GP-11 capability refusal. Apply
-   * raises the first.
+   * proposed closure also contains; then the GP-16 provider issues of the
+   * proposed closure; then the GP-11 capability refusal; then the GP-16
+   * contract change refusal. Apply raises the first.
    */
   readonly issues: readonly { code: string; message: string }[];
 }
@@ -172,6 +231,8 @@ export class ManageProjectPackBinding {
       bindings: ProjectPackBindingRepository;
       definitions: ProjectDefinitionRepository;
       catalog: InstalledDomainPackCatalog;
+      /** Absent means no registered provider, so nothing is bound by omission. */
+      providers?: OperationProviderCatalog;
       auditEvents: AuditEventRepository;
       transactions: TransactionRunner;
       clock: Clock;
@@ -257,14 +318,28 @@ export class ManageProjectPackBinding {
           (await this.dependencies.definitions.get(projectId)).owned,
         ),
       );
+    // GP-16: every operation the proposed closure declares against this
+    // host's providers. Like the collisions, an unchanged selection is checked
+    // too, so a provider that went missing stays visible here.
+    if (closure !== undefined) {
+      const bound = bindCapabilityContracts(
+        closure,
+        this.dependencies.providers ?? noOperationProviders,
+      );
+      if ("issues" in bound) issues.push(...bound.issues);
+    }
     let roleCapabilityChanges: ProjectPackBindingPreview["roleCapabilityChanges"] =
+      { availability: "available", changes: [] };
+    let capabilityContractChanges: ProjectPackBindingPreview["capabilityContractChanges"] =
       { availability: "available", changes: [] };
     // An unchanged selection reads no further artifact, as before GP-11. A
     // collision does not hide the capability refusal; it is listed first.
     if (resolved && added.length + removed.length + changed.length > 0) {
       const guard = this.roleCapabilityGuard(current.packs, proposed);
       roleCapabilityChanges = guard.roleCapabilityChanges;
+      capabilityContractChanges = guard.capabilityContractChanges;
       if (guard.issue) issues.push(guard.issue);
+      if (guard.contractIssue) issues.push(guard.contractIssue);
     }
     return {
       preview: {
@@ -274,6 +349,7 @@ export class ManageProjectPackBinding {
         removed,
         changed,
         roleCapabilityChanges,
+        capabilityContractChanges,
         issues,
       },
       ...(closure === undefined ? {} : { closure }),
@@ -285,14 +361,17 @@ export class ManageProjectPackBinding {
    * selection change that alters the capability set of a role present in both
    * closures. When the current closure cannot be resolved it applies only a
    * pure removal. Everything else goes through the reviewed
-   * `project:pack:upgrade` plan.
+   * `project:pack:upgrade` plan. The same holds, with its own code, for the
+   * operation contract of a capability present in both closures (GP-16).
    */
   private roleCapabilityGuard(
     currentPacks: readonly PackIdentity[],
     proposed: readonly PackIdentity[],
   ): {
     roleCapabilityChanges: ProjectPackBindingPreview["roleCapabilityChanges"];
+    capabilityContractChanges: ProjectPackBindingPreview["capabilityContractChanges"];
     issue?: { code: string; message: string };
+    contractIssue?: { code: string; message: string };
   } {
     const closure = (
       packs: readonly PackIdentity[],
@@ -315,17 +394,20 @@ export class ManageProjectPackBinding {
     const target = closure(proposed);
     // The public resolver just accepted this closure; a manifest that cannot
     // be read back cannot be shown to be capability-neutral.
-    if (typeof target === "string")
+    if (typeof target === "string") {
+      const unavailable = {
+        availability: "unavailable",
+        reason: "proposed_closure_unreadable",
+        detail: target,
+      } as const;
       return {
-        roleCapabilityChanges: {
-          availability: "unavailable",
-          reason: "proposed_closure_unreadable",
-          detail: target,
-        },
+        roleCapabilityChanges: unavailable,
+        capabilityContractChanges: unavailable,
         issue: refuse(
           `Role capabilities of the proposed selection cannot be read (${target})`,
         ),
       };
+    }
     const previous = closure(currentPacks);
     if (typeof previous === "string") {
       const roleCapabilityChanges = {
@@ -341,6 +423,9 @@ export class ManageProjectPackBinding {
       const currentKeys = new Set(currentPacks.map(tupleKey));
       return {
         roleCapabilityChanges,
+        // The same refusal covers the operation contracts: neither can be
+        // compared without the old manifests.
+        capabilityContractChanges: roleCapabilityChanges,
         ...(proposed.every((pack) => currentKeys.has(tupleKey(pack)))
           ? {}
           : {
@@ -356,8 +441,28 @@ export class ManageProjectPackBinding {
     const altered = changes.find(
       ({ roleId }) => before.has(roleId) && after.has(roleId),
     );
+    const contractChanges = capabilityContractDifferences(previous, target);
+    const capabilitiesBefore = closureCapabilityIds(previous);
+    const capabilitiesAfter = closureCapabilityIds(target);
+    const alteredContract = contractChanges.find(
+      ({ capabilityId }) =>
+        capabilitiesBefore.has(capabilityId) &&
+        capabilitiesAfter.has(capabilityId),
+    );
     return {
       roleCapabilityChanges: { availability: "available", changes },
+      capabilityContractChanges: {
+        availability: "available",
+        changes: contractChanges,
+      },
+      ...(alteredContract
+        ? {
+            contractIssue: {
+              code: capabilityContractChangeRequiresUpgrade,
+              message: `The selection changes the operation contract of capability ${alteredContract.capabilityId}; review and approve it with project:pack:upgrade`,
+            },
+          }
+        : {}),
       ...(altered
         ? {
             issue: refuse(
@@ -399,11 +504,14 @@ export class ManageProjectPackBinding {
           packDefinitionCollision,
           preview.issues[0].message,
         );
-      if (preview.issues[0]?.code === roleCapabilityChangeRequiresUpgrade)
-        throw new ProjectPackBindingRefusedError(
-          roleCapabilityChangeRequiresUpgrade,
-          preview.issues[0].message,
-        );
+      const first = preview.issues[0];
+      if (first !== undefined && isProviderIssueCode(first.code))
+        throw new ProjectPackBindingProviderError(first.code, first.message);
+      if (
+        first?.code === roleCapabilityChangeRequiresUpgrade ||
+        first?.code === capabilityContractChangeRequiresUpgrade
+      )
+        throw new ProjectPackBindingRefusedError(first.code, first.message);
       if (preview.issues[0])
         throw new DomainPackCatalogError(
           preview.issues[0].code as DomainPackCatalogError["code"],
