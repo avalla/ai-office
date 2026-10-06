@@ -21,7 +21,7 @@
       "residue": null,
       "gp09Gap": "role_fields_not_expressible",
       "inDefaultState": true,
-      "reason": "Authored responsibility statements of an office role. A pack role has a title and a description only."
+      "reason": "Authored responsibility statements of an office role. The legacy field; a pack role could not carry it before GP-10B-2 PR 1; carried since pack 0.3.0."
     },
     {
       "subject": "runtime_role",
@@ -88,11 +88,11 @@
       "subject": "runtime_role",
       "field": "guidance",
       "owner": "GP-10B-2",
-      "delivered": "The guidance text and its digest: the prompt `<role>-guidance`, referenced by the agent of the role, whose text is the bytes of `agents/<role>/system.md`. The guidance version stays with the Runtime role `version`.",
+      "delivered": "The guidance text and its digest: the prompt `<role>-guidance`, referenced by the agent of the role, whose text is the bytes of `agents/<role>/system.md`. The guidance version is covered by the separate Runtime role `version` entry.",
       "residue": null,
       "gp09Gap": "runtime_role_fields_not_expressible",
       "inDefaultState": true,
-      "reason": "Role guidance, the system instructions shipped as system.md: its text, digest and version."
+      "reason": "Role guidance, the system instructions shipped as system.md: its text, digest and version. The text and the digest are carried since pack 0.3.0; the guidance version is covered by the separate runtime_role.version entry (owner a45ddb12)."
     },
     {
       "subject": "agent",
@@ -112,7 +112,7 @@
       "residue": null,
       "gp09Gap": null,
       "inDefaultState": true,
-      "reason": "Routing of a task kind to a pipeline. A pack workflow names one task type, so the second kind of a pipeline that routes two has no place in the pack."
+      "reason": "Routing of a task kind to a pipeline. The legacy field; a pack workflow named one task type before GP-10B-2 PR 1, so the second kind of a pipeline that routes two had no place in the pack; carried since pack 0.3.0 as additionalTaskTypes."
     },
     {
       "subject": "pipeline",
@@ -122,7 +122,7 @@
       "residue": null,
       "gp09Gap": "pipeline_routes_several_task_kinds",
       "inDefaultState": true,
-      "reason": "One pipeline routes several task kinds; a pack workflow names one task type."
+      "reason": "One pipeline routes several task kinds. The legacy field; a pack workflow named one task type before GP-10B-2 PR 1; carried since pack 0.3.0."
     },
     {
       "subject": "pipeline",
@@ -142,7 +142,7 @@
       "residue": null,
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
-      "reason": "Stage name. A pack workflow stage is an ID and a role."
+      "reason": "Stage name. The legacy field; a pack workflow stage was an ID and a role before GP-10B-2 PR 1; carried since pack 0.3.0 as its title."
     },
     {
       "subject": "stage",
