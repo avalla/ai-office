@@ -673,7 +673,9 @@ deliberately not delivered by GP-09.
 - Roles are enumerated directly. `AgentRuntimeRepository` gained a read-only
   `listRoles(projectId)`, implemented for SQLite and PostgreSQL with the
   tenant scoping of `findRole`, so a role that no agent uses is still listed.
-  No schema changed.
+  Both backends return the roles by key in code-point order; PostgreSQL
+  orders the key with the `"C"` collation for that. The derivation sorts its
+  input itself and does not depend on it. No schema changed.
 - Eligibility is the static rule: enabled agents whose role key equals the
   stage role. A stage's `requiresDifferentAgentFrom` is carried as a field;
   the exclusion it causes depends on earlier assignments of one run and is not
