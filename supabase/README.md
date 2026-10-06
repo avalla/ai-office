@@ -126,6 +126,75 @@ existing Runtime contracts. `tenant_invite.token_hash` is write-only to the
 authenticated table surface; safe invitation columns use explicit column
 grants.
 
+## Project definition payload objects
+
+`core.project_owned_definition.payload_json` and
+`core.project_definition_override.payload_json` hold a `jsonb` object; a
+`disable` override holds SQL `NULL`. Each table enforces it with a
+`<table>_payload_json_check` on `jsonb_typeof`, like the other `jsonb`
+documents of this schema. The repository binds the payload object itself: the
+driver serializes a `jsonb` parameter, so a JavaScript string bound to one is
+stored as a JSON string, not parsed.
+
+Before `20261006000300_project_definition_payload_object.sql` the repository
+bound JSON text, and every payload it wrote is a `jsonb` string scalar whose
+content is that text. The migration converts each such value to the object it
+spells, leaves objects and SQL `NULL` untouched, and then adds the two checks.
+A release older than the migration cannot write definitions to a migrated
+database: its string payloads violate the checks.
+
+The migration fails closed. If one value cannot be converted, it raises
+`cannot convert N project definition payload(s) to jsonb objects` (SQLSTATE
+`22000`), nothing is converted, no check is added and the migration is not
+recorded; the runner applies pending migrations in one transaction, so later
+pending migrations are not applied either. The error detail names up to twenty
+rows by key with the reason and never quotes a payload. A value cannot be
+converted when it is:
+
+- a string whose content is not JSON text;
+- a string whose content is JSON text for an array, a scalar or `null`;
+- a string whose content is JSON text holding an escaped U+0000, which `jsonb`
+  cannot store. The project text rule never accepted that character, so such a
+  row was written past the Runtime's mutation contract;
+- any other non-object `jsonb` value.
+
+Nothing is dropped, rewritten or skipped on the operator's behalf. Keep the
+previous release running, or the Runtime stopped, and repair every row the
+migration names. To list all of them, by key and stored type only:
+
+```sql
+SELECT 'owned' AS source, project_id, NULL AS pack_id, NULL AS pack_version,
+       NULL AS manifest_digest, kind, local_id, jsonb_typeof(payload_json) AS stored_type
+  FROM core.project_owned_definition
+ WHERE jsonb_typeof(payload_json) <> 'object'
+UNION ALL
+SELECT 'override', project_id, pack_id, pack_version, manifest_digest, kind,
+       local_id, jsonb_typeof(payload_json)
+  FROM core.project_definition_override
+ WHERE payload_json IS NOT NULL AND jsonb_typeof(payload_json) <> 'object';
+```
+
+A row of type `string` that is listed here but not named by the migration is
+convertible and needs nothing. For each named row, read the stored text with
+`payload_json #>> '{}'`, keep a copy, and decide as the project's operator
+what the definition should be. Then, as the database owner and in one
+transaction per row, either write the corrected payload as an object:
+
+```sql
+UPDATE core.project_owned_definition
+   SET payload_json = '{"id":"counsel","title":"Counsel"}'::jsonb
+ WHERE project_id = '<project>' AND kind = '<kind>' AND local_id = '<id>';
+```
+
+or delete the row by its full key when the definition should not exist; for an
+override that restores the pack's own definition. An override row is addressed
+by `project_id`, `pack_id`, `pack_version`, `manifest_digest`, `kind` and
+`local_id`. A corrected payload has to satisfy the same rules a Runtime
+mutation would: the exact `id`, the descriptive fields of its kind and the
+project text rule. Such a repair is outside the Runtime: it writes no audit
+event and advances no definition revision, so record it operationally. Apply
+the migrations again afterwards; the migration re-checks every row.
+
 ## Next slices
 
 The remaining sequence after tenant-scoped project authority is:

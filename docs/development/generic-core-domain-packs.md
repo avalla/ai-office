@@ -1840,13 +1840,20 @@ Limits and follow-ups, none of them changed here:
 - The assessment holds while manifests are not stored in a database. A
   persistent catalog, or any new path that writes manifest text to project
   storage, has to repeat it.
-- Observed while probing storage: the PostgreSQL definition repository binds
-  `JSON.stringify(payload)` to a `jsonb` parameter, and the stored value is a
-  `jsonb` string holding the JSON text, not a `jsonb` object. The repository
-  reads it back correctly. As a side effect a payload with U+0000 written past
-  the mutation contract is stored on PostgreSQL as well as on SQLite, and
-  GP-06 then reports `unresolved_override` on both. The GP-07 rule and its
-  tests are unchanged.
+- Observed while probing storage, and corrected afterwards outside GP-23: the
+  PostgreSQL definition repository bound `JSON.stringify(payload)` to a
+  `jsonb` parameter, and the stored value was a `jsonb` string holding the
+  JSON text, not a `jsonb` object. The repository read it back correctly, and
+  as a side effect a payload with U+0000 written past the mutation contract
+  was stored on PostgreSQL as well as on SQLite. The repository now binds the
+  payload object, `20261006000300_project_definition_payload_object.sql`
+  converts the stored strings and makes the object shape a rule of both
+  tables, and PostgreSQL refuses such a payload with SQLSTATE 22P05 while
+  SQLite still stores it; see "Project definition payload objects" in
+  `supabase/README.md`. The assessment never relied on the database rejecting
+  anything: manifest text does not reach `payload_json`, and the one copy
+  path is refused by the GP-07 rule before any write. The outcome, the GP-07
+  rule and its tests are unchanged.
 
 ## Milestone exit and exclusions
 
