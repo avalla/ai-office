@@ -3262,7 +3262,7 @@ owners and deliveries as they were then.
 | Runtime role | `tools`                       | nothing                                                                                                                                                                                                                | The whole field.       | GP-10C   | `runtime_role_fields_not_expressible`                          |
 | Runtime role | `modelPolicy`                 | nothing                                                                                                                                                                                                                | The whole field.       | a45ddb12 | `runtime_role_fields_not_expressible`                          |
 | Runtime role | `limits`                      | nothing                                                                                                                                                                                                                | The whole field.       | a45ddb12 | `runtime_role_fields_not_expressible`                          |
-| Runtime role | `guidance`                    | The guidance text and its digest: the prompt `<role>-guidance`, referenced by the agent of the role, whose text is the bytes of `agents/<role>/system.md`. The guidance version stays with the Runtime role `version`. | none                   | GP-10B-2 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `guidance`                    | The guidance text and its digest: the prompt `<role>-guidance`, referenced by the agent of the role, whose text is the bytes of `agents/<role>/system.md`. The guidance version is covered by the separate Runtime role `version` entry. | none                   | GP-10B-2 | `runtime_role_fields_not_expressible`                          |
 | agent        | `enabled`                     | nothing                                                                                                                                                                                                                | The whole field.       | a45ddb12 | none                                                           |
 | task kind    | `pipelineId`                  | All five routes, each as a task type of the workflow of that ID: `taskType` for feature, bugfix, research and release, and `additionalTaskTypes` for maintenance -> delivery.                                          | none                   | GP-10B-2 | none                                                           |
 | pipeline     | `defaultFor`                  | Every task kind of each pipeline, as the task types of its workflow, including both task kinds of the delivery pipeline.                                                                                               | none                   | GP-10B-2 | `pipeline_routes_several_task_kinds`                           |
@@ -4056,8 +4056,8 @@ storage, and AgentKnowledgeStore boundary:
    and task types and removes nothing (see the GP-10A section). GP-10B-1
    delivers the second slice as expressible-subset parity over workflows and
    removes nothing (see the GP-10B-1 section). GP-10B-2 delivers the third slice,
-the descriptive fields, role guidance and reference prompts, as
-expressible-subset parity and removes nothing (see the GP-10B-2 PR 2 section).
+   the descriptive fields, role guidance and reference prompts, as
+   expressible-subset parity and removes nothing (see the GP-10B-2 PR 2 section).
 5. **Opt-in adoption:** preview and audit an explicit development-pack binding;
    preserve project edits and in-flight pinned runs. Support old snapshots.
 6. **New projects:** decide separately whether explicit pack selection is the
