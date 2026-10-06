@@ -2077,6 +2077,7 @@ profiles:
         "workflows",
         "disabledWorkflows",
         "capabilities",
+        "policies",
         "pin",
       ]);
       expect(

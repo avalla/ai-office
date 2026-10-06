@@ -333,6 +333,8 @@ or definitions) is
 Schema-1 policy contributions have descriptive fields but no typed mandatory
 clause or evaluator. A nonempty policy section yields
 `unsupported_security_composition` rather than an overrideable policy.
+Since GP-25 this holds for a policy without `workflow` only; a pack whose
+policies are all typed resolves (see the GP-25 section).
 Evidence and capability names are descriptive declarations; they create no
 verified fact, grant, or approval. ADR-0027's conjunctive gates, scope
 intersection, accumulating denials, and ordered bounds need a typed policy
@@ -1612,7 +1614,9 @@ pack workflow is deferred to GP-24, the task that persists those pins.
 
 - No domain-specific pipeline engine, no Runtime pipeline and no scheduling
   from a pack workflow. No approval or guard is declared or enforced by a
-  workflow definition.
+  workflow definition. Since GP-25 a pack may declare them for a workflow in
+  a separate policy contribution, which is still not enforced (see the GP-25
+  section).
 - References are local to one manifest or to the project. A stage of a pack
   workflow, customized or not, cannot name a project-owned role or task type,
   and a project-owned workflow cannot name a pack definition. Qualified
@@ -1833,7 +1837,9 @@ never a definition body.
 10. The 14 development-pack capability labels gain no operations in GP-16.
     That belongs to GP-10C, and `packages/domain-pack-development` is not
     edited.
-11. GP-25 depends on GP-16 for the operation vocabulary.
+11. GP-25 depends on GP-16 for the operation vocabulary. (Superseded by the
+    owner-approved GP-25 decision 4: GP-25 stage `operations` are opaque
+    names, so GP-25 does not depend on GP-16.)
 
 ### ADR-0026 narrowing
 
@@ -1863,8 +1869,9 @@ Pinning a binding on a run belongs to GP-24.
 provider exists. GP-25 owns where an operation is permitted or required in a
 workflow: stage `capabilities`, `enforcement`, and the approval and separation
 flags. GP-16 adds no field to workflows, stages or `policies` and does not
-lift `unsupported_security_composition`. GP-25 stage capabilities are expected
-to name GP-16 operations, so GP-25 depends on GP-16 (decision 11).
+lift `unsupported_security_composition`. GP-25 stage `operations` are opaque
+operation names compared exactly, not references to GP-16 capability
+operations, so GP-25 does not depend on GP-16 (decision 11 is superseded).
 
 **GP-14.** Validators reference separately installed adapter IDs and exact
 versions with their own registration checks. GP-16 does not touch
@@ -2699,6 +2706,501 @@ are expressible and are now in the pack, so they are not in the list.
   would behave like the legacy pipelines is not shown and is the subject of
   task `a45ddb12-3159-4b60-9b8b-c26516720834`.
 
+## GP-25 pack policy contribution contract
+
+Status: contract implemented; pack data pending. The owner approved the scope
+proposal on 2026-10-06 (option B-M, every decision below at its proposed
+default) and confirmed the number GP-25. Runtime task
+`1a883c04-0905-4b36-a57b-12d45fdfd59f`. GP-25 is delivered in two pull
+requests. The first, the contract, delivers everything in this section except
+the pack data. The second adds the policies to the development reference
+pack, their parity tests and the residue list; it waits for the pack version
+GP-10B-2 publishes, because pack versions are serialized.
+
+Formal scope:
+
+> Give the schema-1 `policies` contribution a typed form that targets one
+> workflow of its own pack and declares the workflow's `enforcement` and, per
+> stage, `requiresApproval`, `requiresIndependentApproval`,
+> `requiresDifferentAgentFrom` and the admitted `operations`. Resolve it into
+> a derived view, keep it pack-owned, and let it change only through a
+> reviewed upgrade. No Runtime consumption, migration, archive format,
+> catalog registration, adoption or legacy-path removal occurs in GP-25.
+
+Anti-goal:
+
+> the pack must not become authoritative for Runtime execution without a
+> separately approved task
+
+GP-25 is a definition layer, like GP-11, GP-12 and GP-13. A policy is a
+declaration. Nothing is enforced from it: the Runtime still reads only the
+pipelines of the OfficeManifest, and no pipeline, run, pin, approval, guard,
+grant or capability decision is created, read or changed by a policy.
+Executing from a resolved configuration, including its policies, is the
+Runtime task "Runtime resolved-configuration execution parity"
+(`a45ddb12-3159-4b60-9b8b-c26516720834`), which depends on GP-25.
+
+### Decisions
+
+The owner approved these on 2026-10-06.
+
+1. Shape: a policy contribution that targets a workflow by local ID, not
+   flags on the workflow and its stages. The workflow definition stays free
+   of governance, so the GP-13 statement that a workflow definition declares
+   no approval or guard stays true.
+2. Level: every clause of a pack policy is mandatory. There is no weakening
+   operation and no `default`/`mandatory` level; a level can be added later
+   as an optional field. Consequence: a legacy project that lowered an
+   approval in its OfficeManifest cannot adopt a pack that requires it
+   unchanged. That is a matter for adoption (GP-10C).
+3. One manifest declares at most one policy for one workflow.
+4. The legacy stage `capabilities` become `operations`: opaque operation-name
+   strings, independent of GP-16.
+5. An absent `operations` field means that no operation is admitted. It is
+   the one encoding of the legacy empty list.
+6. A `replace` of a governed workflow that drops a governed stage or breaks a
+   separation order fails closed.
+7. Disabling a governed workflow stays allowed.
+8. The upgrade report and the `project:pack:apply` guard are part of this
+   task.
+9. A policy without `workflow` (an untyped policy) still parses and still
+   fails resolution. `workflow` is not a required field.
+10. Project-owned policies, and with them a migration and an archive format,
+    are deferred to a later task.
+11. This declarative slice is delivered before `a45ddb12`.
+12. The task is GP-25 and depends on GP-08, GP-11, GP-13 and GP-10B-1.
+
+### Policy item
+
+A schema-1 policy item keeps `id` and the optional `title` and `description`
+and gains three optional fields:
+
+```text
+{ id, title?, description?,
+  workflow: <local ID of a workflow of the same manifest>,
+  enforcement?: "enforced",
+  stages?: [ { stage: <stage ID of that workflow>,
+               requiresApproval?: true,
+               requiresIndependentApproval?: true,
+               requiresDifferentAgentFrom?: [<stage ID>, ...],
+               operations?: [<operation name>, ...] } ] }
+```
+
+A policy with `workflow` is a typed policy. Its clauses mean what the legacy
+pipeline fields of the same names mean (`packages/domain/src/pipeline`):
+
+| Clause                              | Declares                                                                                  |
+| ----------------------------------- | ----------------------------------------------------------------------------------------- |
+| `enforcement: "enforced"`           | The workflow is enforced. Absent, it is guidance.                                         |
+| `requiresApproval: true`            | Completing the stage needs an approval.                                                   |
+| `requiresIndependentApproval: true` | The agent assigned to the stage cannot approve or reject it.                              |
+| `requiresDifferentAgentFrom: [...]` | The stage is not assigned to the agent of any named earlier stage.                        |
+| `operations: [...]`                 | The operation names admitted on the stage. Absent, no operation is admitted on the stage. |
+
+Every fact has one encoding. Absent `enforcement` means guidance; the value
+`"guidance"` is not accepted. A flag is present only as `true`. `stages`,
+`operations` and `requiresDifferentAgentFrom` are sets: the validated
+manifest holds `stages` in ascending code-unit order of `stage` and the two
+lists in ascending code-unit order, so `manifestDigest` does not depend on
+the written order. An empty list is rejected; the field is omitted instead.
+
+Absent `operations` means that no operation is admitted, which is deny by
+default. The legacy authoring rule that every stage of an enforced pipeline
+must write an explicit list, empty or not, is not carried over, because the
+absent field and the empty list already mean the same to the legacy
+authorization. A stage the policy does not name has no clause: no approval,
+no separation and no admitted operation.
+
+An operation name follows the legacy grammar
+`^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$`, holds at most 128 characters, and one
+stage lists at most 64 of them (`maximumPolicyStageOperations`).
+
+The contract package rejects, with a typed `DomainPackManifestError`
+(`invalid_contribution`) and the path of the offending member:
+
+- a `workflow` that is not a local ID or names no workflow of the same
+  manifest;
+- a second policy for the same workflow in one manifest;
+- `enforcement` with any value but `"enforced"`;
+- `enforcement` or `stages` on a policy without `workflow`;
+- a typed policy with neither `enforcement` nor `stages`;
+- `stages` that is not an array or is empty, a stage entry that is not an
+  object or has an unknown key, a `stage` that is not a stage of the target
+  workflow, and a second entry for the same stage;
+- a stage entry with no clause;
+- a flag with any value but `true`;
+- `requiresIndependentApproval` without `requiresApproval`;
+- a `requiresDifferentAgentFrom` that is not an array, is empty, holds a
+  duplicate, or names anything but an earlier stage of the target workflow
+  in the workflow's stage order (the stage itself and a later stage
+  included);
+- an `operations` list that is not an array, is empty, holds more than 64
+  entries, a duplicate, or an entry outside the grammar or over 128
+  characters;
+- any of the three fields on another contribution kind, where it remains an
+  unknown field.
+
+References are bare local IDs, so a policy can only govern a workflow of its
+own manifest; a workflow of another pack, a dependency included, cannot be
+named.
+
+This is an additive section-schema extension within manifest schema 1 and
+core contract version 1. A manifest without a typed policy keeps its
+canonical form and `manifestDigest`; the four golden fixture digests and the
+digests of the published development pack versions are unchanged. A Runtime
+built before GP-25 rejects a manifest that uses the fields as unknown fields;
+it never ignores them.
+
+An untyped policy, `{ id, title?, description? }`, still parses. It has no
+clause and no evaluator, and a pack that declares one still fails resolution
+with `unsupported_security_composition`, as in GP-06. The extension is
+therefore strictly additive: no manifest that failed to resolve before
+resolves now with another meaning.
+
+### Resolution
+
+A pack whose policies are all typed resolves. For every typed policy the
+resolver finds the target workflow in the policy's own namespace, the exact
+originating pack tuple, and checks the policy against the effective workflow,
+which is the pack's or the project's replacement:
+
+| Finding                                                                                     | Code                               |
+| ------------------------------------------------------------------------------------------- | ---------------------------------- |
+| A policy has no `workflow`                                                                  | `unsupported_security_composition` |
+| The effective workflow lacks a stage the policy names, as a governed stage or a predecessor | `policy_target_missing`            |
+| A separation predecessor no longer comes before the stage that names it                     | `policy_target_missing`            |
+| A stored override or project-owned definition of kind `policies`                            | unchanged GP-06 codes              |
+
+`policy_target_missing` is a new resolution code. It also covers a workflow
+that is absent from the policy's namespace, which a verified manifest cannot
+produce.
+
+`project:configuration:show` exposes a derived policy view next to the role,
+agent and workflow views:
+
+- `policies`: one entry for every typed policy, in the GP-06 definition
+  order, with `policyId`, `effectiveId`, `origin` (always `pack_owned`), the
+  `title` and `description` when present, `workflowId`, `state`,
+  `enforcement` (`enforced` or `guidance`) and `stages`. Each stage entry is
+  `{ stage, requiresApproval, requiresIndependentApproval,
+requiresDifferentAgentFrom, operations }` with both flags as booleans and
+  both lists present, empty when the policy declares none, in ascending
+  order of `stage`.
+
+`policyId` is the stable ID `pack:<packId>/policies/<localId>` and
+`workflowId` the `workflowId` of the GP-13 workflow view. Neither carries a
+pack version or digest. `state` is `active` when the target workflow is
+enabled and `inert` when the project disabled it: no workflow means nothing
+to govern, and the policy is still listed so that the omission is visible.
+
+The view is derived from the effective definitions and is not part of the
+version-1 `configurationDigest` material. The digest format and the
+documented empty-input vector are unchanged, and a configuration without a
+policy keeps its digest. A policy is already covered by the digest through
+the pack payload in `effectiveDefinitions` and its entry in `origins`.
+
+### Policies are pack-owned and cannot be weakened
+
+ADR-0026 requires that an override cannot weaken a pack's mandatory
+requirement and that mandatory clauses compose conjunctively. GP-25 meets
+this by structure, without ever comparing a "stronger" and a "weaker"
+policy:
+
+1. Policies have no project operation. `put_override` on kind `policies`
+   stays `unsupported_override_operation` for `replace`, `extend` and
+   `disable`, and `put_owned` stays rejected; the GP-06 resolver, both
+   storage schemas and the portable archive keep rejecting stored state of
+   that kind. This task adds none, and a later one may only add an operation
+   that strengthens (point 6).
+2. A workflow payload cannot carry a governance key. `enforcement`,
+   `requiresApproval`, `requiresIndependentApproval`,
+   `requiresDifferentAgentFrom`, `operations` and `capabilities` are rejected
+   with `protected_security_invariant` on the workflow envelope and on a
+   stage, for a `replace` and for a project-owned workflow, and nothing is
+   written. On the envelope this is the GP-13 rule for every unknown key. On
+   a stage these six keys were rejected before GP-25 as
+   `malformed_origin_reference`, like any other unknown stage key; GP-25
+   gives them the security code and leaves every other unknown stage key as
+   it was. No payload that was rejected is accepted now.
+3. A `replace` of a governed pack workflow must keep every stage the policy
+   names, as a governed stage or as a separation predecessor, and every
+   predecessor must stay earlier than the stage that names it. Otherwise:
+   - `project:definition:preview` reports `policy_target_missing` and
+     `project:definition:apply` refuses with it, through the GP-12/GP-13
+     pre-store path that reads the exact source manifest; nothing is written;
+   - `project:definition:show` reports it for a stored replacement that
+     arrived without that check;
+   - GP-06 resolution fails closed with it, also for state that arrived by
+     restore or changed under a binding change;
+   - `project:pack:upgrade` blocks as `prospective_configuration_invalid`
+     (`policy_target_missing`) when a replacement would land on a version
+     whose policy it does not satisfy;
+   - a portable restore whose exact pack closure resolves on the host rejects
+     the archive with `policy_target_missing` before anything is restored, as
+     GP-22 does for a collision. When the closure does not resolve there is
+     no verdict and GP-06 reports it later.
+4. `disable` of a governed workflow stays allowed. The policy is then
+   `inert`.
+5. A stage a project adds in a replacement has no clause: no approval and no
+   admitted operation. A replacement may rename the workflow, change its task
+   type, reorder stages within rule 3, change stage roles and add stages.
+6. Any later project policy composes conjunctively with the pack's
+   (ADR-0026) and so can only add requirements.
+
+A governed stage keeps its clauses under every customization: the clause is
+keyed by the stage ID, and GP-13 identifies a stage by its ID inside its
+workflow.
+
+### Change control
+
+A policy change is never incidental, like a role capability change in GP-11.
+`project:pack:upgrade` is the only command that carries one out for an
+existing workflow, under an approved plan.
+
+The upgrade report adds two fields, both covered by `planDigest`:
+
+- `policyChanges`: for every workflow whose policy differs between the old
+  and new resolved closures, the `workflowId`, the `change` (`added`,
+  `removed` or `changed`), the policy `before` and `after` where each exists,
+  and whether a project override names the workflow (`customized`). A policy
+  is reported as `{ policyId, workflowId, enforcement, stages }` with the
+  stage entries of the resolved view. Two policies are equal when these four
+  values are equal; `title` and `description` are presentation and are
+  reported by the template list. It has the availability rule of the
+  template list and of `roleCapabilityChanges`: `unavailable`
+  (`previous_closure_unresolved`) when the previous artifacts are no longer
+  installed, and empty when the selection itself does not change.
+- `targetPolicies`: every typed policy of the target closure in the same
+  form, in ascending `workflowId` order. Approval therefore binds the
+  resulting policies even when the previous closure cannot be read.
+
+A no-op plan reads no artifact and carries both fields empty. The
+`project.pack_upgrade_applied` audit event records both fields. They contain
+identities and clause values only, never a title, a description or another
+definition body.
+
+`project:pack:apply` refuses a selection change that alters the policy of a
+workflow present in both resolved closures (same `workflowId`): a changed
+policy, a policy added to an existing workflow and a policy removed from one.
+Its preview (`project:pack:preview`) reports `policyChanges`, computed by the
+same function as the upgrade plan and without the `customized` mark, and adds
+the issue `policy_change_requires_upgrade` after any GP-04 failure, any
+`pack_definition_collision` and the GP-11 capability refusal. The code is
+carried by the preview issue and by the typed application error
+`project:pack:apply` raises; the CLI prints the message, which names
+`project:pack:upgrade`, on stderr and exits 1. No selection or definition
+state is written and no `project.pack_binding_applied` event is added.
+
+When the current closure cannot be resolved or the proposed manifests cannot
+be read back, `policyChanges` is `unavailable` with the reason
+`roleCapabilityChanges` carries, and the selection change is already refused
+by the GP-11 rule for those cases (anything but a pure removal); no second
+issue is added.
+
+`project:pack:apply` still applies the addition of a pack that was not
+selected, the removal of a pack, and a version change that leaves every
+existing workflow's policy unchanged, which includes one that adds a governed
+workflow or removes a workflow together with its policy. Applying an
+identical selection remains a no-op that reads no artifact.
+
+### Boundary with GP-16
+
+`operations` are opaque operation-name strings, compared exactly. They are
+not references to `contributions.capabilities`, are not checked against
+registered providers or capability policy, and grant nothing. The two
+vocabularies differ on purpose: a pack capability is a role-level local ID,
+which cannot contain `:`, and a stage operation is a legacy operation name
+such as `filesystem.read`. GP-16 owns capability contributions, required and
+optional abstract operations and provider binding. Whether GP-16 later
+relates the two vocabularies is left to GP-16. The field is named
+`operations`, not `capabilities`, to keep them apart.
+
+### Persistence
+
+None. No migration is added on either backend, and no archive format: a
+policy lives in the pack artifact and in derived output, and no project state
+of kind `policies` exists. An archive of a project bound to a pack with
+policies is written at the format it had before.
+
+### Acceptance
+
+Criteria 10 and 11 belong to the second pull request.
+
+1. The manifest parser accepts the typed policy item. Each validation failure
+   listed above raises `invalid_contribution` with the member path. Golden
+   fixture digests and the digests of earlier pack versions are unchanged.
+2. The written order of `stages`, `operations` and
+   `requiresDifferentAgentFrom` does not change `manifestDigest`.
+3. A pack whose policies are all typed and valid resolves, and
+   `project:configuration:show` lists `policies` with stable IDs. A pack with
+   an untyped policy still fails with `unsupported_security_composition`.
+4. The empty-input `configurationDigest` vector and the digest of every
+   configuration without policies are unchanged.
+5. `put_owned` and `put_override` on kind `policies` are still rejected. A
+   workflow payload with any governance key is rejected with
+   `protected_security_invariant`. Nothing is written in either case.
+6. A `replace` of a governed workflow that drops a named stage, or moves a
+   separation predecessor after its dependant, is reported by
+   `project:definition:preview` and refused by `apply`, and makes a stored
+   state fail resolution with `policy_target_missing`.
+7. A `replace` that keeps every governed stage, renames or reorders within
+   the rule, or adds stages resolves, and the added stages carry no clause. A
+   `disable` of a governed workflow resolves and the policy is reported as
+   inert.
+8. Upgrade: `policyChanges` and `targetPolicies` are present, are covered by
+   `planDigest` and are recorded in the audit event with no definition body
+   beyond clause values; a no-op plan carries both empty; `policyChanges` is
+   `unavailable` when the previous artifacts are not installed, by the GP-11
+   rule, while `targetPolicies` still lists the target closure.
+9. `project:pack:apply` refuses a version change that alters an existing
+   workflow's policy, with the typed error, exit 1, and no state or binding
+   event written. It still applies an addition or removal of a pack.
+10. (Second pull request.) The development reference pack declares policies
+    that equal the legacy defaults on the five entries.
+11. (Second pull request.) Mutating any of the five legacy fields in a copy
+    breaks parity on both sides; the five residue entries are marked
+    delivered and the list equals the plan table.
+12. Negative: no pipeline, run, pin, approval, guard, grant or capability
+    decision is created or changed by a policy. Run, approval and job tables
+    are identical before and after binding on the GP-09 fixture.
+    `PipelineRun`, `ManagePipelineRuns`, `OrchestratePipelineStage` and
+    `EvaluatePipelineAuthorization` are not in the diff.
+13. No migration and no archive format change. An archive of a project bound
+    to a pack with policies is written at the same format as before and
+    restores, and restore preflight rejects a stored workflow `replace` that
+    violates criterion 6.
+14. PostgreSQL-gated coverage: binding, upgrade and resolution of a pack with
+    policies run in the PostgreSQL storage contract suite with results
+    identical to SQLite, and `tests/integration/migration-upgrades.test.ts`
+    passes with no new migration.
+15. End-to-end over the Unix socket: `project:pack:preview`/`apply` including
+    the refused policy change, `project:pack:upgrade` with `policyChanges`,
+    `project:configuration:show` with `policies`, and
+    `project:definition:apply` refused for a violating workflow `replace`.
+16. The GP-09 profile digest, gap codes and fixtures are unchanged;
+    architecture tests pass unmodified; the production catalog holds no pack.
+17. This section, with the anti-goal verbatim, the GP-16 boundary, the one
+    pointer sentence in the GP-13 section, and `a45ddb12` linked by ID. The
+    pack data is delivered by the second pull request.
+
+### Non-goals
+
+- Runtime enforcement from a pack policy, and any change to the pipeline
+  engine, runs, pins, approvals, guards, grants or controlled-action
+  authorization (`a45ddb12`).
+- Project-authored policies, a `default`/`mandatory` level and any override
+  operation on a policy.
+- Capability contracts and provider binding (GP-16), and any relation between
+  `operations` and `contributions.capabilities`.
+- Evidence and professional-decision clauses (GP-14, GP-17, GP-18).
+- The policies of the development reference pack, their parity tests and the
+  residue list, which the second pull request of this task delivers.
+- A policy that governs a workflow of another pack, or more than one policy
+  for one workflow.
+
+### Known limitations
+
+Nothing is enforced from a policy yet, so none of these has an effect today.
+Each is an input for Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834` and
+must be decided before a pack policy is enforced.
+
+- Two selection changes can replace a policy without a policy-level audit
+  record. The `project:pack:apply` guard compares the two closures of one
+  selection change and refuses only for a workflow present in both. A project
+  bound to a version that governs a workflow can apply the empty selection
+  and then a version that keeps the workflow and drops or changes its policy.
+  Both changes apply: criterion 9 requires that removing and adding a pack
+  still applies, and GP-11 has the same property for role capabilities. Each
+  preview reports the `policyChanges` of its own step, but the
+  `project.pack_binding_applied` event records only the pack tuples
+  (`previousPacks` and `packs`), so the audit trail shows the two selections
+  and not the policy difference. To decide: whether the binding event
+  carries the policy changes, or the guard compares against the last
+  governed state of the workflow instead of the previous closure.
+- A twin of a governed workflow is ungoverned. A project can disable a
+  governed pack workflow, which leaves its policy `inert`, and add a
+  project-owned workflow under another local ID with the same task type,
+  stages and roles. No policy applies to that workflow: a policy targets a
+  workflow of its own pack, and no project-authored policy exists (owner
+  decisions 7 and 10). To decide: whether such a project is outside the
+  pack's governance by design, or enforcement must close the route.
+- The separation list has a wider bound than the legacy one.
+  `requiresDifferentAgentFrom` uses the general contribution reference bound
+  of 1,000 entries, and the legacy OfficeManifest schema allows at most 16
+  per stage. The bound is the approved contract and is unchanged. A pack can
+  therefore declare a separation list that the legacy manifest cannot
+  express: a parity gap for the second pull request, whose pack data must
+  stay within the legacy bound, and for `a45ddb12`.
+
+### Implementation record
+
+This records what the contract pull request built where the contract left a
+choice, and where the evidence stops. Three of the choices are visible to the
+owner: policy identity is part of policy equality, `targetPolicies` stays
+listed when `policyChanges` is `unavailable` (criterion 8), and a governance
+key on a workflow stage is now refused as `protected_security_invariant`
+instead of `malformed_origin_reference`.
+
+- Contract package. `PolicyContribution` and `PolicyStageClause` in
+  `packages/domain-pack-contracts/src/manifest.ts`. Shape is checked when the
+  item is read and the workflow, stage and separation references once every
+  section has been read, as for roles and agents; paths use the written
+  positions, and the sets are ordered afterwards.
+- One computation per rule. `pack-policy-clauses.ts` holds the clause values
+  and `policyTargetViolations`, used by GP-06 resolution, the definition
+  pre-store check and the restore preflight. `pack-policy-changes.ts` holds
+  `workflowPolicyDifferences`, used by the upgrade plan and the selection
+  guard.
+- Policy identity is part of a policy. Two versions that declare the same
+  clauses for a workflow under another policy local ID differ, so the change
+  is reported as `changed` and `project:pack:apply` refuses it. The stable
+  `policyId` is what a consumer keys on.
+- Target policies stay available. The approved criterion 8 read "both are
+  `unavailable` when the previous artifacts are not installed (the GP-11
+  rule)". Under the GP-11 rule it cites only the difference is unavailable,
+  and the target sets stay listed so that approval binds them. The
+  implementation follows the rule: `policyChanges` is `unavailable` and
+  `targetPolicies` lists the target closure. Criterion 8 above is worded
+  accordingly.
+- Stage governance keys. Criterion 5 asks for `protected_security_invariant`
+  for any governance key in a workflow payload. A key on a stage was rejected
+  as `malformed_origin_reference` before, so the six keys named above now
+  get the security code on a stage; see "Policies are pack-owned and cannot
+  be weakened", point 2.
+- Refusal while a closure cannot be read. The selection guard adds no second
+  issue in the two `unavailable` cases: the GP-11 rule already refuses every
+  such change but a pure removal, which leaves no surviving workflow with
+  another policy.
+- Restore. The preflight raises `ProjectRestorePolicyTargetError`, a
+  `ProjectPortabilityError` with the code `policy_target_missing`, for the
+  first violation of the first violating replacement.
+- Existing tests that pin the shape this task changes were updated and no
+  other: the derived-view list in the independent digest helper of
+  `tests/unit/resolve-project-configuration.test.ts`, the empty
+  configuration in `tests/e2e/development-pack-parity-cli.test.ts`, which
+  gains `policies: []`, the key list of `project:configuration:show` in
+  `tests/e2e/daemon-cli.test.ts` and
+  `tests/e2e/legacy-development-profile-cli.test.ts`, which gains
+  `policies`, and the GP-25 row assertions of the GP-10B-1
+  documentation test in `tests/unit/development-pack.test.ts`. No pack data,
+  pinned digest, parity assertion or architecture test was edited.
+- Criterion 12 is partly a property of the change set: `PipelineRun`,
+  `ManagePipelineRuns`, `OrchestratePipelineStage` and
+  `EvaluatePipelineAuthorization` are not in the diff against the base
+  commit. No test keeps that true afterwards; the table comparison on the
+  GP-09 fixture does.
+- PostgreSQL. The shared storage contract suite runs binding, the pre-store
+  refusal, resolution, the selection guard and the upgrade of a governed pack
+  on both backends and compares each result with the pure functions, so the
+  results are provider-independent. Its audit sink is in memory: the audit
+  repositories have their own contract suite.
+- Evidence limits. Nothing reads a policy at run time, so nothing here shows
+  that a Runtime executing from these declarations would behave like the
+  legacy pipelines; that is the subject of task
+  `a45ddb12-3159-4b60-9b8b-c26516720834`. The development reference pack
+  declares no policy yet: the policies used on the GP-09 fixture are added to
+  a copy of the pack inside the test.
+
 ## Objective and decision boundary
 
 AI Office should operate governed teams in arbitrary domains. The core owns
@@ -2866,11 +3368,11 @@ GP-01 audit + M15-4 authority/evidence ADR → GP-02 boundary ADR → GP-03 mini
 GP-06 + GP-07 → GP-11 roles → GP-12 agents → GP-13 workflows
 GP-03 + GP-06 → GP-14 artifacts/validators
 GP-06 → GP-15 knowledge; GP-06 → GP-16 capabilities
-GP-16 → GP-25 operation vocabulary (GP-16 decision 11)
+GP-16 ⇢ GP-25 operation vocabulary by name only (GP-25 operations are opaque; no dependency)
 GP-09 + GP-11..GP-12 → GP-10A roles/agents/task defaults
 GP-10A + GP-13 → GP-10B-1 workflow templates
 GP-10B-1 → GP-10B-2 descriptive contract extension/prompts
-GP-25 pack policy contribution contract (provisional number; scope proposal pending)
+GP-08 + GP-11 + GP-13 + GP-10B-1 → GP-25 pack policy contribution contract
 GP-10B-1 + GP-10B-2 + GP-14..GP-16 → GP-10C evidence/integrations/adoption
 GP-10B-1 + GP-10B-2 + GP-25 → Runtime task a45ddb12 execution parity
 GP-11..GP-16 → GP-17 legal, GP-18 manufacturing, GP-19 empty/custom
@@ -2905,7 +3407,7 @@ carry the same fields. GP-01 through GP-07 have passed review and merged.
 | GP-10A — Development roles and task defaults                      | GP-09, GP-11, GP-12             | Define the development pack roles, agents and task types as a committed reference artifact; prove expressible-subset parity with the legacy development defaults. No Runtime consumption, catalog registration, adoption or legacy-path removal.                                                                                                                                                                                        | Reference pack manifest and outside-pack-vocabulary list; parity tests on the GP-09 fixture and shipped defaults.                                                                        | Pack authority over Runtime execution; registration or adoption.                                                                                                                         |
 | GP-10B-1 — Development workflow templates                         | GP-10A, GP-13                   | Define the feature delivery, bug fix, research and release workflows in the committed development reference pack (`0.2.0`), within manifest schema 1; prove expressible-subset parity for workflows with the legacy default pipelines. No contract change, Runtime consumption, catalog registration, adoption or legacy-path removal; project pipelines remain editable.                                                               | Reference pack workflows and the outside-pack-vocabulary list with delivered part, residue and residue owner per entry; workflow parity tests on the GP-09 fixture and shipped defaults. | Pack authority over Runtime execution; prompts; contract extension; new pipeline engine or forced workflow.                                                                              |
 | GP-10B-2 — Development descriptive contract extension and prompts | GP-10B-1                        | Runtime task `e890324a-ecd4-4fcc-b1f8-37fdbdaca319`. Additive schema-1 extension and portable archive format 10, approved in principle, for the descriptive residue of GP-10B-1: stage name, objective and checks, role responsibilities and guidance, the `maintenance -> delivery` route, instruction-contract texts and the requirement-assessment prompt.                                                                           | Contract extension, prompt templates and parity tests for the descriptive residue.                                                                                                       | Governance semantics (GP-25); `knowledge` (GP-15); Runtime execution from packs.                                                                                                         |
-| GP-25 — Pack policy contribution contract                         | Set by its scope proposal       | Provisional number; Runtime task `1a883c04-0905-4b36-a57b-12d45fdfd59f`. Needs an owner-approved scope proposal before any work. Owns the five governance entries of the GP-10B-1 residue: pipeline `enforcement`, and stage `requiresApproval`, `requiresIndependentApproval`, `requiresDifferentAgentFrom` and `capabilities`.                                                                                                        | Set by its scope proposal.                                                                                                                                                               | Set by its scope proposal.                                                                                                                                                               |
+| GP-25 — Pack policy contribution contract                         | GP-08, GP-11, GP-13, GP-10B-1   | Runtime task `1a883c04-0905-4b36-a57b-12d45fdfd59f`. Definition layer: a typed schema-1 policy contribution that targets a workflow of its own pack and declares `enforcement` and per-stage `requiresApproval`, `requiresIndependentApproval`, `requiresDifferentAgentFrom` and admitted `operations`. Pack-owned: no project override or project-owned policy; a workflow replacement must keep governed stages; policy changes go only through a reviewed upgrade. Development pack carries the five governance entries with expressible-subset parity. No migration, no archive format. | Policy contract section, resolver view, upgrade report and apply guard; SQLite/PostgreSQL and Unix-socket e2e; pack policies, residue list and parity tests.                             | Runtime enforcement from a pack (a45ddb12); project-authored or preset-level policies; capability contracts and provider binding (GP-16); evidence and professional-decision clauses (GP-14, GP-17, GP-18). |
 | GP-10C — Development evidence and adoption                        | GP-10B-1, GP-10B-2, GP-14–GP-16 | Put repository/GitHub/commit/PR/CI evidence types, knowledge guidance and capability declarations behind pack contracts; offer previewed explicit adoption while preserving old bindings.                                                                                                                                                                                                                                               | Development pack completion and migration report; legacy snapshot, approval, action and provenance regression tests.                                                                     | Redesign of worker, queue, model routing or governance.                                                                                                                                  |
 | GP-11 — Pack role archetypes                                      | GP-06, GP-07                    | Define pack roles with stable identity and declarative capabilities; rename, replace, omit and add them in project configuration; preserve identity, capabilities and project changes on upgrade.                                                                                                                                                                                                                                       | Role contracts and customization/upgrade tests.                                                                                                                                          | Official role names; Runtime roles, grants or bindings.                                                                                                                                  |
 | GP-12 — Pack agent archetypes                                     | GP-11                           | Definition layer: stable agent identity; declarative role, prompt, knowledge and requested-capability references bounded by the role; project replace, disable and add; identity and project changes kept on an upgrade.                                                                                                                                                                                                                | Agent configuration contracts and upgrade/authority tests.                                                                                                                               | Runtime agents, model, tools, pipeline, approval, grants.                                                                                                                                |

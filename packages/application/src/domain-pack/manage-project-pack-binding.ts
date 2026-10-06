@@ -35,6 +35,11 @@ import {
   packDefinitionCollision,
   packDefinitionCollisions,
 } from "./pack-definition-collisions.ts";
+import {
+  closureWorkflowIds,
+  workflowPolicyDifferences,
+  type WorkflowPolicyDifference,
+} from "./pack-policy-changes.ts";
 import type { ProjectOwnedDefinition } from "./project-definition.ts";
 import {
   bindCapabilityContracts,
@@ -62,16 +67,21 @@ export const roleCapabilityChangeRequiresUpgrade =
 export const capabilityContractChangeRequiresUpgrade =
   "capability_contract_change_requires_upgrade" as const;
 
+export const policyChangeRequiresUpgrade =
+  "policy_change_requires_upgrade" as const;
+
 /**
  * A selection change this command does not carry out. A role capability
- * change, and a change to the operation contract of an existing capability
- * (GP-16), are reviewed and approved through `project:pack:upgrade` only.
+ * change, a change to the operation contract of an existing capability
+ * (GP-16), and a change to the policy of an existing workflow (GP-25) are
+ * reviewed and approved through `project:pack:upgrade` only.
  */
 export class ProjectPackBindingRefusedError extends Error {
   constructor(
     readonly code:
       | typeof roleCapabilityChangeRequiresUpgrade
-      | typeof capabilityContractChangeRequiresUpgrade,
+      | typeof capabilityContractChangeRequiresUpgrade
+      | typeof policyChangeRequiresUpgrade,
     message: string,
   ) {
     super(message);
@@ -117,6 +127,39 @@ export class ProjectPackBindingCollisionError extends Error {
     super(message);
     this.name = "ProjectPackBindingCollisionError";
   }
+}
+
+/**
+ * A policy change is never incidental (GP-25). A selection change that alters
+ * the policy of a workflow present in both closures is refused: a changed
+ * policy, a policy added to an existing workflow and a policy removed from
+ * one. A workflow that only one closure provides is an addition or a removal
+ * of the workflow, which stays an explicit selection change.
+ */
+function policyChangeGuard(
+  previous: readonly ResolvedPackManifest[],
+  target: readonly ResolvedPackManifest[],
+): {
+  changes: WorkflowPolicyDifference[];
+  issue?: { code: string; message: string };
+} {
+  const changes = workflowPolicyDifferences(previous, target);
+  const before = closureWorkflowIds(previous);
+  const after = closureWorkflowIds(target);
+  const altered = changes.find(
+    ({ workflowId }) => before.has(workflowId) && after.has(workflowId),
+  );
+  return {
+    changes,
+    ...(altered
+      ? {
+          issue: {
+            code: policyChangeRequiresUpgrade,
+            message: `The selection changes the policy of workflow ${altered.workflowId}; review and approve it with project:pack:upgrade`,
+          },
+        }
+      : {}),
+  };
 }
 
 function collisionIssues(
@@ -170,11 +213,28 @@ export interface ProjectPackBindingPreview {
         readonly detail: string;
       };
   /**
+   * Workflow policy differences between the current and the proposed
+   * resolved closures (GP-25), computed as in the upgrade plan and with the
+   * availability of `roleCapabilityChanges`.
+   */
+  readonly policyChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly WorkflowPolicyDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason:
+          "previous_closure_unresolved" | "proposed_closure_unreadable";
+        readonly detail: string;
+      };
+  /**
    * In order: a GP-04 selection or availability failure, alone; then one
    * `pack_definition_collision` for each project-owned definition that the
    * proposed closure also contains; then the GP-16 provider issues of the
    * proposed closure; then the GP-11 capability refusal; then the GP-16
-   * contract change refusal. Apply raises the first.
+   * contract change refusal; then the GP-25 policy refusal. Apply raises the
+   * first.
    */
   readonly issues: readonly { code: string; message: string }[];
 }
@@ -332,6 +392,10 @@ export class ManageProjectPackBinding {
       { availability: "available", changes: [] };
     let capabilityContractChanges: ProjectPackBindingPreview["capabilityContractChanges"] =
       { availability: "available", changes: [] };
+    let policyChanges: ProjectPackBindingPreview["policyChanges"] = {
+      availability: "available",
+      changes: [],
+    };
     // An unchanged selection reads no further artifact, as before GP-11. A
     // collision does not hide the capability refusal; it is listed first.
     if (resolved && added.length + removed.length + changed.length > 0) {
@@ -340,6 +404,18 @@ export class ManageProjectPackBinding {
       capabilityContractChanges = guard.capabilityContractChanges;
       if (guard.issue) issues.push(guard.issue);
       if (guard.contractIssue) issues.push(guard.contractIssue);
+      // GP-25: the same two closures. Where they cannot be read the GP-11
+      // rule above already refused everything but a pure removal.
+      if (guard.roleCapabilityChanges.availability === "unavailable")
+        policyChanges = guard.roleCapabilityChanges;
+      else if (guard.closures !== undefined) {
+        const policy = policyChangeGuard(
+          guard.closures.previous,
+          guard.closures.target,
+        );
+        policyChanges = { availability: "available", changes: policy.changes };
+        if (policy.issue) issues.push(policy.issue);
+      }
     }
     return {
       preview: {
@@ -350,6 +426,7 @@ export class ManageProjectPackBinding {
         changed,
         roleCapabilityChanges,
         capabilityContractChanges,
+        policyChanges,
         issues,
       },
       ...(closure === undefined ? {} : { closure }),
@@ -372,6 +449,11 @@ export class ManageProjectPackBinding {
     capabilityContractChanges: ProjectPackBindingPreview["capabilityContractChanges"];
     issue?: { code: string; message: string };
     contractIssue?: { code: string; message: string };
+    /** Both closures, when both could be read. */
+    closures?: {
+      previous: readonly ResolvedPackManifest[];
+      target: readonly ResolvedPackManifest[];
+    };
   } {
     const closure = (
       packs: readonly PackIdentity[],
@@ -463,6 +545,7 @@ export class ManageProjectPackBinding {
             },
           }
         : {}),
+      closures: { previous, target },
       ...(altered
         ? {
             issue: refuse(
@@ -509,7 +592,8 @@ export class ManageProjectPackBinding {
         throw new ProjectPackBindingProviderError(first.code, first.message);
       if (
         first?.code === roleCapabilityChangeRequiresUpgrade ||
-        first?.code === capabilityContractChangeRequiresUpgrade
+        first?.code === capabilityContractChangeRequiresUpgrade ||
+        first?.code === policyChangeRequiresUpgrade
       )
         throw new ProjectPackBindingRefusedError(first.code, first.message);
       if (preview.issues[0])

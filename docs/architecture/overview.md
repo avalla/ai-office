@@ -128,6 +128,16 @@ development workflows to that manifest as data. They are compared with the
 legacy default pipelines over the same kind of subset; no pipeline, run, pin,
 approval or guard is created from a pack workflow and nothing is scheduled from
 one.
+GP-25 types the pack `policies` contribution: a policy
+(`pack:<packId>/policies/<localId>`) targets one workflow of its own pack and
+declares enforcement, approval, independent approval, agent separation and
+admitted operation names per stage. The declaration is pack-owned and
+mandatory: a project has no operation on a policy, a workflow replacement
+must keep the governed stages and their separation order, and the policy of
+an existing workflow changes only through the reviewed upgrade plan. The
+derived view lists the policies; they are declarations only, the pipeline
+engine, runs, approvals, guards, grants and controlled-action authorization
+do not read them, and a policy without a target workflow still fails closed.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

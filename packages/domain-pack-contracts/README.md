@@ -28,14 +28,15 @@ outside the interoperable safe-integer range. Schema 1 requires every envelope
 field and contribution section. Contribution items currently accept only an
 ASCII `id` and optional `title`/`description`; workflow items also have a
 `taskType` and ordered `stages` with `id`/`role`, role items may have
-`capabilities`, and agent items may have `role`, `prompts`, `knowledge` and
-`capabilities`, and capability items may have `operations` and `requirement`
-(see below). Unknown fields fail validation,
+`capabilities`, agent items may have `role`, `prompts`, `knowledge` and
+`capabilities`, capability items may have `operations` and `requirement`, and
+policy items may have `workflow`, `enforcement` and `stages` (see below).
+Unknown fields fail validation,
 including executable entry points and embedded credentials. Later GP slices
 must explicitly extend section schemas through a compatible manifest/schema
 decision before they can add fields. The current generic `Contribution` type is
 not the final field-level schema for artifact types, evidence types,
-policies, knowledge, capabilities, prompts or validators, and the agent fields
+knowledge, capabilities, prompts or validators, and the agent fields
 below are not the final agent schema: model, tools, pipeline participation and
 approval eligibility are not expressible.
 
@@ -91,6 +92,32 @@ risk, approval, constraints, a resource, a grant, a principal, a credential
 or a provider version: those are unknown fields. The declaration states a
 need. It grants nothing, and whether a registered provider satisfies it is
 decided by the Runtime host at resolution, not by this package.
+
+A policy item may carry three optional fields (GP-25): `workflow`, one local
+ID naming an item of the same manifest's `contributions.workflows`,
+`enforcement`, whose only value is `"enforced"`, and `stages`, an array of
+`{ stage, requiresApproval?, requiresIndependentApproval?,
+requiresDifferentAgentFrom?, operations? }`. `stage` names a stage of the
+target workflow, the two flags are present only as `true`,
+`requiresDifferentAgentFrom` lists earlier stages of that workflow, and
+`operations` lists at most 64 (`maximumPolicyStageOperations`) operation
+names of the form `^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$` and at most 128
+characters. A policy with `workflow` is typed and must declare `enforcement`
+or `stages`; one manifest declares at most one policy for a workflow. An
+unknown workflow or stage, a duplicate stage entry, a second policy for a
+workflow, a stage entry without a clause, `requiresIndependentApproval`
+without `requiresApproval`, a separation target that is not an earlier stage,
+an empty list, a malformed, duplicate or over-bound operation, a flag or
+`enforcement` with another value, a clause field without `workflow` and any
+of the fields on another contribution kind fail with `invalid_contribution`
+and the member's path. Absent `enforcement` means guidance and absent
+`operations` means that no operation is admitted. `stages`, `operations` and
+`requiresDifferentAgentFrom` are sets: the validated manifest holds them in
+ascending code-unit order (`stages` by `stage`), and that order is what the
+digest covers. Operation names are opaque strings, not references to
+`contributions.capabilities`. The clauses are declarative: they are not
+enforced by this package or by the Runtime and grant nothing. A policy
+without `workflow` still parses as `id`, `title` and `description`.
 
 Versioning and compatibility: these are additive section-schema extensions.
 The manifest stays schema 1 and the core contract version stays 1. A manifest

@@ -147,6 +147,7 @@ export type DefinitionIssueCode =
   | "unsupported_override_operation"
   | "protected_security_invariant"
   | "agent_capability_exceeds_role"
+  | "policy_target_missing"
   | "source_unavailable";
 
 export class ProjectDefinitionConflictError extends Error {
@@ -183,6 +184,20 @@ export class ProjectDefinitionPayloadShapeError extends Error {
 
 /** Shared with the portable archive schema so accepted state stays exportable. */
 export const maximumWorkflowStages = 1_000;
+
+/**
+ * Governance belongs to the pack policy that targets a workflow (GP-25),
+ * never to a workflow payload: a project cannot declare, lower or remove a
+ * clause by writing one of these keys on a stage.
+ */
+const stageGovernanceKeys: readonly string[] = [
+  "enforcement",
+  "requiresApproval",
+  "requiresIndependentApproval",
+  "requiresDifferentAgentFrom",
+  "operations",
+  "capabilities",
+];
 
 /**
  * Bound of an agent's `prompts`, `knowledge` and `capabilities` lists: the
@@ -453,6 +468,11 @@ function parseWorkflowPayload(value: unknown, id: string): WorkflowDefinition {
     const stageIds = new Set<string>();
     const stages = item.stages.map((stage) => {
       const value = record(stage);
+      if (Object.keys(value).some((key) => stageGovernanceKeys.includes(key)))
+        throw new ProjectDefinitionConflictError(
+          "protected_security_invariant",
+          "Workflow stage cannot declare governance; a pack policy does",
+        );
       exactKeys(value, ["id", "role"]);
       const stageId = localId(value.id);
       if (stageIds.has(stageId))
