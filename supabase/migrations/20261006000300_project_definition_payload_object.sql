@@ -19,10 +19,20 @@
 -- constraint is added and the migration is not recorded. A value cannot be
 -- converted when it is a jsonb string whose content is not JSON text, is JSON
 -- text for something other than an object, or is JSON text holding an escaped
--- U+0000, which jsonb cannot store; or when it is any other non-object jsonb
--- value. The error names the rows by key and never quotes a payload. Nothing
+-- U+0000 or another escape jsonb cannot store, such as a lone surrogate; or
+-- when it is any other non-object jsonb value. The error names the rows by key and never quotes a payload. Nothing
 -- is dropped, rewritten or skipped on the operator's behalf: see "Project
 -- definition payload objects" in supabase/README.md for the repair.
+--
+-- Deployment order. Once the two checks below exist, a release older than
+-- this migration can no longer write definitions: it still binds JSON text,
+-- and every such insert fails with check violation 23514. Upgrade every
+-- writer with or before this migration, and apply it with writers stopped: it
+-- takes ACCESS EXCLUSIVE on both tables, and if PostgreSQL reports a deadlock
+-- against a concurrent writer nothing was changed and it can simply be
+-- applied again. PostgreSQL's own DETAIL for a 23514 violation ("Failing row
+-- contains (...)") quotes a prefix of the rejected row, payload included; the
+-- Runtime prints no driver text, but a database log or another client may.
 DO $$
 DECLARE
   candidate record;
@@ -67,7 +77,16 @@ BEGIN
         WHEN untranslatable_character THEN
           reason := 'JSON text holding an escaped U+0000, which jsonb cannot store';
         WHEN data_exception THEN
-          reason := 'not JSON text';
+          -- The json type checks syntax only, so text it accepts and jsonb
+          -- refuses is JSON that jsonb cannot represent, such as a lone
+          -- surrogate escape.
+          BEGIN
+            PERFORM (candidate.payload_json #>> '{}')::json;
+            reason := 'JSON text that jsonb cannot store';
+          EXCEPTION
+            WHEN data_exception THEN
+              reason := 'not JSON text';
+          END;
       END;
     ELSE
       reason := format('jsonb %s, not a JSON object', jsonb_typeof(candidate.payload_json));
@@ -86,7 +105,7 @@ BEGIN
             DETAIL = array_to_string(offending, '; ')
               || CASE WHEN offending_count > 20
                    THEN format('; and %s more', offending_count - 20) ELSE '' END,
-            HINT = 'Nothing was changed. Repair or remove the listed rows, then apply the migration again: see "Project definition payload objects" in supabase/README.md.';
+            HINT = 'Nothing was changed. Repair or remove every unconvertible row, which may be more than are named here, then apply the migration again: see "Project definition payload objects" in supabase/README.md.';
   END IF;
 
   UPDATE core.project_owned_definition
