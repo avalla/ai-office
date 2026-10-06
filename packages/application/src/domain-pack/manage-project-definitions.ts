@@ -139,8 +139,9 @@ function agentReferenceIssues(
 /**
  * GP-06 rejects a workflow whose task type or stage roles do not resolve in
  * its own pack. Report that for a replacement before it is stored, against
- * the exact source manifest, in envelope order. Whether a referenced role is
- * omitted depends on the other project entries and stays with the resolver.
+ * the exact source manifest, in envelope order and once per missing
+ * reference. Whether a referenced role is omitted depends on the other
+ * project entries and stays with the resolver.
  */
 function workflowReferenceIssues(
   manifest: DomainPackManifest,
@@ -159,10 +160,40 @@ function workflowReferenceIssues(
             message: `Workflow ${workflow} references ${kind}/${localId}, which is missing from exact source`,
           },
         ];
+  // Several stages may name one role; a missing role is one finding.
+  const roles = [...new Set(payload.stages.map((stage) => stage.role))];
   return [
     ...missing("taskTypes", payload.taskType),
-    ...payload.stages.flatMap((stage) => missing("roles", stage.role)),
+    ...roles.flatMap((role) => missing("roles", role)),
   ];
+}
+
+/**
+ * A stored override is untrusted input: it may have arrived without the
+ * mutation contract, for example in a database edited by hand. Re-check it
+ * with the parser the GP-06 resolver uses for stored state, so a malformed
+ * entry is reported as what it is and not as an unavailable pack.
+ */
+function storedOverrideIssues(
+  item: ProjectDefinitionOverride,
+): ProjectDefinitionIssue[] {
+  try {
+    parseDefinitionMutation({
+      action: "put_override",
+      source: item.source,
+      operation: item.operation,
+      ...(item.payload === undefined ? {} : { payload: item.payload }),
+    });
+    return [];
+  } catch (error) {
+    if (!(error instanceof ProjectDefinitionConflictError)) throw error;
+    return [
+      {
+        code: error.code,
+        message: `Stored override violates the override contract: ${error.message}`,
+      },
+    ];
+  }
 }
 
 export interface ProjectDefinitionPreview {
@@ -271,6 +302,9 @@ export class ManageProjectDefinitions {
     projectId: string,
     item: ProjectDefinitionOverride,
   ): Promise<ProjectDefinitionIssue[]> {
+    // Shape first: the checks below read the payload as its kind's envelope.
+    const contractIssues = storedOverrideIssues(item);
+    if (contractIssues.length > 0) return contractIssues;
     const bindingIssues = await this.sourceBindingIssues(projectId, item);
     if (bindingIssues.length > 0) return bindingIssues;
     const binding = await this.dependencies.bindings.get(projectId);
@@ -319,7 +353,7 @@ export class ManageProjectDefinitions {
         item.source.kind === "workflows" &&
         item.payload
       )
-        // The stored entry is untyped beyond its kind; GP-06 re-checks shape.
+        // storedOverrideIssues established the workflow envelope above.
         return workflowReferenceIssues(
           manifest,
           item.payload as WorkflowDefinition,

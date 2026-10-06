@@ -462,6 +462,18 @@ describe("GP-13 workflow customization in project definitions", () => {
         },
         ["taskTypes/ghost", "roles/partner", "roles/associate"],
       ],
+      // Several stages that name one missing role are one finding.
+      [
+        {
+          stages: [
+            { id: "one", role: "partner" },
+            { id: "two", role: "associate" },
+            { id: "three", role: "partner" },
+            { id: "four", role: "partner" },
+          ],
+        },
+        ["roles/partner", "roles/associate"],
+      ],
     ];
     for (const [fields, subjects] of cases) {
       const mutation = {
@@ -533,6 +545,87 @@ describe("GP-13 workflow customization in project definitions", () => {
     await expect(h.configuration()).rejects.toMatchObject({
       code: "missing_workflow_reference",
     });
+  });
+
+  test("project:definition:show reports a malformed stored workflow override as a contract violation, not as an unavailable pack", async () => {
+    const cases: [string, object | undefined, string, string][] = [
+      // A replacement without a stage list, as a hand edit could leave it.
+      [
+        "replace",
+        { id: "review", taskType: "matter" },
+        "protected_security_invariant",
+        "Workflow payload must use the typed schema-1 fields",
+      ],
+      [
+        "replace",
+        { id: "review", taskType: "matter", stages: "check" },
+        "protected_security_invariant",
+        "Workflow payload must use the typed schema-1 fields",
+      ],
+      [
+        "replace",
+        { id: "review", taskType: "matter", stages: [{ id: "check" }] },
+        "malformed_origin_reference",
+        "Expected only id, role",
+      ],
+      [
+        "replace",
+        {
+          id: "review",
+          taskType: "matter",
+          stages: [
+            { id: "check", role: "counsel" },
+            { id: "check", role: "paralegal" },
+          ],
+        },
+        "conflicting_ownership_metadata",
+        "Duplicate workflow stage ID",
+      ],
+      [
+        "extend",
+        { description: "Ours", stages: [] },
+        "protected_security_invariant",
+        "Definition payload may contain only its exact ID and descriptive fields",
+      ],
+    ];
+    for (const [operation, payload, code, detail] of cases) {
+      const h = await harness();
+      await h.bind([h.v1]);
+      // Written directly through the repository, past the mutation contract.
+      await h.storage.definitions.replace(
+        {
+          projectId: "a",
+          revision: 0,
+          owned: [],
+          overrides: [
+            {
+              origin: "project_override",
+              source: { ...h.v1, kind: "workflows", localId: "review" },
+              operation: operation as "replace" | "extend",
+              revision: 1,
+              payload: payload as unknown as { id: string },
+              actorId: "hand-edit",
+              changedAt: now.toISOString(),
+            },
+          ],
+        },
+        0,
+        now,
+      );
+      const inspected = await h.definitions.inspect("a");
+      expect(inspected.issues, JSON.stringify(payload)).toEqual([
+        {
+          code,
+          message: `Stored override violates the override contract: ${detail}`,
+          source: source(h.v1, "review"),
+        },
+      ]);
+      expect(JSON.stringify(inspected.issues)).not.toContain("undefined");
+      // The resolver fails closed on the same state.
+      await expect(h.configuration()).rejects.toMatchObject({
+        code: "unresolved_override",
+      });
+    }
   });
 
   test("the mutation contract refuses malformed and out-of-scope workflow overrides; nothing is written", async () => {
