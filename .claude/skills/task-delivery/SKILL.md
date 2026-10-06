@@ -71,11 +71,12 @@ started in preflight, before the first change. Mark it in review when its pull
 request is open. Mark it done only after stage 11. Use the commands the
 project configures for this; without them, use the project's own documented
 way of changing task state, and only where there is none report each
-transition for someone else to apply. Check the task's current state first: a task already in the
-state you would set needs nothing; when you do not know how the tracker identifies the task,
-ask. A transition the tracker refuses is a stop condition: report what it
-said, and never work around it. See
-[configuration](references/configuration.md).
+transition for someone else to apply. Check the task's current state first: a
+task already in the state you would set needs nothing; when you do not know
+how the tracker identifies the task, ask. A transition the tracker refuses is
+a stop condition: report what it said, and never work around it. A transition
+that would itself start a binding run falls under the rule on binding runs
+below. See [configuration](references/configuration.md).
 
 ## What to deliver
 
@@ -94,9 +95,9 @@ preflight, and never choose one yourself:
 - When the project enforces a pipeline, state which one applies; there is no
   choice to offer.
 - When the project defines a default pipeline, ask whether to use it and wait
-  for the answer.
-- When several pipelines could apply and none is the default or enforced, list
-  them and ask the authorizer which one to use.
+  for the answer. If it is declined, ask what to follow instead.
+- When one or more pipelines could apply and none is the default or enforced,
+  list them and ask the authorizer which one to use.
 - When the project defines no pipeline, do not ask.
 
 A project pipeline that is used decides the stages, assignments, and
@@ -110,10 +111,11 @@ Following a project pipeline does not by itself mean starting anything in the
 project's systems. Where using it would start a run that binds the task - one
 whose stages only that system's own assigned performers can complete - check
 first that you are such a performer for every stage. If you are not, do not
-start it: tell the authorizer what the run requires and let them decide how to
-proceed. When you cannot tell whether a run would bind the task, do not start
-it either: ask the authorizer. Never start a binding run you cannot finish, and never override or
-cancel one on your own.
+start it: tell the authorizer what the run requires, let them decide how to
+proceed, and record their decision with the evidence. When you cannot tell
+whether a run would bind the task, or whether you are assigned to every stage,
+do not start it either: ask the authorizer. Never start a binding run you
+cannot finish, and never override or cancel one on your own.
 
 Never pick a milestone or a task yourself. Once the answer is in, and before
 showing anything for approval, check the dependencies of the selection. The
@@ -134,7 +136,7 @@ explicitly, a Git branch dependency on that branch, as the
 satisfies nor cancels the logical task dependency: record the two dependencies
 separately, keep the task dependency listed as unresolved, and never treat the
 prerequisite as DONE until its own lifecycle has reached DONE. A selected
-prerequisite is delivered before the task that needs it, and that task starts
+prerequisite is worked on before the task that needs it, and that task starts
 only once the prerequisite is DONE or the authorizer has approved a Git branch
 dependency on it.
 

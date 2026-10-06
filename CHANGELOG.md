@@ -10,7 +10,9 @@
   tracks task state, the skill marks each task started, in review and done -
   with the configured `task_lifecycle` commands (`start`, new `review`,
   `complete`, with a `{task}` placeholder) or the project's documented way -
-  and stops when the tracker refuses a transition.
+  and stops when the tracker refuses a transition. It never starts a binding
+  pipeline run whose stages it is not assigned to complete, and asks when it
+  cannot tell.
 - Add portable agent skills under `skills/` with one canonical source per
   skill and a deterministic installer for the executor copies
   (`bun run skills:install`, `skills:check`, `skills:validate`). The first

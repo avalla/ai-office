@@ -552,11 +552,11 @@ describe("task-delivery workflow invariants", () => {
     ],
     [
       "policy:refused-transition-stops",
-      /A transition the\s+tracker refuses is a stop condition/u,
+      /A transition the\s+tracker\s+refuses\s+is\s+a\s+stop\s+condition/u,
     ],
     [
       "policy:no-binding-run-you-cannot-finish",
-      /Never start a binding run you cannot finish/u,
+      /Never start a binding run\s+you\s+cannot finish/u,
     ],
     [
       "policy:never-choose-the-target",
@@ -732,6 +732,9 @@ describe("task-delivery workflow invariants", () => {
     expect(core).toMatch(
       /A transition the tracker refuses is a stop condition: report what it said, and never work around it\./u,
     );
+    expect(core).toMatch(
+      /A transition that would itself start a binding run falls under the rule on binding runs below\./u,
+    );
   });
 
   describe("what to deliver", () => {
@@ -822,15 +825,16 @@ describe("task-delivery workflow invariants", () => {
         "Settle which pipeline applies before preflight, and never choose one yourself:",
         "- When the project enforces a pipeline, state which one applies; there is no choice to offer.",
         "- When the project defines a default pipeline, ask whether to use it and wait for the answer.",
-        "- When several pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use.",
+        "If it is declined, ask what to follow instead.",
+        "- When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use.",
         "- When the project defines no pipeline, do not ask.",
         "A project pipeline that is used decides the stages, assignments, and transitions of the work.",
         "Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence.",
         "A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
         "Following a project pipeline does not by itself mean starting anything in the project's systems.",
         "Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage.",
-        "If you are not, do not start it: tell the authorizer what the run requires and let them decide how to proceed.",
-        "When you cannot tell whether a run would bind the task, do not start it either: ask the authorizer.",
+        "If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence.",
+        "When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer.",
         "Never start a binding run you cannot finish, and never override or cancel one on your own.",
         "Never pick a milestone or a task yourself.",
         "Once the answer is in, and before showing anything for approval, check the dependencies of the selection.",
@@ -840,7 +844,7 @@ describe("task-delivery workflow invariants", () => {
         "Never drop or reorder a task silently to make the selection work.",
         "When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, explicitly, a Git branch dependency on that branch, as the [branch policy](references/branch-policy.md) describes.",
         "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
-        "A selected prerequisite is delivered before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.",
+        "A selected prerequisite is worked on before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.",
         "Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
         "Start preflight only after the authorizer approves that summary.",
         "A run that covers several tasks gives each task its own branch, pull request, and evidence.",
@@ -990,7 +994,7 @@ describe("task-delivery workflow invariants", () => {
       );
       // One rule per situation: enforced, default, several, none.
       expect(section).toMatch(
-        /- When the project enforces a pipeline, state which one applies; there is no choice to offer\. - When the project defines a default pipeline, ask whether to use it and wait for the answer\. - When several pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use\. - When the project defines no pipeline, do not ask\./u,
+        /- When the project enforces a pipeline, state which one applies; there is no choice to offer\. - When the project defines a default pipeline, ask whether to use it and wait for the answer\. If it is declined, ask what to follow instead\. - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use\. - When the project defines no pipeline, do not ask\./u,
       );
       // A named target skips the target question, not the pipeline.
       expect(section).toMatch(
@@ -1013,11 +1017,11 @@ describe("task-delivery workflow invariants", () => {
         /Following a project pipeline does not by itself mean starting anything in the project's systems\./u,
       );
       expect(section).toMatch(
-        /Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage\. If you are not, do not start it: tell the authorizer what the run requires and let them decide how to proceed\./u,
+        /Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage\. If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence\./u,
       );
       // In doubt the answer is the same: do not start it, ask.
       expect(section).toMatch(
-        /When you cannot tell whether a run would bind the task, do not start it either: ask the authorizer\./u,
+        /When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer\./u,
       );
       expect(section).toMatch(
         /Never start a binding run you cannot finish, and never override or cancel one on your own\./u,
@@ -1029,7 +1033,7 @@ describe("task-delivery workflow invariants", () => {
         section.indexOf("check the dependencies of the selection"),
       );
       expect(reference("stop-conditions.md")).toMatch(
-        /\*\*Binding run you cannot complete\.\*\* Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage you would have to perform - or such a run is already active for the task\. Do not start, override, or cancel it; report what it requires and wait\./u,
+        /\*\*Binding run you cannot complete\.\*\* Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it, or cannot tell - or such a run is already active for the task and you cannot complete it\. Do not start, override, or cancel it; report what it requires and wait\./u,
       );
     });
 
@@ -1063,7 +1067,7 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: Settle which pipeline applies before preflight, and never choose one yourself:",
         "SKILL.md: - When the project enforces a pipeline, state which one applies; there is no choice to offer.",
         "SKILL.md: - When the project defines a default pipeline, ask whether to use it and wait for the answer.",
-        "SKILL.md: - When several pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use.",
+        "SKILL.md: - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use.",
         "SKILL.md: - When the project defines no pipeline, do not ask.",
         "SKILL.md: A project pipeline that is used decides the stages, assignments, and transitions of the work.",
         "SKILL.md: A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
@@ -1071,7 +1075,7 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
         "SKILL.md: The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
         "configuration.md: A project may bind them to its own role names and to any executor; the pipeline stays the same when the executor changes.",
-        "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage you would have to perform - or such a run is already active for the task.",
+        "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it, or cannot tell - or such a run is already active for the task and you cannot complete it.",
       ]);
     });
 
@@ -1135,7 +1139,7 @@ describe("task-delivery workflow invariants", () => {
 
     test("no part of the section lets a branch settle a task dependency", () => {
       expect(section).not.toMatch(/branch policy (?:allows|permits)/iu);
-      expect(section).not.toMatch(/\bunsatisfied\b|\bdelivered\b(?! before)/iu);
+      expect(section).not.toMatch(/\\bunsatisfied\\b|\\bdelivered\\b/iu);
       expect(section).not.toMatch(
         /\b(?:counts? as|treat(?:ed)? (?:it|its dependency|the dependency) as|is then) (?:satisfied|resolved|DONE)\b/iu,
       );

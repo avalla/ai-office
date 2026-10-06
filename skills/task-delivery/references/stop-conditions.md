@@ -28,9 +28,9 @@ depend on the answer may continue.
 - **Red baseline.** The full verification fails on the untouched base.
 - **Binding run you cannot complete.** Using the project's pipeline would start
   a run whose stages only the project's own assigned performers can complete,
-  and you are not assigned to every stage you would have to perform - or such
-  a run is already active for the task.
-  Do not start, override, or cancel it; report what it requires and wait.
+  and you are not assigned to every stage needed to complete it, or cannot
+  tell - or such a run is already active for the task and you cannot complete
+  it. Do not start, override, or cancel it; report what it requires and wait.
 - **Refused task transition.** The system that tracks the project's tasks
   refuses to mark the task started, in review, or done. Report what it said;
   never work around it or change the state another way.
