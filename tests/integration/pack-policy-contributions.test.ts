@@ -39,6 +39,7 @@ import {
 import {
   parsePortableProjectArchive,
   portableProjectDefinitionFormatVersion,
+  portableProjectDescriptiveVocabularyFormatVersion,
   portableProjectWorkflowOverrideFormatVersion,
   serializePortableProjectArchive,
 } from "@ai-office/application/project-portability/project-snapshot.ts";
@@ -989,6 +990,70 @@ describe("GP-25 a workflow replacement keeps what the policy governs", () => {
     expect(policy.stages.map((item) => item.stage)).toEqual(["check", "sign"]);
   });
 
+  test("a replacement that keeps the governed stage IDs may add the GP-10B-2 descriptive fields and still resolves", async () => {
+    const host = await project();
+    await host.bind([v1]);
+    const mutation = host.mutation(v1, "review", "replace", {
+      id: "review",
+      title: "Project review",
+      taskType: "matter",
+      stages: [
+        { ...stage("draft"), title: "Draft", objective: "Write it" },
+        {
+          id: "check",
+          role: "counsel",
+          title: "Check",
+          objective: "Review it",
+          checks: ["Cited", "Signed"],
+        },
+        stage("sign"),
+      ],
+    });
+    expect((await host.definitions().preview("a", mutation)).issues).toEqual(
+      [],
+    );
+    await host.mutate(mutation);
+    const view = await host.configuration();
+    const workflow = view.workflows.find(
+      (item) => item.workflowId === pid("workflows", "review"),
+    )!;
+    expect(workflow.stages.find((item) => item.id === "check")).toMatchObject({
+      title: "Check",
+      objective: "Review it",
+      checks: ["Cited", "Signed"],
+    });
+    const policy = view.policies.find(
+      (item) => item.workflowId === workflow.workflowId,
+    )!;
+    expect(policy).toMatchObject({ ...reviewClauses, state: "active" });
+  });
+
+  test("a stage that carries a governance key and a descriptive field is refused as governance, and an unknown key beside one keeps its GP-13 code", async () => {
+    const host = await project();
+    await host.bind([v1]);
+    const before = await host.authority();
+    const code = async (extra: Record<string, unknown>) =>
+      (
+        await conflict(
+          host.mutate(
+            host.mutation(v1, "review", "replace", {
+              id: "review",
+              title: "Project review",
+              taskType: "matter",
+              stages: [{ id: "check", role: "counsel", ...extra }],
+            }),
+          ),
+        )
+      ).code;
+    expect(
+      await code({ title: "Check", checks: ["x"], requiresApproval: true }),
+    ).toBe("protected_security_invariant");
+    expect(await code({ title: "Check", guard: "x" })).toBe(
+      "malformed_origin_reference",
+    );
+    expect(await host.authority()).toEqual(before);
+  });
+
   test("extending a governed workflow keeps its policy active", async () => {
     const host = await project();
     await host.bind([v1]);
@@ -1701,6 +1766,36 @@ describe("GP-25 portable archive and restore", () => {
         table,
       ).toBe(0);
     expect(existsSync(join(target, ".ai-office"))).toBe(false);
+  });
+
+  test("a format-10 archive (descriptive stage fields) still runs the policy restore preflight", async () => {
+    const described = (stages: { id: string; role: string }[]) => ({
+      id: "review",
+      taskType: "matter",
+      stages: stages.map((item) => ({ ...item, title: `Title ${item.id}` })),
+    });
+    const valid = await archiveOf(v1, described(review.stages));
+    expect(valid.archive.manifest.formatVersion).toBe(
+      portableProjectDescriptiveVocabularyFormatVersion,
+    );
+    const host = runtime(catalogOf(v1Bytes));
+    const restored = await host
+      .portability()
+      .restore({ archive: valid.archive, rootPath: restoreTarget() });
+    expect(restored.outcome).toBe("restored");
+    const violating = await archiveOf(
+      v1,
+      described(review.stages.filter((item) => item.id !== "check")),
+    );
+    expect(violating.archive.manifest.formatVersion).toBe(
+      portableProjectDescriptiveVocabularyFormatVersion,
+    );
+    const rejected = await runtime(catalogOf(v1Bytes))
+      .portability()
+      .restore({ archive: violating.archive, rootPath: restoreTarget() })
+      .catch((error) => error);
+    expect(rejected).toBeInstanceOf(ProjectRestorePolicyTargetError);
+    expect(rejected).toMatchObject({ code: "policy_target_missing" });
   });
 
   test("without the exact closure there is no restore verdict, and resolution fails closed once the pack is installed", async () => {
