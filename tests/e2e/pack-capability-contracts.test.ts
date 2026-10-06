@@ -379,6 +379,7 @@ describe("GP-16 pack capability contracts over the Runtime socket", () => {
             capabilityId: "pack:org.example.ops/capabilities/publish",
             addedOperations: [write],
             removedOperations: [],
+            requirement: { before: "required", after: "required" },
           },
         ],
       };

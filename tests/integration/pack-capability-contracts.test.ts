@@ -579,6 +579,9 @@ function defineContract(name: string, create: () => Promise<Backend>): void {
             capabilityId: "pack:org.example.ops/capabilities/publish",
             addedOperations: [merge],
             removedOperations: [],
+            // Unchanged, and reported all the same: the reader must see
+            // that the new operation is a required one.
+            requirement: { before: "required", after: "required" },
           },
         ],
       });

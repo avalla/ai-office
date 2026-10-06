@@ -176,14 +176,15 @@ export function bindCapabilityContracts(
 /**
  * A capability whose operation contract differs between two resolved
  * closures. A changed mode is one removed and one added operation.
- * `requirement` is present when it differs; `null` is a capability that is
- * absent or a label on that side.
+ * `requirement` is reported for every entry, changed or not, so an operation
+ * change always shows whether it concerns a required or an optional
+ * capability; `null` is a capability that is absent or a label on that side.
  */
 export interface CapabilityContractDifference {
   readonly capabilityId: string;
   readonly addedOperations: readonly CapabilityOperation[];
   readonly removedOperations: readonly CapabilityOperation[];
-  readonly requirement?: {
+  readonly requirement: {
     readonly before: CapabilityRequirement | null;
     readonly after: CapabilityRequirement | null;
   };
@@ -241,17 +242,16 @@ export function capabilityContractDifferences(
       before: previous?.requirement ?? null,
       after: current?.requirement ?? null,
     };
-    const requirementChanged = requirement.before !== requirement.after;
     if (
       addedOperations.length ||
       removedOperations.length ||
-      requirementChanged
+      requirement.before !== requirement.after
     )
       differences.push({
         capabilityId: id,
         addedOperations,
         removedOperations,
-        ...(requirementChanged ? { requirement } : {}),
+        requirement,
       });
   }
   return differences.sort((left, right) =>
