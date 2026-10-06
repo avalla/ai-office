@@ -29,7 +29,8 @@ field and contribution section. Contribution items currently accept only an
 ASCII `id` and optional `title`/`description`; workflow items also have a
 `taskType` and ordered `stages` with `id`/`role`, role items may have
 `capabilities`, and agent items may have `role`, `prompts`, `knowledge` and
-`capabilities` (see below). Unknown fields fail validation,
+`capabilities` (see below). GP-10B-2 adds descriptive fields to stages,
+roles, prompts and workflows (see below). Unknown fields fail validation,
 including executable entry points and embedded credentials. Later GP slices
 must explicitly extend section schemas through a compatible manifest/schema
 decision before they can add fields. The current generic `Contribution` type is
@@ -70,14 +71,36 @@ role's set and any of the fields on another contribution kind fail with
 so a definition of another pack, including a dependency, cannot be named. The
 references are declarative: they create no Runtime agent and grant nothing.
 
+Descriptive vocabulary (GP-10B-2). A workflow stage may carry `title`,
+`objective` and `checks`; a role item `responsibilities`; a prompt item
+`text`; and a workflow item `additionalTaskTypes`. All are optional.
+`title` and `objective` are manifest text. `checks` and `responsibilities`
+are ordered lists of 1 to 64 entries (`maximumDescriptiveListEntries`), each
+a non-empty string under the manifest text rule; duplicates are allowed, the
+written order is kept and it is what the digest covers. `text` is manifest
+text that must be non-empty, the one exception to the rule below.
+`additionalTaskTypes` is a set like a role's `capabilities`: 1 to 1,000
+valid, unique local IDs, each naming an item of the same manifest's
+`contributions.taskTypes` and none equal to the workflow's `taskType`, held
+in ascending code-unit order. A workflow's routes are its `taskType` and its
+`additionalTaskTypes`; schema 1 does not require that a task type is named by
+only one workflow. A non-array, empty or over-bound list, a non-string, empty
+or lone-surrogate entry, an empty `text`, a malformed, duplicate or
+undeclared additional task type or one equal to `taskType`, and any of the
+fields on another contribution kind or level fail with `invalid_contribution`
+and the member's path. The fields are declarative: nothing is executed,
+scheduled or sent to a provider because of them.
+
 Versioning and compatibility: these are additive section-schema extensions.
 The manifest stays schema 1 and the core contract version stays 1. A manifest
 that omits the fields has the same canonical form and `manifestDigest` as
 before. A reader built before an extension rejects a manifest that uses its
 fields as unknown fields; no reader ignores them.
 
-Manifest text is `metadata.name`, `metadata.description` and every
-contribution `title` and `description`. One rule covers all of them: a string
+Manifest text is `metadata.name`, `metadata.description`, every
+contribution `title` and `description`, and the GP-10B-2 descriptive text: a
+stage `title` and `objective`, every `checks` and `responsibilities` entry
+and a prompt `text`. One rule covers all of them: a string
 without a lone Unicode surrogate. The text is not normalized and has no length
 bound, valid non-BMP characters are kept, and control characters are allowed
 when JSON-escaped, U+0000 included (GP-23). U+0000 is written `\u0000` in the
