@@ -53,6 +53,8 @@ export interface AgentRuntimeRepository {
   ): Promise<{ runId: string; expiresAt: Date } | null>;
   saveRole(role: Role): Promise<void>;
   findRole(roleId: string, projectId: string): Promise<Role | null>;
+  /** Every role of the project, with or without an agent; role key order. */
+  listRoles(projectId: string): Promise<Role[]>;
   saveAgent(agent: Agent): Promise<void>;
   listAgents(projectId: string): Promise<Agent[]>;
   findAgent(agentId: string): Promise<Agent | null>;

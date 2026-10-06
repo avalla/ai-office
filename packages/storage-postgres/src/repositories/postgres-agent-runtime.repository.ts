@@ -293,6 +293,22 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
     return row === undefined ? null : restoreRole(row);
   }
 
+  async listRoles(projectId: string): Promise<Role[]> {
+    const rows = await this.database.query<RoleRow>(
+      `
+      SELECT role.id, role.project_id, role.role_key, role.name, role.version,
+             role.capabilities_json, role.tools_json, role.model_policy, role.limits_json,
+             role.source_path, role.guidance_text, role.guidance_version,
+             role.created_at, role.updated_at
+      FROM core.role AS role
+      JOIN core.project AS project
+        ON project.id = role.project_id AND project.tenant_id = $2
+      WHERE role.project_id = $1 ORDER BY role.role_key, role.id`,
+      [projectId, this.tenantId],
+    );
+    return rows.map(restoreRole);
+  }
+
   async saveAgent(value: Agent): Promise<void> {
     const rows = await this.database.query<{ id: string }>(
       `
