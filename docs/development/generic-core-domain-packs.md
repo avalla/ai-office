@@ -494,8 +494,12 @@ Each entry names a capability declared in the same manifest's
 `contributions.capabilities`. The contract package rejects, with a typed
 `DomainPackManifestError` (`invalid_contribution`) and the path of the
 offending member: a non-array value, an empty array, a malformed local ID, a
-duplicate, a reference to a capability the manifest does not declare, and the
-field on any other contribution kind, where it remains an unknown field.
+duplicate, a list of more than 1,000 entries, a reference to a capability the
+manifest does not declare, and the field on any other contribution kind, where
+it remains an unknown field. The bound of 1,000 entries is the one GP-12
+introduced for every reference list of the contract package
+(`maximumContributionReferences`); it applies to a role's `capabilities` as a
+uniformity rule.
 Schema-1 references are bare local IDs, so a cross-pack reference cannot be
 expressed: a capability declared only in a dependency pack is an unknown
 reference. "No capabilities" has exactly one encoding, the absent field.
