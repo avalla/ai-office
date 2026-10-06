@@ -1951,9 +1951,27 @@ is unchanged, the pack is still unregistered and unread by the Runtime, and
 nothing was removed from the legacy path; the pack must not become
 authoritative for Runtime execution without a separately approved task. The
 execution parity task `a45ddb12-3159-4b60-9b8b-c26516720834` depends on
-GP-10B-1, GP-10B-2 and the policy task. Aliases, Development Pack prompts
-and the descriptive contract extension (GP-10B-2), pack policy contributions
-(GP-25), evidence and adoption (GP-10C), automatic
+GP-10B-1, GP-10B-2 and the policy task. GP-25, whose number is now
+confirmed, gives the schema-1 `policies` contribution a typed form: a policy
+targets one workflow of its own pack and declares its `enforcement` and, per
+stage, `requiresApproval`, `requiresIndependentApproval`,
+`requiresDifferentAgentFrom` and the admitted `operations`, which are opaque
+operation names independent of pack capabilities and of GP-16. A pack whose
+policies are all typed resolves, and `project:configuration:show` lists a
+derived `policies` view; a policy without a target workflow still fails
+closed. Policies are pack-owned: a project cannot override or own one, a
+workflow replacement must keep every governed stage and separation order
+(`policy_target_missing`), and the policy of an existing workflow changes
+only through `project:pack:upgrade`, whose plan reports `policyChanges` and
+`targetPolicies` (`project:pack:apply` refuses it with
+`policy_change_requires_upgrade`). It adds no migration and no archive
+format, and nothing is enforced from a policy: the Runtime still reads only
+the OfficeManifest pipelines. The policies of the development reference pack
+and their parity tests are a second GP-25 pull request that follows the pack
+version of GP-10B-2. Aliases, Development Pack prompts
+and the descriptive contract extension (GP-10B-2), the development pack's
+policy data (GP-25, second pull request), Runtime enforcement from pack
+policies (`a45ddb12`), evidence and adoption (GP-10C), automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
 end-to-end exit criteria are met.
