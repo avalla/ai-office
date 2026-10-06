@@ -3418,14 +3418,15 @@ to 16 are the contract (PR 1).
 
 ## GP-25 pack policy contribution contract
 
-Status: contract implemented; pack data pending. The owner approved the scope
+Status: implemented. The owner approved the scope
 proposal on 2026-10-06 (option B-M, every decision below at its proposed
 default) and confirmed the number GP-25. Runtime task
-`1a883c04-0905-4b36-a57b-12d45fdfd59f`. GP-25 is delivered in two pull
-requests. The first, the contract, delivers everything in this section except
-the pack data. The second adds the policies to the development reference
-pack, their parity tests and the residue list; it waits for the pack version
-GP-10B-2 publishes, because pack versions are serialized.
+`1a883c04-0905-4b36-a57b-12d45fdfd59f`. GP-25 was delivered in two pull
+requests. The first, the contract, delivered everything in this section except
+the pack data. The second added the policies to the development reference
+pack, their parity tests and the residue list, as development pack `0.4.0`,
+after the pack version GP-10B-2 published, because pack versions are
+serialized; it is the section "GP-25 PR 2 development pack 0.4.0".
 
 Formal scope:
 
@@ -3908,18 +3909,18 @@ instead of `malformed_origin_reference`.
   that a Runtime executing from these declarations would behave like the
   legacy pipelines; that is the subject of task
   `a45ddb12-3159-4b60-9b8b-c26516720834`. The development reference pack
-  declares no policy yet: the policies used on the GP-09 fixture are added to
-  a copy of the pack inside the test.
+  declared no policy in this pull request: the policies used on the GP-09
+  fixture were added to a copy of the pack inside the test. Pack `0.4.0`
+  declares them (see "GP-25 PR 2 development pack 0.4.0").
 
 ## GP-25 PR 2 development pack 0.4.0
 
-Status: specified. The owner approved the scope proposal of GP-25 on
+Status: implemented. The owner approved the scope proposal of GP-25 on
 2026-10-06, option B-M, and with it the second pull request below, every
 decision at its proposed default. This section is the contract of that pull
-request, which lands in three commits: this contract, then the failing tests,
-then the data. "Implementation record" is added with the data and records
-what was built where the contract left a choice, and where the evidence
-stops.
+request, which landed in three commits: this contract, then the failing tests,
+then the data. "Implementation record" at the end of this section records what
+was built where the contract left a choice, and where the evidence stops.
 
 Formal scope:
 
@@ -4154,6 +4155,78 @@ This pack is within the legacy bound because it declares no separation list.
   test constructs, not by an observed default.
 - Whether a Runtime that executed these policies would behave like the legacy
   pipelines is not shown; that is task
+  `a45ddb12-3159-4b60-9b8b-c26516720834`.
+
+### Implementation record
+
+- Manifest. `packages/domain-pack-development/manifest.json` is
+  `org.ai-office.development@0.4.0`, schema 1, `coreContract` `[1, 2)`, no
+  dependency, with the three policies of the table above in this order:
+  `delivery-governance`, `bugfix-governance`, `release-governance`. Each has a
+  `title` and a `description` and carries only the keys `workflow`, `stages`
+  and, for `delivery`, `enforcement`; a stage entry carries `stage` and
+  `requiresApproval`. It was produced from the `0.3.0` file by a script that
+  is not committed, then formatted; the tests, not the script, are the
+  evidence. The package still holds the same four files and no source file.
+- Pinned. `manifestDigest` is
+  `sha256:c575ec687088bdf3861cb3fe1fee3b73cc8214c95ff4898c96e57c9ccde59848`.
+  The digest of the exact file bytes is
+  `sha256:59ce1e5a0596a5958c047c1ae446d046e2efe1c38d26e1e554ad6dc713ab0f00`.
+  Every contribution but `policies` keeps the digest
+  `80abc78243d343bfde794b205b739392eadd51e383ca8c3047d609ca52047124`,
+  computed over the JSON of the verified contributions with `policies`
+  removed. It is checked against a frozen copy of the `0.3.0` file,
+  `tests/fixtures/domain-pack/development-0.3.0.json`, whose bytes are those
+  committed before this change and whose manifest digest is
+  `sha256:4f54452420bae28efd34818451b86b256e4edb785c377104cf8e7636d6f48a35`.
+- Comparison shape. `tests/helpers/development-pack-parity.ts` gains a
+  `governance` part: for every workflow its `enforcement` and its stages that
+  carry any clause. A stage with no clause is not listed on either side, so a
+  change that does not touch a clause (a stage rename in `discovery`, the
+  order of a stage list) does not move the part. The legacy side is read from
+  the profile and the pack side from the `policies` view of the resolved
+  configuration. The sets of a stage are compared in code-unit order, so the
+  legacy order of `requiresDifferentAgentFrom` is not compared, as the
+  contract treats the list as a set. An absent legacy `capabilities` and an
+  empty one both equal the absent `operations`.
+- Completeness by mutation. `pipeline.enforcement`, `stage.requiresApproval`
+  and `stage.capabilities` are now read by the projection; the classification
+  of the default state shows it, and an entry of the list that states them as
+  undelivered is reported as in both the projection and the list. The two
+  fields that the default state does not use cannot be classified from it:
+  their entries stay marked `inDefaultState: false`, and the tests give a
+  legacy stage the field and show that the projection reads it.
+- List. `schemaVersion` 3, pack `0.4.0`, 19 entries. The five GP-25 entries
+  have a `delivered` statement and `residue: null`; `owner` stays `GP-25`, the
+  task that delivered them. The `owners` text of GP-25 no longer says
+  "provisional number". The other 14 entries are as GP-10B-2 left them.
+- Tests changed where the pack changed: the pinned version and digests, the
+  count of policies, the GP-10B-2 test that pinned the residue table (now
+  history for fields, owners and gap codes, as the GP-10B-1 one was), the
+  GP-10B-1 cases that changed a governance field and expected parity to stay
+  equal (they now expect it to break), the completeness case that stated a
+  delivered part for `stage.requiresApproval` (it now uses the Runtime role
+  `tools`, which stays with GP-10C), and the pack mutation that removes the
+  `release` workflow, which now removes its policy too because a policy of a
+  workflow the manifest does not declare is refused by the parser.
+- Policy IDs, titles and descriptions are the only wording the contract left
+  open; they are presentation, and the stable `policyId` is what a consumer
+  keys on. A later version that renames a policy reports a change, by the
+  GP-25 implementation record.
+- Unchanged. The GP-09 profile digest of the fixture project is the pinned
+  vector before and after the binding, the checksum of each GP-09 fixture file
+  is pinned, an unbound project resolves to the empty configuration at its
+  pinned digest, the run, approval and job tables are identical before and
+  after binding, and the Runtime's own catalog holds no pack. The
+  architecture tests were not edited.
+- Criterion 24 is a property of this change set. It was checked on the diff
+  against the base commit; no test keeps it true afterwards. PostgreSQL: no
+  storage code is reached, so no PostgreSQL-gated suite covers this change and
+  none was added.
+- Evidence limits. Parity is shown for the default legacy state only. The pack
+  is resolved through a catalog a test supplies. Nothing reads a policy at run
+  time, so whether a Runtime that executed these policies would behave like
+  the legacy pipelines is not shown and is the subject of task
   `a45ddb12-3159-4b60-9b8b-c26516720834`.
 
 ## Objective and decision boundary

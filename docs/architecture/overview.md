@@ -155,6 +155,12 @@ an existing workflow changes only through the reviewed upgrade plan. The
 derived view lists the policies; they are declarations only, the pipeline
 engine, runs, approvals, guards, grants and controlled-action authorization
 do not read them, and a policy without a target workflow still fails closed.
+Development pack `0.4.0` (the second GP-25 pull request) declares the legacy
+governance defaults as three such policies: `delivery` enforced, and an
+approval on `delivery/review`, `bugfix/review` and `release/verification`,
+with no admitted operation. Tests compare them with the legacy pipelines
+(expressible-subset parity); nothing is enforced from them and the Runtime
+still reads only the legacy sources.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

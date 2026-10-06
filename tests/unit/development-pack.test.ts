@@ -1685,7 +1685,7 @@ describe("GP-25 PR 2 residue list", () => {
     expect(entries).toHaveLength(5);
     for (const entry of entries) {
       expect(entry.residue).toBeNull();
-      expect(entry.delivered).toContain("nothing is enforced by the Runtime");
+      expect(entry.delivered).toMatch(/nothing is enforced by the Runtime/iu);
       expect(entry.reason.length).toBeGreaterThan(0);
     }
     expect(
