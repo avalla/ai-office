@@ -1914,7 +1914,8 @@ end-to-end exit criteria are met.
 
 ### Post-GP-06 hardening follow-ups
 
-Status: GP-22 is implemented; GP-23 is planned and not implemented. They are
+Status: GP-22 is implemented; GP-23 is assessed, with U+0000 allowed in pack
+manifest text by design. They are
 separate, independently completable M16 tasks that harden the merged GP-06 and
 GP-07 contracts. They are not unfinished GP-06 or GP-07 acceptance criteria, and
 neither reopens that work. Each depends only on merged GP-06 and GP-07; neither
@@ -1948,15 +1949,23 @@ depends on the other, and no other GP task depends on them.
   the database transaction.
   GP-06 stays the fail-closed backstop. No migration or archive format was
   added.
-- GP-23 — Pack manifest U+0000 policy assessment. Project definition text
-  rejects U+0000 because PostgreSQL `jsonb` cannot represent it consistently
-  with SQLite. Pack manifest text is validated separately. GP-23 traces
-  manifest text through its real persistence, canonicalization and
-  serialization boundaries without assuming the answer, and records exactly
-  one evidence-backed outcome: reject U+0000 consistently through one shared
-  manifest text predicate, or allow it explicitly by design with a regression
-  test and a documented distinction. No restriction is introduced without
-  evidence.
+- GP-23 — Pack manifest U+0000 policy assessment (assessed: allowed by
+  design). Project definition text rejects U+0000 because PostgreSQL `jsonb`
+  cannot represent it consistently with SQLite. Pack manifest text is
+  validated separately. GP-23 traced manifest text through its real
+  persistence, canonicalization and serialization boundaries without assuming
+  the answer, and recorded one evidence-backed outcome: U+0000 is allowed
+  explicitly by design, with regression tests and a documented distinction.
+  Manifest text is not persisted: it stays in the installed catalog's artifact
+  bytes and in derived output, where the escape `\u0000` survives parsing,
+  RFC 8785 canonicalization, both digests, resolution and
+  `project:configuration:show`. Project storage and portable archives hold
+  pack identities only. The one path that copies template text into a stored
+  project payload, `convert_to_replace`, is checked against the project
+  definition text rule before any write and is refused as
+  `prospective_configuration_invalid` on SQLite and PostgreSQL alike. No
+  restriction was introduced, and no code, migration or archive format
+  changed.
 
 Scope, exact acceptance criteria and non-goals are in the
 [plan's hardening section](generic-core-domain-packs.md#post-gp-06-hardening-follow-ups).

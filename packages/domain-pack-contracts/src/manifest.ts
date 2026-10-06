@@ -267,6 +267,12 @@ function keys(
       fail(code, `${path}.${key}`, "missing field");
 }
 
+/**
+ * The one rule for manifest text: metadata name and description, and every
+ * contribution title and description. A lone surrogate has no canonical JSON
+ * form. U+0000 is allowed by design (GP-23): manifest text is not written to
+ * project storage, unlike project definition text, which rejects it.
+ */
 function string(value: unknown, path: string, code: ManifestErrorCode): string {
   if (typeof value !== "string" || hasLoneSurrogate(value))
     return fail(code, path, "expected Unicode string");

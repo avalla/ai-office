@@ -76,6 +76,20 @@ that omits the fields has the same canonical form and `manifestDigest` as
 before. A reader built before an extension rejects a manifest that uses its
 fields as unknown fields; no reader ignores them.
 
+Manifest text is `metadata.name`, `metadata.description` and every
+contribution `title` and `description`. One rule covers all of them: a string
+without a lone Unicode surrogate. The text is not normalized and has no length
+bound, valid non-BMP characters are kept, and control characters are allowed
+when JSON-escaped, U+0000 included (GP-23). U+0000 is written `\u0000` in the
+file and in the canonical form; a raw 0x00 byte is malformed JSON. This differs
+on purpose from project definition text, which is bounded to 16,000 UTF-16
+code units and rejects U+0000 because it is stored in project storage, where
+PostgreSQL `jsonb` cannot hold the character. Manifest text is not stored
+there: it stays in the artifact bytes and in resolved output. An upgrade
+resolution that would copy template text into a project override
+(`convert_to_replace`) is checked against the project rule and refused when
+the text does not fit it.
+
 For `manifestDigest`, validation removes only the root `manifestDigest`, sorts
 `dependencies` and each top-level contribution array by unique ASCII `id`,
 retains all other array order, serializes JSON with RFC 8785 object-key and
