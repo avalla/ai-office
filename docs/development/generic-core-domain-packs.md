@@ -1747,31 +1747,47 @@ workflow cannot express. Each entry names the task that owns it next: GP-10B,
 GP-10C, or the Runtime execution parity task `a45ddb12` (in full
 `a45ddb12-3159-4b60-9b8b-c26516720834`).
 
-| Subject      | Field              | Owner    | GP-09 gap code                        |
-| ------------ | ------------------ | -------- | ------------------------------------- |
-| office role  | `responsibilities` | GP-10B   | `role_fields_not_expressible`         |
-| Runtime role | `name`             | a45ddb12 | none (missing from GP-09's list)      |
-| Runtime role | `version`          | a45ddb12 | `runtime_role_fields_not_expressible` |
-| Runtime role | capability order   | a45ddb12 | none                                  |
-| Runtime role | `tools`            | GP-10C   | `runtime_role_fields_not_expressible` |
-| Runtime role | `modelPolicy`      | a45ddb12 | `runtime_role_fields_not_expressible` |
-| Runtime role | `limits`           | a45ddb12 | `runtime_role_fields_not_expressible` |
-| Runtime role | `guidance`         | GP-10B   | `runtime_role_fields_not_expressible` |
-| agent        | `enabled`          | a45ddb12 | none                                  |
-| task kind    | `pipelineId`       | GP-10B   | none                                  |
-| pipeline     | `defaultFor`       | GP-10B   | `pipeline_routes_several_task_kinds`  |
-| pipeline     | `enforcement`      | GP-10B   | `pipeline_fields_not_expressible`     |
-| stage        | `name`             | GP-10B   | `stage_fields_not_expressible`        |
-| stage        | `objective`        | GP-10B   | `stage_fields_not_expressible`        |
-| stage        | `checks`           | GP-10B   | `stage_fields_not_expressible`        |
-| stage        | `requiresApproval` | GP-10B   | `stage_fields_not_expressible`        |
-| stage        | `capabilities`     | GP-10B   | `stage_fields_not_expressible`        |
+| Subject      | Field                         | Owner    | GP-09 gap code                                                 |
+| ------------ | ----------------------------- | -------- | -------------------------------------------------------------- |
+| office role  | `responsibilities`            | GP-10B   | `role_fields_not_expressible`                                  |
+| Runtime role | `name`                        | a45ddb12 | none (missing from GP-09's list)                               |
+| Runtime role | `version`                     | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | capability order              | a45ddb12 | none                                                           |
+| Runtime role | `tools`                       | GP-10C   | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `modelPolicy`                 | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `limits`                      | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `guidance`                    | GP-10B   | `runtime_role_fields_not_expressible`                          |
+| agent        | `enabled`                     | a45ddb12 | none                                                           |
+| task kind    | `pipelineId`                  | GP-10B   | none                                                           |
+| pipeline     | `defaultFor`                  | GP-10B   | `pipeline_routes_several_task_kinds`                           |
+| pipeline     | `enforcement`                 | GP-10B   | `pipeline_fields_not_expressible`                              |
+| stage        | `name`                        | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `objective`                   | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `checks`                      | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `requiresApproval`            | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `capabilities`                | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `requiresIndependentApproval` | GP-10B   | `stage_fields_not_expressible` if used; unused by the defaults |
+| stage        | `requiresDifferentAgentFrom`  | GP-10B   | `stage_fields_not_expressible` if used; unused by the defaults |
 
 `limits` is the Runtime limit set (`maxIterations`, `maxCostMicros`,
 `timeoutSeconds`). `guidance` is the role's system instructions, the shipped
 `system.md`. `pipelineId` is the routing of a task kind to a pipeline.
 Capability order: the Runtime stores a role's capabilities as an ordered
 list, and a pack role holds a set.
+
+The last two rows are legacy stage fields that the default state does not
+use: neither the shipped default office manifest nor the GP-09 fixture sets
+them, so GP-09 reports no gap for them there. They are listed because a
+schema-1 workflow cannot express an independent-approval flag or a
+separation constraint, and they carry `inDefaultState: false` in the
+artifact; every other entry was observed in the default state and carries
+`true`. A test fails if the default state starts using either field, or if
+an entry marked unused is not a legacy stage field that GP-09 reports once a
+stage uses it.
+
+The list covers the fields of roles, agents, task kinds, pipelines and
+stages. It does not cover the manifest's `office.name`, `project` model or
+`provenance`, and the order of roles, agents and task kinds is not compared.
 
 A pipeline's `id`, `name` and `description` and a stage's `id` and `roleId`
 are expressible by a schema-1 workflow. They are absent from the pack because
@@ -1903,11 +1919,13 @@ in the list.
   Capability order is the one aspect entry: the field is projected as a set
   and only its order is outside.
 - List of fields outside the vocabulary. `outside-pack-vocabulary.json`
-  holds the table above with a reason per entry. A test checks its shape and
-  owners, that it carries every GP-09 `vocabularyGaps` field of the default
-  state (pipeline and stage gaps included), that each GP-09 code it cites
-  does report that field, and that the table in this section equals it
-  entry for entry.
+  holds the table above with a reason per entry: 19 entries, 17 observed in
+  the default state and 2 legacy stage fields it does not use. A test checks
+  its shape and owners, that it carries every GP-09 `vocabularyGaps` field
+  of the default state (pipeline and stage gaps included), that each GP-09
+  code it cites reports that field exactly when the entry is marked as in
+  the default state, on the GP-09 fixture and on the shipped defaults, and
+  that the table in this section equals it entry for entry.
 - Owners. `tools` is assigned to GP-10C, which puts capability declarations
   behind pack contracts; Runtime role name, version, capability order, model
   policy, limits and agent enablement to the execution parity task;
