@@ -1,0 +1,137 @@
+{
+  "agents": [
+    {
+      "id": "architect",
+      "roleKey": "architect",
+      "role": "software-architect",
+      "version": 1,
+      "capabilities": [
+        "inspect_project",
+        "propose_adr",
+        "decompose_work",
+        "assess_tradeoffs"
+      ],
+      "tools": [
+        "project.search",
+        "project.get_active_adrs",
+        "code.get_dependencies",
+        "tasks.create"
+      ],
+      "modelPolicy": "high_reasoning",
+      "roleGuidance": "# Software Architect\n\nYou own the technical coherence of the proposed change.\n",
+      "limits": {
+        "maxIterations": 8,
+        "maxCostMicros": "3000000",
+        "timeoutSeconds": 1800
+      }
+    },
+    {
+      "id": "developer",
+      "roleKey": "developer",
+      "role": "software-developer",
+      "version": 1,
+      "capabilities": [
+        "inspect_code",
+        "modify_code",
+        "run_tests",
+        "create_patch"
+      ],
+      "tools": [
+        "project.search",
+        "code.get_symbol",
+        "code.get_dependencies",
+        "git.diff",
+        "shell.run"
+      ],
+      "modelPolicy": "balanced",
+      "roleGuidance": "# Developer\n\nYou deliver the agreed change with focused tests.\n",
+      "limits": {
+        "maxIterations": 10,
+        "maxCostMicros": "2000000",
+        "timeoutSeconds": 1800
+      }
+    },
+    {
+      "id": "reviewer",
+      "roleKey": "reviewer",
+      "role": "code-reviewer",
+      "version": 1,
+      "capabilities": [
+        "inspect_diff",
+        "inspect_tests",
+        "assess_security",
+        "approve_or_reject"
+      ],
+      "tools": ["git.diff", "code.get_dependencies", "shell.run"],
+      "modelPolicy": "balanced",
+      "roleGuidance": "# Reviewer\n\nYou assess correctness, security and scope independently.\n",
+      "limits": {
+        "maxIterations": 5,
+        "maxCostMicros": "1000000",
+        "timeoutSeconds": 900
+      }
+    },
+    {
+      "id": "qa",
+      "roleKey": "qa",
+      "role": "quality-assurance",
+      "version": 1,
+      "capabilities": ["derive_test_cases", "run_tests", "report_regressions"],
+      "tools": ["project.get_task", "shell.run", "git.diff"],
+      "modelPolicy": "economical",
+      "roleGuidance": "# Quality Assurance\n\nYou produce reproducible evidence of acceptance behavior.\n",
+      "limits": {
+        "maxIterations": 6,
+        "maxCostMicros": "750000",
+        "timeoutSeconds": 1200
+      }
+    },
+    {
+      "id": "security",
+      "roleKey": "security-reviewer",
+      "role": "security-reviewer",
+      "version": 1,
+      "capabilities": [
+        "inspect_diff",
+        "assess_threats",
+        "assess_security",
+        "recommend_mitigations"
+      ],
+      "tools": [
+        "project.search",
+        "project.get_active_adrs",
+        "code.get_dependencies",
+        "git.diff"
+      ],
+      "modelPolicy": "high_reasoning",
+      "roleGuidance": "# Security Reviewer\n\nYou assess threats and recommend mitigations.\n",
+      "limits": {
+        "maxIterations": 8,
+        "maxCostMicros": "2000000",
+        "timeoutSeconds": 1800
+      }
+    }
+  ],
+  "rolesWithoutAgent": [
+    {
+      "id": "release",
+      "roleKey": "release-engineer",
+      "role": "release-engineer",
+      "version": 1,
+      "capabilities": [
+        "inspect_project",
+        "assess_release_readiness",
+        "plan_rollout",
+        "plan_recovery"
+      ],
+      "tools": ["project.search", "project.get_task", "git.diff"],
+      "modelPolicy": "balanced",
+      "roleGuidance": "",
+      "limits": {
+        "maxIterations": 6,
+        "maxCostMicros": "1000000",
+        "timeoutSeconds": 1200
+      }
+    }
+  ]
+}

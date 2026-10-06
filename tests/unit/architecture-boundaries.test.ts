@@ -84,6 +84,85 @@ test("GP-06 configuration remains derived and outside scheduling and portable au
     );
 });
 
+test("GP-09 legacy profile stays a derived read model outside scheduling, storage and portable state", () => {
+  const profileModules = [
+    "packages/application/src/domain-pack/legacy-development-profile.ts",
+    "packages/application/src/domain-pack/read-legacy-development-profile.ts",
+  ];
+  // The reader service and the one read-only command are the only importers.
+  const allowedImporters = new Set([
+    ...profileModules,
+    "packages/runtime-host/src/commands/project-configuration.ts",
+  ]);
+  const importers: string[] = [];
+  for (const root of ["packages", "apps"])
+    for (const file of typescriptFiles(join(repositoryRoot, root))) {
+      const location = relative(repositoryRoot, file);
+      if (/legacy-development-profile/u.test(readFileSync(file, "utf8")))
+        importers.push(location);
+    }
+  expect(importers.sort()).toEqual([...allowedImporters].sort());
+
+  // No port, storage adapter or archive schema names the profile or its type.
+  const authority = [
+    ...typescriptFiles(join(repositoryRoot, "packages/application/src/ports")),
+    ...typescriptFiles(join(repositoryRoot, "packages/storage-sqlite/src")),
+    ...typescriptFiles(join(repositoryRoot, "packages/storage-postgres/src")),
+    ...typescriptFiles(join(repositoryRoot, "packages/storage-bootstrap/src")),
+    ...typescriptFiles(
+      join(repositoryRoot, "packages/application/src/project-portability"),
+    ),
+    ...typescriptFiles(
+      join(repositoryRoot, "packages/application/src/pipeline"),
+    ),
+    ...typescriptFiles(
+      join(repositoryRoot, "packages/application/src/runtime"),
+    ),
+    ...typescriptFiles(
+      join(repositoryRoot, "packages/application/src/commands"),
+    ),
+    ...typescriptFiles(join(repositoryRoot, "packages/domain/src")),
+    join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/resolve-project-configuration.ts",
+    ),
+    join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/read-project-configuration.ts",
+    ),
+  ];
+  expect(authority.length).toBeGreaterThan(100);
+  expect(
+    authority
+      .filter((file) =>
+        /LegacyDevelopmentProfile|legacyDevelopmentProfile|legacy_development_profile/u.test(
+          readFileSync(file, "utf8"),
+        ),
+      )
+      .map((file) => relative(repositoryRoot, file)),
+  ).toEqual([]);
+
+  // The derivation is pure: domain types and the JCS serializer, nothing else.
+  const derivation = join(repositoryRoot, profileModules[0]!);
+  expect(importedSpecifiers(readFileSync(derivation, "utf8")).sort()).toEqual([
+    "../../../domain-pack-contracts/src/jcs.ts",
+    "@ai-office/domain/agent/agent.ts",
+    "@ai-office/domain/agent/role.ts",
+    "@ai-office/domain/office/office-manifest.ts",
+    "node:crypto",
+  ]);
+  for (const location of profileModules)
+    expect(readFileSync(join(repositoryRoot, location), "utf8")).not.toMatch(
+      /org\.ai-office\.development|org\.example\.(?:legal|manufacturing)|Date\.now|new Date\(/u,
+    );
+  // No migration creates a place to store it.
+  for (const directory of ["migrations/project", "supabase/migrations"])
+    for (const entry of readdirSync(join(repositoryRoot, directory)))
+      expect(
+        readFileSync(join(repositoryRoot, directory, entry), "utf8"),
+      ).not.toMatch(/legacy_development|legacy_profile/u);
+});
+
 /** Every module specifier in a static import, re-export, or dynamic import. */
 function importedSpecifiers(source: string): string[] {
   const specifiers: string[] = [];

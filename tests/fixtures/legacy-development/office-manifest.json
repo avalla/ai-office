@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "provenance": {
+    "host": "codex",
+    "skill": "ai-office",
+    "skillVersion": "1"
+  },
+  "project": {
+    "mission": "Deliver reliable, reviewable software changes",
+    "goals": ["Complete the next agreed project outcome"],
+    "constraints": [],
+    "preferences": ["Prefer small changes with relevant automated tests"],
+    "permissionPreferences": ["read_files", "modify_files", "run_tests"]
+  },
+  "office": {
+    "name": "Software delivery office",
+    "roles": [
+      {
+        "id": "architect",
+        "title": "Software Architect",
+        "purpose": "Turn the agreed outcome into a coherent, verifiable technical design",
+        "responsibilities": [
+          "Reconstruct affected flows, ownership boundaries, dependencies, and active architectural decisions",
+          "Compare viable approaches and choose the smallest solution that preserves project invariants",
+          "Define a bounded implementation plan with observable acceptance criteria and failure behavior",
+          "Identify compatibility, migration, security, and operational risks and unresolved decisions",
+          "Hand design and validation expectations to implementation and reassess invalidated assumptions"
+        ]
+      },
+      {
+        "id": "developer",
+        "title": "Developer",
+        "purpose": "Deliver a scoped, maintainable implementation backed by relevant validation",
+        "responsibilities": [
+          "Inspect existing behavior and implement the agreed design within assigned ownership",
+          "Reproduce defects and correct root causes while preserving contracts and unrelated changes",
+          "Maintain focused tests for acceptance behavior, failure modes, and representative upgrades",
+          "Run required checks and review the resulting diff and task-owned documentation",
+          "Report changes, validation evidence, unresolved risks, and review fixes without approving own work"
+        ]
+      },
+      {
+        "id": "reviewer",
+        "title": "Reviewer",
+        "purpose": "Independently assess correctness, security, scope, and architectural integrity",
+        "responsibilities": [
+          "Review the diff in the context of affected callers, contracts, tests, and acceptance criteria",
+          "Check architectural invariants, ownership, authorization, error handling, and compatibility",
+          "Assess whether validation evidence detects relevant regressions and supports implementation claims",
+          "Return actionable findings with locations, triggers, consequences, and severity",
+          "Disclose independence conflicts and distinguish review recommendations from Runtime approvals"
+        ]
+      },
+      {
+        "id": "qa",
+        "title": "Quality Assurance",
+        "purpose": "Produce reproducible evidence of acceptance behavior and regression safety",
+        "responsibilities": [
+          "Map acceptance criteria to risk-based checks of user journeys and affected integration boundaries",
+          "Exercise success, boundary, invalid-input, permission, and recovery paths as relevant",
+          "Run checks in isolated environments and distinguish product defects from environment limitations",
+          "Report reproducible failures with expected and actual behavior and verify fixes against them",
+          "Return passed, failed, and not-run results with artifact identity, evidence, and remaining coverage gaps"
+        ]
+      }
+    ]
+  },
+  "pipelines": [
+    {
+      "id": "delivery",
+      "name": "Feature delivery",
+      "enforcement": "enforced",
+      "description": "Plan, implement, review, and verify product changes",
+      "defaultFor": ["feature", "maintenance"],
+      "stages": [
+        {
+          "id": "design",
+          "name": "Design",
+          "roleId": "architect",
+          "objective": "Define the smallest coherent change and its acceptance criteria",
+          "checks": ["Dependencies and security boundaries are explicit"],
+          "capabilities": [],
+          "requiresApproval": false
+        },
+        {
+          "id": "implement",
+          "name": "Implement",
+          "roleId": "developer",
+          "objective": "Implement the agreed change with focused tests",
+          "checks": ["Relevant tests pass", "Typecheck passes"],
+          "capabilities": [],
+          "requiresApproval": false
+        },
+        {
+          "id": "review",
+          "name": "Review",
+          "roleId": "reviewer",
+          "objective": "Review correctness, security, and scope",
+          "checks": ["No unresolved blocking findings remain"],
+          "capabilities": [],
+          "requiresApproval": true
+        },
+        {
+          "id": "verify",
+          "name": "Verify",
+          "roleId": "qa",
+          "objective": "Validate acceptance criteria and regression safety",
+          "checks": ["Full relevant check suite passes"],
+          "capabilities": [],
+          "requiresApproval": false
+        }
+      ]
+    },
+    {
+      "id": "bugfix",
+      "name": "Bug fix",
+      "description": "Reproduce, fix, review, and verify a defect",
+      "defaultFor": ["bugfix"],
+      "stages": [
+        {
+          "id": "reproduce",
+          "name": "Reproduce",
+          "roleId": "qa",
+          "objective": "Establish a deterministic failing case",
+          "checks": ["The failure is reproduced before implementation"],
+          "requiresApproval": false
+        },
+        {
+          "id": "fix",
+          "name": "Fix",
+          "roleId": "developer",
+          "objective": "Correct the root cause and add regression coverage",
+          "checks": ["The regression test passes"],
+          "requiresApproval": false
+        },
+        {
+          "id": "review",
+          "name": "Review",
+          "roleId": "reviewer",
+          "objective": "Confirm the root cause is addressed without scope creep",
+          "checks": ["No unresolved blocking findings remain"],
+          "requiresApproval": true
+        }
+      ]
+    },
+    {
+      "id": "discovery",
+      "name": "Research",
+      "description": "Investigate a question and record an evidence-based recommendation",
+      "defaultFor": ["research"],
+      "stages": [
+        {
+          "id": "investigate",
+          "name": "Investigate",
+          "roleId": "architect",
+          "objective": "Collect relevant evidence and compare viable approaches",
+          "checks": ["Recommendation identifies evidence and uncertainty"],
+          "requiresApproval": false
+        }
+      ]
+    },
+    {
+      "id": "release",
+      "name": "Release",
+      "description": "Review readiness, verify the build, and require a release decision",
+      "defaultFor": ["release"],
+      "stages": [
+        {
+          "id": "readiness",
+          "name": "Readiness review",
+          "roleId": "reviewer",
+          "objective": "Confirm scope, risks, and unresolved findings",
+          "checks": [
+            "Release scope is explicit",
+            "Blocking findings are resolved"
+          ],
+          "requiresApproval": false
+        },
+        {
+          "id": "verification",
+          "name": "Release verification",
+          "roleId": "qa",
+          "objective": "Run the release checks and verify artifacts",
+          "checks": ["Release check suite passes"],
+          "requiresApproval": true
+        }
+      ]
+    }
+  ]
+}

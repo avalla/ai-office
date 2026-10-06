@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
+import { Role } from "@ai-office/domain/agent/role.ts";
 import type { AgentRuntimeRepository } from "@ai-office/application/ports/agent-runtime-repository.port.ts";
 
 export interface AgentRuntimeContractHarness {
@@ -72,6 +73,49 @@ export function defineAgentRuntimeRepositoryContracts(
           (agent) => agent.id,
         ),
       ).toEqual([harness.agentId]);
+    });
+
+    test("lists every role of the project, including one no agent uses", async () => {
+      // GP-09: a role is enumerated on its own, not through the agents.
+      const unused = Role.create({
+        id: `${harness.idPrefix}-role-unused`,
+        projectId: harness.projectId,
+        key: "a-unused",
+        name: "Unused",
+        version: 2,
+        capabilities: ["inspect"],
+        tools: ["project.search"],
+        modelPolicy: "default",
+        limits: { maxIterations: 2, maxCostMicros: 7n, timeoutSeconds: 30 },
+        sourcePath: "unused.yaml",
+        guidanceText: "Unused guidance",
+        guidanceVersion: 2,
+        now: harness.now,
+      });
+      await harness.runtime.saveRole(unused);
+      const roles = await harness.runtime.listRoles(harness.projectId);
+      expect(roles.map((role) => role.snapshot().key)).toEqual([
+        "a-unused",
+        "contract",
+      ]);
+      expect(roles[0]!.snapshot()).toEqual(
+        (
+          await harness.runtime.findRole(
+            unused.snapshot().id,
+            harness.projectId,
+          )
+        )?.snapshot(),
+      );
+      expect(roles[0]!.snapshot()).toMatchObject({
+        key: "a-unused",
+        tools: ["project.search"],
+        guidanceText: "Unused guidance",
+        guidanceVersion: 2,
+        limits: { maxIterations: 2, maxCostMicros: 7n, timeoutSeconds: 30 },
+      });
+      expect(
+        await harness.runtime.listRoles(`${harness.projectId}-absent`),
+      ).toEqual([]);
     });
 
     test("orders queued and recoverable runs by their contract ordering", async () => {
