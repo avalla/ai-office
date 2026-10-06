@@ -94,11 +94,15 @@ export class ProjectPackBindingProviderError extends Error {
   }
 }
 
-const providerIssueCodes: readonly string[] = [
+const providerIssueCodes: ReadonlySet<string> = new Set([
   "missing_required_capability_provider",
   "capability_provider_mismatch",
   "configuration_invariant",
-] satisfies readonly CapabilityBindingIssueCode[];
+] satisfies CapabilityBindingIssueCode[]);
+
+const isProviderIssueCode = (
+  code: string,
+): code is CapabilityBindingIssueCode => providerIssueCodes.has(code);
 
 /**
  * The proposed resolved closure contains a definition with the kind and local
@@ -501,11 +505,8 @@ export class ManageProjectPackBinding {
           preview.issues[0].message,
         );
       const first = preview.issues[0];
-      if (first !== undefined && providerIssueCodes.includes(first.code))
-        throw new ProjectPackBindingProviderError(
-          first.code as CapabilityBindingIssueCode,
-          first.message,
-        );
+      if (first !== undefined && isProviderIssueCode(first.code))
+        throw new ProjectPackBindingProviderError(first.code, first.message);
       if (
         first?.code === roleCapabilityChangeRequiresUpgrade ||
         first?.code === capabilityContractChangeRequiresUpgrade
