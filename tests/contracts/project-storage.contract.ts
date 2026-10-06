@@ -498,7 +498,7 @@ export function defineProjectStorageContracts(
           ...entry,
           source: { ...source, localId: "intake" },
           operation: "extend" as const,
-          payload: { title: "Our intake" },
+          payload: { title: "Our intake" } as { id: string; title: string },
         };
         // Stage IDs and roles in no sort order: the list is stored as given.
         const replaced = {
@@ -531,7 +531,8 @@ export function defineProjectStorageContracts(
         expect(await definitions().get(projectId)).toEqual(current);
         expect(
           (
-            (await definitions().get(projectId)).overrides[2]?.payload as {
+            (await definitions().get(projectId)).overrides[2]
+              ?.payload as unknown as {
               stages: { id: string }[];
             }
           ).stages.map((stage) => stage.id),

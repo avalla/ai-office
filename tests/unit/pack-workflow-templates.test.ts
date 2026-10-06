@@ -497,7 +497,7 @@ describe("GP-13 workflow contract view", () => {
 
   test("an uncustomized workflow that names a missing or disabled definition fails closed", () => {
     // The manifest contract does not check workflow references.
-    for (const [contributions, code] of [
+    const cases: [Record<string, unknown[]>, string][] = [
       [
         {
           roles: [{ id: "counsel" }],
@@ -525,7 +525,8 @@ describe("GP-13 workflow contract view", () => {
         },
         "missing_workflow_reference",
       ],
-    ] as const) {
+    ];
+    for (const [contributions, code] of cases) {
       const target = catalog();
       const pack = register(target, packBytes("1.0.0", contributions));
       expect(errorCode(() => resolve(target, [pack]))).toBe(code);

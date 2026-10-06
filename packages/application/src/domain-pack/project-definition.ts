@@ -67,8 +67,13 @@ export function hasAgentReferences(payload: object): boolean {
 export type ProjectDefinitionPayload =
   DescriptiveDefinition | WorkflowDefinition | AgentDefinition;
 
-/** A `replace` on an agent carries the agent envelope; nothing else does. */
-export type OverridePayload = DescriptiveDefinition | AgentDefinition;
+/**
+ * A `replace` on an agent carries the agent envelope and a `replace` on a
+ * workflow the workflow envelope (GP-13); every other override payload is
+ * descriptive.
+ */
+export type OverridePayload =
+  DescriptiveDefinition | AgentDefinition | WorkflowDefinition;
 
 export interface ProjectOwnedDefinition {
   readonly origin: "project_owned";
@@ -200,15 +205,24 @@ const descriptiveKinds: readonly ContributionKind[] = [
   "prompts",
 ];
 /**
+ * Kinds a project may override: the descriptive kinds and, since GP-13,
+ * workflows. Policies, capabilities and validators have no override contract.
+ */
+const overridableKinds: readonly ContributionKind[] = [
+  ...descriptiveKinds,
+  "workflows",
+];
+/**
  * Kinds a project may omit with a `disable` override. A role omission (GP-11)
  * removes the role from the resolved configuration; a workflow or an enabled
- * agent that still requires it fails resolution. A disabled agent (GP-12)
- * leaves the configuration together with its references.
+ * agent that still requires it fails resolution. A disabled agent (GP-12) or
+ * workflow (GP-13) leaves the configuration together with its references.
  */
 export const disableableKinds: readonly ContributionKind[] = [
   "prompts",
   "roles",
   "agents",
+  "workflows",
 ];
 export const projectOwnedKinds: readonly ContributionKind[] = [
   ...descriptiveKinds,
@@ -387,6 +401,12 @@ function parseAgentPayload(
   };
 }
 
+/**
+ * The complete workflow envelope of a project-owned workflow or of a
+ * `replace` on a pack workflow. Only shape is checked here; whether the task
+ * type and the stage roles resolve is decided against the definitions the
+ * workflow can see. Stage order is significant and is kept as given.
+ */
 function parseWorkflowPayload(value: unknown, id: string): WorkflowDefinition {
   const item = record(value);
   if (
@@ -524,7 +544,7 @@ export function parseDefinitionMutation(
           : ["expectedEntryRevision"]),
       ]);
       if (
-        !descriptiveKinds.includes(source.kind) ||
+        !overridableKinds.includes(source.kind) ||
         (operation === "disable" && !disableableKinds.includes(source.kind))
       )
         throw new ProjectDefinitionConflictError(
@@ -538,16 +558,18 @@ export function parseDefinitionMutation(
         ...(operation === "disable"
           ? {}
           : {
-              // Only a replacement of an agent carries references; an
-              // extension stays descriptive for every kind.
+              // Only a replacement of an agent or of a workflow carries
+              // references; an extension stays descriptive for every kind.
               payload:
                 operation === "replace" && source.kind === "agents"
                   ? parseAgentPayload(item.payload, source.localId, true)
-                  : parseDefinitionPayload(
-                      item.payload,
-                      source.localId,
-                      operation === "extend",
-                    ),
+                  : operation === "replace" && source.kind === "workflows"
+                    ? parseWorkflowPayload(item.payload, source.localId)
+                    : parseDefinitionPayload(
+                        item.payload,
+                        source.localId,
+                        operation === "extend",
+                      ),
             }),
         ...(expectedEntryRevision === undefined
           ? {}

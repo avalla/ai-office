@@ -12,6 +12,7 @@ import {
   sourceKey,
   type AgentDefinition,
   type DefinitionIssueCode,
+  type WorkflowDefinition,
   type ProjectDefinitionMutation,
   type ProjectDefinitionState,
   type ProjectDefinitionOverride,
@@ -132,6 +133,35 @@ function agentReferenceIssues(
             },
           ];
     }),
+  ];
+}
+
+/**
+ * GP-06 rejects a workflow whose task type or stage roles do not resolve in
+ * its own pack. Report that for a replacement before it is stored, against
+ * the exact source manifest, in envelope order. Whether a referenced role is
+ * omitted depends on the other project entries and stays with the resolver.
+ */
+function workflowReferenceIssues(
+  manifest: DomainPackManifest,
+  payload: WorkflowDefinition,
+): ProjectDefinitionIssue[] {
+  const workflow = `workflows/${payload.id}`;
+  const missing = (
+    kind: "taskTypes" | "roles",
+    localId: string,
+  ): ProjectDefinitionIssue[] =>
+    manifest.contributions[kind].some((entry) => entry.id === localId)
+      ? []
+      : [
+          {
+            code: "source_definition_missing",
+            message: `Workflow ${workflow} references ${kind}/${localId}, which is missing from exact source`,
+          },
+        ];
+  return [
+    ...missing("taskTypes", payload.taskType),
+    ...payload.stages.flatMap((stage) => missing("roles", stage.role)),
   ];
 }
 
@@ -284,6 +314,16 @@ export class ManageProjectDefinitions {
         item.payload
       )
         return agentReferenceIssues(manifest, item.payload);
+      if (
+        item.operation === "replace" &&
+        item.source.kind === "workflows" &&
+        item.payload
+      )
+        // The stored entry is untyped beyond its kind; GP-06 re-checks shape.
+        return workflowReferenceIssues(
+          manifest,
+          item.payload as WorkflowDefinition,
+        );
       return [];
     } catch (error) {
       return [installedSourceIssue(error)];

@@ -111,6 +111,24 @@ export interface ResolvedAgent {
   readonly customization: "none" | "replace" | "extend";
 }
 
+/**
+ * The declarative contract of one enabled workflow. `workflowId` is the
+ * stable slot identity, like `roleId`; a stage is identified by its `id`
+ * inside the workflow. The task type and every stage role are stable IDs of
+ * definitions in the workflow's own namespace, and the stages are in the
+ * workflow's own order. Nothing here creates a Runtime pipeline.
+ */
+export interface ResolvedWorkflow {
+  readonly workflowId: string;
+  readonly effectiveId: string;
+  readonly origin: "pack_owned" | "project_owned";
+  readonly title?: string;
+  readonly description?: string;
+  readonly taskTypeId: string;
+  readonly stages: readonly { readonly id: string; readonly roleId: string }[];
+  readonly customization: "none" | "replace" | "extend";
+}
+
 export interface ResolvedWorkflowReferences {
   readonly workflowId: string;
   readonly taskTypeId: string;
@@ -169,6 +187,13 @@ export interface ResolvedProjectConfiguration {
   readonly agents: readonly ResolvedAgent[];
   /** Stable IDs of disabled agents, which are absent from `agents`. */
   readonly disabledAgents: readonly string[];
+  /**
+   * Derived workflow contract view over `effectiveDefinitions.workflows`.
+   * Like the role and agent views, it is not digest material.
+   */
+  readonly workflows: readonly ResolvedWorkflow[];
+  /** Stable IDs of disabled workflows, which are absent from `workflows`. */
+  readonly disabledWorkflows: readonly string[];
   /** The minimum evidence future run records must pin. */
   readonly pin: {
     readonly configurationDigest: string;
@@ -504,7 +529,8 @@ export function resolveProjectConfiguration(input: {
       // A replacement substitutes the descriptive envelope only. A role's
       // capability set stays the pack's: a project payload cannot carry one.
       // An agent's references are project-controlled: its replacement is the
-      // complete agent envelope and is never merged with the pack's.
+      // complete agent envelope and is never merged with the pack's. The
+      // same holds for a workflow's task type and ordered stages.
       const capabilities =
         current.kind === "roles"
           ? (current.payload as ResolvedPackRolePayload).capabilities
@@ -593,18 +619,71 @@ export function resolveProjectConfiguration(input: {
       );
     return target;
   };
+  // Stable identity of any resolved definition: pack-owned ones lose their
+  // version and digest, project-owned ones already have neither.
+  const stableId = (definition: ResolvedDefinition): string => {
+    const provenance = provenanceOf(definition.effectiveId);
+    return provenance.origin === "pack_owned"
+      ? stablePackDefinitionId(
+          provenance.pack.id,
+          definition.kind,
+          definition.localId,
+        )
+      : definition.effectiveId;
+  };
   const resolvedWorkflowReferences: ResolvedWorkflowReferences[] = [];
+  const workflows: ResolvedWorkflow[] = [];
+  const disabledWorkflows: string[] = [];
+  const workflowIds = new Set<string>();
   for (const workflow of byKind.workflows) {
-    if (!workflow.enabled) continue;
+    const provenance = provenanceOf(workflow.effectiveId);
+    const workflowId = stableId(workflow);
+    if (workflowIds.has(workflowId))
+      failure(
+        "configuration_invariant",
+        `Duplicate workflow identity ${workflowId}`,
+      );
+    workflowIds.add(workflowId);
+    // A disabled workflow is not part of the configuration, so its task type
+    // and stage roles are not required.
+    if (!workflow.enabled) {
+      disabledWorkflows.push(workflowId);
+      continue;
+    }
+    // A customized workflow resolves like the pack's own: inside the exact
+    // originating pack tuple. Stage order is the payload's, never sorted.
     const payload = workflow.payload as WorkflowContribution;
+    const taskType = resolveReference(workflow, "taskTypes", payload.taskType);
+    const stages = payload.stages.map((stage) => ({
+      id: stage.id,
+      role: resolveReference(workflow, "roles", stage.role),
+    }));
     resolvedWorkflowReferences.push({
       workflowId: workflow.effectiveId,
-      taskTypeId: resolveReference(workflow, "taskTypes", payload.taskType)
-        .effectiveId,
-      stages: payload.stages.map((stage) => ({
+      taskTypeId: taskType.effectiveId,
+      stages: stages.map((stage) => ({
         id: stage.id,
-        roleId: resolveReference(workflow, "roles", stage.role).effectiveId,
+        roleId: stage.role.effectiveId,
       })),
+    });
+    const { title, description } = workflow.payload;
+    const operation =
+      provenance.origin === "pack_owned"
+        ? provenance.override?.operation
+        : undefined;
+    workflows.push({
+      workflowId,
+      effectiveId: workflow.effectiveId,
+      origin: provenance.origin,
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      taskTypeId: stableId(taskType),
+      stages: stages.map((stage) => ({
+        id: stage.id,
+        roleId: stableId(stage.role),
+      })),
+      customization:
+        operation === "replace" || operation === "extend" ? operation : "none",
     });
   }
 
@@ -658,18 +737,6 @@ export function resolveProjectConfiguration(input: {
     });
   }
 
-  // Stable identity of any resolved definition: pack-owned ones lose their
-  // version and digest, project-owned ones already have neither.
-  const stableId = (definition: ResolvedDefinition): string => {
-    const provenance = provenanceOf(definition.effectiveId);
-    return provenance.origin === "pack_owned"
-      ? stablePackDefinitionId(
-          provenance.pack.id,
-          definition.kind,
-          definition.localId,
-        )
-      : definition.effectiveId;
-  };
   const agents: ResolvedAgent[] = [];
   const disabledAgents: string[] = [];
   const agentIds = new Set<string>();
@@ -779,6 +846,8 @@ export function resolveProjectConfiguration(input: {
     omittedRoles,
     agents,
     disabledAgents,
+    workflows,
+    disabledWorkflows,
     pin: {
       configurationDigest,
       coreContractVersion,

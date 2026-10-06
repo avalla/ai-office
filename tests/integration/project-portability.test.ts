@@ -894,9 +894,9 @@ describe("project portability", () => {
     const parsed = v9.parse(override("workflows", "replace", envelope));
     expect(parsed.overrides[0]?.payload).toEqual(envelope);
     expect(
-      (parsed.overrides[0]?.payload as { stages: { id: string }[] }).stages.map(
-        (stage) => stage.id,
-      ),
+      (
+        parsed.overrides[0]?.payload as unknown as { stages: { id: string }[] }
+      ).stages.map((stage) => stage.id),
     ).toEqual(["z-last", "a-first"]);
     // Format 9 has the format-8 contents.
     for (const state of [
@@ -1144,7 +1144,7 @@ describe("project portability", () => {
     expect(restoredState).toEqual({ ...stored, projectId: restored.projectId });
     expect(
       (
-        restoredState.overrides.at(-1)?.payload as {
+        restoredState.overrides.at(-1)?.payload as unknown as {
           stages: { id: string }[];
         }
       ).stages.map((stage) => stage.id),

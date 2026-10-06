@@ -388,9 +388,9 @@ describe("GP-13 workflow customization in project definitions", () => {
     const stored = await h.storage.definitions.get("a");
     expect(stored).toEqual(state);
     expect(
-      (stored.overrides[0]?.payload as { stages: { id: string }[] }).stages.map(
-        (item) => item.id,
-      ),
+      (
+        stored.overrides[0]?.payload as unknown as { stages: { id: string }[] }
+      ).stages.map((item) => item.id),
     ).toEqual(["check", "second-opinion", "draft"]);
     const audit = h.audits("project.definition_changed");
     expect(audit).toEqual([
