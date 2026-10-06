@@ -1897,7 +1897,16 @@ schema-1 manifest with requests bounded by the role's declared set, project
 replace, disable and add, and upgrade rules that reuse GP-08 and GP-11. It adds
 forward SQLite and PostgreSQL migrations for agent disable and portable archive
 format 8. It creates no Runtime agent and leaves model, tools, pipeline
-participation and approval eligibility to a later activation task. Aliases,
+participation and approval eligibility to a later activation task. GP-13
+completes the definition layer for pack workflow templates: a stable workflow
+identity and stage identity, project replace (rename, another task type,
+reordered, added or removed stages that name roles of the same pack), extend
+and disable of a pack workflow, a derived workflow view, and upgrade rules
+that reuse GP-08, GP-11 and GP-12. It adds forward SQLite and PostgreSQL
+migrations that admit workflow overrides and portable archive format 9. It
+does not touch the pipeline engine, pipeline runs, pins, approvals or guards;
+runs do not pin pack configuration yet, and blocking a change on in-flight
+pinned runs is deferred to GP-24. Aliases,
 Development Pack parity/extraction, automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
