@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
 ---
 
 # Task Delivery
@@ -59,6 +59,112 @@ listed there and ask only when a default cannot be derived. A configuration
 file that is present but breaks its contract is a stop condition: never guess
 around it.
 
+## Task state
+
+The project tracks task state when its configuration enables that or
+configures a command for it, or when its own instructions describe a system
+that holds its tasks. Only a configuration that switches it off explicitly
+says otherwise. When you cannot tell, ask in preflight instead of skipping it.
+
+Where task state is tracked, keep it true as the work moves. Mark the task
+started in preflight, before the first change. Mark it in review when its pull
+request is open. Mark it done only after stage 11. Use the commands the
+project configures for this; without them, use the project's own documented
+way of changing task state, and only where there is none report each
+transition for someone else to apply. Check the task's current state first: a
+task already in the state you would set needs nothing; when you do not know
+how the tracker identifies the task, ask. A transition the tracker refuses is
+a stop condition: report what it said, and never work around it. A transition
+that would itself start a binding run falls under the rule on binding runs
+below. See [configuration](references/configuration.md).
+
+## What to deliver
+
+When the request does not say what to deliver - the skill was started with no
+task, milestone, or other target - ask before doing anything else. Offer these
+choices and wait for the answer:
+
+1. **A whole milestone**: every open task of one milestone.
+2. **One or more tasks**: the tasks the authorizer names.
+3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.
+
+The project may define delivery pipelines of its own, in its instructions or
+in the system that tracks its tasks. Settle which pipeline applies before
+preflight, and never choose one yourself:
+
+- When the project enforces a pipeline, state which one applies; there is no
+  choice to offer.
+- When the project defines a default pipeline, ask whether to use it and wait
+  for the answer. If it is declined, ask what to follow instead.
+- When one or more pipelines could apply and none is the default or enforced,
+  list them and ask the authorizer which one to use, if any.
+- When the project defines no pipeline, do not ask.
+
+A project pipeline that is used decides the stages, assignments, and
+transitions of the work. Its mapping to this skill's lifecycle need not be one
+to one: a project stage may cover several gates of this skill, and each gate
+still keeps its own criteria and its own evidence. A project pipeline may
+group, rename, or add stages and gates; it never removes a gate of this skill,
+and the non-negotiable rules above still hold.
+
+Following a project pipeline does not by itself mean starting anything in the
+project's systems. Where using it would start a run that binds the task - one
+whose stages only that system's own assigned performers can complete - check
+first that you are such a performer for every stage. If you are not, do not
+start it: tell the authorizer what the run requires, let them decide how to
+proceed, and record their decision with the evidence. When you cannot tell
+whether a run would bind the task, or whether you are assigned to every stage,
+do not start it either: ask the authorizer. Never start a binding run you
+cannot finish, and never override or cancel one on your own.
+
+Never pick a milestone or a task yourself. Once the answer is in, and before
+showing anything for approval, check the dependencies of the selection. The
+check always runs; when individual tasks were chosen it is done for every
+selected task: find the tasks it logically depends on and their state, and
+separate the dependencies that are already DONE, those that are part of the
+selection, and those that are neither. A dependency that is neither DONE nor
+selected is unresolved: name it, and propose adding it to the run or
+postponing the task that needs it. A selected prerequisite is planned,
+not resolved: for the task that needs it, it stays unresolved until it is
+DONE. Never drop or reorder a task silently to
+make the selection work.
+
+When the behavior a task needs already exists on a prerequisite branch that is
+not merged, and the project allows stacked work, you may also propose,
+explicitly, a Git branch dependency on that branch, as the
+[branch policy](references/branch-policy.md) describes. Stacking neither
+satisfies nor cancels the logical task dependency: record the two dependencies
+separately, keep the task dependency listed as unresolved, and never treat the
+prerequisite as DONE until its own lifecycle has reached DONE. A selected
+prerequisite is worked on before the task that needs it, and that task starts
+only once the prerequisite is DONE or the authorizer has approved a Git branch
+dependency on it.
+
+Then show a summary and ask for the go-ahead: the tasks in the order you
+propose, what each depends on, every unresolved dependency with the proposal
+for it, any Git branch dependency you propose, kept apart from the task
+dependencies, the pipeline that will be used, and anything excluded. Start
+preflight only after the authorizer approves that summary.
+
+A run that covers several tasks gives each task its own branch, pull request,
+and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run
+may then continue with another selected task only if that task has no
+unresolved prerequisite that blocks execution, or if the authorizer has
+explicitly approved the required Git branch dependency. The run never merges a
+pull request merely to unblock a later selected task. A stacked branch does
+not make the prerequisite task DONE and does not resolve the logical
+dependency. Where task state is tracked, the tracker may refuse to start a task
+whose prerequisite is not DONE even on an approved Git branch dependency; that
+refusal stands, and the task waits.
+
+When the request already names the target, do not ask for the target again.
+The pipeline is still settled before preflight as described above: an enforced
+pipeline is stated, and a default one is stated and confirmed by the
+authorizer. The dependency check and the summary still apply whenever the
+request covers more than one task. For a single named task, make the same
+dependency check in preflight and stop on an unresolved dependency until the
+authorizer decides.
+
 ## Lifecycle
 
 Run the stages in order. Each stage is detailed, with entry and exit criteria,
@@ -73,9 +179,9 @@ report it as missing. Never assume it.
 ### 1. Preflight
 
 Confirm the task is deliverable: acceptance criteria are explicit, logical
-dependencies are satisfied or deliberately deferred, the working tree is clean,
-the base branch is chosen and current, and the full verification is green on
-the base commit before you change anything.
+dependencies are DONE or the authorizer has decided how to proceed, the
+working tree is clean, the base branch is chosen and current, and the full
+verification is green on the base commit before you change anything.
 
 ### 2. Design
 

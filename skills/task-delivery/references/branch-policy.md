@@ -16,8 +16,8 @@ They are independent. Decide each explicitly and write both in the pull request.
 
 ## Rules
 
-- Default base is the integration branch. Stacking is the exception and needs a
-  reason stated in the pull request.
+- Default base is the integration branch. Stacking is the exception: it needs
+  the authorizer's approval and a reason stated in the pull request.
 - A stacked pull request targets the branch it is stacked on, and says so. Its
   review covers only its own diff. An external review command is run against
   that branch, not against the integration branch.
