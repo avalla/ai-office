@@ -427,7 +427,7 @@ function formatKnownError(error: unknown): string | null {
   // The message names the row by key and never carries the payload; the
   // operator repairs the row in the database, so the procedure is named too.
   if (error instanceof ProjectDefinitionPayloadShapeError)
-    return `${error.message}. Classify and repair the row with the query in supabase/README.md.`;
+    return `${error.message}. Classify the row with the query in supabase/README.md and repair it as that section describes.`;
   if (
     error instanceof CliUsageError ||
     error instanceof DomainPackCatalogError ||
