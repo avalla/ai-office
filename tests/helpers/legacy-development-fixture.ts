@@ -53,11 +53,14 @@ import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repos
 import { SqliteTaskRepository } from "@ai-office/storage-sqlite/repositories/sqlite-task.repository.ts";
 
 /**
- * GP-09 legacy fixture. Everything here is deterministic: a fixed clock that
- * advances one second per reading, sequential IDs, and the committed inputs in
- * `tests/fixtures/legacy-development/`. The committed outputs are rebuilt by
- * `tests/fixtures/legacy-development/regenerate.ts` and checked against these
- * builders by `tests/integration/legacy-development-fixture.test.ts`.
+ * GP-09 legacy fixture. The builders here are deterministic: a fixed clock
+ * that advances one second per reading, sequential IDs, and the committed
+ * inputs in `tests/fixtures/legacy-development/`. The committed dump and
+ * archives are frozen: tests read them as they are and pin their checksums in
+ * `tests/integration/legacy-development-compatibility.test.ts`, and nothing
+ * requires these builders, which run current services, to reproduce them.
+ * `tests/fixtures/legacy-development/regenerate.ts` compares and, only on an
+ * explicit flag, re-creates them.
  */
 const repositoryRoot = join(
   dirname(fileURLToPath(import.meta.url)),

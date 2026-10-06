@@ -715,16 +715,33 @@ deliberately not delivered by GP-09.
   written and every other row is byte-identical.
 - Fixtures. `tests/fixtures/legacy-development/` holds the inputs
   (`office-manifest.json`, a copy of the default office, and
-  `runtime-definitions.json`) and the generated files. `pre-pack-project.sql`
+  `runtime-definitions.json`) and the frozen files. `pre-pack-project.sql`
   is a complete replayable dump of a project database at migration `0040`,
-  the last one before any pack table, written by the current services.
-  `bun tests/fixtures/legacy-development/regenerate.ts` rebuilds every
-  generated file with a fixed clock and sequential IDs, and a test replays the
-  builders against the committed bytes.
+  the last one before any pack table, written by the services as they were
+  when the fixture was created.
+- Frozen means the committed bytes. The dump, the four archives and both
+  `expected-*.json` are the source of truth. Tests read them as they are; a
+  test pins the checksum of the dump and of each archive, and the profile
+  digests are literals in the tests. No test requires current code to
+  reproduce them: the builders run current services, so an unrelated change
+  there moves their output, and that must not turn the legacy files into
+  files of newer code. A test only checks that two builds in one run agree.
+  `bun tests/fixtures/legacy-development/regenerate.ts` writes nothing and
+  reports whether current code still builds the frozen bytes; a difference
+  is information, not a failure. Re-creating a file needs a flag.
+  `--recreate-frozen-legacy-state` rewrites the dump and the archives; it is
+  legitimate only when the fixture has to hold something new, and the pinned
+  checksums change with it in the same reviewed commit.
+  `--recreate-frozen-expected-profiles` rewrites the expected profiles; a
+  different result there means the mapping or the digest material changed,
+  which is a new profile version and never a refresh of the version 1 files.
+  Either flag needs a profile version review: the pinned digests still hold,
+  or the version is bumped.
 - Frozen archives. `format-1.aioffice` to `format-4.aioffice` are one quiescent
   legacy project projected onto each format by
-  `portableStateAtFormatVersion` and written by the current archive writer
-  under that format's frozen schema. They are not files produced by the
+  `portableStateAtFormatVersion` and written, when the fixture was created,
+  by the archive writer under that format's frozen schema. They are not
+  files produced by the
   releases that wrote those formats: the current exporter cannot write below
   format 6, and no historical archive is kept in the repository.
 - Criterion 12 is met in part. Each archive restores, its state at its own

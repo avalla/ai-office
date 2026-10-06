@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -224,18 +225,54 @@ async function applyManifest(
 }
 
 describe("GP-09 committed legacy fixtures", () => {
-  test("the deterministic builders reproduce the committed fixtures byte for byte", async () => {
-    const root = temporaryRoot();
-    const database = await buildPrePackDatabase(root);
-    databases.push(database);
-    expect(dumpSqliteDatabase(database)).toBe(
-      readFileSync(legacyFixturePath("pre-pack-project.sql"), "utf8"),
+  test("the frozen dump and archives are the committed bytes", () => {
+    // The committed files are the source of truth. No test rebuilds them
+    // from head code; replacing one changes its checksum here, in review.
+    expect(
+      Object.fromEntries(
+        [
+          "pre-pack-project.sql",
+          ...legacyArchiveFormats.map(legacyArchiveName),
+        ].map((name) => [
+          name,
+          createHash("sha256")
+            .update(readFileSync(legacyFixturePath(name)))
+            .digest("hex"),
+        ]),
+      ),
+    ).toEqual({
+      "pre-pack-project.sql":
+        "b0c8da9ee0687d209527e8ae55d34efd5456cc60b1feb4f429fafd9433e5ec84",
+      "format-1.aioffice":
+        "230f6fa4df9f92a3d61411cdda76a6366bdacb7d7c9f7cb683836ed820ce90da",
+      "format-2.aioffice":
+        "8d76868c1fe0136a986ba0c226b1863089d6201cd7f25065240cd9d45568bb33",
+      "format-3.aioffice":
+        "47704aec1153ae569c5c50d8756bd20e2e5df8b87e7c46ee3a49749e44b95e90",
+      "format-4.aioffice":
+        "c1d33c2f4c6444b404789b36dadf829616049f50c494e9db5a6a065680bcf5eb",
+    });
+  });
+
+  test("the fixture builders are deterministic: two builds in one run give the same bytes", async () => {
+    // Head against head only. Whether head still writes the frozen bytes is
+    // not a requirement: the builders run current services, which may change.
+    const build = async () => {
+      const root = temporaryRoot();
+      const database = await buildPrePackDatabase(root);
+      databases.push(database);
+      return {
+        dump: dumpSqliteDatabase(database),
+        archives: await buildLegacyArchives(root),
+      };
+    };
+    const first = await build();
+    const second = await build();
+    expect(second.dump).toBe(first.dump);
+    expect(second.archives).toEqual(first.archives);
+    expect(Object.keys(first.archives)).toEqual(
+      legacyArchiveFormats.map(String),
     );
-    const archives = await buildLegacyArchives(root);
-    for (const format of legacyArchiveFormats)
-      expect(archives[format]).toBe(
-        readFileSync(legacyFixturePath(legacyArchiveName(format)), "utf8"),
-      );
   });
 
   test("the committed pre-pack database has no Domain Pack table and holds every legacy record kind", () => {
