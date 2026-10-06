@@ -1914,36 +1914,40 @@ end-to-end exit criteria are met.
 
 ### Post-GP-06 hardening follow-ups
 
-Status: planned; neither is implemented. GP-22 and GP-23 are separate,
-independently completable M16 tasks that harden the merged GP-06 and GP-07
-contracts. They are not unfinished GP-06 or GP-07 acceptance criteria, and
+Status: GP-22 is implemented; GP-23 is planned and not implemented. They are
+separate, independently completable M16 tasks that harden the merged GP-06 and
+GP-07 contracts. They are not unfinished GP-06 or GP-07 acceptance criteria, and
 neither reopens that work. Each depends only on merged GP-06 and GP-07; neither
 depends on the other, and no other GP task depends on them.
 
-- GP-22 — Binding composition preflight. GP-07 checks a prospective
-  project-owned definition against the currently resolved pack closure. The
-  inverse path is open: a later `project:pack:apply`, or a portable restore
-  whose sections are valid individually, can still produce a collision that
-  only GP-06 reports as `duplicate_effective_definition`. GP-22 closes that
-  gap. Binding preview/apply will check the prospective pack closure against
-  existing project-owned definitions. Portable restore will validate the
-  combined prospective binding, project definitions and resolved closure after
-  archive structural validation and before authoritative state is committed,
-  when the exact closure is resolvable on the restore host. Pack availability
-  stays host-local operational state: an archive whose exact pack artifacts
-  are absent locally still restores, GP-06 reports its existing closure
-  failure (`pack_unavailable` for an absent selected pack,
+- GP-22 — Binding composition preflight (implemented). GP-07 checks a
+  prospective project-owned definition against the currently resolved pack
+  closure. GP-22 closes the inverse path, where a later `project:pack:apply`,
+  or a portable restore whose sections are valid individually, produced a
+  collision that only GP-06 reported as `duplicate_effective_definition`.
+  Binding preview/apply check the prospective pack closure against existing
+  project-owned definitions; apply repeats the comparison inside its
+  transaction against the closure resolved before it. Portable restore
+  validates the combined prospective binding, project definitions and resolved
+  closure after archive structural validation and before authoritative state
+  is committed, when the exact closure is resolvable on the restore host. Pack
+  availability stays host-local operational state: an archive whose exact pack
+  artifacts are absent locally still restores, GP-06 reports its existing
+  closure failure (`pack_unavailable` for an absent selected pack,
   `pack_dependency_failure` for an absent dependency), and a collision fails
   closed once the exact closure becomes resolvable. Binding mutation stays
   strict.
   Both use the existing shared resolver; no second resolver is introduced.
   The preflight rejects with `pack_definition_collision`, the code GP-07
   already uses; `duplicate_effective_definition` stays GP-06's backstop
-  diagnostic. Applying the unchanged active selection remains a GP-05 no-op.
+  diagnostic. In a binding preview the collision is listed after a GP-04
+  availability failure and before the GP-11 capability refusal. Applying the
+  unchanged active selection remains a GP-05 no-op.
   The restore preflight runs only on the path that writes binding and
   definition state (outcome `restored`), and closure resolution stays outside
   the database transaction.
-  GP-06 stays the fail-closed backstop.
+  GP-06 stays the fail-closed backstop. No migration or archive format was
+  added.
 - GP-23 — Pack manifest U+0000 policy assessment. Project definition text
   rejects U+0000 because PostgreSQL `jsonb` cannot represent it consistently
   with SQLite. Pack manifest text is validated separately. GP-23 traces
