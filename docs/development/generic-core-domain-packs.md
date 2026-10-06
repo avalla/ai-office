@@ -3115,8 +3115,8 @@ role guidance and reference prompts, and the residue list.
 
 ## GP-10B-2 PR 2 development pack 0.3.0
 
-Status: contract approved by the owner on 2026-10-06 (every decision at its
-proposed default); data and tests follow in the same pull request.
+Status: implemented. The owner approved the contract below on 2026-10-06,
+every decision at its proposed default.
 "Implementation record" at the end of this section records what was built
 where the contract left a choice, and where the evidence stops.
 
@@ -3174,7 +3174,7 @@ proposal. They are the decisions of GP-10B-2 that concern the data.
 4. Parity of the requirement-assessment prompt is shown by capturing the
    provider request of `requirement:validate` with a deterministic provider.
    `requirement.ts` is not edited and exports nothing new.
-5. The residue list moves to `schemaVersion` 3 with a nullable `residue` and
+5. The residue list becomes `schemaVersion` 3 with a nullable `residue` and
    keeps all 19 entries. An entry whose field the pack now delivers in full
    has `residue: null`; it is not removed.
 6. The route `maintenance -> delivery` is expressed by
@@ -3241,7 +3241,7 @@ Two comparisons are made by text and not by the shared shape:
 The parity comparison runs on the GP-09 fixture state and on legacy state
 built from the shipped defaults, as before. Changing any newly expressible
 legacy field in a copy breaks parity on both the pack side and the legacy
-side. Changing a legacy field that stays residue moves the legacy profile and
+side. Changing a legacy field that stays residue changes the legacy profile and
 leaves parity equal, and that field is still in the residue list.
 
 ### Residue
@@ -3346,6 +3346,75 @@ to 16 are the contract (PR 1).
 - Parity covers the default legacy state only. Whether a Runtime that
   executed these workflows would behave like the legacy pipelines is not
   shown; that is task `a45ddb12-3159-4b60-9b8b-c26516720834`.
+
+### Implementation record
+
+- Manifest. `packages/domain-pack-development/manifest.json` is
+  `org.ai-office.development@0.3.0`, schema 1, `coreContract` `[1, 2)`, no
+  dependency, with 11 prompts, in this order: the four guidance prompts, the
+  six instruction-contract prompts and `requirement-assessment`. It was
+  produced from the legacy sources by a script that is not committed, then
+  formatted; the tests, not the script, are the evidence. The package still
+  holds the same four files and no source file.
+- Pinned. `manifestDigest` is
+  `sha256:4f54452420bae28efd34818451b86b256e4edb785c377104cf8e7636d6f48a35`.
+  The digest of the exact file bytes is
+  `sha256:015c0af5d4be1837f3143f634d8f63a0ad6a91b7a64534002da4ae9955dcbb69`.
+  The roles, agents (without `prompts`), task types and capabilities keep the
+  digest of `0.1.0` and `0.2.0`, `45c8fb314eb56986aefcaaeeb4c90496ec9721f3dba5aa103bf7d23af49ec0e6`, computed with the role
+  `responsibilities` and the agent `prompts` removed. Two older tests pinned
+  digests over the pack file itself; they now read a frozen copy of the
+  `0.2.0` file, `tests/fixtures/domain-pack/development-0.2.0.json`, whose
+  bytes are those committed before this change.
+- Comparison shape. `tests/helpers/development-pack-parity.ts` gains role
+  `responsibilities`, stage `title`, `objective` and `checks`, and every task
+  type of a workflow. The exemption of the `maintenance` task kind and
+  `unexpressedLegacyRoute` are removed, so both sides read all five routes.
+  Guidance is compared by two further functions, not in the shared shape,
+  because the GP-09 fixture's guidance is synthetic: the legacy digest of each
+  role against the digest of the text of the one prompt that the agent of the
+  role references.
+- Completeness by mutation. A mutated legacy field counts as read when the
+  shared shape or the guidance digest changes. The mutated `guidance` record
+  gets another digest, so `runtime_role.guidance` is read through guidance
+  parity.
+- List. `schemaVersion` 3, pack `0.3.0`. The seven GP-10B-2 entries have a
+  `delivered` statement and `residue: null`; `owner` stays `GP-10B-2` for
+  them and names the task that delivered the field. The parser refuses an
+  entry that delivers nothing and states no residue. The other 12 entries are
+  as GP-10B-1 left them. The guidance version is not a separate entry: the
+  Runtime role `version` entry already covers how the Runtime versions
+  guidance.
+- Requirement assessment. `tests/e2e/development-pack-assessment-prompt.test.ts`
+  runs `requirement:validate` over the Unix socket with a deterministic
+  provider and compares the captured system message with the prompt. The
+  provider is a fake and the test needs no credential.
+- Instruction contract. The builder output for the shipped office manifest,
+  which has no constraints, is compared per field: the static entries are the
+  prompts, the last entries of `workflow` are the derived per-pipeline lines,
+  and none of those lines is in any prompt. `policy`, `project.name` and
+  `project.mission` have no static text and are not prompts.
+- Tests changed where the pack changed: the pinned version and digests, the
+  count of prompts, the agent keys, the task-type rename in a copy of the pack
+  (which now renames the additional task type too), the route cases that named
+  `maintenance` as a `taskType`, and the GP-10B-1 tests that pinned the
+  residue table, the README and the one-route difference. The GP-10B-1 table
+  is now checked as history for fields, owners and gap codes. The "leaves
+  parity equal" cases keep only the fields that stay residue.
+- Unchanged. The GP-09 profile digest of the fixture project is the pinned
+  vector before and after the binding, the checksum of each GP-09 fixture
+  file is pinned, an unbound project resolves to the empty configuration at
+  its pinned digest, and the Runtime's own catalog holds no pack. The
+  architecture tests were not edited.
+- Criterion 25 is a property of this change set. It was checked on the diff
+  against the base commit; no test keeps it true afterwards. PostgreSQL: no
+  storage code is reached, so no PostgreSQL-gated suite covers this change and
+  none was added.
+- Evidence limits. Parity is shown for the default legacy state only; guidance
+  parity is shown on the shipped defaults, not on the fixture. The pack is
+  resolved through a catalog a test supplies. Whether a Runtime that executed
+  these workflows, prompts or checks would behave like the legacy path is not
+  shown and is the subject of task `a45ddb12-3159-4b60-9b8b-c26516720834`.
 
 ## GP-25 pack policy contribution contract
 

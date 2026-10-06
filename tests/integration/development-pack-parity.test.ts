@@ -759,9 +759,6 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
       (manifest: RawPackManifest) => {
         manifest.contributions.workflows![0]!.stages![1]!.checks!.push("More");
       },
-      (manifest: RawPackManifest) => {
-        manifest.contributions.roles![1]!.responsibilities!.pop();
-      },
     ]) {
       const result = await boundProjections(
         fixtureProject(),
@@ -773,6 +770,33 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
         ...result.legacy,
         workflows: [],
         routes: [],
+      });
+    }
+  });
+});
+
+describe("GP-10B-2 PR 2 role responsibilities on stored state", () => {
+  test("a role responsibility that changes, is reordered or is removed in a copy of the pack breaks parity on stored state", async () => {
+    for (const mutate of [
+      (manifest: RawPackManifest) => {
+        manifest.contributions.roles![1]!.responsibilities!.pop();
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.roles![0]!.responsibilities!.reverse();
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.roles![3]!.responsibilities![0] += " (edited)";
+      },
+    ]) {
+      const result = await boundProjections(
+        fixtureProject(),
+        legacyProjectId,
+        mutatedDevelopmentPackBytes(mutate),
+      );
+      expect(result.pack).not.toEqual(result.legacy);
+      expect({ ...result.pack, roles: [] }).toEqual({
+        ...result.legacy,
+        roles: [],
       });
     }
   });

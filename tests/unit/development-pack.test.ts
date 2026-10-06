@@ -615,13 +615,19 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       }),
     ).toEqual(["agent.enabled is in neither the projection nor the list"]);
     // Both: a projected field also listed, and an entry for no field at all.
+    // The base entry delivers nothing, as every entry did before pack 0.3.0.
+    const undelivered = {
+      ...vocabulary.entries[0]!,
+      delivered: null,
+      residue: "The whole field.",
+    };
     expect(
       completenessViolations(fixtureProfile, {
         ...vocabulary,
         entries: [
           ...vocabulary.entries,
-          { ...vocabulary.entries[0]!, field: "title" },
-          { ...vocabulary.entries[0]!, field: "seniority" },
+          { ...undelivered, field: "title" },
+          { ...undelivered, field: "seniority" },
         ],
       }),
     ).toEqual([
@@ -1672,7 +1678,9 @@ describe("GP-10B-2 PR 2 residue list", () => {
     );
     for (const entry of vocabulary.entries) {
       const key = `${entry.subject}.${entry.field}`;
-      if (entry.aspect !== undefined) continue;
+      // An aspect is a part of a field read for another reason, and a field
+      // the default state does not use cannot be classified from it.
+      if (entry.aspect !== undefined || !entry.inDefaultState) continue;
       expect([key, projected.get(key)]).toEqual([
         key,
         entry.delivered !== null,

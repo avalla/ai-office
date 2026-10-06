@@ -385,9 +385,17 @@ export function projectResolvedGuidance(
     "roles" | "agents" | "effectiveDefinitions" | "origins"
   >,
 ): GuidanceDigest[] {
+  // An agent names a prompt by its stable ID, which carries no pack version.
+  const stable = (effectiveId: string): string => {
+    const origin = configuration.origins[effectiveId];
+    if (origin === undefined) throw new Error(`No origin for ${effectiveId}`);
+    return origin.origin === "pack_owned"
+      ? `pack:${origin.pack.id}/prompts/${origin.localId}`
+      : `project:prompts/${origin.localId}`;
+  };
   const texts = new Map(
     configuration.effectiveDefinitions.prompts.map((prompt) => [
-      prompt.effectiveId,
+      stable(prompt.effectiveId),
       (prompt.payload as { text?: string }).text,
     ]),
   );
