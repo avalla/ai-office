@@ -23,6 +23,9 @@ or disable a pack workflow. Both are definition layers: no Runtime agent or
 pipeline is created from them.
 GP-22 makes binding preview/apply and portable restore reject a selection
 whose resolved closure collides with a project-owned definition.
+GP-10A defines the development pack as a committed reference artifact and
+proves expressible-subset parity with the legacy development defaults. The
+pack is not registered, not adopted and not read by the Runtime.
 The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
 architectural contract, not current Runtime behavior.
 
@@ -257,10 +260,12 @@ fields; format 7 rejects both. GP-13 adds format 9 for a state that overrides
 a workflow; format 8 rejects that.
 
 GP-06 resolves these sources into an effective configuration and defines
-its digest. GP-08 handles pack upgrade reconciliation. Aliases, legacy
-Development Pack parity/extraction, automatic selection, downloads, registry,
-executable validators, KnowledgeScopeV2, portable project UIDs and Runtime
-execution from pack definitions remain deferred.
+its digest. GP-08 handles pack upgrade reconciliation. GP-10A delivers the
+first legacy Development Pack parity slice: expressible-subset parity for
+roles, agents and task types. Aliases, the remaining Development Pack
+parity and extraction, automatic selection, downloads, registry, executable
+validators, KnowledgeScopeV2, portable project UIDs and Runtime execution
+from pack definitions remain deferred.
 
 ## GP-06 derived project configuration
 
@@ -1631,6 +1636,327 @@ pack workflow is deferred to GP-24, the task that persists those pins.
   `prospective_configuration_invalid` (`unresolved_override`).
 - Changes are not blocked on in-flight pinned runs; see above (GP-24).
 
+## GP-10A development roles and task defaults
+
+Status: implemented. The owner approved the contract below on 2026-10-06.
+"Implementation record" at the end of this section records what was built
+where the contract left a choice, and where the evidence stops.
+
+Formal scope:
+
+> Define the development domain pack as a committed reference artifact and
+> prove parity with the legacy development defaults over the subset
+> expressible by the current pack contract. No Runtime consumption, catalog
+> registration, implicit adoption, or legacy-path removal occurs in GP-10A.
+
+Anti-goal:
+
+> GP-10A MUST NOT make the development pack authoritative for Runtime
+> execution.
+
+The property GP-10A proves is **expressible-subset parity**: the development
+pack and the legacy development defaults are equal over the subset that the
+current pack contract (schema 1) can represent. It is not complete
+equivalence of Runtime behaviour and it is not execution parity. A project
+bound to the pack still runs on its OfficeManifest, its Runtime roles and its
+Runtime agents, exactly as before; comparing execution from a resolved
+configuration with legacy execution stays with the Runtime task
+"Runtime resolved-configuration execution parity"
+(`a45ddb12-3159-4b60-9b8b-c26516720834`).
+
+Nothing was removed from the legacy path. `agents/`, the default office
+manifest, `officeTaskKinds`, the agent definition loader and
+`SyncAgentDefinitions` are unchanged and remain the only source the Runtime
+reads. The pack repeats the expressible part of those defaults as a second,
+verified description; a test fails when the two drift apart.
+
+### Decisions
+
+1. Defining the defaults in the pack means a verified reference artifact. The
+   legacy path is neither removed nor modified.
+2. The pack lives in `packages/domain-pack-development/`, is data only and is
+   not registered in any catalog.
+3. Its identity is `org.ai-office.development@0.1.0`. The contract fixture
+   `tests/fixtures/domain-pack/development.json` (`@1.0.0`) is a different,
+   unrelated artifact and is unchanged.
+4. The 14 legacy role capabilities are declared as id-only capability
+   contributions. They are descriptive labels, not GP-16 capability contracts,
+   and grant nothing.
+5. The legacy office role `purpose` maps to the pack role `description`. The
+   mapping is covered by a test.
+6. Agents declare no capabilities: the legacy state has no per-agent set.
+7. Parity is verified twice: against the GP-09 fixture profile, and against
+   the defaults actually shipped in the repository (`agents/` and the default
+   office manifest) through the real loader and sync.
+8. The pack contract is not extended.
+9. The pack is neither registered nor adopted; that is GP-10C.
+
+### Reference pack
+
+The manifest declares exactly:
+
+- four roles, `architect`, `developer`, `reviewer` and `qa`, each with the
+  legacy title, the legacy `purpose` as `description`, and the capability set
+  of the Runtime role of the same key;
+- four agents with the same IDs, each naming the role of its ID and nothing
+  else;
+- five task types, `feature`, `bugfix`, `maintenance`, `research` and
+  `release`, by ID only;
+- the 14 role capabilities, by ID only.
+
+It declares no workflow, prompt, knowledge entry, policy, artifact type,
+evidence type or validator, and no agent capability. Those belong to GP-10B
+and GP-10C.
+
+### Expressible-subset parity
+
+Both sides are projected into one comparison shape and must be equal:
+
+- a role: `id`, `title`, `description`, capability set;
+- an agent: `id`, `role`;
+- the task type IDs.
+
+One side is the resolved configuration (GP-06) of a project that holds the
+default legacy state and is bound to the pack through a catalog the test
+supplies. The other side is the GP-09 legacy development profile of the same
+project. The comparison runs on the GP-09 fixture state and, separately, on
+legacy state built from the shipped `agents/` directory and the shipped
+default office manifest. The second comparison is the drift guard on the
+defaults that are actually distributed: it fails when a shipped default
+changes and the pack does not.
+
+Two points found after GP-09 shape this:
+
+- **Runtime role name.** GP-09's `runtime_role_fields_not_expressible` gap
+  lists `guidance`, `limits`, `modelPolicy`, `tools` and `version`. It does
+  not list the Runtime role `name` (`software-architect`, for example), which
+  the pack vocabulary cannot express either. The name is added to the list
+  below. The frozen GP-09 profile is not edited.
+- **Synthetic guidance in the GP-09 fixture.** The GP-09 fixture's
+  `runtime-definitions.json` carries one-line guidance written for the
+  fixture, not the shipped `system.md` files. Its pinned digest therefore
+  says nothing about the real defaults, and parity with the fixture does not
+  prove parity with what the repository ships. Hence the separate comparison
+  with the shipped artifacts.
+
+### Outside pack vocabulary
+
+Every legacy field of the four roles, four agents and five task kinds is
+either in the projection above or in this list, never both and never
+neither. The list is a committed artifact that a test verifies; it also
+holds the pipeline, approval and check semantics that a schema-1 pack
+workflow cannot express. Each entry names the task that owns it next: GP-10B,
+GP-10C, or the Runtime execution parity task `a45ddb12` (in full
+`a45ddb12-3159-4b60-9b8b-c26516720834`).
+
+| Subject      | Field                         | Owner    | GP-09 gap code                                                 |
+| ------------ | ----------------------------- | -------- | -------------------------------------------------------------- |
+| office role  | `responsibilities`            | GP-10B   | `role_fields_not_expressible`                                  |
+| Runtime role | `name`                        | a45ddb12 | none (missing from GP-09's list)                               |
+| Runtime role | `version`                     | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | capability order              | a45ddb12 | none                                                           |
+| Runtime role | `tools`                       | GP-10C   | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `modelPolicy`                 | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `limits`                      | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `guidance`                    | GP-10B   | `runtime_role_fields_not_expressible`                          |
+| agent        | `enabled`                     | a45ddb12 | none                                                           |
+| task kind    | `pipelineId`                  | GP-10B   | none                                                           |
+| pipeline     | `defaultFor`                  | GP-10B   | `pipeline_routes_several_task_kinds`                           |
+| pipeline     | `enforcement`                 | GP-10B   | `pipeline_fields_not_expressible`                              |
+| stage        | `name`                        | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `objective`                   | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `checks`                      | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `requiresApproval`            | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `capabilities`                | GP-10B   | `stage_fields_not_expressible`                                 |
+| stage        | `requiresIndependentApproval` | GP-10B   | `stage_fields_not_expressible` if used; unused by the defaults |
+| stage        | `requiresDifferentAgentFrom`  | GP-10B   | `stage_fields_not_expressible` if used; unused by the defaults |
+
+`limits` is the Runtime limit set (`maxIterations`, `maxCostMicros`,
+`timeoutSeconds`). `guidance` is the role's system instructions, the shipped
+`system.md`. `pipelineId` is the routing of a task kind to a pipeline.
+Capability order: the Runtime stores a role's capabilities as an ordered
+list, and a pack role holds a set.
+
+The last two rows are legacy stage fields that the default state does not
+use: neither the shipped default office manifest nor the GP-09 fixture sets
+them, so GP-09 reports no gap for them there. They are listed because a
+schema-1 workflow cannot express an independent-approval flag or a
+separation constraint, and they carry `inDefaultState: false` in the
+artifact; every other entry was observed in the default state and carries
+`true`. A test fails if the default state starts using either field, or if
+an entry marked unused is not a legacy stage field that GP-09 reports once a
+stage uses it.
+
+The list covers the fields of roles, agents, task kinds, pipelines and
+stages. It does not cover the manifest's `office.name`, `project` model or
+`provenance`, and the order of roles, agents and task kinds is not compared.
+
+A pipeline's `id`, `name` and `description` and a stage's `id` and `roleId`
+are expressible by a schema-1 workflow. They are absent from the pack because
+workflows are GP-10B, not because the vocabulary lacks them, so they are not
+in the list.
+
+### Acceptance
+
+1. The committed manifest passes `verifyDomainPackManifest` against core
+   contract 1 and its `manifestDigest` equals a pinned literal. It fails if
+   the bytes change without a version change.
+2. It declares exactly the roles `architect`, `developer`, `reviewer` and
+   `qa`, the agents of the same IDs each naming its role, and the five task
+   types. It fails on any extra, missing or renamed ID.
+3. It contains no workflows, prompts, knowledge, policies, artifact or
+   evidence types, or validators, and no agent capabilities. It fails if
+   GP-10B or GP-10C content appears.
+4. For a project holding the default legacy state and bound to the pack
+   through a test-supplied catalog, the projection of the resolved
+   configuration equals the projection of the GP-09 legacy profile for every
+   role (`id`, `title`, `description` from `purpose`, capability set), agent
+   (`id`, `role`) and task type. It fails on any difference.
+5. The same holds when the legacy state is built from the shipped `agents/`
+   directory and the shipped default office manifest through the real loader
+   and sync. It fails if a shipped default changes without the pack changing.
+6. Every legacy field of the four roles, four agents and five kinds is either
+   in the projection or in the pinned outside-pack-vocabulary list. It fails
+   if a field is in neither or in both.
+7. The outside-pack-vocabulary list is a committed, test-verified artifact.
+   It contains every role-side GP-09 `vocabularyGaps` entry for the default
+   state plus tools, modelPolicy, limits, guidance, responsibilities, Runtime
+   role name, capability order, agent enabled, and the pipeline, approval and
+   check semantics not expressible by the pack workflow; every entry names
+   its owner. It fails if a GP-09 role gap, a listed field or an owner is
+   missing.
+8. Changing one title, description, capability, agent role or task-type ID in
+   a copy of the pack makes the parity comparison fail. It fails if the
+   comparison is vacuous.
+9. Binding the pack leaves the legacy profile digest equal to the GP-09
+   pinned vector, and the GP-09 frozen fixture files are byte-identical. It
+   fails on any change.
+10. `project:configuration:show` for an unbound project and the empty-digest
+    vector are unchanged. It fails if either changes.
+11. The default production catalog contains no pack and no project gains a
+    binding from install, sync or restore. It fails if the pack is resolvable
+    without a test-supplied catalog.
+12. No file under `packages/domain`, `packages/application`,
+    `packages/runtime-host`, the storage packages or `apps` imports the pack
+    package or contains its ID. It fails mechanically in the architecture
+    test.
+13. The pack package imports only `domain-pack-contracts`. It fails on any
+    other import.
+14. No migration, archive format, audit event type, CLI command or
+    contract-package change is in the diff. It fails if one appears.
+15. `agents/`, the default office manifest, `officeTaskKinds`, the loader and
+    sync are byte-identical to the base. It fails if a legacy default is
+    edited.
+16. The documentation names the claim expressible-subset parity, carries the
+    formal scope and the anti-goal verbatim, lists the residue with owners,
+    records the two GP-09 points, and states that nothing was removed. It
+    fails if it says the defaults left the legacy path or claims execution
+    parity.
+
+### Non-goals
+
+- No registration, install or adoption of the pack (GP-10C).
+- No contract or schema extension.
+- No workflows, routing, prompts or guidance text (GP-10B).
+- No Runtime roles or agents created from archetypes.
+- No generalisation of `officeTaskKinds`.
+- No specialists from `agent-catalog/`.
+- No removal or modification of any legacy default.
+- The pack is not authoritative for Runtime execution.
+
+### Implementation record
+
+- Package. `packages/domain-pack-development/` holds `manifest.json`,
+  `outside-pack-vocabulary.json`, a `package.json` that makes it a workspace
+  member, and a README. It has no source file, so it imports nothing; the
+  architecture test allows a future source file to import only
+  `domain-pack-contracts`. No path alias, dependency or production file
+  names the package or its ID, and `bun.lock` lists it as a workspace only.
+- Manifest. Schema 1, `coreContract` `[1, 2)`, no dependency. Roles are in
+  the default office manifest's order and task types in `officeTaskKinds`
+  order; neither order is compared. A role's capability list is written in
+  code-unit order, the order the contract validates it to. Task types,
+  agents and capabilities carry no title or description: the legacy state
+  has none to copy.
+- Pinned. `manifestDigest` is
+  `sha256:cda1c5fc48b5e04d75905d00f0f5d2b41a69e497eb4cc009a3aa77cfc2dac567`.
+  The test also pins the digest of the file's exact bytes, so a formatting
+  change at version `0.1.0` fails too.
+- Capabilities. The 14 IDs are `approve_or_reject`, `assess_security`,
+  `assess_tradeoffs`, `create_patch`, `decompose_work`, `derive_test_cases`,
+  `inspect_code`, `inspect_diff`, `inspect_project`, `inspect_tests`,
+  `modify_code`, `propose_adr`, `report_regressions` and `run_tests`. They
+  are the union of the four shipped `agent.yaml` capability lists; `run_tests`
+  is held by both `developer` and `qa`.
+- Projection. `tests/helpers/development-pack-parity.ts` is test code and
+  the only place the two sides meet. The legacy side reads the profile's
+  office-derived `roles`, `agents` and `taskKinds`: a role's capabilities are
+  those of the Runtime role of the same key, as a set; an agent is its name
+  and the office role it serves. The pack side reads every enabled role,
+  agent and task type of the resolved configuration by local ID, whatever
+  its origin, so a definition the project adds would break the comparison
+  as it should. `runtimeOnly` roles and agents are not development defaults
+  and are not projected; in the GP-09 fixture that is the `security`
+  specialist and the unused `release-engineer` role.
+- Binding in tests. A test builds an `InMemoryInstalledDomainPackCatalog`
+  with one trusted test installer, registers the committed bytes and binds
+  the project through `ManageProjectPackBinding.apply`, or through
+  `project:pack:apply` over the socket. No production path does either.
+- Two comparisons. On the GP-09 fixture, the committed pre-pack dump is
+  replayed and migrated to head. On the shipped defaults, a project is
+  given the shipped default office manifest through `ApplyOfficeManifest`
+  and the shipped `agents/` directory through `YamlAgentDefinitionLoader`
+  and `SyncAgentDefinitions`; an end-to-end case does the same with
+  `install` and `agent:sync` over the Unix socket. Edited copies of the
+  shipped files show the guard works: a capability added, removed or
+  renamed, a role key, a title or a purpose breaks parity.
+- Task types. The five kinds are defined by the domain constant
+  `officeTaskKinds`, not by the shipped office manifest, so the task-type
+  drift guard watches that constant.
+- What the drift guard does not see. A change to a field in the list above
+  (guidance text, model policy, the Runtime role name, for example) leaves
+  the expressible subset equal. The test asserts that too, so the limit of
+  the claim is itself pinned.
+- Completeness is decided by mutation, not by a second hand-written list:
+  each legacy field of the profile is changed in a copy, and the field counts
+  as projected when the projection changes. It must then be absent from the
+  list, and a field that does not change the projection must be in it.
+  Capability order is the one aspect entry: the field is projected as a set
+  and only its order is outside.
+- List of fields outside the vocabulary. `outside-pack-vocabulary.json`
+  holds the table above with a reason per entry: 19 entries, 17 observed in
+  the default state and 2 legacy stage fields it does not use. A test checks
+  its shape and owners, that it carries every GP-09 `vocabularyGaps` field
+  of the default state (pipeline and stage gaps included), that each GP-09
+  code it cites reports that field exactly when the entry is marked as in
+  the default state, on the GP-09 fixture and on the shipped defaults, and
+  that the table in this section equals it entry for entry.
+- Owners. `tools` is assigned to GP-10C, which puts capability declarations
+  behind pack contracts; Runtime role name, version, capability order, model
+  policy, limits and agent enablement to the execution parity task;
+  responsibilities, guidance, routing and every pipeline and stage field to
+  GP-10B.
+- Unchanged. The legacy profile digest of the fixture project is the GP-09
+  vector before and after the binding, every legacy row is the same, and a
+  test pins the checksum of each GP-09 fixture file. An unbound project
+  still resolves to the empty configuration at its pinned digest, also on a
+  host whose catalog holds the pack.
+- Architecture scans. The checks for criteria 11 to 13 are textual,
+  mechanical guards: they catch a literal import, the literal pack ID, a
+  literal `installedPacks` supplied outside the option plumbing and a
+  literal catalog `register` call. They are not tamper-proof against a
+  constructed string, a `require` or a catalog passed positionally.
+- Criteria 14 and 15 are properties of this change set, not of the code.
+  They were checked on the diff against the base commit: it touches only
+  the plan, the roadmap, the architecture overview, the README, `bun.lock`,
+  the new package and tests. No test keeps them true afterwards; a later
+  edit of a legacy default is caught by the drift guard only where it
+  changes the expressible subset.
+- PostgreSQL. Nothing here reaches storage code, so no PostgreSQL-gated
+  suite covers it and none was added.
+- No migration, archive format, audit event type, CLI command, Runtime code
+  or contract-package change was added.
+
 ## Objective and decision boundary
 
 AI Office should operate governed teams in arbitrary domains. The core owns
@@ -1769,8 +2095,11 @@ storage, and AgentKnowledgeStore boundary:
    legacy-state parity: the profile is compared with the Runtime's legacy
    readers. Comparing old and resolved behavior is execution parity, a
    separate Runtime task (see the GP-09 section).
-4. **Extraction:** move development defaults and integration metadata in small
-   slices, proving parity before each old coupling is removed.
+4. **Extraction:** define development defaults and integration metadata in
+   the development pack in small slices, proving parity for each slice. An
+   old coupling is removed only by a later, separately approved task. GP-10A
+   delivers the first slice as expressible-subset parity over roles, agents
+   and task types and removes nothing (see the GP-10A section).
 5. **Opt-in adoption:** preview and audit an explicit development-pack binding;
    preserve project edits and in-flight pinned runs. Support old snapshots.
 6. **New projects:** decide separately whether explicit pack selection is the
@@ -1825,7 +2154,7 @@ carry the same fields. GP-01 through GP-07 have passed review and merged.
 | GP-07 — Definition ownership and project overrides | GP-05                           | Record core/pack/project/override/resolved origin; allow replacement, extension, disablement and custom definitions where safe; security gates cannot be weakened.                                                                                                              | Ownership/override contract and tests for customized, removed and conflicting definitions.                           | Fixed pack workflow.                                               |
 | GP-08 — Pack upgrade/reconciliation                | GP-06, GP-07                    | Preview/apply upgrades idempotently; preserve customized definitions, handle deleted/old references and active pins, audit changes, block unresolved conflicts.                                                                                                                 | Migration/reconciliation report; repeat, rollback/failure and compatibility tests.                                   | Silent overwrite or automatic pack download.                       |
 | GP-09 — Legacy development compatibility           | GP-06, GP-08                    | Legacy-state parity: a versioned, read-only legacy development profile describes old offices, roles, agents, task kinds and pipelines; old databases, bindings and snapshots load unchanged. Execution parity is a separate Runtime task.                                       | Legacy fixture, frozen archives and comparison with Runtime legacy readers; tasks, approvals, knowledge, audit.      | Forcing adoption; inferred packs; execution parity.                |
-| GP-10A — Development roles and task defaults       | GP-09, GP-11, GP-12             | Move Software Architect/Developer/Reviewer/QA defaults and software task kinds into the development pack; legacy and adopted projects resolve equivalent effective definitions.                                                                                                 | Reference pack definitions; old/new manifest, role and agent parity tests.                                           | Runtime identity or task lifecycle redesign.                       |
+| GP-10A — Development roles and task defaults       | GP-09, GP-11, GP-12             | Define the development pack roles, agents and task types as a committed reference artifact; prove expressible-subset parity with the legacy development defaults. No Runtime consumption, catalog registration, adoption or legacy-path removal.                                | Reference pack manifest and outside-pack-vocabulary list; parity tests on the GP-09 fixture and shipped defaults.    | Pack authority over Runtime execution; registration or adoption.   |
 | GP-10B — Development workflows and prompts         | GP-10A, GP-13                   | Move feature/bugfix/research/release templates and software assessment/instruction prompts behind pack defaults; project pipelines remain editable.                                                                                                                             | Workflow and prompt templates; stage/approval and project-customization parity tests.                                | New pipeline engine or forced workflow.                            |
 | GP-10C — Development evidence and adoption         | GP-10B, GP-14–GP-16             | Put repository/GitHub/commit/PR/CI evidence types, knowledge guidance and capability declarations behind pack contracts; offer previewed explicit adoption while preserving old bindings.                                                                                       | Development pack completion and migration report; legacy snapshot, approval, action and provenance regression tests. | Redesign of worker, queue, model routing or governance.            |
 | GP-11 — Pack role archetypes                       | GP-06, GP-07                    | Define pack roles with stable identity and declarative capabilities; rename, replace, omit and add them in project configuration; preserve identity, capabilities and project changes on upgrade.                                                                               | Role contracts and customization/upgrade tests.                                                                      | Official role names; Runtime roles, grants or bindings.            |
