@@ -1110,6 +1110,320 @@ profiles:
     }
   });
 
+  test("replaces and disables pack agents, upgrades and shows the agent view over the socket", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-agent-archetype-cli-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const installedPacks = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    const template = parseDomainPackManifest(
+      readFileSync(
+        new URL("../fixtures/domain-pack/custom.json", import.meta.url),
+      ),
+    );
+    const register = (version: string, roles: object[], agents: object[]) => {
+      const manifest = {
+        ...template,
+        version,
+        contributions: {
+          ...template.contributions,
+          roles,
+          agents,
+          prompts: [{ id: "brief" }, { id: "tone" }],
+          knowledge: [{ id: "statutes" }],
+          capabilities: [{ id: "draft" }, { id: "review" }, { id: "sign" }],
+        },
+      } as unknown as typeof template;
+      const bytes = new TextEncoder().encode(
+        JSON.stringify({
+          ...manifest,
+          manifestDigest: computeManifestDigest(manifest),
+        }),
+      );
+      return installedPacks.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: {
+          installerId: "local-distribution",
+          reference: `bundled/custom-${version}`,
+        },
+      });
+    };
+    const roles = [
+      { id: "counsel", capabilities: ["draft", "review"] },
+      { id: "clerk", capabilities: ["draft"] },
+    ];
+    const v1 = register("1.0.0", roles, [
+      {
+        id: "drafter",
+        role: "counsel",
+        prompts: ["brief"],
+        capabilities: ["draft"],
+      },
+      { id: "filer", role: "clerk" },
+      { id: "researcher", knowledge: ["statutes"] },
+    ]);
+    // Same role sets; the drafter and the filer change.
+    const v2 = register("2.0.0", roles, [
+      {
+        id: "drafter",
+        title: "Drafter",
+        role: "counsel",
+        prompts: ["brief", "tone"],
+        capabilities: ["draft", "review"],
+      },
+      { id: "filer", title: "Filer", role: "clerk", capabilities: ["draft"] },
+      { id: "researcher", knowledge: ["statutes"] },
+    ]);
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+      installedPacks,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+    try {
+      await waitForDaemon(socket.socketPath);
+      const created = await invoke(["project:create", "Agent fixture"]);
+      const projectId = created.stdout[0]!.replace("Project created: ", "");
+      expect(
+        (
+          await invoke([
+            "project:pack:apply",
+            "--project",
+            projectId,
+            "--packs",
+            JSON.stringify([v1]),
+            "--expected-revision",
+            "0",
+          ])
+        ).code,
+      ).toBe(0);
+      const define = (revision: number, mutation: object) =>
+        invoke([
+          "project:definition:apply",
+          "--project",
+          projectId,
+          "--mutation",
+          JSON.stringify(mutation),
+          "--expected-revision",
+          String(revision),
+        ]);
+      const source = (pack: typeof v1, localId: string) => ({
+        ...pack,
+        kind: "agents",
+        localId,
+      });
+      // A request beyond the role's declared set is refused before storage.
+      const exceeding = {
+        action: "put_override",
+        source: source(v1, "drafter"),
+        operation: "replace",
+        payload: { id: "drafter", role: "clerk", capabilities: ["review"] },
+      };
+      const previewed = await invoke([
+        "project:definition:preview",
+        "--project",
+        projectId,
+        "--mutation",
+        JSON.stringify(exceeding),
+        "--json",
+      ]);
+      expect(previewed.code).toBe(1);
+      expect(JSON.parse(previewed.stdout[0]!)).toMatchObject({
+        issues: [{ code: "agent_capability_exceeds_role" }],
+      });
+      expect((await define(0, exceeding)).code).toBe(1);
+      // Replace the drafter's name, role, prompts and requested capabilities.
+      expect(
+        (
+          await define(0, {
+            action: "put_override",
+            source: source(v1, "drafter"),
+            operation: "replace",
+            payload: {
+              id: "drafter",
+              title: "Our drafter",
+              role: "clerk",
+              prompts: ["tone"],
+              capabilities: ["draft"],
+            },
+          })
+        ).code,
+      ).toBe(0);
+      expect(
+        (
+          await define(1, {
+            action: "put_override",
+            source: source(v1, "filer"),
+            operation: "disable",
+          })
+        ).code,
+      ).toBe(0);
+      expect(
+        (
+          await define(2, {
+            action: "put_owned",
+            kind: "roles",
+            id: "liaison",
+            enabled: true,
+            payload: { id: "liaison" },
+          })
+        ).code,
+      ).toBe(0);
+      expect(
+        (
+          await define(3, {
+            action: "put_owned",
+            kind: "agents",
+            id: "helper",
+            enabled: true,
+            payload: { id: "helper", title: "Helper", role: "liaison" },
+          })
+        ).code,
+      ).toBe(0);
+      const show = async () =>
+        JSON.parse(
+          (
+            await invoke([
+              "project:configuration:show",
+              "--project",
+              projectId,
+              "--json",
+            ])
+          ).stdout[0]!,
+        ) as {
+          ok: boolean;
+          configuration: {
+            configurationDigest: string;
+            agents: { agentId: string; effectiveId: string }[];
+            disabledAgents: string[];
+          };
+        };
+      const before = await show();
+      const stable = (kind: string, localId: string) =>
+        `pack:org.example.custom/${kind}/${localId}`;
+      const drafter = {
+        agentId: stable("agents", "drafter"),
+        origin: "pack_owned",
+        title: "Our drafter",
+        roleId: stable("roles", "clerk"),
+        prompts: [stable("prompts", "tone")],
+        knowledge: [],
+        capabilities: [stable("capabilities", "draft")],
+        customization: "replace",
+      };
+      const researcher = {
+        agentId: stable("agents", "researcher"),
+        origin: "pack_owned",
+        prompts: [],
+        knowledge: [stable("knowledge", "statutes")],
+        capabilities: [],
+        customization: "none",
+      };
+      const helper = {
+        agentId: "project:agents/helper",
+        effectiveId: "project:agents/helper",
+        origin: "project_owned",
+        title: "Helper",
+        roleId: "project:roles/liaison",
+        prompts: [],
+        knowledge: [],
+        capabilities: [],
+        customization: "none",
+      };
+      const effective = (pack: typeof v1, localId: string) =>
+        `pack:org.example.custom@${pack.version}#${pack.manifestDigest}/agents/${localId}`;
+      expect(before.configuration.agents).toEqual([
+        { ...drafter, effectiveId: effective(v1, "drafter") },
+        { ...researcher, effectiveId: effective(v1, "researcher") },
+        helper,
+      ]);
+      expect(before.configuration.disabledAgents).toEqual([
+        stable("agents", "filer"),
+      ]);
+
+      const upgrade = (...extra: string[]) =>
+        invoke([
+          "project:pack:upgrade",
+          "--project",
+          projectId,
+          "--packs",
+          JSON.stringify([v2]),
+          ...extra,
+          "--json",
+        ]);
+      const preview = await upgrade();
+      expect(preview.code).toBe(0);
+      const plan = JSON.parse(preview.stdout[0]!) as {
+        planDigest: string;
+        prospectiveConfigurationDigest: string;
+      };
+      expect(plan).toMatchObject({
+        issues: [],
+        overrides: [
+          { operation: "replace", outcome: "retargeted", upstream: "changed" },
+          { operation: "disable", outcome: "retargeted", upstream: "changed" },
+        ],
+        // Role sets are unchanged; the agent changes are template changes.
+        roleCapabilityChanges: { availability: "available", changes: [] },
+        templates: {
+          availability: "available",
+          changes: [
+            { kind: "agents", localId: "drafter", customized: true },
+            { kind: "agents", localId: "filer", customized: true },
+          ],
+        },
+      });
+      expect(JSON.stringify(plan)).not.toContain("Our drafter");
+      const applied = await upgrade("--approve", plan.planDigest);
+      expect(applied.code).toBe(0);
+      expect(JSON.parse(applied.stdout[0]!)).toMatchObject({
+        result: "applied",
+        bindingRevision: 2,
+        definitionRevision: 5,
+        packs: [v2],
+      });
+
+      const after = await show();
+      expect(after).toEqual({
+        ok: true,
+        configuration: expect.objectContaining({
+          configurationDigest: plan.prospectiveConfigurationDigest,
+          selectedPacks: [v2],
+          agents: [
+            { ...drafter, effectiveId: effective(v2, "drafter") },
+            { ...researcher, effectiveId: effective(v2, "researcher") },
+            helper,
+          ],
+          // The disabled agent is not recreated by the upgrade.
+          disabledAgents: [stable("agents", "filer")],
+        }) as unknown,
+      });
+      // Stable identities are the same before and after the upgrade.
+      expect(after.configuration.agents.map((agent) => agent.agentId)).toEqual(
+        before.configuration.agents.map((agent) => agent.agentId),
+      );
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
   test("previews and applies an explicit project pack binding over the socket", async () => {
     const projectRoot = mkdtempSync(
       join(tmpdir(), "ai-office-pack-binding-cli-"),
@@ -1428,6 +1742,8 @@ profiles:
         "configurationDigest",
         "roles",
         "omittedRoles",
+        "agents",
+        "disabledAgents",
         "pin",
       ]);
       expect(

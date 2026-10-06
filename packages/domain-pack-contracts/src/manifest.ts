@@ -62,6 +62,20 @@ export interface RoleContribution extends Contribution {
   readonly capabilities?: readonly ContributionLocalId[];
 }
 
+/**
+ * An agent archetype. `role`, `prompts` and `knowledge` name contributions of
+ * the same manifest, and `capabilities` the capabilities the agent requests,
+ * which must be among those its role declares. The references are declarative:
+ * they create no Runtime agent and grant nothing. Each validated list is a set
+ * in ascending code-unit order, absent when empty.
+ */
+export interface AgentContribution extends Contribution {
+  readonly role?: ContributionLocalId;
+  readonly prompts?: readonly ContributionLocalId[];
+  readonly knowledge?: readonly ContributionLocalId[];
+  readonly capabilities?: readonly ContributionLocalId[];
+}
+
 export interface WorkflowStage {
   readonly id: ContributionLocalId;
   readonly role: ContributionLocalId;
@@ -77,7 +91,9 @@ export type DomainPackContributions = {
     ? WorkflowContribution
     : K extends "roles"
       ? RoleContribution
-      : Contribution)[];
+      : K extends "agents"
+        ? AgentContribution
+        : Contribution)[];
 };
 
 export interface DomainPackManifest {
@@ -271,42 +287,76 @@ const compareCodeUnits = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
 
 /**
- * Shape of a role's capability references. Whether each one names a declared
- * capability is checked once every section has been read.
+ * The most references one list may hold: a role's capabilities, or an agent's
+ * prompts, knowledge or requested capabilities. Shared with the project
+ * mutation contract and the portable archive, so every accepted list stays
+ * storable and exportable.
  */
-function roleCapabilities(
+export const maximumContributionReferences = 1_000;
+
+/**
+ * Shape of a list of references to contributions of the same manifest: a
+ * role's capabilities, or an agent's prompts, knowledge and requested
+ * capabilities. Whether each one names a declared contribution is checked once
+ * every section has been read.
+ */
+function referenceList(
   value: unknown,
   path: string,
+  noun: string,
 ): readonly ContributionLocalId[] {
   if (!Array.isArray(value))
     return fail("invalid_contribution", path, "expected array");
-  // "No capabilities" has one encoding: the absent field.
+  // "None" has one encoding: the absent field.
   if (value.length === 0)
     return fail(
       "invalid_contribution",
       path,
-      "expected at least one capability; omit the field instead",
+      `expected at least one ${noun}; omit the field instead`,
+    );
+  if (value.length > maximumContributionReferences)
+    return fail(
+      "invalid_contribution",
+      path,
+      `expected at most ${maximumContributionReferences} ${noun} references`,
     );
   const parsed = value.map((entry: unknown, index: number) =>
     localId(entry, `${path}[${index}]`, "invalid_contribution"),
   );
   if (new Set(parsed).size !== parsed.length)
-    fail("invalid_contribution", path, "duplicate capability reference");
+    fail("invalid_contribution", path, `duplicate ${noun} reference`);
   return parsed;
 }
+
+/** The list fields of an agent, with the noun used in their diagnostics. */
+const agentReferenceLists = [
+  ["prompts", "prompt"],
+  ["knowledge", "knowledge"],
+  ["capabilities", "capability"],
+] as const;
 
 function contribution(
   value: unknown,
   path: string,
   kind: ContributionKind,
-): Contribution | RoleContribution | WorkflowContribution {
+): Contribution | RoleContribution | AgentContribution | WorkflowContribution {
   const record = object(value, path, "invalid_contribution");
   const workflow = kind === "workflows";
   const allowed = workflow
     ? ["id", "title", "description", "taskType", "stages"]
     : kind === "roles"
       ? ["id", "title", "description", "capabilities"]
-      : ["id", "title", "description"];
+      : kind === "agents"
+        ? [
+            "id",
+            "title",
+            "description",
+            "role",
+            "prompts",
+            "knowledge",
+            "capabilities",
+          ]
+        : ["id", "title", "description"];
   for (const key of Object.keys(record))
     if (!allowed.includes(key))
       fail("invalid_contribution", `${path}.${key}`, "unknown field");
@@ -333,11 +383,28 @@ function contribution(
       ? common
       : {
           ...common,
-          capabilities: roleCapabilities(
+          capabilities: referenceList(
             record.capabilities,
             `${path}.capabilities`,
+            "capability",
           ),
         };
+  if (kind === "agents")
+    return {
+      ...common,
+      ...(record.role === undefined
+        ? {}
+        : {
+            role: localId(record.role, `${path}.role`, "invalid_contribution"),
+          }),
+      ...Object.fromEntries(
+        agentReferenceLists.flatMap(([field, noun]) =>
+          record[field] === undefined
+            ? []
+            : [[field, referenceList(record[field], `${path}.${field}`, noun)]],
+        ),
+      ),
+    };
   if (!workflow) return common;
   if (!Array.isArray(record.stages))
     return fail("invalid_contribution", `${path}.stages`, "expected array");
@@ -467,6 +534,60 @@ export function validateDomainPackManifest(value: unknown): DomainPackManifest {
       ...role,
       capabilities: [...role.capabilities].sort(compareCodeUnits),
     };
+  });
+  // An agent's references follow the same rule: bare local IDs of this
+  // manifest, each list a set in one order.
+  const roleSets = new Map(
+    (contributions.roles as readonly RoleContribution[]).map((role) => [
+      role.id,
+      role.capabilities ?? [],
+    ]),
+  );
+  contributions.agents = (
+    contributions.agents as readonly AgentContribution[]
+  ).map((agent, index) => {
+    const path = `contributions.agents[${index}]`;
+    const roleSet =
+      agent.role === undefined ? undefined : roleSets.get(agent.role);
+    if (agent.role !== undefined && roleSet === undefined)
+      fail(
+        "invalid_contribution",
+        `${path}.role`,
+        "role is not declared by this manifest",
+      );
+    const lists: {
+      prompts?: ContributionLocalId[];
+      knowledge?: ContributionLocalId[];
+      capabilities?: ContributionLocalId[];
+    } = {};
+    for (const [field, noun] of agentReferenceLists) {
+      const references = agent[field];
+      if (references === undefined) continue;
+      // The limit: a request needs a role and stays inside that role's set.
+      if (field === "capabilities" && roleSet === undefined)
+        fail(
+          "invalid_contribution",
+          `${path}.capabilities`,
+          "requested capabilities need a role",
+        );
+      const known = new Set(contributions[field].map((entry) => entry.id));
+      for (const [position, reference] of references.entries()) {
+        if (!known.has(reference))
+          fail(
+            "invalid_contribution",
+            `${path}.${field}[${position}]`,
+            `${noun} is not declared by this manifest`,
+          );
+        if (field === "capabilities" && !roleSet?.includes(reference))
+          fail(
+            "invalid_contribution",
+            `${path}.capabilities[${position}]`,
+            "capability is not declared by the agent's role",
+          );
+      }
+      lists[field] = [...references].sort(compareCodeUnits);
+    }
+    return { ...agent, ...lists };
   });
   return {
     schemaVersion: 1,

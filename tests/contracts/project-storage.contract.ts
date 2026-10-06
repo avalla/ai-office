@@ -378,9 +378,9 @@ export function defineProjectStorageContracts(
         expect(current.overrides).toEqual([omission]);
         expect(await definitions().get(projectId)).toEqual(current);
         for (const invalid of [
-          // Only roles and prompts have an omission contract.
+          // Only roles, prompts and (GP-12) agents have a disable contract.
           { ...omission, source: { ...omission.source, kind: "taskTypes" } },
-          { ...omission, source: { ...omission.source, kind: "agents" } },
+          { ...omission, source: { ...omission.source, kind: "knowledge" } },
           // An omission carries no payload.
           { ...omission, payload: { id: "counsel" } },
         ] as unknown as (typeof omission)[])
@@ -391,6 +391,85 @@ export function defineProjectStorageContracts(
               now,
             ),
           ).rejects.toThrow();
+        expect(await definitions().get(projectId)).toEqual(current);
+      });
+
+      test("stores an agent disable and agent reference payloads unchanged", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-agent-archetype`)
+        ).snapshot().id;
+        const source = {
+          id: parseDomainPackId("org.example.legal"),
+          version: parseDomainPackVersion("1.0.0"),
+          manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+          kind: "agents" as const,
+        };
+        const entry = {
+          origin: "project_override" as const,
+          revision: 1,
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        const disabled = {
+          ...entry,
+          source: { ...source, localId: "drafter" },
+          operation: "disable" as const,
+        };
+        const replaced = {
+          ...entry,
+          source: { ...source, localId: "filer" },
+          operation: "replace" as const,
+          payload: {
+            id: "filer",
+            title: "Our filer",
+            role: "counsel",
+            prompts: ["brief", "tone"],
+            knowledge: ["precedents", "statutes"],
+            capabilities: ["draft", "review"],
+          },
+        };
+        const added = {
+          origin: "project_owned" as const,
+          kind: "agents" as const,
+          id: "helper",
+          revision: 1,
+          enabled: true,
+          payload: {
+            id: "helper",
+            role: "auditor",
+            prompts: ["house"],
+            knowledge: ["handbook"],
+          },
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        const current = await definitions().replace(
+          {
+            projectId,
+            revision: 0,
+            owned: [added],
+            overrides: [disabled, replaced],
+          },
+          0,
+          now,
+        );
+        // Lists come back in the order they were stored, on both backends.
+        expect(current.owned).toEqual([added]);
+        expect(current.overrides).toEqual([disabled, replaced]);
+        expect(await definitions().get(projectId)).toEqual(current);
+        // An agent disable carries no payload.
+        await expect(
+          definitions().replace(
+            {
+              projectId,
+              revision: 1,
+              owned: [],
+              overrides: [{ ...disabled, payload: { id: "drafter" } }],
+            },
+            1,
+            now,
+          ),
+        ).rejects.toThrow();
         expect(await definitions().get(projectId)).toEqual(current);
       });
 

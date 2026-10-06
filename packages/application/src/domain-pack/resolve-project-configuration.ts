@@ -19,9 +19,11 @@ import {
   parseDefinitionMutation,
   ProjectDefinitionConflictError,
   projectOwnedKinds,
+  type AgentDefinition,
   type DescriptiveDefinition,
   type ExactPackDefinitionSource,
   type OverrideOperation,
+  type OverridePayload,
   type ProjectDefinitionOverride,
   type ProjectDefinitionPayload,
   type ProjectDefinitionState,
@@ -42,8 +44,10 @@ export type ConfigurationIssueCode =
   | "unresolved_override"
   | "duplicate_effective_definition"
   | "missing_workflow_reference"
+  | "missing_agent_reference"
   | "ambiguous_reference"
   | "disabled_required_definition"
+  | "agent_capability_exceeds_role"
   | "unsupported_security_composition"
   | "configuration_invariant"
   | "stale_resolution";
@@ -83,6 +87,26 @@ export interface ResolvedRole {
   readonly origin: "pack_owned" | "project_owned";
   readonly title?: string;
   readonly description?: string;
+  readonly capabilities: readonly string[];
+  readonly customization: "none" | "replace" | "extend";
+}
+
+/**
+ * The declarative contract of one enabled agent. `agentId` is the stable slot
+ * identity, like `roleId`. Every reference is the stable ID of a definition in
+ * the agent's own namespace; `capabilities` are requested capabilities inside
+ * the role's declared set. Nothing here creates a Runtime agent or grants
+ * anything.
+ */
+export interface ResolvedAgent {
+  readonly agentId: string;
+  readonly effectiveId: string;
+  readonly origin: "pack_owned" | "project_owned";
+  readonly title?: string;
+  readonly description?: string;
+  readonly roleId?: string;
+  readonly prompts: readonly string[];
+  readonly knowledge: readonly string[];
   readonly capabilities: readonly string[];
   readonly customization: "none" | "replace" | "extend";
 }
@@ -138,6 +162,13 @@ export interface ResolvedProjectConfiguration {
   readonly roles: readonly ResolvedRole[];
   /** Stable IDs of disabled roles, which are absent from `roles`. */
   readonly omittedRoles: readonly string[];
+  /**
+   * Derived agent contract view over `effectiveDefinitions.agents`. Like the
+   * role view, it is not digest material.
+   */
+  readonly agents: readonly ResolvedAgent[];
+  /** Stable IDs of disabled agents, which are absent from `agents`. */
+  readonly disabledAgents: readonly string[];
   /** The minimum evidence future run records must pin. */
   readonly pin: {
     readonly configurationDigest: string;
@@ -274,7 +305,7 @@ function storedOwnedDefinition(entry: ProjectOwnedDefinition): {
 function storedOverride(entry: ProjectDefinitionOverride): {
   readonly source: ExactPackDefinitionSource;
   readonly operation: OverrideOperation;
-  readonly payload?: DescriptiveDefinition;
+  readonly payload?: OverridePayload;
 } {
   try {
     const parsed = parseDefinitionMutation({
@@ -472,6 +503,8 @@ export function resolveProjectConfiguration(input: {
     else if (entry.operation === "replace" && payload) {
       // A replacement substitutes the descriptive envelope only. A role's
       // capability set stays the pack's: a project payload cannot carry one.
+      // An agent's references are project-controlled: its replacement is the
+      // complete agent envelope and is never merged with the pack's.
       const capabilities =
         current.kind === "roles"
           ? (current.payload as ResolvedPackRolePayload).capabilities
@@ -526,14 +559,15 @@ export function resolveProjectConfiguration(input: {
     byKind[definition.kind].push(definition);
   }
 
-  // A workflow's bare references stay inside its own namespace: the exact
-  // originating pack tuple, or the project-owned definitions.
+  // A workflow's or an agent's bare references stay inside its own namespace:
+  // the exact originating pack tuple, or the project-owned definitions.
   const resolveReference = (
-    workflow: ResolvedDefinition,
-    kind: "taskTypes" | "roles",
+    referrer: ResolvedDefinition,
+    kind: ContributionKind,
     localId: string,
-  ): string => {
-    const provenance = provenanceOf(workflow.effectiveId);
+    noun: "workflow" | "agent" = "workflow",
+  ): ResolvedDefinition => {
+    const provenance = provenanceOf(referrer.effectiveId);
     const target = source.get(
       provenance.origin === "project_owned"
         ? projectId(kind, localId)
@@ -543,19 +577,21 @@ export function resolveProjectConfiguration(input: {
       if ((bareCount.get(bareKey(kind, localId)) ?? 0) > 1)
         failure(
           "ambiguous_reference",
-          `Bare ${kind}/${localId} crosses pack namespaces in workflow ${workflow.effectiveId}`,
+          `Bare ${kind}/${localId} crosses pack namespaces in ${noun} ${referrer.effectiveId}`,
         );
       failure(
-        "missing_workflow_reference",
-        `Missing ${kind}/${localId} in workflow ${workflow.effectiveId}`,
+        noun === "agent"
+          ? "missing_agent_reference"
+          : "missing_workflow_reference",
+        `Missing ${kind}/${localId} in ${noun} ${referrer.effectiveId}`,
       );
     }
     if (!target.enabled)
       failure(
         "disabled_required_definition",
-        `Disabled ${kind}/${localId} in workflow ${workflow.effectiveId}`,
+        `Disabled ${kind}/${localId} in ${noun} ${referrer.effectiveId}`,
       );
-    return target.effectiveId;
+    return target;
   };
   const resolvedWorkflowReferences: ResolvedWorkflowReferences[] = [];
   for (const workflow of byKind.workflows) {
@@ -563,10 +599,11 @@ export function resolveProjectConfiguration(input: {
     const payload = workflow.payload as WorkflowContribution;
     resolvedWorkflowReferences.push({
       workflowId: workflow.effectiveId,
-      taskTypeId: resolveReference(workflow, "taskTypes", payload.taskType),
+      taskTypeId: resolveReference(workflow, "taskTypes", payload.taskType)
+        .effectiveId,
       stages: payload.stages.map((stage) => ({
         id: stage.id,
-        roleId: resolveReference(workflow, "roles", stage.role),
+        roleId: resolveReference(workflow, "roles", stage.role).effectiveId,
       })),
     });
   }
@@ -621,6 +658,84 @@ export function resolveProjectConfiguration(input: {
     });
   }
 
+  // Stable identity of any resolved definition: pack-owned ones lose their
+  // version and digest, project-owned ones already have neither.
+  const stableId = (definition: ResolvedDefinition): string => {
+    const provenance = provenanceOf(definition.effectiveId);
+    return provenance.origin === "pack_owned"
+      ? stablePackDefinitionId(
+          provenance.pack.id,
+          definition.kind,
+          definition.localId,
+        )
+      : definition.effectiveId;
+  };
+  const agents: ResolvedAgent[] = [];
+  const disabledAgents: string[] = [];
+  const agentIds = new Set<string>();
+  for (const definition of byKind.agents) {
+    const provenance = provenanceOf(definition.effectiveId);
+    const agentId = stableId(definition);
+    if (agentIds.has(agentId))
+      failure("configuration_invariant", `Duplicate agent identity ${agentId}`);
+    agentIds.add(agentId);
+    // A disabled agent is not part of the configuration, so its references
+    // are not resolved.
+    if (!definition.enabled) {
+      disabledAgents.push(agentId);
+      continue;
+    }
+    const payload = definition.payload as AgentDefinition;
+    const role =
+      payload.role === undefined
+        ? undefined
+        : resolveReference(definition, "roles", payload.role, "agent");
+    const references = (kind: "prompts" | "knowledge"): string[] =>
+      (payload[kind] ?? []).map((localId) =>
+        stableId(resolveReference(definition, kind, localId, "agent")),
+      );
+    const prompts = references("prompts");
+    const knowledge = references("knowledge");
+    // The limit: a request stays inside the effective role's declared set,
+    // which is the pack's under every role override (GP-11).
+    const declared =
+      role === undefined
+        ? []
+        : ((role.payload as ResolvedPackRolePayload).capabilities ?? []);
+    const capabilities = (payload.capabilities ?? []).map((capability) => {
+      const target = resolveReference(
+        definition,
+        "capabilities",
+        capability,
+        "agent",
+      );
+      if (!declared.includes(capability))
+        failure(
+          "agent_capability_exceeds_role",
+          `Agent ${definition.effectiveId} requests capabilities/${capability} outside the declared set of its role ${role === undefined ? "(none)" : `roles/${role.localId}`}`,
+        );
+      return stableId(target);
+    });
+    const { title, description } = definition.payload;
+    const operation =
+      provenance.origin === "pack_owned"
+        ? provenance.override?.operation
+        : undefined;
+    agents.push({
+      agentId,
+      effectiveId: definition.effectiveId,
+      origin: provenance.origin,
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      ...(role === undefined ? {} : { roleId: stableId(role) }),
+      prompts,
+      knowledge,
+      capabilities,
+      customization:
+        operation === "replace" || operation === "extend" ? operation : "none",
+    });
+  }
+
   const sortedOrigins = Object.fromEntries(
     Object.keys(origins)
       .sort(compareIds)
@@ -662,6 +777,8 @@ export function resolveProjectConfiguration(input: {
     configurationDigest,
     roles,
     omittedRoles,
+    agents,
+    disabledAgents,
     pin: {
       configurationDigest,
       coreContractVersion,

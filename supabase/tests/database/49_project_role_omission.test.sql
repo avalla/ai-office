@@ -67,10 +67,11 @@ select throws_ok(
   $$insert into core.project_definition_override(project_id,tenant_id,pack_id,pack_version,manifest_digest,kind,local_id,operation,revision,payload_json,actor_id,changed_at)
     values ('gp11-project-a','gp11-tenant-a','org.example.legal','1.0.0','sha256:' || repeat('a',64),'taskTypes','matter','disable',1,null,'operator','2026-10-05T00:00:00Z')$$,
   '23514', null, 'a disable on a task type is still rejected');
+-- GP-12 (20261006000100) admits a disable on agents; file 50 covers it.
 select throws_ok(
   $$insert into core.project_definition_override(project_id,tenant_id,pack_id,pack_version,manifest_digest,kind,local_id,operation,revision,payload_json,actor_id,changed_at)
-    values ('gp11-project-a','gp11-tenant-a','org.example.legal','1.0.0','sha256:' || repeat('a',64),'agents','drafter','disable',1,null,'operator','2026-10-05T00:00:00Z')$$,
-  '23514', null, 'a disable on an agent is still rejected');
+    values ('gp11-project-a','gp11-tenant-a','org.example.legal','1.0.0','sha256:' || repeat('a',64),'knowledge','handbook','disable',1,null,'operator','2026-10-05T00:00:00Z')$$,
+  '23514', null, 'a disable on a knowledge entry is still rejected');
 select throws_ok(
   $$insert into core.project_definition_override(project_id,tenant_id,pack_id,pack_version,manifest_digest,kind,local_id,operation,revision,payload_json,actor_id,changed_at)
     values ('gp11-project-a','gp11-tenant-a','org.example.legal','1.0.0','sha256:' || repeat('a',64),'roles','paralegal','disable',1,'{"id":"paralegal"}','operator','2026-10-05T00:00:00Z')$$,

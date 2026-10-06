@@ -571,12 +571,15 @@ function independentCanonicalJson(value: unknown): string {
 function independentDigest(
   result: ReturnType<typeof resolveProjectConfiguration>,
 ): string {
-  // The GP-11 role view is derived from the material; it is not part of it.
+  // The GP-11 role view and the GP-12 agent view are derived from the
+  // material; they are not part of it.
   const {
     configurationDigest: _digest,
     pin: _pin,
     roles: _roles,
     omittedRoles: _omittedRoles,
+    agents: _agents,
+    disabledAgents: _disabledAgents,
     ...material
   } = result;
   return `sha256:${createHash("sha256")

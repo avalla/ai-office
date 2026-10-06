@@ -15,7 +15,9 @@ import {
   parseManifestDigest,
 } from "../../../domain-pack-contracts/src/index.ts";
 import {
+  hasAgentReferences,
   isDefinitionText,
+  maximumAgentReferences,
   maximumDefinitionTextLength,
   maximumWorkflowStages,
 } from "../domain-pack/project-definition.ts";
@@ -39,8 +41,10 @@ export const portableProjectFormat = "ai-office-project" as const;
  * New backups use v6 for authoritative project definitions. v5 remains frozen.
  * v7 has the v6 contents and additionally carries a role omission; it is
  * written only for a state that contains one, so v6 keeps its frozen meaning.
+ * v8 has the v7 contents and additionally carries an agent disable and agent
+ * reference fields; it is written only for a state that contains either.
  */
-export const portableProjectFormatVersions = [1, 2, 3, 4, 5, 6, 7] as const;
+export const portableProjectFormatVersions = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 export type PortableProjectFormatVersion =
   (typeof portableProjectFormatVersions)[number];
 
@@ -53,6 +57,7 @@ export const portableProjectExecutionHistoryFormatVersion = 4 as const;
 export const portableProjectPackBindingFormatVersion = 5 as const;
 export const portableProjectDefinitionFormatVersion = 6 as const;
 export const portableProjectRoleOmissionFormatVersion = 7 as const;
+export const portableProjectAgentArchetypeFormatVersion = 8 as const;
 export const portableProjectExtension = ".aioffice" as const;
 export const maximumPortableProjectBytes = 32 * 1024 * 1024;
 
@@ -269,6 +274,27 @@ const portableExtensionPayload = z.strictObject({
   title: portableDefinitionText.optional(),
   description: portableDefinitionText.optional(),
 });
+/**
+ * A bounded, non-empty set of local IDs in the one order the mutation
+ * contract stores: strictly ascending by code unit, so also duplicate-free.
+ * "None" is the absent field.
+ */
+const portableReferenceList = z
+  .array(portableDefinitionId)
+  .min(1)
+  .max(maximumAgentReferences)
+  .refine(
+    (items) =>
+      items.every((item, index) => index === 0 || items[index - 1]! < item),
+    { message: "References must be unique and in ascending order" },
+  );
+/** The GP-12 agent envelope: descriptive fields and declarative references. */
+const portableAgentPayload = portableDescriptivePayload.extend({
+  role: portableDefinitionId.optional(),
+  prompts: portableReferenceList.optional(),
+  knowledge: portableReferenceList.optional(),
+  capabilities: portableReferenceList.optional(),
+});
 const portableWorkflowPayload = portableDescriptivePayload.extend({
   taskType: portableDefinitionId,
   stages: z
@@ -319,6 +345,7 @@ const portableDefinitionState = z
           payload: z.union([
             portableDescriptivePayload,
             portableWorkflowPayload,
+            portableAgentPayload,
           ]),
           actorId: id,
           changedAt: timestamp,
@@ -333,7 +360,11 @@ const portableDefinitionState = z
           operation: z.enum(["replace", "extend", "disable"]),
           revision: z.number().int().positive().safe(),
           payload: z
-            .union([portableDescriptivePayload, portableExtensionPayload])
+            .union([
+              portableDescriptivePayload,
+              portableExtensionPayload,
+              portableAgentPayload,
+            ])
             .optional(),
           actorId: id,
           changedAt: timestamp,
@@ -356,6 +387,17 @@ const portableDefinitionState = z
           code: "custom",
           path: ["owned", index, "payload"],
           message: "Workflow kind requires its typed payload",
+        });
+      // Only an agent has references, and a project-owned agent cannot
+      // request capabilities.
+      if (
+        hasAgentReferences(item.payload) &&
+        (item.kind !== "agents" || "capabilities" in item.payload)
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["owned", index, "payload"],
+          message: "Unsupported agent reference fields",
         });
       if (
         "stages" in item.payload &&
@@ -380,9 +422,23 @@ const portableDefinitionState = z
           message: "Duplicate override target",
         });
       overrides.add(key);
+      // Only a replacement of an agent has references, and requested
+      // capabilities need a role.
+      if (
+        item.payload !== undefined &&
+        hasAgentReferences(item.payload) &&
+        (source.kind !== "agents" ||
+          item.operation !== "replace" ||
+          ("capabilities" in item.payload && !("role" in item.payload)))
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["overrides", index, "payload"],
+          message: "Unsupported agent reference fields",
+        });
       if (
         (item.operation === "disable" &&
-          (!["prompts", "roles"].includes(source.kind) ||
+          (!["prompts", "roles", "agents"].includes(source.kind) ||
             item.payload !== undefined)) ||
         (item.operation !== "disable" &&
           (item.payload === undefined ||
@@ -409,8 +465,33 @@ const portableDefinitionState = z
         message: "Nonempty definition state needs a positive revision",
       });
   });
+/**
+ * Format 7 froze `disable` as prompt-or-role and payloads as descriptive; an
+ * agent disable and agent reference fields need format 8.
+ */
+const portableDefinitionStateV7 = portableDefinitionState.superRefine(
+  (state, context) => {
+    for (const [index, item] of state.owned.entries())
+      if (hasAgentReferences(item.payload))
+        context.addIssue({
+          code: "custom",
+          path: ["owned", index, "payload"],
+          message: "Unsupported agent reference fields",
+        });
+    for (const [index, item] of state.overrides.entries())
+      if (
+        (item.operation === "disable" && item.source.kind === "agents") ||
+        (item.payload !== undefined && hasAgentReferences(item.payload))
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["overrides", index],
+          message: "Unsupported or malformed override operation",
+        });
+  },
+);
 /** Format 6 froze `disable` as prompt-only; a role omission needs format 7. */
-const portableDefinitionStateV6 = portableDefinitionState.superRefine(
+const portableDefinitionStateV6 = portableDefinitionStateV7.superRefine(
   (state, context) => {
     for (const [index, item] of state.overrides.entries())
       if (item.operation === "disable" && item.source.kind === "roles")
@@ -586,6 +667,9 @@ const portableProjectStateShapeV6 = portableProjectStateShapeV5.extend({
   definitions: portableDefinitionStateV6,
 });
 const portableProjectStateShapeV7 = portableProjectStateShapeV5.extend({
+  definitions: portableDefinitionStateV7,
+});
+const portableProjectStateShapeV8 = portableProjectStateShapeV5.extend({
   definitions: portableDefinitionState,
 });
 
@@ -853,6 +937,8 @@ export const portableProjectStateSchemaV6 =
   portableProjectStateShapeV6.superRefine(referentialClosure);
 export const portableProjectStateSchemaV7 =
   portableProjectStateShapeV7.superRefine(referentialClosure);
+export const portableProjectStateSchemaV8 =
+  portableProjectStateShapeV8.superRefine(referentialClosure);
 
 export type PortableProjectState = z.infer<typeof portableProjectStateSchema>;
 
@@ -870,6 +956,17 @@ export function portableTaskRequirementLinks(
 export function portableProjectFormatVersionFor(
   state: PortableProjectState,
 ): PortableProjectFormatVersion {
+  // An agent disable and agent reference fields are what format 7 cannot
+  // express.
+  if (
+    state.definitions?.overrides.some(
+      (item) =>
+        (item.operation === "disable" && item.source.kind === "agents") ||
+        (item.payload !== undefined && hasAgentReferences(item.payload)),
+    ) ||
+    state.definitions?.owned.some((item) => hasAgentReferences(item.payload))
+  )
+    return portableProjectAgentArchetypeFormatVersion;
   // A role omission is the one definition entry format 6 cannot express.
   if (
     state.definitions?.overrides.some(
@@ -895,9 +992,9 @@ export function portableStateAtFormatVersion(
   state: PortableProjectState,
   version: PortableProjectFormatVersion,
 ): PortableProjectState {
-  // Formats 6 and 7 carry the same sections; a role omission simply never
-  // matches a format-6 archive.
-  if (version === 7 || version === 6) return state;
+  // Formats 6, 7 and 8 carry the same sections; a role omission simply never
+  // matches a format-6 archive, nor an agent disable a format-7 one.
+  if (version === 8 || version === 7 || version === 6) return state;
   const {
     packBinding: _packBinding,
     definitions: _definitions,
@@ -1023,6 +1120,20 @@ export const portableProjectContents = {
     "project_pack_binding",
     "project_definitions",
   ],
+  8: [
+    "project",
+    "tasks",
+    "profile",
+    "office_manifests",
+    "governance",
+    "agent_definitions",
+    "terminal_run_summaries",
+    "task_requirements",
+    "task_dependencies",
+    "task_execution_history",
+    "project_pack_binding",
+    "project_definitions",
+  ],
 } as const;
 
 const portableProjectManifestBase = {
@@ -1114,6 +1225,18 @@ export const portableProjectManifestSchemaV7 = z.strictObject({
     z.literal("project_definitions"),
   ]),
 });
+export const portableProjectManifestSchemaV8 = z.strictObject({
+  ...portableProjectManifestBase,
+  formatVersion: z.literal(portableProjectAgentArchetypeFormatVersion),
+  contents: z.tuple([
+    ...manifestContentsV1,
+    z.literal("task_requirements"),
+    z.literal("task_dependencies"),
+    z.literal("task_execution_history"),
+    z.literal("project_pack_binding"),
+    z.literal("project_definitions"),
+  ]),
+});
 
 /** Accepts either version. Which one is decided before the state is parsed. */
 export const portableProjectManifestSchema = z.union([
@@ -1124,6 +1247,7 @@ export const portableProjectManifestSchema = z.union([
   portableProjectManifestSchemaV5,
   portableProjectManifestSchemaV6,
   portableProjectManifestSchemaV7,
+  portableProjectManifestSchemaV8,
 ]);
 
 export type PortableProjectManifest = z.infer<
@@ -1148,6 +1272,12 @@ export function portableProjectManifestFor(input: {
     revision: input.revision,
     ...(input.source === undefined ? {} : { source: input.source }),
   };
+  if (input.formatVersion === portableProjectAgentArchetypeFormatVersion)
+    return {
+      ...envelope,
+      formatVersion: portableProjectAgentArchetypeFormatVersion,
+      contents: [...portableProjectContents[8]],
+    };
   return input.formatVersion === portableProjectRoleOmissionFormatVersion
     ? {
         ...envelope,
@@ -1230,6 +1360,11 @@ export const portableProjectArchiveSchemaV6 = z.strictObject({
 export const portableProjectArchiveSchemaV7 = z.strictObject({
   manifest: portableProjectManifestSchemaV7,
   state: portableProjectStateSchemaV7,
+  integrity: integrityShape,
+});
+export const portableProjectArchiveSchemaV8 = z.strictObject({
+  manifest: portableProjectManifestSchemaV8,
+  state: portableProjectStateSchemaV8,
   integrity: integrityShape,
 });
 
@@ -1315,22 +1450,24 @@ export function createPortableProjectArchive(input: {
   const required = portableProjectFormatVersionFor(input.state);
   if (declared < required)
     throw new PortableProjectArchiveError(
-      `Portable project archive format version ${declared} cannot carry ${required === 7 ? "a role omission" : required === 6 ? "project definitions" : required === 5 ? "project pack binding" : required === 4 ? "lifetime task execution history" : "Task/Requirement links"}; write format version ${required}`,
+      `Portable project archive format version ${declared} cannot carry ${required === 8 ? "an agent disable or agent references" : required === 7 ? "a role omission" : required === 6 ? "project definitions" : required === 5 ? "project pack binding" : required === 4 ? "lifetime task execution history" : "Task/Requirement links"}; write format version ${required}`,
     );
   const state =
-    declared === portableProjectRoleOmissionFormatVersion
-      ? portableProjectStateSchemaV7.parse(input.state)
-      : declared === portableProjectDefinitionFormatVersion
-        ? portableProjectStateSchemaV6.parse(input.state)
-        : declared === portableProjectPackBindingFormatVersion
-          ? portableProjectStateSchemaV5.parse(input.state)
-          : declared === portableProjectExecutionHistoryFormatVersion
-            ? portableProjectStateSchemaV4.parse(input.state)
-            : declared === portableProjectDependencyFormatVersion
-              ? portableProjectStateSchemaV3.parse(input.state)
-              : declared === portableProjectLinkedFormatVersion
-                ? portableProjectStateSchemaV2.parse(input.state)
-                : portableProjectStateSchemaV1.parse(input.state);
+    declared === portableProjectAgentArchetypeFormatVersion
+      ? portableProjectStateSchemaV8.parse(input.state)
+      : declared === portableProjectRoleOmissionFormatVersion
+        ? portableProjectStateSchemaV7.parse(input.state)
+        : declared === portableProjectDefinitionFormatVersion
+          ? portableProjectStateSchemaV6.parse(input.state)
+          : declared === portableProjectPackBindingFormatVersion
+            ? portableProjectStateSchemaV5.parse(input.state)
+            : declared === portableProjectExecutionHistoryFormatVersion
+              ? portableProjectStateSchemaV4.parse(input.state)
+              : declared === portableProjectDependencyFormatVersion
+                ? portableProjectStateSchemaV3.parse(input.state)
+                : declared === portableProjectLinkedFormatVersion
+                  ? portableProjectStateSchemaV2.parse(input.state)
+                  : portableProjectStateSchemaV1.parse(input.state);
   assertPortableProjectStateSafe(state);
   const stateChecksum = portableStateChecksum(state);
   if (input.manifest.revision.stateChecksum !== stateChecksum)
@@ -1338,19 +1475,21 @@ export function createPortableProjectArchive(input: {
       "Snapshot revision checksum does not match portable state",
     );
   const manifest =
-    declared === portableProjectRoleOmissionFormatVersion
-      ? portableProjectManifestSchemaV7.parse(input.manifest)
-      : declared === portableProjectDefinitionFormatVersion
-        ? portableProjectManifestSchemaV6.parse(input.manifest)
-        : declared === portableProjectPackBindingFormatVersion
-          ? portableProjectManifestSchemaV5.parse(input.manifest)
-          : declared === portableProjectExecutionHistoryFormatVersion
-            ? portableProjectManifestSchemaV4.parse(input.manifest)
-            : declared === portableProjectDependencyFormatVersion
-              ? portableProjectManifestSchemaV3.parse(input.manifest)
-              : declared === portableProjectLinkedFormatVersion
-                ? portableProjectManifestSchemaV2.parse(input.manifest)
-                : portableProjectManifestSchemaV1.parse(input.manifest);
+    declared === portableProjectAgentArchetypeFormatVersion
+      ? portableProjectManifestSchemaV8.parse(input.manifest)
+      : declared === portableProjectRoleOmissionFormatVersion
+        ? portableProjectManifestSchemaV7.parse(input.manifest)
+        : declared === portableProjectDefinitionFormatVersion
+          ? portableProjectManifestSchemaV6.parse(input.manifest)
+          : declared === portableProjectPackBindingFormatVersion
+            ? portableProjectManifestSchemaV5.parse(input.manifest)
+            : declared === portableProjectExecutionHistoryFormatVersion
+              ? portableProjectManifestSchemaV4.parse(input.manifest)
+              : declared === portableProjectDependencyFormatVersion
+                ? portableProjectManifestSchemaV3.parse(input.manifest)
+                : declared === portableProjectLinkedFormatVersion
+                  ? portableProjectManifestSchemaV2.parse(input.manifest)
+                  : portableProjectManifestSchemaV1.parse(input.manifest);
   const basis = { manifest, state };
   return {
     ...basis,
@@ -1399,19 +1538,21 @@ export function parsePortableProjectArchive(
       `Portable project archive does not declare a supported format version (supported: ${portableProjectFormatVersions.join(", ")})`,
     );
   const parsed = (
-    version === portableProjectRoleOmissionFormatVersion
-      ? portableProjectArchiveSchemaV7
-      : version === portableProjectDefinitionFormatVersion
-        ? portableProjectArchiveSchemaV6
-        : version === portableProjectPackBindingFormatVersion
-          ? portableProjectArchiveSchemaV5
-          : version === portableProjectExecutionHistoryFormatVersion
-            ? portableProjectArchiveSchemaV4
-            : version === portableProjectDependencyFormatVersion
-              ? portableProjectArchiveSchemaV3
-              : version === portableProjectLinkedFormatVersion
-                ? portableProjectArchiveSchemaV2
-                : portableProjectArchiveSchemaV1
+    version === portableProjectAgentArchetypeFormatVersion
+      ? portableProjectArchiveSchemaV8
+      : version === portableProjectRoleOmissionFormatVersion
+        ? portableProjectArchiveSchemaV7
+        : version === portableProjectDefinitionFormatVersion
+          ? portableProjectArchiveSchemaV6
+          : version === portableProjectPackBindingFormatVersion
+            ? portableProjectArchiveSchemaV5
+            : version === portableProjectExecutionHistoryFormatVersion
+              ? portableProjectArchiveSchemaV4
+              : version === portableProjectDependencyFormatVersion
+                ? portableProjectArchiveSchemaV3
+                : version === portableProjectLinkedFormatVersion
+                  ? portableProjectArchiveSchemaV2
+                  : portableProjectArchiveSchemaV1
   ).safeParse(value);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];

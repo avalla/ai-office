@@ -22,9 +22,9 @@ const migrations = join(
   "migrations",
   "project",
 );
-const migration = "0044_project_role_omission.sql";
+const migration = "0045_project_agent_disable.sql";
 const digest = `sha256:${"a".repeat(64)}`;
-const at = "2026-10-03T00:00:00.000Z";
+const at = "2026-10-05T00:00:00.000Z";
 
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -38,19 +38,6 @@ function temporaryDatabase(prefix: string): {
   const root = mkdtempSync(join(tmpdir(), prefix));
   roots.push(root);
   return { root, database: openDatabase(join(root, "project.sqlite")) };
-}
-
-/**
- * The schema as 0044 left it. Later migrations widen the same constraint
- * (GP-12 admits an agent disable), so these assertions stop at 0044.
- */
-function migrationsThrough(root: string, last: string): string {
-  const directory = join(root, `through-${last}`);
-  mkdirSync(directory);
-  for (const file of readdirSync(migrations).sort())
-    if (file <= last)
-      copyFileSync(join(migrations, file), join(directory, file));
-  return directory;
 }
 
 function insertOverride(
@@ -83,12 +70,12 @@ function seedProject(database: Database, projectId = "legacy"): void {
 }
 
 /** The constraint, not the application, is what these assertions exercise. */
-function expectOmissionConstraint(database: Database): void {
+function expectDisableConstraint(database: Database): void {
+  insertOverride(database, "agents", "disabled", "disable", null);
   insertOverride(database, "roles", "omitted", "disable", null);
   insertOverride(database, "prompts", "muted", "disable", null);
   for (const kind of [
     "taskTypes",
-    "agents",
     "artifactTypes",
     "evidenceTypes",
     "knowledge",
@@ -96,54 +83,82 @@ function expectOmissionConstraint(database: Database): void {
     expect(() =>
       insertOverride(database, kind, "other", "disable", null),
     ).toThrow(/CHECK constraint failed/u);
-  // An omission has no payload; a replacement or extension needs one.
+  // A disable has no payload; a replacement or extension needs one.
   expect(() =>
-    insertOverride(database, "roles", "with-payload", "disable", '{"id":"x"}'),
+    insertOverride(database, "agents", "with-payload", "disable", '{"id":"x"}'),
   ).toThrow(/CHECK constraint failed/u);
   expect(() =>
-    insertOverride(database, "roles", "no-payload", "replace", null),
+    insertOverride(database, "agents", "no-payload", "replace", null),
   ).toThrow(/CHECK constraint failed/u);
+  // An agent payload with reference fields is plain JSON to the schema.
+  insertOverride(
+    database,
+    "agents",
+    "replaced",
+    "replace",
+    '{"id":"replaced","role":"counsel","prompts":["brief"],"knowledge":["statutes"],"capabilities":["draft"]}',
+  );
   // Every other 0042 constraint is still enforced on the rebuilt table.
   expect(() =>
     insertOverride(database, "workflows", "flow", "replace", '{"id":"flow"}'),
   ).toThrow(/CHECK constraint failed/u);
   expect(() =>
-    insertOverride(database, "roles", "omitted", "replace", '{"id":"omitted"}'),
-  ).toThrow(/UNIQUE constraint failed/u);
-  expect(() =>
-    insertOverride(database, "roles", "bad id", "replace", '{"id":"x"}'),
+    insertOverride(database, "agents", "broken", "replace", "{not json"),
   ).toThrow(/CHECK constraint failed/u);
   expect(() =>
-    insertOverride(database, "roles", "orphan", "disable", null, "missing"),
+    insertOverride(database, "agents", "disabled", "replace", '{"id":"x"}'),
+  ).toThrow(/UNIQUE constraint failed/u);
+  expect(() =>
+    insertOverride(database, "agents", "bad id", "replace", '{"id":"x"}'),
+  ).toThrow(/CHECK constraint failed/u);
+  expect(() =>
+    insertOverride(database, "agents", "orphan", "disable", null, "missing"),
   ).toThrow(/FOREIGN KEY constraint failed/u);
 }
 
-describe("GP-11 role omission migration", () => {
-  test("a fresh database accepts a role omission and still constrains every other kind", () => {
-    const { root, database } = temporaryDatabase("ai-office-gp11-fresh-");
-    const through = migrationsThrough(root, migration);
+describe("GP-12 agent disable migration", () => {
+  test("a fresh database accepts an agent disable and still constrains every other kind", () => {
+    const { database } = temporaryDatabase("ai-office-gp12-fresh-");
     try {
-      expect(migrate(database, through).applied.at(-1)).toBe(migration);
-      expect(migrate(database, through).applied).toEqual([]);
+      expect(migrate(database, migrations).applied.at(-1)).toBe(migration);
+      expect(migrate(database, migrations).applied).toEqual([]);
       seedProject(database);
-      expectOmissionConstraint(database);
+      expectDisableConstraint(database);
     } finally {
       database.close();
     }
   });
 
-  test("an upgrade preserves every existing override row, key and constraint", async () => {
-    const { root, database } = temporaryDatabase("ai-office-gp11-upgrade-");
-    const partial = join(root, "pre-gp11");
-    const through = migrationsThrough(root, migration);
+  test("an upgrade from 0044 preserves every existing override row, key and constraint", async () => {
+    const { root, database } = temporaryDatabase("ai-office-gp12-upgrade-");
+    const partial = join(root, "pre-gp12");
     mkdirSync(partial);
     for (const file of readdirSync(migrations).sort())
       if (file < migration)
         copyFileSync(join(migrations, file), join(partial, file));
     try {
-      migrate(database, partial);
+      expect(migrate(database, partial).applied.at(-1)).toBe(
+        "0044_project_role_omission.sql",
+      );
       seedProject(database);
       seedProject(database, "other");
+      insertOverride(
+        database,
+        "agents",
+        "drafter",
+        "replace",
+        '{"id":"drafter","title":"Our drafter"}',
+      );
+      insertOverride(
+        database,
+        "agents",
+        "filer",
+        "extend",
+        '{"title":"Filer"}',
+      );
+      // The GP-11 role omission and the GP-07 prompt disable are carried over.
+      insertOverride(database, "roles", "clerk", "disable", null);
+      insertOverride(database, "prompts", "greeting", "disable", null);
       insertOverride(
         database,
         "roles",
@@ -151,8 +166,6 @@ describe("GP-11 role omission migration", () => {
         "replace",
         '{"id":"counsel","title":"Our counsel"}',
       );
-      insertOverride(database, "roles", "clerk", "extend", '{"title":"Clerk"}');
-      insertOverride(database, "prompts", "greeting", "disable", null);
       insertOverride(
         database,
         "knowledge",
@@ -161,14 +174,14 @@ describe("GP-11 role omission migration", () => {
         '{"id":"handbook"}',
         "other",
       );
-      // Before the migration a role omission violates the 0042 constraint.
+      // Before the migration an agent disable violates the 0044 constraint.
       expect(() =>
-        insertOverride(database, "roles", "omitted", "disable", null),
+        insertOverride(database, "agents", "disabled", "disable", null),
       ).toThrow(/CHECK constraint failed/u);
       database
         .query(
           `INSERT INTO project_owned_definition(project_id, kind, local_id, revision, enabled, payload_json, actor_id, changed_at)
-          VALUES ('legacy', 'roles', 'auditor', 1, 1, '{"id":"auditor"}', 'operator', ?)`,
+          VALUES ('legacy', 'agents', 'helper', 1, 1, '{"id":"helper"}', 'operator', ?)`,
         )
         .run(at);
       const rows = (table: string) =>
@@ -184,10 +197,11 @@ describe("GP-11 role omission migration", () => {
         "project",
       ];
       const before = tables.map(rows);
+      expect(before[0]).toHaveLength(6);
       const repository = new SqliteProjectDefinitionRepository(database);
       const stateBefore = await repository.get("legacy");
 
-      expect(migrate(database, through).applied).toEqual([migration]);
+      expect(migrate(database, migrations).applied).toEqual([migration]);
 
       expect(tables.map(rows)).toEqual(before);
       expect(await repository.get("legacy")).toEqual(stateBefore);
@@ -205,7 +219,7 @@ describe("GP-11 role omission migration", () => {
           .map((row) => row.name)
           .filter((name) => !name.startsWith("sqlite_autoindex_")),
       ).toEqual(["project_definition_override"]);
-      expectOmissionConstraint(database);
+      expectDisableConstraint(database);
       // Deleting the project still cascades through the head to the overrides.
       database.exec("DELETE FROM project WHERE id = 'legacy'");
       expect(
@@ -222,7 +236,7 @@ describe("GP-11 role omission migration", () => {
           )
           .get()?.count,
       ).toBe(1);
-      expect(migrate(database, through).applied).toEqual([]);
+      expect(migrate(database, migrations).applied).toEqual([]);
     } finally {
       database.close();
     }

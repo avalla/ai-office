@@ -330,8 +330,8 @@ describe("GP-11 role omission and capability ownership in project definitions", 
         h.override(h.v1, "matter", "disable", undefined, "taskTypes"),
       ),
     ).toBe("unsupported_override_operation");
+    // GP-12 added agents to the kinds a project may disable.
     for (const kind of [
-      "agents",
       "artifactTypes",
       "evidenceTypes",
       "knowledge",

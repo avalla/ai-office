@@ -29,6 +29,7 @@ import {
   createPortableProjectArchive,
   portableProjectArchiveSchemaV6,
   portableProjectArchiveSchemaV7,
+  portableProjectArchiveSchemaV8,
   portableProjectFormatVersionFor,
   portableProjectFormatVersions,
   portableProjectManifestFor,
@@ -323,7 +324,7 @@ describe("project portability", () => {
       ],
       overrides: [],
     });
-    expect(portableProjectFormatVersions).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(portableProjectFormatVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
 
     expect(v6.safeParse(override("roles", "disable")).success).toBe(false);
     expect(v7.safeParse(override("roles", "disable")).success).toBe(true);
@@ -474,6 +475,321 @@ describe("project portability", () => {
     ).toEqual({ ...omitted, projectId: restored.projectId });
     const again = await destination.service.backup(restored.projectId);
     expect(again.archive.manifest.formatVersion).toBe(7);
+    expect(again.archive.state).toEqual(backup.archive.state);
+    // Restoring the same archive over identical local state is idempotent.
+    await expect(
+      destination.service.restore({
+        archive: parsePortableProjectArchive(serialized),
+        rootPath: source,
+      }),
+    ).resolves.toMatchObject({ projectId: restored.projectId });
+    origin.database.close();
+    destination.database.close();
+  });
+
+  test("format 8 carries an agent disable and agent references; format 7 rejects both", () => {
+    const v6 = portableProjectArchiveSchemaV6.shape.state.shape.definitions;
+    const v7 = portableProjectArchiveSchemaV7.shape.state.shape.definitions;
+    const v8 = portableProjectArchiveSchemaV8.shape.state.shape.definitions;
+    const entry = {
+      revision: 1,
+      actorId: "operator",
+      changedAt: "2026-10-06T00:00:00.000Z",
+    };
+    const override = (
+      kind: string,
+      operation: "replace" | "extend" | "disable",
+      payload?: object,
+    ) => ({
+      revision: 1,
+      owned: [],
+      overrides: [
+        {
+          origin: "project_override",
+          source: {
+            id: "org.example.legal",
+            version: "1.0.0",
+            manifestDigest: `sha256:${"a".repeat(64)}`,
+            kind,
+            localId: "custom",
+          },
+          operation,
+          ...(payload === undefined ? {} : { payload }),
+          ...entry,
+        },
+      ],
+    });
+    const owned = (kind: string, payload: object) => ({
+      revision: 1,
+      owned: [
+        {
+          origin: "project_owned",
+          kind,
+          id: "custom",
+          enabled: true,
+          payload,
+          ...entry,
+        },
+      ],
+      overrides: [],
+    });
+    const many = (count: number) =>
+      Array.from(
+        { length: count },
+        (_, index) => `p${String(index).padStart(4, "0")}`,
+      );
+    const references = {
+      id: "custom",
+      title: "Custom",
+      role: "counsel",
+      prompts: ["brief", "tone"],
+      knowledge: ["statutes"],
+    };
+
+    // What only format 8 can carry.
+    for (const state of [
+      override("agents", "disable"),
+      override("agents", "replace", { ...references, capabilities: ["draft"] }),
+      override("agents", "replace", { id: "custom", role: "counsel" }),
+      override("agents", "replace", { id: "custom", prompts: ["brief"] }),
+      override("agents", "replace", { id: "custom", knowledge: ["statutes"] }),
+      owned("agents", references),
+      owned("agents", { id: "custom", role: "auditor" }),
+    ]) {
+      expect(v8.safeParse(state).success, JSON.stringify(state)).toBe(true);
+      expect(v7.safeParse(state).success, JSON.stringify(state)).toBe(false);
+      expect(v6.safeParse(state).success, JSON.stringify(state)).toBe(false);
+    }
+    // Format 8 has the format-7 contents.
+    for (const state of [
+      override("roles", "disable"),
+      override("prompts", "disable"),
+      override("agents", "replace", { id: "custom", title: "Custom" }),
+      override("agents", "extend", { title: "Custom" }),
+      owned("agents", { id: "custom" }),
+      owned("roles", { id: "custom", title: "Custom" }),
+    ]) {
+      expect(v8.safeParse(state).success, JSON.stringify(state)).toBe(true);
+      expect(v7.safeParse(state).success, JSON.stringify(state)).toBe(true);
+    }
+    for (const state of [
+      override("agents", "replace", { id: "custom", prompts: many(1_000) }),
+      override("agents", "replace", { id: "custom", prompts: ["B", "a"] }),
+      owned("agents", { id: "custom", knowledge: many(1_000) }),
+    ])
+      expect(v8.safeParse(state).success).toBe(true);
+    // Forged format-8 state is rejected.
+    for (const state of [
+      // A disable carries no payload; other kinds have no disable contract.
+      override("agents", "disable", { id: "custom" }),
+      override("taskTypes", "disable"),
+      override("knowledge", "disable"),
+      // Requested capabilities need a role and never sit on a project agent.
+      override("agents", "replace", { id: "custom", capabilities: ["draft"] }),
+      owned("agents", { id: "custom", capabilities: ["draft"] }),
+      owned("agents", {
+        id: "custom",
+        role: "auditor",
+        capabilities: ["draft"],
+      }),
+      // List rules: non-empty, unique, valid local IDs.
+      override("agents", "replace", { id: "custom", prompts: [] }),
+      override("agents", "replace", {
+        id: "custom",
+        prompts: ["brief", "brief"],
+      }),
+      override("agents", "replace", { id: "custom", knowledge: ["no id"] }),
+      override("agents", "replace", { id: "custom", role: "no id" }),
+      override("agents", "replace", { id: "custom", role: ["counsel"] }),
+      owned("agents", { id: "custom", knowledge: [] }),
+      // One order only: ascending by code unit, as the mutation contract
+      // stores it.
+      override("agents", "replace", { id: "custom", prompts: ["z", "a"] }),
+      override("agents", "replace", {
+        id: "custom",
+        knowledge: ["a", "c", "b"],
+      }),
+      override("agents", "replace", {
+        id: "custom",
+        role: "counsel",
+        capabilities: ["review", "draft"],
+      }),
+      // Code units, not a locale: uppercase sorts first.
+      override("agents", "replace", { id: "custom", prompts: ["a", "B"] }),
+      owned("agents", { id: "custom", prompts: ["voice", "house"] }),
+      // At most 1,000 references per list.
+      override("agents", "replace", { id: "custom", prompts: many(1_001) }),
+      owned("agents", { id: "custom", knowledge: many(1_001) }),
+      // The fields exist on agents only and never on an extension.
+      override("agents", "extend", { title: "Custom", role: "counsel" }),
+      override("roles", "replace", { id: "custom", role: "counsel" }),
+      override("roles", "replace", { id: "custom", capabilities: ["draft"] }),
+      override("knowledge", "replace", { id: "custom", prompts: ["brief"] }),
+      owned("roles", { id: "custom", prompts: ["brief"] }),
+      owned("prompts", { id: "custom", role: "counsel" }),
+      // Nothing beyond the GP-12 fields.
+      override("agents", "replace", { id: "custom", model: "large" }),
+      owned("agents", { id: "custom", tools: ["shell"] }),
+    ])
+      expect(v8.safeParse(state).success, JSON.stringify(state)).toBe(false);
+  });
+
+  test("an agent disable or reference is exported as format 8, round-trips, and cannot be written as format 7", async () => {
+    const source = temporaryRoot("ai-office-gp12-portable-project-");
+    writeFileSync(join(source, "package.json"), '{"name":"gp12"}\n');
+    const origin = openRuntime(
+      temporaryRoot("ai-office-gp12-portable-source-"),
+    );
+    const projectId = (await importProject(origin, source)).projectId;
+    const now = new Date("2026-10-06T00:00:00.000Z");
+    const tuple = {
+      id: parseDomainPackId("org.example.legal"),
+      version: parseDomainPackVersion("1.0.0"),
+      manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+    };
+    const definitions = new SqliteProjectDefinitionRepository(origin.database);
+    const entry = (
+      kind: "roles" | "agents",
+      localId: string,
+      operation: "replace" | "disable",
+      payload: object = { id: localId },
+    ) => ({
+      origin: "project_override" as const,
+      source: { ...tuple, kind, localId },
+      operation,
+      revision: 1,
+      ...(operation === "replace"
+        ? { payload: payload as { id: string } }
+        : {}),
+      actorId: "operator",
+      changedAt: now.toISOString(),
+    });
+    const helper = (payload: object) => ({
+      origin: "project_owned" as const,
+      kind: "agents" as const,
+      id: "helper",
+      revision: 1,
+      enabled: true,
+      payload: payload as { id: string },
+      actorId: "operator",
+      changedAt: now.toISOString(),
+    });
+    let revision = 0;
+    const store = (
+      owned: ReturnType<typeof helper>[],
+      overrides: ReturnType<typeof entry>[],
+    ) =>
+      definitions.replace(
+        { projectId, revision, owned, overrides },
+        revision++,
+        now,
+      );
+
+    // Descriptive agent entries and a role omission need nothing new.
+    await store(
+      [helper({ id: "helper", title: "Helper" })],
+      [
+        entry("agents", "drafter", "replace"),
+        entry("roles", "clerk", "disable"),
+      ],
+    );
+    const plain = await origin.service.backup(projectId);
+    expect(plain.archive.manifest.formatVersion).toBe(7);
+    expect(portableProjectFormatVersionFor(plain.archive.state)).toBe(7);
+
+    // Each of these alone needs format 8.
+    for (const [owned, overrides] of [
+      [[], [entry("agents", "drafter", "disable")]],
+      [
+        [],
+        [
+          entry("agents", "drafter", "replace", {
+            id: "drafter",
+            role: "counsel",
+          }),
+        ],
+      ],
+      [[helper({ id: "helper", knowledge: ["handbook"] })], []],
+    ] as const) {
+      await store([...owned], [...overrides]);
+      expect(
+        (await origin.service.backup(projectId)).archive.manifest.formatVersion,
+      ).toBe(8);
+    }
+
+    const stored = await store(
+      [helper({ id: "helper", role: "auditor", prompts: ["house"] })],
+      [
+        entry("agents", "drafter", "disable"),
+        entry("agents", "filer", "replace", {
+          id: "filer",
+          title: "Our filer",
+          role: "counsel",
+          prompts: ["brief", "tone"],
+          knowledge: ["statutes"],
+          capabilities: ["draft"],
+        }),
+        entry("roles", "clerk", "disable"),
+      ],
+    );
+    const backup = await origin.service.backup(projectId);
+    expect(backup.archive.manifest.formatVersion).toBe(8);
+    expect(backup.archive.manifest.contents).toEqual(
+      plain.archive.manifest.contents,
+    );
+    expect(backup.archive.state.definitions).toEqual({
+      revision: stored.revision,
+      owned: stored.owned,
+      overrides: stored.overrides,
+    });
+
+    // Format 7 cannot carry it, as a producer or as a reader.
+    const asFormat = (formatVersion: 7 | 8) =>
+      portableProjectManifestFor({
+        formatVersion,
+        projectIdentity: backup.archive.manifest.projectIdentity,
+        createdAt: backup.archive.manifest.createdAt,
+        revision: backup.archive.manifest.revision,
+      });
+    expect(() =>
+      createPortableProjectArchive({
+        manifest: asFormat(7),
+        state: backup.archive.state,
+      }),
+    ).toThrow(
+      "Portable project archive format version 7 cannot carry an agent disable or agent references; write format version 8",
+    );
+    const serialized = serializePortableProjectArchive(backup.archive);
+    expect(() =>
+      parsePortableProjectArchive(
+        serialized.replace('"formatVersion":8', '"formatVersion":7'),
+      ),
+    ).toThrow(/Portable project archive state\.definitions\./u);
+    // A forged format-8 archive is rejected by the same schema.
+    expect(() =>
+      parsePortableProjectArchive(serialized.replace('"role":"counsel",', "")),
+    ).toThrow(/Portable project archive/u);
+    // The format-7 archive of the earlier state is still readable as written.
+    expect(
+      parsePortableProjectArchive(
+        serializePortableProjectArchive(plain.archive),
+      ),
+    ).toEqual(plain.archive);
+
+    const destination = openRuntime(
+      temporaryRoot("ai-office-gp12-portable-destination-"),
+    );
+    const restored = await destination.service.restore({
+      archive: parsePortableProjectArchive(serialized),
+      rootPath: source,
+    });
+    expect(
+      await new SqliteProjectDefinitionRepository(destination.database).get(
+        restored.projectId,
+      ),
+    ).toEqual({ ...stored, projectId: restored.projectId });
+    const again = await destination.service.backup(restored.projectId);
+    expect(again.archive.manifest.formatVersion).toBe(8);
     expect(again.archive.state).toEqual(backup.archive.state);
     // Restoring the same archive over identical local state is idempotent.
     await expect(

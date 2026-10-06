@@ -82,6 +82,7 @@ describe("project database migrations", () => {
       "0042_project_definition_ownership.sql",
       "0043_requirement_updated_event.sql",
       "0044_project_role_omission.sql",
+      "0045_project_agent_disable.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -136,6 +137,7 @@ describe("project database migrations", () => {
       { version: "0042_project_definition_ownership.sql" },
       { version: "0043_requirement_updated_event.sql" },
       { version: "0044_project_role_omission.sql" },
+      { version: "0045_project_agent_disable.sql" },
     ]);
     database.close();
   });
