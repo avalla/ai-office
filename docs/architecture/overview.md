@@ -87,6 +87,13 @@ of its own pack, a request cannot exceed the role's declared set, and a project
 may replace, disable or add agent definitions. No Runtime agent, model, tool,
 pipeline participation or approval eligibility is derived from them; an agent
 disable or agent reference field is carried by portable archive format 8.
+GP-13 gives pack workflows the same stable identity
+(`pack:<packId>/workflows/<localId>`) and lets a project replace a pack
+workflow with a complete envelope (name, task type and ordered stages that
+name roles of the same pack), extend its description or disable it; stage
+order is preserved as given. A workflow override is carried by portable
+archive format 9. The pipeline engine, pipeline runs, pins, approvals and
+guards are neither read nor written, and runs do not pin pack configuration.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

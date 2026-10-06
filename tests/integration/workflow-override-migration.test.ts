@@ -22,9 +22,11 @@ const migrations = join(
   "migrations",
   "project",
 );
-const migration = "0045_project_agent_disable.sql";
+const migration = "0046_project_workflow_override.sql";
 const digest = `sha256:${"a".repeat(64)}`;
-const at = "2026-10-05T00:00:00.000Z";
+const at = "2026-10-06T00:00:00.000Z";
+const workflow =
+  '{"id":"review","title":"Our review","taskType":"matter","stages":[{"id":"z-last","role":"counsel"},{"id":"a-first","role":"paralegal"}]}';
 
 afterEach(() => {
   for (const root of roots.splice(0))
@@ -38,19 +40,6 @@ function temporaryDatabase(prefix: string): {
   const root = mkdtempSync(join(tmpdir(), prefix));
   roots.push(root);
   return { root, database: openDatabase(join(root, "project.sqlite")) };
-}
-
-/**
- * The schema as 0045 left it. Later migrations widen the same table (GP-13
- * admits workflow overrides), so these assertions stop at 0045.
- */
-function migrationsThrough(root: string, last: string): string {
-  const directory = join(root, `through-${last}`);
-  mkdirSync(directory);
-  for (const file of readdirSync(migrations).sort())
-    if (file <= last)
-      copyFileSync(join(migrations, file), join(directory, file));
-  return directory;
 }
 
 function insertOverride(
@@ -83,7 +72,26 @@ function seedProject(database: Database, projectId = "legacy"): void {
 }
 
 /** The constraint, not the application, is what these assertions exercise. */
-function expectDisableConstraint(database: Database): void {
+function expectWorkflowConstraint(database: Database): void {
+  // Every operation is admitted on a workflow.
+  insertOverride(database, "workflows", "review", "replace", workflow);
+  insertOverride(
+    database,
+    "workflows",
+    "intake",
+    "extend",
+    '{"title":"Intake"}',
+  );
+  insertOverride(database, "workflows", "audit", "disable", null);
+  // The stage list is stored as given.
+  expect(
+    database
+      .query<{ payload_json: string }, []>(
+        "SELECT payload_json FROM project_definition_override WHERE kind = 'workflows' AND local_id = 'review'",
+      )
+      .get()?.payload_json,
+  ).toBe(workflow);
+  // The earlier disable kinds are kept, and no other kind gains one.
   insertOverride(database, "agents", "disabled", "disable", null);
   insertOverride(database, "roles", "omitted", "disable", null);
   insertOverride(database, "prompts", "muted", "disable", null);
@@ -96,82 +104,82 @@ function expectDisableConstraint(database: Database): void {
     expect(() =>
       insertOverride(database, kind, "other", "disable", null),
     ).toThrow(/CHECK constraint failed/u);
+  // Kinds without an override contract are still rejected for every operation.
+  for (const kind of ["policies", "capabilities", "validators", "unknown"]) {
+    expect(() =>
+      insertOverride(database, kind, "any", "replace", '{"id":"any"}'),
+    ).toThrow(/CHECK constraint failed/u);
+    expect(() =>
+      insertOverride(database, kind, "any", "extend", '{"title":"Any"}'),
+    ).toThrow(/CHECK constraint failed/u);
+    expect(() =>
+      insertOverride(database, kind, "any", "disable", null),
+    ).toThrow(/CHECK constraint failed/u);
+  }
   // A disable has no payload; a replacement or extension needs one.
   expect(() =>
-    insertOverride(database, "agents", "with-payload", "disable", '{"id":"x"}'),
+    insertOverride(database, "workflows", "with-payload", "disable", workflow),
   ).toThrow(/CHECK constraint failed/u);
   expect(() =>
-    insertOverride(database, "agents", "no-payload", "replace", null),
+    insertOverride(database, "workflows", "no-payload", "replace", null),
   ).toThrow(/CHECK constraint failed/u);
-  // An agent payload with reference fields is plain JSON to the schema.
-  insertOverride(
-    database,
-    "agents",
-    "replaced",
-    "replace",
-    '{"id":"replaced","role":"counsel","prompts":["brief"],"knowledge":["statutes"],"capabilities":["draft"]}',
-  );
+  expect(() =>
+    insertOverride(database, "workflows", "no-payload", "extend", null),
+  ).toThrow(/CHECK constraint failed/u);
   // Every other 0042 constraint is still enforced on the rebuilt table.
   expect(() =>
-    insertOverride(database, "workflows", "flow", "replace", '{"id":"flow"}'),
+    insertOverride(database, "workflows", "merged", "merge", workflow),
   ).toThrow(/CHECK constraint failed/u);
   expect(() =>
-    insertOverride(database, "agents", "broken", "replace", "{not json"),
+    insertOverride(database, "workflows", "broken", "replace", "{not json"),
   ).toThrow(/CHECK constraint failed/u);
   expect(() =>
-    insertOverride(database, "agents", "disabled", "replace", '{"id":"x"}'),
+    insertOverride(database, "workflows", "review", "disable", null),
   ).toThrow(/UNIQUE constraint failed/u);
   expect(() =>
-    insertOverride(database, "agents", "bad id", "replace", '{"id":"x"}'),
+    insertOverride(database, "workflows", "bad id", "replace", workflow),
   ).toThrow(/CHECK constraint failed/u);
   expect(() =>
-    insertOverride(database, "agents", "orphan", "disable", null, "missing"),
+    insertOverride(database, "workflows", "orphan", "disable", null, "missing"),
   ).toThrow(/FOREIGN KEY constraint failed/u);
 }
 
-describe("GP-12 agent disable migration", () => {
-  test("a fresh database accepts an agent disable and still constrains every other kind", () => {
-    const { root, database } = temporaryDatabase("ai-office-gp12-fresh-");
-    const through = migrationsThrough(root, migration);
+describe("GP-13 workflow override migration", () => {
+  test("a fresh database accepts workflow overrides and still constrains every other kind", () => {
+    const { database } = temporaryDatabase("ai-office-gp13-fresh-");
     try {
-      expect(migrate(database, through).applied.at(-1)).toBe(migration);
-      expect(migrate(database, through).applied).toEqual([]);
+      expect(migrate(database, migrations).applied.at(-1)).toBe(migration);
+      expect(migrate(database, migrations).applied).toEqual([]);
       seedProject(database);
-      expectDisableConstraint(database);
+      expectWorkflowConstraint(database);
     } finally {
       database.close();
     }
   });
 
-  test("an upgrade from 0044 preserves every existing override row, key and constraint", async () => {
-    const { root, database } = temporaryDatabase("ai-office-gp12-upgrade-");
-    const partial = join(root, "pre-gp12");
-    const through = migrationsThrough(root, migration);
+  test("an upgrade from 0045 preserves every existing override row, key and constraint", async () => {
+    const { root, database } = temporaryDatabase("ai-office-gp13-upgrade-");
+    const partial = join(root, "pre-gp13");
     mkdirSync(partial);
     for (const file of readdirSync(migrations).sort())
       if (file < migration)
         copyFileSync(join(migrations, file), join(partial, file));
     try {
       expect(migrate(database, partial).applied.at(-1)).toBe(
-        "0044_project_role_omission.sql",
+        "0045_project_agent_disable.sql",
       );
       seedProject(database);
       seedProject(database, "other");
-      insertOverride(
-        database,
-        "agents",
-        "drafter",
-        "replace",
-        '{"id":"drafter","title":"Our drafter"}',
-      );
+      // The GP-12 agent disable and reference payload, the GP-11 role
+      // omission and the GP-07 entries are carried over.
+      insertOverride(database, "agents", "drafter", "disable", null);
       insertOverride(
         database,
         "agents",
         "filer",
-        "extend",
-        '{"title":"Filer"}',
+        "replace",
+        '{"id":"filer","role":"counsel","prompts":["brief","tone"],"capabilities":["draft"]}',
       );
-      // The GP-11 role omission and the GP-07 prompt disable are carried over.
       insertOverride(database, "roles", "clerk", "disable", null);
       insertOverride(database, "prompts", "greeting", "disable", null);
       insertOverride(
@@ -183,20 +191,32 @@ describe("GP-12 agent disable migration", () => {
       );
       insertOverride(
         database,
+        "taskTypes",
+        "matter",
+        "extend",
+        '{"description":"A case"}',
+      );
+      insertOverride(
+        database,
         "knowledge",
         "handbook",
         "replace",
         '{"id":"handbook"}',
         "other",
       );
-      // Before the migration an agent disable violates the 0044 constraint.
-      expect(() =>
-        insertOverride(database, "agents", "disabled", "disable", null),
-      ).toThrow(/CHECK constraint failed/u);
+      // Before the migration no operation on a workflow passes 0045.
+      for (const [operation, payload] of [
+        ["replace", workflow],
+        ["extend", '{"title":"Review"}'],
+        ["disable", null],
+      ] as const)
+        expect(() =>
+          insertOverride(database, "workflows", "review", operation, payload),
+        ).toThrow(/CHECK constraint failed/u);
       database
         .query(
           `INSERT INTO project_owned_definition(project_id, kind, local_id, revision, enabled, payload_json, actor_id, changed_at)
-          VALUES ('legacy', 'agents', 'helper', 1, 1, '{"id":"helper"}', 'operator', ?)`,
+          VALUES ('legacy', 'workflows', 'house', 1, 1, '{"id":"house","taskType":"errand","stages":[{"id":"only","role":"liaison"}]}', 'operator', ?)`,
         )
         .run(at);
       const rows = (table: string) =>
@@ -212,11 +232,11 @@ describe("GP-12 agent disable migration", () => {
         "project",
       ];
       const before = tables.map(rows);
-      expect(before[0]).toHaveLength(6);
+      expect(before[0]).toHaveLength(7);
       const repository = new SqliteProjectDefinitionRepository(database);
       const stateBefore = await repository.get("legacy");
 
-      expect(migrate(database, through).applied).toEqual([migration]);
+      expect(migrate(database, migrations).applied).toEqual([migration]);
 
       expect(tables.map(rows)).toEqual(before);
       expect(await repository.get("legacy")).toEqual(stateBefore);
@@ -234,7 +254,7 @@ describe("GP-12 agent disable migration", () => {
           .map((row) => row.name)
           .filter((name) => !name.startsWith("sqlite_autoindex_")),
       ).toEqual(["project_definition_override"]);
-      expectDisableConstraint(database);
+      expectWorkflowConstraint(database);
       // Deleting the project still cascades through the head to the overrides.
       database.exec("DELETE FROM project WHERE id = 'legacy'");
       expect(
@@ -251,7 +271,7 @@ describe("GP-12 agent disable migration", () => {
           )
           .get()?.count,
       ).toBe(1);
-      expect(migrate(database, through).applied).toEqual([]);
+      expect(migrate(database, migrations).applied).toEqual([]);
     } finally {
       database.close();
     }

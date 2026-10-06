@@ -476,6 +476,64 @@ describe("GP-12 agent customization in project definitions", () => {
     });
   });
 
+  test("project:definition:show reports a malformed stored agent replacement as a contract violation", async () => {
+    // GP-13 hardening of the GP-12 path: stored state written directly
+    // through the repository, past the mutation contract.
+    const cases: [object, string, string][] = [
+      [
+        { id: "filer", capabilities: ["file"] },
+        "agent_capability_exceeds_role",
+        "Requested capabilities need a role",
+      ],
+      [
+        { id: "filer", role: "clerk", prompts: "brief" },
+        "malformed_origin_reference",
+        "prompts must be a non-empty list; omit the field instead",
+      ],
+      [
+        { id: "filer", role: "clerk", knowledge: [7] },
+        "malformed_origin_reference",
+        "Invalid local definition ID",
+      ],
+    ];
+    for (const [payload, code, detail] of cases) {
+      const h = await harness();
+      await h.bind([h.v1]);
+      await h.storage.definitions.replace(
+        {
+          projectId: "a",
+          revision: 0,
+          owned: [],
+          overrides: [
+            {
+              origin: "project_override",
+              source: { ...h.v1, kind: "agents", localId: "filer" },
+              operation: "replace",
+              revision: 1,
+              payload: payload as unknown as { id: string },
+              actorId: "hand-edit",
+              changedAt: now.toISOString(),
+            },
+          ],
+        },
+        0,
+        now,
+      );
+      const inspected = await h.definitions.inspect("a");
+      expect(inspected.issues, JSON.stringify(payload)).toEqual([
+        {
+          code,
+          message: `Stored override violates the override contract: ${detail}`,
+          source: source(h.v1, "filer"),
+        },
+      ]);
+      expect(JSON.stringify(inspected.issues)).not.toContain("undefined");
+      await expect(h.configuration()).rejects.toMatchObject({
+        code: "unresolved_override",
+      });
+    }
+  });
+
   test("every list stored through the mutation and upgrade paths is in the order archive format 8 requires", async () => {
     const h = await harness();
     await h.bind([h.v1]);

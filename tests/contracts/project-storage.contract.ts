@@ -473,6 +473,96 @@ export function defineProjectStorageContracts(
         expect(await definitions().get(projectId)).toEqual(current);
       });
 
+      test("stores workflow overrides with their stage order and rejects kinds without an override contract", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-workflow-override`)
+        ).snapshot().id;
+        const source = {
+          id: parseDomainPackId("org.example.legal"),
+          version: parseDomainPackVersion("1.0.0"),
+          manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+          kind: "workflows" as const,
+        };
+        const entry = {
+          origin: "project_override" as const,
+          revision: 1,
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        const disabled = {
+          ...entry,
+          source: { ...source, localId: "audit" },
+          operation: "disable" as const,
+        };
+        const extended = {
+          ...entry,
+          source: { ...source, localId: "intake" },
+          operation: "extend" as const,
+          payload: { title: "Our intake" } as { id: string; title: string },
+        };
+        // Stage IDs and roles in no sort order: the list is stored as given.
+        const replaced = {
+          ...entry,
+          source: { ...source, localId: "review" },
+          operation: "replace" as const,
+          payload: {
+            id: "review",
+            title: "Our review",
+            taskType: "matter",
+            stages: [
+              { id: "z-last", role: "paralegal" },
+              { id: "a-first", role: "counsel" },
+              { id: "m-middle", role: "auditor" },
+              { id: "B-upper", role: "clerk" },
+            ],
+          },
+        };
+        const current = await definitions().replace(
+          {
+            projectId,
+            revision: 0,
+            owned: [],
+            overrides: [disabled, extended, replaced],
+          },
+          0,
+          now,
+        );
+        expect(current.overrides).toEqual([disabled, extended, replaced]);
+        expect(await definitions().get(projectId)).toEqual(current);
+        expect(
+          (
+            (await definitions().get(projectId)).overrides[2]
+              ?.payload as unknown as {
+              stages: { id: string }[];
+            }
+          ).stages.map((stage) => stage.id),
+        ).toEqual(["z-last", "a-first", "m-middle", "B-upper"]);
+        for (const invalid of [
+          // A workflow disable carries no payload.
+          { ...disabled, payload: { id: "audit" } },
+          // A replacement needs one.
+          { ...replaced, payload: undefined },
+          // Policies, capabilities and validators have no override contract.
+          { ...disabled, source: { ...disabled.source, kind: "policies" } },
+          {
+            ...extended,
+            source: { ...extended.source, kind: "capabilities" },
+          },
+          {
+            ...replaced,
+            source: { ...replaced.source, kind: "validators" },
+          },
+        ] as unknown as (typeof disabled)[])
+          await expect(
+            definitions().replace(
+              { projectId, revision: 1, owned: [], overrides: [invalid] },
+              1,
+              now,
+            ),
+          ).rejects.toThrow();
+        expect(await definitions().get(projectId)).toEqual(current);
+      });
+
       test("creates, updates and removes ordered owned and exact-source entries", async () => {
         const projectId = (
           await createProject(harness, `${prefix}-definition-lifecycle`)

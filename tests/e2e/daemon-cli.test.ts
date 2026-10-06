@@ -1424,6 +1424,336 @@ profiles:
     }
   });
 
+  test("replaces and disables pack workflows, omits the freed role, upgrades and shows the workflow view over the socket", async () => {
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-workflow-template-cli-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const installedPacks = new InMemoryInstalledDomainPackCatalog(1, [
+      "local-distribution",
+    ]);
+    const template = parseDomainPackManifest(
+      readFileSync(
+        new URL("../fixtures/domain-pack/custom.json", import.meta.url),
+      ),
+    );
+    const register = (version: string, workflows: object[]) => {
+      const manifest = {
+        ...template,
+        version,
+        contributions: {
+          ...template.contributions,
+          roles: [
+            { id: "counsel" },
+            { id: "clerk" },
+            { id: "paralegal" },
+            { id: "auditor" },
+          ],
+          taskTypes: [{ id: "matter" }, { id: "filing" }],
+          workflows,
+        },
+      } as unknown as typeof template;
+      const bytes = new TextEncoder().encode(
+        JSON.stringify({
+          ...manifest,
+          manifestDigest: computeManifestDigest(manifest),
+        }),
+      );
+      return installedPacks.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: {
+          installerId: "local-distribution",
+          reference: `bundled/custom-${version}`,
+        },
+      });
+    };
+    // `clerk` is used by `intake` only.
+    const intake = {
+      id: "intake",
+      taskType: "filing",
+      stages: [{ id: "file", role: "clerk" }],
+    };
+    const audit = {
+      id: "audit",
+      taskType: "matter",
+      stages: [{ id: "inspect", role: "auditor" }],
+    };
+    const v1 = register("1.0.0", [
+      {
+        id: "review",
+        title: "Review",
+        taskType: "matter",
+        stages: [
+          { id: "draft", role: "paralegal" },
+          { id: "check", role: "counsel" },
+        ],
+      },
+      intake,
+      audit,
+    ]);
+    // The review is renamed and gains a stage; the intake gains a title.
+    const v2 = register("2.0.0", [
+      {
+        id: "review",
+        title: "Matter review",
+        taskType: "matter",
+        stages: [
+          { id: "draft", role: "paralegal" },
+          { id: "check", role: "counsel" },
+          { id: "sign", role: "counsel" },
+        ],
+      },
+      { ...intake, title: "Intake" },
+      audit,
+    ]);
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+      installedPacks,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+    try {
+      await waitForDaemon(socket.socketPath);
+      const created = await invoke(["project:create", "Workflow fixture"]);
+      const projectId = created.stdout[0]!.replace("Project created: ", "");
+      expect(
+        (
+          await invoke([
+            "project:pack:apply",
+            "--project",
+            projectId,
+            "--packs",
+            JSON.stringify([v1]),
+            "--expected-revision",
+            "0",
+          ])
+        ).code,
+      ).toBe(0);
+      const define = (revision: number, mutation: object) =>
+        invoke([
+          "project:definition:apply",
+          "--project",
+          projectId,
+          "--mutation",
+          JSON.stringify(mutation),
+          "--expected-revision",
+          String(revision),
+        ]);
+      const source = (
+        pack: typeof v1,
+        localId: string,
+        kind = "workflows",
+      ) => ({
+        ...pack,
+        kind,
+        localId,
+      });
+      // A stage role the pack does not declare is refused before storage.
+      const unknown = {
+        action: "put_override",
+        source: source(v1, "review"),
+        operation: "replace",
+        payload: {
+          id: "review",
+          taskType: "matter",
+          stages: [{ id: "check", role: "partner" }],
+        },
+      };
+      const previewed = await invoke([
+        "project:definition:preview",
+        "--project",
+        projectId,
+        "--mutation",
+        JSON.stringify(unknown),
+        "--json",
+      ]);
+      expect(previewed.code).toBe(1);
+      expect(JSON.parse(previewed.stdout[0]!)).toMatchObject({
+        issues: [{ code: "source_definition_missing" }],
+      });
+      expect((await define(0, unknown)).code).toBe(1);
+      // Replace the review: reorder its two stages and add one between them.
+      expect(
+        (
+          await define(0, {
+            action: "put_override",
+            source: source(v1, "review"),
+            operation: "replace",
+            payload: {
+              id: "review",
+              title: "Our review",
+              taskType: "matter",
+              stages: [
+                { id: "check", role: "counsel" },
+                { id: "second-opinion", role: "auditor" },
+                { id: "draft", role: "paralegal" },
+              ],
+            },
+          })
+        ).code,
+      ).toBe(0);
+      // Disable the intake, then omit the role only the intake used.
+      expect(
+        (
+          await define(1, {
+            action: "put_override",
+            source: source(v1, "intake"),
+            operation: "disable",
+          })
+        ).code,
+      ).toBe(0);
+      expect(
+        (
+          await define(2, {
+            action: "put_override",
+            source: source(v1, "clerk", "roles"),
+            operation: "disable",
+          })
+        ).code,
+      ).toBe(0);
+      const show = async () =>
+        JSON.parse(
+          (
+            await invoke([
+              "project:configuration:show",
+              "--project",
+              projectId,
+              "--json",
+            ])
+          ).stdout[0]!,
+        ) as {
+          ok: boolean;
+          configuration: {
+            configurationDigest: string;
+            workflows: { workflowId: string; effectiveId: string }[];
+            disabledWorkflows: string[];
+            omittedRoles: string[];
+          };
+        };
+      const before = await show();
+      const stable = (kind: string, localId: string) =>
+        `pack:org.example.custom/${kind}/${localId}`;
+      const effective = (pack: typeof v1, localId: string) =>
+        `pack:org.example.custom@${pack.version}#${pack.manifestDigest}/workflows/${localId}`;
+      const auditView = {
+        workflowId: stable("workflows", "audit"),
+        origin: "pack_owned",
+        taskTypeId: stable("taskTypes", "matter"),
+        stages: [{ id: "inspect", roleId: stable("roles", "auditor") }],
+        customization: "none",
+      };
+      const reviewView = {
+        workflowId: stable("workflows", "review"),
+        origin: "pack_owned",
+        title: "Our review",
+        taskTypeId: stable("taskTypes", "matter"),
+        stages: [
+          { id: "check", roleId: stable("roles", "counsel") },
+          { id: "second-opinion", roleId: stable("roles", "auditor") },
+          { id: "draft", roleId: stable("roles", "paralegal") },
+        ],
+        customization: "replace",
+      };
+      expect(before.ok).toBe(true);
+      expect(before.configuration.workflows).toEqual([
+        { ...auditView, effectiveId: effective(v1, "audit") },
+        { ...reviewView, effectiveId: effective(v1, "review") },
+      ]);
+      expect(before.configuration.disabledWorkflows).toEqual([
+        stable("workflows", "intake"),
+      ]);
+      expect(before.configuration.omittedRoles).toEqual([
+        stable("roles", "clerk"),
+      ]);
+
+      const upgrade = (...extra: string[]) =>
+        invoke([
+          "project:pack:upgrade",
+          "--project",
+          projectId,
+          "--packs",
+          JSON.stringify([v2]),
+          ...extra,
+          "--json",
+        ]);
+      const preview = await upgrade();
+      expect(preview.code).toBe(0);
+      const plan = JSON.parse(preview.stdout[0]!) as {
+        planDigest: string;
+        prospectiveConfigurationDigest: string;
+      };
+      expect(plan).toMatchObject({
+        issues: [],
+        overrides: [
+          // The role omission: the role itself is unchanged.
+          {
+            operation: "disable",
+            outcome: "retargeted",
+            upstream: "unchanged",
+          },
+          { operation: "disable", outcome: "retargeted", upstream: "changed" },
+          { operation: "replace", outcome: "retargeted", upstream: "changed" },
+        ],
+        templates: {
+          availability: "available",
+          changes: [
+            { kind: "workflows", localId: "intake", customized: true },
+            { kind: "workflows", localId: "review", customized: true },
+          ],
+        },
+        activePins: { availability: "unavailable" },
+      });
+      expect(JSON.stringify(plan)).not.toContain("Our review");
+      expect(JSON.stringify(plan)).not.toContain("second-opinion");
+      const applied = await upgrade("--approve", plan.planDigest);
+      expect(applied.code).toBe(0);
+      expect(JSON.parse(applied.stdout[0]!)).toMatchObject({
+        result: "applied",
+        bindingRevision: 2,
+        definitionRevision: 4,
+        packs: [v2],
+      });
+
+      const after = await show();
+      expect(after).toEqual({
+        ok: true,
+        configuration: expect.objectContaining({
+          configurationDigest: plan.prospectiveConfigurationDigest,
+          selectedPacks: [v2],
+          // The replacement is not reset and its stage order is kept.
+          workflows: [
+            { ...auditView, effectiveId: effective(v2, "audit") },
+            { ...reviewView, effectiveId: effective(v2, "review") },
+          ],
+          // The disabled workflow is not recreated by the upgrade.
+          disabledWorkflows: [stable("workflows", "intake")],
+          omittedRoles: [stable("roles", "clerk")],
+        }) as unknown,
+      });
+      // Stable identities are the same before and after the upgrade.
+      expect(
+        after.configuration.workflows.map((item) => item.workflowId),
+      ).toEqual(before.configuration.workflows.map((item) => item.workflowId));
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
   test("previews and applies an explicit project pack binding over the socket", async () => {
     const projectRoot = mkdtempSync(
       join(tmpdir(), "ai-office-pack-binding-cli-"),
@@ -1744,6 +2074,8 @@ profiles:
         "omittedRoles",
         "agents",
         "disabledAgents",
+        "workflows",
+        "disabledWorkflows",
         "pin",
       ]);
       expect(

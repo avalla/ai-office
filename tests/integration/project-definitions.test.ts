@@ -523,15 +523,19 @@ describe("GP-07 authoritative definition ownership", () => {
             ? undefined
             : operation === "extend"
               ? { title: "Added" }
-              : { id: "counsel" },
+              : kind === "workflows"
+                ? { id: "counsel", taskType: "matter", stages: [] }
+                : { id: "counsel" },
           kind,
         );
         // GP-11 widened `disable` from prompts to prompts and roles, GP-12
-        // to agents.
+        // to agents. GP-13 supports all three operations on workflows, so
+        // policies, capabilities and validators are the unsupported kinds.
         const supported =
-          operation === "disable"
+          kind === "workflows" ||
+          (operation === "disable"
             ? kind === "prompts" || kind === "roles" || kind === "agents"
-            : descriptive.has(kind);
+            : descriptive.has(kind));
         if (supported)
           expect(() => parseDefinitionMutation(mutation)).not.toThrow();
         else

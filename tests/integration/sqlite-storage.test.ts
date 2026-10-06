@@ -83,6 +83,7 @@ describe("project database migrations", () => {
       "0043_requirement_updated_event.sql",
       "0044_project_role_omission.sql",
       "0045_project_agent_disable.sql",
+      "0046_project_workflow_override.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -138,6 +139,7 @@ describe("project database migrations", () => {
       { version: "0043_requirement_updated_event.sql" },
       { version: "0044_project_role_omission.sql" },
       { version: "0045_project_agent_disable.sql" },
+      { version: "0046_project_workflow_override.sql" },
     ]);
     database.close();
   });
