@@ -2944,21 +2944,29 @@ project has adopted the development pack.
   not on GP-14. GP-17 to GP-19 are definition-layer fixtures. The slice,
   verification and non-goal cells of GP-17 to GP-20 were reworded to the
   definition layer, and GP-20 runs lifecycle regressions only on the legacy
-  path.
+  path. Where the GP-20 row and the table above say that the fixtures bind,
+  resolve, and are customized and upgraded, that applies to the three
+  pack-backed fixtures; the empty/custom fixture resolves with an empty
+  selection and carries project-owned definitions, as the exit text says.
 - GP-17, GP-18 and GP-19 also depend on GP-25. A fixture that carries policy
   or governance definitions cannot resolve before GP-25, because GP-06
   rejects a non-empty policy section as `unsupported_security_composition`.
+  For GP-19 the dependency is provisional: it has no pack, and whether
+  project-owned policy definitions in a pack-free project fall under GP-25
+  is set by GP-25's scope.
 - The sections of delivered tasks and the committed
   `outside-pack-vocabulary.json` still name GP-10C and GP-14 as owners and
   are not rewritten. Read registration, install and adoption as GP-10C-2,
   and declarative content, including the `tools` residue, as GP-10C-1. The
   list's owner field is updated by the task that next changes it.
 - Two more statements in delivered sections are not rewritten and are read
-  as follows. The GP-08 and GP-13 sections call GP-24 "the task that
-  persists those pins": Runtime activation is now expected to persist the
-  run pins and GP-24 to use them. The GP-10B-1 section says that the
-  execution parity task "depends on GP-10B-1, GP-10B-2 and the policy task
-  (GP-25)": it now also needs Runtime activation.
+  as follows. The GP-08 section assigns blocking a removal to "the task
+  that persists those pins", and the GP-13 section calls GP-24 that task.
+  Runtime activation is now expected to persist the run pins; blocking a
+  removal stays with GP-24, which uses them. The GP-10B-1 section and the
+  roadmap say that the execution parity task "depends on GP-10B-1, GP-10B-2
+  and the policy task (GP-25)": it is now also expected to need Runtime
+  activation (provisional, see the table below).
 
 **Rows owned by other pull requests.** The same owner decision set the M16
 part of three tasks whose table rows this record does not edit. Until each
