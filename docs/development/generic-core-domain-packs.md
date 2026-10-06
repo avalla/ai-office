@@ -1499,7 +1499,9 @@ carry the same fields. GP-01 through GP-07 have passed review and merged.
 
 ## Post-GP-06 hardening follow-ups
 
-GP-22 is implemented. GP-23 is planned and not implemented. They harden the
+GP-22 is implemented. GP-23 is assessed: U+0000 stays allowed in pack manifest
+text by design, with regression tests and no change to the manifest contract.
+They harden the
 merged GP-06 and GP-07 contracts; they are not unfinished GP-06 or GP-07 acceptance
 criteria and do not reopen that work. Each is a project requirement key with
 one linked AI Office task, depends only on GP-06 and GP-07, and can be
@@ -1716,6 +1718,10 @@ Implementation.
 
 ### GP-23 — Pack manifest U+0000 policy assessment
 
+Status: assessed. The recorded outcome is the second one: U+0000 is allowed in
+pack manifest text by design. The criteria below are unchanged; "Assessment
+record" at the end of this section holds the evidence and the reasoning.
+
 Depends on: GP-06, GP-07.
 
 Project definition text has one shared rule: at most 16,000 UTF-16 code units,
@@ -1756,6 +1762,91 @@ No restriction is introduced without evidence.
 Non-goals: Unicode normalization; unnecessary changes to manifest identity
 semantics; changes to GP-07 definition text behavior; a general Unicode
 redesign.
+
+Assessment record.
+
+Manifest text is `metadata.name`, `metadata.description`, and the optional
+`title` and `description` of an item in each of the eleven contribution
+sections: 24 fields, all validated by the one `string` check in
+`packages/domain-pack-contracts/src/manifest.ts`, which requires a string
+without a lone surrogate and sets no length bound. Every other manifest string
+is an identity with its own pattern and cannot hold U+0000.
+
+Each boundary was exercised with a manifest whose text contains U+0000, on
+SQLite and on PostgreSQL 17.6 where storage is involved. "Read" marks a row
+established by reading the code only.
+
+| Boundary                                                            | U+0000 in manifest text                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Lone surrogate, for comparison                                                                     |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Strict JSON reader                                                  | The escape `\u0000` is accepted. A raw 0x00 byte is a JSON syntax error, `malformed_input` at `$`, "unescaped control character", like any raw control character.                                                                                                                                                                                                                                                                                                                               | `malformed_input` at `$`.                                                                          |
+| Field validation                                                    | Accepted; the text is returned unchanged.                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `malformed_input` (metadata) or `invalid_contribution` (contribution text), with the field's path. |
+| RFC 8785 canonicalization and `manifestDigest`                      | Serialized as the six characters `\u0000`, as RFC 8785 requires; the canonical bytes hold no 0x00. The digest is deterministic and differs from the digest of the same manifest without the character.                                                                                                                                                                                                                                                                                          | Not reached.                                                                                       |
+| `artifactDigest`                                                    | SHA-256 of the exact bytes; unaffected.                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Not reached.                                                                                       |
+| Installed pack catalog                                              | Registers. The catalog is in memory and holds the exact bytes; no database stores a manifest.                                                                                                                                                                                                                                                                                                                                                                                                   | Registration fails as `malformed_catalog_entry`.                                                   |
+| Pack binding, binding preview and apply, their audit events         | Unaffected: both backends store and audit pack identities only (ID, version, digest).                                                                                                                                                                                                                                                                                                                                                                                                           | —                                                                                                  |
+| GP-06 effective configuration, `configurationDigest`, derived views | The text is intact in `effectiveDefinitions` and in the role, agent and workflow views. The digest is computed and equals the upgrade plan's prospective digest. The result is the same from SQLite and PostgreSQL state.                                                                                                                                                                                                                                                                       | —                                                                                                  |
+| `project:configuration:show` over the Runtime socket                | One JSON text holding the escape; neither the frame nor the printed output holds a raw U+0000, and parsing it returns the exact text. Same with and without `--json`.                                                                                                                                                                                                                                                                                                                           | —                                                                                                  |
+| Ordinary project override (`extend`, `replace`, `disable`)          | The stored payload is the project's own fields under the GP-07 text rule. Pack text is merged at resolution and is never written: an extension of an agent whose pack description contains U+0000 stores `{"title": …}` only, on both backends.                                                                                                                                                                                                                                                 | —                                                                                                  |
+| Upgrade plan, `planDigest`, upgrade audit event                     | Identities, outcomes and counts only. Template change detection compares canonical forms and reports the item as changed.                                                                                                                                                                                                                                                                                                                                                                       | —                                                                                                  |
+| `convert_to_replace`                                                | The one path that copies pack text into a project payload: the replacement takes the fields the extension does not set from the new template. The prospective configuration is resolved before anything is written and re-checks the payload with the GP-07 mutation contract, so the plan carries `prospective_configuration_invalid` with detail `unresolved_override`, apply raises `upgrade_blocked`, and binding, definitions and audit are unchanged. Identical on SQLite and PostgreSQL. | —                                                                                                  |
+| `retain_as_project_owned`                                           | Read: it is accepted only for a `replace` override whose template is gone and moves that override's own payload, which is project text. No pack text is copied.                                                                                                                                                                                                                                                                                                                                 | —                                                                                                  |
+| Portable archive (formats 6–9)                                      | `project:backup` of a project bound to such a pack succeeds; the archive names the pack by identity and holds no manifest text. Executed on SQLite; restore was not executed, since the archive carries nothing of the manifest.                                                                                                                                                                                                                                                                | —                                                                                                  |
+| Dashboard, read models, generated Markdown                          | Read: none of them reads a manifest or the resolved configuration. `project:configuration:show` and the upgrade planner are the only consumers.                                                                                                                                                                                                                                                                                                                                                 | —                                                                                                  |
+
+For reference, PostgreSQL rejects `'{"title":"a\u0000b"}'::jsonb` with SQLSTATE
+22P05, "unsupported Unicode escape sequence", and a text parameter holding
+0x00 with 22021. SQLite's `json_valid` accepts the escape. That difference is
+what the GP-07 rule answers.
+
+Outcome: allow U+0000 in pack manifest text by design. No manifest path
+represents the character inconsistently, so the first outcome's condition is
+not met.
+
+- Manifest text is not persisted. It lives in the catalog's artifact bytes and
+  in derived, in-memory output. Project storage holds pack identities, and
+  project definition payloads that are project text. PostgreSQL's `jsonb`
+  limitation therefore has nothing of a manifest to act on.
+- The single copy path is a project-state path, and it is already governed by
+  the project definition text rule. It fails closed with a typed code, before
+  any write, identically on both backends. Text longer than 16,000 code units,
+  which manifest text may also be, is refused there in the same way, so
+  rejecting U+0000 in manifests would not make that conversion total. The
+  operator can still reach the new pack version with `remove_override`, and a
+  conversion whose copied text fits project text is applied as before.
+- A restriction would reject manifests that validate today and would do so
+  without a boundary that requires it.
+
+Distinction from project definition text: `isDefinitionText` bounds project
+text to 16,000 code units and rejects U+0000 because that text is stored in
+`payload_json` on every ProjectStorage provider and exported in portable
+archives. Manifest text has neither property and keeps its own rule: a string
+without a lone surrogate, not normalized, not bounded. The two rules meet only
+at `convert_to_replace`, where the project rule decides.
+
+Tests: `tests/unit/domain-pack-manifest-text.test.ts` (every text field through
+parsing, canonicalization and digests), `tests/integration/pack-manifest-nul-policy.test.ts`
+(resolution, storage, both conversion outcomes and the unchanged GP-07 rule, on
+SQLite and, with `AI_OFFICE_TEST_POSTGRES_URL`, PostgreSQL) and
+`tests/e2e/pack-manifest-nul-policy.test.ts` (the Runtime socket and
+`project:backup`). No code, migration, archive format, manifest schema or core
+contract version changed. The four fixture manifests hold no U+0000 and their
+golden digests are unchanged.
+
+Limits and follow-ups, none of them changed here:
+
+- The refused conversion reports `unresolved_override` with
+  `malformed_origin_reference`; it does not name the template field that broke
+  the project text rule.
+- The assessment holds while manifests are not stored in a database. A
+  persistent catalog, or any new path that writes manifest text to project
+  storage, has to repeat it.
+- Observed while probing storage: the PostgreSQL definition repository binds
+  `JSON.stringify(payload)` to a `jsonb` parameter, and the stored value is a
+  `jsonb` string holding the JSON text, not a `jsonb` object. The repository
+  reads it back correctly. As a side effect a payload with U+0000 written past
+  the mutation contract is stored on PostgreSQL as well as on SQLite, and
+  GP-06 then reports `unresolved_override` on both. The GP-07 rule and its
+  tests are unchanged.
 
 ## Milestone exit and exclusions
 
