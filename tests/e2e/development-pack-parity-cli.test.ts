@@ -66,6 +66,7 @@ const emptyConfiguration = {
   disabledAgents: [],
   workflows: [],
   disabledWorkflows: [],
+  capabilities: [],
   policies: [],
   pin: {
     configurationDigest:

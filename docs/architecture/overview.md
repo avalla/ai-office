@@ -100,6 +100,17 @@ name roles of the same pack), extend its description or disable it; stage
 order is preserved as given. A workflow override is carried by portable
 archive format 9. The pipeline engine, pipeline runs, pins, approvals and
 guards are neither read nor written, and runs do not pin pack configuration.
+GP-16 lets a pack capability declare the connector operations it needs, by
+name and mode, as required or optional. The Runtime host exposes the
+descriptors of its composed connector registry through the read-only
+`OperationProviderCatalog` application port: provider ID, version and
+operations with mode, and nothing else. Resolution, binding preview and apply,
+and upgrade fail closed when a required operation has no registered provider
+or the provider offers it in another mode, and the resolved configuration
+reports each binding in a derived `capabilities` view. The binding is
+host-local availability: it is not digest or pin material, it is not stored,
+and it grants nothing. The policy engine, grants, approval and the
+controlled-action gateway do not read it, and no run is gated by it.
 GP-09 adds a second derived read model beside the resolved configuration: the
 legacy development profile, a pure function of the latest office manifest and
 the project's Runtime roles and agents, printed by the read-only

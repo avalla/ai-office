@@ -572,8 +572,9 @@ function independentDigest(
   result: ReturnType<typeof resolveProjectConfiguration>,
 ): string {
   // The GP-11 role view, the GP-12 agent view, the GP-13 workflow view and
-  // the GP-25 policy view are derived from the material; they are not part
-  // of it.
+  // the GP-25 policy view are derived from the material; they are not part of
+  // it. Nor is the GP-16 capability view, which also depends on the host's
+  // providers.
   const {
     configurationDigest: _digest,
     pin: _pin,
@@ -583,6 +584,7 @@ function independentDigest(
     disabledAgents: _disabledAgents,
     workflows: _workflows,
     disabledWorkflows: _disabledWorkflows,
+    capabilities: _capabilities,
     policies: _policies,
     ...material
   } = result;

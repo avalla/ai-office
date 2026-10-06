@@ -15,6 +15,7 @@ import {
   type InstalledDomainPackCatalog,
   type PackIdentity,
 } from "../ports/installed-domain-pack-catalog.port.ts";
+import type { OperationProviderCatalog } from "../ports/operation-provider-catalog.port.ts";
 import {
   StaleProjectPackBindingError,
   type ProjectPackBinding,
@@ -42,6 +43,10 @@ import {
   type ProjectDefinitionState,
   type ProjectOwnedDefinition,
 } from "./project-definition.ts";
+import {
+  capabilityContractDifferences,
+  type CapabilityContractDifference,
+} from "./capability-contracts.ts";
 import {
   CapturedPackManifestError,
   resolveInstalledPackManifests,
@@ -190,6 +195,21 @@ export interface PackUpgradePlan {
    * binds these sets even when the previous closure cannot be read.
    */
   readonly targetRoleCapabilities: readonly RoleCapabilitySet[];
+  /**
+   * Operation contract differences of pack capabilities over the resolved
+   * closures (GP-16): added and removed operations and requirement changes.
+   * Like a role capability change, it is reviewed and approved with the plan.
+   */
+  readonly capabilityContractChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly CapabilityContractDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason: "previous_closure_unresolved";
+        readonly detail: string;
+      };
   /**
    * Workflow policy differences over the resolved closures (GP-25). Like a
    * capability change, a policy change is reviewed and approved with the
@@ -517,6 +537,7 @@ export function planProjectPackUpgrade(input: {
   readonly desired: readonly PackIdentity[];
   readonly resolutions: readonly OverrideResolution[];
   readonly catalog: InstalledDomainPackCatalog;
+  readonly providers?: OperationProviderCatalog;
 }): PackUpgradePlan {
   return reconcileProjectPackUpgrade(input).plan;
 }
@@ -527,6 +548,7 @@ function reconcileProjectPackUpgrade(input: {
   readonly desired: readonly PackIdentity[];
   readonly resolutions: readonly OverrideResolution[];
   readonly catalog: InstalledDomainPackCatalog;
+  readonly providers?: OperationProviderCatalog;
 }): UpgradeReconciliation {
   const { binding, definitions, catalog, resolutions } = input;
   const currentPacks = binding.packs.map(identity);
@@ -563,6 +585,7 @@ function reconcileProjectPackUpgrade(input: {
       | "templates"
       | "roleCapabilityChanges"
       | "targetRoleCapabilities"
+      | "capabilityContractChanges"
       | "policyChanges"
       | "targetPolicies"
       | "overrides"
@@ -589,6 +612,7 @@ function reconcileProjectPackUpgrade(input: {
       // A no-op reads no artifact, so it has no capability set to report.
       roleCapabilityChanges: { availability: "available", changes: [] },
       targetRoleCapabilities: [],
+      capabilityContractChanges: { availability: "available", changes: [] },
       policyChanges: { availability: "available", changes: [] },
       targetPolicies: [],
       overrides: definitions.overrides.map(({ source, operation }) => ({
@@ -623,6 +647,10 @@ function reconcileProjectPackUpgrade(input: {
     availability: "available",
     changes: [],
   };
+  let contractChanges: PackUpgradePlan["capabilityContractChanges"] = {
+    availability: "available",
+    changes: [],
+  };
   let policyDifferences: PackUpgradePlan["policyChanges"] = {
     availability: "available",
     changes: [],
@@ -638,6 +666,10 @@ function reconcileProjectPackUpgrade(input: {
         availability: "available",
         changes: roleCapabilityChanges(previous, target, definitions.overrides),
       };
+      contractChanges = {
+        availability: "available",
+        changes: capabilityContractDifferences(previous, target),
+      };
       policyDifferences = {
         availability: "available",
         changes: policyChanges(previous, target, definitions.overrides),
@@ -651,6 +683,7 @@ function reconcileProjectPackUpgrade(input: {
         detail,
       };
       capabilityChanges = templates;
+      contractChanges = templates;
       policyDifferences = templates;
     }
   const targetRoleCapabilities = roleCapabilitySets(target ?? []);
@@ -952,6 +985,11 @@ function reconcileProjectPackUpgrade(input: {
         },
         catalog,
         coreContractVersion: catalog.coreContractVersion,
+        // GP-16: a target whose required provider is missing does not
+        // resolve, so the upgrade is blocked like any invalid target.
+        ...(input.providers === undefined
+          ? {}
+          : { providers: input.providers }),
       }).configurationDigest;
     } catch (error) {
       if (!(error instanceof ProjectConfigurationResolutionError)) throw error;
@@ -968,6 +1006,7 @@ function reconcileProjectPackUpgrade(input: {
     templates,
     roleCapabilityChanges: capabilityChanges,
     targetRoleCapabilities,
+    capabilityContractChanges: contractChanges,
     policyChanges: policyDifferences,
     targetPolicies,
     overrides,
@@ -994,6 +1033,8 @@ export class ReconcileProjectPackUpgrade {
       bindings: ProjectPackBindingRepository;
       definitions: ProjectDefinitionRepository;
       catalog: InstalledDomainPackCatalog;
+      /** Absent means no registered provider; see the resolver. */
+      providers?: OperationProviderCatalog;
       auditEvents: AuditEventRepository;
       transactions: TransactionRunner;
       clock: Clock;
@@ -1040,6 +1081,9 @@ export class ReconcileProjectPackUpgrade {
       desired,
       resolutions,
       catalog: this.dependencies.catalog,
+      ...(this.dependencies.providers === undefined
+        ? {}
+        : { providers: this.dependencies.providers }),
     });
   }
 
@@ -1144,6 +1188,8 @@ export class ReconcileProjectPackUpgrade {
             // Role and capability identities only.
             roleCapabilityChanges: plan.roleCapabilityChanges,
             targetRoleCapabilities: plan.targetRoleCapabilities,
+            // Capability IDs, operation names, modes and requirements only.
+            capabilityContractChanges: plan.capabilityContractChanges,
             // Policy and workflow identities and clause values only.
             policyChanges: plan.policyChanges,
             targetPolicies: plan.targetPolicies,

@@ -91,16 +91,8 @@ describe("offline runtime purge CLI", () => {
     expect(JSON.parse(appliedOutput.stdout[0]!)).toMatchObject({
       purged: true,
       stateDirectoryRemoved: false,
-      removedPaths: [
-        "generated/profile.md",
-        "generated",
-        "project.sqlite",
-      ],
-      preservedPaths: [
-        "agent-instructions.json",
-        "global.sqlite",
-        "notes.txt",
-      ],
+      removedPaths: ["generated/profile.md", "generated", "project.sqlite"],
+      preservedPaths: ["agent-instructions.json", "global.sqlite", "notes.txt"],
     });
     expect(existsSync(join(state, "project.sqlite"))).toBe(false);
     expect(readFileSync(join(state, "notes.txt"), "utf8")).toBe("keep me\n");
@@ -196,9 +188,7 @@ describe("offline runtime purge CLI", () => {
         io: output.io,
       }),
     ).toBe(1);
-    expect(output.stderr[0]).toContain(
-      "must be a real directory",
-    );
+    expect(output.stderr[0]).toContain("must be a real directory");
     expect(readFileSync(join(external, "project.sqlite"), "utf8")).toBe(
       "outside",
     );

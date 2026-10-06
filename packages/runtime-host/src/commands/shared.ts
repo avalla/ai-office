@@ -17,6 +17,7 @@ import type { ModelRoutingState } from "@ai-office/application/model-routing/mod
 import type { ModelProviderCatalog } from "@ai-office/application/ports/model-provider-catalog.port.ts";
 import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
+import type { OperationProviderCatalog } from "@ai-office/application/ports/operation-provider-catalog.port.ts";
 
 export interface CommandContext extends ProjectStorage {
   onRunChanged?: () => void;
@@ -52,6 +53,11 @@ export interface CommandContext extends ProjectStorage {
   /** Host provider access for gateway-executed routed runs; credentials never leave it. */
   gatewayProviders: GatewayModelProviders;
   installedPacks: InstalledDomainPackCatalog;
+  /**
+   * The operations of `connectors`, as data (GP-16). Pack commands read it to
+   * report and check capability contracts; it authorizes nothing.
+   */
+  operationProviders: OperationProviderCatalog;
 }
 
 export * from "@ai-office/command-support/arguments.ts";

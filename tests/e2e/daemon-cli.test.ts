@@ -2076,6 +2076,7 @@ profiles:
         "disabledAgents",
         "workflows",
         "disabledWorkflows",
+        "capabilities",
         "policies",
         "pin",
       ]);

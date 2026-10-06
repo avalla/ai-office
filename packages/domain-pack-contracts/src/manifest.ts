@@ -76,6 +76,26 @@ export interface AgentContribution extends Contribution {
   readonly capabilities?: readonly ContributionLocalId[];
 }
 
+/** One operation a capability needs: a connector operation name and mode. */
+export interface CapabilityOperation {
+  readonly operation: string;
+  readonly mode: "read" | "mutation";
+}
+
+export type CapabilityRequirement = "required" | "optional";
+
+/**
+ * A capability. With only an `id` it is a label. `operations` names the
+ * operations it needs (GP-16); the validated list is a set in ascending
+ * code-unit order of the operation name, and `requirement` is then always
+ * present, `required` unless the manifest says `optional`. The declaration
+ * states a need and grants nothing.
+ */
+export interface CapabilityContribution extends Contribution {
+  readonly operations?: readonly CapabilityOperation[];
+  readonly requirement?: CapabilityRequirement;
+}
+
 export interface WorkflowStage {
   readonly id: ContributionLocalId;
   readonly role: ContributionLocalId;
@@ -123,7 +143,9 @@ export type DomainPackContributions = {
         ? AgentContribution
         : K extends "policies"
           ? PolicyContribution
-          : Contribution)[];
+          : K extends "capabilities"
+            ? CapabilityContribution
+            : Contribution)[];
 };
 
 export interface DomainPackManifest {
@@ -552,6 +574,99 @@ function policyOperations(value: unknown, path: string): readonly string[] {
   return parsed;
 }
 
+/** The most operations one capability may declare. */
+export const maximumCapabilityOperations = 100;
+
+/**
+ * A connector operation name, `<connectorId>.<name>`: two or more ASCII
+ * segments. A wildcard is not a name.
+ */
+const operationNamePattern =
+  /^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)+$/;
+const maximumOperationNameLength = 128;
+const capabilityRequirements: readonly CapabilityRequirement[] = [
+  "required",
+  "optional",
+];
+
+/** The operation contract of a capability entry (GP-16). */
+function capabilityContract(
+  record: Record<string, unknown>,
+  path: string,
+): Pick<CapabilityContribution, "operations" | "requirement"> {
+  const requirement = capabilityRequirements.find(
+    (candidate) => candidate === record.requirement,
+  );
+  if (record.requirement !== undefined && requirement === undefined)
+    return fail(
+      "invalid_contribution",
+      `${path}.requirement`,
+      "expected required or optional",
+    );
+  if (record.operations === undefined) {
+    // A requirement states nothing without an operation to require.
+    if (requirement !== undefined)
+      fail(
+        "invalid_contribution",
+        `${path}.requirement`,
+        "requirement needs operations",
+      );
+    return {};
+  }
+  const list = record.operations;
+  const listPath = `${path}.operations`;
+  if (!Array.isArray(list))
+    return fail("invalid_contribution", listPath, "expected array");
+  // "None" has one encoding: the absent field.
+  if (list.length === 0)
+    return fail(
+      "invalid_contribution",
+      listPath,
+      "expected at least one operation; omit the field instead",
+    );
+  if (list.length > maximumCapabilityOperations)
+    return fail(
+      "invalid_contribution",
+      listPath,
+      `expected at most ${maximumCapabilityOperations} operations`,
+    );
+  const operations = list.map(
+    (entry: unknown, index: number): CapabilityOperation => {
+      const entryPath = `${listPath}[${index}]`;
+      const item = object(entry, entryPath, "invalid_contribution");
+      keys(item, ["operation", "mode"], entryPath, "invalid_contribution");
+      const { operation, mode } = item;
+      if (
+        typeof operation !== "string" ||
+        operation.length > maximumOperationNameLength ||
+        !operationNamePattern.test(operation)
+      )
+        return fail(
+          "invalid_contribution",
+          `${entryPath}.operation`,
+          "expected operation name <connector>.<name>",
+        );
+      if (mode !== "read" && mode !== "mutation")
+        return fail(
+          "invalid_contribution",
+          `${entryPath}.mode`,
+          "expected read or mutation",
+        );
+      return { operation, mode };
+    },
+  );
+  if (new Set(operations.map((entry) => entry.operation)).size !== list.length)
+    fail("invalid_contribution", listPath, "duplicate operation");
+  return {
+    // A set: one order, so the digest does not depend on the written order.
+    operations: operations.sort((left, right) =>
+      compareCodeUnits(left.operation, right.operation),
+    ),
+    // The default has one canonical form.
+    requirement: requirement ?? "required",
+  };
+}
+
 function contribution(
   value: unknown,
   path: string,
@@ -560,6 +675,7 @@ function contribution(
   | Contribution
   | RoleContribution
   | AgentContribution
+  | CapabilityContribution
   | WorkflowContribution
   | PolicyContribution {
   const record = object(value, path, "invalid_contribution");
@@ -581,6 +697,8 @@ function contribution(
         : kind === "policies"
           ? ["id", "title", "description", "workflow", "enforcement", "stages"]
           : ["id", "title", "description"];
+  // GP-16: a capability entry may also carry its operation contract.
+  if (kind === "capabilities") allowed.push("operations", "requirement");
   for (const key of Object.keys(record))
     if (!allowed.includes(key))
       fail("invalid_contribution", `${path}.${key}`, "unknown field");
@@ -630,6 +748,8 @@ function contribution(
       ),
     };
   if (kind === "policies") return policyContribution(record, path, common);
+  if (kind === "capabilities")
+    return { ...common, ...capabilityContract(record, path) };
   if (!workflow) return common;
   if (!Array.isArray(record.stages))
     return fail("invalid_contribution", `${path}.stages`, "expected array");

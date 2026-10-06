@@ -204,6 +204,13 @@ export class ConnectorRegistry implements ConnectorPolicyRegistry {
     return this.definitions.get(provider)?.descriptor ?? null;
   }
 
+  /** Every registered descriptor, in ascending connector ID order. */
+  descriptors(): readonly ConnectorDescriptor[] {
+    return [...this.definitions.values()].map(
+      (definition) => definition.descriptor,
+    );
+  }
+
   getDefinition(provider: string): ConnectorDefinition | null {
     return this.definitions.get(provider) ?? null;
   }

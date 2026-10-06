@@ -1640,6 +1640,442 @@ pack workflow is deferred to GP-24, the task that persists those pins.
   `prospective_configuration_invalid` (`unresolved_override`).
 - Changes are not blocked on in-flight pinned runs; see above (GP-24).
 
+## GP-16 pack capability contracts
+
+Status: implemented. The contract was approved by the owner on 2026-10-06
+(scope option B2, every decision below at its default) and is unchanged;
+"Implementation record" at the end of this section records what the code does
+where the contract left a choice.
+
+Depends on: GP-06. It reuses the additive schema-1 extension pattern of GP-11
+and GP-12, the upgrade plan of GP-08 and the binding preflight of GP-22.
+
+GP-16 is a definition-layer task. A pack capability may declare the operations
+it needs, by name and mode, and whether it requires them. The Runtime host
+exposes its registered connector descriptors read-only. Resolution, binding
+preview and apply, and upgrade fail closed when a required operation has no
+registered provider or the provider offers it in another mode. The resolved
+view reports each binding. Nothing here grants, schedules or executes
+anything: grants, constraints, approval and controlled execution are unchanged
+and still separately authorize every use.
+
+### Three meanings of "capability"
+
+Three unrelated things share the word. GP-16 changes only the first.
+
+| Meaning                 | Where                                                                                                 | What it is                                                                                              | Authorization use                                      | Owner             |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ----------------- |
+| Pack capability         | `contributions.capabilities`, referenced by pack roles (GP-11) and pack agents (GP-12)                | A declarative label; since GP-16 it may also name the operations it needs                               | None. A resolved binding is a report, not a permission | GP-16             |
+| Legacy stage capability | `capabilities` of a legacy pipeline stage                                                             | Connector operation names, matched exactly against the requested operation, conjunctive with the policy | Yes, in the pipeline gate                              | GP-25 (pack form) |
+| Capability grant        | `CapabilityGrant.actions` on a registered resource, with a Runtime agent or Runtime role as principal | The stored permission the policy engine evaluates, deny by default                                      | Yes, in the policy engine                              | Core (unchanged)  |
+
+A grant principal is a Runtime agent ID or a Runtime role ID. A pack `roleId`
+(`pack:<packId>/roles/<localId>`) is neither, so no grant can name a pack role
+and a pack capability cannot reach a grant.
+
+### Contract
+
+A capability entry of `contributions.capabilities` gains two optional members.
+
+- `operations`: an array of `{ "operation", "mode" }` objects. `operation` is
+  an operation name in the connector registry's syntax, `<connectorId>.<name>`,
+  matched exactly; `mode` is `read` or `mutation`. The array holds at least one
+  and at most 100 entries (`maximumCapabilityOperations`), and an operation
+  name appears once. It is a set: the validated manifest holds it in ascending
+  code-unit order of the operation name, and that order is what the digest
+  covers.
+- `requirement`: `required` or `optional`. It is allowed only together with
+  `operations`. When `operations` is present and `requirement` is absent the
+  validated manifest holds `required`, so the default and the written default
+  have one canonical form and one digest.
+
+An operation name is ASCII: two or more segments separated by `.`, each
+segment starting with a letter or digit and continuing with letters, digits,
+`_` or `-`, at most 128 characters in all. A wildcard such as `fake.*` is not
+a name.
+
+Rejected with `invalid_contribution` and the member's path: a non-array,
+empty, over-bound or duplicate `operations` list; a malformed operation name;
+an unknown `mode`; an unknown `requirement`; `requirement` without
+`operations`; any member of an operation entry other than `operation` and
+`mode`; and either field on another contribution kind.
+
+A pack cannot declare risk, approval, constraints, a resource, a grant, a
+principal, a credential or a provider version. `riskLevel`,
+`requiresApproval`, `constraints`, `resource`, `grant`, `principal`,
+`credentialRef`, `version` and every other member are unknown fields.
+
+Compatibility: this is an additive section-schema extension. The manifest
+stays schema 1 and the core contract version stays 1. A manifest that uses
+neither field has the same canonical form and `manifestDigest` as before, so
+the four golden digests and the development pack digest are unchanged. A
+capability with only an `id` remains a label and resolves as before. A reader
+built before GP-16 rejects a manifest that uses the fields as unknown fields.
+
+### Provider catalog
+
+"Registered provider" means a connector descriptor of the host's composed
+connector registry that lists the operation. The application layer reads it
+through one read-only port, `OperationProviderCatalog`, which lists for each
+provider its ID, its version and its operations with their mode. The port
+exposes no connector function, resource type, risk level, approval flag,
+grant or credential. The Runtime host builds the catalog at each command
+composition from the same registry instance its controlled-action gateway
+uses, as a frozen copy. The registry is static host composition, so every
+composition of one program builds the same catalog. The resolver imports no
+connector package.
+
+"Bind" means: find the provider that lists the operation name, and compare the
+mode. A binding is the pair of provider ID and version at the time of the
+read. It is not stored.
+
+### Resolution
+
+`project:configuration:show` gains a derived `capabilities` view with one
+entry for every capability of the resolved pack closure, selected packs and
+transitive dependencies alike:
+
+- `capabilityId`: `pack:<packId>/capabilities/<localId>`;
+- `requirement`: `required` or `optional`; absent for a label;
+- `operations`: for each declared operation its name, mode and `binding`,
+  either `bound` with the provider's ID and version or `unbound_optional`. A
+  label has an empty list.
+
+The view is not digest material. The declaration is: it is part of the
+capability's effective definition and of the pack's `manifestDigest`. The
+provider binding is neither digest nor pin material, so the empty-input
+vector and the digest of every configuration that uses no operation are
+unchanged.
+
+Resolution fails closed, with no view:
+
+| Code                                   | When                                                                                |
+| -------------------------------------- | ----------------------------------------------------------------------------------- |
+| `missing_required_capability_provider` | A required operation is listed by no registered provider                            |
+| `capability_provider_mismatch`         | A declared operation, required or optional, is listed by a provider in another mode |
+| `configuration_invariant`              | The provider catalog cannot be read, or lists one operation more than once          |
+
+The diagnostic names the pack, the capability and the operation, and nothing
+else. An optional operation that no provider lists resolves and is reported as
+`unbound_optional`.
+
+The check covers the whole resolved closure and every declared capability,
+whether or not a role or an agent references it. A capability has no override
+and no project-owned form, so nothing a project does to a role or an agent,
+including disabling it, hides a required operation.
+
+### Binding preflight
+
+`project:pack:preview` reports the same three codes as resolution
+(`missing_required_capability_provider`, `capability_provider_mismatch` and
+`configuration_invariant`) for the proposed closure, in the `issues` list
+after a GP-04 failure and the GP-22 collisions and before the GP-11 refusal.
+`project:pack:apply` refuses a changed selection with a typed error carrying
+the code, writes nothing and adds no audit event.
+
+The unchanged active selection takes two different paths:
+
+- `project:pack:preview` of the unchanged selection resolves the closure and
+  runs the provider check, like the GP-22 comparison. A provider that went
+  missing after the binding was applied, or was never present on a host the
+  project was restored to, is reported there.
+- `project:pack:apply` of the unchanged selection stays the GP-05 no-op. It
+  reads no artifact and no provider, raises no provider error, and writes
+  nothing, also when preview reports an issue for that selection. It changes
+  no authority, so it neither repairs nor refuses; the failure stays visible
+  in preview and at resolution.
+
+`project:pack:upgrade` reports the failure through its existing prospective
+resolution, as issue `prospective_configuration_invalid` with the code as
+`detail`; the approved apply is refused as `upgrade_blocked`, writes nothing
+and adds no audit event.
+
+### Upgrade
+
+The upgrade plan gains `capabilityContractChanges`, covered by `planDigest`:
+for each capability whose contract differs between the current and the
+proposed resolved closure, the `capabilityId`, the added and the removed
+operations with their mode, and the requirement before and after. The
+requirement is reported for every listed capability, also when only an
+operation changed, so the report always shows whether a change concerns a
+required or an optional capability; `null` stands for a capability that is
+absent or a label on that side. A changed mode is one removed and one added
+entry. An added or removed capability is listed when it declares operations.
+Like the GP-11 role capability report it is `unavailable` when the current
+closure cannot be read.
+
+A change to the contract of a capability present in both closures is never
+incidental: `project:pack:apply` refuses it with
+`capability_contract_change_requires_upgrade` and names
+`project:pack:upgrade`. The `project.pack_upgrade_applied` audit event records
+the same report: capability IDs, operation names, modes and requirements,
+never a definition body.
+
+### Owner decisions
+
+1. Scope is resolution and binding preflight. There is no scheduler or run
+   gate; see "Unmet relative to the original wording".
+2. An "abstract operation" is the operation name in the existing registry
+   syntax, matched exactly. A separate abstract contract ID that connectors
+   declare they provide needs a connector SDK descriptor change and has no
+   second provider before M13.
+3. A declared `mode` that differs from the provider's descriptor fails closed.
+4. A pack cannot pin a provider version or range. The view reports the bound
+   version only.
+5. Provider binding is not part of `configurationDigest` v1 or of `pin`. It is
+   host-local availability, like installed-pack availability. See "ADR-0026
+   narrowing".
+6. An unbound optional operation resolves and is reported as
+   `unbound_optional`.
+7. A portable restore proceeds when a required provider is absent on the
+   target host, as it does for packs that are not installed yet. Resolution is
+   the backstop.
+8. A change to an existing capability's operations or requirement is refused
+   by `project:pack:apply` and carried only by `project:pack:upgrade`, with
+   `capabilityContractChanges` under `planDigest`, mirroring GP-11.
+9. A project cannot own or override a capability. Both stay unsupported.
+10. The 14 development-pack capability labels gain no operations in GP-16.
+    That belongs to GP-10C, and `packages/domain-pack-development` is not
+    edited.
+11. GP-25 depends on GP-16 for the operation vocabulary. (Superseded by the
+    owner-approved GP-25 decision 4: GP-25 stage `operations` are opaque
+    names, so GP-25 does not depend on GP-16.)
+
+### ADR-0026 narrowing
+
+ADR-0026 lists "registered capability providers" among the fixed inputs of
+resolution that yield a stable `configurationDigest`. GP-16 narrows this on
+purpose (decision 5). The text of ADR-0026 is not edited: it still names
+registered providers as a fixed resolution input, and this section, by owner
+decision, is the record of how far that holds. Registered providers are an
+input of resolution: they
+decide whether it succeeds and what the `capabilities` view reports. They are
+not digest material and not part of `pin`. Two hosts with the same packs and
+definitions compute the same `configurationDigest` whether or not they have
+the same connectors, and a host that lacks a required provider computes none
+because resolution fails.
+
+The reason is the one GP-22 gives for pack availability: what a host has
+installed is operational, host-local state, not portable project authority.
+Putting a connector ID and version under the digest would make the digest
+change when a host upgrades a connector, and would make an archive's recorded
+digest unreproducible on another host. The consequence is recorded as a
+limitation: the digest does not attest which provider version a host bound.
+Pinning a binding on a run belongs to GP-24.
+
+### Boundaries
+
+**GP-25.** GP-16 owns the operation vocabulary a pack needs and whether a
+provider exists. GP-25 owns where an operation is permitted or required in a
+workflow: stage `capabilities`, `enforcement`, and the approval and separation
+flags. GP-16 adds no field to workflows, stages or `policies` and does not
+lift `unsupported_security_composition`. GP-25 stage `operations` are opaque
+operation names compared exactly, not references to GP-16 capability
+operations, so GP-25 does not depend on GP-16 (decision 11 is superseded).
+
+**GP-14.** Validators reference separately installed adapter IDs and exact
+versions with their own registration checks. GP-16 does not touch
+`contributions.validators` and does not turn the connector registry into a
+validator registry. Only the fail-closed availability pattern is shared.
+
+**Controlled actions.** The policy engine, the pipeline gate, the approval
+flow, the controlled-action gateway and their storage are not edited. A
+request for an operation a bound pack requires is still denied without a
+grant, with the same reason and the same audit payload as without the pack.
+
+**PostgreSQL.** The provider catalog is storage-independent, and resolution,
+binding preview, apply and upgrade behave the same on both backends. The
+controlled-action evidence of criterion 11 is SQLite-only, because PostgreSQL
+does not implement the `capabilities` and `controlled` storage ports. No
+migration is added on either backend.
+
+### Acceptance
+
+1. A schema-1 capability entry accepts optional `operations` and
+   `requirement`. A manifest without them keeps its canonical form; the four
+   golden digests and the development pack digest are unchanged; an id-only
+   capability remains a label and resolves as before.
+2. The contract package rejects with `invalid_contribution` and the member
+   path: a non-array, empty, over-bound or duplicate `operations` list; a
+   malformed operation name or an unknown `mode`; an unknown `requirement`, or
+   `requirement` without `operations`; any member other than `operation` and
+   `mode`; either field on another contribution kind.
+3. Negative: a capability entry that names `riskLevel`, `requiresApproval`,
+   `constraints`, `resource`, `grant`, `principal`, `credentialRef` or a
+   connector version is rejected as an unknown field.
+4. `operations` is a set in one order; `manifestDigest` does not depend on the
+   written order.
+5. A read-only provider catalog port exposes, for the host's composed
+   registry, each provider's ID, version and operations with mode. It exposes
+   no connector function, resource, grant or credential. It is built from the
+   host's composed registry at each command composition and frozen; the
+   registry is static, so the catalog is the same for every composition of
+   one program. The resolver stays free of connector imports. Recorded
+   deviation: the proposal said "built once at composition, next to
+   `installedPacks`"; the host composes per command, so the catalog is built
+   per command composition.
+6. `project:configuration:show` exposes the derived `capabilities` view. The
+   view is not digest material; the empty-input vector is unchanged.
+7. Fail closed at resolution: a required operation with no registered
+   provider fails with `missing_required_capability_provider`; a mode mismatch
+   fails with `capability_provider_mismatch`; no view is returned, and the
+   diagnostic names only pack, capability and operation.
+8. The check applies to the whole resolved closure, transitive dependencies
+   included, and to every declared capability whether or not a role references
+   it. A disabled role or agent does not hide a required operation.
+9. Preflight: `project:pack:preview` reports the same issue;
+   `project:pack:apply` and `project:pack:upgrade` refuse with a typed error,
+   write nothing and add no binding or upgrade audit event. Applying an
+   identical selection stays a no-op that reads no artifact; previewing it
+   still runs the check (see "Binding preflight").
+10. Upgrade: the plan carries `capabilityContractChanges` under `planDigest`;
+    `project:pack:apply` refuses such a change to an existing capability with
+    a code that names `project:pack:upgrade`; the upgrade audit event records
+    identities only.
+11. Grants stay separate (SQLite, real controlled-action gateway): with a pack
+    bound whose required operation is provided by the fake connector and no
+    grant, a request for that operation is denied with "no valid grant permits
+    the operation". With a grant it follows the existing policy, approval and
+    pipeline gates. Decisions, reasons and audit payloads are identical with
+    and without the binding. The evidence is at request time: the policy
+    engine, the approval requirement, and the pipeline gate for a request made
+    by an AgentRun inside an enforced stage. Approval followed by execution is
+    not part of it; see "Limitations and non-goals".
+12. Adversarial: a grant whose `principalId` equals a pack `roleId` string
+    matches nothing; a pack operation named with a wildcard (`fake.*`) is
+    rejected by the contract; a pack naming a critical operation
+    (`fake.admin`) changes no risk or approval requirement; a hand-edited
+    catalog entry or stored state cannot make an unregistered operation appear
+    bound; a provider catalog double that throws yields a typed resolution
+    failure, not a bound view.
+13. Negative: no row is written to resource, grant, action, approval or
+    simulation tables by any GP-16 path. The architecture test rule that
+    `ReadProjectConfiguration` is not used under
+    `packages/application/src/runtime` is unedited: no scheduler, run or
+    pipeline module reads the provider binding, and no run is refused by it.
+14. Restore: a format-9 archive with a binding whose required provider is
+    absent on the target restores; resolution then fails with the code of
+    criterion 7.
+15. End to end over the Unix socket, using the fake connector of the default
+    registry and a test-supplied pack catalog: show bound, show unbound
+    optional, show failing required, preview and apply refusal, upgrade with a
+    contract change.
+16. PostgreSQL: the PostgreSQL-gated suite runs binding preview, apply and
+    upgrade refusal and resolution with the same codes. Criterion 11 is
+    SQLite-only, as stated under "Boundaries". No migration is added on either
+    backend.
+17. Docs: this section, the roadmap, the architecture overview and the
+    contract README.
+
+### Unmet relative to the original wording
+
+The task row read: "Declare required/optional abstract operations; bind
+registered providers at bootstrap; reject missing required provider before
+runs; grants still separately authorize use." Three parts of it are
+deliberately not delivered as written.
+
+- **A gate before runs.** "Reject missing required provider before runs" is
+  delivered as a rejection at resolution, binding and upgrade, not as a
+  scheduler or run gate. The Runtime does not consume the resolved
+  configuration, runs do not pin it and the production pack catalog is empty,
+  so a run cannot be refused by a pack contract today, and no run is. The run
+  gate belongs to the execution parity task
+  `a45ddb12-3159-4b60-9b8b-c26516720834`, together with GP-24, which persists
+  the pins a gate would check.
+- **Abstract operations.** An operation is a concrete connector operation
+  name, not a provider-independent contract ID (decision 2). The registry
+  namespaces every operation by its connector, so two providers cannot offer
+  the same name. Provider-independent contracts need a connector SDK
+  descriptor change and a second provider, which arrives with M13.
+- **Binding as a resolution input under the digest.** See "ADR-0026
+  narrowing".
+
+### Limitations and non-goals
+
+- No scheduler gate, run gate or run pin (`a45ddb12`, GP-24).
+- No stage, workflow or policy semantics (GP-25) and no validator adapters
+  (GP-14).
+- No pack-granted authority and no credentials. A binding creates no
+  resource, grant, action, approval or simulation.
+- No provider version pin or range, and no choice between providers.
+- The binding is read when the configuration is resolved. It is not stored,
+  not audited on read and not attested by `configurationDigest`.
+- A capability cannot be owned, overridden or disabled by a project.
+- The development pack declares no operations (GP-10C).
+- No migration, no portable archive format change and no new storage port.
+- `project:pack:apply` to the empty selection and then to a new pack version
+  carries a contract change without the upgrade review, because after the
+  first step no capability is present in both closures. GP-11 has the same
+  property for role capabilities. It moves no authority: a binding grants
+  nothing, and the provider check still runs on the second apply.
+- The with and without binding comparison of criterion 11 does not run
+  approval followed by execution. The fake connector declares
+  `supportsExecution: false` and has no `invoke`, so that pair needs the
+  filesystem connector and its simulation flow. Fresh authorization at
+  execution uses the same policy evaluation that the comparison covers at
+  request time, and no GP-16 module is imported by it.
+
+### Implementation record
+
+- Contract: `packages/domain-pack-contracts/src/manifest.ts`
+  (`CapabilityContribution`, `CapabilityOperation`,
+  `maximumCapabilityOperations`). The bound of 100 operations and the name
+  syntax were chosen here; the brief left both open.
+- Port: `packages/application/src/ports/operation-provider-catalog.port.ts`.
+  The Runtime host adapter is
+  `packages/runtime-host/src/operation-provider-catalog.ts`, built in
+  `runtime-command.ts` from the registry instance the command context holds;
+  `ConnectorRegistry.descriptors()` is the one addition to the connector SDK.
+  The catalog is built with each command composition, as the registry itself
+  is, and is the same for every composition of one program.
+- Binding rules and the contract difference:
+  `packages/application/src/domain-pack/capability-contracts.ts`, one
+  computation shared by resolution, the binding preflight and the upgrade
+  plan.
+- The provider catalog is an optional dependency of the resolver, the
+  configuration reader, the binding service and the upgrade service. When it
+  is absent they use the empty catalog: a required operation fails closed
+  with `missing_required_capability_provider`, an optional one is reported as
+  `unbound_optional`, and nothing is bound by omission. The Runtime host
+  always supplies it.
+- A mode mismatch fails closed for an optional operation as well as for a
+  required one. An optional operation is `unbound_optional` only when no
+  provider lists its name.
+- A provider catalog that throws or returns a malformed list, and one that
+  lists an operation name under two providers, fail as
+  `configuration_invariant` with a fixed message; the cause is not reported.
+  The catalog is read only when some capability of the closure declares an
+  operation, so a configuration of labels never depends on it.
+- The view lists every capability of the closure, labels included, ordered by
+  pack ID and then local ID. A label has no `requirement` and an empty
+  `operations` list.
+- Binding apply raises `ProjectPackBindingProviderError` for the provider
+  codes and the existing `ProjectPackBindingRefusedError` for
+  `capability_contract_change_requires_upgrade`. Preview of the unchanged
+  selection runs the provider check when the closure resolves, like the GP-22
+  comparison. When the current closure cannot be read,
+  `capabilityContractChanges` is `unavailable` and the existing GP-11 rule
+  decides: only a pure removal is applied.
+- Every entry of `capabilityContractChanges` carries `requirement` with
+  `before` and `after`, changed or not. An earlier revision of this branch
+  omitted it when only an operation changed; adding it changed `planDigest`
+  material, which no stored state depends on.
+- A capability added or removed by a selection change is listed in
+  `capabilityContractChanges` but is not a change to an existing capability,
+  so `project:pack:apply` carries it. A label that gains operations, and a
+  capability that loses them, are changes to an existing capability.
+- The upgrade plan has no separate list of the target's contracts. The
+  proposed tuples and their manifest digests are under `planDigest` and
+  determine every contract, also when the current closure cannot be read.
+- Portable restore is not edited: it never consulted providers, and a
+  restored binding whose provider is missing fails at resolution.
+- Tests: `tests/unit/pack-capability-contracts.test.ts`,
+  `tests/integration/pack-capability-contracts.test.ts` (SQLite, and
+  PostgreSQL when `AI_OFFICE_TEST_POSTGRES_URL` is set; added to the
+  PostgreSQL CI job), `tests/integration/pack-capability-grants.test.ts`
+  (SQLite, real policy engine and gateway) and
+  `tests/e2e/pack-capability-contracts.test.ts`.
+
 ## GP-10A development roles and task defaults
 
 Status: implemented. The owner approved the contract below on 2026-10-06.
@@ -2932,6 +3368,7 @@ GP-01 audit + M15-4 authority/evidence ADR → GP-02 boundary ADR → GP-03 mini
 GP-06 + GP-07 → GP-11 roles → GP-12 agents → GP-13 workflows
 GP-03 + GP-06 → GP-14 artifacts/validators
 GP-06 → GP-15 knowledge; GP-06 → GP-16 capabilities
+GP-16 ⇢ GP-25 operation vocabulary by name only (GP-25 operations are opaque; no dependency)
 GP-09 + GP-11..GP-12 → GP-10A roles/agents/task defaults
 GP-10A + GP-13 → GP-10B-1 workflow templates
 GP-10B-1 → GP-10B-2 descriptive contract extension/prompts
@@ -2956,33 +3393,33 @@ objective, smallest delivery slice, acceptance, artifact/verification, and
 explicit exclusion. The linked AI Office task and requirement descriptions
 carry the same fields. GP-01 through GP-07 have passed review and merged.
 
-| ID and title                                                      | Depends on                      | Slice and acceptance                                                                                                                                                                                                                                                                                                                                                      | Artifact / verification                                                                                                                                                                  | Non-goal                                                                                                    |
-| ----------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| GP-01 — Core/domain boundary audit                                | M15 assessment input            | Classify all current domain, application, runtime, worker, lifecycle, schema, CLI, prompt, test and docs seams; record exact core/pack/adapter split and compatibility risks.                                                                                                                                                                                             | Updated evidence matrix and dependency map; review every cited source and compare current behavior.                                                                                      | Production changes.                                                                                         |
-| GP-02 — Domain Pack contract ADR                                  | GP-01; M15-4 review/integration | Accept or revise ADR-0026 against ADR-0027: manifest, version/schema compatibility, lifecycle, execution boundary, conflicts, ownership, governance, knowledge, capability and purity.                                                                                                                                                                                    | Accepted ADR plus contract examples; architecture review against M11.6, ADR-0022/0025/0027.                                                                                              | Arbitrary plugin execution.                                                                                 |
-| GP-03 — Minimum generic primitives                                | GP-02                           | Add only genuinely reusable type/artifact/evidence/task metadata selected by ADR; preserve existing state machines and schema-1 readers.                                                                                                                                                                                                                                  | Contract and migration plan; unit and representative upgrade tests.                                                                                                                      | Renaming development entities for appearance.                                                               |
-| GP-04 — Pack catalog and deterministic resolution                 | GP-03                           | Validate locally installed IDs, versions, digests, dependencies and compatibility; duplicate/missing/incompatible/conflicting definitions fail clearly and independent of import order.                                                                                                                                                                                   | Public catalog/resolver contract; deterministic positive/negative tests.                                                                                                                 | Remote registry or downloads.                                                                               |
-| GP-05 — Project pack binding                                      | GP-04                           | Persist explicit project selection through ProjectStorage; expose preview/read and compatibility failures, with SQLite and PG parity as its provider permits.                                                                                                                                                                                                             | Forward migrations, repository contracts, tenant/RLS and upgrade tests; CLI/IPC coverage.                                                                                                | Pack selection from tools or client detection.                                                              |
-| GP-06 — Resolved project configuration                            | GP-04, GP-05, GP-07             | Resolve packs + project definitions/overrides into stable effective roles, agents, pipelines, policies and capability needs with origin/digest; reuse manifest revisions where sound.                                                                                                                                                                                     | Inspectable resolved view; equality, pinning and invalid-input tests.                                                                                                                    | Second mutable project authority.                                                                           |
-| GP-07 — Definition ownership and project overrides                | GP-05                           | Record core/pack/project/override/resolved origin; allow replacement, extension, disablement and custom definitions where safe; security gates cannot be weakened.                                                                                                                                                                                                        | Ownership/override contract and tests for customized, removed and conflicting definitions.                                                                                               | Fixed pack workflow.                                                                                        |
-| GP-08 — Pack upgrade/reconciliation                               | GP-06, GP-07                    | Preview/apply upgrades idempotently; preserve customized definitions, handle deleted/old references and active pins, audit changes, block unresolved conflicts.                                                                                                                                                                                                           | Migration/reconciliation report; repeat, rollback/failure and compatibility tests.                                                                                                       | Silent overwrite or automatic pack download.                                                                |
-| GP-09 — Legacy development compatibility                          | GP-06, GP-08                    | Legacy-state parity: a versioned, read-only legacy development profile describes old offices, roles, agents, task kinds and pipelines; old databases, bindings and snapshots load unchanged. Execution parity is a separate Runtime task.                                                                                                                                 | Legacy fixture, frozen archives and comparison with Runtime legacy readers; tasks, approvals, knowledge, audit.                                                                          | Forcing adoption; inferred packs; execution parity.                                                         |
-| GP-10A — Development roles and task defaults                      | GP-09, GP-11, GP-12             | Define the development pack roles, agents and task types as a committed reference artifact; prove expressible-subset parity with the legacy development defaults. No Runtime consumption, catalog registration, adoption or legacy-path removal.                                                                                                                          | Reference pack manifest and outside-pack-vocabulary list; parity tests on the GP-09 fixture and shipped defaults.                                                                        | Pack authority over Runtime execution; registration or adoption.                                            |
-| GP-10B-1 — Development workflow templates                         | GP-10A, GP-13                   | Define the feature delivery, bug fix, research and release workflows in the committed development reference pack (`0.2.0`), within manifest schema 1; prove expressible-subset parity for workflows with the legacy default pipelines. No contract change, Runtime consumption, catalog registration, adoption or legacy-path removal; project pipelines remain editable. | Reference pack workflows and the outside-pack-vocabulary list with delivered part, residue and residue owner per entry; workflow parity tests on the GP-09 fixture and shipped defaults. | Pack authority over Runtime execution; prompts; contract extension; new pipeline engine or forced workflow. |
-| GP-10B-2 — Development descriptive contract extension and prompts | GP-10B-1                        | Runtime task `e890324a-ecd4-4fcc-b1f8-37fdbdaca319`. Additive schema-1 extension and portable archive format 10, approved in principle, for the descriptive residue of GP-10B-1: stage name, objective and checks, role responsibilities and guidance, the `maintenance -> delivery` route, instruction-contract texts and the requirement-assessment prompt.             | Contract extension, prompt templates and parity tests for the descriptive residue.                                                                                                       | Governance semantics (GP-25); `knowledge` (GP-15); Runtime execution from packs.                            |
+| ID and title                                                      | Depends on                      | Slice and acceptance                                                                                                                                                                                                                                                                                                                                                                                                                    | Artifact / verification                                                                                                                                                                  | Non-goal                                                                                                                                                                                 |
+| ----------------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GP-01 — Core/domain boundary audit                                | M15 assessment input            | Classify all current domain, application, runtime, worker, lifecycle, schema, CLI, prompt, test and docs seams; record exact core/pack/adapter split and compatibility risks.                                                                                                                                                                                                                                                           | Updated evidence matrix and dependency map; review every cited source and compare current behavior.                                                                                      | Production changes.                                                                                                                                                                      |
+| GP-02 — Domain Pack contract ADR                                  | GP-01; M15-4 review/integration | Accept or revise ADR-0026 against ADR-0027: manifest, version/schema compatibility, lifecycle, execution boundary, conflicts, ownership, governance, knowledge, capability and purity.                                                                                                                                                                                                                                                  | Accepted ADR plus contract examples; architecture review against M11.6, ADR-0022/0025/0027.                                                                                              | Arbitrary plugin execution.                                                                                                                                                              |
+| GP-03 — Minimum generic primitives                                | GP-02                           | Add only genuinely reusable type/artifact/evidence/task metadata selected by ADR; preserve existing state machines and schema-1 readers.                                                                                                                                                                                                                                                                                                | Contract and migration plan; unit and representative upgrade tests.                                                                                                                      | Renaming development entities for appearance.                                                                                                                                            |
+| GP-04 — Pack catalog and deterministic resolution                 | GP-03                           | Validate locally installed IDs, versions, digests, dependencies and compatibility; duplicate/missing/incompatible/conflicting definitions fail clearly and independent of import order.                                                                                                                                                                                                                                                 | Public catalog/resolver contract; deterministic positive/negative tests.                                                                                                                 | Remote registry or downloads.                                                                                                                                                            |
+| GP-05 — Project pack binding                                      | GP-04                           | Persist explicit project selection through ProjectStorage; expose preview/read and compatibility failures, with SQLite and PG parity as its provider permits.                                                                                                                                                                                                                                                                           | Forward migrations, repository contracts, tenant/RLS and upgrade tests; CLI/IPC coverage.                                                                                                | Pack selection from tools or client detection.                                                                                                                                           |
+| GP-06 — Resolved project configuration                            | GP-04, GP-05, GP-07             | Resolve packs + project definitions/overrides into stable effective roles, agents, pipelines, policies and capability needs with origin/digest; reuse manifest revisions where sound.                                                                                                                                                                                                                                                   | Inspectable resolved view; equality, pinning and invalid-input tests.                                                                                                                    | Second mutable project authority.                                                                                                                                                        |
+| GP-07 — Definition ownership and project overrides                | GP-05                           | Record core/pack/project/override/resolved origin; allow replacement, extension, disablement and custom definitions where safe; security gates cannot be weakened.                                                                                                                                                                                                                                                                      | Ownership/override contract and tests for customized, removed and conflicting definitions.                                                                                               | Fixed pack workflow.                                                                                                                                                                     |
+| GP-08 — Pack upgrade/reconciliation                               | GP-06, GP-07                    | Preview/apply upgrades idempotently; preserve customized definitions, handle deleted/old references and active pins, audit changes, block unresolved conflicts.                                                                                                                                                                                                                                                                         | Migration/reconciliation report; repeat, rollback/failure and compatibility tests.                                                                                                       | Silent overwrite or automatic pack download.                                                                                                                                             |
+| GP-09 — Legacy development compatibility                          | GP-06, GP-08                    | Legacy-state parity: a versioned, read-only legacy development profile describes old offices, roles, agents, task kinds and pipelines; old databases, bindings and snapshots load unchanged. Execution parity is a separate Runtime task.                                                                                                                                                                                               | Legacy fixture, frozen archives and comparison with Runtime legacy readers; tasks, approvals, knowledge, audit.                                                                          | Forcing adoption; inferred packs; execution parity.                                                                                                                                      |
+| GP-10A — Development roles and task defaults                      | GP-09, GP-11, GP-12             | Define the development pack roles, agents and task types as a committed reference artifact; prove expressible-subset parity with the legacy development defaults. No Runtime consumption, catalog registration, adoption or legacy-path removal.                                                                                                                                                                                        | Reference pack manifest and outside-pack-vocabulary list; parity tests on the GP-09 fixture and shipped defaults.                                                                        | Pack authority over Runtime execution; registration or adoption.                                                                                                                         |
+| GP-10B-1 — Development workflow templates                         | GP-10A, GP-13                   | Define the feature delivery, bug fix, research and release workflows in the committed development reference pack (`0.2.0`), within manifest schema 1; prove expressible-subset parity for workflows with the legacy default pipelines. No contract change, Runtime consumption, catalog registration, adoption or legacy-path removal; project pipelines remain editable.                                                               | Reference pack workflows and the outside-pack-vocabulary list with delivered part, residue and residue owner per entry; workflow parity tests on the GP-09 fixture and shipped defaults. | Pack authority over Runtime execution; prompts; contract extension; new pipeline engine or forced workflow.                                                                              |
+| GP-10B-2 — Development descriptive contract extension and prompts | GP-10B-1                        | Runtime task `e890324a-ecd4-4fcc-b1f8-37fdbdaca319`. Additive schema-1 extension and portable archive format 10, approved in principle, for the descriptive residue of GP-10B-1: stage name, objective and checks, role responsibilities and guidance, the `maintenance -> delivery` route, instruction-contract texts and the requirement-assessment prompt.                                                                           | Contract extension, prompt templates and parity tests for the descriptive residue.                                                                                                       | Governance semantics (GP-25); `knowledge` (GP-15); Runtime execution from packs.                                                                                                         |
 | GP-25 — Pack policy contribution contract                         | GP-08, GP-11, GP-13, GP-10B-1   | Runtime task `1a883c04-0905-4b36-a57b-12d45fdfd59f`. Definition layer: a typed schema-1 policy contribution that targets a workflow of its own pack and declares `enforcement` and per-stage `requiresApproval`, `requiresIndependentApproval`, `requiresDifferentAgentFrom` and admitted `operations`. Pack-owned: no project override or project-owned policy; a workflow replacement must keep governed stages; policy changes go only through a reviewed upgrade. Development pack carries the five governance entries with expressible-subset parity. No migration, no archive format. | Policy contract section, resolver view, upgrade report and apply guard; SQLite/PostgreSQL and Unix-socket e2e; pack policies, residue list and parity tests.                             | Runtime enforcement from a pack (a45ddb12); project-authored or preset-level policies; capability contracts and provider binding (GP-16); evidence and professional-decision clauses (GP-14, GP-17, GP-18). |
-| GP-10C — Development evidence and adoption                        | GP-10B-1, GP-10B-2, GP-14–GP-16 | Put repository/GitHub/commit/PR/CI evidence types, knowledge guidance and capability declarations behind pack contracts; offer previewed explicit adoption while preserving old bindings.                                                                                                                                                                                 | Development pack completion and migration report; legacy snapshot, approval, action and provenance regression tests.                                                                     | Redesign of worker, queue, model routing or governance.                                                     |
-| GP-11 — Pack role archetypes                                      | GP-06, GP-07                    | Define pack roles with stable identity and declarative capabilities; rename, replace, omit and add them in project configuration; preserve identity, capabilities and project changes on upgrade.                                                                                                                                                                         | Role contracts and customization/upgrade tests.                                                                                                                                          | Official role names; Runtime roles, grants or bindings.                                                     |
-| GP-12 — Pack agent archetypes                                     | GP-11                           | Definition layer: stable agent identity; declarative role, prompt, knowledge and requested-capability references bounded by the role; project replace, disable and add; identity and project changes kept on an upgrade.                                                                                                                                                  | Agent configuration contracts and upgrade/authority tests.                                                                                                                               | Runtime agents, model, tools, pipeline, approval, grants.                                                   |
-| GP-13 — Pack workflow templates                                   | GP-11, GP-12                    | Definition layer: stable workflow and stage identity; project replace (rename, reorder, add or remove stages with pack-local references), extend and disable of a pack workflow; customizations kept on an upgrade; generic engine, runs, pins, approvals and guards untouched.                                                                                           | Workflow customization contracts and upgrade/preservation tests.                                                                                                                         | Pipeline engine, Runtime pipelines, in-flight pinned runs (GP-24).                                          |
-| GP-14 — Artifacts, evidence and validators                        | GP-03, GP-06; M11.6             | Declare domain types and trusted validator references atop generic version/provenance/review contracts; stale evidence and invalid validator output fail closed.                                                                                                                                                                                                          | Typed fixture schemas and version-bound review/validator tests.                                                                                                                          | Running arbitrary pack code.                                                                                |
-| GP-15 — Pack knowledge guidance                                   | GP-06                           | Contribute categories, schemas, seed references, retrieval guidance and agent settings through AgentKnowledgeStore with trusted tenant/project scope.                                                                                                                                                                                                                     | Scope compatibility plan and old/new knowledge fixtures; outage and provenance tests.                                                                                                    | New vector/graph store or authority.                                                                        |
-| GP-16 — Pack capability contracts                                 | GP-06                           | Declare required/optional abstract operations; bind registered providers at bootstrap; reject missing required provider before runs; grants still separately authorize use.                                                                                                                                                                                               | Capability contract and fail-closed/controlled-action tests.                                                                                                                             | Pack-granted authority or direct credentials.                                                               |
-| GP-17 — Legal reference fixture                                   | GP-11–GP-16                     | Matter intake, research, draft, citation/evidence review and human approval use public contracts and no software defaults.                                                                                                                                                                                                                                                | Minimal legal pack/fixture and scenario tests for roles, workflow, artifact, knowledge and governance.                                                                                   | Production legal service or filing adapter.                                                                 |
-| GP-18 — Manufacturing reference fixture                           | GP-11–GP-16                     | Production order, execution, inspection, deviation and supervisor approval use public contracts and no software defaults.                                                                                                                                                                                                                                                 | Minimal manufacturing pack/fixture and scenario tests for provenance, policy and controlled-action boundary.                                                                             | MES, ERP, OPC-UA or PLC writes.                                                                             |
-| GP-19 — Empty/custom domain fixture                               | GP-11–GP-16                     | Zero official packs; project-defined roles, agents, workflow, artifacts, policy and knowledge work without core edits.                                                                                                                                                                                                                                                    | Custom-domain fixture and end-to-end configuration/upgrade tests.                                                                                                                        | Making `custom` a privileged official pack.                                                                 |
-| GP-20 — Core purity and legacy regression gate                    | GP-10C, GP-17–GP-19             | Enforce `pack → public core contracts`, no core import of official packs, and run four-domain plus pre-pack fixtures against lifecycle, approval, storage, knowledge, audit and fencing.                                                                                                                                                                                  | Architecture rule and integration suite; `bun run check` plus DB upgrade/RLS checks as applicable.                                                                                       | Broad refactor outside M16.                                                                                 |
-| GP-21 — Pack authoring and operations guide                       | GP-20                           | Document manifest, lifecycle, project ownership/customization, conflicts, upgrades, local install/validate and custom/three reference examples using actual commands.                                                                                                                                                                                                     | Authoring guide and tested examples; docs/CLI parity review.                                                                                                                             | Marketplace, remote registry or speculative CLI commands.                                                   |
+| GP-10C — Development evidence and adoption                        | GP-10B-1, GP-10B-2, GP-14–GP-16 | Put repository/GitHub/commit/PR/CI evidence types, knowledge guidance and capability declarations behind pack contracts; offer previewed explicit adoption while preserving old bindings.                                                                                                                                                                                                                                               | Development pack completion and migration report; legacy snapshot, approval, action and provenance regression tests.                                                                     | Redesign of worker, queue, model routing or governance.                                                                                                                                  |
+| GP-11 — Pack role archetypes                                      | GP-06, GP-07                    | Define pack roles with stable identity and declarative capabilities; rename, replace, omit and add them in project configuration; preserve identity, capabilities and project changes on upgrade.                                                                                                                                                                                                                                       | Role contracts and customization/upgrade tests.                                                                                                                                          | Official role names; Runtime roles, grants or bindings.                                                                                                                                  |
+| GP-12 — Pack agent archetypes                                     | GP-11                           | Definition layer: stable agent identity; declarative role, prompt, knowledge and requested-capability references bounded by the role; project replace, disable and add; identity and project changes kept on an upgrade.                                                                                                                                                                                                                | Agent configuration contracts and upgrade/authority tests.                                                                                                                               | Runtime agents, model, tools, pipeline, approval, grants.                                                                                                                                |
+| GP-13 — Pack workflow templates                                   | GP-11, GP-12                    | Definition layer: stable workflow and stage identity; project replace (rename, reorder, add or remove stages with pack-local references), extend and disable of a pack workflow; customizations kept on an upgrade; generic engine, runs, pins, approvals and guards untouched.                                                                                                                                                         | Workflow customization contracts and upgrade/preservation tests.                                                                                                                         | Pipeline engine, Runtime pipelines, in-flight pinned runs (GP-24).                                                                                                                       |
+| GP-14 — Artifacts, evidence and validators                        | GP-03, GP-06; M11.6             | Declare domain types and trusted validator references atop generic version/provenance/review contracts; stale evidence and invalid validator output fail closed.                                                                                                                                                                                                                                                                        | Typed fixture schemas and version-bound review/validator tests.                                                                                                                          | Running arbitrary pack code.                                                                                                                                                             |
+| GP-15 — Pack knowledge guidance                                   | GP-06                           | Contribute categories, schemas, seed references, retrieval guidance and agent settings through AgentKnowledgeStore with trusted tenant/project scope.                                                                                                                                                                                                                                                                                   | Scope compatibility plan and old/new knowledge fixtures; outage and provenance tests.                                                                                                    | New vector/graph store or authority.                                                                                                                                                     |
+| GP-16 — Pack capability contracts                                 | GP-06                           | Definition layer: a pack capability declares required or optional operations by name and mode; the Runtime host exposes its registered providers read-only; resolution, binding preview/apply and upgrade fail closed on a missing or mismatched required provider; the resolved view reports each binding. Grants, constraints, approval and controlled execution are unchanged and still separately authorize use. No scheduler gate. | Capability contract, provider catalog port, fail-closed resolution/preflight tests, and controlled-action tests proving a binding grants nothing.                                        | Pack-granted authority or direct credentials; run gating and pins (`a45ddb12`, GP-24); stage or policy semantics (GP-25); validator adapters (GP-14); abstract multi-provider contracts. |
+| GP-17 — Legal reference fixture                                   | GP-11–GP-16                     | Matter intake, research, draft, citation/evidence review and human approval use public contracts and no software defaults.                                                                                                                                                                                                                                                                                                              | Minimal legal pack/fixture and scenario tests for roles, workflow, artifact, knowledge and governance.                                                                                   | Production legal service or filing adapter.                                                                                                                                              |
+| GP-18 — Manufacturing reference fixture                           | GP-11–GP-16                     | Production order, execution, inspection, deviation and supervisor approval use public contracts and no software defaults.                                                                                                                                                                                                                                                                                                               | Minimal manufacturing pack/fixture and scenario tests for provenance, policy and controlled-action boundary.                                                                             | MES, ERP, OPC-UA or PLC writes.                                                                                                                                                          |
+| GP-19 — Empty/custom domain fixture                               | GP-11–GP-16                     | Zero official packs; project-defined roles, agents, workflow, artifacts, policy and knowledge work without core edits.                                                                                                                                                                                                                                                                                                                  | Custom-domain fixture and end-to-end configuration/upgrade tests.                                                                                                                        | Making `custom` a privileged official pack.                                                                                                                                              |
+| GP-20 — Core purity and legacy regression gate                    | GP-10C, GP-17–GP-19             | Enforce `pack → public core contracts`, no core import of official packs, and run four-domain plus pre-pack fixtures against lifecycle, approval, storage, knowledge, audit and fencing.                                                                                                                                                                                                                                                | Architecture rule and integration suite; `bun run check` plus DB upgrade/RLS checks as applicable.                                                                                       | Broad refactor outside M16.                                                                                                                                                              |
+| GP-21 — Pack authoring and operations guide                       | GP-20                           | Document manifest, lifecycle, project ownership/customization, conflicts, upgrades, local install/validate and custom/three reference examples using actual commands.                                                                                                                                                                                                                                                                   | Authoring guide and tested examples; docs/CLI parity review.                                                                                                                             | Marketplace, remote registry or speculative CLI commands.                                                                                                                                |
 
 ## Post-GP-06 hardening follow-ups
 

@@ -29,8 +29,9 @@ field and contribution section. Contribution items currently accept only an
 ASCII `id` and optional `title`/`description`; workflow items also have a
 `taskType` and ordered `stages` with `id`/`role`, role items may have
 `capabilities`, agent items may have `role`, `prompts`, `knowledge` and
-`capabilities`, and policy items may have `workflow`, `enforcement` and
-`stages` (see below). Unknown fields fail validation,
+`capabilities`, capability items may have `operations` and `requirement`, and
+policy items may have `workflow`, `enforcement` and `stages` (see below).
+Unknown fields fail validation,
 including executable entry points and embedded credentials. Later GP slices
 must explicitly extend section schemas through a compatible manifest/schema
 decision before they can add fields. The current generic `Contribution` type is
@@ -70,6 +71,27 @@ role's set and any of the fields on another contribution kind fail with
 `invalid_contribution` and the member's path. References are bare local IDs,
 so a definition of another pack, including a dependency, cannot be named. The
 references are declarative: they create no Runtime agent and grant nothing.
+
+A capability item may carry two optional members (GP-16). `operations` is an
+array of `{ "operation", "mode" }` objects: `operation` is a connector
+operation name, `<connectorId>.<name>`, and `mode` is `read` or `mutation`. A
+name is ASCII, at most 128 characters, two or more segments separated by `.`,
+each starting with a letter or digit and continuing with letters, digits, `_`
+or `-`; a wildcard is not a name. The array holds at least one and at most 100
+entries (`maximumCapabilityOperations`) and names an operation once. It is a
+set: the validated manifest holds it in ascending code-unit order of the
+operation name, and that order is what the digest covers. `requirement` is
+`required` or `optional` and is allowed only with `operations`; when
+`operations` is present and `requirement` is absent, the validated manifest
+and the digest input hold `required`, so the default has one canonical form.
+A non-array, empty, over-bound or duplicate list, a malformed name, an unknown
+mode or requirement, `requirement` without `operations`, any other member of
+an operation entry and either field on another contribution kind fail with
+`invalid_contribution` and the member's path. A capability cannot declare
+risk, approval, constraints, a resource, a grant, a principal, a credential
+or a provider version: those are unknown fields. The declaration states a
+need. It grants nothing, and whether a registered provider satisfies it is
+decided by the Runtime host at resolution, not by this package.
 
 A policy item may carry three optional fields (GP-25): `workflow`, one local
 ID naming an item of the same manifest's `contributions.workflows`,
