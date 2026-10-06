@@ -145,9 +145,13 @@ database: its string payloads violate the checks (SQLSTATE `23514`), so
 upgrade every writer with or before the migration. PostgreSQL's own detail for
 that violation quotes a prefix of the rejected row; the Runtime prints no
 driver text, but a database log may hold it. The repository also refuses, on
-read and on write, any payload that is not an object, naming the row by key:
-opened against a database that has not been migrated it fails instead of
-returning or storing JSON text.
+read and on write, any payload that is not an object: opened against a
+database that has not been migrated it fails instead of returning or storing
+JSON text. It raises `ProjectDefinitionPayloadShapeError`, whose `rowKey`
+names the row by table and key and which never carries the payload. That is
+the repository's contract, not Runtime CLI output: the Runtime does not list
+this error among those it prints, and reports it as an unexpected error
+without the key. Use the query below to find the rows.
 
 `jsonb` keeps array order and does not keep the order of an object's members.
 `project:definition:show` may therefore print the members of a payload in a
@@ -179,6 +183,9 @@ Nothing is dropped, rewritten or skipped on the operator's behalf. The
 migration's detail is not the complete list. This query is: it returns every
 payload that is not yet an object, by key, with the verdict the migration
 would reach for it and never its content. It needs PostgreSQL 16 or later.
+On JSON text nested pathologically deep, this query and the migration's
+per-row reason both fail with `54001 stack depth limit exceeded` instead of a
+verdict; the migration still fails closed, changing nothing.
 
 ```sql
 WITH listed AS (

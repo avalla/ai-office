@@ -20,9 +20,10 @@
 -- converted when it is a jsonb string whose content is not JSON text, is JSON
 -- text for something other than an object, or is JSON text holding an escaped
 -- U+0000 or another escape jsonb cannot store, such as a lone surrogate; or
--- when it is any other non-object jsonb value. The error names the rows by key and never quotes a payload. Nothing
--- is dropped, rewritten or skipped on the operator's behalf: see "Project
--- definition payload objects" in supabase/README.md for the repair.
+-- when it is any other non-object jsonb value. The error names the rows by
+-- key and never quotes a payload. Nothing is dropped, rewritten or skipped on
+-- the operator's behalf: see "Project definition payload objects" in
+-- supabase/README.md for the repair.
 --
 -- Deployment order. Once the two checks below exist, a release older than
 -- this migration can no longer write definitions: it still binds JSON text,
