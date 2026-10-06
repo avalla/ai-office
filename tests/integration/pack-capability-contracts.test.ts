@@ -167,6 +167,36 @@ const optionalBytes = packBytes("org.example.optional", "1.0.0", {
 });
 const optional = identityOf(optionalBytes);
 
+// shift@1 -> shift@2: `trim` loses an operation and keeps its requirement,
+// `flip` changes the mode of an operation no provider lists, and `drop` loses
+// its contract and becomes a label.
+const mergeAsRead = { operation: "github.merge_pr", mode: "read" };
+const shiftBytes = packBytes("org.example.shift", "1.0.0", {
+  capabilities: [
+    { id: "trim", operations: [read, write] },
+    { id: "flip", requirement: "optional", operations: [mergeAsRead] },
+    { id: "drop", operations: [read] },
+  ],
+});
+const shift = identityOf(shiftBytes);
+const shiftV2Bytes = packBytes("org.example.shift", "2.0.0", {
+  capabilities: [
+    { id: "trim", operations: [read] },
+    { id: "flip", requirement: "optional", operations: [merge] },
+    { id: "drop" },
+  ],
+});
+const shiftV2 = identityOf(shiftV2Bytes);
+// shift@3: the only difference from shift@1 is the operation `trim` loses.
+const shiftV3Bytes = packBytes("org.example.shift", "3.0.0", {
+  capabilities: [
+    { id: "trim", operations: [read] },
+    { id: "flip", requirement: "optional", operations: [mergeAsRead] },
+    { id: "drop", operations: [read] },
+  ],
+});
+const shiftV3 = identityOf(shiftV3Bytes);
+
 function catalogOf(...artifacts: Uint8Array[]) {
   const catalog = new InMemoryInstalledDomainPackCatalog(1, [
     "local-distribution",
@@ -191,6 +221,9 @@ const everything = () =>
     dependentBytes,
     mismatchBytes,
     optionalBytes,
+    shiftBytes,
+    shiftV2Bytes,
+    shiftV3Bytes,
   );
 
 interface Backend {
@@ -552,6 +585,93 @@ function defineContract(name: string, create: () => Promise<Backend>): void {
             ],
           },
         ],
+      });
+    });
+
+    test("a removed operation, a changed mode and a lost contract are reported with the requirement on both sides", async () => {
+      const runtime = await host();
+      await runtime.apply([shift], 0);
+      const before = await runtime.authority();
+      const changes = [
+        {
+          capabilityId: "pack:org.example.shift/capabilities/drop",
+          addedOperations: [],
+          removedOperations: [read],
+          // A label has no requirement.
+          requirement: { before: "required", after: null },
+        },
+        {
+          capabilityId: "pack:org.example.shift/capabilities/flip",
+          // One operation in another mode: one removed and one added entry.
+          addedOperations: [merge],
+          removedOperations: [mergeAsRead],
+          requirement: { before: "optional", after: "optional" },
+        },
+        {
+          capabilityId: "pack:org.example.shift/capabilities/trim",
+          addedOperations: [],
+          removedOperations: [write],
+          // Only an operation changed; the requirement is reported anyway.
+          requirement: { before: "required", after: "required" },
+        },
+      ];
+      const preview = await runtime.binding.preview(runtime.id, [shiftV2]);
+      expect(preview.capabilityContractChanges).toEqual({
+        availability: "available",
+        changes,
+      });
+      expect(preview.issues).toEqual([
+        {
+          code: "capability_contract_change_requires_upgrade",
+          message:
+            "The selection changes the operation contract of capability pack:org.example.shift/capabilities/drop; review and approve it with project:pack:upgrade",
+        },
+      ]);
+      await expect(runtime.apply([shiftV2], 1)).rejects.toBeInstanceOf(
+        ProjectPackBindingRefusedError,
+      );
+
+      // A removal alone is a contract change too: apply refuses it.
+      const removal = await runtime.binding.preview(runtime.id, [shiftV3]);
+      expect(removal.capabilityContractChanges).toEqual({
+        availability: "available",
+        changes: [changes[2]],
+      });
+      const rejected = await runtime
+        .apply([shiftV3], 1)
+        .catch((error: unknown) => error);
+      expect(rejected).toBeInstanceOf(ProjectPackBindingRefusedError);
+      expect(rejected).toMatchObject({
+        code: "capability_contract_change_requires_upgrade",
+        message:
+          "The selection changes the operation contract of capability pack:org.example.shift/capabilities/trim; review and approve it with project:pack:upgrade",
+      });
+      expect(await runtime.authority()).toEqual(before);
+
+      // The reviewed upgrade carries the same report into the plan and the
+      // audit event, the unchanged requirement of `trim` included.
+      const plan = await runtime.upgrade.preview({
+        projectId: runtime.id,
+        desired: [shiftV2],
+      });
+      expect(plan.issues).toEqual([]);
+      expect(plan.capabilityContractChanges).toEqual({
+        availability: "available",
+        changes,
+      });
+      await runtime.upgrade.apply({
+        projectId: runtime.id,
+        desired: [shiftV2],
+        approvedPlanDigest: plan.planDigest,
+        actorId: "local-operator",
+      });
+      const audits = await runtime.backend.auditPayloads(
+        "project.pack_upgrade_applied",
+      );
+      expect(audits).toHaveLength(1);
+      expect(JSON.parse(audits[0]!)).toMatchObject({
+        planDigest: plan.planDigest,
+        capabilityContractChanges: { availability: "available", changes },
       });
     });
 
