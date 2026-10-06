@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "id": "org.ai-office.development",
+  "version": "0.2.0",
+  "manifestDigest": "sha256:6321bb076a19765ce50f3127914c95487658c44e4cf480c3471337d2983f227e",
+  "coreContract": {
+    "minInclusive": 1,
+    "maxExclusive": 2
+  },
+  "metadata": {
+    "name": "Development",
+    "description": "Reference definitions of the software development roles, agents, task types and workflows. Not registered in any catalog and not read by the Runtime."
+  },
+  "dependencies": [],
+  "contributions": {
+    "roles": [
+      {
+        "id": "architect",
+        "title": "Software Architect",
+        "description": "Turn the agreed outcome into a coherent, verifiable technical design",
+        "capabilities": [
+          "assess_tradeoffs",
+          "decompose_work",
+          "inspect_project",
+          "propose_adr"
+        ]
+      },
+      {
+        "id": "developer",
+        "title": "Developer",
+        "description": "Deliver a scoped, maintainable implementation backed by relevant validation",
+        "capabilities": [
+          "create_patch",
+          "inspect_code",
+          "modify_code",
+          "run_tests"
+        ]
+      },
+      {
+        "id": "reviewer",
+        "title": "Reviewer",
+        "description": "Independently assess correctness, security, scope, and architectural integrity",
+        "capabilities": [
+          "approve_or_reject",
+          "assess_security",
+          "inspect_diff",
+          "inspect_tests"
+        ]
+      },
+      {
+        "id": "qa",
+        "title": "Quality Assurance",
+        "description": "Produce reproducible evidence of acceptance behavior and regression safety",
+        "capabilities": ["derive_test_cases", "report_regressions", "run_tests"]
+      }
+    ],
+    "taskTypes": [
+      { "id": "feature" },
+      { "id": "bugfix" },
+      { "id": "maintenance" },
+      { "id": "research" },
+      { "id": "release" }
+    ],
+    "workflows": [
+      {
+        "id": "delivery",
+        "title": "Feature delivery",
+        "description": "Plan, implement, review, and verify product changes",
+        "taskType": "feature",
+        "stages": [
+          { "id": "design", "role": "architect" },
+          { "id": "implement", "role": "developer" },
+          { "id": "review", "role": "reviewer" },
+          { "id": "verify", "role": "qa" }
+        ]
+      },
+      {
+        "id": "bugfix",
+        "title": "Bug fix",
+        "description": "Reproduce, fix, review, and verify a defect",
+        "taskType": "bugfix",
+        "stages": [
+          { "id": "reproduce", "role": "qa" },
+          { "id": "fix", "role": "developer" },
+          { "id": "review", "role": "reviewer" }
+        ]
+      },
+      {
+        "id": "discovery",
+        "title": "Research",
+        "description": "Investigate a question and record an evidence-based recommendation",
+        "taskType": "research",
+        "stages": [{ "id": "investigate", "role": "architect" }]
+      },
+      {
+        "id": "release",
+        "title": "Release",
+        "description": "Review readiness, verify the build, and require a release decision",
+        "taskType": "release",
+        "stages": [
+          { "id": "readiness", "role": "reviewer" },
+          { "id": "verification", "role": "qa" }
+        ]
+      }
+    ],
+    "agents": [
+      { "id": "architect", "role": "architect" },
+      { "id": "developer", "role": "developer" },
+      { "id": "reviewer", "role": "reviewer" },
+      { "id": "qa", "role": "qa" }
+    ],
+    "artifactTypes": [],
+    "evidenceTypes": [],
+    "policies": [],
+    "knowledge": [],
+    "capabilities": [
+      { "id": "approve_or_reject" },
+      { "id": "assess_security" },
+      { "id": "assess_tradeoffs" },
+      { "id": "create_patch" },
+      { "id": "decompose_work" },
+      { "id": "derive_test_cases" },
+      { "id": "inspect_code" },
+      { "id": "inspect_diff" },
+      { "id": "inspect_project" },
+      { "id": "inspect_tests" },
+      { "id": "modify_code" },
+      { "id": "propose_adr" },
+      { "id": "report_regressions" },
+      { "id": "run_tests" }
+    ],
+    "prompts": [],
+    "validators": []
+  }
+}

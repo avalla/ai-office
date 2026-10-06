@@ -877,7 +877,8 @@ describe("GP-10B-2 descriptive vocabulary in the resolved configuration", () => 
     );
 
     // A configuration that uses none of the fields, on existing fixtures: the
-    // legal golden fixture and development pack 0.2.0, with project-owned
+    // legal golden fixture and development pack 0.2.0 (a frozen copy of
+    // the file as committed before 0.3.0), with project-owned
     // definitions and two replacements. The digest was computed before the
     // extension existed.
     const target = catalog();
@@ -885,7 +886,7 @@ describe("GP-10B-2 descriptive vocabulary in the resolved configuration", () => 
       register(target, readFileSync(new URL(path, import.meta.url)));
     const legal = fixture("../fixtures/domain-pack/legal.json");
     const development = fixture(
-      "../../packages/domain-pack-development/manifest.json",
+      "../fixtures/domain-pack/development-0.2.0.json",
     );
     const pinned = resolveProjectConfiguration({
       projectId: "project-a",
