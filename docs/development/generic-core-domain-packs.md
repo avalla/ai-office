@@ -442,8 +442,9 @@ deferred.
 
 ## GP-09 legacy development compatibility
 
-Status: contract. "Implementation record" at the end of this section records
-what the code does where the contract left a choice.
+Status: implemented, with criterion 12 met in part. The contract below is
+unchanged; "Implementation record" at the end of this section records what the
+code does where the contract left a choice, and where it stops short.
 
 GP-09 describes, deterministically, what the legacy Runtime uses today. It
 derives a versioned, read-only **legacy development profile** from a project's
@@ -619,6 +620,113 @@ deliberately not delivered by GP-09.
   compatibility is "versioned and auditable". The profile is versioned and
   reproducible by digest. It is derived on demand, never stored, never pinned
   to a run, and reading it records no domain audit event.
+
+### Implementation record
+
+- One derivation. `deriveLegacyDevelopmentProfile` in
+  `packages/application/src/domain-pack/legacy-development-profile.ts` is the
+  pure function. `ReadLegacyDevelopmentProfile` reads the project, its latest
+  office manifest, its Runtime roles and agents and its pack binding in one
+  short transaction through existing ports and derives outside it. Only that
+  reader and the command import the derivation; an architecture test pins
+  this.
+- Command. `project:configuration:legacy --project <id> [--json]` is a
+  separate read-only Runtime command. `--json` prints
+  `{ "ok": true, "profile": … }` with every field; without it the command
+  prints an operator summary. An unknown project is `Project <id> not found`
+  on stderr with exit code 1. A project with no office prints the empty view
+  with exit code 0.
+- Marker. The view carries `source: "legacy_state"`, `executable: false` and
+  a fixed `statement` sentence; the text form prints all three.
+- Shape. `profileId` (`ai-office.legacy-development`), `profileVersion` (1),
+  `profileDigest`, `metadata`, `office`, `roles`, `agents`, `taskKinds`,
+  `pipelines`, `runtimeOnly`, `diagnostics`, `vocabularyGaps`. A role is the
+  manifest role plus `runtime`, the Runtime role of the same key or null. A
+  stage is the manifest stage plus `eligibleAgents`. Agents are named by
+  their project-unique name.
+- Order. Manifest roles, pipelines, Runtime roles and agents are sorted by ID,
+  key or name in UTF-16 code-unit order. Stage order and every authored list
+  (`responsibilities`, `checks`, `defaultFor`, `capabilities`, `tools`) are
+  kept as given; reordering one of them is a content change.
+- Digest. `profileDigest` is `sha256:` over the UTF-8 bytes of
+  `ai-office-legacy-development-profile-v1\n` followed by the RFC 8785
+  serialization of `profileId`, `profileVersion`, `source`, `office`, `roles`,
+  `agents`, `taskKinds`, `pipelines` and `runtimeOnly`. A guidance digest is
+  `sha256:` over `ai-office-legacy-role-guidance-v1\n` followed by the exact
+  guidance text, without normalization. A role limit `maxCostMicros` is a
+  decimal string.
+- Outside the digest. `metadata` holds `packBinding.present`, true when the
+  project currently selects at least one pack, and `officeManifestRevision`.
+  Neither is digest material, which is how a binding leaves the digest
+  unchanged (criterion 19) and why two projects with the same office at
+  different revision numbers share a digest. `diagnostics` and
+  `vocabularyGaps` are determined by the digested sections and are not
+  digest material either.
+- Not carried. The manifest's `project` model and `provenance`, a role's
+  `sourcePath`, every row ID and timestamp, and guidance text. A role whose
+  stored guidance text is empty has `guidance: null`.
+- Roles are enumerated directly. `AgentRuntimeRepository` gained a read-only
+  `listRoles(projectId)`, implemented for SQLite and PostgreSQL with the
+  tenant scoping of `findRole`, so a role that no agent uses is still listed.
+  No schema changed.
+- Eligibility is the static rule: enabled agents whose role key equals the
+  stage role. A stage's `requiresDifferentAgentFrom` is carried as a field;
+  the exclusion it causes depends on earlier assignments of one run and is not
+  applied to the list.
+- Diagnostics: `manifest_role_without_runtime_role`,
+  `runtime_role_outside_manifest`, `runtime_role_without_agent`,
+  `task_kind_unrouted`, `stage_without_eligible_agent`. Vocabulary gaps:
+  `pipeline_routes_several_task_kinds`, `pipeline_fields_not_expressible`,
+  `stage_fields_not_expressible`, `role_fields_not_expressible`,
+  `runtime_role_fields_not_expressible`, each naming the subject and the
+  fields. A stage capability name that is not a valid pack local ID is not
+  reported separately.
+- Typed refusal. State that storage cannot hold (two Runtime roles with one
+  key, two agents with one name, an agent naming an absent role) raises
+  `legacy_state_invariant`; text that cannot be canonicalized raises
+  `profile_not_canonical`. The command prints the code and exits 1.
+- Read-only, and the host's envelope. The reader writes no row. Over the
+  socket the Runtime host appends its `command.received` and
+  `command.completed` audit rows, as it does for every command including
+  `project:configuration:show`. They carry the command name, exit code and
+  duration, no project and nothing of the profile. No domain audit event is
+  written and every other row is byte-identical.
+- Fixtures. `tests/fixtures/legacy-development/` holds the inputs
+  (`office-manifest.json`, a copy of the default office, and
+  `runtime-definitions.json`) and the generated files. `pre-pack-project.sql`
+  is a complete replayable dump of a project database at migration `0040`,
+  the last one before any pack table, written by the current services.
+  `bun tests/fixtures/legacy-development/regenerate.ts` rebuilds every
+  generated file with a fixed clock and sequential IDs, and a test replays the
+  builders against the committed bytes.
+- Frozen archives. `format-1.aioffice` to `format-4.aioffice` are one quiescent
+  legacy project projected onto each format by
+  `portableStateAtFormatVersion` and written by the current archive writer
+  under that format's frozen schema. They are not files produced by the
+  releases that wrote those formats: the current exporter cannot write below
+  format 6, and no historical archive is kept in the repository.
+- Criterion 12 is met in part. Each archive restores, its state at its own
+  format equals the archive with the same checksum, a second restore reports
+  `unchanged`, and the restored project has its pinned profile. Re-export does
+  not select the same format: since GP-07 the exporter writes format 6 or
+  later for every project, because the binding and definition sections are
+  always present, and existing tests pin that. Writing a legacy project back
+  at format 1 to 4 would change the exporter's format selection, which this
+  task excludes. The test asserts format 6 and equal state at the archive's
+  format.
+- Guidance does not survive an archive. Portable role rows carry no guidance,
+  so a restored project's roles have `guidance: null` and its profile digest
+  differs from the source project's. The expected restored profile is pinned
+  separately.
+- PostgreSQL. The provider is partial and cannot host the daemon, so the
+  PostgreSQL case runs the application services and the reader on PostgreSQL
+  repositories and compares the canonical profile and digest with SQLite and
+  with the pinned vector. It is part of the `postgres-storage` CI job.
+- Knowledge. The restore test resolves the scope through
+  `ManageKnowledgeAdmission.search` with SQLite repositories and a stub store;
+  no SurrealDB instance is involved.
+- No migration, archive format, audit event type, dependency or scheduling
+  change was added.
 
 ## GP-11 pack role archetypes
 

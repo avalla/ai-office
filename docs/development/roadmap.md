@@ -1906,7 +1906,18 @@ that reuse GP-08, GP-11 and GP-12. It adds forward SQLite and PostgreSQL
 migrations that admit workflow overrides and portable archive format 9. It
 does not touch the pipeline engine, pipeline runs, pins, approvals or guards;
 runs do not pin pack configuration yet, and blocking a change on in-flight
-pinned runs is deferred to GP-24. Aliases,
+pinned runs is deferred to GP-24. GP-09 adds a versioned, read-only legacy
+development profile and `project:configuration:legacy`: a deterministic,
+digest-pinned description of the office, roles, agents, task-kind routing and
+pipelines the Runtime reads from a legacy project today. It proves
+legacy-state parity against the Runtime's own readers, and that pre-pack
+databases, in-flight pipeline runs and format 1–4 archives load unchanged. It
+infers no pack, adds no migration, archive format or audit event type, and
+leaves `project:configuration:show` unchanged. It is not execution parity:
+comparing execution from a resolved configuration with legacy execution is
+the follow-up Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`, equivalence
+with a real development pack belongs to GP-10A/B, and the derived profile is
+reproducible by digest but leaves no audit record. Aliases,
 Development Pack parity/extraction, automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
