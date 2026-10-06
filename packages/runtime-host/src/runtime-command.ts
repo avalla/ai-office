@@ -167,6 +167,7 @@ import { DomainPackCatalogError } from "@ai-office/application/ports/installed-d
 import { StaleProjectPackBindingError } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
 import {
   ProjectDefinitionConflictError,
+  ProjectDefinitionPayloadShapeError,
   StaleProjectDefinitionError,
 } from "@ai-office/application/domain-pack/project-definition.ts";
 import { ProjectDefinitionProjectNotFoundError } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
@@ -422,6 +423,10 @@ function isCommand(value: string): value is Command {
 }
 
 function formatKnownError(error: unknown): string | null {
+  // The message names the row by key and never carries the payload; the
+  // operator repairs the row in the database, so the procedure is named too.
+  if (error instanceof ProjectDefinitionPayloadShapeError)
+    return `${error.message}. Classify and repair the row with the query in supabase/README.md.`;
   if (
     error instanceof CliUsageError ||
     error instanceof DomainPackCatalogError ||

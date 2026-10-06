@@ -148,10 +148,11 @@ driver text, but a database log may hold it. The repository also refuses, on
 read and on write, any payload that is not an object: opened against a
 database that has not been migrated it fails instead of returning or storing
 JSON text. It raises `ProjectDefinitionPayloadShapeError`, whose `rowKey`
-names the row by table and key and which never carries the payload. That is
-the repository's contract, not Runtime CLI output: the Runtime does not list
-this error among those it prints, and reports it as an unexpected error
-without the key. Use the query below to find the rows.
+names the row by table and key and which never carries the payload. The
+Runtime lists this error among those it prints: the command fails with
+`Project definition payload must be a JSON object: <row key>. Classify and
+repair the row with the query in supabase/README.md.` Use the query below to
+find the rows.
 
 `jsonb` keeps array order and does not keep the order of an object's members.
 `project:definition:show` may therefore print the members of a payload in a
