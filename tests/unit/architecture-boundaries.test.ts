@@ -963,6 +963,42 @@ describe("GP-10A development pack stays a reference artifact outside production"
     });
   }
 
+  /**
+   * Whether a source registers an artifact in an installed-pack catalog: a
+   * `register` call in a file that names the catalog, or on a receiver named
+   * as one. Textual, like the other scans here.
+   */
+  function registersInCatalog(source: string): boolean {
+    if (/\b(?:\w*[cC]atalog\w*|installedPacks)\s*\.\s*register\(/u.test(source))
+      return true;
+    return (
+      /InstalledDomainPackCatalog|installed-domain-pack-catalog|installedPacks/u.test(
+        source,
+      ) && /\.\s*register\(/u.test(source)
+    );
+  }
+
+  /**
+   * Uses of `installedPacks` other than the option plumbing: declaring the
+   * option, reading it from `options`, `context` or `this`, forwarding that
+   * value, and the Runtime's default of an empty catalog. What is left
+   * supplies a catalog.
+   */
+  function suppliedInstalledPacks(source: string): string[] {
+    const plumbing = [
+      /installedPacks\??: InstalledDomainPackCatalog\b/gu,
+      /\b(?:options|context|this)\.installedPacks\b(?!\s*=[^=])/gu,
+      /installedPacks: (?=<plumbing>)/gu,
+    ];
+    const rest = plumbing.reduce(
+      (text, pattern) => text.replace(pattern, "<plumbing>"),
+      source.replace(/\s+/gu, " "),
+    );
+    return [...rest.matchAll(/installedPacks[^;]{0,40};?/gu)].map((match) =>
+      match[0].trim(),
+    );
+  }
+
   test("no package, app, entry point or script imports the pack package or contains its ID", () => {
     const scanned = ["packages", "apps", "bin", "scripts"].flatMap(
       (directory) => allFiles(join(repositoryRoot, directory)),
@@ -1081,8 +1117,78 @@ describe("GP-10A development pack stays a reference artifact outside production"
     ).toEqual(["packages/runtime-host/src/runtime-command.ts"]);
     expect(
       production
-        .filter((file) => /\.register\(/u.test(readFileSync(file, "utf8")))
+        .filter((file) => registersInCatalog(readFileSync(file, "utf8")))
         .map((file) => relative(repositoryRoot, file)),
     ).toEqual([]);
+    // The rule itself: a registration in a pack catalog is reported, a
+    // `register` call on anything else is not.
+    for (const registration of [
+      'import { InMemoryInstalledDomainPackCatalog } from "./installed-domain-pack-catalog.ts";\nconst packs = build();\npacks.register(entry);',
+      'import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";\nstore.register(entry);',
+      "options.installedPacks.register(entry);",
+      "this.packCatalog\n  .register(entry);",
+    ])
+      expect(registersInCatalog(registration)).toBe(true);
+    for (const unrelated of [
+      'import { Registry } from "./connector-registry.ts";\nregistry.register(connector);',
+      "program.register(command);",
+      "class Catalog { register(entry: Entry) {} }",
+    ])
+      expect(registersInCatalog(unrelated)).toBe(false);
+  });
+
+  test("no production entry point supplies an installed-pack catalog", () => {
+    const production = ["packages", "apps", "bin", "scripts"].flatMap(
+      (directory) => typescriptFiles(join(repositoryRoot, directory)),
+    );
+    const supplied = (file: string) =>
+      suppliedInstalledPacks(readFileSync(file, "utf8")).map(
+        (use) => `${relative(repositoryRoot, file)}: ${use}`,
+      );
+    // Everything that names the option declares it, reads it or forwards the
+    // caller's value. Nothing passes a catalog of its own.
+    expect(production.flatMap(supplied)).toEqual([]);
+    // Among the entry points, only the bootstrap option plumbing names it.
+    const entryPoints = ["apps", "bin", "scripts"].flatMap((directory) =>
+      typescriptFiles(join(repositoryRoot, directory)),
+    );
+    for (const location of ["apps/daemon/src/main.ts", "bin/ai-office.ts"])
+      expect(
+        entryPoints.map((file) => relative(repositoryRoot, file)),
+      ).toContain(location);
+    expect(
+      entryPoints
+        .filter((file) =>
+          /installedPacks|InstalledDomainPackCatalog|installed-domain-pack-catalog/u.test(
+            readFileSync(file, "utf8"),
+          ),
+        )
+        .map((file) => relative(repositoryRoot, file)),
+    ).toEqual(["apps/daemon/src/bootstrap.ts"]);
+    // The rule itself: plumbing passes, a supplied catalog is reported.
+    expect(
+      suppliedInstalledPacks(
+        [
+          "interface Options { installedPacks?: InstalledDomainPackCatalog; }",
+          "private readonly installedPacks?: InstalledDomainPackCatalog,",
+          "run(options.installedPacks, { catalog: context.installedPacks });",
+          "({ installedPacks: this.installedPacks });",
+          "({ installedPacks: options.installedPacks ?? new InMemoryInstalledDomainPackCatalog(1, []) });",
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+    expect(
+      suppliedInstalledPacks(
+        [
+          "await bootstrap({ projectRoot, runtimePaths, installedPacks: developmentCatalog() });",
+          "await bootstrap({ projectRoot, installedPacks });",
+          "options.installedPacks = catalog;",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      "installedPacks: developmentCatalog() });",
+      "installedPacks });",
+      "installedPacks = catalog;",
+    ]);
   });
 });
