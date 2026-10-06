@@ -8,12 +8,19 @@ import { RegisterResource } from "@ai-office/application/capability/register-res
 import { RequestControlledAction } from "@ai-office/application/capability/request-controlled-action.ts";
 import { CapabilityPrincipalNotFoundError } from "@ai-office/application/capability-errors.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
+import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent-run.ts";
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
+import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
+import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
+import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 import type { PackIdentity } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { fakeConnectorDescriptor } from "@ai-office/connector-sdk/fake-connector.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
+import type { ActionRequest } from "@ai-office/domain/capability/action-request.ts";
+import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
+import { Task } from "@ai-office/domain/task/task.ts";
 import { createDefaultConnectorRegistry } from "@ai-office/filesystem-connector/default-connector-registry.ts";
 import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/installed-domain-pack-catalog.ts";
 import { createOperationProviderCatalog } from "@ai-office/runtime-host/operation-provider-catalog.ts";
@@ -32,6 +39,8 @@ import {
 // GP-16 criterion 11 and 12: a pack binding grants nothing. The real policy
 // engine, gateway and SQLite storage run twice, once with a pack bound whose
 // capability requires the requested operations and once without any pack.
+// The same differential runs inside an enforced pipeline stage, where the
+// pipeline gate is conjunctive with the policy engine.
 // PostgreSQL has no `capabilities` or `controlled` storage port, so this
 // evidence is SQLite-only.
 
@@ -75,6 +84,52 @@ const packBytes = encoder.encode(
 );
 const { id, version, manifestDigest } = parseDomainPackManifest(packBytes);
 const pack: PackIdentity = { id, version, manifestDigest };
+
+// One enforced stage for the Runtime role. Its legacy stage `capabilities`
+// are what the pipeline gate matches; the pack requires more operations than
+// the stage permits, and the stage permits one the agent holds no grant for.
+const manifest: OfficeManifest = {
+  schemaVersion: 1,
+  provenance: { host: "codex", skill: "ai-office", skillVersion: "1" },
+  project: {
+    mission: "Operate",
+    goals: ["Operate safely"],
+    constraints: [],
+    preferences: [],
+    permissionPreferences: [],
+  },
+  office: {
+    name: "Gated office",
+    roles: [
+      {
+        id: "operator",
+        title: "Operator",
+        purpose: "Operate",
+        responsibilities: ["Operate"],
+      },
+    ],
+  },
+  pipelines: [
+    {
+      id: "operation",
+      name: "Operation",
+      description: "One enforced stage",
+      defaultFor: ["feature"],
+      enforcement: "enforced",
+      stages: [
+        {
+          id: "operate",
+          name: "Operate",
+          roleId: "operator",
+          objective: "Operate",
+          checks: ["Done"],
+          requiresApproval: false,
+          capabilities: ["fake.read", "fake.admin"],
+        },
+      ],
+    },
+  ],
+};
 
 const roots: string[] = [];
 const closers: (() => void)[] = [];
@@ -211,16 +266,16 @@ async function world(bound: boolean) {
     storage.transactions,
     connectors,
   );
-  const ask = async (operation: string) => {
-    const result = await request.execute({
-      projectId: "project-1",
-      agentId: "agent-1",
-      resourceId: resource.id,
-      operation,
-      arguments: { target: "readme" },
-    });
-    const { decision, riskLevel, reasons, matchedGrantIds, status } =
-      result.request.snapshot();
+  const summary = (result: { request: ActionRequest; outcome: string }) => {
+    const {
+      decision,
+      riskLevel,
+      reasons,
+      matchedGrantIds,
+      status,
+      pipelineRunId,
+      pipelineStageRunId,
+    } = result.request.snapshot();
     return {
       outcome: result.outcome,
       decision,
@@ -228,7 +283,100 @@ async function world(bound: boolean) {
       reasons,
       matchedGrantIds,
       status,
+      pipelineRunId,
+      pipelineStageRunId,
     };
+  };
+  const ask = async (operation: string) =>
+    summary(
+      await request.execute({
+        projectId: "project-1",
+        agentId: "agent-1",
+        resourceId: resource.id,
+        operation,
+        arguments: { target: "readme" },
+      }),
+    );
+  // The agent-run gateway with the pipeline gate, as the Runtime host
+  // composes it: the pipeline context comes from the persisted AgentRun.
+  const gated = new RequestControlledAction(
+    new EvaluateActionPolicy(
+      runtime,
+      capabilities,
+      clock,
+      connectors,
+      new EvaluatePipelineAuthorization(storage.pipelines),
+    ),
+    capabilities,
+    audit,
+    ids,
+    clock,
+    storage.transactions,
+    runtime,
+  );
+  const pipelineRuns = new ManagePipelineRuns(
+    storage.officeManifests,
+    storage.pipelines,
+    storage.tasks,
+    runtime,
+    audit,
+    ids,
+    clock,
+    storage.transactions,
+  );
+  let tasks = 0;
+  /**
+   * One request from an AgentRun of the agent assigned to the active stage
+   * of a fresh enforced pipeline run, so every call meets the pipeline gate.
+   */
+  const askInPipeline = async (operation: string) => {
+    if (tasks === 0)
+      await storage.officeManifests.save({
+        id: "manifest-1",
+        projectId: "project-1",
+        revision: 1,
+        manifest,
+        appliedAt: now,
+      });
+    const taskId = `task-${++tasks}`;
+    await storage.tasks.save(
+      Task.create({ id: taskId, projectId: "project-1", title: taskId, now }),
+    );
+    const pipelineRun = await pipelineRuns.start({
+      projectId: "project-1",
+      taskId,
+      pipelineId: "operation",
+      principal: localOperatorPrincipal,
+    });
+    await pipelineRuns.assign({
+      projectId: "project-1",
+      pipelineRunId: pipelineRun.snapshot().id,
+      agentId: "agent-1",
+      principal: localOperatorPrincipal,
+    });
+    const agentRunId = await new ScheduleAgentRun(
+      storage.projects,
+      storage.tasks,
+      runtime,
+      ids,
+      clock,
+      storage.transactions,
+      storage.pipelines,
+    ).execute({
+      projectId: "project-1",
+      taskId,
+      agentId: "agent-1",
+      actionIntent: {
+        resourceId: resource.id,
+        operation,
+        arguments: { target: "readme" },
+      },
+    });
+    const agentRun = (await runtime.findRun(agentRunId))!;
+    agentRun.transition("preparing", now);
+    agentRun.transition("running", now);
+    await runtime.saveRun(agentRun);
+    return summary(await gated.executeFromAgentRun(agentRunId));
   };
   const grant = (
     principalType: "agent" | "role",
@@ -260,7 +408,15 @@ async function world(bound: boolean) {
     database
       .query<{ count: number }, []>(`SELECT count(*) AS count FROM ${table}`)
       .get()!.count;
-  return { database, resource, ask, grant, securityAudit, rows };
+  return {
+    database,
+    resource,
+    ask,
+    askInPipeline,
+    grant,
+    securityAudit,
+    rows,
+  };
 }
 
 const operations = ["fake.read", "fake.write", "fake.delete", "fake.admin"];
@@ -312,6 +468,58 @@ describe("GP-16: a pack binding grants nothing (SQLite, real gateway)", () => {
       ),
     );
     expect(bound.securityAudit()).toEqual(plain.securityAudit());
+  });
+
+  test("inside an enforced pipeline stage the pipeline gate decides, identically with and without the pack", async () => {
+    const plain = await world(false);
+    const bound = await world(true);
+    // No grant for fake.admin; fake.write is granted but is not a stage
+    // capability. The pack requires both, bound to the fake connector.
+    for (const host of [plain, bound])
+      await host.grant("agent", "agent-1", ["fake.read", "fake.write"], {
+        allowMutation: true,
+      });
+    const decided: Record<string, Awaited<ReturnType<typeof bound.ask>>> = {};
+    for (const operation of ["fake.read", "fake.write", "fake.admin"]) {
+      const expected = await plain.askInPipeline(operation);
+      const actual = await bound.askInPipeline(operation);
+      expect(actual, operation).toEqual(expected);
+      // The request really carried the pipeline context of its AgentRun.
+      expect(actual.pipelineRunId, operation).toEqual(expect.any(String));
+      expect(actual.pipelineStageRunId, operation).toEqual(expect.any(String));
+      decided[operation] = actual;
+    }
+    expect(decided["fake.read"]).toMatchObject({
+      outcome: "allowed",
+      decision: "allow",
+      reasons: ["operation risk is low"],
+    });
+    // Granted, required by the bound pack and provided, yet outside the
+    // stage: the gate denies it. The policy engine alone would not have.
+    expect(decided["fake.write"]).toMatchObject({
+      outcome: "denied",
+      decision: "deny",
+    });
+    expect(decided["fake.write"]!.reasons).toContain(
+      "pipeline_capability_denied",
+    );
+    expect(decided["fake.write"]!.reasons).not.toContain(noGrant);
+    const direct = await bound.ask("fake.write");
+    expect(direct).toEqual(await plain.ask("fake.write"));
+    expect(direct.outcome).not.toBe("denied");
+    expect(direct.pipelineRunId).toBeUndefined();
+    // A stage capability the pack also requires, with no grant: the stage
+    // and the binding together still grant nothing.
+    expect(decided["fake.admin"]).toMatchObject({
+      outcome: "denied",
+      matchedGrantIds: [],
+      reasons: [noGrant],
+    });
+    const audit = bound.securityAudit();
+    expect(audit).toEqual(plain.securityAudit());
+    expect(audit.map((event) => event.event_type)).toEqual(
+      expect.arrayContaining(["pipeline.started", "action.requested"]),
+    );
   });
 
   test("a critical operation named by a pack keeps its risk and approval requirement", async () => {
