@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { AuditEvent } from "@ai-office/domain/event/audit-event.ts";
 import {
   contributionKinds,
+  type AgentContribution,
   type Contribution,
   type ContributionKind,
   type DomainPackManifest,
@@ -30,11 +31,12 @@ import {
   StaleProjectDefinitionError,
   compareExactSources,
   compareOwnedDefinitions,
+  hasAgentReferences,
   parseExactSource,
   sourceKey,
-  type DescriptiveDefinition,
   type ExactPackDefinitionSource,
   type OverrideOperation,
+  type OverridePayload,
   type ProjectDefinitionOverride,
   type ProjectDefinitionState,
   type ProjectOwnedDefinition,
@@ -381,7 +383,7 @@ function roleCapabilityChanges(
 function reconciledDefinitions(
   current: ProjectDefinitionState,
   overrides: readonly OverrideReconciliation[],
-  conversions: ReadonlyMap<string, DescriptiveDefinition>,
+  conversions: ReadonlyMap<string, OverridePayload>,
   actorId: string,
   changedAt: string,
 ): ProjectDefinitionState {
@@ -451,7 +453,7 @@ interface UpgradeReconciliation {
    * definition bodies, so they stay out of the report; the prospective
    * configuration digest in the plan covers them.
    */
-  readonly conversions: ReadonlyMap<string, DescriptiveDefinition>;
+  readonly conversions: ReadonlyMap<string, OverridePayload>;
 }
 
 /**
@@ -503,7 +505,7 @@ function reconcileProjectPackUpgrade(input: {
       reason: "pack_configuration_run_pins_not_modelled",
     },
   } as const;
-  const conversions = new Map<string, DescriptiveDefinition>();
+  const conversions = new Map<string, OverridePayload>();
   const finish = (
     rest: Pick<
       PackUpgradePlan,
@@ -776,10 +778,18 @@ function reconcileProjectPackUpgrade(input: {
       }
       const title = override.payload.title ?? nextEntry.title;
       const description = override.payload.description ?? nextEntry.description;
+      // An extension sets no reference, so an agent's references are among
+      // the fields taken from the new template.
+      const { role, prompts, knowledge, capabilities }: AgentContribution =
+        source.kind === "agents" ? nextEntry : { id: nextEntry.id };
       conversions.set(sourceKey(source), {
         id: source.localId,
         ...(title === undefined ? {} : { title }),
         ...(description === undefined ? {} : { description }),
+        ...(role === undefined ? {} : { role }),
+        ...(prompts === undefined ? {} : { prompts }),
+        ...(knowledge === undefined ? {} : { knowledge }),
+        ...(capabilities === undefined ? {} : { capabilities }),
       });
       overrides.push({
         source,
@@ -801,7 +811,11 @@ function reconcileProjectPackUpgrade(input: {
           ? "the pack still provides this definition"
           : ownedKeys.has(ownedKey)
             ? "a project-owned definition already uses this identity"
-            : null;
+            : // Every reference of an override names a definition of its
+              // pack; a project-owned agent resolves project definitions only.
+              source.kind === "agents" && hasAgentReferences(override.payload)
+              ? "the agent references pack definitions, which a project-owned agent cannot name"
+              : null;
     if (reason !== null) {
       overrides.push({
         source,
@@ -859,7 +873,9 @@ function reconcileProjectPackUpgrade(input: {
       issues.push({
         code: "prospective_configuration_invalid",
         detail: error.code,
-        message: "The reconciled project configuration would not resolve",
+        // The GP-06 diagnostic names the definition and the reference or
+        // capability that failed; it carries identities only.
+        message: `The reconciled project configuration would not resolve: ${error.message}`,
       });
     }
 
