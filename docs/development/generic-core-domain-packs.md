@@ -260,10 +260,12 @@ fields; format 7 rejects both. GP-13 adds format 9 for a state that overrides
 a workflow; format 8 rejects that.
 
 GP-06 resolves these sources into an effective configuration and defines
-its digest. GP-08 handles pack upgrade reconciliation. Aliases, legacy
-Development Pack parity/extraction, automatic selection, downloads, registry,
-executable validators, KnowledgeScopeV2, portable project UIDs and Runtime
-execution from pack definitions remain deferred.
+its digest. GP-08 handles pack upgrade reconciliation. GP-10A delivers the
+first legacy Development Pack parity slice: expressible-subset parity for
+roles, agents and task types. Aliases, the remaining Development Pack
+parity and extraction, automatic selection, downloads, registry, executable
+validators, KnowledgeScopeV2, portable project UIDs and Runtime execution
+from pack definitions remain deferred.
 
 ## GP-06 derived project configuration
 
@@ -1908,6 +1910,9 @@ in the list.
   `install` and `agent:sync` over the Unix socket. Edited copies of the
   shipped files show the guard works: a capability added, removed or
   renamed, a role key, a title or a purpose breaks parity.
+- Task types. The five kinds are defined by the domain constant
+  `officeTaskKinds`, not by the shipped office manifest, so the task-type
+  drift guard watches that constant.
 - What the drift guard does not see. A change to a field in the list above
   (guidance text, model policy, the Runtime role name, for example) leaves
   the expressible subset equal. The test asserts that too, so the limit of
@@ -1936,6 +1941,11 @@ in the list.
   test pins the checksum of each GP-09 fixture file. An unbound project
   still resolves to the empty configuration at its pinned digest, also on a
   host whose catalog holds the pack.
+- Architecture scans. The checks for criteria 11 to 13 are textual,
+  mechanical guards: they catch a literal import, the literal pack ID, a
+  literal `installedPacks` supplied outside the option plumbing and a
+  literal catalog `register` call. They are not tamper-proof against a
+  constructed string, a `require` or a catalog passed positionally.
 - Criteria 14 and 15 are properties of this change set, not of the code.
   They were checked on the diff against the base commit: it touches only
   the plan, the roadmap, the architecture overview, the README, `bun.lock`,
