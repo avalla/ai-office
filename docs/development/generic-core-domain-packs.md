@@ -1715,9 +1715,11 @@ connector registry that lists the operation. The application layer reads it
 through one read-only port, `OperationProviderCatalog`, which lists for each
 provider its ID, its version and its operations with their mode. The port
 exposes no connector function, resource type, risk level, approval flag,
-grant or credential. The Runtime host builds the catalog once per composition
-from the same registry instance its controlled-action gateway uses, as a
-frozen copy. The resolver imports no connector package.
+grant or credential. The Runtime host builds the catalog at each command
+composition from the same registry instance its controlled-action gateway
+uses, as a frozen copy. The registry is static host composition, so every
+composition of one program builds the same catalog. The resolver imports no
+connector package.
 
 "Bind" means: find the provider that lists the operation name, and compare the
 mode. A binding is the pair of provider ID and version at the time of the
@@ -1760,12 +1762,24 @@ including disabling it, hides a required operation.
 
 ### Binding preflight
 
-`project:pack:preview` reports the same two codes for the proposed closure, in
-the `issues` list after a GP-04 failure and the GP-22 collisions and before
-the GP-11 refusal. `project:pack:apply` refuses a changed selection with a
-typed error carrying the code, writes nothing and adds no audit event.
-Applying the unchanged active selection stays the GP-05 no-op: it reads no
-artifact and no provider.
+`project:pack:preview` reports the same three codes as resolution
+(`missing_required_capability_provider`, `capability_provider_mismatch` and
+`configuration_invariant`) for the proposed closure, in the `issues` list
+after a GP-04 failure and the GP-22 collisions and before the GP-11 refusal.
+`project:pack:apply` refuses a changed selection with a typed error carrying
+the code, writes nothing and adds no audit event.
+
+The unchanged active selection takes two different paths:
+
+- `project:pack:preview` of the unchanged selection resolves the closure and
+  runs the provider check, like the GP-22 comparison. A provider that went
+  missing after the binding was applied, or was never present on a host the
+  project was restored to, is reported there.
+- `project:pack:apply` of the unchanged selection stays the GP-05 no-op. It
+  reads no artifact and no provider, raises no provider error, and writes
+  nothing, also when preview reports an issue for that selection. It changes
+  no authority, so it neither repairs nor refuses; the failure stays visible
+  in preview and at resolution.
 
 `project:pack:upgrade` reports the failure through its existing prospective
 resolution, as issue `prospective_configuration_invalid` with the code as
@@ -1777,10 +1791,14 @@ and adds no audit event.
 The upgrade plan gains `capabilityContractChanges`, covered by `planDigest`:
 for each capability whose contract differs between the current and the
 proposed resolved closure, the `capabilityId`, the added and the removed
-operations with their mode, and the requirement before and after. A changed
-mode is one removed and one added entry. An added or removed capability is
-listed when it declares operations. Like the GP-11 role capability report it
-is `unavailable` when the current closure cannot be read.
+operations with their mode, and the requirement before and after. The
+requirement is reported for every listed capability, also when only an
+operation changed, so the report always shows whether a change concerns a
+required or an optional capability; `null` stands for a capability that is
+absent or a label on that side. A changed mode is one removed and one added
+entry. An added or removed capability is listed when it declares operations.
+Like the GP-11 role capability report it is `unavailable` when the current
+closure cannot be read.
 
 A change to the contract of a capability present in both closures is never
 incidental: `project:pack:apply` refuses it with
@@ -1821,7 +1839,10 @@ never a definition body.
 
 ADR-0026 lists "registered capability providers" among the fixed inputs of
 resolution that yield a stable `configurationDigest`. GP-16 narrows this on
-purpose (decision 5). Registered providers are an input of resolution: they
+purpose (decision 5). The text of ADR-0026 is not edited: it still names
+registered providers as a fixed resolution input, and this section, by owner
+decision, is the record of how far that holds. Registered providers are an
+input of resolution: they
 decide whether it succeeds and what the `capabilities` view reports. They are
 not digest material and not part of `pin`. Two hosts with the same packs and
 definitions compute the same `configurationDigest` whether or not they have
@@ -1879,8 +1900,13 @@ migration is added on either backend.
    written order.
 5. A read-only provider catalog port exposes, for the host's composed
    registry, each provider's ID, version and operations with mode. It exposes
-   no connector function, resource, grant or credential. It is built once at
-   composition; the resolver stays free of connector imports.
+   no connector function, resource, grant or credential. It is built from the
+   host's composed registry at each command composition and frozen; the
+   registry is static, so the catalog is the same for every composition of
+   one program. The resolver stays free of connector imports. Recorded
+   deviation: the proposal said "built once at composition, next to
+   `installedPacks`"; the host composes per command, so the catalog is built
+   per command composition.
 6. `project:configuration:show` exposes the derived `capabilities` view. The
    view is not digest material; the empty-input vector is unchanged.
 7. Fail closed at resolution: a required operation with no registered
@@ -1893,7 +1919,8 @@ migration is added on either backend.
 9. Preflight: `project:pack:preview` reports the same issue;
    `project:pack:apply` and `project:pack:upgrade` refuse with a typed error,
    write nothing and add no binding or upgrade audit event. Applying an
-   identical selection stays a no-op that reads no artifact.
+   identical selection stays a no-op that reads no artifact; previewing it
+   still runs the check (see "Binding preflight").
 10. Upgrade: the plan carries `capabilityContractChanges` under `planDigest`;
     `project:pack:apply` refuses such a change to an existing capability with
     a code that names `project:pack:upgrade`; the upgrade audit event records
@@ -1903,7 +1930,10 @@ migration is added on either backend.
     grant, a request for that operation is denied with "no valid grant permits
     the operation". With a grant it follows the existing policy, approval and
     pipeline gates. Decisions, reasons and audit payloads are identical with
-    and without the binding.
+    and without the binding. The evidence is at request time: the policy
+    engine, the approval requirement, and the pipeline gate for a request made
+    by an AgentRun inside an enforced stage. Approval followed by execution is
+    not part of it; see "Limitations and non-goals".
 12. Adversarial: a grant whose `principalId` equals a pack `roleId` string
     matches nothing; a pack operation named with a wildcard (`fake.*`) is
     rejected by the contract; a pack naming a critical operation
@@ -1966,6 +1996,17 @@ deliberately not delivered as written.
 - A capability cannot be owned, overridden or disabled by a project.
 - The development pack declares no operations (GP-10C).
 - No migration, no portable archive format change and no new storage port.
+- `project:pack:apply` to the empty selection and then to a new pack version
+  carries a contract change without the upgrade review, because after the
+  first step no capability is present in both closures. GP-11 has the same
+  property for role capabilities. It moves no authority: a binding grants
+  nothing, and the provider check still runs on the second apply.
+- The with and without binding comparison of criterion 11 does not run
+  approval followed by execution. The fake connector declares
+  `supportsExecution: false` and has no `invoke`, so that pair needs the
+  filesystem connector and its simulation flow. Fresh authorization at
+  execution uses the same policy evaluation that the comparison covers at
+  request time, and no GP-16 module is imported by it.
 
 ### Implementation record
 
@@ -1986,8 +2027,10 @@ deliberately not delivered as written.
   plan.
 - The provider catalog is an optional dependency of the resolver, the
   configuration reader, the binding service and the upgrade service. When it
-  is absent they use the empty catalog, so a required operation is unmet and
-  nothing is bound by omission. The Runtime host always supplies it.
+  is absent they use the empty catalog: a required operation fails closed
+  with `missing_required_capability_provider`, an optional one is reported as
+  `unbound_optional`, and nothing is bound by omission. The Runtime host
+  always supplies it.
 - A mode mismatch fails closed for an optional operation as well as for a
   required one. An optional operation is `unbound_optional` only when no
   provider lists its name.
@@ -2006,6 +2049,10 @@ deliberately not delivered as written.
   comparison. When the current closure cannot be read,
   `capabilityContractChanges` is `unavailable` and the existing GP-11 rule
   decides: only a pure removal is applied.
+- Every entry of `capabilityContractChanges` carries `requirement` with
+  `before` and `after`, changed or not. An earlier revision of this branch
+  omitted it when only an operation changed; adding it changed `planDigest`
+  material, which no stored state depends on.
 - A capability added or removed by a selection change is listed in
   `capabilityContractChanges` but is not a change to an existing capability,
   so `project:pack:apply` carries it. A label that gains operations, and a
