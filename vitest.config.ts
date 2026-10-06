@@ -37,6 +37,11 @@ export default defineConfig({
   },
   test: {
     include: ["tests/**/*.test.ts"],
+    // The suite runs files in parallel and many tests start subprocesses,
+    // daemons or SQLite databases. The 5 s default measures host contention,
+    // not correctness: under load it fails a different test on each run.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     // Tests never inherit a developer's optional project memory provider or
     // host model routing; an empty value is treated as unset.
     env: {

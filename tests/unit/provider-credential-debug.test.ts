@@ -23,7 +23,13 @@ afterEach(() => {
 
 /** A random sentinel; its length is fixed so a length token is recognizable. */
 function sentinel(label: string): string {
-  return `aio-debug-${label}-${randomBytes(20).toString("hex")}`;
+  // The suffix checks below look for the last characters of the value. A
+  // digits-only suffix could equal an unrelated number in the output, so the
+  // last four characters always include a letter.
+  for (;;) {
+    const value = `aio-debug-${label}-${randomBytes(20).toString("hex")}`;
+    if (/[a-f]/u.test(value.slice(-4))) return value;
+  }
 }
 
 /** Everything written to the console or the standard streams while enabled. */
@@ -45,6 +51,8 @@ function captureDiagnostics(): () => string {
 /** Asserts no form derived from `value` appears in the captured diagnostics. */
 function expectNoCredentialDerivedData(output: string, value: string): void {
   const sha256 = createHash("sha256").update(value).digest("hex");
+  // The process ID is unrelated to the credential and may contain any digits.
+  const withoutPid = output.replaceAll(`pid=${process.pid}`, "pid=<pid>");
   for (const derived of [
     value,
     sha256,
@@ -55,9 +63,8 @@ function expectNoCredentialDerivedData(output: string, value: string): void {
     value.slice(-8),
     value.slice(-4),
   ])
-    expect(output).not.toContain(derived);
+    expect(withoutPid).not.toContain(derived);
   // No numeric token equal to the value's length, once the pid is set aside.
-  const withoutPid = output.replaceAll(`pid=${process.pid}`, "pid=<pid>");
   expect(withoutPid).not.toMatch(new RegExp(`\\b${value.length}\\b`, "u"));
   expect(withoutPid).not.toMatch(/length|fingerprint|sha256|prefix|suffix/iu);
   expect(output).not.toContain("credentials/");

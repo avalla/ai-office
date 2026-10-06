@@ -307,7 +307,9 @@ describe("bounded Claude worker", () => {
             args: ["-e", script],
             cwd: root,
             input: "",
-            timeoutMs: 100,
+            // Long enough for the worker to start and record its grandchild
+            // before the deadline kills the tree, even on a loaded host.
+            timeoutMs: 3_000,
           }),
         ).rejects.toMatchObject({ code: "WORKER_TIMEOUT" });
         const pid = Number(readFileSync(pidFile, "utf8"));
