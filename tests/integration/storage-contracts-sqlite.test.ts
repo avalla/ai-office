@@ -44,6 +44,35 @@ describe("SQLite project storage contracts", () => {
             packs: count("project_pack_binding_pack"),
           };
         },
+        async definitionPayloadShapes(projectId: string) {
+          return database
+            .query<
+              {
+                table_name: "owned" | "override";
+                local_id: string;
+                json_type: string | null;
+                title: string | null;
+              },
+              [string, string]
+            >(
+              // payload_json is TEXT guarded by json_valid on SQLite.
+              `SELECT 'owned' AS table_name, local_id,
+                      json_type(payload_json) AS json_type,
+                      json_extract(payload_json, '$.title') AS title
+                 FROM project_owned_definition WHERE project_id = ?
+               UNION ALL
+               SELECT 'override', local_id, json_type(payload_json),
+                      json_extract(payload_json, '$.title')
+                 FROM project_definition_override WHERE project_id = ?`,
+            )
+            .all(projectId, projectId)
+            .map((row) => ({
+              table: row.table_name,
+              localId: row.local_id,
+              jsonType: row.json_type,
+              title: row.title,
+            }));
+        },
         async definitionRowCounts(projectId: string) {
           const count = (
             table:

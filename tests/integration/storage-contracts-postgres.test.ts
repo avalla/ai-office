@@ -178,6 +178,31 @@ describe.skipIf(connectionString === undefined)(
           );
           return { heads: Number(head?.count), packs: Number(pack?.count) };
         },
+        async definitionPayloadShapes(projectId: string) {
+          return (
+            await database.query<{
+              table_name: "owned" | "override";
+              local_id: string;
+              json_type: string | null;
+              title: string | null;
+            }>(
+              `SELECT 'owned' AS table_name, local_id,
+                      jsonb_typeof(payload_json) AS json_type,
+                      payload_json->>'title' AS title
+                 FROM core.project_owned_definition WHERE project_id = $1
+               UNION ALL
+               SELECT 'override', local_id, jsonb_typeof(payload_json),
+                      payload_json->>'title'
+                 FROM core.project_definition_override WHERE project_id = $1`,
+              [projectId],
+            )
+          ).map((row) => ({
+            table: row.table_name,
+            localId: row.local_id,
+            jsonType: row.json_type,
+            title: row.title,
+          }));
+        },
         async definitionRowCounts(projectId: string) {
           const count = async (
             table:
@@ -1027,6 +1052,7 @@ describe.skipIf(connectionString === undefined)(
           "20261005000100_project_role_omission.sql",
           "20261006000100_project_agent_disable.sql",
           "20261006000200_project_workflow_override.sql",
+          "20261006000300_project_definition_payload_object.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -1397,6 +1423,7 @@ describe.skipIf(connectionString === undefined)(
           "20261005000100_project_role_omission.sql",
           "20261006000100_project_agent_disable.sql",
           "20261006000200_project_workflow_override.sql",
+          "20261006000300_project_definition_payload_object.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(
@@ -1425,6 +1452,606 @@ describe.skipIf(connectionString === undefined)(
           await cleanup.close();
         }
       }
+    });
+  },
+);
+
+const payloadMigration = "20261006000300_project_definition_payload_object.sql";
+
+describe.skipIf(connectionString === undefined)(
+  "PostgreSQL project definition payload objects",
+  () => {
+    const at = new Date("2026-10-06T00:00:00.000Z");
+    const tenant = "payload-tenant";
+    const project = "payload-project";
+    const digest = `sha256:${"a".repeat(64)}`;
+    const stages = [
+      { id: "z-last", role: "paralegal" },
+      { id: "a-first", role: "counsel" },
+      { id: "m-middle", role: "auditor" },
+    ];
+    const ownedPayloads = [
+      ["roles", "role", { id: "role", title: "Role", description: "Text" }],
+      ["taskTypes", "matter", { id: "matter", title: "Matter" }],
+      ["knowledge", "handbook", { id: "handbook" }],
+      [
+        "agents",
+        "drafter",
+        { id: "drafter", title: "Drafter", role: "role", prompts: ["b", "a"] },
+      ],
+      [
+        "workflows",
+        "intake",
+        { id: "intake", title: "Intake", taskType: "matter", stages },
+      ],
+    ] as const;
+    const overridePayloads = [
+      ["roles", "counsel", "replace", { id: "counsel", title: "Counsel" }],
+      ["roles", "clerk", "extend", { id: "clerk", description: "Ours é" }],
+      [
+        "agents",
+        "filer",
+        "replace",
+        {
+          id: "filer",
+          title: "Filer",
+          role: "counsel",
+          prompts: ["brief", "cite"],
+          knowledge: ["handbook", "statutes"],
+          capabilities: ["draft", "file"],
+        },
+      ],
+      [
+        "workflows",
+        "review",
+        "replace",
+        { id: "review", title: "Review", taskType: "matter", stages },
+      ],
+      ["workflows", "audit", "extend", { id: "audit", title: "Our audit" }],
+    ] as const;
+
+    interface StoredRow extends Record<string, unknown> {
+      table_name: string;
+      kind: string;
+      local_id: string;
+      json_type: string | null;
+      payload_text: string | null;
+      version: string;
+    }
+    const storedRows = (database: PostgresClient) =>
+      database.query<StoredRow>(
+        // xmin changes whenever a row is rewritten.
+        `SELECT 'owned' AS table_name, kind, local_id,
+                jsonb_typeof(payload_json) AS json_type,
+                payload_json::text AS payload_text, xmin::text AS version
+           FROM core.project_owned_definition
+         UNION ALL
+         SELECT 'override', kind, local_id, jsonb_typeof(payload_json),
+                payload_json::text, xmin::text
+           FROM core.project_definition_override
+         ORDER BY 1, 2, 3`,
+      );
+    const schemaShape = async (database: PostgresClient) => ({
+      constraints: await database.query<{ name: string; definition: string }>(
+        `SELECT conrelid::regclass::text || '.' || conname AS name,
+                pg_get_constraintdef(oid) AS definition
+           FROM pg_constraint
+          WHERE conrelid IN ('core.project_owned_definition'::regclass,
+                             'core.project_definition_override'::regclass)
+          ORDER BY 1`,
+      ),
+      columns: await database.query(
+        `SELECT table_name, column_name, data_type, is_nullable
+           FROM information_schema.columns
+          WHERE table_schema = 'core'
+            AND table_name IN ('project_owned_definition','project_definition_override')
+          ORDER BY 1, ordinal_position`,
+      ),
+      policies: await database.query(
+        `SELECT tablename, policyname, cmd, roles::text AS roles, qual, with_check
+           FROM pg_policies
+          WHERE schemaname = 'core'
+            AND tablename IN ('project_owned_definition','project_definition_override')
+          ORDER BY 1, 2`,
+      ),
+      rowSecurity: await database.query(
+        `SELECT relname, relrowsecurity FROM pg_class
+          WHERE oid IN ('core.project_owned_definition'::regclass,
+                        'core.project_definition_override'::regclass)
+          ORDER BY 1`,
+      ),
+    });
+
+    /**
+     * A database migrated up to, but not including, the payload migration,
+     * with one project and its definition head.
+     */
+    async function withLegacyDatabase(
+      work: (database: PostgresClient) => Promise<void>,
+    ): Promise<void> {
+      const databaseName = `ai_office_payload_${randomUUID().replaceAll("-", "")}`;
+      const partialRoot = mkdtempSync(
+        join(tmpdir(), "ai-office-postgres-payload-upgrade-"),
+      );
+      const partial = join(partialRoot, "migrations");
+      mkdirSync(partial);
+      for (const file of readdirSync(migrationDirectory).filter(
+        (name) => name.endsWith(".sql") && name < payloadMigration,
+      ))
+        copyFileSync(join(migrationDirectory, file), join(partial, file));
+      const admin = new PostgresClient(connectionString!);
+      await admin.query(`CREATE DATABASE "${databaseName}"`);
+      await admin.close();
+      const isolated = new URL(connectionString!);
+      isolated.pathname = `/${databaseName}`;
+      const database = new PostgresClient(isolated.toString());
+      try {
+        await migratePostgres(database, partial);
+        await database.query(
+          "INSERT INTO core.tenant(id,name,created_at,updated_at) VALUES ($1,'Tenant',$2,$2)",
+          [tenant, at],
+        );
+        await database.query(
+          "INSERT INTO core.project(id,tenant_id,name,created_at,updated_at) VALUES ($1,$2,'Project',$3,$3)",
+          [project, tenant, at],
+        );
+        await database.query(
+          "INSERT INTO core.project_definition_head(project_id,tenant_id,revision,changed_at) VALUES ($1,$2,1,$3)",
+          [project, tenant, at],
+        );
+        await work(database);
+      } finally {
+        await database.close();
+        rmSync(partialRoot, { recursive: true, force: true });
+        const cleanup = new PostgresClient(connectionString!);
+        try {
+          await cleanup.query(`DROP DATABASE "${databaseName}"`);
+        } finally {
+          await cleanup.close();
+        }
+      }
+    }
+
+    // The statements and bindings of the repository before this change: a
+    // JavaScript string bound to a jsonb parameter is stored by the driver as
+    // a jsonb string scalar. Passing an object stores a jsonb object.
+    const insertOwned = (
+      database: PostgresClient,
+      kind: string,
+      localId: string,
+      bound: unknown,
+    ) =>
+      database.query(
+        `INSERT INTO core.project_owned_definition(project_id, tenant_id, kind, local_id, revision, enabled, payload_json, actor_id, changed_at) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)`,
+        [project, tenant, kind, localId, 1, true, bound, "operator", at],
+      );
+    const insertOverride = (
+      database: PostgresClient,
+      kind: string,
+      localId: string,
+      operation: string,
+      bound: unknown,
+    ) =>
+      database.query(
+        `INSERT INTO core.project_definition_override(project_id, tenant_id, pack_id, pack_version, manifest_digest, kind, local_id, operation, revision, payload_json, actor_id, changed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)`,
+        [
+          project,
+          tenant,
+          "org.example.legal",
+          "1.0.0",
+          digest,
+          kind,
+          localId,
+          operation,
+          1,
+          bound,
+          "operator",
+          at,
+        ],
+      );
+
+    test("converts every legacy string payload to the equal object and changes nothing else", async () => {
+      await withLegacyDatabase(async (database) => {
+        for (const [kind, localId, value] of ownedPayloads)
+          await insertOwned(database, kind, localId, JSON.stringify(value));
+        for (const [kind, localId, operation, value] of overridePayloads)
+          await insertOverride(
+            database,
+            kind,
+            localId,
+            operation,
+            JSON.stringify(value),
+          );
+        await insertOverride(database, "prompts", "greeting", "disable", null);
+        // Rows that already hold an object must not be touched.
+        await insertOwned(database, "prompts", "already", {
+          id: "already",
+          title: "Object",
+        });
+        await insertOverride(database, "taskTypes", "already", "extend", {
+          id: "already",
+          title: "Object",
+        });
+
+        const before = await storedRows(database);
+        const shapeBefore = await schemaShape(database);
+        expect(before).toHaveLength(13);
+        expect(before.filter((row) => row.json_type === "string")).toHaveLength(
+          ownedPayloads.length + overridePayloads.length,
+        );
+        expect(
+          before
+            .filter((row) => row.json_type === "object")
+            .map((row) => [row.table_name, row.local_id]),
+        ).toEqual([
+          ["override", "already"],
+          ["owned", "already"],
+        ]);
+        expect(
+          before
+            .filter((row) => row.json_type === null)
+            .map((row) => [row.local_id, row.payload_text]),
+        ).toEqual([["greeting", null]]);
+
+        expect(await migratePostgres(database, migrationDirectory)).toEqual([
+          payloadMigration,
+        ]);
+
+        const after = await storedRows(database);
+        expect(
+          after.map((row) => [row.table_name, row.kind, row.local_id]),
+        ).toEqual(
+          before.map((row) => [row.table_name, row.kind, row.local_id]),
+        );
+        for (const [index, row] of after.entries()) {
+          const legacy = before[index]!;
+          if (legacy.json_type === null) {
+            expect(row).toEqual(legacy);
+          } else if (legacy.json_type === "object") {
+            // Not rewritten: same value, same row version.
+            expect(row).toEqual(legacy);
+          } else {
+            expect(row.json_type).toBe("object");
+            // The legacy value is a JSON string whose content is the JSON
+            // text the old repository wrote.
+            expect(JSON.parse(row.payload_text!)).toEqual(
+              JSON.parse(JSON.parse(legacy.payload_text!) as string),
+            );
+          }
+        }
+        expect(
+          await database.query(
+            `SELECT local_id, array_agg(stage->>'id' ORDER BY position) AS stage_ids
+               FROM (SELECT local_id, payload_json FROM core.project_owned_definition WHERE kind = 'workflows'
+                     UNION ALL
+                     SELECT local_id, payload_json FROM core.project_definition_override
+                      WHERE kind = 'workflows' AND operation = 'replace') AS workflow,
+                    jsonb_array_elements(payload_json->'stages') WITH ORDINALITY AS item(stage, position)
+              GROUP BY local_id ORDER BY local_id`,
+          ),
+        ).toEqual([
+          { local_id: "intake", stage_ids: ["z-last", "a-first", "m-middle"] },
+          { local_id: "review", stage_ids: ["z-last", "a-first", "m-middle"] },
+        ]);
+        expect(
+          await database.query(
+            "SELECT payload_json->>'title' AS title, payload_json->'prompts' AS prompts FROM core.project_definition_override WHERE local_id = 'filer'",
+          ),
+        ).toEqual([{ title: "Filer", prompts: ["brief", "cite"] }]);
+
+        // Only the two object checks are added; every earlier constraint,
+        // column, policy and the row security flag is as it was.
+        const shapeAfter = await schemaShape(database);
+        const added = [
+          {
+            name: "core.project_definition_override.project_definition_override_payload_json_check",
+            definition:
+              "CHECK (((payload_json IS NULL) OR (jsonb_typeof(payload_json) = 'object'::text)))",
+          },
+          {
+            name: "core.project_owned_definition.project_owned_definition_payload_json_check",
+            definition: "CHECK ((jsonb_typeof(payload_json) = 'object'::text))",
+          },
+        ];
+        expect(shapeAfter.constraints).toEqual(
+          [...shapeBefore.constraints, ...added].sort((left, right) =>
+            left.name < right.name ? -1 : 1,
+          ),
+        );
+        expect({ ...shapeAfter, constraints: [] }).toEqual({
+          ...shapeBefore,
+          constraints: [],
+        });
+        expect(shapeAfter.rowSecurity).toEqual([
+          { relname: "project_definition_override", relrowsecurity: true },
+          { relname: "project_owned_definition", relrowsecurity: true },
+        ]);
+
+        // The repository returns what the old repository returned for the
+        // same rows: the parsed payloads.
+        const state = await new PostgresProjectDefinitionRepository(
+          database,
+          tenant,
+        ).get(project);
+        expect(state.revision).toBe(1);
+        expect(
+          Object.fromEntries(
+            state.owned.map((item) => [
+              `${item.kind}/${item.id}`,
+              item.payload,
+            ]),
+          ),
+        ).toEqual({
+          ...Object.fromEntries(
+            ownedPayloads.map(([kind, id, value]) => [`${kind}/${id}`, value]),
+          ),
+          "prompts/already": { id: "already", title: "Object" },
+        });
+        expect(
+          Object.fromEntries(
+            state.overrides.map((item) => [
+              `${item.source.kind}/${item.source.localId}/${item.operation}`,
+              "payload" in item ? item.payload : "absent",
+            ]),
+          ),
+        ).toEqual({
+          ...Object.fromEntries(
+            overridePayloads.map(([kind, id, operation, value]) => [
+              `${kind}/${id}/${operation}`,
+              value,
+            ]),
+          ),
+          "prompts/greeting/disable": "absent",
+          "taskTypes/already/extend": { id: "already", title: "Object" },
+        });
+
+        // Tracked, so the runner does not apply it again; and applying the
+        // file again by hand rewrites no row and changes no constraint.
+        expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
+        await database.query(
+          readFileSync(join(migrationDirectory, payloadMigration), "utf8"),
+        );
+        expect(await storedRows(database)).toEqual(after);
+        expect(await schemaShape(database)).toEqual(shapeAfter);
+      });
+    });
+
+    test.each([
+      ["text that is not JSON", "not json: private-marker", "not JSON text"],
+      [
+        "JSON text of an array",
+        JSON.stringify([{ id: "private-marker" }]),
+        "JSON array, not a JSON object",
+      ],
+      ["JSON text of null", "null", "JSON null, not a JSON object"],
+      [
+        "JSON text with an escaped U+0000",
+        JSON.stringify({ id: "nul", title: "private-marker a\u0000b" }),
+        "an escaped U+0000",
+      ],
+      ["a jsonb number", 7, "jsonb number, not a JSON object"],
+    ] as const)(
+      "fails closed on %s and converts nothing",
+      async (_name, bound, reason) => {
+        await withLegacyDatabase(async (database) => {
+          await insertOwned(
+            database,
+            "roles",
+            "good",
+            JSON.stringify({ id: "good", title: "Good" }),
+          );
+          await insertOverride(
+            database,
+            "roles",
+            "good",
+            "extend",
+            JSON.stringify({ id: "good", title: "Good" }),
+          );
+          await insertOverride(database, "prompts", "off", "disable", null);
+          await insertOwned(database, "knowledge", "bad-owned", bound);
+          await insertOverride(
+            database,
+            "agents",
+            "bad-override",
+            "replace",
+            bound,
+          );
+          const before = await storedRows(database);
+          const shapeBefore = await schemaShape(database);
+
+          const error: unknown = await migratePostgres(
+            database,
+            migrationDirectory,
+          ).then(
+            () => null,
+            (failure: unknown) => failure,
+          );
+          expect(error).toMatchObject({
+            code: "22000",
+            message:
+              "cannot convert 2 project definition payload(s) to jsonb objects",
+          });
+          const detail = (error as { detail: string }).detail;
+          expect(detail).toContain(
+            `core.project_owned_definition (project_id=${project}, kind=knowledge, local_id=bad-owned): ${reason}`,
+          );
+          expect(detail).toContain(
+            `core.project_definition_override (project_id=${project}, pack=org.example.legal@1.0.0, kind=agents, local_id=bad-override): ${reason}`,
+          );
+          // The report names rows, never payload content.
+          expect(JSON.stringify(error)).not.toContain("private-marker");
+          expect(String((error as Error).message)).not.toContain(
+            "private-marker",
+          );
+          expect((error as { hint: string }).hint).toContain(
+            "supabase/README.md",
+          );
+
+          // Nothing is half-converted, tracked or constrained.
+          expect(await storedRows(database)).toEqual(before);
+          expect(await schemaShape(database)).toEqual(shapeBefore);
+          expect(
+            await database.query(
+              "SELECT count(*)::integer AS count FROM core.schema_migration WHERE version = $1",
+              [payloadMigration],
+            ),
+          ).toEqual([{ count: 0 }]);
+
+          // The operator repairs the named rows; the migration then applies.
+          await database.query(
+            "DELETE FROM core.project_owned_definition WHERE local_id = 'bad-owned'",
+          );
+          await database.query(
+            "UPDATE core.project_definition_override SET payload_json = $1::jsonb WHERE local_id = 'bad-override'",
+            [{ id: "bad-override", title: "Repaired" }],
+          );
+          expect(await migratePostgres(database, migrationDirectory)).toEqual([
+            payloadMigration,
+          ]);
+          expect(
+            (await storedRows(database)).map((row) => [
+              row.table_name,
+              row.local_id,
+              row.json_type,
+            ]),
+          ).toEqual([
+            ["override", "bad-override", "object"],
+            ["override", "off", null],
+            ["override", "good", "object"],
+            ["owned", "good", "object"],
+          ]);
+        });
+      },
+    );
+
+    describe("after the migration", () => {
+      let database: PostgresClient;
+      const scopedTenant = tenantId;
+
+      beforeAll(async () => {
+        database = new PostgresClient(connectionString!);
+        await migratePostgres(database, migrationDirectory);
+        await database.query(
+          "INSERT INTO core.tenant(id, name, created_at, updated_at) VALUES ($1, $2, $3, $3) ON CONFLICT DO NOTHING",
+          [scopedTenant, "Contract Tenant", at],
+        );
+      });
+      afterAll(async () => {
+        await database.close();
+      });
+
+      const seed = async () => {
+        const projectId = `payload-object-${randomUUID()}`;
+        await new PostgresProjectRepository(database, scopedTenant).save(
+          Project.create({
+            id: projectId,
+            name: "Payload object",
+            now: at,
+          }),
+        );
+        const repository = new PostgresProjectDefinitionRepository(
+          database,
+          scopedTenant,
+        );
+        const kept = await repository.replace(
+          {
+            projectId,
+            revision: 0,
+            owned: [
+              {
+                origin: "project_owned",
+                kind: "roles",
+                id: "kept",
+                revision: 1,
+                enabled: true,
+                payload: { id: "kept", title: "Kept" },
+                actorId: "operator",
+                changedAt: at.toISOString(),
+              },
+            ],
+            overrides: [],
+          },
+          0,
+          at,
+        );
+        return { projectId, repository, kept };
+      };
+
+      test("a payload holding U+0000 written straight through the repository is refused whole", async () => {
+        const { projectId, repository, kept } = await seed();
+        const error: unknown = await repository
+          .replace(
+            {
+              ...kept,
+              owned: [
+                ...kept.owned,
+                {
+                  ...kept.owned[0]!,
+                  id: "nul",
+                  payload: { id: "nul", title: "a\u0000b" },
+                },
+              ],
+            },
+            1,
+            at,
+          )
+          .then(
+            () => null,
+            (failure: unknown) => failure,
+          );
+        // PostgreSQL refuses the value; jsonb cannot hold U+0000. The
+        // application's project text rule (GP-07) rejects such text before
+        // any repository is reached, so this is a storage backstop only.
+        expect(error).toMatchObject({ code: "22P05" });
+        // The replacement is one transaction: the earlier state is intact.
+        expect(await repository.get(projectId)).toEqual(kept);
+      });
+
+      test("a writer that binds JSON text instead of an object is refused by the schema", async () => {
+        const { projectId, repository, kept } = await seed();
+        await expect(
+          database.query(
+            `INSERT INTO core.project_owned_definition(project_id, tenant_id, kind, local_id, revision, enabled, payload_json, actor_id, changed_at) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9)`,
+            [
+              projectId,
+              scopedTenant,
+              "roles",
+              "legacy",
+              1,
+              true,
+              JSON.stringify({ id: "legacy" }),
+              "operator",
+              at,
+            ],
+          ),
+        ).rejects.toMatchObject({
+          code: "23514",
+          constraint_name: "project_owned_definition_payload_json_check",
+        });
+        await expect(
+          database.query(
+            `INSERT INTO core.project_definition_override(project_id, tenant_id, pack_id, pack_version, manifest_digest, kind, local_id, operation, revision, payload_json, actor_id, changed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12)`,
+            [
+              projectId,
+              scopedTenant,
+              "org.example.legal",
+              "1.0.0",
+              digest,
+              "roles",
+              "legacy",
+              "extend",
+              1,
+              JSON.stringify({ id: "legacy" }),
+              "operator",
+              at,
+            ],
+          ),
+        ).rejects.toMatchObject({
+          code: "23514",
+          constraint_name: "project_definition_override_payload_json_check",
+        });
+        expect(await repository.get(projectId)).toEqual(kept);
+      });
     });
   },
 );
