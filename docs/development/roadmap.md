@@ -1890,7 +1890,14 @@ version and presentation, declarative pack-owned role capabilities in the
 schema-1 manifest, project rename, replace, omit and add, and deterministic
 upgrade merge rules with capability changes bound to plan approval. It adds
 forward SQLite and PostgreSQL migrations for role omission and portable archive
-format 7, and creates no Runtime role, grant or binding. Aliases,
+format 7, and creates no Runtime role, grant or binding. GP-12 defines pack
+agent archetypes as the same kind of definition layer: a stable agent identity,
+declarative role, prompt, knowledge and requested-capability references in the
+schema-1 manifest with requests bounded by the role's declared set, project
+replace, disable and add, and upgrade rules that reuse GP-08 and GP-11. It adds
+forward SQLite and PostgreSQL migrations for agent disable and portable archive
+format 8. It creates no Runtime agent and leaves model, tools, pipeline
+participation and approval eligibility to a later activation task. Aliases,
 Development Pack parity/extraction, automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its

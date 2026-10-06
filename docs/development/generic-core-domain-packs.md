@@ -208,13 +208,15 @@ before the mutation transaction. When the closure cannot be resolved the check
 is skipped. GP-06 remains the authority: it rejects a collision that appears
 later, for example after the binding changes or through restore.
 
-| Schema-1 pack contribution                                    | `replace`               | `extend`                      | `disable`   |
-| ------------------------------------------------------------- | ----------------------- | ----------------------------- | ----------- |
-| Task types, agents, artifact types, evidence types, knowledge | Descriptive fields only | Absent title/description only | Unsupported |
-| Roles (`disable` since GP-11), prompts                        | Descriptive fields only | Absent title/description only | Supported   |
-| Workflows, policies, capabilities, validators                 | Unsupported             | Unsupported                   | Unsupported |
+| Schema-1 pack contribution                            | `replace`                                         | `extend`                      | `disable`   |
+| ----------------------------------------------------- | ------------------------------------------------- | ----------------------------- | ----------- |
+| Task types, artifact types, evidence types, knowledge | Descriptive fields only                           | Absent title/description only | Unsupported |
+| Roles (`disable` since GP-11), prompts                | Descriptive fields only                           | Absent title/description only | Supported   |
+| Agents (reference fields and `disable` since GP-12)   | Descriptive fields and the GP-12 reference fields | Absent title/description only | Supported   |
+| Workflows, policies, capabilities, validators         | Unsupported                                       | Unsupported                   | Unsupported |
 
-`replace` supplies the complete schema-1 descriptive envelope; `extend` fills
+`replace` supplies the complete schema-1 descriptive envelope, and for an agent
+the reference fields of GP-12; `extend` fills
 only optional title or description fields missing from the exact source. An
 empty extension or a change to identity or an existing source field is invalid.
 Unknown fields,
@@ -233,7 +235,9 @@ actor and timestamp without the definition body. Portable archive format 6
 carries authoritative entries, including unresolved pinned overrides; formats
 1–5 remain readable with their original meanings. Format 6 excludes installed
 artifacts, credentials and resolved configuration. GP-11 adds format 7 for a
-state that omits a role; format 6 keeps its prompt-only `disable` rule.
+state that omits a role; format 6 keeps its prompt-only `disable` rule. GP-12
+adds format 8 for a state that disables an agent or stores agent reference
+fields; format 7 rejects both.
 
 GP-06 resolves these sources into an effective configuration and defines
 its digest. GP-08 handles pack upgrade reconciliation. Aliases, legacy
@@ -666,6 +670,278 @@ with definitions is still written as format 6, byte for byte as before.
   agent or runtime binding, aliases, or official role names. GP-12 owns agent
   archetypes, GP-13 workflow templates and GP-16 capability contracts.
 
+## GP-12 pack agent archetypes
+
+GP-12 defines pack agents as declarative archetypes that a project resolves
+into its own configuration, as GP-11 did for roles and with the same
+mechanisms. It is a definition layer only. It creates no Runtime agent,
+selects no model, activates no tool, adds no agent to a pipeline, makes no
+agent eligible to approve anything and grants or enforces no capability.
+Existing OfficeManifest, role, agent, pipeline and run-pin rows are neither
+read nor written, agent sync and model routing are unchanged, and nothing is
+scheduled from a resolved agent.
+
+Model, tools, pipeline participation and approval eligibility are deliberately
+not part of this contract. They belong to a later activation task that turns a
+resolved archetype into a Runtime agent. GP-12 is therefore not the final agent
+model: it fixes identity, the declarative references and their customization
+and upgrade rules, and nothing else.
+
+### Identity
+
+Every resolved agent has a stable `agentId`:
+
+- `pack:<packId>/agents/<localId>` for a pack agent;
+- `project:agents/<localId>` for a project-added agent.
+
+The `agentId` contains no pack version, manifest digest, title or description.
+The pack ID and the agent local ID are the identity-bearing keys: a pack upgrade
+that keeps both keeps the `agentId`, and changing either is a removal and an
+addition, not a rename. The GP-06 `effectiveId` still carries the exact pack
+tuple and changes with every pack version.
+
+### Declarative references
+
+A schema-1 pack agent may carry four optional fields. Each is a bare local ID,
+or a list of bare local IDs, of a definition declared in the same manifest:
+
+| Field          | Shape             | Names                                                         |
+| -------------- | ----------------- | ------------------------------------------------------------- |
+| `role`         | one local ID      | an item of `contributions.roles`                              |
+| `prompts`      | list of local IDs | items of `contributions.prompts`                              |
+| `knowledge`    | list of local IDs | items of `contributions.knowledge`                            |
+| `capabilities` | list of local IDs | requested capabilities: items of `contributions.capabilities` |
+
+The lists follow the GP-11 rules for a role's `capabilities`: every entry is a
+valid, unique local ID; an empty array is rejected, because "none" has exactly
+one encoding, the absent field; and the validated manifest holds each list in
+ascending code-unit order, so `manifestDigest` does not depend on the written
+order. The contract package rejects, with a typed `DomainPackManifestError`
+(`invalid_contribution`) and the path of the offending member: a malformed
+`role`, a non-array list, an empty list, a malformed or duplicate entry, a
+reference to a definition the manifest does not declare, and any of the four
+fields on a contribution kind other than agents, where it remains an unknown
+field (a role's own `capabilities` is the GP-11 field). References are bare
+local IDs, so a cross-pack reference cannot be expressed: a definition declared
+only in a dependency pack is an unknown reference.
+
+The limit: an agent can request only capabilities its role declares.
+`capabilities` requires `role`, and every entry must be in that role's
+`capabilities` list. A request without a role, and a request for a capability
+the role does not declare, fail with `invalid_contribution` at
+`contributions.agents[i].capabilities` and
+`contributions.agents[i].capabilities[j]`.
+
+A requested capability is a declarative request inside the role's declared
+set. It grants nothing, authorizes nothing and is not checked against
+registered providers or capability policy; GP-16 owns capability contracts and
+controlled-action authorization is unchanged.
+
+This is an additive section-schema extension within manifest schema 1 and core
+contract version 1. A manifest that omits the four fields keeps its canonical
+form and digest; the four golden fixture digests are unchanged. A Runtime built
+before GP-12 rejects a manifest that uses any of the fields as an unknown
+field; it never ignores them.
+
+### Project customization
+
+| Intent  | Mechanism                         | Effect                                                                                              |
+| ------- | --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Rename  | `extend` override setting `title` | Presentation only. `agentId` and the pack's references are unchanged.                               |
+| Replace | `replace` override                | The project's complete agent envelope substitutes the pack's. The slot and `agentId` stay.          |
+| Disable | `disable` override                | The agent leaves `agents` and is listed in `disabledAgents`. Its references are not resolved.       |
+| Add     | project-owned `agents` definition | A `project:agents/<localId>` agent that references project-owned definitions, without capabilities. |
+
+Unlike a role's capability set, which stays pack-owned (GP-11), the reference
+fields of an agent are project-controlled. A `replace` payload on a pack agent
+is the complete envelope `id`, optional `title`, `description`, `role`,
+`prompts`, `knowledge` and `capabilities`, with the list rules above. A field
+the payload omits is absent from the resolved agent: a replacement without
+`role` yields an agent with no role, and a replacement is never merged with
+the pack's references. Every reference in an override is a bare local ID that
+resolves in the namespace of the override's own pack tuple. Schema 1 has no
+cross-pack and no pack-to-project reference, so a replaced pack agent cannot
+name a project-owned role, prompt or knowledge entry.
+
+`extend` stays descriptive: it fills only an absent `title` or `description`
+and keeps every pack reference. A reference field in an extension, and on any
+kind other than agents, is rejected (`protected_security_invariant`).
+
+A project-owned agent (`put_owned`, kind `agents`) may carry `role`, `prompts`
+and `knowledge`. They are bare local IDs that resolve to project-owned
+definitions only. `capabilities` on a project-owned agent is rejected
+(`protected_security_invariant`): project-added roles have no capabilities in
+GP-11, so there is no set a request could stay within.
+
+GP-12 widens the GP-07 override matrix: `disable` is supported for agents as
+well as prompts and roles, and `replace` on an agent accepts the reference
+fields. The mutation contract, the GP-06 re-check of stored state, both
+storage schemas and the portable archive apply the same rule.
+
+Validation happens in three places:
+
+- **Mutation contract.** `put_owned` and `put_override` check shape before
+  anything else: an entry that is not a local ID, a non-array or empty list
+  (`malformed_origin_reference`), a duplicate entry
+  (`conflicting_ownership_metadata`), and `capabilities` without `role`
+  (`agent_capability_exceeds_role`: with no role there is no set to request
+  from). The stored lists are in ascending code-unit order.
+- **Preview and apply of an override on a pack agent**, when the exact source
+  manifest can be read, as GP-07 reads it for every override. A `role`,
+  prompt, knowledge entry or capability the source manifest does not declare is
+  reported as `source_definition_missing`; a requested capability outside the
+  named role's declared set is reported as `agent_capability_exceeds_role`.
+  Nothing is written while an issue is reported.
+- **GP-06 resolution**, which is the authority and fails closed, also for
+  state that arrived by restore or changed under a binding change.
+
+### Resolution
+
+For every enabled agent the resolver resolves each reference inside the
+agent's own namespace: the exact originating pack tuple for a pack agent,
+replaced or not, and the project-owned definitions for a project-added agent.
+
+| Finding                                                             | Code                            |
+| ------------------------------------------------------------------- | ------------------------------- |
+| A referenced role, prompt, knowledge entry or capability is missing | `missing_agent_reference`       |
+| The bare reference exists only in other namespaces, more than once  | `ambiguous_reference`           |
+| A referenced role, prompt or knowledge entry is disabled or omitted | `disabled_required_definition`  |
+| A requested capability is outside the effective role's set          | `agent_capability_exceeds_role` |
+| A stored override payload violates the mutation contract            | `unresolved_override`           |
+| A stored project-owned agent violates the mutation contract         | `configuration_invariant`       |
+
+The effective role's set is the pack-owned set of GP-11, which no override
+changes. A disabled agent is not part of the configuration, so its references
+are not resolved and cannot fail. No existing validation is weakened: omitting
+a role or disabling a prompt that an enabled agent names now fails resolution,
+exactly as omitting a role that an enabled workflow names does.
+
+`project:configuration:show` exposes a derived agent contract view next to the
+GP-11 role view:
+
+- `agents`: one entry for every enabled agent, in the GP-06 definition order,
+  with `agentId`, `effectiveId`, `origin` (`pack_owned` or `project_owned`),
+  the effective `title` and `description` when present, `roleId` when the
+  agent names a role, `prompts`, `knowledge`, `capabilities` and
+  `customization` (`none`, `replace` or `extend`);
+- `disabledAgents`: the `agentId` of every agent that is disabled, by a
+  `disable` override or as a project-owned agent with `enabled: false`, in the
+  same order.
+
+Every reference in the view is a stable ID of the GP-11 form:
+`pack:<packId>/<kind>/<localId>` or `project:<kind>/<localId>`, with kinds
+`roles`, `prompts`, `knowledge` and `capabilities`. The lists are in ascending
+local-ID order. `roleId` is the `roleId` of the GP-11 role view.
+
+The view is derived from the effective definitions and is not part of the
+version-1 `configurationDigest` material. The digest format and the documented
+empty-input vector are unchanged, and a configuration that uses none of the
+four fields keeps its digest. A pack agent's references are part of its pack
+payload in `effectiveDefinitions`, and a project's replacement is part of the
+overridden payload there, so the digest of a configuration that uses them
+reflects them through that existing field.
+
+### Upgrade and merge semantics
+
+`project:pack:upgrade` (GP-08) carries agent customizations across a pack
+version change with the GP-08 and GP-11 rules and no new mechanism. Stable
+`agentId` values are identical before and after.
+
+| Project state of the agent      | New pack version                                                 | Outcome                                                                                                                                                         |
+| ------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Not customized                  | Changed                                                          | The new template applies. Reported as a template change.                                                                                                        |
+| `replace`                       | Changed, the project's references still resolve                  | `retargeted`. The project's envelope wins whole and `upstream: changed` is reported.                                                                            |
+| `replace`                       | A referenced definition is gone, or the request exceeds the role | Blocks as `prospective_configuration_invalid` with the GP-06 code (`missing_agent_reference`, `disabled_required_definition`, `agent_capability_exceeds_role`). |
+| `extend`                        | Changed, extended fields still absent upstream                   | `retargeted`. The project's fields fill the gaps and the references are the new version's.                                                                      |
+| `extend`                        | Now sets a field the project extends                             | Blocks as `extend_conflict` until resolved with `convert_to_replace` or `remove_override`.                                                                      |
+| `disable`                       | Changed                                                          | `retargeted`. The agent stays disabled and `upstream: changed` is reported.                                                                                     |
+| Any override                    | Agent removed                                                    | Blocks as `source_definition_removed`. `retain_as_project_owned` is accepted only for a `replace` without reference fields; otherwise `remove_override`.        |
+| Any override                    | Pack removed                                                     | Blocks as `source_pack_removed`, resolved the same way.                                                                                                         |
+| Role omitted or prompt disabled | An enabled pack agent now names it                               | Blocks as `prospective_configuration_invalid` (`disabled_required_definition`).                                                                                 |
+| Project-added agent             | Pack starts to provide the same kind and local ID                | Blocks as `prospective_configuration_invalid` (`duplicate_effective_definition`). The project agent is never discarded.                                         |
+| Project-added agent             | Anything else                                                    | Untouched.                                                                                                                                                      |
+
+A `prospective_configuration_invalid` issue carries the GP-06 code as its
+`detail`, and its message ends with the GP-06 diagnostic, which names the
+agent by effective ID and the reference or capability that failed. It is not
+an override conflict, so no `--resolutions` entry answers it. The operator
+resolves it explicitly before the upgrade, with `project:definition:apply`: by
+changing the replacement so that it is valid against both versions (a
+replacement can always drop the reference), or by removing the override, the
+role omission or the prompt disable that causes it. Nothing is rewritten on the
+project's behalf.
+
+`convert_to_replace` on an agent `extend_conflict` builds the replacement from
+both sides: the project's `title` and `description` win where it set them, and
+every other field, including `role`, `prompts`, `knowledge` and
+`capabilities`, is taken from the new template. As in GP-11 the copied fields
+become project values from then on.
+
+`retain_as_project_owned` turns a `replace` override whose template is gone
+into a project-owned agent. A project-owned agent can reference only project
+definitions, and every reference of an override names a pack definition, so
+retaining is valid only when the payload carries none of the four reference
+fields. Otherwise it is an `invalid_resolution` and blocks; the operator
+removes the override, or first replaces the agent without references. A
+retained agent has a new `project:agents/<localId>` identity.
+
+No upgrade silently recreates a disabled agent, discards a project-added
+agent, resets an override or drops an upstream change. Conflict outcomes are a
+pure function of the snapshot, the desired tuples, the resolutions and the
+installed catalog, as in GP-08.
+
+Capability review is deliberately not duplicated for agents. GP-11's
+`roleCapabilityChanges`, `targetRoleCapabilities` and the `project:pack:apply`
+guard stay keyed on role capability sets, and GP-12 adds no second report or
+guard for agent requests. The role set is the approved bound: an agent request
+is a declarative request inside it, the resolver rejects any request outside
+it, and a version that widens a role's set is already refused by
+`project:pack:apply` and approved through the upgrade plan. A change to a pack
+agent, including its requested capabilities, is reported in the existing
+template change list (`kind: agents`, `changed`, with `customized`), and
+`project:pack:apply` applies it as it applies any other template change.
+
+### Persistence
+
+SQLite migration `0045` and PostgreSQL migration `20261006000100` widen the
+`project_definition_override` operation constraint from "`disable` on prompts
+or roles" to "`disable` on prompts, roles or agents". SQLite rebuilds the
+table and copies every row; PostgreSQL drops the GP-11 constraint
+`project_definition_override_operation_kind_payload_check` by name and adds it
+back widened under the same name, leaving tenant ownership, keys and RLS
+policies untouched. `0042`, `0044`, `20261003000100` and `20261005000100` are
+not edited. Existing rows keep their values; a `disable` on any other kind is
+still rejected by the constraint. The agent reference fields need no schema
+change: both backends store a definition payload as JSON without a key
+constraint.
+
+Portable archive format 8 has the format-7 contents and additionally accepts a
+`disable` override on an agent and the four reference fields in an agent
+payload (three in a project-owned agent, which cannot carry `capabilities`).
+Formats 1–7 keep their readers and meanings, and format 7 still rejects both.
+A backup is written as format 8 only when the project state contains an agent
+`disable` override or an agent payload with a reference field; every other
+state is written as before, byte for byte.
+
+### Limitations and non-goals
+
+- No Runtime agent or pack-owned Runtime identity is created, synced or
+  activated. Model selection and model routing, tools, pipeline participation
+  and approval eligibility are left to a later activation task.
+- Requested capabilities are declarations within a role's declared set. No
+  capability is granted or enforced.
+- Project-added agents cannot request capabilities, because project-added
+  roles cannot declare any (GP-11).
+- References are local to one manifest or to the project. A replaced pack
+  agent cannot name a project-owned role, prompt or knowledge entry, and a
+  project-added agent cannot name a pack definition. Qualified cross-namespace
+  references are not expressible in schema 1.
+- A pack agent's role cannot be omitted, and a prompt it names cannot be
+  disabled, while the agent is enabled and still names them; the project
+  disables or replaces the agent first.
+- An upgrade blocked by a customization that no longer resolves is resolved by
+  editing or removing that customization, not by an upgrade resolution.
+
 ## Objective and decision boundary
 
 AI Office should operate governed teams in arbitrary domains. The core owns
@@ -861,7 +1137,7 @@ carry the same fields. GP-01 through GP-07 have passed review and merged.
 | GP-10B — Development workflows and prompts         | GP-10A, GP-13                   | Move feature/bugfix/research/release templates and software assessment/instruction prompts behind pack defaults; project pipelines remain editable.                                                                      | Workflow and prompt templates; stage/approval and project-customization parity tests.                                | New pipeline engine or forced workflow.                   |
 | GP-10C — Development evidence and adoption         | GP-10B, GP-14–GP-16             | Put repository/GitHub/commit/PR/CI evidence types, knowledge guidance and capability declarations behind pack contracts; offer previewed explicit adoption while preserving old bindings.                                | Development pack completion and migration report; legacy snapshot, approval, action and provenance regression tests. | Redesign of worker, queue, model routing or governance.   |
 | GP-11 — Pack role archetypes                       | GP-06, GP-07                    | Define pack roles with stable identity and declarative capabilities; rename, replace, omit and add them in project configuration; preserve identity, capabilities and project changes on upgrade.                        | Role contracts and customization/upgrade tests.                                                                      | Official role names; Runtime roles, grants or bindings.   |
-| GP-12 — Pack agent archetypes                      | GP-11                           | Instantiate, replace, disable or add agents; project config controls name, role, model, guidance/prompts, knowledge, tools, capability requests, pipeline participation and approval eligibility within existing limits. | Agent configuration contracts and upgrade/authority tests.                                                           | Pack-owned Runtime identities or model-routing rewrite.   |
+| GP-12 — Pack agent archetypes                      | GP-11                           | Definition layer: stable agent identity; declarative role, prompt, knowledge and requested-capability references bounded by the role; project replace, disable and add; identity and project changes kept on an upgrade. | Agent configuration contracts and upgrade/authority tests.                                                           | Runtime agents, model, tools, pipeline, approval, grants. |
 | GP-13 — Pack workflow templates                    | GP-11, GP-12                    | Instantiate, reorder, extend, replace or disable pipelines and stages; preserve generic engine, pinning, approvals and guards.                                                                                           | Pipeline template and project customization tests, including in-flight version changes.                              | Domain-specific pipeline engine.                          |
 | GP-14 — Artifacts, evidence and validators         | GP-03, GP-06; M11.6             | Declare domain types and trusted validator references atop generic version/provenance/review contracts; stale evidence and invalid validator output fail closed.                                                         | Typed fixture schemas and version-bound review/validator tests.                                                      | Running arbitrary pack code.                              |
 | GP-15 — Pack knowledge guidance                    | GP-06                           | Contribute categories, schemas, seed references, retrieval guidance and agent settings through AgentKnowledgeStore with trusted tenant/project scope.                                                                    | Scope compatibility plan and old/new knowledge fixtures; outage and provenance tests.                                | New vector/graph store or authority.                      |

@@ -27,13 +27,16 @@ any depth, lone Unicode surrogates, nonfinite numbers and integer literals
 outside the interoperable safe-integer range. Schema 1 requires every envelope
 field and contribution section. Contribution items currently accept only an
 ASCII `id` and optional `title`/`description`; workflow items also have a
-`taskType` and ordered `stages` with `id`/`role`, and role items may have
+`taskType` and ordered `stages` with `id`/`role`, role items may have
+`capabilities`, and agent items may have `role`, `prompts`, `knowledge` and
 `capabilities` (see below). Unknown fields fail validation,
 including executable entry points and embedded credentials. Later GP slices
 must explicitly extend section schemas through a compatible manifest/schema
 decision before they can add fields. The current generic `Contribution` type is
-not the final field-level schema for agents, artifact types, evidence types,
-policies, knowledge, capabilities, prompts or validators.
+not the final field-level schema for artifact types, evidence types,
+policies, knowledge, capabilities, prompts or validators, and the agent fields
+below are not the final agent schema: model, tools, pipeline participation and
+approval eligibility are not expressible.
 
 A role item may carry an optional `capabilities` array of local IDs (GP-11).
 Every entry must be a valid, unique local ID naming an item of the same
@@ -46,11 +49,27 @@ capability of another pack, including a dependency. The list is a set: the
 validated manifest holds it in ascending code-unit order, and that order is
 what the digest covers. The association is declarative and grants nothing.
 
-Versioning and compatibility: this is an additive section-schema extension.
+An agent item may carry four optional reference fields (GP-12): `role`, one
+local ID naming an item of the same manifest's `contributions.roles`, and
+`prompts`, `knowledge` and `capabilities`, arrays of local IDs naming items of
+`contributions.prompts`, `contributions.knowledge` and
+`contributions.capabilities`. The arrays follow the rules of a role's
+`capabilities`: valid, unique local IDs, no empty array, ascending code-unit
+order in the validated manifest and in the digest input. An agent's
+`capabilities` are requested capabilities and are bounded by its role: the
+field requires `role`, and every entry must be in that role's `capabilities`.
+A malformed `role`, a non-array or empty list, a malformed or duplicate entry,
+an undeclared reference, a request without a role, a request outside the
+role's set and any of the fields on another contribution kind fail with
+`invalid_contribution` and the member's path. References are bare local IDs,
+so a definition of another pack, including a dependency, cannot be named. The
+references are declarative: they create no Runtime agent and grant nothing.
+
+Versioning and compatibility: these are additive section-schema extensions.
 The manifest stays schema 1 and the core contract version stays 1. A manifest
-that omits the field has the same canonical form and `manifestDigest` as
-before. A reader built before the extension rejects a manifest that uses the
-field as an unknown field; no reader ignores it.
+that omits the fields has the same canonical form and `manifestDigest` as
+before. A reader built before an extension rejects a manifest that uses its
+fields as unknown fields; no reader ignores them.
 
 For `manifestDigest`, validation removes only the root `manifestDigest`, sorts
 `dependencies` and each top-level contribution array by unique ASCII `id`,

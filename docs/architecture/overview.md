@@ -81,6 +81,12 @@ by the selected pack version; a project may rename, replace, omit or add role
 definitions, and the derived view lists the resulting role contracts. These
 remain definitions: no Runtime role, grant or agent binding is created. A role
 omission is carried by portable archive format 7; format 6 is unchanged.
+GP-12 does the same for pack agents (`pack:<packId>/agents/<localId>`): an
+agent may name a role, prompts, knowledge entries and requested capabilities
+of its own pack, a request cannot exceed the role's declared set, and a project
+may replace, disable or add agent definitions. No Runtime agent, model, tool,
+pipeline participation or approval eligibility is derived from them; an agent
+disable or agent reference field is carried by portable archive format 8.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,
