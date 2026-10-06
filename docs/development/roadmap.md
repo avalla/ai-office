@@ -1962,9 +1962,18 @@ development pack at `0.2.0` and the legacy path untouched, and records two
 limits: project text stays bounded at 16,000 UTF-16 code units, below the
 65,536-byte legacy guidance bound, and a mutation over the 16 KiB argument
 limit cannot be sent. The fields are declarative; nothing in the Runtime
-reads them. The second pull request, development pack `0.3.0` with the
-descriptive defaults, the `maintenance -> delivery` route, role guidance and
-reference prompts, is not delivered yet. GP-25, whose number is now
+reads them. The second pull request extends the development pack to `0.3.0`
+with the descriptive defaults (role responsibilities, stage title, objective
+and checks), the `maintenance -> delivery` route as `additionalTaskTypes`,
+the four role guidance prompts (the bytes of `agents/<id>/system.md`, named
+by the agent of the role) and reference prompts for the static
+instruction-contract text and the requirement-assessment message. It proves
+expressible-subset parity on the GP-09 fixture and on the shipped defaults
+and moves the residue list to `schemaVersion` 3 with the seven GP-10B-2
+entries delivered. It is not execution parity; `knowledge` and `policies`
+stay empty, the pack is still unregistered and unread by the Runtime, no
+instruction file or provider request is generated from a pack prompt and
+nothing was removed from the legacy path. GP-25, whose number is now
 confirmed, gives the schema-1 `policies` contribution a typed form: a policy
 targets one workflow of its own pack and declares its `enforcement` and, per
 stage, `requiresApproval`, `requiresIndependentApproval`,
@@ -1981,8 +1990,7 @@ only through `project:pack:upgrade`, whose plan reports `policyChanges` and
 format, and nothing is enforced from a policy: the Runtime still reads only
 the OfficeManifest pipelines. The policies of the development reference pack
 and their parity tests are a second GP-25 pull request that follows the pack
-version of GP-10B-2. Aliases, the Development Pack `0.3.0` data and prompts
-(GP-10B-2, second pull request), the development pack's policy data (GP-25, second pull
+version of GP-10B-2. Aliases, the development pack's policy data (GP-25, second pull
 request), Runtime enforcement from pack policies (`a45ddb12`), evidence and
 adoption (GP-10C), automatic
 selection, remote marketplace/downloads, executable validators and Runtime
