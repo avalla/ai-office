@@ -2662,10 +2662,48 @@ Criteria 10 and 11 belong to the second pull request.
 - A policy that governs a workflow of another pack, or more than one policy
   for one workflow.
 
+### Known limitations
+
+Nothing is enforced from a policy yet, so none of these has an effect today.
+Each is an input for Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834` and
+must be decided before a pack policy is enforced.
+
+- Two selection changes can replace a policy without a policy-level audit
+  record. The `project:pack:apply` guard compares the two closures of one
+  selection change and refuses only for a workflow present in both. A project
+  bound to a version that governs a workflow can apply the empty selection
+  and then a version that keeps the workflow and drops or changes its policy.
+  Both changes apply: criterion 9 requires that removing and adding a pack
+  still applies, and GP-11 has the same property for role capabilities. Each
+  preview reports the `policyChanges` of its own step, but the
+  `project.pack_binding_applied` event records only the pack tuples
+  (`previousPacks` and `packs`), so the audit trail shows the two selections
+  and not the policy difference. To decide: whether the binding event
+  carries the policy changes, or the guard compares against the last
+  governed state of the workflow instead of the previous closure.
+- A twin of a governed workflow is ungoverned. A project can disable a
+  governed pack workflow, which leaves its policy `inert`, and add a
+  project-owned workflow under another local ID with the same task type,
+  stages and roles. No policy applies to that workflow: a policy targets a
+  workflow of its own pack, and no project-authored policy exists (owner
+  decisions 7 and 10). To decide: whether such a project is outside the
+  pack's governance by design, or enforcement must close the route.
+- The separation list has a wider bound than the legacy one.
+  `requiresDifferentAgentFrom` uses the general contribution reference bound
+  of 1,000 entries, and the legacy OfficeManifest schema allows at most 16
+  per stage. The bound is the approved contract and is unchanged. A pack can
+  therefore declare a separation list that the legacy manifest cannot
+  express: a parity gap for the second pull request, whose pack data must
+  stay within the legacy bound, and for `a45ddb12`.
+
 ### Implementation record
 
 This records what the contract pull request built where the contract left a
-choice, and where the evidence stops.
+choice, and where the evidence stops. Three of the choices are visible to the
+owner: policy identity is part of policy equality, `targetPolicies` stays
+listed when `policyChanges` is `unavailable` (criterion 8), and a governance
+key on a workflow stage is now refused as `protected_security_invariant`
+instead of `malformed_origin_reference`.
 
 - Contract package. `PolicyContribution` and `PolicyStageClause` in
   `packages/domain-pack-contracts/src/manifest.ts`. Shape is checked when the
