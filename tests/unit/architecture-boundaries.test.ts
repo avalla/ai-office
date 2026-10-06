@@ -935,3 +935,154 @@ test("only the Runtime admission service writes native knowledge", () => {
     "packages/runtime-host/src/runtime-command.ts",
   ]);
 });
+
+describe("GP-10A development pack stays a reference artifact outside production", () => {
+  const packDirectory = "packages/domain-pack-development";
+  const names = /domain-pack-development|org\.ai-office\.development/u;
+
+  /** Every file under a directory, whatever its type. */
+  function allFiles(directory: string): string[] {
+    if (!existsSync(directory)) return [];
+    return readdirSync(directory).flatMap((entry) => {
+      if (entry === "node_modules") return [];
+      const path = join(directory, entry);
+      return statSync(path).isDirectory() ? allFiles(path) : [path];
+    });
+  }
+
+  /** Imports of a pack source file that leave the pack and its contracts. */
+  function importsOutsideContracts(file: string, source: string): string[] {
+    return importedSpecifiers(source).filter((specifier) => {
+      const target = resolvedTarget(file, specifier);
+      if (target === null)
+        return !specifier.startsWith("@ai-office/domain-pack-contracts/");
+      return !(
+        target.startsWith("packages/domain-pack-contracts/") ||
+        target.startsWith(`${packDirectory}/`)
+      );
+    });
+  }
+
+  test("no package, app, entry point or script imports the pack package or contains its ID", () => {
+    const scanned = ["packages", "apps", "bin", "scripts"].flatMap(
+      (directory) => allFiles(join(repositoryRoot, directory)),
+    );
+    const mentions = scanned
+      .filter((file) => names.test(readFileSync(file, "utf8")))
+      .map((file) => relative(repositoryRoot, file))
+      .sort();
+    // The scan sees the pack, so an empty result elsewhere is not blindness.
+    expect(mentions).toEqual([
+      `${packDirectory}/README.md`,
+      `${packDirectory}/manifest.json`,
+      `${packDirectory}/outside-pack-vocabulary.json`,
+      `${packDirectory}/package.json`,
+    ]);
+    // The layers the contract names were all walked.
+    for (const layer of [
+      "packages/domain/",
+      "packages/application/",
+      "packages/runtime-host/",
+      "packages/storage-sqlite/",
+      "packages/storage-postgres/",
+      "packages/storage-surrealdb/",
+      "packages/storage-bootstrap/",
+      "apps/",
+    ])
+      expect(
+        scanned.some((file) =>
+          relative(repositoryRoot, file).startsWith(layer),
+        ),
+      ).toBe(true);
+    // No path alias or workspace dependency reaches it either.
+    for (const location of ["tsconfig.json", "vitest.config.ts"])
+      expect(readFileSync(join(repositoryRoot, location), "utf8")).not.toMatch(
+        names,
+      );
+    for (const manifest of scanned.filter(
+      (file) =>
+        file.endsWith("package.json") &&
+        !relative(repositoryRoot, file).startsWith(`${packDirectory}/`),
+    ))
+      expect(readFileSync(manifest, "utf8")).not.toMatch(names);
+    expect(
+      readFileSync(join(repositoryRoot, "package.json"), "utf8"),
+    ).not.toMatch(names);
+  });
+
+  test("the pack package is data and imports only the contracts package", () => {
+    const files = allFiles(join(repositoryRoot, packDirectory));
+    expect(files.length).toBeGreaterThan(0);
+    const offenders: string[] = [];
+    for (const file of files) {
+      const location = relative(repositoryRoot, file);
+      if (/\.(?:json|md)$/u.test(file)) continue;
+      if (!/\.(?:ts|tsx|mts|js|mjs)$/u.test(file)) {
+        offenders.push(`${location} is neither data nor source`);
+        continue;
+      }
+      for (const specifier of importsOutsideContracts(
+        file,
+        readFileSync(file, "utf8"),
+      ))
+        offenders.push(`${location} -> ${specifier}`);
+    }
+    expect(offenders).toEqual([]);
+    const manifest = JSON.parse(
+      readFileSync(join(repositoryRoot, packDirectory, "package.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(manifest).toEqual({
+      name: "@ai-office/domain-pack-development",
+      private: true,
+      type: "module",
+    });
+    // The rule itself: contracts pass, anything else is reported.
+    const probe = join(repositoryRoot, packDirectory, "src", "index.ts");
+    expect(
+      importsOutsideContracts(
+        probe,
+        [
+          'import type { DomainPackManifest } from "../../domain-pack-contracts/src/index.ts";',
+          'import { x } from "@ai-office/domain-pack-contracts/manifest.ts";',
+          'import { local } from "./local.ts";',
+          'import { Project } from "@ai-office/domain/project/project.ts";',
+          'import { y } from "../../application/src/errors.ts";',
+          'import { readFileSync } from "node:fs";',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      "@ai-office/domain/project/project.ts",
+      "../../application/src/errors.ts",
+      "node:fs",
+    ]);
+  });
+
+  test("production composes an empty catalog and registers no pack", () => {
+    const runtimeCommand = readFileSync(
+      join(repositoryRoot, "packages/runtime-host/src/runtime-command.ts"),
+      "utf8",
+    );
+    expect(runtimeCommand.replace(/\s+/gu, " ")).toContain(
+      "options.installedPacks ?? new InMemoryInstalledDomainPackCatalog(1, [])",
+    );
+    const production = ["packages", "apps", "bin", "scripts"].flatMap(
+      (directory) => typescriptFiles(join(repositoryRoot, directory)),
+    );
+    // One place constructs a catalog, and nothing registers an artifact in
+    // one: a pack is resolvable only from a catalog a caller supplies.
+    expect(
+      production
+        .filter((file) =>
+          /new InMemoryInstalledDomainPackCatalog\(/u.test(
+            readFileSync(file, "utf8"),
+          ),
+        )
+        .map((file) => relative(repositoryRoot, file)),
+    ).toEqual(["packages/runtime-host/src/runtime-command.ts"]);
+    expect(
+      production
+        .filter((file) => /\.register\(/u.test(readFileSync(file, "utf8")))
+        .map((file) => relative(repositoryRoot, file)),
+    ).toEqual([]);
+  });
+});
