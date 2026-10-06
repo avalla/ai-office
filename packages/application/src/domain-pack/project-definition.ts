@@ -169,6 +169,18 @@ export class StaleProjectDefinitionError extends Error {
   }
 }
 
+/**
+ * A definition payload that is not a JSON object, met by a repository in
+ * stored state or in a state handed to it for writing. `rowKey` names the row
+ * by table and key; the payload itself is never carried or quoted.
+ */
+export class ProjectDefinitionPayloadShapeError extends Error {
+  constructor(readonly rowKey: string) {
+    super(`Project definition payload must be a JSON object: ${rowKey}`);
+    this.name = "ProjectDefinitionPayloadShapeError";
+  }
+}
+
 /** Shared with the portable archive schema so accepted state stays exportable. */
 export const maximumWorkflowStages = 1_000;
 

@@ -45,6 +45,20 @@ export interface RepositoryContractHarness {
   definitionRowCounts?: (
     projectId: string,
   ) => Promise<{ heads: number; owned: number; overrides: number }>;
+  /**
+   * The stored shape of every definition payload of a project, read with the
+   * provider's own SQL JSON operators rather than through the repository:
+   * the JSON type of the stored value (`null` for SQL NULL) and the `title`
+   * member extracted in SQL, in any order.
+   */
+  definitionPayloadShapes?: (projectId: string) => Promise<
+    {
+      table: "owned" | "override";
+      localId: string;
+      jsonType: string | null;
+      title: string | null;
+    }[]
+  >;
   tasks: TaskRepository;
   taskRequirements: TaskRequirementRepository;
   taskDependencies?: TaskDependencyRepository;
@@ -350,6 +364,150 @@ export function defineProjectStorageContracts(
           ),
         ).rejects.toThrow();
         expect(await definitions().get(projectId)).toEqual(current);
+      });
+
+      test("stores every definition payload as a JSON object the database can address", async () => {
+        if (!harness.definitionPayloadShapes)
+          throw new Error("Definition payload shapes are required");
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-payload-shape`)
+        ).snapshot().id;
+        const source = {
+          id: parseDomainPackId("org.example.legal"),
+          version: parseDomainPackVersion("1.0.0"),
+          manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+        };
+        const entry = {
+          revision: 1,
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        const stages = [
+          { id: "z-last", role: "paralegal" },
+          { id: "a-first", role: "counsel" },
+          { id: "m-middle", role: "auditor" },
+        ];
+        const state = await definitions().replace(
+          {
+            projectId,
+            revision: 0,
+            owned: [
+              { ...owned, id: "o-role" },
+              {
+                ...owned,
+                kind: "workflows",
+                id: "o-workflow",
+                payload: {
+                  id: "o-workflow",
+                  title: "Owned workflow",
+                  taskType: "matter",
+                  stages,
+                },
+              },
+            ],
+            overrides: [
+              {
+                ...entry,
+                origin: "project_override",
+                source: { ...source, kind: "roles", localId: "v-extend" },
+                operation: "extend",
+                payload: { id: "v-extend", title: "Extended" },
+              },
+              {
+                ...entry,
+                origin: "project_override",
+                source: { ...source, kind: "agents", localId: "w-agent" },
+                operation: "replace",
+                payload: {
+                  id: "w-agent",
+                  title: "Agent",
+                  role: "counsel",
+                  prompts: ["brief", "cite"],
+                  knowledge: ["handbook"],
+                  capabilities: ["draft"],
+                },
+              },
+              {
+                ...entry,
+                origin: "project_override",
+                source: { ...source, kind: "workflows", localId: "x-workflow" },
+                operation: "replace",
+                payload: {
+                  id: "x-workflow",
+                  title: "Workflow",
+                  taskType: "matter",
+                  stages,
+                },
+              },
+              {
+                ...entry,
+                origin: "project_override",
+                source: { ...source, kind: "prompts", localId: "y-disable" },
+                operation: "disable",
+              },
+            ],
+          },
+          0,
+          now,
+        );
+        // A stored payload is a JSON object, so SQL can read its members; a
+        // disable stores SQL NULL, not a JSON value.
+        expect(
+          (await harness.definitionPayloadShapes(projectId)).sort(
+            (left, right) => (left.localId < right.localId ? -1 : 1),
+          ),
+        ).toEqual([
+          {
+            table: "owned",
+            localId: "o-role",
+            jsonType: "object",
+            title: "Custom",
+          },
+          {
+            table: "owned",
+            localId: "o-workflow",
+            jsonType: "object",
+            title: "Owned workflow",
+          },
+          {
+            table: "override",
+            localId: "v-extend",
+            jsonType: "object",
+            title: "Extended",
+          },
+          {
+            table: "override",
+            localId: "w-agent",
+            jsonType: "object",
+            title: "Agent",
+          },
+          {
+            table: "override",
+            localId: "x-workflow",
+            jsonType: "object",
+            title: "Workflow",
+          },
+          {
+            table: "override",
+            localId: "y-disable",
+            jsonType: null,
+            title: null,
+          },
+        ]);
+        const read = await definitions().get(projectId);
+        expect(read).toEqual(state);
+        expect(
+          read.overrides.find((item) => item.source.localId === "x-workflow")
+            ?.payload,
+        ).toEqual({
+          id: "x-workflow",
+          title: "Workflow",
+          taskType: "matter",
+          stages,
+        });
+        expect(
+          read.overrides.find((item) => item.source.localId === "y-disable"),
+        ).not.toHaveProperty("payload");
       });
 
       test("stores a role omission and still rejects a disable on any other kind", async () => {

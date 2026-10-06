@@ -488,14 +488,11 @@ describe.skipIf(connectionString === undefined)(
         storedPayloads: async () =>
           (
             await database.query<{ payload: string }>(
-              // `#>> '{}'` reads the stored JSON text whichever jsonb shape
-              // the repository wrote.
-              `SELECT CASE jsonb_typeof(payload_json) WHEN 'string'
-                        THEN payload_json #>> '{}' ELSE payload_json::text END AS payload
+              // A payload is a jsonb object; its text is the stored JSON.
+              `SELECT payload_json::text AS payload
                  FROM core.project_owned_definition WHERE project_id = $1
                UNION ALL
-               SELECT CASE jsonb_typeof(payload_json) WHEN 'string'
-                        THEN payload_json #>> '{}' ELSE payload_json::text END AS payload
+               SELECT payload_json::text AS payload
                  FROM core.project_definition_override
                 WHERE project_id = $1 AND payload_json IS NOT NULL`,
               [projectId],

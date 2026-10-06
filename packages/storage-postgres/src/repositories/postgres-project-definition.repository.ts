@@ -1,4 +1,5 @@
 import {
+  ProjectDefinitionPayloadShapeError,
   StaleProjectDefinitionError,
   compareExactSources,
   compareOwnedDefinitions,
@@ -18,7 +19,7 @@ interface OwnedRow extends Record<string, unknown> {
   local_id: string;
   revision: number;
   enabled: boolean;
-  payload_json: ProjectOwnedDefinition["payload"];
+  payload_json: unknown;
   actor_id: string;
   changed_at: Date | string;
 }
@@ -30,18 +31,40 @@ interface OverrideRow extends Record<string, unknown> {
   local_id: string;
   operation: ProjectDefinitionOverride["operation"];
   revision: number;
-  payload_json: ProjectDefinitionOverride["payload"] | null;
+  payload_json: unknown;
   actor_id: string;
   changed_at: Date | string;
 }
 const iso = (value: Date | string): string =>
   value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-const payload = (
-  value: ProjectOwnedDefinition["payload"] | string,
-): ProjectOwnedDefinition["payload"] =>
-  typeof value === "string"
-    ? (JSON.parse(value) as ProjectOwnedDefinition["payload"])
-    : value;
+
+/**
+ * A definition payload is a jsonb object in both tables (migration
+ * 20261006000300). Anything else is corrupt or pre-migration state: the
+ * repository refuses to return it typed as a payload, or to write it. The
+ * error names the row by key and never carries or quotes the value.
+ */
+function objectPayload<Payload extends object>(
+  value: unknown,
+  key: string,
+): Payload {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new ProjectDefinitionPayloadShapeError(key);
+  return value as Payload;
+}
+const ownedKey = (projectId: string, kind: string, localId: string): string =>
+  `core.project_owned_definition (project_id=${projectId}, kind=${kind}, local_id=${localId})`;
+const overrideKey = (
+  projectId: string,
+  source: {
+    id: string;
+    version: string;
+    manifestDigest: string;
+    kind: string;
+    localId: string;
+  },
+): string =>
+  `core.project_definition_override (project_id=${projectId}, pack=${source.id}@${source.version}, manifest_digest=${source.manifestDigest}, kind=${source.kind}, local_id=${source.localId})`;
 
 export class PostgresProjectDefinitionRepository implements ProjectDefinitionRepository {
   private readonly tenantId: string;
@@ -74,7 +97,10 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
         id: row.local_id,
         revision: row.revision,
         enabled: row.enabled,
-        payload: payload(row.payload_json),
+        payload: objectPayload<ProjectOwnedDefinition["payload"]>(
+          row.payload_json,
+          ownedKey(projectId, row.kind, row.local_id),
+        ),
         actorId: row.actor_id,
         changedAt: iso(row.changed_at),
       })),
@@ -89,9 +115,26 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
         },
         operation: row.operation,
         revision: row.revision,
-        ...(row.payload_json === null || row.payload_json === undefined
+        // Only a disable override has no payload (SQL NULL, by the table's
+        // operation check). The driver also returns null for a jsonb null
+        // scalar, which is a payload that is not an object.
+        ...(row.operation === "disable" &&
+        (row.payload_json === null || row.payload_json === undefined)
           ? {}
-          : { payload: payload(row.payload_json) }),
+          : {
+              payload: objectPayload<
+                NonNullable<ProjectDefinitionOverride["payload"]>
+              >(
+                row.payload_json,
+                overrideKey(projectId, {
+                  id: row.pack_id,
+                  version: row.pack_version,
+                  manifestDigest: row.manifest_digest,
+                  kind: row.kind,
+                  localId: row.local_id,
+                }),
+              ),
+            }),
         actorId: row.actor_id,
         changedAt: iso(row.changed_at),
       })),
@@ -103,6 +146,19 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
     expectedRevision: number,
     changedAt: Date,
   ): Promise<ProjectDefinitionState> {
+    // Checked before anything is written: a state carrying a payload that is
+    // not a JavaScript object (a string, as an unguarded read of an unmigrated
+    // database returned it, an array or null) is refused whole. What the
+    // driver then serializes is not inspected here; the table checks of
+    // migration 20261006000300 are what hold the stored shape.
+    for (const item of state.owned)
+      objectPayload(
+        item.payload,
+        ownedKey(state.projectId, item.kind, item.id),
+      );
+    for (const item of state.overrides)
+      if (item.payload !== undefined)
+        objectPayload(item.payload, overrideKey(state.projectId, item.source));
     return this.database.runInTransaction(async () => {
       await this.database.query(
         `INSERT INTO core.project_definition_head(project_id, tenant_id) SELECT id, tenant_id FROM core.project WHERE id = $1 AND tenant_id = $2 ON CONFLICT(project_id) DO NOTHING`,
@@ -139,7 +195,9 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
             item.id,
             item.revision,
             item.enabled,
-            JSON.stringify(item.payload),
+            // An object, never JSON text: the driver serializes a jsonb
+            // parameter itself, and a string would be stored as a JSON string.
+            item.payload,
             item.actorId,
             item.changedAt,
           ],
@@ -157,7 +215,7 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
             item.source.localId,
             item.operation,
             item.revision,
-            item.payload === undefined ? null : JSON.stringify(item.payload),
+            item.payload ?? null,
             item.actorId,
             item.changedAt,
           ],
