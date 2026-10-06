@@ -8,6 +8,7 @@ import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-e
 import { SyncAgentDefinitions } from "@ai-office/application/commands/sync-agent-definitions.ts";
 import {
   canonicalLegacyDevelopmentProfile,
+  LegacyDevelopmentProfileError,
   type LegacyDevelopmentProfile,
 } from "@ai-office/application/domain-pack/legacy-development-profile.ts";
 import { ReadLegacyDevelopmentProfile } from "@ai-office/application/domain-pack/read-legacy-development-profile.ts";
@@ -266,6 +267,67 @@ describe.skipIf(connectionString === undefined)(
           .find((pipeline) => pipeline.id === "delivery")!
           .stages.map((stage) => stage.eligibleAgents),
       ).toEqual([["architect"], ["developer"], ["reviewer"], []]);
+    });
+
+    test("a sync committed by another connection between the reads is a typed stale read, never a mixed profile", async () => {
+      const projectId = randomUUID();
+      await seed(backend, projectId);
+      // A second pool: its statements commit outside the reader's transaction.
+      const other = new PostgresClient(connectionString!);
+      try {
+        const sync = new SyncAgentDefinitions(
+          new PostgresProjectRepository(other, tenantId),
+          new PostgresAgentRuntimeRepository(other, tenantId),
+          ids,
+          clock,
+          new PostgresTransactionRunner(other),
+        );
+        const template = legacyAgentDefinitions()[0]!;
+        let roleReads = 0;
+        const interleaved: Backend = {
+          ...backend,
+          runtime: {
+            listRoles: async (id: string) => {
+              const roles = await backend.runtime.listRoles(id);
+              roleReads += 1;
+              // Committed after the roles were read and before the agents are:
+              // the agent read then names a role the role read did not hold.
+              if (roleReads === 1)
+                await sync.execute(projectId, [
+                  {
+                    sourcePath: "agents/late/agent.yaml",
+                    definition: {
+                      ...template.definition,
+                      id: "late",
+                      roleKey: "late",
+                    },
+                  },
+                ]);
+              return roles;
+            },
+            listAgents: (id: string) => backend.runtime.listAgents(id),
+          } as unknown as AgentRuntimeRepository,
+        };
+        const before = await stored(projectId);
+        const error: unknown = await read(interleaved, projectId).catch(
+          (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(LegacyDevelopmentProfileError);
+        expect(error).toMatchObject({ code: "stale_legacy_state" });
+        expect(roleReads).toBe(2);
+        // The other connection's commit is there; the reader wrote nothing.
+        const after = await stored(projectId);
+        expect(after).not.toBe(before);
+        // Repeating the read gives the profile of the committed state.
+        const profile = await read(interleaved, projectId);
+        expect(profile.runtimeOnly.agents.map((agent) => agent.name)).toEqual([
+          "late",
+          "security",
+        ]);
+        expect(await stored(projectId)).toBe(after);
+      } finally {
+        await other.close();
+      }
     });
 
     test("an unknown project is not found and a project without an office is the empty view", async () => {

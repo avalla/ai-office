@@ -25,8 +25,12 @@ export const legacyDevelopmentProfileVersion = 1 as const;
 export const legacyDevelopmentProfileStatement =
   "Legacy-state profile: it describes the office, role, agent and pipeline state the Runtime reads today. It is not an executable resolved configuration, and nothing is bound or scheduled from it." as const;
 
+/**
+ * `stale_legacy_state` is raised by `ReadLegacyDevelopmentProfile`, never by
+ * the derivation: the state changed during the read, which may be repeated.
+ */
 export type LegacyDevelopmentProfileIssueCode =
-  "legacy_state_invariant" | "profile_not_canonical";
+  "legacy_state_invariant" | "profile_not_canonical" | "stale_legacy_state";
 
 export class LegacyDevelopmentProfileError extends Error {
   constructor(

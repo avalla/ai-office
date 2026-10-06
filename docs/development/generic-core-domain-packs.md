@@ -685,6 +685,28 @@ deliberately not delivered by GP-09.
   key, two agents with one name, an agent naming an absent role) raises
   `legacy_state_invariant`; text that cannot be canonicalized raises
   `profile_not_canonical`. The command prints the code and exits 1.
+- One consistent state, or a retryable refusal. A PostgreSQL transaction is
+  read committed, so an `office:apply` or `agent:sync` that commits between
+  the reader's statements could otherwise yield a profile of a state that
+  never existed, or a false `legacy_state_invariant`. As
+  `ReadProjectConfiguration` does, the reader reads every source twice in the
+  same order inside the transaction: office manifest, roles, agents, binding,
+  then the four again. If no confirming read differs from its first read,
+  every source held its value between the last first read and the first
+  confirming read, and the profile is of the state at that moment. Otherwise
+  the read fails with `stale_legacy_state`. The command prints "Legacy
+  development profile unavailable: stale_legacy_state: Legacy state changed
+  during the read; run the command again" (with `--json`,
+  `{ "ok": false, "diagnostics": [{ "code": "stale_legacy_state", … }] }`)
+  and exits 1. Nothing was written; running the command again is the remedy,
+  and the command does not retry by itself. The office manifest and the
+  binding are compared by revision. Roles and agents have no revision and are
+  compared row for row, timestamps included, so a change that is undone again
+  inside the read window and leaves every row equal, `updated_at` included,
+  is not detected. The check is conservative: a commit during the confirming
+  reads fails the read even where the first reads were consistent. SQLite
+  serializes the transaction and never raises the code. The transaction
+  runner and its isolation level are unchanged.
 - Read-only, and the host's envelope. The reader writes no row. Over the
   socket the Runtime host appends its `command.received` and
   `command.completed` audit rows, as it does for every command including
