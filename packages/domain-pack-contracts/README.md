@@ -40,7 +40,10 @@ approval eligibility are not expressible.
 
 A role item may carry an optional `capabilities` array of local IDs (GP-11).
 Every entry must be a valid, unique local ID naming an item of the same
-manifest's `contributions.capabilities`. A non-array value, an empty array, a
+manifest's `contributions.capabilities`. The list holds at most 1,000 entries
+(`maximumContributionReferences`, the bound GP-12 introduced for every
+reference list and applies to this one as a uniformity rule). A non-array
+value, an empty array, a list over the bound, a
 malformed or duplicate ID, an undeclared capability and the field on any other
 contribution kind fail with `invalid_contribution` and the member's path. The
 field is omitted when a role has no capabilities; an empty array is not a

@@ -494,8 +494,12 @@ Each entry names a capability declared in the same manifest's
 `contributions.capabilities`. The contract package rejects, with a typed
 `DomainPackManifestError` (`invalid_contribution`) and the path of the
 offending member: a non-array value, an empty array, a malformed local ID, a
-duplicate, a reference to a capability the manifest does not declare, and the
-field on any other contribution kind, where it remains an unknown field.
+duplicate, a list of more than 1,000 entries, a reference to a capability the
+manifest does not declare, and the field on any other contribution kind, where
+it remains an unknown field. The bound of 1,000 entries is the one GP-12
+introduced for every reference list of the contract package
+(`maximumContributionReferences`); it applies to a role's `capabilities` as a
+uniformity rule.
 Schema-1 references are bare local IDs, so a cross-pack reference cannot be
 expressed: a capability declared only in a dependency pack is an unknown
 reference. "No capabilities" has exactly one encoding, the absent field.
@@ -802,9 +806,14 @@ Validation happens in three places:
 - **GP-06 resolution**, which is the authority and fails closed, also for
   state that arrived by restore or changed under a binding change.
 
-Only a `replace` on a pack agent is checked against other definitions before
-it is stored. Every other mutation is accepted on its shape alone, as GP-07
-accepts a workflow reference, and stored by `project:definition:apply`:
+Only a `replace` on a pack agent has its references checked before it is
+stored. Every other mutation still passes the GP-07 checks that are not about
+references: the entry and project revisions, the pack closure collision of a
+project-owned definition, the source binding and source existence of an
+override, and the field overlap of an `extend`. Its references to other
+definitions, and its effect on definitions that reference it, are not checked,
+as GP-07 does not check a workflow reference. `project:definition:apply`
+therefore stores:
 
 - omitting a role, or disabling a prompt, that an enabled agent names;
 - adding a project agent that names a project role, prompt or knowledge entry
@@ -957,9 +966,13 @@ Portable archive format 8 has the format-7 contents and additionally accepts a
 payload (three in a project-owned agent, which cannot carry `capabilities`).
 A list in a format-8 payload must be in the order the mutation contract
 stores: at most 1,000 valid local IDs, strictly ascending by code unit, so
-also free of duplicates. Every path that stores a list writes that order, so
-every stored state is exportable; an archive with another order is rejected
-like any other malformed payload.
+also free of duplicates. Every Runtime path that stores a list writes that
+order, so every state the Runtime wrote is exportable. A database edited by
+hand to hold a list in another order still resolves, because the resolver
+re-parses and orders stored lists, but it cannot be exported. An archive with
+another order is rejected like any other malformed payload. Format 8 was
+finalized before any release: its ordering and bound rules were added during
+GP-12 hardening.
 Formats 1–7 keep their readers and meanings, and format 7 still rejects both.
 A backup is written as format 8 only when the project state contains an agent
 `disable` override or an agent payload with a reference field; every other
