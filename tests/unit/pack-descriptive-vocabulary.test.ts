@@ -784,8 +784,8 @@ describe("GP-10B-2 descriptive vocabulary in the resolved configuration", () => 
         state(
           [],
           [
+            // The workflow is disabled, so its routes are not consulted.
             override(pack, "review", "disable"),
-            // Its replacement would not resolve; it is not consulted.
           ],
         ),
       ).workflows,
