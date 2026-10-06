@@ -1,4 +1,5 @@
 import {
+  ProjectDefinitionPayloadShapeError,
   StaleProjectDefinitionError,
   compareExactSources,
   compareOwnedDefinitions,
@@ -41,16 +42,14 @@ const iso = (value: Date | string): string =>
  * A definition payload is a jsonb object in both tables (migration
  * 20261006000300). Anything else is corrupt or pre-migration state: the
  * repository refuses to return it typed as a payload, or to write it. The
- * message names the row by key and never quotes the value.
+ * error names the row by key and never carries or quotes the value.
  */
 function objectPayload<Payload extends object>(
   value: unknown,
   key: string,
 ): Payload {
   if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw new Error(
-      `Stored project definition payload must be a JSON object: ${key}`,
-    );
+    throw new ProjectDefinitionPayloadShapeError(key);
   return value as Payload;
 }
 const ownedKey = (projectId: string, kind: string, localId: string): string =>
@@ -143,9 +142,11 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
     expectedRevision: number,
     changedAt: Date,
   ): Promise<ProjectDefinitionState> {
-    // Checked before anything is written: a state that carries a non-object
-    // payload (read from an unmigrated database, or hand-built) is refused
-    // whole instead of being stored as a jsonb string or array.
+    // Checked before anything is written: a state carrying a payload that is
+    // not a JavaScript object (a string, as an unguarded read of an unmigrated
+    // database returned it, an array or null) is refused whole. What the
+    // driver then serializes is not inspected here; the table checks of
+    // migration 20261006000300 are what hold the stored shape.
     for (const item of state.owned)
       objectPayload(
         item.payload,
