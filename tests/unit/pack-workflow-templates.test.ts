@@ -1026,7 +1026,8 @@ describe("GP-13 workflow customization in the mutation contract", () => {
       { id: "no id", role: "counsel" },
       { id: "check", role: "no id" },
       { id: "check", role: "counsel", approval: true },
-      { id: "check", role: "counsel", title: "Check" },
+      // A stage title is a GP-10B-2 field; any other key is still unknown.
+      { id: "check", role: "counsel", name: "Check" },
       { id: "check", role: ["counsel"] },
       // Qualified references are not schema-1 local IDs.
       { id: "check", role: "project:roles/liaison" },

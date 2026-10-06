@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
+import { createHash } from "node:crypto";
 import {
   mkdirSync,
   mkdtempSync,
@@ -31,6 +32,7 @@ import {
   portableProjectArchiveSchemaV7,
   portableProjectArchiveSchemaV8,
   portableProjectArchiveSchemaV9,
+  portableProjectArchiveSchemaV10,
   portableProjectFormatVersionFor,
   portableProjectFormatVersions,
   portableProjectManifestFor,
@@ -327,7 +329,9 @@ describe("project portability", () => {
       ],
       overrides: [],
     });
-    expect(portableProjectFormatVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(portableProjectFormatVersions).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    ]);
 
     expect(v6.safeParse(override("roles", "disable")).success).toBe(false);
     expect(v7.safeParse(override("roles", "disable")).success).toBe(true);
@@ -1163,6 +1167,673 @@ describe("project portability", () => {
     ).resolves.toMatchObject({ projectId: restored.projectId });
     origin.database.close();
     destination.database.close();
+  });
+
+  test("format 10 carries the descriptive vocabulary; format 9 rejects every new key", () => {
+    const v9 = portableProjectArchiveSchemaV9.shape.state.shape.definitions;
+    const v10 = portableProjectArchiveSchemaV10.shape.state.shape.definitions;
+    const earlier = [
+      v9,
+      portableProjectArchiveSchemaV8.shape.state.shape.definitions,
+      portableProjectArchiveSchemaV7.shape.state.shape.definitions,
+      portableProjectArchiveSchemaV6.shape.state.shape.definitions,
+    ];
+    expect(portableProjectFormatVersions).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+    ]);
+    const entry = {
+      revision: 1,
+      actorId: "operator",
+      changedAt: "2026-10-06T00:00:00.000Z",
+    };
+    const override = (
+      kind: string,
+      operation: "replace" | "extend" | "disable",
+      payload?: object,
+    ) => ({
+      revision: 1,
+      owned: [],
+      overrides: [
+        {
+          origin: "project_override",
+          source: {
+            id: "org.example.legal",
+            version: "1.0.0",
+            manifestDigest: `sha256:${"a".repeat(64)}`,
+            kind,
+            localId: "custom",
+          },
+          operation,
+          ...(payload === undefined ? {} : { payload }),
+          ...entry,
+        },
+      ],
+    });
+    const owned = (kind: string, payload: object) => ({
+      revision: 1,
+      owned: [
+        {
+          origin: "project_owned",
+          kind,
+          id: "custom",
+          enabled: true,
+          payload,
+          ...entry,
+        },
+      ],
+      overrides: [],
+    });
+    /** The same payload as a project-owned definition and as a replacement. */
+    const both = (kind: string, payload: object) => [
+      owned(kind, payload),
+      override(kind, "replace", payload),
+    ];
+    const workflow = (extra: object = {}, stage: object = {}) => ({
+      id: "custom",
+      taskType: "matter",
+      stages: [{ id: "check", role: "counsel", ...stage }],
+      ...extra,
+    });
+    const many = (count: number) =>
+      Array.from({ length: count }, (_, index) => `entry ${index}`);
+    const atBound = "x".repeat(16_000);
+
+    // What only format 10 can carry: each new key, alone.
+    const carried = [
+      ...both("roles", { id: "custom", responsibilities: ["b", "a", "b"] }),
+      ...both("roles", { id: "custom", responsibilities: many(64) }),
+      ...both("prompts", { id: "custom", text: "Line one\nLine two" }),
+      ...both("prompts", { id: "custom", title: "T", text: atBound }),
+      ...both("workflows", workflow({}, { title: "Check" })),
+      ...both("workflows", workflow({}, { objective: atBound })),
+      ...both("workflows", workflow({}, { checks: ["b", "a", "b"] })),
+      ...both("workflows", workflow({ additionalTaskTypes: ["filing"] })),
+      ...both(
+        "workflows",
+        workflow({ additionalTaskTypes: ["Zeta", "appeal", "filing"] }),
+      ),
+    ];
+    for (const state of carried) {
+      expect(v10.safeParse(state).success, JSON.stringify(state)).toBe(true);
+      for (const schema of earlier)
+        expect(schema.safeParse(state).success, JSON.stringify(state)).toBe(
+          false,
+        );
+    }
+    // List order survives parsing.
+    const parsed = v10.parse(
+      owned("roles", { id: "custom", responsibilities: ["b", "a", "b"] }),
+    );
+    expect(parsed.owned[0]?.payload).toEqual({
+      id: "custom",
+      responsibilities: ["b", "a", "b"],
+    });
+    // Format 10 has the format-9 contents.
+    for (const state of [
+      override("workflows", "replace", workflow()),
+      override("workflows", "extend", { title: "Custom" }),
+      override("workflows", "disable"),
+      override("agents", "replace", { id: "custom", role: "counsel" }),
+      override("roles", "disable"),
+      override("roles", "replace", { id: "custom", title: "Custom" }),
+      override("prompts", "extend", { description: "Custom" }),
+      owned("agents", { id: "custom", prompts: ["house"] }),
+      owned("workflows", workflow()),
+      owned("prompts", { id: "custom" }),
+    ]) {
+      expect(v10.safeParse(state).success, JSON.stringify(state)).toBe(true);
+      expect(v9.safeParse(state).success, JSON.stringify(state)).toBe(true);
+    }
+    // Forged format-10 state is rejected.
+    const forged = [
+      // A key on the wrong kind.
+      ...both("roles", { id: "custom", text: "x" }),
+      ...both("prompts", { id: "custom", responsibilities: ["x"] }),
+      ...both("taskTypes", { id: "custom", responsibilities: ["x"] }),
+      ...both("taskTypes", { id: "custom", text: "x" }),
+      ...both("knowledge", { id: "custom", text: "x" }),
+      ...both("agents", { id: "custom", responsibilities: ["x"] }),
+      ...both("agents", { id: "custom", role: "counsel", text: "x" }),
+      ...both("roles", { id: "custom", additionalTaskTypes: ["filing"] }),
+      ...both("roles", {
+        id: "custom",
+        responsibilities: ["x"],
+        text: "x",
+      }),
+      ...both("workflows", workflow({ text: "x" })),
+      ...both("workflows", workflow({ responsibilities: ["x"] })),
+      ...both("workflows", workflow({ objective: "x" })),
+      ...both("workflows", workflow({}, { text: "x" })),
+      ...both("workflows", workflow({}, { responsibilities: ["x"] })),
+      ...both("workflows", workflow({}, { description: "x" })),
+      // A role payload carries no capabilities.
+      ...both("roles", {
+        id: "custom",
+        responsibilities: ["x"],
+        capabilities: ["sign"],
+      }),
+      // Lists: "none" is the absent field, 64 entries at most, text entries.
+      ...both("roles", { id: "custom", responsibilities: [] }),
+      ...both("roles", { id: "custom", responsibilities: many(65) }),
+      ...both("roles", { id: "custom", responsibilities: ["fine", ""] }),
+      ...both("roles", { id: "custom", responsibilities: ["a\u0000b"] }),
+      ...both("roles", { id: "custom", responsibilities: [1] }),
+      ...both("roles", { id: "custom", responsibilities: "one" }),
+      ...both("workflows", workflow({}, { checks: [] })),
+      ...both("workflows", workflow({}, { checks: many(65) })),
+      ...both("workflows", workflow({}, { checks: ["x".repeat(16_001)] })),
+      // Text: non-empty project definition text.
+      ...both("prompts", { id: "custom", text: "" }),
+      ...both("prompts", { id: "custom", text: "x".repeat(16_001) }),
+      ...both("prompts", { id: "custom", text: "a\u0000b" }),
+      ...both("prompts", { id: "custom", text: "a\ud800b" }),
+      ...both("workflows", workflow({}, { title: "" })),
+      ...both("workflows", workflow({}, { objective: "" })),
+      ...both("workflows", workflow({}, { objective: "a\u0000b" })),
+      // The route set: non-empty, ascending, unique, without the task type.
+      ...both("workflows", workflow({ additionalTaskTypes: [] })),
+      ...both(
+        "workflows",
+        workflow({ additionalTaskTypes: ["filing", "appeal"] }),
+      ),
+      ...both(
+        "workflows",
+        workflow({ additionalTaskTypes: ["filing", "filing"] }),
+      ),
+      ...both("workflows", workflow({ additionalTaskTypes: ["matter"] })),
+      ...both(
+        "workflows",
+        workflow({ additionalTaskTypes: ["appeal", "matter"] }),
+      ),
+      ...both("workflows", workflow({ additionalTaskTypes: ["no id"] })),
+      ...both(
+        "workflows",
+        workflow({
+          additionalTaskTypes: Array.from(
+            { length: 1_001 },
+            (_, index) => `t${String(index).padStart(4, "0")}`,
+          ),
+        }),
+      ),
+      // An extension stays descriptive and a disable carries no payload.
+      override("roles", "extend", { responsibilities: ["x"] }),
+      override("roles", "extend", { title: "T", responsibilities: ["x"] }),
+      override("prompts", "extend", { text: "x" }),
+      override("prompts", "extend", { title: "T", text: "x" }),
+      override("workflows", "extend", { additionalTaskTypes: ["filing"] }),
+      override("workflows", "extend", { title: "T", objective: "x" }),
+      override("roles", "disable", { id: "custom", responsibilities: ["x"] }),
+      override("prompts", "disable", { id: "custom", text: "x" }),
+    ];
+    for (const state of forged)
+      expect(
+        v10.safeParse(state).success,
+        JSON.stringify(state).slice(0, 300),
+      ).toBe(false);
+  });
+
+  test("a state without the new keys is written at its earlier format, byte for byte", () => {
+    // The digests below are of archives written before format 10 existed.
+    const frozen = parsePortableProjectArchive(
+      readFileSync(
+        new URL(
+          "../fixtures/legacy-development/format-4.aioffice",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+    const entry = {
+      revision: 1,
+      actorId: "operator",
+      changedAt: "2026-10-06T00:00:00.000Z",
+    };
+    const tuple = {
+      id: "org.example.legal",
+      version: "1.0.0",
+      manifestDigest: `sha256:${"a".repeat(64)}`,
+    };
+    const override = (
+      kind: string,
+      localId: string,
+      operation: string,
+      payload?: object,
+    ) => ({
+      origin: "project_override",
+      source: { ...tuple, kind, localId },
+      operation,
+      ...(payload === undefined ? {} : { payload }),
+      ...entry,
+    });
+    const owned = (kind: string, id: string, payload: object) => ({
+      origin: "project_owned",
+      kind,
+      id,
+      enabled: true,
+      payload,
+      ...entry,
+    });
+    const plainOwned = [
+      owned("prompts", "house", { id: "house", title: "House" }),
+      owned("roles", "liaison", { id: "liaison", description: "Liaison" }),
+      owned("workflows", "ours", {
+        id: "ours",
+        taskType: "errand",
+        stages: [{ id: "go", role: "liaison" }],
+      }),
+    ];
+    const written = (overrides: object[], ownedEntries = plainOwned) => {
+      const state = {
+        ...frozen.state,
+        packBinding: { configurationRevision: 1, packs: [tuple] },
+        definitions: { revision: 1, owned: ownedEntries, overrides },
+      } as unknown as Parameters<typeof portableStateChecksum>[0];
+      const formatVersion = portableProjectFormatVersionFor(state);
+      const archive = createPortableProjectArchive({
+        manifest: portableProjectManifestFor({
+          formatVersion,
+          projectIdentity: frozen.manifest.projectIdentity,
+          createdAt: "2026-10-06T00:00:00.000Z",
+          revision: {
+            id: "rev_pinned",
+            stateChecksum: portableStateChecksum(state),
+          },
+        }),
+        state,
+      });
+      const serialized = serializePortableProjectArchive(archive);
+      expect(parsePortableProjectArchive(serialized)).toEqual(archive);
+      return [
+        formatVersion,
+        createHash("sha256").update(serialized).digest("hex"),
+      ];
+    };
+    expect(
+      written([
+        override("roles", "counsel", "replace", {
+          id: "counsel",
+          title: "Our counsel",
+        }),
+      ]),
+    ).toEqual([
+      6,
+      "5c0a62b172b4876efbbe05d1306f82b61ad6e9e53a439f13f8e0f4d01de1583d",
+    ]);
+    expect(written([override("roles", "clerk", "disable")])).toEqual([
+      7,
+      "da7ece72bc8234b0f7341216e829f6ad7be1c02d3afb96237acb4fbc18c9fb58",
+    ]);
+    expect(
+      written([
+        override("agents", "drafter", "replace", {
+          id: "drafter",
+          role: "counsel",
+          prompts: ["brief"],
+        }),
+      ]),
+    ).toEqual([
+      8,
+      "8844ac9c9fadbc46c7162cdf05732cd56659bdf1ddfff6866e2c4cd3e45bfd91",
+    ]);
+    const workflowOverrides = [
+      override("prompts", "brief", "replace", {
+        id: "brief",
+        description: "Ours",
+      }),
+      override("workflows", "review", "replace", {
+        id: "review",
+        taskType: "matter",
+        stages: [
+          { id: "z-last", role: "counsel" },
+          { id: "a-first", role: "clerk" },
+        ],
+      }),
+    ];
+    expect(written(workflowOverrides)).toEqual([
+      9,
+      "1ef90ffdfcdbaf8b686a129fa4c8d417db2a3ff34bef5ff7fc2f5fbe0f91daa2",
+    ]);
+    // One new key anywhere moves the same state to format 10.
+    for (const [ownedEntries, overrides] of [
+      [
+        [
+          ...plainOwned,
+          owned("prompts", "rules", { id: "rules", text: "Rules." }),
+        ],
+        workflowOverrides,
+      ],
+      [
+        plainOwned,
+        [
+          override("roles", "counsel", "replace", {
+            id: "counsel",
+            responsibilities: ["Advise"],
+          }),
+        ],
+      ],
+      [
+        plainOwned,
+        [
+          override("workflows", "review", "replace", {
+            id: "review",
+            taskType: "matter",
+            stages: [{ id: "check", role: "counsel", checks: ["One"] }],
+          }),
+        ],
+      ],
+      [
+        [
+          plainOwned[0]!,
+          plainOwned[1]!,
+          owned("workflows", "ours", {
+            id: "ours",
+            taskType: "errand",
+            additionalTaskTypes: ["visit"],
+            stages: [],
+          }),
+        ],
+        [],
+      ],
+    ] as const)
+      expect(written([...overrides], [...ownedEntries])[0]).toBe(10);
+  });
+
+  test("the descriptive vocabulary is exported as format 10, round-trips in list order, and cannot be written as format 9", async () => {
+    const source = temporaryRoot("ai-office-gp10b2-portable-project-");
+    writeFileSync(join(source, "package.json"), '{"name":"gp10b2"}\n');
+    const origin = openRuntime(
+      temporaryRoot("ai-office-gp10b2-portable-source-"),
+    );
+    const projectId = (await importProject(origin, source)).projectId;
+    const now = new Date("2026-10-06T00:00:00.000Z");
+    const tuple = {
+      id: parseDomainPackId("org.example.legal"),
+      version: parseDomainPackVersion("1.0.0"),
+      manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+    };
+    const definitions = new SqliteProjectDefinitionRepository(origin.database);
+    const entry = (
+      kind: "roles" | "prompts" | "workflows",
+      localId: string,
+      operation: "replace" | "extend" | "disable",
+      payload: object = { id: localId },
+    ) => ({
+      origin: "project_override" as const,
+      source: { ...tuple, kind, localId },
+      operation,
+      revision: 1,
+      ...(operation === "disable"
+        ? {}
+        : { payload: payload as { id: string } }),
+      actorId: "operator",
+      changedAt: now.toISOString(),
+    });
+    const own = (
+      kind: "roles" | "prompts" | "workflows" | "taskTypes",
+      id: string,
+      payload: object = { id },
+    ) => ({
+      origin: "project_owned" as const,
+      kind,
+      id,
+      revision: 1,
+      enabled: true,
+      payload: payload as { id: string },
+      actorId: "operator",
+      changedAt: now.toISOString(),
+    });
+    let revision = 0;
+    const store = (
+      owned: ReturnType<typeof own>[],
+      overrides: ReturnType<typeof entry>[],
+    ) =>
+      definitions.replace(
+        { projectId, revision, owned, overrides },
+        revision++,
+        now,
+      );
+
+    // The format-9 state of GP-13 needs nothing new.
+    const review = {
+      id: "review",
+      taskType: "matter",
+      stages: [
+        { id: "z-last", role: "paralegal" },
+        { id: "a-first", role: "counsel" },
+      ],
+    };
+    await store(
+      [own("prompts", "house")],
+      [entry("workflows", "review", "replace", review)],
+    );
+    const plain = await origin.service.backup(projectId);
+    expect(plain.archive.manifest.formatVersion).toBe(9);
+
+    // Each new key alone needs format 10.
+    const described = {
+      ...review,
+      additionalTaskTypes: ["appeal", "filing"],
+      stages: [
+        {
+          id: "z-last",
+          role: "paralegal",
+          title: "Last",
+          objective: "Close the matter",
+          checks: ["b second", "a first", "b second"],
+        },
+        { id: "a-first", role: "counsel" },
+      ],
+    };
+    for (const [owned, overrides] of [
+      [
+        [own("roles", "liaison", { id: "liaison", responsibilities: ["x"] })],
+        [],
+      ],
+      [[own("prompts", "house", { id: "house", text: "x" })], []],
+      [
+        [],
+        [
+          entry("roles", "counsel", "replace", {
+            id: "counsel",
+            responsibilities: ["x"],
+          }),
+        ],
+      ],
+      [[], [entry("prompts", "brief", "replace", { id: "brief", text: "x" })]],
+      [
+        [],
+        [
+          entry("workflows", "review", "replace", {
+            ...review,
+            additionalTaskTypes: ["appeal"],
+          }),
+        ],
+      ],
+      [
+        [],
+        [
+          entry("workflows", "review", "replace", {
+            ...review,
+            stages: [{ id: "only", role: "counsel", title: "x" }],
+          }),
+        ],
+      ],
+      [
+        [],
+        [
+          entry("workflows", "review", "replace", {
+            ...review,
+            stages: [{ id: "only", role: "counsel", objective: "x" }],
+          }),
+        ],
+      ],
+      [
+        [],
+        [
+          entry("workflows", "review", "replace", {
+            ...review,
+            stages: [{ id: "only", role: "counsel", checks: ["x"] }],
+          }),
+        ],
+      ],
+    ] as [ReturnType<typeof own>[], ReturnType<typeof entry>[]][]) {
+      await store(owned, overrides);
+      expect(
+        (await origin.service.backup(projectId)).archive.manifest.formatVersion,
+      ).toBe(10);
+    }
+
+    const stored = await store(
+      [
+        own("prompts", "house", {
+          id: "house",
+          text: "House rules.\nBe kind.",
+        }),
+        own("roles", "liaison", {
+          id: "liaison",
+          responsibilities: ["z write", "a call", "z write"],
+        }),
+        own("taskTypes", "errand"),
+        own("taskTypes", "visit"),
+        own("workflows", "ours", {
+          id: "ours",
+          taskType: "errand",
+          additionalTaskTypes: ["visit"],
+          stages: [{ id: "go", role: "liaison", checks: ["Back by noon"] }],
+        }),
+      ],
+      [
+        entry("prompts", "brief", "replace", {
+          id: "brief",
+          text: "Our brief.",
+        }),
+        entry("prompts", "tone", "extend", { title: "Our tone" }),
+        entry("roles", "clerk", "disable"),
+        entry("roles", "counsel", "replace", {
+          id: "counsel",
+          title: "Our counsel",
+          responsibilities: ["z sign", "a advise"],
+        }),
+        entry("workflows", "review", "replace", described),
+      ],
+    );
+    const backup = await origin.service.backup(projectId);
+    expect(backup.archive.manifest.formatVersion).toBe(10);
+    expect(portableProjectFormatVersionFor(backup.archive.state)).toBe(10);
+    // Format 10 adds keys, not sections.
+    expect(backup.archive.manifest.contents).toEqual(
+      plain.archive.manifest.contents,
+    );
+    expect(backup.archive.state.definitions).toEqual({
+      revision: stored.revision,
+      owned: stored.owned,
+      overrides: stored.overrides,
+    });
+    const serialized = serializePortableProjectArchive(backup.archive);
+    // Lists are serialized in the order given.
+    expect(serialized).toContain(
+      '"responsibilities":["z write","a call","z write"]',
+    );
+    expect(serialized).toContain('"checks":["b second","a first","b second"]');
+    expect(serialized).toContain('"additionalTaskTypes":["appeal","filing"]');
+
+    // Format 9 cannot carry it, as a producer or as a reader.
+    const asFormat = (formatVersion: 9 | 10) =>
+      portableProjectManifestFor({
+        formatVersion,
+        projectIdentity: backup.archive.manifest.projectIdentity,
+        createdAt: backup.archive.manifest.createdAt,
+        revision: backup.archive.manifest.revision,
+      });
+    expect(() =>
+      createPortableProjectArchive({
+        manifest: asFormat(9),
+        state: backup.archive.state,
+      }),
+    ).toThrow(
+      "Portable project archive format version 9 cannot carry descriptive workflow, role or prompt vocabulary; write format version 10",
+    );
+    expect(
+      createPortableProjectArchive({
+        manifest: asFormat(10),
+        state: backup.archive.state,
+      }),
+    ).toEqual(backup.archive);
+    expect(() =>
+      parsePortableProjectArchive(
+        serialized.replace('"formatVersion":10', '"formatVersion":9'),
+      ),
+    ).toThrow(/Portable project archive state\.definitions\./u);
+    // A forged format-10 archive is rejected by the same schema: an unsorted
+    // route set, an empty list and a key on the wrong kind.
+    for (const [from, to] of [
+      [
+        '"additionalTaskTypes":["appeal","filing"]',
+        '"additionalTaskTypes":["filing","appeal"]',
+      ],
+      ['"checks":["Back by noon"]', '"checks":[]'],
+      ['"responsibilities":["z sign","a advise"]', '"responsibilities":[]'],
+      ['"text":"Our brief."', '"responsibilities":["x"]'],
+      ['"title":"Our tone"', '"text":"x"'],
+    ] as const) {
+      expect(serialized).toContain(from);
+      expect(() =>
+        parsePortableProjectArchive(serialized.replace(from, to)),
+      ).toThrow(/Portable project archive state\.definitions\./u);
+    }
+    // Reordering a list of a valid archive breaks its checksums.
+    expect(() =>
+      parsePortableProjectArchive(
+        serialized.replace(
+          '"responsibilities":["z sign","a advise"]',
+          '"responsibilities":["a advise","z sign"]',
+        ),
+      ),
+    ).toThrow("checksum mismatch");
+    // The format-9 archive of the earlier state is still readable as written.
+    expect(
+      parsePortableProjectArchive(
+        serializePortableProjectArchive(plain.archive),
+      ),
+    ).toEqual(plain.archive);
+
+    const destination = openRuntime(
+      temporaryRoot("ai-office-gp10b2-portable-destination-"),
+    );
+    const restored = await destination.service.restore({
+      archive: parsePortableProjectArchive(serialized),
+      rootPath: source,
+    });
+    const restoredState = await new SqliteProjectDefinitionRepository(
+      destination.database,
+    ).get(restored.projectId);
+    expect(restoredState).toEqual({ ...stored, projectId: restored.projectId });
+    const again = await destination.service.backup(restored.projectId);
+    expect(again.archive.manifest.formatVersion).toBe(10);
+    expect(again.archive.state).toEqual(backup.archive.state);
+    // Restoring the same archive over identical local state is idempotent.
+    await expect(
+      destination.service.restore({
+        archive: parsePortableProjectArchive(serialized),
+        rootPath: source,
+      }),
+    ).resolves.toMatchObject({ projectId: restored.projectId });
+    // A format-9 archive still restores with its frozen meaning.
+    const older = openRuntime(
+      temporaryRoot("ai-office-gp10b2-portable-format9-"),
+    );
+    const olderRestored = await older.service.restore({
+      archive: parsePortableProjectArchive(
+        serializePortableProjectArchive(plain.archive),
+      ),
+      rootPath: source,
+    });
+    const olderBackup = await older.service.backup(olderRestored.projectId);
+    expect(olderBackup.archive.manifest.formatVersion).toBe(9);
+    expect(olderBackup.archive.state).toEqual(plain.archive.state);
+    origin.database.close();
+    destination.database.close();
+    older.database.close();
   });
 
   test("v6 restore recomputes the same derived configuration with a different installer reference", async () => {

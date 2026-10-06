@@ -127,7 +127,17 @@ pack contract can express (expressible-subset parity). GP-10B-1 adds the four
 development workflows to that manifest as data. They are compared with the
 legacy default pipelines over the same kind of subset; no pipeline, run, pin,
 approval or guard is created from a pack workflow and nothing is scheduled from
-one.
+one. The GP-10B-2 contract adds descriptive vocabulary to manifest schema 1
+without a schema or core contract version change: a workflow stage may carry
+a `title`, an `objective` and ordered `checks`, a role ordered
+`responsibilities`, a prompt its `text`, and a workflow `additionalTaskTypes`
+beside its `taskType`. Project-owned definitions and `replace` overrides
+carry the same fields, `extend` does not, and the resolved configuration
+reports them. They are stored in the existing JSON payload columns with no
+migration and are carried by portable archive format 10; format 9 rejects
+them. They are declarative text and references: the Runtime reads none of
+them, generates no instruction file from them and sends no pack prompt to a
+provider.
 GP-25 types the pack `policies` contribution: a policy
 (`pack:<packId>/policies/<localId>`) targets one workflow of its own pack and
 declares enforcement, approval, independent approval, agent separation and

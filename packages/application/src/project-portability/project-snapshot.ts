@@ -16,9 +16,12 @@ import {
 } from "../../../domain-pack-contracts/src/index.ts";
 import {
   hasAgentReferences,
+  hasDescriptiveVocabulary,
   isDefinitionText,
+  isDescriptiveText,
   maximumAgentReferences,
   maximumDefinitionTextLength,
+  maximumDescriptiveEntries,
   maximumWorkflowStages,
 } from "../domain-pack/project-definition.ts";
 
@@ -46,9 +49,14 @@ export const portableProjectFormat = "ai-office-project" as const;
  * v9 has the v8 contents and additionally carries an override on a workflow,
  * whose stage list keeps the order given; it is written only for a state that
  * contains one.
+ * v10 has the v9 contents and additionally carries the descriptive vocabulary
+ * of GP-10B-2 in project-owned and replacing payloads: a role's
+ * `responsibilities`, a prompt's `text`, a stage's `title`, `objective` and
+ * `checks`, and a workflow's `additionalTaskTypes`. It is written only for a
+ * state that contains at least one of those keys.
  */
 export const portableProjectFormatVersions = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9,
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
 ] as const;
 export type PortableProjectFormatVersion =
   (typeof portableProjectFormatVersions)[number];
@@ -64,6 +72,7 @@ export const portableProjectDefinitionFormatVersion = 6 as const;
 export const portableProjectRoleOmissionFormatVersion = 7 as const;
 export const portableProjectAgentArchetypeFormatVersion = 8 as const;
 export const portableProjectWorkflowOverrideFormatVersion = 9 as const;
+export const portableProjectDescriptiveVocabularyFormatVersion = 10 as const;
 export const portableProjectExtension = ".aioffice" as const;
 export const maximumPortableProjectBytes = 32 * 1024 * 1024;
 
@@ -294,6 +303,24 @@ const portableReferenceList = z
       items.every((item, index) => index === 0 || items[index - 1]! < item),
     { message: "References must be unique and in ascending order" },
   );
+/** Descriptive text of GP-10B-2: definition text that is not empty. */
+const portableDescriptiveText = portableDefinitionText.refine(
+  isDescriptiveText,
+  { message: "must not be empty" },
+);
+/** An ordered list of descriptive text, carried in the order given. */
+const portableDescriptiveList = z
+  .array(portableDescriptiveText)
+  .min(1)
+  .max(maximumDescriptiveEntries);
+/** A role envelope: only this kind carries `responsibilities` (format 10). */
+const portableRolePayload = portableDescriptivePayload.extend({
+  responsibilities: portableDescriptiveList,
+});
+/** A prompt envelope: only this kind carries `text` (format 10). */
+const portablePromptPayload = portableDescriptivePayload.extend({
+  text: portableDescriptiveText,
+});
 /** The GP-12 agent envelope: descriptive fields and declarative references. */
 const portableAgentPayload = portableDescriptivePayload.extend({
   role: portableDefinitionId.optional(),
@@ -303,12 +330,43 @@ const portableAgentPayload = portableDescriptivePayload.extend({
 });
 const portableWorkflowPayload = portableDescriptivePayload.extend({
   taskType: portableDefinitionId,
+  // Further routes, in the mutation contract's order (format 10).
+  additionalTaskTypes: portableReferenceList.optional(),
   stages: z
     .array(
-      z.strictObject({ id: portableDefinitionId, role: portableDefinitionId }),
+      z.strictObject({
+        id: portableDefinitionId,
+        role: portableDefinitionId,
+        // Descriptive stage fields (format 10).
+        title: portableDescriptiveText.optional(),
+        objective: portableDescriptiveText.optional(),
+        checks: portableDescriptiveList.optional(),
+      }),
     )
     .max(maximumWorkflowStages),
 });
+/**
+ * The kind-specific rules of the format-10 keys: `responsibilities` on a role
+ * only, `text` on a prompt only, and a route set without the task type.
+ */
+function descriptiveVocabularyIssue(
+  kind: string,
+  payload: object,
+): string | null {
+  if ("responsibilities" in payload && kind !== "roles")
+    return "Only a role carries responsibilities";
+  if ("text" in payload && kind !== "prompts")
+    return "Only a prompt carries text";
+  if (
+    "additionalTaskTypes" in payload &&
+    "taskType" in payload &&
+    (payload.additionalTaskTypes as readonly unknown[]).includes(
+      payload.taskType,
+    )
+  )
+    return "Additional task types must not contain the task type";
+  return null;
+}
 const portableExactDefinitionSource = z.strictObject({
   id: z.string().refine((value) => {
     try {
@@ -352,6 +410,8 @@ const portableDefinitionState = z
           enabled: z.boolean(),
           payload: z.union([
             portableDescriptivePayload,
+            portableRolePayload,
+            portablePromptPayload,
             portableWorkflowPayload,
             portableAgentPayload,
           ]),
@@ -371,6 +431,8 @@ const portableDefinitionState = z
             .union([
               portableDescriptivePayload,
               portableExtensionPayload,
+              portableRolePayload,
+              portablePromptPayload,
               portableAgentPayload,
               portableWorkflowPayload,
             ])
@@ -408,6 +470,16 @@ const portableDefinitionState = z
           path: ["owned", index, "payload"],
           message: "Unsupported agent reference fields",
         });
+      const ownedVocabulary = descriptiveVocabularyIssue(
+        item.kind,
+        item.payload,
+      );
+      if (ownedVocabulary !== null)
+        context.addIssue({
+          code: "custom",
+          path: ["owned", index, "payload"],
+          message: ownedVocabulary,
+        });
       if (
         "stages" in item.payload &&
         new Set(item.payload.stages.map((stage) => stage.id)).size !==
@@ -444,6 +516,18 @@ const portableDefinitionState = z
           code: "custom",
           path: ["overrides", index, "payload"],
           message: "Unsupported agent reference fields",
+        });
+      // The descriptive vocabulary belongs to a replacement of its kind; an
+      // extension's schema has none of its keys.
+      const vocabulary =
+        item.payload === undefined
+          ? null
+          : descriptiveVocabularyIssue(source.kind, item.payload);
+      if (vocabulary !== null)
+        context.addIssue({
+          code: "custom",
+          path: ["overrides", index, "payload"],
+          message: vocabulary,
         });
       // A replacement of a workflow is the typed workflow envelope, and
       // nothing else carries one. Stage order is kept as given.
@@ -499,10 +583,32 @@ const portableDefinitionState = z
       });
   });
 /**
+ * Format 9 froze the payload keys without the descriptive vocabulary of
+ * GP-10B-2; any of its keys needs format 10.
+ */
+const portableDefinitionStateV9 = portableDefinitionState.superRefine(
+  (state, context) => {
+    for (const [index, item] of state.owned.entries())
+      if (hasDescriptiveVocabulary(item.payload))
+        context.addIssue({
+          code: "custom",
+          path: ["owned", index, "payload"],
+          message: "Unsupported descriptive vocabulary fields",
+        });
+    for (const [index, item] of state.overrides.entries())
+      if (item.payload !== undefined && hasDescriptiveVocabulary(item.payload))
+        context.addIssue({
+          code: "custom",
+          path: ["overrides", index, "payload"],
+          message: "Unsupported descriptive vocabulary fields",
+        });
+  },
+);
+/**
  * Format 8 froze the override kinds without workflows; replacing, extending
  * or disabling a workflow needs format 9.
  */
-const portableDefinitionStateV8 = portableDefinitionState.superRefine(
+const portableDefinitionStateV8 = portableDefinitionStateV9.superRefine(
   (state, context) => {
     for (const [index, item] of state.overrides.entries())
       if (item.source.kind === "workflows")
@@ -721,6 +827,9 @@ const portableProjectStateShapeV8 = portableProjectStateShapeV5.extend({
   definitions: portableDefinitionStateV8,
 });
 const portableProjectStateShapeV9 = portableProjectStateShapeV5.extend({
+  definitions: portableDefinitionStateV9,
+});
+const portableProjectStateShapeV10 = portableProjectStateShapeV5.extend({
   definitions: portableDefinitionState,
 });
 
@@ -992,6 +1101,8 @@ export const portableProjectStateSchemaV8 =
   portableProjectStateShapeV8.superRefine(referentialClosure);
 export const portableProjectStateSchemaV9 =
   portableProjectStateShapeV9.superRefine(referentialClosure);
+export const portableProjectStateSchemaV10 =
+  portableProjectStateShapeV10.superRefine(referentialClosure);
 
 export type PortableProjectState = z.infer<typeof portableProjectStateSchema>;
 
@@ -1009,6 +1120,17 @@ export function portableTaskRequirementLinks(
 export function portableProjectFormatVersionFor(
   state: PortableProjectState,
 ): PortableProjectFormatVersion {
+  // The descriptive vocabulary of GP-10B-2 is what format 9 cannot express.
+  if (
+    state.definitions?.owned.some((item) =>
+      hasDescriptiveVocabulary(item.payload),
+    ) ||
+    state.definitions?.overrides.some(
+      (item) =>
+        item.payload !== undefined && hasDescriptiveVocabulary(item.payload),
+    )
+  )
+    return portableProjectDescriptiveVocabularyFormatVersion;
   // An override on a workflow is what format 8 cannot express.
   if (
     state.definitions?.overrides.some(
@@ -1052,10 +1174,16 @@ export function portableStateAtFormatVersion(
   state: PortableProjectState,
   version: PortableProjectFormatVersion,
 ): PortableProjectState {
-  // Formats 6 to 9 carry the same sections; a role omission simply never
-  // matches a format-6 archive, an agent disable a format-7 one, nor a
-  // workflow override a format-8 one.
-  if (version === 9 || version === 8 || version === 7 || version === 6)
+  // Formats 6 to 10 carry the same sections; a role omission simply never
+  // matches a format-6 archive, an agent disable a format-7 one, a workflow
+  // override a format-8 one, nor a descriptive key a format-9 one.
+  if (
+    version === 10 ||
+    version === 9 ||
+    version === 8 ||
+    version === 7 ||
+    version === 6
+  )
     return state;
   const {
     packBinding: _packBinding,
@@ -1210,6 +1338,20 @@ export const portableProjectContents = {
     "project_pack_binding",
     "project_definitions",
   ],
+  10: [
+    "project",
+    "tasks",
+    "profile",
+    "office_manifests",
+    "governance",
+    "agent_definitions",
+    "terminal_run_summaries",
+    "task_requirements",
+    "task_dependencies",
+    "task_execution_history",
+    "project_pack_binding",
+    "project_definitions",
+  ],
 } as const;
 
 const portableProjectManifestBase = {
@@ -1325,6 +1467,18 @@ export const portableProjectManifestSchemaV9 = z.strictObject({
     z.literal("project_definitions"),
   ]),
 });
+export const portableProjectManifestSchemaV10 = z.strictObject({
+  ...portableProjectManifestBase,
+  formatVersion: z.literal(portableProjectDescriptiveVocabularyFormatVersion),
+  contents: z.tuple([
+    ...manifestContentsV1,
+    z.literal("task_requirements"),
+    z.literal("task_dependencies"),
+    z.literal("task_execution_history"),
+    z.literal("project_pack_binding"),
+    z.literal("project_definitions"),
+  ]),
+});
 
 /** Accepts either version. Which one is decided before the state is parsed. */
 export const portableProjectManifestSchema = z.union([
@@ -1337,6 +1491,7 @@ export const portableProjectManifestSchema = z.union([
   portableProjectManifestSchemaV7,
   portableProjectManifestSchemaV8,
   portableProjectManifestSchemaV9,
+  portableProjectManifestSchemaV10,
 ]);
 
 export type PortableProjectManifest = z.infer<
@@ -1361,6 +1516,12 @@ export function portableProjectManifestFor(input: {
     revision: input.revision,
     ...(input.source === undefined ? {} : { source: input.source }),
   };
+  if (input.formatVersion === portableProjectDescriptiveVocabularyFormatVersion)
+    return {
+      ...envelope,
+      formatVersion: portableProjectDescriptiveVocabularyFormatVersion,
+      contents: [...portableProjectContents[10]],
+    };
   if (input.formatVersion === portableProjectWorkflowOverrideFormatVersion)
     return {
       ...envelope,
@@ -1467,6 +1628,11 @@ export const portableProjectArchiveSchemaV9 = z.strictObject({
   state: portableProjectStateSchemaV9,
   integrity: integrityShape,
 });
+export const portableProjectArchiveSchemaV10 = z.strictObject({
+  manifest: portableProjectManifestSchemaV10,
+  state: portableProjectStateSchemaV10,
+  integrity: integrityShape,
+});
 
 export interface PortableProjectArchive {
   manifest: PortableProjectManifest;
@@ -1550,26 +1716,28 @@ export function createPortableProjectArchive(input: {
   const required = portableProjectFormatVersionFor(input.state);
   if (declared < required)
     throw new PortableProjectArchiveError(
-      `Portable project archive format version ${declared} cannot carry ${required === 9 ? "a workflow override" : required === 8 ? "an agent disable or agent references" : required === 7 ? "a role omission" : required === 6 ? "project definitions" : required === 5 ? "project pack binding" : required === 4 ? "lifetime task execution history" : "Task/Requirement links"}; write format version ${required}`,
+      `Portable project archive format version ${declared} cannot carry ${required === 10 ? "descriptive workflow, role or prompt vocabulary" : required === 9 ? "a workflow override" : required === 8 ? "an agent disable or agent references" : required === 7 ? "a role omission" : required === 6 ? "project definitions" : required === 5 ? "project pack binding" : required === 4 ? "lifetime task execution history" : "Task/Requirement links"}; write format version ${required}`,
     );
   const state =
-    declared === portableProjectWorkflowOverrideFormatVersion
-      ? portableProjectStateSchemaV9.parse(input.state)
-      : declared === portableProjectAgentArchetypeFormatVersion
-        ? portableProjectStateSchemaV8.parse(input.state)
-        : declared === portableProjectRoleOmissionFormatVersion
-          ? portableProjectStateSchemaV7.parse(input.state)
-          : declared === portableProjectDefinitionFormatVersion
-            ? portableProjectStateSchemaV6.parse(input.state)
-            : declared === portableProjectPackBindingFormatVersion
-              ? portableProjectStateSchemaV5.parse(input.state)
-              : declared === portableProjectExecutionHistoryFormatVersion
-                ? portableProjectStateSchemaV4.parse(input.state)
-                : declared === portableProjectDependencyFormatVersion
-                  ? portableProjectStateSchemaV3.parse(input.state)
-                  : declared === portableProjectLinkedFormatVersion
-                    ? portableProjectStateSchemaV2.parse(input.state)
-                    : portableProjectStateSchemaV1.parse(input.state);
+    declared === portableProjectDescriptiveVocabularyFormatVersion
+      ? portableProjectStateSchemaV10.parse(input.state)
+      : declared === portableProjectWorkflowOverrideFormatVersion
+        ? portableProjectStateSchemaV9.parse(input.state)
+        : declared === portableProjectAgentArchetypeFormatVersion
+          ? portableProjectStateSchemaV8.parse(input.state)
+          : declared === portableProjectRoleOmissionFormatVersion
+            ? portableProjectStateSchemaV7.parse(input.state)
+            : declared === portableProjectDefinitionFormatVersion
+              ? portableProjectStateSchemaV6.parse(input.state)
+              : declared === portableProjectPackBindingFormatVersion
+                ? portableProjectStateSchemaV5.parse(input.state)
+                : declared === portableProjectExecutionHistoryFormatVersion
+                  ? portableProjectStateSchemaV4.parse(input.state)
+                  : declared === portableProjectDependencyFormatVersion
+                    ? portableProjectStateSchemaV3.parse(input.state)
+                    : declared === portableProjectLinkedFormatVersion
+                      ? portableProjectStateSchemaV2.parse(input.state)
+                      : portableProjectStateSchemaV1.parse(input.state);
   assertPortableProjectStateSafe(state);
   const stateChecksum = portableStateChecksum(state);
   if (input.manifest.revision.stateChecksum !== stateChecksum)
@@ -1577,23 +1745,25 @@ export function createPortableProjectArchive(input: {
       "Snapshot revision checksum does not match portable state",
     );
   const manifest =
-    declared === portableProjectWorkflowOverrideFormatVersion
-      ? portableProjectManifestSchemaV9.parse(input.manifest)
-      : declared === portableProjectAgentArchetypeFormatVersion
-        ? portableProjectManifestSchemaV8.parse(input.manifest)
-        : declared === portableProjectRoleOmissionFormatVersion
-          ? portableProjectManifestSchemaV7.parse(input.manifest)
-          : declared === portableProjectDefinitionFormatVersion
-            ? portableProjectManifestSchemaV6.parse(input.manifest)
-            : declared === portableProjectPackBindingFormatVersion
-              ? portableProjectManifestSchemaV5.parse(input.manifest)
-              : declared === portableProjectExecutionHistoryFormatVersion
-                ? portableProjectManifestSchemaV4.parse(input.manifest)
-                : declared === portableProjectDependencyFormatVersion
-                  ? portableProjectManifestSchemaV3.parse(input.manifest)
-                  : declared === portableProjectLinkedFormatVersion
-                    ? portableProjectManifestSchemaV2.parse(input.manifest)
-                    : portableProjectManifestSchemaV1.parse(input.manifest);
+    declared === portableProjectDescriptiveVocabularyFormatVersion
+      ? portableProjectManifestSchemaV10.parse(input.manifest)
+      : declared === portableProjectWorkflowOverrideFormatVersion
+        ? portableProjectManifestSchemaV9.parse(input.manifest)
+        : declared === portableProjectAgentArchetypeFormatVersion
+          ? portableProjectManifestSchemaV8.parse(input.manifest)
+          : declared === portableProjectRoleOmissionFormatVersion
+            ? portableProjectManifestSchemaV7.parse(input.manifest)
+            : declared === portableProjectDefinitionFormatVersion
+              ? portableProjectManifestSchemaV6.parse(input.manifest)
+              : declared === portableProjectPackBindingFormatVersion
+                ? portableProjectManifestSchemaV5.parse(input.manifest)
+                : declared === portableProjectExecutionHistoryFormatVersion
+                  ? portableProjectManifestSchemaV4.parse(input.manifest)
+                  : declared === portableProjectDependencyFormatVersion
+                    ? portableProjectManifestSchemaV3.parse(input.manifest)
+                    : declared === portableProjectLinkedFormatVersion
+                      ? portableProjectManifestSchemaV2.parse(input.manifest)
+                      : portableProjectManifestSchemaV1.parse(input.manifest);
   const basis = { manifest, state };
   return {
     ...basis,
@@ -1642,23 +1812,25 @@ export function parsePortableProjectArchive(
       `Portable project archive does not declare a supported format version (supported: ${portableProjectFormatVersions.join(", ")})`,
     );
   const parsed = (
-    version === portableProjectWorkflowOverrideFormatVersion
-      ? portableProjectArchiveSchemaV9
-      : version === portableProjectAgentArchetypeFormatVersion
-        ? portableProjectArchiveSchemaV8
-        : version === portableProjectRoleOmissionFormatVersion
-          ? portableProjectArchiveSchemaV7
-          : version === portableProjectDefinitionFormatVersion
-            ? portableProjectArchiveSchemaV6
-            : version === portableProjectPackBindingFormatVersion
-              ? portableProjectArchiveSchemaV5
-              : version === portableProjectExecutionHistoryFormatVersion
-                ? portableProjectArchiveSchemaV4
-                : version === portableProjectDependencyFormatVersion
-                  ? portableProjectArchiveSchemaV3
-                  : version === portableProjectLinkedFormatVersion
-                    ? portableProjectArchiveSchemaV2
-                    : portableProjectArchiveSchemaV1
+    version === portableProjectDescriptiveVocabularyFormatVersion
+      ? portableProjectArchiveSchemaV10
+      : version === portableProjectWorkflowOverrideFormatVersion
+        ? portableProjectArchiveSchemaV9
+        : version === portableProjectAgentArchetypeFormatVersion
+          ? portableProjectArchiveSchemaV8
+          : version === portableProjectRoleOmissionFormatVersion
+            ? portableProjectArchiveSchemaV7
+            : version === portableProjectDefinitionFormatVersion
+              ? portableProjectArchiveSchemaV6
+              : version === portableProjectPackBindingFormatVersion
+                ? portableProjectArchiveSchemaV5
+                : version === portableProjectExecutionHistoryFormatVersion
+                  ? portableProjectArchiveSchemaV4
+                  : version === portableProjectDependencyFormatVersion
+                    ? portableProjectArchiveSchemaV3
+                    : version === portableProjectLinkedFormatVersion
+                      ? portableProjectArchiveSchemaV2
+                      : portableProjectArchiveSchemaV1
   ).safeParse(value);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];

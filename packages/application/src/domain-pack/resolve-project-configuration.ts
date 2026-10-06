@@ -37,6 +37,7 @@ import {
   type ProjectDefinitionPayload,
   type ProjectDefinitionState,
   type ProjectOwnedDefinition,
+  type RoleDefinition,
 } from "./project-definition.ts";
 import {
   policyClauses,
@@ -105,6 +106,8 @@ export interface ResolvedRole {
   readonly origin: "pack_owned" | "project_owned";
   readonly title?: string;
   readonly description?: string;
+  /** Descriptive and ordered (GP-10B-2); present only when the role has any. */
+  readonly responsibilities?: readonly string[];
   readonly capabilities: readonly string[];
   readonly customization: "none" | "replace" | "extend";
 }
@@ -143,7 +146,19 @@ export interface ResolvedWorkflow {
   readonly title?: string;
   readonly description?: string;
   readonly taskTypeId: string;
-  readonly stages: readonly { readonly id: string; readonly roleId: string }[];
+  /**
+   * Stable IDs of the further task types the workflow routes (GP-10B-2), in
+   * ascending order of their local ID; present only when there is one.
+   */
+  readonly additionalTaskTypeIds?: readonly string[];
+  /** A stage's `title`, `objective` and `checks` are present only when set. */
+  readonly stages: readonly {
+    readonly id: string;
+    readonly roleId: string;
+    readonly title?: string;
+    readonly objective?: string;
+    readonly checks?: readonly string[];
+  }[];
   readonly customization: "none" | "replace" | "extend";
 }
 
@@ -167,6 +182,11 @@ export interface ResolvedPolicy extends PolicyClauses {
 export interface ResolvedWorkflowReferences {
   readonly workflowId: string;
   readonly taskTypeId: string;
+  /**
+   * Present only for a workflow with additional task types, so the digest of
+   * a configuration without any is what it was before the field existed.
+   */
+  readonly additionalTaskTypeIds?: readonly string[];
   readonly stages: readonly { readonly id: string; readonly roleId: string }[];
 }
 
@@ -392,7 +412,7 @@ function storedOverride(entry: ProjectDefinitionOverride): {
     if (error instanceof ProjectDefinitionConflictError)
       failure(
         "unresolved_override",
-        `Stored override violates the override contract: ${error.code}`,
+        `Stored override violates the override contract: ${error.code}: ${error.message}`,
       );
     throw error;
   }
@@ -582,8 +602,9 @@ export function resolveProjectConfiguration(input: {
     let next: ResolvedDefinition;
     if (entry.operation === "disable") next = { ...current, enabled: false };
     else if (entry.operation === "replace" && payload) {
-      // A replacement substitutes the descriptive envelope only. A role's
-      // capability set stays the pack's: a project payload cannot carry one.
+      // A replacement substitutes the descriptive envelope only, with its
+      // responsibilities or text when it carries them. A role's capability
+      // set stays the pack's: a project payload cannot carry one.
       // An agent's references are project-controlled: its replacement is the
       // complete agent envelope and is never merged with the pack's. The
       // same holds for a workflow's task type and ordered stages.
@@ -710,13 +731,32 @@ export function resolveProjectConfiguration(input: {
     // originating pack tuple. Stage order is the payload's, never sorted.
     const payload = workflow.payload as WorkflowContribution;
     const taskType = resolveReference(workflow, "taskTypes", payload.taskType);
+    // Further routes resolve exactly like the task type.
+    const additionalTaskTypes = (payload.additionalTaskTypes ?? []).map(
+      (localId) => resolveReference(workflow, "taskTypes", localId),
+    );
     const stages = payload.stages.map((stage) => ({
       id: stage.id,
       role: resolveReference(workflow, "roles", stage.role),
+      // Descriptive fields are reported as they are, only when set.
+      described: {
+        ...(stage.title === undefined ? {} : { title: stage.title }),
+        ...(stage.objective === undefined
+          ? {}
+          : { objective: stage.objective }),
+        ...(stage.checks === undefined ? {} : { checks: stage.checks }),
+      },
     }));
     resolvedWorkflowReferences.push({
       workflowId: workflow.effectiveId,
       taskTypeId: taskType.effectiveId,
+      ...(additionalTaskTypes.length === 0
+        ? {}
+        : {
+            additionalTaskTypeIds: additionalTaskTypes.map(
+              (target) => target.effectiveId,
+            ),
+          }),
       stages: stages.map((stage) => ({
         id: stage.id,
         roleId: stage.role.effectiveId,
@@ -734,9 +774,13 @@ export function resolveProjectConfiguration(input: {
       ...(title === undefined ? {} : { title }),
       ...(description === undefined ? {} : { description }),
       taskTypeId: stableId(taskType),
+      ...(additionalTaskTypes.length === 0
+        ? {}
+        : { additionalTaskTypeIds: additionalTaskTypes.map(stableId) }),
       stages: stages.map((stage) => ({
         id: stage.id,
         roleId: stableId(stage.role),
+        ...stage.described,
       })),
       customization:
         operation === "replace" || operation === "extend" ? operation : "none",
@@ -813,6 +857,7 @@ export function resolveProjectConfiguration(input: {
       continue;
     }
     const { title, description } = definition.payload;
+    const { responsibilities } = definition.payload as RoleDefinition;
     const operation =
       provenance.origin === "pack_owned"
         ? provenance.override?.operation
@@ -823,6 +868,7 @@ export function resolveProjectConfiguration(input: {
       origin: provenance.origin,
       ...(title === undefined ? {} : { title }),
       ...(description === undefined ? {} : { description }),
+      ...(responsibilities === undefined ? {} : { responsibilities }),
       // Only a pack source declares capabilities; they are reported by the
       // stable ID of the capability the same pack declares.
       capabilities:

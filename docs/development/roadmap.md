@@ -1951,7 +1951,20 @@ is unchanged, the pack is still unregistered and unread by the Runtime, and
 nothing was removed from the legacy path; the pack must not become
 authoritative for Runtime execution without a separately approved task. The
 execution parity task `a45ddb12-3159-4b60-9b8b-c26516720834` depends on
-GP-10B-1, GP-10B-2 and the policy task. GP-25, whose number is now
+GP-10B-1, GP-10B-2 and the policy task. GP-10B-2 is delivered as two pull
+requests. The first, the contract, is an additive schema-1 extension with the
+descriptive vocabulary that residue needs: workflow stage `title`,
+`objective` and `checks`, role `responsibilities`, prompt `text` and workflow
+`additionalTaskTypes`, with the same fields in project-owned and `replace`
+payloads, the resolved view, upgrade reconciliation and portable archive
+format 10. It adds no migration, CLI command or error code, leaves the
+development pack at `0.2.0` and the legacy path untouched, and records two
+limits: project text stays bounded at 16,000 UTF-16 code units, below the
+65,536-byte legacy guidance bound, and a mutation over the 16 KiB argument
+limit cannot be sent. The fields are declarative; nothing in the Runtime
+reads them. The second pull request, development pack `0.3.0` with the
+descriptive defaults, the `maintenance -> delivery` route, role guidance and
+reference prompts, is not delivered yet. GP-25, whose number is now
 confirmed, gives the schema-1 `policies` contribution a typed form: a policy
 targets one workflow of its own pack and declares its `enforcement` and, per
 stage, `requiresApproval`, `requiresIndependentApproval`,
@@ -1968,10 +1981,10 @@ only through `project:pack:upgrade`, whose plan reports `policyChanges` and
 format, and nothing is enforced from a policy: the Runtime still reads only
 the OfficeManifest pipelines. The policies of the development reference pack
 and their parity tests are a second GP-25 pull request that follows the pack
-version of GP-10B-2. Aliases, Development Pack prompts
-and the descriptive contract extension (GP-10B-2), the development pack's
-policy data (GP-25, second pull request), Runtime enforcement from pack
-policies (`a45ddb12`), evidence and adoption (GP-10C), automatic
+version of GP-10B-2. Aliases, the Development Pack `0.3.0` data and prompts
+(GP-10B-2, second pull request), the development pack's policy data (GP-25, second pull
+request), Runtime enforcement from pack policies (`a45ddb12`), evidence and
+adoption (GP-10C), automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
 end-to-end exit criteria are met.

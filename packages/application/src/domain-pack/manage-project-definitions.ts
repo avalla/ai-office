@@ -142,11 +142,11 @@ function agentReferenceIssues(
 }
 
 /**
- * GP-06 rejects a workflow whose task type or stage roles do not resolve in
- * its own pack. Report that for a replacement before it is stored, against
- * the exact source manifest, in envelope order and once per missing
- * reference. Whether a referenced role is omitted depends on the other
- * project entries and stays with the resolver.
+ * GP-06 rejects a workflow whose task type, additional task types or stage
+ * roles do not resolve in its own pack. Report that for a replacement before
+ * it is stored, against the exact source manifest, in envelope order and once
+ * per missing reference. Whether a referenced role is omitted depends on the
+ * other project entries and stays with the resolver.
  */
 function workflowReferenceIssues(
   manifest: DomainPackManifest,
@@ -169,6 +169,10 @@ function workflowReferenceIssues(
   const roles = [...new Set(payload.stages.map((stage) => stage.role))];
   return [
     ...missing("taskTypes", payload.taskType),
+    // Further routes (GP-10B-2) are task types of the same exact source.
+    ...(payload.additionalTaskTypes ?? []).flatMap((taskType) =>
+      missing("taskTypes", taskType),
+    ),
     ...roles.flatMap((role) => missing("roles", role)),
   ];
 }
