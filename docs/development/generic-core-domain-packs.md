@@ -1933,7 +1933,10 @@ in the list.
   of the default state (pipeline and stage gaps included), that each GP-09
   code it cites reports that field exactly when the entry is marked as in
   the default state, on the GP-09 fixture and on the shipped defaults, and
-  that the table in this section equals it entry for entry.
+  that the table in this section equals it entry for entry. (Since GP-10B-1
+  that comparison is made with the table of the GP-10B-1 section. The table
+  in this section is checked for its fields and gap codes against the list
+  and for the owners GP-10A assigned as literals.)
 - Owners. `tools` is assigned to GP-10C, which puts capability declarations
   behind pack contracts; Runtime role name, version, capability order, model
   policy, limits and agent enablement to the execution parity task;
@@ -2234,7 +2237,8 @@ are expressible and are now in the pack, so they are not in the list.
 - GP-10A section. Its table of fields is kept as GP-10A wrote it, with one
   added sentence that points here. The test that compared that table with
   the list entry for entry now compares the table above; the GP-10A table is
-  still checked for the same 19 fields in the same order.
+  still checked for the same 19 fields in the same order, for the owners
+  GP-10A assigned as literals, and for its gap codes against the list.
 - GP-10A tests changed where the pack changed: the pinned version and
   digests, the count of workflows, the owners, the classification list, and
   the task type renamed in a copy of the pack, which is now `maintenance`
