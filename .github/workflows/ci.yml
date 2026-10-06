@@ -87,7 +87,8 @@ jobs:
             tests/integration/governance-postgres-invariants.test.ts \
             tests/integration/agent-runtime-postgres-contracts.test.ts \
             tests/integration/agent-runtime-postgres.test.ts \
-            tests/integration/storage-bootstrap-postgres.test.ts
+            tests/integration/storage-bootstrap-postgres.test.ts \
+            tests/integration/pack-manifest-nul-policy.test.ts
 
   queue-e2e:
     name: Redis queue E2E
