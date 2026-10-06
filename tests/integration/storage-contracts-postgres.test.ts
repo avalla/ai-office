@@ -2268,25 +2268,25 @@ describe.skipIf(connectionString === undefined)(
           [{ id: "text" }],
           null,
         ]) {
-          const error = (await repository
-            .replace(
-              {
-                ...kept,
-                owned: [
-                  ...kept.owned,
-                  { ...kept.owned[0]!, id: "text", payload: invalid },
-                ],
-              } as unknown as State,
-              1,
-              at,
-            )
-            .then(
-              () => null,
-              (failure: unknown) => failure,
-            )) as Error;
-          expect(error.message).toBe(
-            `Stored project definition payload must be a JSON object: core.project_owned_definition (project_id=${projectId}, kind=roles, local_id=text)`,
-          );
+          const rowKey = `core.project_owned_definition (project_id=${projectId}, kind=roles, local_id=text)`;
+          expect(
+            await refusal(
+              repository.replace(
+                {
+                  ...kept,
+                  owned: [
+                    ...kept.owned,
+                    { ...kept.owned[0]!, id: "text", payload: invalid },
+                  ],
+                } as unknown as State,
+                1,
+                at,
+              ),
+            ),
+          ).toEqual({
+            rowKey,
+            message: `Project definition payload must be a JSON object: ${rowKey}`,
+          });
         }
         expect(await repository.get(projectId)).toEqual(kept);
       });
