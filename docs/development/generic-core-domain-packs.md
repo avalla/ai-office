@@ -1638,9 +1638,10 @@ pack workflow is deferred to GP-24, the task that persists those pins.
 
 ## GP-16 pack capability contracts
 
-Status: contract approved by the owner on 2026-10-06 (scope option B2, every
-decision below at its default). Not yet implemented; an "Implementation
-record" is added to this section with the code.
+Status: implemented. The contract was approved by the owner on 2026-10-06
+(scope option B2, every decision below at its default) and is unchanged;
+"Implementation record" at the end of this section records what the code does
+where the contract left a choice.
 
 Depends on: GP-06. It reuses the additive schema-1 extension pattern of GP-11
 and GP-12, the upgrade plan of GP-08 and the binding preflight of GP-22.
@@ -1965,6 +1966,61 @@ deliberately not delivered as written.
 - A capability cannot be owned, overridden or disabled by a project.
 - The development pack declares no operations (GP-10C).
 - No migration, no portable archive format change and no new storage port.
+
+### Implementation record
+
+- Contract: `packages/domain-pack-contracts/src/manifest.ts`
+  (`CapabilityContribution`, `CapabilityOperation`,
+  `maximumCapabilityOperations`). The bound of 100 operations and the name
+  syntax were chosen here; the brief left both open.
+- Port: `packages/application/src/ports/operation-provider-catalog.port.ts`.
+  The Runtime host adapter is
+  `packages/runtime-host/src/operation-provider-catalog.ts`, built in
+  `runtime-command.ts` from the registry instance the command context holds;
+  `ConnectorRegistry.descriptors()` is the one addition to the connector SDK.
+  The catalog is built with each command composition, as the registry itself
+  is, and is the same for every composition of one program.
+- Binding rules and the contract difference:
+  `packages/application/src/domain-pack/capability-contracts.ts`, one
+  computation shared by resolution, the binding preflight and the upgrade
+  plan.
+- The provider catalog is an optional dependency of the resolver, the
+  configuration reader, the binding service and the upgrade service. When it
+  is absent they use the empty catalog, so a required operation is unmet and
+  nothing is bound by omission. The Runtime host always supplies it.
+- A mode mismatch fails closed for an optional operation as well as for a
+  required one. An optional operation is `unbound_optional` only when no
+  provider lists its name.
+- A provider catalog that throws or returns a malformed list, and one that
+  lists an operation name under two providers, fail as
+  `configuration_invariant` with a fixed message; the cause is not reported.
+  The catalog is read only when some capability of the closure declares an
+  operation, so a configuration of labels never depends on it.
+- The view lists every capability of the closure, labels included, ordered by
+  pack ID and then local ID. A label has no `requirement` and an empty
+  `operations` list.
+- Binding apply raises `ProjectPackBindingProviderError` for the provider
+  codes and the existing `ProjectPackBindingRefusedError` for
+  `capability_contract_change_requires_upgrade`. Preview of the unchanged
+  selection runs the provider check when the closure resolves, like the GP-22
+  comparison. When the current closure cannot be read,
+  `capabilityContractChanges` is `unavailable` and the existing GP-11 rule
+  decides: only a pure removal is applied.
+- A capability added or removed by a selection change is listed in
+  `capabilityContractChanges` but is not a change to an existing capability,
+  so `project:pack:apply` carries it. A label that gains operations, and a
+  capability that loses them, are changes to an existing capability.
+- The upgrade plan has no separate list of the target's contracts. The
+  proposed tuples and their manifest digests are under `planDigest` and
+  determine every contract, also when the current closure cannot be read.
+- Portable restore is not edited: it never consulted providers, and a
+  restored binding whose provider is missing fails at resolution.
+- Tests: `tests/unit/pack-capability-contracts.test.ts`,
+  `tests/integration/pack-capability-contracts.test.ts` (SQLite, and
+  PostgreSQL when `AI_OFFICE_TEST_POSTGRES_URL` is set; added to the
+  PostgreSQL CI job), `tests/integration/pack-capability-grants.test.ts`
+  (SQLite, real policy engine and gateway) and
+  `tests/e2e/pack-capability-contracts.test.ts`.
 
 ## GP-10A development roles and task defaults
 

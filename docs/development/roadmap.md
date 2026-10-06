@@ -2018,7 +2018,7 @@ Scope, exact acceptance criteria and non-goals are in the
 
 ### GP-16 pack capability contracts
 
-Status: contract approved by the owner on 2026-10-06; not yet implemented.
+Status: implemented; the contract was approved by the owner on 2026-10-06.
 
 GP-16 is a definition-layer task. A pack capability may declare the operations
 it needs, by connector operation name and mode, as required or optional. The

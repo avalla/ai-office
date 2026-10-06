@@ -234,6 +234,7 @@ async function world(bound: boolean) {
     principalType: "agent" | "role",
     principalId: string,
     actions: string[],
+    constraints: Record<string, unknown> = {},
   ) =>
     grants.execute({
       projectId: "project-1",
@@ -241,6 +242,7 @@ async function world(bound: boolean) {
       principalId,
       resourceId: resource.id,
       actions,
+      constraints,
       grantedBy: "owner",
       reason: "GP-16 test",
     });
@@ -315,11 +317,19 @@ describe("GP-16: a pack binding grants nothing (SQLite, real gateway)", () => {
   test("a critical operation named by a pack keeps its risk and approval requirement", async () => {
     const plain = await world(false);
     const bound = await world(true);
+    // The fake connector denies a mutation unless a grant constraint allows
+    // it; the pack's declared mode does not stand in for that constraint.
     for (const host of [plain, bound])
-      await host.grant("agent", "agent-1", ["fake.admin", "fake.delete"]);
+      await host.grant("agent", "agent-1", ["fake.admin", "fake.delete"], {
+        allowMutation: true,
+      });
     const admin = await bound.ask("fake.admin");
     expect(admin).toEqual(await plain.ask("fake.admin"));
-    expect(admin.riskLevel).toBe("critical");
+    expect(admin).toMatchObject({
+      riskLevel: "critical",
+      decision: "allow_with_approval",
+      reasons: ["operation risk is critical", "approval is required"],
+    });
     expect(admin.outcome).not.toBe("allowed");
     const remove = await bound.ask("fake.delete");
     expect(remove).toEqual(await plain.ask("fake.delete"));

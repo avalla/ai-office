@@ -367,6 +367,7 @@ describe("GP-09 project:configuration:legacy over the Runtime socket", () => {
         "disabledAgents",
         "workflows",
         "disabledWorkflows",
+        "capabilities",
         "pin",
       ]);
       expect(showAfter.stdout[0]).not.toMatch(/legacy/iu);

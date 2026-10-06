@@ -12,7 +12,15 @@ import {
   type InstalledDomainPackCatalog,
   type PackIdentity,
 } from "../ports/installed-domain-pack-catalog.port.ts";
+import {
+  noOperationProviders,
+  type OperationProviderCatalog,
+} from "../ports/operation-provider-catalog.port.ts";
 import type { ProjectPackBinding } from "../ports/project-pack-binding-repository.port.ts";
+import {
+  bindCapabilityContracts,
+  type ResolvedCapability,
+} from "./capability-contracts.ts";
 import {
   compareExactSources,
   compareOwnedDefinitions,
@@ -49,6 +57,8 @@ export type ConfigurationIssueCode =
   | "disabled_required_definition"
   | "agent_capability_exceeds_role"
   | "unsupported_security_composition"
+  | "missing_required_capability_provider"
+  | "capability_provider_mismatch"
   | "configuration_invariant"
   | "stale_resolution";
 
@@ -194,6 +204,12 @@ export interface ResolvedProjectConfiguration {
   readonly workflows: readonly ResolvedWorkflow[];
   /** Stable IDs of disabled workflows, which are absent from `workflows`. */
   readonly disabledWorkflows: readonly string[];
+  /**
+   * Derived capability contract view over the resolved pack closure (GP-16):
+   * each declared operation with the provider this host bound it to. It is
+   * not digest or pin material, and a binding grants nothing.
+   */
+  readonly capabilities: readonly ResolvedCapability[];
   /** The minimum evidence future run records must pin. */
   readonly pin: {
     readonly configurationDigest: string;
@@ -359,6 +375,11 @@ export function resolveProjectConfiguration(input: {
   readonly definitions: ProjectDefinitionState;
   readonly catalog: InstalledDomainPackCatalog;
   readonly coreContractVersion: number;
+  /**
+   * The host's registered operation providers. Absent means none, so a
+   * required operation is never bound by omission.
+   */
+  readonly providers?: OperationProviderCatalog;
 }): ResolvedProjectConfiguration {
   const {
     projectId: owner,
@@ -803,6 +824,15 @@ export function resolveProjectConfiguration(input: {
     });
   }
 
+  // GP-16: every capability of the closure, whether or not a role or an agent
+  // names it. A capability has no override, so nothing above can hide one.
+  const bound = bindCapabilityContracts(
+    closure,
+    input.providers ?? noOperationProviders,
+  );
+  if ("issues" in bound)
+    failure(bound.issues[0]!.code, bound.issues[0]!.message);
+
   const sortedOrigins = Object.fromEntries(
     Object.keys(origins)
       .sort(compareIds)
@@ -848,6 +878,7 @@ export function resolveProjectConfiguration(input: {
     disabledAgents,
     workflows,
     disabledWorkflows,
+    capabilities: bound.capabilities,
     pin: {
       configurationDigest,
       coreContractVersion,

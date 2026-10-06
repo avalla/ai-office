@@ -1,5 +1,6 @@
 import { ProjectNotFoundError } from "../errors.ts";
 import type { InstalledDomainPackCatalog } from "../ports/installed-domain-pack-catalog.port.ts";
+import type { OperationProviderCatalog } from "../ports/operation-provider-catalog.port.ts";
 import type { ProjectPackBindingRepository } from "../ports/project-pack-binding-repository.port.ts";
 import type { ProjectDefinitionRepository } from "../ports/project-definition-repository.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
@@ -19,6 +20,8 @@ export class ReadProjectConfiguration {
       readonly definitions: ProjectDefinitionRepository;
       readonly transactions: TransactionRunner;
       readonly catalog: InstalledDomainPackCatalog;
+      /** Absent means no registered provider; see the resolver. */
+      readonly providers?: OperationProviderCatalog;
     },
   ) {}
 
@@ -49,6 +52,9 @@ export class ReadProjectConfiguration {
       definitions,
       catalog: this.ports.catalog,
       coreContractVersion: this.ports.catalog.coreContractVersion,
+      ...(this.ports.providers === undefined
+        ? {}
+        : { providers: this.ports.providers }),
     });
   }
 }
