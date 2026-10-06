@@ -2332,8 +2332,9 @@ proposal.
     provider; `requirement.ts` is not edited.
 12. The residue list (PR 2) moves to `schemaVersion` 3 with a nullable
     `residue` and keeps all 19 entries.
-13. A prompt `text` in a manifest must be non-empty. This is a deliberate
-    exception to the one rule for manifest text.
+13. A prompt `text` in a manifest, and each `checks` and `responsibilities`
+    entry, must be non-empty. These are deliberate exceptions to the one rule
+    for manifest text.
 
 ### Manifest fields
 
@@ -2596,6 +2597,13 @@ role guidance and reference prompts, and the residue list.
 - Empty text. A stage `title` or `objective` may be the empty string in a
   manifest, like a contribution `title`. Only a prompt `text` and a list entry
   must be non-empty there. In a project payload every new text is non-empty.
+  A `convert_to_replace` of such a template therefore blocks as
+  `prospective_configuration_invalid` (`unresolved_override`); the message
+  names the offending field, for example `Workflow stage title must be
+  non-empty bounded text`, and never quotes a value.
+- Unknown keys. An unknown key of a stage keeps `malformed_origin_reference`
+  and the message lists the allowed stage keys; a key of the wrong kind of
+  envelope (such as `text` on a role) is `protected_security_invariant`.
 - Mutation contract. `project-definition.ts` admits `responsibilities` for a
   role and `text` for a prompt through one table, `descriptiveFieldOfKind`,
   used for a project-owned definition and for a `replace`; an `extend` and
@@ -2607,6 +2615,8 @@ role guidance and reference prompts, and the residue list.
   type the exact source manifest does not declare as
   `source_definition_missing`, in the list's stored order, before anything is
   written, and `project:definition:show` reports the same for stored state.
+  A route missing more than once is reported once per missing task type, as
+  in GP-13.
 - View. The derived fields are optional and present only when set, so every
   existing view of a configuration without them is unchanged, not only its
   digest. `ResolvedRole.responsibilities`, the stage fields and

@@ -78,7 +78,8 @@ Descriptive vocabulary (GP-10B-2). A workflow stage may carry `title`,
 are ordered lists of 1 to 64 entries (`maximumDescriptiveListEntries`), each
 a non-empty string under the manifest text rule; duplicates are allowed, the
 written order is kept and it is what the digest covers. `text` is manifest
-text that must be non-empty, the one exception to the rule below.
+text that must be non-empty, as must each `checks` and `responsibilities`
+entry; these are exceptions to the rule below.
 `additionalTaskTypes` is a set like a role's `capabilities`: 1 to 1,000
 valid, unique local IDs, each naming an item of the same manifest's
 `contributions.taskTypes` and none equal to the workflow's `taskType`, held
