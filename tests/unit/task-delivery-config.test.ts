@@ -47,8 +47,9 @@ external_review:
 
 task_lifecycle:
   enabled: true
-  start: tracker start
-  complete: tracker complete
+  start: tracker start {task}
+  review: tracker review {task}
+  complete: tracker complete {task}
 `;
 
 const quoteHint =
@@ -212,6 +213,40 @@ describe("task-delivery configuration contract", () => {
     ["an empty flow mapping", "{}\n"],
   ])("rejects a root that is %s", (_label, source) => {
     expect(validateTaskDeliveryConfigSource(source)).toEqual([notPlain]);
+  });
+
+  test("task lifecycle commands may be given for start, review and complete only", () => {
+    expect(
+      validateTaskDeliveryConfigSource(
+        "task_lifecycle:\n  enabled: true\n  review: tracker review {task}\n",
+      ),
+    ).toEqual([]);
+    expect(
+      validateTaskDeliveryConfigSource(
+        "task_lifecycle:\n  enabled: true\n  reveiw: tracker review {task}\n",
+      ),
+    ).toEqual([
+      "unknown key task_lifecycle.reveiw (allowed in task_lifecycle: enabled, start, review, complete)",
+    ]);
+  });
+
+  test("commands that could never run are rejected", () => {
+    expect(
+      validateTaskDeliveryConfigSource(
+        "task_lifecycle:\n  enabled: false\n  start: tracker start {task}\n",
+      ),
+    ).toEqual([
+      "task_lifecycle.enabled is false but a task_lifecycle command is configured; remove the commands or enable it",
+    ]);
+    // Without the key, a command alone means task state is tracked.
+    expect(
+      validateTaskDeliveryConfigSource(
+        "task_lifecycle:\n  start: tracker start {task}\n",
+      ),
+    ).toEqual([]);
+    expect(
+      validateTaskDeliveryConfigSource("task_lifecycle:\n  enabled: false\n"),
+    ).toEqual([]);
   });
 
   test("rejects an unknown top-level key", () => {
@@ -764,6 +799,33 @@ describe("task-delivery configuration contract", () => {
     expect(validateTaskDeliveryConfig(root)).toEqual([
       `${taskDeliveryConfigName}: must be a regular file`,
     ]);
+  });
+
+  test("this repository marks tasks started, in review and done through its tracker", () => {
+    const source = readFileSync(
+      join(repositoryRoot, taskDeliveryConfigName),
+      "utf8",
+    );
+    const parsed = Bun.YAML.parse(source) as {
+      git: Record<string, unknown>;
+      task_lifecycle: Record<string, unknown>;
+    };
+
+    expect(parsed.task_lifecycle.enabled).toBe(true);
+    // A project identifier is local to one runtime, so none is written here.
+    // The commands run from the primary checkout - the one bound to the
+    // runtime - because a task worktree is not bound and would be refused.
+    // Each key runs its own verb, in a subshell that leaves the caller's
+    // working directory alone.
+    const inPrimaryCheckout = (verb: string): string =>
+      `(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && ai-office ${verb} --task {task})`;
+    expect(parsed.task_lifecycle).toEqual({
+      enabled: true,
+      start: inPrimaryCheckout("task:start"),
+      review: inPrimaryCheckout("task:submit-review"),
+      complete: inPrimaryCheckout("task:complete"),
+    });
+    expect(parsed.git).toMatchObject({ worktree_required: true });
   });
 
   test("the repository's own configuration and the shipped example are valid", () => {

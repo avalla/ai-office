@@ -22,7 +22,12 @@ const schema: Schema = {
   verification: { full: "string", targeted: "string" },
   git: { worktree_required: "boolean", stacking_allowed: "boolean" },
   external_review: { command: "string" },
-  task_lifecycle: { enabled: "boolean", start: "string", complete: "string" },
+  task_lifecycle: {
+    enabled: "boolean",
+    start: "string",
+    review: "string",
+    complete: "string",
+  },
 };
 
 function validateSection(
@@ -303,6 +308,16 @@ export function validateTaskDeliveryConfigSource(rawSource: string): string[] {
   // The scan decides what the file says, so the schema is checked against
   // it; keys whose line was rejected above are simply absent here.
   validateSection(scanned, schema, "", errors);
+  // Commands that could never run are a configuration nobody meant.
+  const lifecycle = scanned.task_lifecycle;
+  if (
+    isRecord(lifecycle) &&
+    lifecycle.enabled === false &&
+    ["start", "review", "complete"].some((key) => Object.hasOwn(lifecycle, key))
+  )
+    errors.push(
+      "task_lifecycle.enabled is false but a task_lifecycle command is configured; remove the commands or enable it",
+    );
   if (errors.length > 0) return errors;
   if (Object.keys(scanned).length === 0)
     return [

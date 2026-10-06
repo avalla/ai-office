@@ -21,15 +21,18 @@ evidence is not passed, whatever its apparent state.
 
 - Restate the task and its acceptance criteria. If they are missing or
   ambiguous, stop and ask.
-- List the task's logical dependencies and their state. Decide the Git base
-  separately, following the [branch policy](branch-policy.md).
+- List the task's logical dependencies and their state. A dependency that is
+  not DONE is unresolved: stop until the authorizer decides. Decide the Git
+  base separately, following the [branch policy](branch-policy.md); a stacked
+  base never resolves a task dependency.
 - Confirm the working tree is clean and isolated as the project requires (for
   example a dedicated worktree).
 - Update the base, create the task branch, and establish a green baseline: run
   the full verification on the untouched base, or cite an existing green result
   for that exact base commit. A red baseline is a stop condition, not something
   to fix inside this task.
-- If the project tracks task state, mark the task as started.
+- Where the project tracks task state, mark the task started before the first
+  change. If the tracker refuses, stop.
 
 ## 2. Design
 
@@ -53,6 +56,7 @@ evidence is not passed, whatever its apparent state.
   preflight, using the [template](../assets/pr-template.md).
 - Declare both kinds of dependency: which tasks this one logically needs, and
   which branch this one is based on.
+- Where the project tracks task state, mark the task as in review.
 - Do not request merge. Do not enable automatic merge.
 
 ## 5. Independent Review
@@ -126,6 +130,8 @@ evidence is not passed, whatever its apparent state.
   bring in new integration-branch commits by merging them in when needed, and
   run its verification again on the resulting head. Never rewrite shared or
   reviewed history to do so.
-- Update task state, record follow-ups, clean up the branch and workspace.
+- After the post-merge verification passes, mark the task done where the
+  project tracks task state. Record follow-ups, and clean up the branch and
+  workspace.
 - Only now report DONE. If post-merge verification fails, report it at once and
   propose a revert or a fix; do not declare DONE.

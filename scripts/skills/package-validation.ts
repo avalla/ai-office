@@ -139,6 +139,69 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
         pattern: /Being installed does not make a reviewer required/u,
       },
       {
+        id: "policy:ask-what-to-deliver",
+        pattern:
+          /When the request does not say what to deliver .* ask before doing anything else\. .*A whole milestone.*One or more tasks.*Some tasks of one milestone/u,
+      },
+      {
+        id: "policy:check-dependencies-before-summary",
+        pattern:
+          /before showing anything for approval, check the dependencies of the selection\. The check always runs; when individual tasks were chosen it is done for every selected task/u,
+      },
+      {
+        id: "policy:unresolved-dependency-proposals",
+        pattern:
+          /A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it\./u,
+      },
+      {
+        id: "policy:stacking-does-not-satisfy-task-dependency",
+        pattern:
+          /Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE\./u,
+      },
+      {
+        id: "policy:approve-summary-before-preflight",
+        pattern:
+          /Start preflight only after the authorizer approves that summary/u,
+      },
+      {
+        id: "policy:settle-project-pipeline",
+        pattern:
+          /Settle which pipeline applies before preflight, and never choose one yourself:/u,
+      },
+      {
+        id: "policy:project-pipeline-keeps-gates",
+        pattern:
+          /A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold\./u,
+      },
+      {
+        id: "policy:run-never-merges-to-unblock",
+        pattern:
+          /The run never merges a pull request merely to unblock a later selected task\./u,
+      },
+      {
+        id: "policy:keep-task-state-true",
+        pattern:
+          /Mark the task started in preflight, before the first change\. Mark it in review when its pull request is open\. Mark it done only after stage 11\./u,
+      },
+      {
+        id: "policy:refused-transition-stops",
+        pattern: /A transition the tracker refuses is a stop condition/u,
+      },
+      {
+        id: "policy:no-binding-run-you-cannot-finish",
+        pattern:
+          /Never start a binding run you cannot finish, and never override or cancel one on your own\./u,
+      },
+      {
+        id: "policy:never-choose-the-target",
+        pattern: /Never pick a milestone or a task yourself/u,
+      },
+      {
+        id: "policy:preflight-dependencies-done",
+        pattern:
+          /logical dependencies are DONE or the authorizer has decided how to proceed/u,
+      },
+      {
         id: "policy:scope",
         pattern: /stay in scope/iu,
       },
