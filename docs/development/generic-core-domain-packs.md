@@ -49,8 +49,10 @@ The existing schema-1 fixture and representative SQLite upgrade test cover
 this additive boundary. GP-04 will define the installed-pack catalog and its
 host-local availability state. GP-05 is the first task that persists
 authoritative **project** Domain Pack selection; it owns the forward SQLite
-and PostgreSQL migrations and upgrade tests for those bindings. GP-09 owns
-later legacy-development compatibility when pack resolution reaches Runtime.
+and PostgreSQL migrations and upgrade tests for those bindings. GP-09
+describes legacy state through a versioned read-only profile (legacy-state
+parity). Compatibility once pack resolution reaches the Runtime is the
+follow-up Runtime task named in the GP-09 section.
 
 ## GP-04 installed-pack catalog and availability resolution
 
@@ -437,6 +439,186 @@ Aliases, explicit old-to-new definition mappings beyond the listed resolutions,
 automatic selection or download of a newer version, Development Pack
 compatibility/extraction and Runtime execution from pack definitions remain
 deferred.
+
+## GP-09 legacy development compatibility
+
+Status: contract. "Implementation record" at the end of this section records
+what the code does where the contract left a choice.
+
+GP-09 describes, deterministically, what the legacy Runtime uses today. It
+derives a versioned, read-only **legacy development profile** from a project's
+legacy state: the latest OfficeManifest revision and the project's Runtime
+roles and agents. The property it proves is **legacy-state parity**: the
+profile equals the office, routing and agent eligibility that the Runtime's
+own readers return for the same project.
+
+It is not execution parity. The profile is not a Domain Pack, not a resolved
+configuration and not executable. GP-09 does not claim that a pack-based
+resolved configuration is semantically equivalent to a legacy office or would
+execute the same way; that is the separate follow-up Runtime task
+"Runtime resolved-configuration execution parity"
+(`a45ddb12-3159-4b60-9b8b-c26516720834`). No pack is inferred, bound or
+installed, nothing is migrated, nothing is scheduled from the profile and no
+project is mutated. `project:configuration:show`, its key set and its digest
+are unchanged.
+
+### Decisions
+
+1. "Effective parity" in the task row means that the view equals the legacy
+   state the Runtime reads today. It is named legacy-state parity and never
+   execution parity.
+2. The profile has its own read-only command. It is not a block in
+   `project:configuration:show`.
+3. The profile is available for every project with an office. It reports
+   whether a pack binding also exists.
+4. A project with no office returns a valid empty view.
+5. Runtime roles and agents outside the manifest are included in a distinct
+   `runtimeOnly` section with explicit provenance. They are never
+   reinterpreted as pack content.
+6. Prompts and instruction-contract defaults are excluded (GP-10B).
+7. Role guidance appears as digest and version only, never as text.
+8. SQLite carries the complete suite. At least one representative end-to-end
+   case covers derivation and digest on real PostgreSQL.
+9. Profile version 1 is frozen with a test vector. Any change to the mapping
+   or to the digest material is a new profile version.
+
+### Profile
+
+The profile is a pure function of the legacy state. It reads no clock and no
+storage, and its output carries no Runtime-local project ID, row ID, actor
+name or timestamp, so two projects with identical legacy state have identical
+profiles. The output states, in every form, that it is a legacy-state profile
+and not an executable resolved configuration.
+
+- Office, manifest roles, pipelines and stages keep their legacy field names
+  and values. Nothing is renamed into pack vocabulary, so no mapping table
+  exists to drift.
+- A manifest role is joined to the Runtime role whose key equals its ID, the
+  join the pipeline orchestrator and stage authorization already use.
+- Each of the five task kinds lists the pipeline `office:pipeline` returns for
+  it, or none.
+- Each stage lists the agents the pipeline orchestrator would consider for it:
+  the enabled agents whose role key equals the stage role.
+- Runtime roles whose key is not a manifest role ID, and their agents, are
+  listed only under `runtimeOnly`.
+- Manifest roles without a Runtime role, Runtime roles outside the manifest,
+  task kinds without a pipeline, and the legacy state that the schema-1 pack
+  vocabulary cannot express are listed as diagnostics. They never fail the
+  view.
+
+The profile has a digest over a canonical serialization of its content. The
+binding metadata is reported beside the profile and is not part of the digest.
+
+### Acceptance
+
+1. A pure function derives legacy profile version 1 from an office manifest
+   revision and the project's Runtime agents and roles; the same inputs in any
+   order give the same canonical bytes and digest. It fails if the output
+   depends on input order or the clock.
+2. The profile digest for the committed default-office fixture equals a
+   pinned test vector. It fails if a mapping or canonicalization change is not
+   accompanied by a version bump.
+3. The digest and view contain no Runtime-local project ID, row IDs, actor
+   names or timestamps. It fails if two projects with identical legacy state
+   give different digests.
+4. Every manifest role, pipeline, stage and stage field appears in the view
+   with an equal value. It fails if a legacy field is dropped or renamed
+   without a recorded mapping.
+5. For each of the five task kinds, the view's routed workflow equals
+   `office:pipeline` output, including "no pipeline". It fails on any routing
+   difference.
+6. For each stage, the view's eligible agent set equals the set the pipeline
+   orchestrator would consider. It fails if an enabled agent with the matching
+   role key is missing or an extra one appears.
+7. Manifest roles without a Runtime role, Runtime roles outside the manifest,
+   and unrouted kinds are listed as diagnostics and do not fail the view. It
+   fails if such a project errors or the mismatch is silent.
+8. A project with no office manifest returns a valid empty legacy view. It
+   fails if the command errors.
+9. `project:configuration:show` output and the empty digest vector are
+   byte-identical for a legacy project before and after this change. It fails
+   if the key set or digest moves.
+10. The command is strictly read-only: running it leaves every row of the
+    project database byte-identical and writes no domain audit event. It fails
+    on any row or revision change.
+11. A committed pre-pack fixture migrated to head keeps office, role, agent,
+    pipeline run, stage run, override, agent run, task, approval, audit and
+    repository-identity rows byte-identical. It fails on any difference.
+12. Committed frozen format-1 to format-4 archives restore, re-export selects
+    the same format with equal state, and each produces its expected pinned
+    legacy profile. It fails if a legacy archive is rejected, silently written
+    at a higher format, or yields a different profile.
+13. After restore, the legacy project's knowledge scope is still tenant plus
+    repository ID and existing records are retrievable. It fails if the scope
+    key changes.
+14. An existing active pipeline run on the fixture can still be advanced and
+    approved after migration, with its pinned definition unchanged. It fails
+    if the pin or a guard changes.
+15. A fixture with one stage role or approval flag altered makes the parity
+    comparison fail, so the comparison is not vacuous.
+16. No scheduling, pipeline, run or storage module imports the profile module,
+    and no storage port or archive schema names its type. It fails
+    mechanically in the architecture test.
+17. The command works through the Unix-socket protocol and reports an unknown
+    project as not found. It fails without end-to-end coverage.
+18. The same legacy state gives the same digest; every semantically relevant
+    change (a role, pipeline, stage, stage field, routing, agent eligibility,
+    `runtimeOnly` entry, guidance content) gives a different digest.
+19. The presence of a pack binding does not alter the legacy profile or its
+    digest, except for the binding metadata field.
+20. `runtimeOnly` is a section distinct from the office-derived roles and
+    agents, each entry carries visible provenance, and nothing in it is
+    presented as pack content.
+21. The output states explicitly, in both text and JSON forms, that it is a
+    legacy-state profile and not an executable resolved configuration.
+22. Role guidance appears as digest and version only; the guidance digest and
+    the profile digest change when the guidance's semantically relevant
+    content changes; the guidance text never appears in output.
+23. At least one representative case yields the same normalized profile and
+    digest on SQLite and on real PostgreSQL, end to end over derivation and
+    digest.
+24. The documentation names legacy-state parity, records the non-goals below,
+    and links the follow-up task for Runtime resolved-configuration execution
+    parity by its task ID.
+
+### Non-goals
+
+- No pack is inferred, bound or installed.
+- No migration, archive format or audit event type.
+- No change to OfficeManifest, role and agent sync, pipelines, pins, approvals
+  or scheduling.
+- No development pack contents, prompt extraction or task-kind generalization
+  (GP-10A, GP-10B).
+- No adoption or migration command (GP-10C).
+- No change to `project:configuration:show`.
+
+### Unmet relative to the original wording
+
+The task row, the compatibility stages and ADR-0026 were written before pack
+resolution was known to stop short of the Runtime. Three things they name are
+deliberately not delivered by GP-09.
+
+- **Execution-level compatibility.** The plan said GP-09 owns legacy
+  compatibility "when pack resolution reaches Runtime", and stage 3 says
+  "compare old and resolved behavior". Resolution has not reached the Runtime:
+  nothing is scheduled from a resolved configuration, and for a legacy project
+  that configuration is empty by design. GP-09 compares the profile with the
+  Runtime's legacy readers. Comparing execution from a resolved configuration
+  with legacy execution belongs to task
+  `a45ddb12-3159-4b60-9b8b-c26516720834`.
+- **Equivalence with a real development pack.** ADR-0026 step 4 asks for
+  legacy and resolved configuration to be checked for semantic equivalence. No
+  development pack exists yet, and the schema-1 pack vocabulary cannot express
+  a legacy office in full: a workflow has one task type where a pipeline routes
+  several kinds, a stage is an ID and a role where a legacy stage also has a
+  name, objective, checks, approval flags, capabilities and separation
+  constraints, and a pack role has no tools, model policy, limits or guidance.
+  The profile lists these gaps for the project at hand. The equivalence check
+  belongs to GP-10A and GP-10B, which define the pack.
+- **An audit trace of the derived profile.** The roadmap says legacy
+  compatibility is "versioned and auditable". The profile is versioned and
+  reproducible by digest. It is derived on demand, never stored, never pinned
+  to a run, and reading it records no domain audit event.
 
 ## GP-11 pack role archetypes
 
@@ -1425,7 +1607,10 @@ storage, and AgentKnowledgeStore boundary:
    project store.
 3. **Implicit legacy development:** recognize existing project state through a
    versioned compatibility profile without rewriting office, role, agent,
-   pipeline, binding, knowledge or snapshots. Compare old and resolved behavior.
+   pipeline, binding, knowledge or snapshots. GP-09 delivers this as
+   legacy-state parity: the profile is compared with the Runtime's legacy
+   readers. Comparing old and resolved behavior is execution parity, a
+   separate Runtime task (see the GP-09 section).
 4. **Extraction:** move development defaults and integration metadata in small
    slices, proving parity before each old coupling is removed.
 5. **Opt-in adoption:** preview and audit an explicit development-pack binding;
@@ -1481,7 +1666,7 @@ carry the same fields. GP-01 through GP-07 have passed review and merged.
 | GP-06 — Resolved project configuration             | GP-04, GP-05, GP-07             | Resolve packs + project definitions/overrides into stable effective roles, agents, pipelines, policies and capability needs with origin/digest; reuse manifest revisions where sound.                                                                                           | Inspectable resolved view; equality, pinning and invalid-input tests.                                                | Second mutable project authority.                                  |
 | GP-07 — Definition ownership and project overrides | GP-05                           | Record core/pack/project/override/resolved origin; allow replacement, extension, disablement and custom definitions where safe; security gates cannot be weakened.                                                                                                              | Ownership/override contract and tests for customized, removed and conflicting definitions.                           | Fixed pack workflow.                                               |
 | GP-08 — Pack upgrade/reconciliation                | GP-06, GP-07                    | Preview/apply upgrades idempotently; preserve customized definitions, handle deleted/old references and active pins, audit changes, block unresolved conflicts.                                                                                                                 | Migration/reconciliation report; repeat, rollback/failure and compatibility tests.                                   | Silent overwrite or automatic pack download.                       |
-| GP-09 — Legacy development compatibility           | GP-06, GP-08                    | Versioned implicit development profile loads old offices, agents, roles, pipelines, binding and snapshots unchanged; verify effective parity.                                                                                                                                   | Legacy fixture and semantic comparison tests including tasks, approvals, knowledge, persistence and audit.           | Forcing existing users to adopt packs.                             |
+| GP-09 — Legacy development compatibility           | GP-06, GP-08                    | Legacy-state parity: a versioned, read-only legacy development profile describes old offices, roles, agents, task kinds and pipelines; old databases, bindings and snapshots load unchanged. Execution parity is a separate Runtime task.                                       | Legacy fixture, frozen archives and comparison with Runtime legacy readers; tasks, approvals, knowledge, audit.      | Forcing adoption; inferred packs; execution parity.                |
 | GP-10A — Development roles and task defaults       | GP-09, GP-11, GP-12             | Move Software Architect/Developer/Reviewer/QA defaults and software task kinds into the development pack; legacy and adopted projects resolve equivalent effective definitions.                                                                                                 | Reference pack definitions; old/new manifest, role and agent parity tests.                                           | Runtime identity or task lifecycle redesign.                       |
 | GP-10B — Development workflows and prompts         | GP-10A, GP-13                   | Move feature/bugfix/research/release templates and software assessment/instruction prompts behind pack defaults; project pipelines remain editable.                                                                                                                             | Workflow and prompt templates; stage/approval and project-customization parity tests.                                | New pipeline engine or forced workflow.                            |
 | GP-10C — Development evidence and adoption         | GP-10B, GP-14–GP-16             | Put repository/GitHub/commit/PR/CI evidence types, knowledge guidance and capability declarations behind pack contracts; offer previewed explicit adoption while preserving old bindings.                                                                                       | Development pack completion and migration report; legacy snapshot, approval, action and provenance regression tests. | Redesign of worker, queue, model routing or governance.            |
