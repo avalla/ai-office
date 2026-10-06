@@ -15,6 +15,7 @@ import {
   type ProjectPackBinding,
   type ProjectPackBindingRepository,
 } from "../ports/project-pack-binding-repository.port.ts";
+import type { ProjectDefinitionRepository } from "../ports/project-definition-repository.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
 import type { AuditEventRepository } from "../ports/audit-event-repository.port.ts";
 import type { TransactionRunner } from "../ports/transaction-runner.port.ts";
@@ -26,6 +27,11 @@ import {
   resolveInstalledPackManifests,
   type ResolvedPackManifest,
 } from "./resolve-installed-pack-manifests.ts";
+import {
+  packDefinitionCollision,
+  packDefinitionCollisions,
+} from "./pack-definition-collisions.ts";
+import type { ProjectOwnedDefinition } from "./project-definition.ts";
 import {
   closureRoleIds,
   roleCapabilityDifferences,
@@ -56,6 +62,31 @@ export class ProjectPackBindingRefusedError extends Error {
   }
 }
 
+/**
+ * The proposed resolved closure contains a definition with the kind and local
+ * ID of a project-owned definition (GP-22). The selection is not applied; the
+ * code is the one GP-07 reports for the same conflict.
+ */
+export class ProjectPackBindingCollisionError extends Error {
+  constructor(
+    readonly code: typeof packDefinitionCollision,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ProjectPackBindingCollisionError";
+  }
+}
+
+function collisionIssues(
+  closure: readonly ResolvedPackManifest[],
+  owned: readonly ProjectOwnedDefinition[],
+): { code: typeof packDefinitionCollision; message: string }[] {
+  return packDefinitionCollisions(closure, owned).map(({ kind, id, pack }) => ({
+    code: packDefinitionCollision,
+    message: `Project definition ${kind}/${id} collides with pack ${pack} in the proposed pack closure`,
+  }));
+}
+
 export interface ProjectPackBindingPreview {
   readonly current: ProjectPackBinding;
   readonly proposed: readonly PackIdentity[];
@@ -80,6 +111,12 @@ export interface ProjectPackBindingPreview {
           "previous_closure_unresolved" | "proposed_closure_unreadable";
         readonly detail: string;
       };
+  /**
+   * In order: a GP-04 selection or availability failure, alone; then one
+   * `pack_definition_collision` for each project-owned definition that the
+   * proposed closure also contains; then the GP-11 capability refusal. Apply
+   * raises the first.
+   */
   readonly issues: readonly { code: string; message: string }[];
 }
 
@@ -133,6 +170,7 @@ export class ManageProjectPackBinding {
     private readonly dependencies: {
       projects: ProjectRepository;
       bindings: ProjectPackBindingRepository;
+      definitions: ProjectDefinitionRepository;
       catalog: InstalledDomainPackCatalog;
       auditEvents: AuditEventRepository;
       transactions: TransactionRunner;
@@ -151,6 +189,21 @@ export class ManageProjectPackBinding {
     projectId: string,
     desired: readonly PackIdentity[],
   ): Promise<ProjectPackBindingPreview> {
+    return (await this.examine(projectId, desired)).preview;
+  }
+
+  /**
+   * The preview, and the proposed closure it was computed from when that
+   * closure resolved and its manifests could be read. Resolution and catalog
+   * access happen here, outside any transaction.
+   */
+  private async examine(
+    projectId: string,
+    desired: readonly PackIdentity[],
+  ): Promise<{
+    preview: ProjectPackBindingPreview;
+    closure?: readonly ResolvedPackManifest[];
+  }> {
     const current = await this.read(projectId);
     const issues: { code: string; message: string }[] = [];
     let proposed: PackIdentity[];
@@ -173,34 +226,57 @@ export class ManageProjectPackBinding {
       const before = currentById.get(after.id);
       return before && !same(before, after) ? [{ before, after }] : [];
     });
+    // The one GP-04 resolution of the proposed selection. It also captures
+    // the manifests the composition preflight compares, so the artifacts are
+    // read once and no second resolver is involved.
+    let resolved = false;
+    let closure: readonly ResolvedPackManifest[] | undefined;
     if (issues.length === 0) {
       try {
-        resolveInstalledPacks(this.dependencies.catalog, proposed);
+        closure = resolveInstalledPackManifests(
+          this.dependencies.catalog,
+          proposed,
+        );
+        resolved = true;
       } catch (error) {
         if (error instanceof DomainPackCatalogError)
           issues.push({ code: error.code, message: error.message });
+        // GP-04 accepted the closure but a manifest could not be read back.
+        // The capability guard below refuses a changed selection for that.
+        else if (error instanceof CapturedPackManifestError) resolved = true;
         else throw error;
       }
     }
+    // GP-22: every project-owned definition against the proposed closure. An
+    // unchanged selection is compared too, so a latent collision stays
+    // visible here.
+    if (closure !== undefined)
+      issues.push(
+        ...collisionIssues(
+          closure,
+          (await this.dependencies.definitions.get(projectId)).owned,
+        ),
+      );
     let roleCapabilityChanges: ProjectPackBindingPreview["roleCapabilityChanges"] =
       { availability: "available", changes: [] };
-    // An unchanged selection reads no further artifact, as before GP-11.
-    if (
-      issues.length === 0 &&
-      added.length + removed.length + changed.length > 0
-    ) {
+    // An unchanged selection reads no further artifact, as before GP-11. A
+    // collision does not hide the capability refusal; it is listed first.
+    if (resolved && added.length + removed.length + changed.length > 0) {
       const guard = this.roleCapabilityGuard(current.packs, proposed);
       roleCapabilityChanges = guard.roleCapabilityChanges;
       if (guard.issue) issues.push(guard.issue);
     }
     return {
-      current,
-      proposed,
-      added,
-      removed,
-      changed,
-      roleCapabilityChanges,
-      issues,
+      preview: {
+        current,
+        proposed,
+        added,
+        removed,
+        changed,
+        roleCapabilityChanges,
+        issues,
+      },
+      ...(closure === undefined ? {} : { closure }),
     };
   }
 
@@ -313,8 +389,16 @@ export class ManageProjectPackBinding {
         input.projectId,
         current.configurationRevision,
       );
+    // Set only for a changed selection. The unchanged active selection stays
+    // the GP-05 no-op: no resolution and no composition preflight.
+    let proposedClosure: readonly ResolvedPackManifest[] | undefined;
     if (JSON.stringify(current.packs) !== JSON.stringify(desired)) {
-      const preview = await this.preview(input.projectId, desired);
+      const { preview, closure } = await this.examine(input.projectId, desired);
+      if (preview.issues[0]?.code === packDefinitionCollision)
+        throw new ProjectPackBindingCollisionError(
+          packDefinitionCollision,
+          preview.issues[0].message,
+        );
       if (preview.issues[0]?.code === roleCapabilityChangeRequiresUpgrade)
         throw new ProjectPackBindingRefusedError(
           roleCapabilityChangeRequiresUpgrade,
@@ -326,6 +410,14 @@ export class ManageProjectPackBinding {
           preview.issues[0].message,
         );
       resolveInstalledPacks(this.dependencies.catalog, preview.proposed);
+      // Unreachable while the guard above refuses an unreadable closure; a
+      // changed selection is never committed without its preflight.
+      if (closure === undefined)
+        throw new DomainPackCatalogError(
+          "malformed_catalog_entry",
+          "The proposed pack closure could not be read back for the composition preflight",
+        );
+      proposedClosure = closure;
     }
     return this.dependencies.transactions.run(async () => {
       const previous = await this.dependencies.bindings.get(input.projectId);
@@ -340,6 +432,21 @@ export class ManageProjectPackBinding {
         desired,
         this.dependencies.clock.now(),
       );
+      // A project-owned definition may have been committed since the
+      // preflight. Re-read the definitions under this transaction and compare
+      // them with the closure resolved before it; the catalog is not read
+      // again. Throwing rolls the replacement back.
+      if (proposedClosure !== undefined) {
+        const collision = collisionIssues(
+          proposedClosure,
+          (await this.dependencies.definitions.get(input.projectId)).owned,
+        )[0];
+        if (collision)
+          throw new ProjectPackBindingCollisionError(
+            collision.code,
+            collision.message,
+          );
+      }
       if (result.changed)
         await this.dependencies.auditEvents.append(
           AuditEvent.create({

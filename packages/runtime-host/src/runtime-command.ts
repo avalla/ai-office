@@ -173,6 +173,7 @@ import { ProjectDefinitionProjectNotFoundError } from "@ai-office/application/do
 import { handleProjectDefinitionCommand } from "./commands/project-definition.ts";
 import {
   ProjectPackBindingProjectNotFoundError,
+  ProjectPackBindingCollisionError,
   ProjectPackBindingRefusedError,
 } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { InMemoryInstalledDomainPackCatalog } from "./installed-domain-pack-catalog.ts";
@@ -426,6 +427,7 @@ function formatKnownError(error: unknown): string | null {
     error instanceof DomainPackCatalogError ||
     error instanceof StaleProjectPackBindingError ||
     error instanceof ProjectPackBindingProjectNotFoundError ||
+    error instanceof ProjectPackBindingCollisionError ||
     error instanceof ProjectPackBindingRefusedError ||
     error instanceof ProjectPackUpgradeError ||
     error instanceof ProjectDefinitionConflictError ||

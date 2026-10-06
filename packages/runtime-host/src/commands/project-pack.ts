@@ -60,6 +60,7 @@ export async function handleProjectPackCommand(
   const service = new ManageProjectPackBinding({
     projects: context.projects,
     bindings: context.packBindings,
+    definitions: context.definitions,
     catalog: context.installedPacks,
     auditEvents: context.auditEvents,
     transactions: context.transactions,

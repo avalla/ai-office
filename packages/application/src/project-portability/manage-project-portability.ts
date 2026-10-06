@@ -1,6 +1,18 @@
 import { Project } from "@ai-office/domain/project/project.ts";
+import {
+  parseDomainPackId,
+  parseDomainPackVersion,
+  parseManifestDigest,
+} from "../../../domain-pack-contracts/src/index.ts";
 import type { Clock } from "../ports/clock.port.ts";
 import type { IdGenerator } from "../ports/id-generator.port.ts";
+import type { InstalledDomainPackCatalog } from "../ports/installed-domain-pack-catalog.port.ts";
+import {
+  packDefinitionCollision,
+  packDefinitionCollisions,
+  resolvablePackClosure,
+  type PackDefinitionCollision,
+} from "../domain-pack/pack-definition-collisions.ts";
 import type { ProjectBindingAdapter } from "../ports/project-binding-adapter.port.ts";
 import type { ProjectProfileRepository } from "../ports/project-profile-repository.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
@@ -50,6 +62,23 @@ export class ProjectRestorePartialError extends ProjectPortabilityError {
   ) {
     super(`${result.error.message} ${result.error.recovery}`);
     this.name = "ProjectRestorePartialError";
+  }
+}
+
+/**
+ * The archive's sections are valid one by one, but its exact pack closure,
+ * resolved on this host, contains a definition a project-owned definition of
+ * the archive also declares (GP-22). Nothing was restored. The code is the one
+ * binding preview and apply report for the same conflict.
+ */
+export class ProjectRestoreCompositionError extends ProjectPortabilityError {
+  readonly code = packDefinitionCollision;
+  constructor(readonly collisions: readonly PackDefinitionCollision[]) {
+    const first = collisions[0]!;
+    super(
+      `Portable restore rejected (${packDefinitionCollision}): project definition ${first.kind}/${first.id} collides with pack ${first.pack} in the archive's resolved pack closure; nothing was restored`,
+    );
+    this.name = "ProjectRestoreCompositionError";
   }
 }
 
@@ -120,6 +149,8 @@ interface Dependencies {
   transactions: TransactionRunner;
   ids: IdGenerator;
   clock: Clock;
+  /** Host-local availability; read by restore's composition preflight only. */
+  catalog: InstalledDomainPackCatalog;
 }
 
 export class ManageProjectPortability {
@@ -278,6 +309,12 @@ export class ManageProjectPortability {
         );
     }
 
+    // GP-22. Only a restore that creates the project writes binding and
+    // definition state; `attached` and `unchanged` write neither and are not
+    // checked, so a rerun after a partial failure stays possible. The closure
+    // is resolved here, before and outside the transaction.
+    if (identityProject === null) this.assertArchiveComposition(archive);
+
     let projectId = identityProject;
     let outcome: ProjectRestoreResult["outcome"] = "restored";
     let authoritativeStateCommitted = false;
@@ -418,5 +455,30 @@ export class ManageProjectPortability {
       stateChecksum: archive.manifest.revision.stateChecksum,
       repositoryIdentityAction: bindingPlan.action,
     };
+  }
+
+  /**
+   * Compares the archive's own project-owned definitions with the exact pack
+   * closure of the archive's own binding. Installed packs are host-local
+   * state and never a prerequisite for restore: when the exact closure does
+   * not resolve here, for any GP-04 reason, there is no verdict, the archive
+   * restores unchanged and GP-06 reports the closure failure, and later a
+   * collision, when the project configuration is resolved.
+   */
+  private assertArchiveComposition(archive: PortableProjectArchive): void {
+    const owned = archive.state.definitions?.owned ?? [];
+    // The archive schema already validated each tuple; this only restores
+    // the exact types the resolver takes.
+    const packs = (archive.state.packBinding?.packs ?? []).map((pack) => ({
+      id: parseDomainPackId(pack.id),
+      version: parseDomainPackVersion(pack.version),
+      manifestDigest: parseManifestDigest(pack.manifestDigest),
+    }));
+    if (packs.length === 0 || owned.length === 0) return;
+    const closure = resolvablePackClosure(this.dependencies.catalog, packs);
+    if (closure === undefined) return;
+    const collisions = packDefinitionCollisions(closure, owned);
+    if (collisions.length > 0)
+      throw new ProjectRestoreCompositionError(collisions);
   }
 }
