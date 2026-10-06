@@ -93,12 +93,23 @@ export function defineAgentRuntimeRepositoryContracts(
         now: harness.now,
       });
       await harness.runtime.saveRole(unused);
+      // Code-point order on every backend: an upper-case key sorts first,
+      // where a linguistic database collation would put it after "a-unused".
+      await harness.runtime.saveRole(
+        Role.create({
+          ...unused.snapshot(),
+          id: `${harness.idPrefix}-role-upper`,
+          key: "B-upper",
+          now: harness.now,
+        }),
+      );
       const roles = await harness.runtime.listRoles(harness.projectId);
       expect(roles.map((role) => role.snapshot().key)).toEqual([
+        "B-upper",
         "a-unused",
         "contract",
       ]);
-      expect(roles[0]!.snapshot()).toEqual(
+      expect(roles[1]!.snapshot()).toEqual(
         (
           await harness.runtime.findRole(
             unused.snapshot().id,
@@ -106,7 +117,7 @@ export function defineAgentRuntimeRepositoryContracts(
           )
         )?.snapshot(),
       );
-      expect(roles[0]!.snapshot()).toMatchObject({
+      expect(roles[1]!.snapshot()).toMatchObject({
         key: "a-unused",
         tools: ["project.search"],
         guidanceText: "Unused guidance",

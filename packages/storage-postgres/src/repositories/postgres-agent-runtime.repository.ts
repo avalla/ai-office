@@ -303,7 +303,7 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
       FROM core.role AS role
       JOIN core.project AS project
         ON project.id = role.project_id AND project.tenant_id = $2
-      WHERE role.project_id = $1 ORDER BY role.role_key, role.id`,
+      WHERE role.project_id = $1 ORDER BY role.role_key COLLATE "C", role.id`,
       [projectId, this.tenantId],
     );
     return rows.map(restoreRole);
