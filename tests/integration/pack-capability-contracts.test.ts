@@ -675,6 +675,33 @@ function defineContract(name: string, create: () => Promise<Backend>): void {
       });
     });
 
+    test("project:pack:preview of the unchanged selection still reports a missing provider; applying it stays a no-op", async () => {
+      // A binding that passed no preflight on this host, as after a restore
+      // or after the host lost a connector.
+      const runtime = await host();
+      await runtime.backend.bindings.replace(runtime.id, 0, [needs], now);
+      const before = await runtime.authority();
+      const preview = await runtime.binding.preview(runtime.id, [needs]);
+      expect(preview).toMatchObject({ added: [], removed: [], changed: [] });
+      expect(preview.issues).toEqual([
+        {
+          code: "missing_required_capability_provider",
+          message: missingMessage("org.example.needs@1.0.0", "merge"),
+        },
+      ]);
+      // Apply of the active selection is the GP-05 no-op and checks nothing:
+      // it changes no authority, so it neither repairs nor refuses. The
+      // failure stays visible in preview and at resolution.
+      expect(await runtime.apply([needs], 1)).toMatchObject({
+        configurationRevision: 1,
+        packs: [needs],
+      });
+      expect(await runtime.authority()).toEqual(before);
+      expect(await runtime.resolution()).toMatchObject({
+        code: "missing_required_capability_provider",
+      });
+    });
+
     test("project:pack:upgrade refuses a target whose required provider is missing and writes nothing", async () => {
       const runtime = await host();
       await runtime.apply([ops], 0);
