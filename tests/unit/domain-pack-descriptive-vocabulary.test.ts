@@ -8,6 +8,7 @@ import {
   maximumContributionReferences,
   maximumDescriptiveListEntries,
   parseDomainPackManifest,
+  validateDomainPackManifest,
   verifyDomainPackManifest,
 } from "../../packages/domain-pack-contracts/src/index.ts";
 
@@ -38,15 +39,30 @@ function manifest(
 const bytes = (value: unknown): Uint8Array =>
   encoder.encode(JSON.stringify(value));
 
-function failure(value: unknown): { code: string; path: string } {
+function rejection(work: () => unknown): { code: string; path: string } {
   try {
-    parseDomainPackManifest(bytes(value));
+    work();
   } catch (error) {
     expect(error).toBeInstanceOf(DomainPackManifestError);
     const { code, path } = error as DomainPackManifestError;
     return { code, path };
   }
   throw new Error("Expected manifest rejection");
+}
+
+/**
+ * The validator's finding for a manifest value. The byte reader reports the
+ * same, except for a lone surrogate, which is not well-formed JSON text and
+ * is refused by the reader before any section is validated.
+ */
+function failure(value: unknown): { code: string; path: string } {
+  const validated = rejection(() => validateDomainPackManifest(value));
+  expect(rejection(() => parseDomainPackManifest(bytes(value)))).toEqual(
+    JSON.stringify(value).includes("\\ud800")
+      ? { code: "malformed_input", path: "$" }
+      : validated,
+  );
+  return validated;
 }
 
 const base = {

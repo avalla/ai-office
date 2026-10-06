@@ -1,6 +1,7 @@
 import {
   contributionKinds,
   maximumContributionReferences,
+  maximumDescriptiveListEntries,
   parseContributionLocalId,
   parseDomainPackId,
   parseDomainPackVersion,
@@ -33,9 +34,37 @@ export interface DescriptiveDefinition {
   readonly description?: string;
 }
 
+/** A role with its descriptive, ordered responsibilities (GP-10B-2). */
+export interface RoleDefinition extends DescriptiveDefinition {
+  readonly responsibilities?: readonly string[];
+}
+
+/** A prompt with its declarative text (GP-10B-2). */
+export interface PromptDefinition extends DescriptiveDefinition {
+  readonly text?: string;
+}
+
+/**
+ * A stage with its descriptive fields (GP-10B-2). `checks` keeps the order
+ * given; nothing is enforced because of any of them.
+ */
+export interface WorkflowStageDefinition {
+  readonly id: string;
+  readonly role: string;
+  readonly title?: string;
+  readonly objective?: string;
+  readonly checks?: readonly string[];
+}
+
+/**
+ * `additionalTaskTypes` are further routes beside `taskType`: bare local IDs
+ * that resolve in the workflow's own namespace, a set in ascending code-unit
+ * order that never holds `taskType`, absent when empty.
+ */
 export interface WorkflowDefinition extends DescriptiveDefinition {
   readonly taskType: string;
-  readonly stages: readonly { readonly id: string; readonly role: string }[];
+  readonly additionalTaskTypes?: readonly string[];
+  readonly stages: readonly WorkflowStageDefinition[];
 }
 
 /**
@@ -65,7 +94,11 @@ export function hasAgentReferences(payload: object): boolean {
 }
 
 export type ProjectDefinitionPayload =
-  DescriptiveDefinition | WorkflowDefinition | AgentDefinition;
+  | DescriptiveDefinition
+  | RoleDefinition
+  | PromptDefinition
+  | WorkflowDefinition
+  | AgentDefinition;
 
 /**
  * A `replace` on an agent carries the agent envelope and a `replace` on a
@@ -73,7 +106,11 @@ export type ProjectDefinitionPayload =
  * descriptive.
  */
 export type OverridePayload =
-  DescriptiveDefinition | AgentDefinition | WorkflowDefinition;
+  | DescriptiveDefinition
+  | RoleDefinition
+  | PromptDefinition
+  | AgentDefinition
+  | WorkflowDefinition;
 
 export interface ProjectOwnedDefinition {
   readonly origin: "project_owned";
@@ -190,6 +227,12 @@ export const maximumWorkflowStages = 1_000;
  */
 export const maximumAgentReferences = maximumContributionReferences;
 
+/**
+ * Bound of a stage's `checks` and a role's `responsibilities`: the manifest
+ * contract's own bound, shared with the portable archive schema.
+ */
+export const maximumDescriptiveEntries = maximumDescriptiveListEntries;
+
 export const maximumDefinitionTextLength = 16_000;
 
 /**
@@ -204,6 +247,43 @@ export function isDefinitionText(value: unknown): value is string {
     value.length <= maximumDefinitionTextLength &&
     !value.includes("\u0000") &&
     !hasLoneSurrogate(value)
+  );
+}
+
+/**
+ * The rule for the descriptive text of GP-10B-2 (a prompt `text`, a stage
+ * `title` or `objective`, a `checks` or `responsibilities` entry): definition
+ * text that says something. Shared with the portable archive schema.
+ */
+export function isDescriptiveText(value: unknown): value is string {
+  return isDefinitionText(value) && value.length > 0;
+}
+
+/**
+ * The one descriptive field a kind's complete envelope adds to `title` and
+ * `description`. An extension never carries it.
+ */
+export const descriptiveFieldOfKind: Partial<
+  Record<ContributionKind, "responsibilities" | "text">
+> = { roles: "responsibilities", prompts: "text" };
+
+/** The descriptive keys of a stage, beside `id` and `role`. */
+export const stageDescriptiveFields = ["title", "objective", "checks"] as const;
+
+/** Whether a payload carries any key that needs portable archive format 10. */
+export function hasDescriptiveVocabulary(payload: object): boolean {
+  const stages: unknown = (payload as { stages?: unknown }).stages;
+  return (
+    Object.hasOwn(payload, "responsibilities") ||
+    Object.hasOwn(payload, "text") ||
+    Object.hasOwn(payload, "additionalTaskTypes") ||
+    (Array.isArray(stages) &&
+      stages.some(
+        (stage: unknown) =>
+          typeof stage === "object" &&
+          stage !== null &&
+          stageDescriptiveFields.some((field) => Object.hasOwn(stage, field)),
+      ))
   );
 }
 
@@ -301,15 +381,53 @@ export function parseExactSource(value: unknown): ExactPackDefinitionSource {
   }
 }
 
+/** An ordered list of 1 to 64 entries of descriptive text, kept as given. */
+function descriptiveList(value: unknown, field: string): string[] {
+  // "None" has one encoding: the absent field.
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    value.length > maximumDescriptiveEntries
+  )
+    throw new ProjectDefinitionConflictError(
+      "malformed_origin_reference",
+      `${field} must be a list of 1 to ${maximumDescriptiveEntries} entries; omit the field instead`,
+    );
+  if (!value.every(isDescriptiveText))
+    throw new ProjectDefinitionConflictError(
+      "malformed_origin_reference",
+      `${field} entries must be non-empty bounded text`,
+    );
+  return [...(value as string[])];
+}
+
+function descriptiveText(value: unknown, field: string): string {
+  if (!isDescriptiveText(value))
+    throw new ProjectDefinitionConflictError(
+      "malformed_origin_reference",
+      `${field} must be non-empty bounded text`,
+    );
+  return value;
+}
+
+/**
+ * The descriptive envelope of a definition. A complete envelope of a role may
+ * also carry `responsibilities` and one of a prompt `text` (GP-10B-2); pass
+ * the kind to admit them. An extension (`partial`) never does. Messages name
+ * a field and never quote a value.
+ */
 export function parseDefinitionPayload(
   value: unknown,
   id: string,
   partial = false,
-): DescriptiveDefinition {
+  kind?: ContributionKind,
+): DescriptiveDefinition | RoleDefinition | PromptDefinition {
   const item = record(value);
+  const extra =
+    partial || kind === undefined ? undefined : descriptiveFieldOfKind[kind];
   const allowed = partial
     ? ["title", "description"]
-    : ["id", "title", "description"];
+    : ["id", "title", "description", ...(extra === undefined ? [] : [extra])];
   if (
     Object.keys(item).some((key) => !allowed.includes(key)) ||
     (!partial && item.id !== id) ||
@@ -330,7 +448,19 @@ export function parseDefinitionPayload(
         "malformed_origin_reference",
         `${key} must be bounded text`,
       );
-  return item as unknown as DescriptiveDefinition;
+  if (extra === undefined || item[extra] === undefined)
+    return item as unknown as DescriptiveDefinition;
+  return {
+    ...(item as unknown as DescriptiveDefinition),
+    ...(extra === "text"
+      ? { text: descriptiveText(item.text, "text") }
+      : {
+          responsibilities: descriptiveList(
+            item.responsibilities,
+            "responsibilities",
+          ),
+        }),
+  };
 }
 
 /** A non-empty set of local IDs, returned in ascending code-unit order. */
@@ -424,7 +554,14 @@ function parseWorkflowPayload(value: unknown, id: string): WorkflowDefinition {
   if (
     Object.keys(item).some(
       (key) =>
-        !["id", "title", "description", "taskType", "stages"].includes(key),
+        ![
+          "id",
+          "title",
+          "description",
+          "taskType",
+          "additionalTaskTypes",
+          "stages",
+        ].includes(key),
     ) ||
     item.id !== id ||
     !Array.isArray(item.stages)
@@ -451,9 +588,13 @@ function parseWorkflowPayload(value: unknown, id: string): WorkflowDefinition {
   try {
     const taskType = localId(item.taskType);
     const stageIds = new Set<string>();
-    const stages = item.stages.map((stage) => {
+    const stages = item.stages.map((stage): WorkflowStageDefinition => {
       const value = record(stage);
-      exactKeys(value, ["id", "role"]);
+      exactKeys(value, [
+        "id",
+        "role",
+        ...stageDescriptiveFields.filter((field) => value[field] !== undefined),
+      ]);
       const stageId = localId(value.id);
       if (stageIds.has(stageId))
         throw new ProjectDefinitionConflictError(
@@ -461,9 +602,38 @@ function parseWorkflowPayload(value: unknown, id: string): WorkflowDefinition {
           "Duplicate workflow stage ID",
         );
       stageIds.add(stageId);
-      return { id: stageId, role: localId(value.role) };
+      return {
+        id: stageId,
+        role: localId(value.role),
+        ...(value.title === undefined
+          ? {}
+          : { title: descriptiveText(value.title, "Workflow stage title") }),
+        ...(value.objective === undefined
+          ? {}
+          : {
+              objective: descriptiveText(
+                value.objective,
+                "Workflow stage objective",
+              ),
+            }),
+        ...(value.checks === undefined
+          ? {}
+          : { checks: descriptiveList(value.checks, "Workflow stage checks") }),
+      };
     });
-    return { ...common, taskType, stages };
+    if (item.additionalTaskTypes === undefined)
+      return { ...common, taskType, stages };
+    const additionalTaskTypes = referenceList(
+      item.additionalTaskTypes,
+      "additionalTaskTypes",
+    );
+    // The task type is the first route; it is not also an additional one.
+    if (additionalTaskTypes.includes(taskType))
+      throw new ProjectDefinitionConflictError(
+        "conflicting_ownership_metadata",
+        "additionalTaskTypes must not contain the workflow's taskType",
+      );
+    return { ...common, taskType, additionalTaskTypes, stages };
   } catch (error) {
     if (error instanceof ProjectDefinitionConflictError) throw error;
     throw new ProjectDefinitionConflictError(
@@ -521,7 +691,7 @@ export function parseDefinitionMutation(
             ? parseWorkflowPayload(item.payload, id)
             : kind === "agents"
               ? parseAgentPayload(item.payload, id, false)
-              : parseDefinitionPayload(item.payload, id),
+              : parseDefinitionPayload(item.payload, id, false, kind),
         ...(expectedEntryRevision === undefined
           ? {}
           : { expectedEntryRevision: expectedEntryRevision as number }),
@@ -571,7 +741,9 @@ export function parseDefinitionMutation(
           ? {}
           : {
               // Only a replacement of an agent or of a workflow carries
-              // references; an extension stays descriptive for every kind.
+              // references, and only a replacement of a role or a prompt its
+              // descriptive field; an extension stays descriptive for every
+              // kind.
               payload:
                 operation === "replace" && source.kind === "agents"
                   ? parseAgentPayload(item.payload, source.localId, true)
@@ -581,6 +753,7 @@ export function parseDefinitionMutation(
                         item.payload,
                         source.localId,
                         operation === "extend",
+                        source.kind,
                       ),
             }),
         ...(expectedEntryRevision === undefined

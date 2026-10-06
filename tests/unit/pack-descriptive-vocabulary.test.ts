@@ -92,7 +92,7 @@ const review = {
   ],
 };
 const described = {
-  roles: [counsel, { id: "clerk" }],
+  roles: [counsel, { id: "clerk" }] as (typeof counsel)[],
   taskTypes: [{ id: "matter" }, { id: "filing" }, { id: "appeal" }],
   capabilities: [{ id: "sign" }],
   prompts: [{ id: "brief", title: "Brief", text: "Write the brief." }],
@@ -845,7 +845,7 @@ describe("GP-10B-2 descriptive vocabulary in the resolved configuration", () => 
       return digestOf(copy);
     };
     for (const digest of [
-      without((copy) => copy.roles[0]!.responsibilities!.reverse()),
+      without((copy) => copy.roles[0]!.responsibilities.reverse()),
       without((copy) => (copy.prompts[0]!.text = "Other.")),
       without((copy) => (copy.workflows[0]!.additionalTaskTypes = ["appeal"])),
       without((copy) => (copy.workflows[0]!.stages[0]!.title = "Other")),

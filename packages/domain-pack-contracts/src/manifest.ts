@@ -60,6 +60,13 @@ export interface Contribution {
  */
 export interface RoleContribution extends Contribution {
   readonly capabilities?: readonly ContributionLocalId[];
+  /** Descriptive, ordered and never sorted (GP-10B-2). Absent when none. */
+  readonly responsibilities?: readonly string[];
+}
+
+/** A prompt. `text` is its declarative body; nothing sends it anywhere. */
+export interface PromptContribution extends Contribution {
+  readonly text?: string;
 }
 
 /**
@@ -76,13 +83,26 @@ export interface AgentContribution extends Contribution {
   readonly capabilities?: readonly ContributionLocalId[];
 }
 
+/**
+ * `title`, `objective` and `checks` are descriptive (GP-10B-2): no approval,
+ * guard or check is enforced because of them. `checks` keeps its order.
+ */
 export interface WorkflowStage {
   readonly id: ContributionLocalId;
   readonly role: ContributionLocalId;
+  readonly title?: string;
+  readonly objective?: string;
+  readonly checks?: readonly string[];
 }
 
+/**
+ * A workflow's routes are `taskType` and `additionalTaskTypes`, task types of
+ * the same manifest. The validated list is a set in ascending code-unit order
+ * that never holds `taskType`, absent when empty.
+ */
 export interface WorkflowContribution extends Contribution {
   readonly taskType: ContributionLocalId;
+  readonly additionalTaskTypes?: readonly ContributionLocalId[];
   readonly stages: readonly WorkflowStage[];
 }
 
@@ -93,7 +113,9 @@ export type DomainPackContributions = {
       ? RoleContribution
       : K extends "agents"
         ? AgentContribution
-        : Contribution)[];
+        : K extends "prompts"
+          ? PromptContribution
+          : Contribution)[];
 };
 
 export interface DomainPackManifest {
@@ -268,8 +290,10 @@ function keys(
 }
 
 /**
- * The one rule for manifest text: metadata name and description, and every
- * contribution title and description. A lone surrogate has no canonical JSON
+ * The one rule for manifest text: metadata name and description, every
+ * contribution title and description, and the descriptive text of GP-10B-2
+ * (stage title and objective, list entries, prompt text; the last two must
+ * also be non-empty). A lone surrogate has no canonical JSON
  * form. U+0000 is allowed by design (GP-23): manifest text is not written to
  * project storage, unlike project definition text, which rejects it.
  */
@@ -334,6 +358,47 @@ function referenceList(
   return parsed;
 }
 
+/**
+ * The most entries one descriptive list may hold: a stage's `checks` or a
+ * role's `responsibilities`. Shared with the project mutation contract and
+ * the portable archive, so every accepted list stays storable and exportable.
+ */
+export const maximumDescriptiveListEntries = 64;
+
+/**
+ * An ordered list of descriptive text: a stage's `checks` or a role's
+ * `responsibilities`. Order is kept as written and duplicates are allowed.
+ * Every entry is non-empty manifest text.
+ */
+function descriptiveList(value: unknown, path: string): readonly string[] {
+  if (!Array.isArray(value))
+    return fail("invalid_contribution", path, "expected array");
+  // "None" has one encoding: the absent field.
+  if (value.length === 0)
+    return fail(
+      "invalid_contribution",
+      path,
+      "expected at least one entry; omit the field instead",
+    );
+  if (value.length > maximumDescriptiveListEntries)
+    return fail(
+      "invalid_contribution",
+      path,
+      `expected at most ${maximumDescriptiveListEntries} entries`,
+    );
+  return value.map((entry: unknown, index: number) =>
+    nonEmptyString(entry, `${path}[${index}]`),
+  );
+}
+
+/** Manifest text that must say something: a list entry or a prompt text. */
+function nonEmptyString(value: unknown, path: string): string {
+  const text = string(value, path, "invalid_contribution");
+  if (text.length === 0)
+    return fail("invalid_contribution", path, "expected non-empty string");
+  return text;
+}
+
 /** The list fields of an agent, with the noun used in their diagnostics. */
 const agentReferenceLists = [
   ["prompts", "prompt"],
@@ -345,13 +410,25 @@ function contribution(
   value: unknown,
   path: string,
   kind: ContributionKind,
-): Contribution | RoleContribution | AgentContribution | WorkflowContribution {
+):
+  | Contribution
+  | RoleContribution
+  | AgentContribution
+  | PromptContribution
+  | WorkflowContribution {
   const record = object(value, path, "invalid_contribution");
   const workflow = kind === "workflows";
   const allowed = workflow
-    ? ["id", "title", "description", "taskType", "stages"]
+    ? [
+        "id",
+        "title",
+        "description",
+        "taskType",
+        "additionalTaskTypes",
+        "stages",
+      ]
     : kind === "roles"
-      ? ["id", "title", "description", "capabilities"]
+      ? ["id", "title", "description", "capabilities", "responsibilities"]
       : kind === "agents"
         ? [
             "id",
@@ -362,7 +439,9 @@ function contribution(
             "knowledge",
             "capabilities",
           ]
-        : ["id", "title", "description"];
+        : kind === "prompts"
+          ? ["id", "title", "description", "text"]
+          : ["id", "title", "description"];
   for (const key of Object.keys(record))
     if (!allowed.includes(key))
       fail("invalid_contribution", `${path}.${key}`, "unknown field");
@@ -385,16 +464,30 @@ function contribution(
         }),
   };
   if (kind === "roles")
-    return record.capabilities === undefined
+    return {
+      ...common,
+      ...(record.capabilities === undefined
+        ? {}
+        : {
+            capabilities: referenceList(
+              record.capabilities,
+              `${path}.capabilities`,
+              "capability",
+            ),
+          }),
+      ...(record.responsibilities === undefined
+        ? {}
+        : {
+            responsibilities: descriptiveList(
+              record.responsibilities,
+              `${path}.responsibilities`,
+            ),
+          }),
+    };
+  if (kind === "prompts")
+    return record.text === undefined
       ? common
-      : {
-          ...common,
-          capabilities: referenceList(
-            record.capabilities,
-            `${path}.capabilities`,
-            "capability",
-          ),
-        };
+      : { ...common, text: nonEmptyString(record.text, `${path}.text`) };
   if (kind === "agents")
     return {
       ...common,
@@ -418,10 +511,36 @@ function contribution(
     (entry: unknown, index: number): WorkflowStage => {
       const stagePath = `${path}.stages[${index}]`;
       const stage = object(entry, stagePath, "invalid_contribution");
-      keys(stage, ["id", "role"], stagePath, "invalid_contribution");
+      for (const key of Object.keys(stage))
+        if (!["id", "role", "title", "objective", "checks"].includes(key))
+          fail("invalid_contribution", `${stagePath}.${key}`, "unknown field");
+      for (const key of ["id", "role"])
+        if (!Object.hasOwn(stage, key))
+          fail("invalid_contribution", `${stagePath}.${key}`, "missing field");
       return {
         id: localId(stage.id, `${stagePath}.id`, "invalid_contribution"),
         role: localId(stage.role, `${stagePath}.role`, "invalid_contribution"),
+        ...Object.fromEntries(
+          (["title", "objective"] as const).flatMap((field) =>
+            stage[field] === undefined
+              ? []
+              : [
+                  [
+                    field,
+                    string(
+                      stage[field],
+                      `${stagePath}.${field}`,
+                      "invalid_contribution",
+                    ),
+                  ],
+                ],
+          ),
+        ),
+        ...(stage.checks === undefined
+          ? {}
+          : {
+              checks: descriptiveList(stage.checks, `${stagePath}.checks`),
+            }),
       };
     },
   );
@@ -435,6 +554,15 @@ function contribution(
       `${path}.taskType`,
       "invalid_contribution",
     ),
+    ...(record.additionalTaskTypes === undefined
+      ? {}
+      : {
+          additionalTaskTypes: referenceList(
+            record.additionalTaskTypes,
+            `${path}.additionalTaskTypes`,
+            "task type",
+          ),
+        }),
     stages,
   };
 }
@@ -594,6 +722,39 @@ export function validateDomainPackManifest(value: unknown): DomainPackManifest {
       lists[field] = [...references].sort(compareCodeUnits);
     }
     return { ...agent, ...lists };
+  });
+  // A workflow's additional routes follow the same rule: bare local IDs of
+  // task types this manifest declares, a set in one order. The task type
+  // itself is not an additional one.
+  const taskTypes = new Set(contributions.taskTypes.map((entry) => entry.id));
+  contributions.workflows = (
+    contributions.workflows as readonly WorkflowContribution[]
+  ).map((workflow, index) => {
+    if (workflow.additionalTaskTypes === undefined) return workflow;
+    const path = `contributions.workflows[${index}].additionalTaskTypes`;
+    for (const [
+      position,
+      reference,
+    ] of workflow.additionalTaskTypes.entries()) {
+      if (reference === workflow.taskType)
+        fail(
+          "invalid_contribution",
+          `${path}[${position}]`,
+          "the task type is not an additional task type",
+        );
+      if (!taskTypes.has(reference))
+        fail(
+          "invalid_contribution",
+          `${path}[${position}]`,
+          "task type is not declared by this manifest",
+        );
+    }
+    return {
+      ...workflow,
+      additionalTaskTypes: [...workflow.additionalTaskTypes].sort(
+        compareCodeUnits,
+      ),
+    };
   });
   return {
     schemaVersion: 1,

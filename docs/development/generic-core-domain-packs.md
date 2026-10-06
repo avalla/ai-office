@@ -2268,7 +2268,7 @@ are expressible and are now in the pack, so they are not in the list.
 
 ## GP-10B-2 descriptive workflow and prompt vocabulary
 
-Status: contract approved; PR 1 in progress. The owner approved the scope on 2026-10-06
+Status: the contract (PR 1) is implemented; PR 2 is not started. The owner approved the scope on 2026-10-06
 as two pull requests: the contract below, and then development pack `0.3.0`
 with the data and its parity tests (PR 2), which is a separate, later change.
 "Implementation record" at the end of this section records what was built
@@ -2580,7 +2580,82 @@ role guidance and reference prompts, and the residue list.
 
 ### Implementation record
 
-Recorded with the behaviour commit of PR 1.
+- Manifest. `packages/domain-pack-contracts/src/manifest.ts` reads the six
+  fields. `maximumDescriptiveListEntries` (64) is exported from the contracts
+  package. The declared-task-type check of `additionalTaskTypes` runs in the
+  cross-reference pass, after every section is read, like the GP-11 and GP-12
+  checks. `taskType` itself is still not checked against the manifest's task
+  types, as before; GP-06 resolution does that.
+- Lone surrogates. A lone surrogate in an entry or a text is
+  `invalid_contribution` with the member path when a manifest value is
+  validated (`validateDomainPackManifest`). The byte reader
+  (`parseDomainPackManifest`, `verifyDomainPackManifest`) refuses a lone
+  surrogate earlier, as `malformed_input` at `$`, because it is not
+  well-formed JSON text. That is the existing behaviour for every manifest
+  string and is unchanged; the tests pin both layers.
+- Empty text. A stage `title` or `objective` may be the empty string in a
+  manifest, like a contribution `title`. Only a prompt `text` and a list entry
+  must be non-empty there. In a project payload every new text is non-empty.
+- Mutation contract. `project-definition.ts` admits `responsibilities` for a
+  role and `text` for a prompt through one table, `descriptiveFieldOfKind`,
+  used for a project-owned definition and for a `replace`; an `extend` and
+  every other kind keep the two-field envelope. The messages are fixed
+  strings that name a field: for example
+  `text must be non-empty bounded text` and
+  `additionalTaskTypes must not contain the workflow's taskType`.
+- Pre-store check. `manage-project-definitions.ts` reports an additional task
+  type the exact source manifest does not declare as
+  `source_definition_missing`, in the list's stored order, before anything is
+  written, and `project:definition:show` reports the same for stored state.
+- View. The derived fields are optional and present only when set, so every
+  existing view of a configuration without them is unchanged, not only its
+  digest. `ResolvedRole.responsibilities`, the stage fields and
+  `additionalTaskTypeIds` are the names.
+- Upgrade. The only code change is in `convert_to_replace`. The other rows of
+  the table are existing behaviour and are covered by tests only.
+- Archive. `portableProjectDescriptiveVocabularyFormatVersion` is 10. The
+  base definition schema gained a role payload, a prompt payload, the stage
+  fields and `additionalTaskTypes`, with kind-specific refinements; format 9
+  became a refinement that rejects every new key, and formats 6 to 8 refine
+  format 9 as before. `hasDescriptiveVocabulary` decides both the format a
+  state is written at and what format 9 rejects.
+- Byte identity. A test pins the SHA-256 of serialized archives of four
+  states without the new keys, at formats 6, 7, 8 and 9. The digests were
+  computed on the base commit, before format 10 existed.
+- Pinned digests. The four golden fixture digests, the `0.2.0` manifest
+  digest, the empty-input `configurationDigest` vector and the digest of one
+  configuration on the legal fixture and pack `0.2.0` with project-owned
+  definitions and two replacements, computed on the base commit, are
+  unchanged.
+- Storage. No migration. `tests/contracts/project-storage.contract.ts` gained
+  one case that both backends run: it stores a state with every new key,
+  reads it back equal with list order kept, and checks that the state read
+  back is a valid format-10 definition section that format 9 rejects. No
+  PostgreSQL portable export path exists in the repository, so "exports" in
+  criterion 12 is shown as that schema check on the state read from
+  PostgreSQL, not as a backup written by a PostgreSQL-backed Runtime.
+- PostgreSQL. The gated suites were run against a throwaway `postgres:17`
+  container, the image CI uses:
+  `storage-contracts-postgres`, `storage-bootstrap-postgres`,
+  `pack-manifest-nul-policy`, `legacy-development-profile-postgres` and
+  `migration-upgrades` passed, 93 tests in 5 files.
+- Earlier tests. One GP-13 unit case asserted that a stage `title` is an
+  unknown stage key; it now uses `name`, which is still unknown. One
+  snapshot unit case used format version 10 as its unsupported version; it
+  now uses 11.
+- Preservation. On a project with a real OfficeManifest, Runtime roles and
+  agents and a started pipeline run, definitions with the new keys and an
+  upgrade that converts one leave every table but the definition, binding
+  and audit tables identical, the OfficeManifest rows included.
+- Criterion 16 is a property of this change set, checked on the diff against
+  the base commit. No test keeps it true afterwards.
+- Delivery table. The GP-10B-2 row is longer than its column and the table
+  was not re-padded, so that the rows of tasks developed in parallel merge
+  without a conflict. Prettier reports the file; re-padding is left to the
+  last of those merges.
+- Evidence limits. Nothing shows how a Runtime would use these fields,
+  because none does. Parity of the development defaults with these fields is
+  PR 2. The 16 KiB argument limit is recorded, not tested.
 
 ## Objective and decision boundary
 

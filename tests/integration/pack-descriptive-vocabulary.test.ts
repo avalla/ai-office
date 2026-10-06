@@ -44,6 +44,7 @@ afterEach(() => {
 const now = new Date("2026-10-06T00:00:00.000Z");
 const later = new Date("2026-10-07T00:00:00.000Z");
 const encoder = new TextEncoder();
+const packId = "org.example.legal";
 /** Exact bytes of one schema-1 manifest with a computed digest. */
 function packBytes(
   version: string,

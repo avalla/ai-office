@@ -6,6 +6,8 @@ import {
   type Contribution,
   type ContributionKind,
   type DomainPackManifest,
+  type PromptContribution,
+  type RoleContribution,
   type WorkflowContribution,
 } from "../../../domain-pack-contracts/src/index.ts";
 import { canonicalizeJcsJson } from "../../../domain-pack-contracts/src/jcs.ts";
@@ -789,10 +791,19 @@ function reconcileProjectPackUpgrade(input: {
         source.kind === "workflows"
           ? (nextEntry as WorkflowContribution)
           : undefined;
+      // Nor does it set a descriptive field (GP-10B-2): a role's
+      // responsibilities, a prompt's text, a stage's title, objective and
+      // checks and a workflow's additional task types are the template's.
+      const { responsibilities }: RoleContribution =
+        source.kind === "roles" ? nextEntry : { id: nextEntry.id };
+      const { text }: PromptContribution =
+        source.kind === "prompts" ? nextEntry : { id: nextEntry.id };
       conversions.set(sourceKey(source), {
         id: source.localId,
         ...(title === undefined ? {} : { title }),
         ...(description === undefined ? {} : { description }),
+        ...(responsibilities === undefined ? {} : { responsibilities }),
+        ...(text === undefined ? {} : { text }),
         ...(role === undefined ? {} : { role }),
         ...(prompts === undefined ? {} : { prompts }),
         ...(knowledge === undefined ? {} : { knowledge }),
@@ -801,10 +812,24 @@ function reconcileProjectPackUpgrade(input: {
           ? {}
           : {
               taskType: workflow.taskType,
-              stages: workflow.stages.map(({ id, role: stageRole }) => ({
-                id,
-                role: stageRole,
-              })),
+              ...(workflow.additionalTaskTypes === undefined
+                ? {}
+                : { additionalTaskTypes: workflow.additionalTaskTypes }),
+              stages: workflow.stages.map(
+                ({
+                  id,
+                  role: stageRole,
+                  title: stageTitle,
+                  objective,
+                  checks,
+                }) => ({
+                  id,
+                  role: stageRole,
+                  ...(stageTitle === undefined ? {} : { title: stageTitle }),
+                  ...(objective === undefined ? {} : { objective }),
+                  ...(checks === undefined ? {} : { checks }),
+                }),
+              ),
             }),
       });
       overrides.push({
