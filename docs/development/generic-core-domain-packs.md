@@ -2403,12 +2403,12 @@ definition layer only: binding, resolution, customization and upgrade. Running
 a core lifecycle from a pack is M16.5 (see
 [M16 exit re-scope](#m16-exit-re-scope-owner-decision-2026-10-06)):
 
-| Project           | Domain definitions and scenario                                                                                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A — development   | CTO/Architect/Developer/QA; requirement → implementation → review → hardening → complete; project may replace roles or insert security, QA and human approval stages.    |
-| B — legal         | Counsel/Researcher/Reviewer; matter intake → research → draft → review → approval, with source/citation evidence and human authority. No production legal service claim. |
-| C — manufacturing | Planner/Operator/Quality Engineer/Supervisor; production order → execution → inspection → deviation review → release. No MES/PLC mutation.                               |
-| D — empty/custom  | No official pack; project-created roles, agents, pipeline, artifact types and policies. It runs and audits through the same contracts without modifying core source.     |
+| Project           | Domain definitions and scenario                                                                                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A — development   | CTO/Architect/Developer/QA; requirement → implementation → review → hardening → complete; project may replace roles or insert security, QA and human approval stages.           |
+| B — legal         | Counsel/Researcher/Reviewer; matter intake → research → draft → review → approval, with source/citation evidence and human authority. No production legal service claim.        |
+| C — manufacturing | Planner/Operator/Quality Engineer/Supervisor; production order → execution → inspection → deviation review → release. No MES/PLC mutation.                                      |
+| D — empty/custom  | No official pack; project-created roles, agents, pipeline, artifact types and policies. It eventually runs and audits through the same contracts without modifying core source. |
 
 ## Compatibility stages
 
@@ -2432,10 +2432,11 @@ a core lifecycle from a pack is M16.5 (see
    removes nothing (see the GP-10B-1 section).
 5. **Opt-in adoption:** preview and audit an explicit development-pack binding;
    preserve project edits and in-flight pinned runs. Support old snapshots.
-   This stage is not part of the M16 exit. Adoption presupposes that the
-   Runtime executes from the resolved configuration and that runs pin it;
-   both are planned for M16.5, with the adoption task GP-10C-2. M16 delivers
-   only the declarative content an adoption would bind (GP-10C-1).
+   This stage is not part of the M16 exit. Adoption is planned together with
+   Runtime execution from the resolved configuration and run pinning, in
+   M16.5, as task GP-10C-2; its dependencies are set by its scope proposal.
+   M16 delivers only the declarative content an adoption would bind
+   (GP-10C-1).
 6. **New projects:** decide separately whether explicit pack selection is the
    default, after pack-free custom projects are proven. Legacy projects never
    acquire a mandatory rewrite solely because this option exists.
@@ -2461,14 +2462,16 @@ GP-10A + GP-13 → GP-10B-1 workflow templates
 GP-10B-1 → GP-10B-2 descriptive contract extension/prompts
 GP-25 pack policy contribution contract (provisional number; scope proposal pending)
 GP-10B-2 + GP-14A + GP-15 + GP-16 → GP-10C-1 declarative evidence/knowledge/capabilities
-GP-11..GP-13 + GP-14A + GP-15 + GP-16 → GP-17 legal, GP-18 manufacturing, GP-19 empty/custom
+GP-11..GP-13 + GP-14A + GP-15 + GP-16 + GP-25 → GP-17 legal, GP-18 manufacturing, GP-19 empty/custom
 GP-10C-1 + GP-17..GP-19 → GP-20 purity and regression → GP-21 authoring guide
 GP-06 + GP-07 → GP-22 binding composition preflight (hardening)
 GP-06 + GP-07 → GP-23 pack manifest U+0000 policy assessment (hardening)
 ```
 
 Planned for the successor milestone M16.5, outside the M16 exit (see
-[M16 exit re-scope](#m16-exit-re-scope-owner-decision-2026-10-06)):
+[M16 exit re-scope](#m16-exit-re-scope-owner-decision-2026-10-06)). The
+edges in this block are provisional: they record the expected order, none is
+owner-approved, and each is set by the scope proposal of its item:
 
 ```text
 GP-10B-2 + GP-25 → Runtime activation: execution from the resolved configuration, persisted run pins
@@ -2491,7 +2494,10 @@ another roadmap milestone.
 Every GP key is also a project requirement key. Each row gives the task's
 objective, smallest delivery slice, acceptance, artifact/verification, and
 explicit exclusion. The linked AI Office task and requirement descriptions
-carry the same fields. GP-01 through GP-09, GP-10A, GP-10B-1, GP-11 through
+carry the same fields. Runtime records for the split keys (GP-14A, GP-14B,
+GP-10C-1, GP-10C-2) and for the rows reworded by the M16 exit re-scope are
+updated separately; until then the records carry the pre-split GP-14 and
+GP-10C. GP-01 through GP-09, GP-10A, GP-10B-1, GP-11 through
 GP-13, GP-22 and GP-23 have passed review and merged. GP-24 and GP-25 exist
 as tasks; GP-24 is planned for M16.5 and is listed in
 [M16 exit re-scope](#m16-exit-re-scope-owner-decision-2026-10-06), with the
@@ -2519,9 +2525,9 @@ other work that left the M16 exit.
 | GP-14A — Artifact, evidence and validator definitions             | GP-03, GP-06                    | First half of the split GP-14; no M11.6 dependency. Definition layer: declare domain artifact and evidence types and trusted validator references (adapter ID, exact version, input/output schema, failure policy); project customization and upgrade rules as its contract section defines. No validator runs and no evidence or review state is enforced.               | Typed fixture schemas and definition, customization and upgrade tests.                                                                                                                   | Running arbitrary pack code; fail-closed evidence and version-bound review (GP-14B, M16.5).                 |
 | GP-15 — Pack knowledge guidance                                   | GP-06                           | Contribute categories, schemas, seed references, retrieval guidance and agent settings through AgentKnowledgeStore with trusted tenant/project scope.                                                                                                                                                                                                                     | Scope compatibility plan and old/new knowledge fixtures; outage and provenance tests.                                                                                                    | New vector/graph store or authority.                                                                        |
 | GP-16 — Pack capability contracts                                 | GP-06                           | Declare required/optional abstract operations; bind registered providers at bootstrap; reject missing required provider before runs; grants still separately authorize use.                                                                                                                                                                                               | Capability contract and fail-closed/controlled-action tests.                                                                                                                             | Pack-granted authority or direct credentials.                                                               |
-| GP-17 — Legal reference fixture                                   | GP-11–13, GP-14A, GP-15, GP-16  | Matter intake, research, draft, citation/evidence review and human approval are defined through public contracts with no software defaults. The fixture binds through a test-supplied catalog, resolves, and is customized and upgraded; it does not run a core lifecycle.                                                                                                | Minimal legal pack/fixture and bind, resolve, customize and upgrade tests for roles, workflow, artifact, knowledge and governance definitions.                                           | Production legal service or filing adapter; lifecycle execution (M16.5).                                    |
-| GP-18 — Manufacturing reference fixture                           | GP-11–13, GP-14A, GP-15, GP-16  | Production order, execution, inspection, deviation and supervisor approval are defined through public contracts with no software defaults. The fixture binds through a test-supplied catalog, resolves, and is customized and upgraded; it does not run a core lifecycle.                                                                                                 | Minimal manufacturing pack/fixture and bind, resolve, customize and upgrade tests for provenance, policy and capability definitions.                                                     | MES, ERP, OPC-UA or PLC writes; lifecycle execution (M16.5).                                                |
-| GP-19 — Empty/custom domain fixture                               | GP-11–13, GP-14A, GP-15, GP-16  | Zero official packs; project-defined roles, agents, workflow, artifacts, policy and knowledge definitions resolve, and are customized, without core edits. It does not run a core lifecycle.                                                                                                                                                                              | Custom-domain fixture and end-to-end configuration/upgrade tests.                                                                                                                        | Making `custom` a privileged official pack; lifecycle execution (M16.5).                                    |
+| GP-17 — Legal reference fixture                                   | GP-11–13, GP-14A, 15, 16, 25    | Matter intake, research, draft, citation/evidence review and human approval are defined through public contracts with no software defaults. The fixture binds through a test-supplied catalog, resolves, and is customized and upgraded; it does not run a core lifecycle.                                                                                                | Minimal legal pack/fixture and bind, resolve, customize and upgrade tests for roles, workflow, artifact, knowledge and governance definitions.                                           | Production legal service or filing adapter; lifecycle execution (M16.5).                                    |
+| GP-18 — Manufacturing reference fixture                           | GP-11–13, GP-14A, 15, 16, 25    | Production order, execution, inspection, deviation and supervisor approval are defined through public contracts with no software defaults. The fixture binds through a test-supplied catalog, resolves, and is customized and upgraded; it does not run a core lifecycle.                                                                                                 | Minimal manufacturing pack/fixture and bind, resolve, customize and upgrade tests for provenance, policy and capability definitions.                                                     | MES, ERP, OPC-UA or PLC writes; lifecycle execution (M16.5).                                                |
+| GP-19 — Empty/custom domain fixture                               | GP-11–13, GP-14A, 15, 16, 25    | Zero official packs: the fixture resolves with an empty selection; project-defined roles, agents, workflow, artifacts, policy and knowledge definitions are added and customized without core edits. Pack upgrade does not apply to it. It does not run a core lifecycle.                                                                                                 | Custom-domain fixture and tests: empty-selection resolution; adding and customizing project-owned definitions.                                                                           | Making `custom` a privileged official pack; lifecycle execution (M16.5).                                    |
 | GP-20 — Core purity and legacy regression gate                    | GP-10C-1, GP-17–GP-19           | Enforce `pack → public core contracts` and no core import of official packs; run the four-domain fixtures at the definition layer (bind, resolve, customize, upgrade) and the pre-pack fixtures against lifecycle, approval, storage, knowledge, audit and fencing on the legacy path.                                                                                    | Architecture rule and integration suite; `bun run check` plus DB upgrade/RLS checks as applicable.                                                                                       | Broad refactor outside M16; execution from packs (M16.5).                                                   |
 | GP-21 — Pack authoring and operations guide                       | GP-20                           | Document manifest, lifecycle, project ownership/customization, conflicts, upgrades, local install/validate and custom/three reference examples using actual commands.                                                                                                                                                                                                     | Authoring guide and tested examples; docs/CLI parity review.                                                                                                                             | Marketplace, remote registry or speculative CLI commands.                                                   |
 
@@ -2899,7 +2905,7 @@ from a pack: pipeline runs are still created from the OfficeManifest, no run
 pins a pack configuration, the production catalog holds no pack and no
 project has adopted the development pack.
 
-**Why.**
+**Why.** The points below are the rationale recorded with the decision.
 
 - The exit clause "Runtime execution consumes generic resolved configuration"
   had no owning task. The plan deferred activation to "a later activation
@@ -2909,20 +2915,21 @@ project has adopted the development pack.
 - GP-14 required the M11.6 Phase B contract (persisted artifacts, immutable
   versions, fingerprints, review requests and results). Phase B is "future"
   in the roadmap and does not exist in code.
-- Speed: the re-scoped exit has no cross-milestone dependency.
+- Speed: the re-scoped exit does not depend on the code of an unfinished
+  milestone (M11.6 Phase B).
 
 **Exit clauses changed.** The current text is in
 [Milestone exit and exclusions](#milestone-exit-and-exclusions).
 
-| Document | Previous clause                                                                                                                                                | Change                                                                                                                                                                       |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Plan     | "Runtime execution consumes generic resolved configuration"                                                                                                    | Removed from the M16 exit; it is the exit of M16.5.                                                                                                                          |
-| Plan     | "roles, agents, pipelines and other pack defaults can be replaced or omitted"                                                                                  | Limited to the definitions for which an M16 task delivers a contract, each as far as that contract allows.                                                                   |
-| Plan     | "the empty/custom fixture succeeds beside development, legal and manufacturing"                                                                                | "Succeeds" is defined: the fixture binds through a test-supplied catalog, resolves, and is customized and upgraded. It does not mean that the fixture runs a core lifecycle. |
-| Plan     | "An accepted ADR or a fixture alone does not satisfy the eventual end-to-end exit."                                                                            | Replaced by a statement of what M16 delivers and does not deliver. An accepted ADR alone still does not satisfy the exit.                                                    |
-| Roadmap  | "development, legal, manufacturing, and empty/custom fixtures run the same core lifecycles without changes to core for each domain"                            | The fixtures bind, resolve, and are customized and upgraded through the same public contracts; they do not run a core lifecycle in M16.                                      |
-| Roadmap  | "Project-owned roles, agents, prompts, validators, capabilities, artifacts, knowledge settings and pipelines can be customized or replaced without pack forks" | Stated at the definition layer and limited to what each M16 contract allows; Runtime roles, agents, pipelines, validators and capability bindings are not created from them. |
-| Roadmap  | "cross-domain scenario tests prevent development semantics from returning to core"                                                                             | "cross-domain fixture tests", since no scenario runs a lifecycle in M16.                                                                                                     |
+| Document | Previous clause                                                                                                                                                | Change                                                                                                                                                                                                                                                                                                                                        |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plan     | "Runtime execution consumes generic resolved configuration"                                                                                                    | Removed from the M16 exit; it is expected to become the exit of M16.5.                                                                                                                                                                                                                                                                        |
+| Plan     | "roles, agents, pipelines and other pack defaults can be replaced or omitted"                                                                                  | Limited to the definitions for which an M16 task delivers a contract, each as far as that contract allows. The word "pipelines" became "workflows".                                                                                                                                                                                           |
+| Plan     | "the empty/custom fixture succeeds beside development, legal and manufacturing"                                                                                | "Succeeds" is defined: a pack-backed fixture binds through a test-supplied catalog, resolves, and is customized and upgraded. The empty/custom fixture has no pack to bind or upgrade: it resolves with an empty selection and its project-owned definitions are added and customized. In neither case does the fixture run a core lifecycle. |
+| Plan     | "An accepted ADR or a fixture alone does not satisfy the eventual end-to-end exit."                                                                            | Replaced by a statement of what M16 delivers and does not deliver. An accepted ADR alone still does not satisfy the exit.                                                                                                                                                                                                                     |
+| Roadmap  | "development, legal, manufacturing, and empty/custom fixtures run the same core lifecycles without changes to core for each domain"                            | The fixtures bind, resolve, and are customized and upgraded through the same public contracts; they do not run a core lifecycle in M16.                                                                                                                                                                                                       |
+| Roadmap  | "Project-owned roles, agents, prompts, validators, capabilities, artifacts, knowledge settings and pipelines can be customized or replaced without pack forks" | Stated at the definition layer and limited to what each M16 contract allows; Runtime roles, agents, pipelines, validators and capability bindings are not created from them.                                                                                                                                                                  |
+| Roadmap  | "cross-domain scenario tests prevent development semantics from returning to core"                                                                             | "cross-domain fixture tests", since no scenario runs a lifecycle in M16.                                                                                                                                                                                                                                                                      |
 
 **Tasks split.**
 
@@ -2934,33 +2941,64 @@ project has adopted the development pack.
   M16. GP-10C-2 is previewed explicit adoption and registration and is
   planned for M16.5.
 - GP-17, GP-18, GP-19, GP-20 and, through GP-20, GP-21 now depend on GP-14A,
-  not on GP-14. GP-17 to GP-19 are definition-layer fixtures.
+  not on GP-14. GP-17 to GP-19 are definition-layer fixtures. The slice,
+  verification and non-goal cells of GP-17 to GP-20 were reworded to the
+  definition layer, and GP-20 runs lifecycle regressions only on the legacy
+  path.
+- GP-17, GP-18 and GP-19 also depend on GP-25. A fixture that carries policy
+  or governance definitions cannot resolve before GP-25, because GP-06
+  rejects a non-empty policy section as `unsupported_security_composition`.
 - The sections of delivered tasks and the committed
   `outside-pack-vocabulary.json` still name GP-10C and GP-14 as owners and
   are not rewritten. Read registration, install and adoption as GP-10C-2,
   and declarative content, including the `tools` residue, as GP-10C-1. The
   list's owner field is updated by the task that next changes it.
+- Two more statements in delivered sections are not rewritten and are read
+  as follows. The GP-08 and GP-13 sections call GP-24 "the task that
+  persists those pins": Runtime activation is now expected to persist the
+  run pins and GP-24 to use them. The GP-10B-1 section says that the
+  execution parity task "depends on GP-10B-1, GP-10B-2 and the policy task
+  (GP-25)": it now also needs Runtime activation.
+
+**Rows owned by other pull requests.** The same owner decision set the M16
+part of three tasks whose table rows this record does not edit. Until each
+task's own pull request updates its row, read the rows as follows.
+
+- GP-16. The row still lists "bind registered providers at bootstrap" and
+  "reject missing required provider before runs". Those two clauses are the
+  run gate and are M16.5. In M16, GP-16 is delivered as capability
+  declarations plus fail-closed provider availability at resolution and at
+  binding preflight, with no run or scheduler gate. The row and a GP-16
+  contract section are updated by GP-16's own pull request.
+- GP-15. The row still reads as use of the AgentKnowledgeStore. In M16,
+  GP-15 is delivered as a definition layer only: no store call and no
+  seeding. Store use, seeding, and "outage and provenance" behaviour beyond
+  proving that the store is untouched are not M16; this record assigns them
+  to no milestone.
+- GP-25. The pack policy contribution contract is an M16 task: a definition
+  layer, pack-owned. Its row and scope are updated by its own pull request.
 
 **Planned for M16.5.** None of these rows is M16 work and none has
 owner-approved acceptance criteria yet; each needs a scope proposal before
-any work.
+any work. The "Depends on" column is provisional: it records the expected
+order, and each entry is set by the item's scope proposal.
 
-| Item                                                  | Depends on                            | Scope                                                                                                                                                                                                   |
-| ----------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime activation (no key or task yet)               | GP-10B-2, GP-25                       | Runtime execution consumes the resolved configuration; a new run persists its `configurationDigest` and exact source pack tuples with its existing pins (ADR-0026). This is the former M16 exit clause. |
-| GP-24 — Block pack removal on active pack-pinned runs | Runtime activation                    | Block a pack removal, and a workflow change, while an active run pins that pack. It needs persisted run pins, which activation delivers.                                                                |
-| Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`   | GP-10B-1, GP-10B-2, GP-25; activation | Execution parity: compare execution from a resolved configuration with legacy execution.                                                                                                                |
-| GP-14B — Evidence and validator enforcement           | GP-14A; M11.6 Phase B                 | Stale evidence and invalid validator output fail closed; version-bound review, atop the generic version/provenance/review contracts.                                                                    |
-| GP-10C-2 — Development pack adoption                  | GP-10C-1; activation                  | Previewed explicit adoption of the development pack and its catalog registration, preserving old bindings; legacy snapshot, approval, action and provenance regression tests.                           |
-| GP-16 run gate                                        | GP-16; activation                     | Bind registered providers at bootstrap and reject a missing required provider before runs. The M16 part of GP-16 is defined by its own row and contract section.                                        |
+| Item                                                  | Depends on (provisional)              | Scope                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime activation (no key or task yet)               | GP-10B-2, GP-25                       | Runtime execution consumes the resolved configuration; a new run persists its `configurationDigest` and exact source pack tuples with its existing pins (ADR-0026). This is the former M16 exit clause.                                                       |
+| GP-24 — Block pack removal on active pack-pinned runs | Runtime activation                    | Block a pack removal while an active run pins that pack. Whether it also blocks a workflow change on such a run, which the GP-13 section defers to GP-24, is set by its scope proposal. It needs persisted run pins, which activation is expected to deliver. |
+| Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`   | GP-10B-1, GP-10B-2, GP-25; activation | Execution parity: compare execution from a resolved configuration with legacy execution.                                                                                                                                                                      |
+| GP-14B — Evidence and validator enforcement           | GP-14A; M11.6 Phase B                 | Stale evidence and invalid validator output fail closed; version-bound review, atop the generic version/provenance/review contracts.                                                                                                                          |
+| GP-10C-2 — Development pack adoption                  | GP-10C-1; activation                  | Previewed explicit adoption of the development pack and its catalog registration, preserving old bindings; legacy snapshot, approval, action and provenance regression tests.                                                                                 |
+| GP-16 run gate                                        | GP-16; activation                     | Bind registered providers at bootstrap and reject a missing required provider before runs. The M16 row of GP-16 still lists these clauses; see "Rows owned by other pull requests" above.                                                                     |
 
 **Left open by this decision.**
 
 - Core still holds the closed list of five software task kinds
   (`officeTaskKinds`). Opening it is needed before a legal or manufacturing
-  task type can route, which is activation work; no task owns it yet. The
-  M16 clause "no privileged core import or branch" is checked by GP-20
-  against imports and pack-specific branches and does not cover that list.
+  task type can route; no task owns it. Whether the M16 clause "no
+  privileged core import or branch" covers that closed list is not decided
+  here. It needs an owner ruling before GP-20's scope is approved.
 - ADR-0026 is unchanged and stays an accepted target. Its parts on Runtime
   consumption of the resolved view, run pinning, removal blocked on active
   pinned runs, previewed migration to a development-pack binding, fail-closed
@@ -2982,20 +3020,24 @@ a definition contract can be replaced or omitted, each as far as that
 contract allows; projects can add their own definitions; official packs have
 no privileged core import or branch; upgrade conflicts are deterministic and
 auditable; and the empty/custom fixture succeeds beside development, legal
-and manufacturing. A fixture succeeds when it binds through a test-supplied
-catalog (the empty/custom fixture with zero packs), resolves, and is
-customized and upgraded. It does not mean that the fixture runs a core
-lifecycle. Existing tenant, RLS, fencing, approval, audit, provenance, task,
-run, pipeline and storage guarantees must still pass.
+and manufacturing. A pack-backed fixture succeeds when it binds through a
+test-supplied catalog, resolves, and is customized and upgraded. The
+empty/custom fixture has zero packs, so there is nothing to bind or upgrade:
+it succeeds when it resolves with an empty selection and project-owned
+definitions are added and customized. Pack upgrade does not apply to it;
+upgrade preservation is proven on the pack-backed fixtures. Success does not
+mean that a fixture runs a core lifecycle. Existing tenant, RLS, fencing,
+approval, audit, provenance, task, run, pipeline and storage guarantees must
+still pass.
 
 What M16 delivers: Domain Packs as a definition, customization and upgrade
 layer with reference fixtures. What it does not deliver: the Runtime does not
 execute from a pack. Runs are still created from the OfficeManifest, no run
 pins a pack configuration, no pack is registered in the production catalog
 and no project adopts the development pack. Runtime execution that consumes
-the generic resolved configuration is the exit of M16.5, not of M16. An
-accepted ADR alone does not satisfy the M16 exit, and ADR-0026 stays unmet in
-the parts that M16.5 owns.
+the generic resolved configuration leaves the M16 exit and is expected to
+become the exit of M16.5. An accepted ADR alone does not satisfy the M16
+exit, and ADR-0026 stays unmet in the parts that M16.5 owns.
 
 Out of scope: complete legal software, MES, ERP or industrial integrations;
 third-party marketplace/distribution; remote registry and dynamic downloading;
