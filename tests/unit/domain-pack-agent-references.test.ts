@@ -187,11 +187,13 @@ describe("GP-12 agent references in the schema-1 manifest", () => {
       );
       const verified = verifyDomainPackManifest(file, 1);
       expect(computeManifestDigest(verified)).toBe(golden[name]);
-      const canonical = decoder.decode(
-        canonicalizeDomainPackManifest(verified),
-      );
-      for (const field of ["role", "prompts", "knowledge"])
-        expect(canonical).not.toContain(`"${field}":`);
+      // No agent of a golden fixture carries a reference field.
+      for (const agent of verified.contributions.agents)
+        expect(Object.keys(agent).sort()).toEqual(
+          Object.keys(agent)
+            .filter((key) => ["id", "title", "description"].includes(key))
+            .sort(),
+        );
     }
     // A manifest with descriptive agents only keeps its pre-GP-12 digest.
     expect(
