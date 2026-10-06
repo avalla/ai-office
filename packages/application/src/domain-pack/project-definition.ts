@@ -344,11 +344,12 @@ function localId(value: unknown): string {
 function exactKeys(
   value: Record<string, unknown>,
   keys: readonly string[],
+  allowed: readonly string[] = keys,
 ): void {
   if (Object.keys(value).sort().join(",") !== [...keys].sort().join(","))
     throw new ProjectDefinitionConflictError(
       "malformed_origin_reference",
-      `Expected only ${keys.join(", ")}`,
+      `Expected only ${allowed.join(", ")}`,
     );
 }
 
@@ -590,11 +591,17 @@ function parseWorkflowPayload(value: unknown, id: string): WorkflowDefinition {
     const stageIds = new Set<string>();
     const stages = item.stages.map((stage): WorkflowStageDefinition => {
       const value = record(stage);
-      exactKeys(value, [
-        "id",
-        "role",
-        ...stageDescriptiveFields.filter((field) => value[field] !== undefined),
-      ]);
+      exactKeys(
+        value,
+        [
+          "id",
+          "role",
+          ...stageDescriptiveFields.filter(
+            (field) => value[field] !== undefined,
+          ),
+        ],
+        ["id", "role", ...stageDescriptiveFields],
+      );
       const stageId = localId(value.id);
       if (stageIds.has(stageId))
         throw new ProjectDefinitionConflictError(

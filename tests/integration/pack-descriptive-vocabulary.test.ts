@@ -1385,6 +1385,13 @@ describe("GP-10B-2 descriptive vocabulary across a pack upgrade", () => {
         plan.issues.map((item) => [item.code, item.detail]),
         JSON.stringify(second).slice(0, 100),
       ).toEqual([["prospective_configuration_invalid", "unresolved_override"]]);
+      // The message names the field that failed, never its body.
+      const message = plan.issues[0]?.message ?? "";
+      expect(message, kind).toMatch(
+        /override contract: malformed_origin_reference: .*(text|responsibilities|title|objective)/,
+      );
+      expect(message).not.toContain("xxxx");
+      expect(message).not.toContain("a\u0000b");
       expect(plan.prospectiveConfigurationDigest).toBeUndefined();
       await expect(
         applyUpgrade(h, [h.v2], plan.planDigest, resolutions),

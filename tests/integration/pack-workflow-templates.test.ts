@@ -566,7 +566,7 @@ describe("GP-13 workflow customization in project definitions", () => {
         "replace",
         { id: "review", taskType: "matter", stages: [{ id: "check" }] },
         "malformed_origin_reference",
-        "Expected only id, role",
+        "Expected only id, role, title, objective, checks",
       ],
       [
         "replace",

@@ -366,7 +366,7 @@ function storedOverride(entry: ProjectDefinitionOverride): {
     if (error instanceof ProjectDefinitionConflictError)
       failure(
         "unresolved_override",
-        `Stored override violates the override contract: ${error.code}`,
+        `Stored override violates the override contract: ${error.code}: ${error.message}`,
       );
     throw error;
   }
