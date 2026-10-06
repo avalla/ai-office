@@ -111,6 +111,8 @@ function openRuntime(root: string) {
     transactions,
     ids,
     clock,
+    // The restore host of these tests has no installed pack artifact.
+    catalog: new InMemoryInstalledDomainPackCatalog(1, []),
   });
   return {
     database,
@@ -1541,6 +1543,7 @@ describe("project portability", () => {
     const validator = new ManageProjectPackBinding({
       projects: destination.projects,
       bindings: new SqliteProjectPackBindingRepository(destination.database),
+      definitions: new SqliteProjectDefinitionRepository(destination.database),
       catalog: absentCatalog,
       auditEvents: new SqliteAuditEventRepository(destination.database),
       transactions: destination.transactions,
@@ -3579,6 +3582,7 @@ describe("project portability", () => {
       transactions: destination.transactions,
       ids: destination.ids,
       clock: destination.clock,
+      catalog: new InMemoryInstalledDomainPackCatalog(1, []),
     });
 
     let partial: unknown;
