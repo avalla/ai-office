@@ -38,6 +38,8 @@ import {
 } from "@ai-office/application/project-portability/manage-project-portability.ts";
 import {
   parsePortableProjectArchive,
+  portableProjectDefinitionFormatVersion,
+  portableProjectWorkflowOverrideFormatVersion,
   serializePortableProjectArchive,
 } from "@ai-office/application/project-portability/project-snapshot.ts";
 import {
@@ -991,10 +993,7 @@ describe("GP-25 a workflow replacement keeps what the policy governs", () => {
     const host = await project();
     await host.bind([v1]);
     await host.mutate(
-      host.mutation(v1, "intake", "extend", {
-        id: "intake",
-        title: "Project intake",
-      }),
+      host.mutation(v1, "intake", "extend", { title: "Project intake" }),
     );
     const view = await host.configuration();
     expect(
@@ -1019,7 +1018,7 @@ describe("GP-25 a workflow replacement keeps what the policy governs", () => {
 });
 
 /** The approval token, recomputed from every other field of the plan. */
-function planDigestOf(plan: { planDigest: string }): string {
+function planDigestOf<T extends { planDigest: string }>(plan: T): string {
   const { planDigest: _planDigest, ...rest } = plan;
   return `sha256:${createHash("sha256")
     .update("ai-office-pack-upgrade-plan-v1\n", "utf8")
@@ -1031,9 +1030,7 @@ describe("GP-25 policy changes in the upgrade plan", () => {
   test("the plan reports policy changes and the target policies under planDigest, and the audit event records both without a definition body", async () => {
     const host = await project();
     await host.bind([v1]);
-    await host.mutate(
-      host.mutation(v1, "intake", "extend", { id: "intake", title: "Mine" }),
-    );
+    await host.mutate(host.mutation(v1, "intake", "extend", { title: "Mine" }));
     const plan = await host
       .upgrade()
       .preview({ projectId: "a", desired: [v2] });
@@ -1628,7 +1625,16 @@ describe("GP-25 portable archive and restore", () => {
     for (const payload of [undefined, validReplacement]) {
       const governed = await archiveOf(v1, payload);
       const plain = await archiveOf(ungoverned, payload);
-      expect(governed.archive.formatVersion).toBe(plain.archive.formatVersion);
+      expect(governed.archive.manifest.formatVersion).toBe(
+        plain.archive.manifest.formatVersion,
+      );
+      // No format is added: the definition format, or the GP-13 workflow
+      // override format when the project replaced a workflow.
+      expect(governed.archive.manifest.formatVersion).toBe(
+        payload === undefined
+          ? portableProjectDefinitionFormatVersion
+          : portableProjectWorkflowOverrideFormatVersion,
+      );
       expect(governed.archive.manifest.contents).toEqual(
         plain.archive.manifest.contents,
       );

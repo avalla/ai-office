@@ -48,6 +48,12 @@ import {
   type ResolvedPackManifest,
 } from "./resolve-installed-pack-manifests.ts";
 import {
+  closureWorkflowPolicies,
+  workflowPolicyDifferences,
+  type WorkflowPolicy,
+  type WorkflowPolicyDifference,
+} from "./pack-policy-changes.ts";
+import {
   roleCapabilityDifferences,
   roleCapabilitySets,
   type RoleCapabilityDifference,
@@ -123,6 +129,12 @@ export interface RoleCapabilityChange extends RoleCapabilityDifference {
   readonly customized: boolean;
 }
 
+/** A workflow policy difference, marked when a project override names it. */
+export interface PolicyChange extends WorkflowPolicyDifference {
+  /** A project override names this workflow; it cannot alter the policy. */
+  readonly customized: boolean;
+}
+
 export type PackUpgradeIssueCode =
   | "target_closure_unresolved"
   | "unresolved_override_conflict"
@@ -178,6 +190,26 @@ export interface PackUpgradePlan {
    * binds these sets even when the previous closure cannot be read.
    */
   readonly targetRoleCapabilities: readonly RoleCapabilitySet[];
+  /**
+   * Workflow policy differences over the resolved closures (GP-25). Like a
+   * capability change, a policy change is reviewed and approved with the
+   * plan. Identities and clause values only.
+   */
+  readonly policyChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly PolicyChange[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason: "previous_closure_unresolved";
+        readonly detail: string;
+      };
+  /**
+   * Every typed policy of the target closure. Approval binds these policies
+   * even when the previous closure cannot be read.
+   */
+  readonly targetPolicies: readonly WorkflowPolicy[];
   readonly overrides: readonly OverrideReconciliation[];
   /** Supplied resolutions that matched no conflict; they change nothing. */
   readonly ignoredResolutions: readonly OverrideResolution[];
@@ -376,6 +408,24 @@ function roleCapabilityChanges(
   }));
 }
 
+function policyChanges(
+  before: readonly ResolvedPackManifest[],
+  after: readonly ResolvedPackManifest[],
+  overrides: readonly ProjectDefinitionOverride[],
+): PolicyChange[] {
+  const customized = new Set(
+    overrides
+      .filter(({ source }) => source.kind === "workflows")
+      .map(({ source }) =>
+        stablePackDefinitionId(source.id, "workflows", source.localId),
+      ),
+  );
+  return workflowPolicyDifferences(before, after).map((item) => ({
+    ...item,
+    customized: customized.has(item.workflowId),
+  }));
+}
+
 /**
  * The definition state after the plan's override outcomes. A surviving override
  * is carried over whole: only the pack tuple of a retargeted source changes.
@@ -513,6 +563,8 @@ function reconcileProjectPackUpgrade(input: {
       | "templates"
       | "roleCapabilityChanges"
       | "targetRoleCapabilities"
+      | "policyChanges"
+      | "targetPolicies"
       | "overrides"
       | "ignoredResolutions"
       | "issues"
@@ -537,6 +589,8 @@ function reconcileProjectPackUpgrade(input: {
       // A no-op reads no artifact, so it has no capability set to report.
       roleCapabilityChanges: { availability: "available", changes: [] },
       targetRoleCapabilities: [],
+      policyChanges: { availability: "available", changes: [] },
+      targetPolicies: [],
       overrides: definitions.overrides.map(({ source, operation }) => ({
         source,
         operation,
@@ -569,6 +623,10 @@ function reconcileProjectPackUpgrade(input: {
     availability: "available",
     changes: [],
   };
+  let policyDifferences: PackUpgradePlan["policyChanges"] = {
+    availability: "available",
+    changes: [],
+  };
   if (target && selectionChanged)
     try {
       const previous = resolveInstalledPackManifests(catalog, currentPacks);
@@ -580,6 +638,10 @@ function reconcileProjectPackUpgrade(input: {
         availability: "available",
         changes: roleCapabilityChanges(previous, target, definitions.overrides),
       };
+      policyDifferences = {
+        availability: "available",
+        changes: policyChanges(previous, target, definitions.overrides),
+      };
     } catch (error) {
       const detail = closureFailure(error);
       if (detail === null) throw error;
@@ -589,8 +651,10 @@ function reconcileProjectPackUpgrade(input: {
         detail,
       };
       capabilityChanges = templates;
+      policyDifferences = templates;
     }
   const targetRoleCapabilities = roleCapabilitySets(target ?? []);
+  const targetPolicies = closureWorkflowPolicies(target ?? []);
 
   const targetManifests = new Map<string, DomainPackManifest>(
     (target ?? []).map((entry) => [tupleKey(entry.identity), entry.manifest]),
@@ -904,6 +968,8 @@ function reconcileProjectPackUpgrade(input: {
     templates,
     roleCapabilityChanges: capabilityChanges,
     targetRoleCapabilities,
+    policyChanges: policyDifferences,
+    targetPolicies,
     overrides,
     ignoredResolutions: resolutions.filter(
       (item) => !usedResolutions.has(sourceKey(item.source)),
@@ -1078,6 +1144,9 @@ export class ReconcileProjectPackUpgrade {
             // Role and capability identities only.
             roleCapabilityChanges: plan.roleCapabilityChanges,
             targetRoleCapabilities: plan.targetRoleCapabilities,
+            // Policy and workflow identities and clause values only.
+            policyChanges: plan.policyChanges,
+            targetPolicies: plan.targetPolicies,
             prospectiveConfigurationDigest:
               plan.prospectiveConfigurationDigest ?? null,
             result: "applied",

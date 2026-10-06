@@ -66,6 +66,7 @@ const emptyConfiguration = {
   disabledAgents: [],
   workflows: [],
   disabledWorkflows: [],
+  policies: [],
   pin: {
     configurationDigest:
       "sha256:c272fa286a92c8d3732e97fec7b0373c3a7854cb70e4a108a7690acb92bd7b19",

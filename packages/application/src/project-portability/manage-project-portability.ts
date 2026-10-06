@@ -13,6 +13,11 @@ import {
   resolvablePackClosure,
   type PackDefinitionCollision,
 } from "../domain-pack/pack-definition-collisions.ts";
+import {
+  policyTargetMissing,
+  policyTargetViolations,
+  type PolicyTargetViolation,
+} from "../domain-pack/pack-policy-clauses.ts";
 import type { ProjectBindingAdapter } from "../ports/project-binding-adapter.port.ts";
 import type { ProjectProfileRepository } from "../ports/project-profile-repository.port.ts";
 import type { ProjectRepository } from "../ports/project-repository.port.ts";
@@ -79,6 +84,33 @@ export class ProjectRestoreCompositionError extends ProjectPortabilityError {
       `Portable restore rejected (${packDefinitionCollision}): project definition ${first.kind}/${first.id} collides with pack ${first.pack} in the archive's resolved pack closure; nothing was restored`,
     );
     this.name = "ProjectRestoreCompositionError";
+  }
+}
+
+/**
+ * The archive replaces a pack workflow that a policy of its exact pack
+ * closure, resolved on this host, governs, and the replacement does not keep
+ * a governed stage or a separation order (GP-25). Nothing was restored. The
+ * code is the one definition preview and GP-06 resolution report.
+ */
+export class ProjectRestorePolicyTargetError extends ProjectPortabilityError {
+  readonly code = policyTargetMissing;
+  constructor(
+    readonly target: {
+      readonly pack: string;
+      readonly workflow: string;
+      readonly policy: string;
+    },
+    readonly violation: PolicyTargetViolation,
+  ) {
+    super(
+      `Portable restore rejected (${policyTargetMissing}): workflow replacement workflows/${target.workflow} of pack ${target.pack} does not keep ${
+        violation.kind === "stage_missing"
+          ? `stage ${violation.stage}, which policy policies/${target.policy} governs`
+          : `stage ${violation.predecessor} before stage ${violation.stage}, as policy policies/${target.policy} requires`
+      }; nothing was restored`,
+    );
+    this.name = "ProjectRestorePolicyTargetError";
   }
 }
 
@@ -464,9 +496,18 @@ export class ManageProjectPortability {
    * not resolve here, for any GP-04 reason, there is no verdict, the archive
    * restores unchanged and GP-06 reports the closure failure, and later a
    * collision, when the project configuration is resolved.
+   *
+   * The same closure judges the archive's workflow replacements against the
+   * pack policies that govern them (GP-25): a replacement that lacks a
+   * governed stage or breaks a separation order is rejected here, with the
+   * same absence of a verdict when the closure does not resolve.
    */
   private assertArchiveComposition(archive: PortableProjectArchive): void {
     const owned = archive.state.definitions?.owned ?? [];
+    const replacements = (archive.state.definitions?.overrides ?? []).filter(
+      (item) =>
+        item.operation === "replace" && item.source.kind === "workflows",
+    );
     // The archive schema already validated each tuple; this only restores
     // the exact types the resolver takes.
     const packs = (archive.state.packBinding?.packs ?? []).map((pack) => ({
@@ -474,11 +515,36 @@ export class ManageProjectPortability {
       version: parseDomainPackVersion(pack.version),
       manifestDigest: parseManifestDigest(pack.manifestDigest),
     }));
-    if (packs.length === 0 || owned.length === 0) return;
+    if (packs.length === 0 || owned.length + replacements.length === 0) return;
     const closure = resolvablePackClosure(this.dependencies.catalog, packs);
     if (closure === undefined) return;
     const collisions = packDefinitionCollisions(closure, owned);
     if (collisions.length > 0)
       throw new ProjectRestoreCompositionError(collisions);
+    for (const { source, payload } of replacements) {
+      // The archive schema established the workflow envelope of the payload.
+      const stages = (payload as { stages?: readonly { id: string }[] }).stages;
+      const manifest = closure.find(
+        ({ identity }) =>
+          identity.id === source.id &&
+          identity.version === source.version &&
+          identity.manifestDigest === source.manifestDigest,
+      )?.manifest;
+      if (manifest === undefined || stages === undefined) continue;
+      const stageIds = stages.map((stage) => stage.id);
+      for (const policy of manifest.contributions.policies) {
+        if (policy.workflow !== source.localId) continue;
+        const violation = policyTargetViolations(policy, stageIds)[0];
+        if (violation)
+          throw new ProjectRestorePolicyTargetError(
+            {
+              pack: `${source.id}@${source.version}`,
+              workflow: source.localId,
+              policy: policy.id,
+            },
+            violation,
+          );
+      }
+    }
   }
 }

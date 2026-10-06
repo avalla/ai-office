@@ -2272,9 +2272,9 @@ are expressible and are now in the pack, so they are not in the list.
 
 ## GP-25 pack policy contribution contract
 
-Status: contract approved. The owner approved the scope proposal on
-2026-10-06 (option B-M, every decision below at its proposed default) and
-confirmed the number GP-25. Runtime task
+Status: contract implemented; pack data pending. The owner approved the scope
+proposal on 2026-10-06 (option B-M, every decision below at its proposed
+default) and confirmed the number GP-25. Runtime task
 `1a883c04-0905-4b36-a57b-12d45fdfd59f`. GP-25 is delivered in two pull
 requests. The first, the contract, delivers everything in this section except
 the pack data. The second adds the policies to the development reference
@@ -2661,6 +2661,71 @@ Criteria 10 and 11 belong to the second pull request.
   residue list, which the second pull request of this task delivers.
 - A policy that governs a workflow of another pack, or more than one policy
   for one workflow.
+
+### Implementation record
+
+This records what the contract pull request built where the contract left a
+choice, and where the evidence stops.
+
+- Contract package. `PolicyContribution` and `PolicyStageClause` in
+  `packages/domain-pack-contracts/src/manifest.ts`. Shape is checked when the
+  item is read and the workflow, stage and separation references once every
+  section has been read, as for roles and agents; paths use the written
+  positions, and the sets are ordered afterwards.
+- One computation per rule. `pack-policy-clauses.ts` holds the clause values
+  and `policyTargetViolations`, used by GP-06 resolution, the definition
+  pre-store check and the restore preflight. `pack-policy-changes.ts` holds
+  `workflowPolicyDifferences`, used by the upgrade plan and the selection
+  guard.
+- Policy identity is part of a policy. Two versions that declare the same
+  clauses for a workflow under another policy local ID differ, so the change
+  is reported as `changed` and `project:pack:apply` refuses it. The stable
+  `policyId` is what a consumer keys on.
+- Target policies stay available. The approved criterion 8 read "both are
+  `unavailable` when the previous artifacts are not installed (the GP-11
+  rule)". Under the GP-11 rule it cites only the difference is unavailable,
+  and the target sets stay listed so that approval binds them. The
+  implementation follows the rule: `policyChanges` is `unavailable` and
+  `targetPolicies` lists the target closure. Criterion 8 above is worded
+  accordingly.
+- Stage governance keys. Criterion 5 asks for `protected_security_invariant`
+  for any governance key in a workflow payload. A key on a stage was rejected
+  as `malformed_origin_reference` before, so the six keys named above now
+  get the security code on a stage; see "Policies are pack-owned and cannot
+  be weakened", point 2.
+- Refusal while a closure cannot be read. The selection guard adds no second
+  issue in the two `unavailable` cases: the GP-11 rule already refuses every
+  such change but a pure removal, which leaves no surviving workflow with
+  another policy.
+- Restore. The preflight raises `ProjectRestorePolicyTargetError`, a
+  `ProjectPortabilityError` with the code `policy_target_missing`, for the
+  first violation of the first violating replacement.
+- Existing tests that pin the shape this task changes were updated and no
+  other: the derived-view list in the independent digest helper of
+  `tests/unit/resolve-project-configuration.test.ts`, the empty
+  configuration in `tests/e2e/development-pack-parity-cli.test.ts`, which
+  gains `policies: []`, the key list of `project:configuration:show` in
+  `tests/e2e/daemon-cli.test.ts` and
+  `tests/e2e/legacy-development-profile-cli.test.ts`, which gains
+  `policies`, and the GP-25 row assertions of the GP-10B-1
+  documentation test in `tests/unit/development-pack.test.ts`. No pack data,
+  pinned digest, parity assertion or architecture test was edited.
+- Criterion 12 is partly a property of the change set: `PipelineRun`,
+  `ManagePipelineRuns`, `OrchestratePipelineStage` and
+  `EvaluatePipelineAuthorization` are not in the diff against the base
+  commit. No test keeps that true afterwards; the table comparison on the
+  GP-09 fixture does.
+- PostgreSQL. The shared storage contract suite runs binding, the pre-store
+  refusal, resolution, the selection guard and the upgrade of a governed pack
+  on both backends and compares each result with the pure functions, so the
+  results are provider-independent. Its audit sink is in memory: the audit
+  repositories have their own contract suite.
+- Evidence limits. Nothing reads a policy at run time, so nothing here shows
+  that a Runtime executing from these declarations would behave like the
+  legacy pipelines; that is the subject of task
+  `a45ddb12-3159-4b60-9b8b-c26516720834`. The development reference pack
+  declares no policy yet: the policies used on the GP-09 fixture are added to
+  a copy of the pack inside the test.
 
 ## Objective and decision boundary
 

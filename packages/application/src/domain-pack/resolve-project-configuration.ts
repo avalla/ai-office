@@ -4,6 +4,7 @@ import {
   type Contribution,
   type ContributionKind,
   type DomainPackManifest,
+  type PolicyContribution,
   type WorkflowContribution,
 } from "../../../domain-pack-contracts/src/index.ts";
 import { canonicalizeJcsJson } from "../../../domain-pack-contracts/src/jcs.ts";
@@ -30,6 +31,12 @@ import {
   type ProjectOwnedDefinition,
 } from "./project-definition.ts";
 import {
+  policyClauses,
+  policyTargetMissing,
+  policyTargetViolations,
+  type PolicyClauses,
+} from "./pack-policy-clauses.ts";
+import {
   CapturedPackManifestError,
   resolveInstalledPackManifests,
   type ResolvedPackManifest,
@@ -49,6 +56,7 @@ export type ConfigurationIssueCode =
   | "disabled_required_definition"
   | "agent_capability_exceeds_role"
   | "unsupported_security_composition"
+  | typeof policyTargetMissing
   | "configuration_invariant"
   | "stale_resolution";
 
@@ -129,6 +137,23 @@ export interface ResolvedWorkflow {
   readonly customization: "none" | "replace" | "extend";
 }
 
+/**
+ * The declared policy of one pack workflow (GP-25). `policyId` and
+ * `workflowId` are stable slot identities. `state` is `inert` when the
+ * project disabled the target workflow: nothing is left to govern. The
+ * clauses are the pack's under every customization; a project cannot change
+ * them. Nothing here is enforced, approved or granted.
+ */
+export interface ResolvedPolicy extends PolicyClauses {
+  readonly policyId: string;
+  readonly effectiveId: string;
+  readonly origin: "pack_owned";
+  readonly title?: string;
+  readonly description?: string;
+  readonly workflowId: string;
+  readonly state: "active" | "inert";
+}
+
 export interface ResolvedWorkflowReferences {
   readonly workflowId: string;
   readonly taskTypeId: string;
@@ -194,6 +219,11 @@ export interface ResolvedProjectConfiguration {
   readonly workflows: readonly ResolvedWorkflow[];
   /** Stable IDs of disabled workflows, which are absent from `workflows`. */
   readonly disabledWorkflows: readonly string[];
+  /**
+   * Derived policy contract view over `effectiveDefinitions.policies`. Like
+   * the other views, it is not digest material.
+   */
+  readonly policies: readonly ResolvedPolicy[];
   /** The minimum evidence future run records must pin. */
   readonly pin: {
     readonly configurationDigest: string;
@@ -436,7 +466,12 @@ export function resolveProjectConfiguration(input: {
 
   for (const pack of resolvedPacks) {
     const manifest = manifests.get(tupleKey(pack))!;
-    if (manifest.contributions.policies.length)
+    // A policy without a target workflow has no typed clause (GP-25).
+    if (
+      manifest.contributions.policies.some(
+        (policy) => policy.workflow === undefined,
+      )
+    )
       failure(
         "unsupported_security_composition",
         `Pack ${pack.id}@${pack.version} has schema-1 policy declarations without typed clauses`,
@@ -687,6 +722,55 @@ export function resolveProjectConfiguration(input: {
     });
   }
 
+  // A pack policy is mandatory and pack-owned: its clauses are the pack's,
+  // and the effective workflow, the pack's or the project's replacement,
+  // must still carry every stage the policy names, in the required order.
+  const policies: ResolvedPolicy[] = [];
+  for (const definition of byKind.policies) {
+    const provenance = provenanceOf(definition.effectiveId);
+    const policy = definition.payload as PolicyContribution;
+    if (provenance.origin !== "pack_owned" || policy.workflow === undefined)
+      failure(
+        "unsupported_security_composition",
+        `Policy ${definition.effectiveId} has no typed pack clauses`,
+      );
+    const target = source.get(
+      packId(provenance.pack, "workflows", policy.workflow),
+    );
+    if (!target)
+      failure(
+        policyTargetMissing,
+        `Policy ${definition.effectiveId} targets workflows/${policy.workflow}, which its pack does not declare`,
+      );
+    // A disabled workflow leaves the configuration: nothing to govern.
+    if (target.enabled) {
+      const violation = policyTargetViolations(
+        policy,
+        (target.payload as WorkflowContribution).stages.map(
+          (stage) => stage.id,
+        ),
+      )[0];
+      if (violation)
+        failure(
+          policyTargetMissing,
+          violation.kind === "stage_missing"
+            ? `Policy ${definition.effectiveId} governs stage ${violation.stage}, which workflow ${target.effectiveId} does not declare`
+            : `Policy ${definition.effectiveId} requires stage ${violation.predecessor} before stage ${violation.stage} in workflow ${target.effectiveId}`,
+        );
+    }
+    const { title, description } = definition.payload;
+    policies.push({
+      policyId: stableId(definition),
+      effectiveId: definition.effectiveId,
+      origin: "pack_owned",
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      workflowId: stableId(target),
+      state: target.enabled ? "active" : "inert",
+      ...policyClauses(policy),
+    });
+  }
+
   const roles: ResolvedRole[] = [];
   const omittedRoles: string[] = [];
   const roleIds = new Set<string>();
@@ -848,6 +932,7 @@ export function resolveProjectConfiguration(input: {
     disabledAgents,
     workflows,
     disabledWorkflows,
+    policies,
     pin: {
       configurationDigest,
       coreContractVersion,
