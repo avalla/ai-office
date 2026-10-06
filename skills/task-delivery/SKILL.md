@@ -97,7 +97,7 @@ preflight, and never choose one yourself:
 - When the project defines a default pipeline, ask whether to use it and wait
   for the answer. If it is declined, ask what to follow instead.
 - When one or more pipelines could apply and none is the default or enforced,
-  list them and ask the authorizer which one to use.
+  list them and ask the authorizer which one to use, if any.
 - When the project defines no pipeline, do not ask.
 
 A project pipeline that is used decides the stages, assignments, and

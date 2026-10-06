@@ -826,7 +826,7 @@ describe("task-delivery workflow invariants", () => {
         "- When the project enforces a pipeline, state which one applies; there is no choice to offer.",
         "- When the project defines a default pipeline, ask whether to use it and wait for the answer.",
         "If it is declined, ask what to follow instead.",
-        "- When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use.",
+        "- When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use, if any.",
         "- When the project defines no pipeline, do not ask.",
         "A project pipeline that is used decides the stages, assignments, and transitions of the work.",
         "Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence.",
@@ -994,7 +994,7 @@ describe("task-delivery workflow invariants", () => {
       );
       // One rule per situation: enforced, default, several, none.
       expect(section).toMatch(
-        /- When the project enforces a pipeline, state which one applies; there is no choice to offer\. - When the project defines a default pipeline, ask whether to use it and wait for the answer\. If it is declined, ask what to follow instead\. - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use\. - When the project defines no pipeline, do not ask\./u,
+        /- When the project enforces a pipeline, state which one applies; there is no choice to offer\. - When the project defines a default pipeline, ask whether to use it and wait for the answer\. If it is declined, ask what to follow instead\. - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use, if any\. - When the project defines no pipeline, do not ask\./u,
       );
       // A named target skips the target question, not the pipeline.
       expect(section).toMatch(
@@ -1033,7 +1033,7 @@ describe("task-delivery workflow invariants", () => {
         section.indexOf("check the dependencies of the selection"),
       );
       expect(reference("stop-conditions.md")).toMatch(
-        /\*\*Binding run you cannot complete\.\*\* Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it, or cannot tell - or such a run is already active for the task and you cannot complete it\. Do not start, override, or cancel it; report what it requires and wait\./u,
+        /\*\*Binding run you cannot complete\.\*\* Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it - or such a run is already active for the task and you cannot complete it - or you cannot tell whether either is the case\. Do not start, override, or cancel it; report what it requires and wait\./u,
       );
     });
 
@@ -1067,7 +1067,7 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: Settle which pipeline applies before preflight, and never choose one yourself:",
         "SKILL.md: - When the project enforces a pipeline, state which one applies; there is no choice to offer.",
         "SKILL.md: - When the project defines a default pipeline, ask whether to use it and wait for the answer.",
-        "SKILL.md: - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use.",
+        "SKILL.md: - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use, if any.",
         "SKILL.md: - When the project defines no pipeline, do not ask.",
         "SKILL.md: A project pipeline that is used decides the stages, assignments, and transitions of the work.",
         "SKILL.md: A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
@@ -1075,7 +1075,7 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
         "SKILL.md: The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
         "configuration.md: A project may bind them to its own role names and to any executor; the pipeline stays the same when the executor changes.",
-        "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it, or cannot tell - or such a run is already active for the task and you cannot complete it.",
+        "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it - or such a run is already active for the task and you cannot complete it - or you cannot tell whether either is the case.",
       ]);
     });
 
@@ -1139,7 +1139,12 @@ describe("task-delivery workflow invariants", () => {
 
     test("no part of the section lets a branch settle a task dependency", () => {
       expect(section).not.toMatch(/branch policy (?:allows|permits)/iu);
-      expect(section).not.toMatch(/\\bunsatisfied\\b|\\bdelivered\\b/iu);
+      expect(section).not.toMatch(/\bunsatisfied\b|\bdelivered\b/iu);
+      // The guard itself: it must be able to fail.
+      expect("is delivered before").toMatch(/\bunsatisfied\b|\bdelivered\b/iu);
+      expect("an unsatisfied dependency").toMatch(
+        /\bunsatisfied\b|\bdelivered\b/iu,
+      );
       expect(section).not.toMatch(
         /\b(?:counts? as|treat(?:ed)? (?:it|its dependency|the dependency) as|is then) (?:satisfied|resolved|DONE)\b/iu,
       );
