@@ -6,6 +6,7 @@ import {
   type Contribution,
   type ContributionKind,
   type DomainPackManifest,
+  type WorkflowContribution,
 } from "../../../domain-pack-contracts/src/index.ts";
 import { canonicalizeJcsJson } from "../../../domain-pack-contracts/src/jcs.ts";
 import { ProjectNotFoundError } from "../errors.ts";
@@ -782,6 +783,12 @@ function reconcileProjectPackUpgrade(input: {
       // the fields taken from the new template.
       const { role, prompts, knowledge, capabilities }: AgentContribution =
         source.kind === "agents" ? nextEntry : { id: nextEntry.id };
+      // Nor does it set a task type or a stage: a workflow's replacement
+      // takes both from the new template, the stages in the template's order.
+      const workflow =
+        source.kind === "workflows"
+          ? (nextEntry as WorkflowContribution)
+          : undefined;
       conversions.set(sourceKey(source), {
         id: source.localId,
         ...(title === undefined ? {} : { title }),
@@ -790,6 +797,15 @@ function reconcileProjectPackUpgrade(input: {
         ...(prompts === undefined ? {} : { prompts }),
         ...(knowledge === undefined ? {} : { knowledge }),
         ...(capabilities === undefined ? {} : { capabilities }),
+        ...(workflow === undefined
+          ? {}
+          : {
+              taskType: workflow.taskType,
+              stages: workflow.stages.map(({ id, role: stageRole }) => ({
+                id,
+                role: stageRole,
+              })),
+            }),
       });
       overrides.push({
         source,
@@ -815,7 +831,12 @@ function reconcileProjectPackUpgrade(input: {
               // pack; a project-owned agent resolves project definitions only.
               source.kind === "agents" && hasAgentReferences(override.payload)
               ? "the agent references pack definitions, which a project-owned agent cannot name"
-              : null;
+              : // A workflow always names a task type and stage roles of its
+                // pack; retained, the same bare IDs would re-resolve in the
+                // project namespace.
+                source.kind === "workflows"
+                ? "the workflow references pack definitions, which would silently re-resolve in the project namespace"
+                : null;
     if (reason !== null) {
       overrides.push({
         source,
