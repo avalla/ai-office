@@ -141,59 +141,116 @@ bound JSON text, and every payload it wrote is a `jsonb` string scalar whose
 content is that text. The migration converts each such value to the object it
 spells, leaves objects and SQL `NULL` untouched, and then adds the two checks.
 A release older than the migration cannot write definitions to a migrated
-database: its string payloads violate the checks.
+database: its string payloads violate the checks (SQLSTATE `23514`), so
+upgrade every writer with or before the migration. PostgreSQL's own detail for
+that violation quotes a prefix of the rejected row; the Runtime prints no
+driver text, but a database log may hold it. The repository also refuses, on
+read and on write, any payload that is not an object, naming the row by key:
+opened against a database that has not been migrated it fails instead of
+returning or storing JSON text.
+
+`jsonb` keeps array order and does not keep the order of an object's members.
+`project:definition:show` may therefore print the members of a payload in a
+different order on PostgreSQL than on SQLite. Digests are unaffected: they are
+computed over canonical JSON.
+
+Apply the migration with definition writers stopped. It locks both tables
+exclusively; if PostgreSQL reports a deadlock against a concurrent writer,
+nothing was changed and the migration can simply be applied again.
 
 The migration fails closed. If one value cannot be converted, it raises
 `cannot convert N project definition payload(s) to jsonb objects` (SQLSTATE
 `22000`), nothing is converted, no check is added and the migration is not
 recorded; the runner applies pending migrations in one transaction, so later
-pending migrations are not applied either. The error detail names up to twenty
-rows by key with the reason and never quotes a payload. A value cannot be
-converted when it is:
+pending migrations are not applied either. The error detail names at most
+twenty rows by key with the reason, ends with `; and N more` when there are
+more, and never quotes a payload. A value cannot be converted when it is:
 
 - a string whose content is not JSON text;
 - a string whose content is JSON text for an array, a scalar or `null`;
 - a string whose content is JSON text holding an escaped U+0000, which `jsonb`
   cannot store. The project text rule never accepted that character, so such a
   row was written past the Runtime's mutation contract;
+- a string whose content is JSON text `jsonb` cannot store for another reason,
+  such as a lone surrogate escape;
 - any other non-object `jsonb` value.
 
-Nothing is dropped, rewritten or skipped on the operator's behalf. Keep the
-previous release running, or the Runtime stopped, and repair every row the
-migration names. To list all of them, by key and stored type only:
+Nothing is dropped, rewritten or skipped on the operator's behalf. The
+migration's detail is not the complete list. This query is: it returns every
+payload that is not yet an object, by key, with the verdict the migration
+would reach for it and never its content. It needs PostgreSQL 16 or later.
 
 ```sql
-SELECT 'owned' AS source, project_id, NULL AS pack_id, NULL AS pack_version,
-       NULL AS manifest_digest, kind, local_id, jsonb_typeof(payload_json) AS stored_type
-  FROM core.project_owned_definition
- WHERE jsonb_typeof(payload_json) <> 'object'
-UNION ALL
-SELECT 'override', project_id, pack_id, pack_version, manifest_digest, kind,
-       local_id, jsonb_typeof(payload_json)
-  FROM core.project_definition_override
- WHERE payload_json IS NOT NULL AND jsonb_typeof(payload_json) <> 'object';
+WITH listed AS (
+  SELECT 'owned' AS source, project_id, NULL::text AS pack_id,
+         NULL::text AS pack_version, NULL::text AS manifest_digest,
+         kind, local_id, payload_json
+    FROM core.project_owned_definition
+   WHERE jsonb_typeof(payload_json) <> 'object'
+  UNION ALL
+  SELECT 'override', project_id, pack_id, pack_version, manifest_digest,
+         kind, local_id, payload_json
+    FROM core.project_definition_override
+   WHERE payload_json IS NOT NULL AND jsonb_typeof(payload_json) <> 'object'
+)
+SELECT source, project_id, pack_id, pack_version, manifest_digest, kind, local_id,
+       CASE
+         WHEN jsonb_typeof(payload_json) <> 'string'
+           THEN format('jsonb %s, not a JSON object', jsonb_typeof(payload_json))
+         WHEN pg_input_is_valid(payload_json #>> '{}', 'jsonb')
+           THEN CASE jsonb_typeof((payload_json #>> '{}')::jsonb)
+                  WHEN 'object' THEN 'convertible'
+                  ELSE format('JSON %s, not a JSON object',
+                              jsonb_typeof((payload_json #>> '{}')::jsonb))
+                END
+         WHEN (pg_input_error_info(payload_json #>> '{}', 'jsonb')).sql_error_code = '22P05'
+           THEN 'JSON text holding an escaped U+0000, which jsonb cannot store'
+         WHEN pg_input_is_valid(payload_json #>> '{}', 'json')
+           THEN 'JSON text that jsonb cannot store'
+         ELSE 'not JSON text'
+       END AS verdict
+  FROM listed
+ ORDER BY source, project_id, pack_id, pack_version, manifest_digest, kind, local_id;
 ```
 
-A row of type `string` that is listed here but not named by the migration is
-convertible and needs nothing. For each named row, read the stored text with
-`payload_json #>> '{}'`, keep a copy, and decide as the project's operator
-what the definition should be. Then, as the database owner and in one
-transaction per row, either write the corrected payload as an object:
+A row whose verdict is `convertible` needs nothing: its text is JSON for an
+object that `jsonb` can store, and the migration converts it. Every other row
+has to be repaired, whether or not the migration's detail named it. For each,
+read the stored text with `payload_json #>> '{}'`, keep a copy, and decide as
+the project's operator what the definition should be. Then, as the database
+owner, write the corrected payload as an object and advance the project's
+definition revision in the same transaction:
 
 ```sql
+BEGIN;
 UPDATE core.project_owned_definition
    SET payload_json = '{"id":"counsel","title":"Counsel"}'::jsonb
  WHERE project_id = '<project>' AND kind = '<kind>' AND local_id = '<id>';
+UPDATE core.project_definition_head
+   SET revision = revision + 1, changed_at = now()
+ WHERE project_id = '<project>';
+COMMIT;
 ```
 
-or delete the row by its full key when the definition should not exist; for an
-override that restores the pack's own definition. An override row is addressed
-by `project_id`, `pack_id`, `pack_version`, `manifest_digest`, `kind` and
-`local_id`. A corrected payload has to satisfy the same rules a Runtime
-mutation would: the exact `id`, the descriptive fields of its kind and the
-project text rule. Such a repair is outside the Runtime: it writes no audit
-event and advances no definition revision, so record it operationally. Apply
-the migrations again afterwards; the migration re-checks every row.
+or, in place of the first statement, delete the row by its full key when the
+definition should not exist; for an override that restores the pack's own
+definition. An override row is addressed by `project_id`, `pack_id`,
+`pack_version`, `manifest_digest`, `kind` and `local_id`.
+
+The revision step is required, not optional. A failed migration leaves the
+previous release in service, and that release replaces a project's whole
+definition state from what it read. The repository accepts a replacement only
+when the head revision still equals the one the writer read, so advancing it
+with the repair makes a writer that read the bad row fail as stale and read
+again, instead of silently writing the bad value back. Stopping the Runtime
+for the repair works too, but the revision step holds either way.
+
+A corrected payload has to satisfy the same rules a Runtime mutation would:
+the exact `id`, the descriptive fields of its kind and the project text rule.
+The repair is outside the Runtime and writes no audit event, so record it
+operationally. Then run the query again until every row is `convertible`, and
+apply the migrations again until they succeed; the migration re-checks every
+row each time.
 
 ## Next slices
 
