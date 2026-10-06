@@ -1827,7 +1827,7 @@ describe.skipIf(connectionString === undefined)(
       [
         "JSON text with an escaped U+0000",
         JSON.stringify({ id: "nul", title: "private-marker a\u0000b" }),
-        "an escaped U+0000",
+        "JSON text holding an escaped U+0000, which jsonb cannot store",
       ],
       ["a jsonb number", 7, "jsonb number, not a JSON object"],
     ] as const)(
@@ -1876,7 +1876,7 @@ describe.skipIf(connectionString === undefined)(
             `core.project_owned_definition (project_id=${project}, kind=knowledge, local_id=bad-owned): ${reason}`,
           );
           expect(detail).toContain(
-            `core.project_definition_override (project_id=${project}, pack=org.example.legal@1.0.0, kind=agents, local_id=bad-override): ${reason}`,
+            `core.project_definition_override (project_id=${project}, pack=org.example.legal@1.0.0, manifest_digest=${digest}, kind=agents, local_id=bad-override): ${reason}`,
           );
           // The report names rows, never payload content.
           expect(JSON.stringify(error)).not.toContain("private-marker");

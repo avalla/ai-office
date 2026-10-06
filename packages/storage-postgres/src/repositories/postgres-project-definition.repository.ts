@@ -36,12 +36,6 @@ interface OverrideRow extends Record<string, unknown> {
 }
 const iso = (value: Date | string): string =>
   value instanceof Date ? value.toISOString() : new Date(value).toISOString();
-const payload = (
-  value: ProjectOwnedDefinition["payload"] | string,
-): ProjectOwnedDefinition["payload"] =>
-  typeof value === "string"
-    ? (JSON.parse(value) as ProjectOwnedDefinition["payload"])
-    : value;
 
 export class PostgresProjectDefinitionRepository implements ProjectDefinitionRepository {
   private readonly tenantId: string;
@@ -74,7 +68,7 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
         id: row.local_id,
         revision: row.revision,
         enabled: row.enabled,
-        payload: payload(row.payload_json),
+        payload: row.payload_json,
         actorId: row.actor_id,
         changedAt: iso(row.changed_at),
       })),
@@ -91,7 +85,7 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
         revision: row.revision,
         ...(row.payload_json === null || row.payload_json === undefined
           ? {}
-          : { payload: payload(row.payload_json) }),
+          : { payload: row.payload_json }),
         actorId: row.actor_id,
         changedAt: iso(row.changed_at),
       })),
@@ -139,7 +133,9 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
             item.id,
             item.revision,
             item.enabled,
-            JSON.stringify(item.payload),
+            // An object, never JSON text: the driver serializes a jsonb
+            // parameter itself, and a string would be stored as a JSON string.
+            item.payload,
             item.actorId,
             item.changedAt,
           ],
@@ -157,7 +153,7 @@ export class PostgresProjectDefinitionRepository implements ProjectDefinitionRep
             item.source.localId,
             item.operation,
             item.revision,
-            item.payload === undefined ? null : JSON.stringify(item.payload),
+            item.payload ?? null,
             item.actorId,
             item.changedAt,
           ],

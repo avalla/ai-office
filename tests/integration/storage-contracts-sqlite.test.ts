@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe } from "vitest";
+import { describe, expect, test } from "vitest";
+import { Project } from "@ai-office/domain/project/project.ts";
 import type { RequirementStatus } from "@ai-office/domain/governance/governance.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -128,4 +129,53 @@ describe("SQLite project storage contracts", () => {
     },
     { packBindings: true, definitions: true },
   );
+
+  test("a payload holding U+0000 written straight through the repository is stored", async () => {
+    // SQLite keeps payload_json as TEXT guarded by json_valid, which accepts
+    // the escape; PostgreSQL jsonb refuses it (see the PostgreSQL contracts).
+    // The application's project text rule (GP-07) rejects such text before
+    // either repository is reached, so neither behaviour is a product path.
+    const root = mkdtempSync(join(tmpdir(), "ai-office-sqlite-contract-"));
+    const database = openDatabase(join(root, "project.sqlite"));
+    try {
+      migrate(database, migrationDirectory);
+      const at = new Date("2026-10-06T00:00:00.000Z");
+      await new SqliteProjectRepository(database).save(
+        Project.create({ id: "nul-project", name: "U+0000", now: at }),
+      );
+      const repository = new SqliteProjectDefinitionRepository(database);
+      const state = await repository.replace(
+        {
+          projectId: "nul-project",
+          revision: 0,
+          owned: [
+            {
+              origin: "project_owned",
+              kind: "roles",
+              id: "nul",
+              revision: 1,
+              enabled: true,
+              payload: { id: "nul", title: "a\u0000b" },
+              actorId: "operator",
+              changedAt: at.toISOString(),
+            },
+          ],
+          overrides: [],
+        },
+        0,
+        at,
+      );
+      expect(await repository.get("nul-project")).toEqual(state);
+      expect(
+        database
+          .query<{ payload_json: string }, []>(
+            "SELECT payload_json FROM project_owned_definition",
+          )
+          .all(),
+      ).toEqual([{ payload_json: '{"id":"nul","title":"a\\u0000b"}' }]);
+    } finally {
+      database.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

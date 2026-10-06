@@ -64,6 +64,8 @@ select is(
     'project_definition_override_operation_check',
     'project_definition_override_pack_id_check',
     'project_definition_override_pack_version_check',
+    -- Added later by 20261006000300 (payloads are jsonb objects); see test 52.
+    'project_definition_override_payload_json_check',
     'project_definition_override_revision_check'
   ], 'every other column check is preserved under its name');
 select has_pk('core', 'project_definition_override', 'override primary key is preserved');
