@@ -231,6 +231,7 @@ const commands = [
   "project:definition:preview",
   "project:definition:apply",
   "project:configuration:show",
+  "project:configuration:legacy",
   "office:context",
   "office:workspace",
   "office:validate",

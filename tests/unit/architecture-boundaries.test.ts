@@ -84,6 +84,85 @@ test("GP-06 configuration remains derived and outside scheduling and portable au
     );
 });
 
+test("GP-09 legacy profile stays a derived read model outside scheduling, storage and portable state", () => {
+  const profileModules = [
+    "packages/application/src/domain-pack/legacy-development-profile.ts",
+    "packages/application/src/domain-pack/read-legacy-development-profile.ts",
+  ];
+  // The reader service and the one read-only command are the only importers.
+  const allowedImporters = new Set([
+    ...profileModules,
+    "packages/runtime-host/src/commands/project-configuration.ts",
+  ]);
+  const importers: string[] = [];
+  for (const root of ["packages", "apps"])
+    for (const file of typescriptFiles(join(repositoryRoot, root))) {
+      const location = relative(repositoryRoot, file);
+      if (/legacy-development-profile/u.test(readFileSync(file, "utf8")))
+        importers.push(location);
+    }
+  expect(importers.sort()).toEqual([...allowedImporters].sort());
+
+  // No port, storage adapter or archive schema names the profile or its type.
+  const authority = [
+    ...typescriptFiles(join(repositoryRoot, "packages/application/src/ports")),
+    ...typescriptFiles(join(repositoryRoot, "packages/storage-sqlite/src")),
+    ...typescriptFiles(join(repositoryRoot, "packages/storage-postgres/src")),
+    ...typescriptFiles(join(repositoryRoot, "packages/storage-bootstrap/src")),
+    ...typescriptFiles(
+      join(repositoryRoot, "packages/application/src/project-portability"),
+    ),
+    ...typescriptFiles(
+      join(repositoryRoot, "packages/application/src/pipeline"),
+    ),
+    ...typescriptFiles(
+      join(repositoryRoot, "packages/application/src/runtime"),
+    ),
+    ...typescriptFiles(
+      join(repositoryRoot, "packages/application/src/commands"),
+    ),
+    ...typescriptFiles(join(repositoryRoot, "packages/domain/src")),
+    join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/resolve-project-configuration.ts",
+    ),
+    join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/read-project-configuration.ts",
+    ),
+  ];
+  expect(authority.length).toBeGreaterThan(100);
+  expect(
+    authority
+      .filter((file) =>
+        /LegacyDevelopmentProfile|legacyDevelopmentProfile|legacy_development_profile/u.test(
+          readFileSync(file, "utf8"),
+        ),
+      )
+      .map((file) => relative(repositoryRoot, file)),
+  ).toEqual([]);
+
+  // The derivation is pure: domain types and the JCS serializer, nothing else.
+  const derivation = join(repositoryRoot, profileModules[0]!);
+  expect(importedSpecifiers(readFileSync(derivation, "utf8")).sort()).toEqual([
+    "../../../domain-pack-contracts/src/jcs.ts",
+    "@ai-office/domain/agent/agent.ts",
+    "@ai-office/domain/agent/role.ts",
+    "@ai-office/domain/office/office-manifest.ts",
+    "node:crypto",
+  ]);
+  for (const location of profileModules)
+    expect(readFileSync(join(repositoryRoot, location), "utf8")).not.toMatch(
+      /org\.ai-office\.development|org\.example\.(?:legal|manufacturing)|Date\.now|new Date\(/u,
+    );
+  // No migration creates a place to store it.
+  for (const directory of ["migrations/project", "supabase/migrations"])
+    for (const entry of readdirSync(join(repositoryRoot, directory)))
+      expect(
+        readFileSync(join(repositoryRoot, directory, entry), "utf8"),
+      ).not.toMatch(/legacy_development|legacy_profile/u);
+});
+
 /** Every module specifier in a static import, re-export, or dynamic import. */
 function importedSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
@@ -855,4 +934,261 @@ test("only the Runtime admission service writes native knowledge", () => {
     "packages/runtime-host/src/commands/knowledge.ts",
     "packages/runtime-host/src/runtime-command.ts",
   ]);
+});
+
+describe("GP-10A development pack stays a reference artifact outside production", () => {
+  const packDirectory = "packages/domain-pack-development";
+  const names = /domain-pack-development|org\.ai-office\.development/u;
+
+  /** Every file under a directory, whatever its type. */
+  function allFiles(directory: string): string[] {
+    if (!existsSync(directory)) return [];
+    return readdirSync(directory).flatMap((entry) => {
+      if (entry === "node_modules") return [];
+      const path = join(directory, entry);
+      return statSync(path).isDirectory() ? allFiles(path) : [path];
+    });
+  }
+
+  /** Imports of a pack source file that leave the pack and its contracts. */
+  function importsOutsideContracts(file: string, source: string): string[] {
+    return importedSpecifiers(source).filter((specifier) => {
+      const target = resolvedTarget(file, specifier);
+      if (target === null)
+        return !specifier.startsWith("@ai-office/domain-pack-contracts/");
+      return !(
+        target.startsWith("packages/domain-pack-contracts/") ||
+        target.startsWith(`${packDirectory}/`)
+      );
+    });
+  }
+
+  /**
+   * Whether a source registers an artifact in an installed-pack catalog: a
+   * `register` call in a file that names the catalog, or on a receiver named
+   * as one. Textual, like the other scans here.
+   */
+  function registersInCatalog(source: string): boolean {
+    if (/\b(?:\w*[cC]atalog\w*|installedPacks)\s*\.\s*register\(/u.test(source))
+      return true;
+    return (
+      /InstalledDomainPackCatalog|installed-domain-pack-catalog|installedPacks/u.test(
+        source,
+      ) && /\.\s*register\(/u.test(source)
+    );
+  }
+
+  /**
+   * Uses of `installedPacks` other than the option plumbing: declaring the
+   * option, reading it from `options`, `context` or `this`, forwarding that
+   * value, and the Runtime's default of an empty catalog. What is left
+   * supplies a catalog.
+   */
+  function suppliedInstalledPacks(source: string): string[] {
+    const plumbing = [
+      /installedPacks\??: InstalledDomainPackCatalog\b/gu,
+      /\b(?:options|context|this)\.installedPacks\b(?!\s*=[^=])/gu,
+      /installedPacks: (?=<plumbing>)/gu,
+    ];
+    const rest = plumbing.reduce(
+      (text, pattern) => text.replace(pattern, "<plumbing>"),
+      source.replace(/\s+/gu, " "),
+    );
+    return [...rest.matchAll(/installedPacks[^;]{0,40};?/gu)].map((match) =>
+      match[0].trim(),
+    );
+  }
+
+  test("no package, app, entry point or script imports the pack package or contains its ID", () => {
+    const scanned = ["packages", "apps", "bin", "scripts"].flatMap(
+      (directory) => allFiles(join(repositoryRoot, directory)),
+    );
+    const mentions = scanned
+      .filter((file) => names.test(readFileSync(file, "utf8")))
+      .map((file) => relative(repositoryRoot, file))
+      .sort();
+    // The scan sees the pack, so an empty result elsewhere is not blindness.
+    expect(mentions).toEqual([
+      `${packDirectory}/README.md`,
+      `${packDirectory}/manifest.json`,
+      `${packDirectory}/outside-pack-vocabulary.json`,
+      `${packDirectory}/package.json`,
+    ]);
+    // The layers the contract names were all walked.
+    for (const layer of [
+      "packages/domain/",
+      "packages/application/",
+      "packages/runtime-host/",
+      "packages/storage-sqlite/",
+      "packages/storage-postgres/",
+      "packages/storage-surrealdb/",
+      "packages/storage-bootstrap/",
+      "apps/",
+    ])
+      expect(
+        scanned.some((file) =>
+          relative(repositoryRoot, file).startsWith(layer),
+        ),
+      ).toBe(true);
+    // No path alias or workspace dependency reaches it either.
+    for (const location of ["tsconfig.json", "vitest.config.ts"])
+      expect(readFileSync(join(repositoryRoot, location), "utf8")).not.toMatch(
+        names,
+      );
+    for (const manifest of scanned.filter(
+      (file) =>
+        file.endsWith("package.json") &&
+        !relative(repositoryRoot, file).startsWith(`${packDirectory}/`),
+    ))
+      expect(readFileSync(manifest, "utf8")).not.toMatch(names);
+    expect(
+      readFileSync(join(repositoryRoot, "package.json"), "utf8"),
+    ).not.toMatch(names);
+  });
+
+  test("the pack package is data and imports only the contracts package", () => {
+    const files = allFiles(join(repositoryRoot, packDirectory));
+    expect(files.length).toBeGreaterThan(0);
+    const offenders: string[] = [];
+    for (const file of files) {
+      const location = relative(repositoryRoot, file);
+      if (/\.(?:json|md)$/u.test(file)) continue;
+      if (!/\.(?:ts|tsx|mts|js|mjs)$/u.test(file)) {
+        offenders.push(`${location} is neither data nor source`);
+        continue;
+      }
+      for (const specifier of importsOutsideContracts(
+        file,
+        readFileSync(file, "utf8"),
+      ))
+        offenders.push(`${location} -> ${specifier}`);
+    }
+    expect(offenders).toEqual([]);
+    const manifest = JSON.parse(
+      readFileSync(join(repositoryRoot, packDirectory, "package.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(manifest).toEqual({
+      name: "@ai-office/domain-pack-development",
+      private: true,
+      type: "module",
+    });
+    // The rule itself: contracts pass, anything else is reported.
+    const probe = join(repositoryRoot, packDirectory, "src", "index.ts");
+    expect(
+      importsOutsideContracts(
+        probe,
+        [
+          'import type { DomainPackManifest } from "../../domain-pack-contracts/src/index.ts";',
+          'import { x } from "@ai-office/domain-pack-contracts/manifest.ts";',
+          'import { local } from "./local.ts";',
+          'import { Project } from "@ai-office/domain/project/project.ts";',
+          'import { y } from "../../application/src/errors.ts";',
+          'import { readFileSync } from "node:fs";',
+        ].join("\n"),
+      ),
+    ).toEqual([
+      "@ai-office/domain/project/project.ts",
+      "../../application/src/errors.ts",
+      "node:fs",
+    ]);
+  });
+
+  test("production composes an empty catalog and registers no pack", () => {
+    const runtimeCommand = readFileSync(
+      join(repositoryRoot, "packages/runtime-host/src/runtime-command.ts"),
+      "utf8",
+    );
+    expect(runtimeCommand.replace(/\s+/gu, " ")).toContain(
+      "options.installedPacks ?? new InMemoryInstalledDomainPackCatalog(1, [])",
+    );
+    const production = ["packages", "apps", "bin", "scripts"].flatMap(
+      (directory) => typescriptFiles(join(repositoryRoot, directory)),
+    );
+    // One place constructs a catalog, and nothing registers an artifact in
+    // one: a pack is resolvable only from a catalog a caller supplies.
+    expect(
+      production
+        .filter((file) =>
+          /new InMemoryInstalledDomainPackCatalog\(/u.test(
+            readFileSync(file, "utf8"),
+          ),
+        )
+        .map((file) => relative(repositoryRoot, file)),
+    ).toEqual(["packages/runtime-host/src/runtime-command.ts"]);
+    expect(
+      production
+        .filter((file) => registersInCatalog(readFileSync(file, "utf8")))
+        .map((file) => relative(repositoryRoot, file)),
+    ).toEqual([]);
+    // The rule itself: a registration in a pack catalog is reported, a
+    // `register` call on anything else is not.
+    for (const registration of [
+      'import { InMemoryInstalledDomainPackCatalog } from "./installed-domain-pack-catalog.ts";\nconst packs = build();\npacks.register(entry);',
+      'import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";\nstore.register(entry);',
+      "options.installedPacks.register(entry);",
+      "this.packCatalog\n  .register(entry);",
+    ])
+      expect(registersInCatalog(registration)).toBe(true);
+    for (const unrelated of [
+      'import { Registry } from "./connector-registry.ts";\nregistry.register(connector);',
+      "program.register(command);",
+      "class Catalog { register(entry: Entry) {} }",
+    ])
+      expect(registersInCatalog(unrelated)).toBe(false);
+  });
+
+  test("no production entry point supplies an installed-pack catalog", () => {
+    const production = ["packages", "apps", "bin", "scripts"].flatMap(
+      (directory) => typescriptFiles(join(repositoryRoot, directory)),
+    );
+    const supplied = (file: string) =>
+      suppliedInstalledPacks(readFileSync(file, "utf8")).map(
+        (use) => `${relative(repositoryRoot, file)}: ${use}`,
+      );
+    // Everything that names the option declares it, reads it or forwards the
+    // caller's value. Nothing passes a catalog of its own.
+    expect(production.flatMap(supplied)).toEqual([]);
+    // Among the entry points, only the bootstrap option plumbing names it.
+    const entryPoints = ["apps", "bin", "scripts"].flatMap((directory) =>
+      typescriptFiles(join(repositoryRoot, directory)),
+    );
+    for (const location of ["apps/daemon/src/main.ts", "bin/ai-office.ts"])
+      expect(
+        entryPoints.map((file) => relative(repositoryRoot, file)),
+      ).toContain(location);
+    expect(
+      entryPoints
+        .filter((file) =>
+          /installedPacks|InstalledDomainPackCatalog|installed-domain-pack-catalog/u.test(
+            readFileSync(file, "utf8"),
+          ),
+        )
+        .map((file) => relative(repositoryRoot, file)),
+    ).toEqual(["apps/daemon/src/bootstrap.ts"]);
+    // The rule itself: plumbing passes, a supplied catalog is reported.
+    expect(
+      suppliedInstalledPacks(
+        [
+          "interface Options { installedPacks?: InstalledDomainPackCatalog; }",
+          "private readonly installedPacks?: InstalledDomainPackCatalog,",
+          "run(options.installedPacks, { catalog: context.installedPacks });",
+          "({ installedPacks: this.installedPacks });",
+          "({ installedPacks: options.installedPacks ?? new InMemoryInstalledDomainPackCatalog(1, []) });",
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+    expect(
+      suppliedInstalledPacks(
+        [
+          "await bootstrap({ projectRoot, runtimePaths, installedPacks: developmentCatalog() });",
+          "await bootstrap({ projectRoot, installedPacks });",
+          "options.installedPacks = catalog;",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      "installedPacks: developmentCatalog() });",
+      "installedPacks });",
+      "installedPacks = catalog;",
+    ]);
+  });
 });

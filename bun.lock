@@ -65,6 +65,9 @@
     "packages/domain-pack-contracts": {
       "name": "@ai-office/domain-pack-contracts",
     },
+    "packages/domain-pack-development": {
+      "name": "@ai-office/domain-pack-development",
+    },
     "packages/filesystem-connector": {
       "name": "@ai-office/filesystem-connector",
     },
@@ -132,6 +135,8 @@
     "@ai-office/domain": ["@ai-office/domain@workspace:packages/domain"],
 
     "@ai-office/domain-pack-contracts": ["@ai-office/domain-pack-contracts@workspace:packages/domain-pack-contracts"],
+
+    "@ai-office/domain-pack-development": ["@ai-office/domain-pack-development@workspace:packages/domain-pack-development"],
 
     "@ai-office/filesystem-connector": ["@ai-office/filesystem-connector@workspace:packages/filesystem-connector"],
 

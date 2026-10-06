@@ -100,6 +100,19 @@ name roles of the same pack), extend its description or disable it; stage
 order is preserved as given. A workflow override is carried by portable
 archive format 9. The pipeline engine, pipeline runs, pins, approvals and
 guards are neither read nor written, and runs do not pin pack configuration.
+GP-09 adds a second derived read model beside the resolved configuration: the
+legacy development profile, a pure function of the latest office manifest and
+the project's Runtime roles and agents, printed by the read-only
+`project:configuration:legacy`. It describes the legacy state the Runtime
+reads (legacy-state parity), states that it is not an executable resolved
+configuration, and is neither stored, pinned nor scheduled from. Runtime roles
+and agents outside the manifest are listed apart with their provenance and are
+never treated as pack content.
+GP-10A adds `packages/domain-pack-development`, a data-only package with the
+development pack manifest as a reference artifact. No production code imports
+it, the Runtime's catalog does not hold it and nothing is scheduled from it;
+tests compare it with the legacy development defaults over the subset the
+pack contract can express (expressible-subset parity).
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

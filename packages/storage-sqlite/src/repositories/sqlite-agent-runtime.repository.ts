@@ -392,15 +392,28 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
       .run(...base, v.createdAt.toISOString(), v.updatedAt.toISOString());
   }
   async findRole(id: string, projectId: string): Promise<Role | null> {
+    const row = this.database
+      .query<RoleRow, [string, string]>(
+        `${this.roleSelect()} WHERE id=? AND project_id=?`,
+      )
+      .get(id, projectId);
+    return row === null ? null : this.restoreRole(row);
+  }
+  async listRoles(projectId: string): Promise<Role[]> {
+    return this.database
+      .query<RoleRow, [string]>(
+        `${this.roleSelect()} WHERE project_id=? ORDER BY role_key, id`,
+      )
+      .all(projectId)
+      .map((row) => this.restoreRole(row));
+  }
+  private roleSelect(): string {
     const roleColumns = this.hasRoleGuidance
       ? ", guidance_text, guidance_version"
       : "";
-    const row = this.database
-      .query<RoleRow, [string, string]>(
-        `SELECT id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy, limits_json, source_path${roleColumns}, created_at, updated_at FROM role WHERE id=? AND project_id=?`,
-      )
-      .get(id, projectId);
-    if (row === null) return null;
+    return `SELECT id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy, limits_json, source_path${roleColumns}, created_at, updated_at FROM role`;
+  }
+  private restoreRole(row: RoleRow): Role {
     return Role.restore({
       id: row.id,
       projectId: row.project_id,
