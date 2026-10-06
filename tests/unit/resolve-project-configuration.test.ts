@@ -571,8 +571,8 @@ function independentCanonicalJson(value: unknown): string {
 function independentDigest(
   result: ReturnType<typeof resolveProjectConfiguration>,
 ): string {
-  // The GP-11 role view and the GP-12 agent view are derived from the
-  // material; they are not part of it.
+  // The GP-11 role view, the GP-12 agent view and the GP-13 workflow view are
+  // derived from the material; they are not part of it.
   const {
     configurationDigest: _digest,
     pin: _pin,
@@ -580,6 +580,8 @@ function independentDigest(
     omittedRoles: _omittedRoles,
     agents: _agents,
     disabledAgents: _disabledAgents,
+    workflows: _workflows,
+    disabledWorkflows: _disabledWorkflows,
     ...material
   } = result;
   return `sha256:${createHash("sha256")
@@ -1053,8 +1055,12 @@ describe("GP-06 hardening", () => {
       }) as unknown as ProjectDefinitionState["overrides"][number];
     for (const entry of [
       override(pack, "taskTypes", "task", "disable"),
+      // GP-13 supports workflow overrides, so the unsupported-kind cases
+      // moved to capabilities and validators. A workflow replacement that is
+      // not the typed envelope still fails closed.
       override(pack, "workflows", "flow", "replace", { id: "flow" }),
-      override(pack, "workflows", "flow", "extend", { title: "x" }),
+      override(pack, "validators", "val", "replace", { id: "val" }),
+      override(pack, "capabilities", "cap", "extend", { title: "x" }),
       override(pack, "capabilities", "cap", "replace", { id: "cap" }),
       override(pack, "validators", "val", "extend", { title: "x" }),
       override(pack, "roles", "titled", "extend", { title: "Clobber" }),

@@ -30,6 +30,7 @@ import {
   portableProjectArchiveSchemaV6,
   portableProjectArchiveSchemaV7,
   portableProjectArchiveSchemaV8,
+  portableProjectArchiveSchemaV9,
   portableProjectFormatVersionFor,
   portableProjectFormatVersions,
   portableProjectManifestFor,
@@ -324,7 +325,7 @@ describe("project portability", () => {
       ],
       overrides: [],
     });
-    expect(portableProjectFormatVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(portableProjectFormatVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 
     expect(v6.safeParse(override("roles", "disable")).success).toBe(false);
     expect(v7.safeParse(override("roles", "disable")).success).toBe(true);
@@ -790,6 +791,366 @@ describe("project portability", () => {
     ).toEqual({ ...stored, projectId: restored.projectId });
     const again = await destination.service.backup(restored.projectId);
     expect(again.archive.manifest.formatVersion).toBe(8);
+    expect(again.archive.state).toEqual(backup.archive.state);
+    // Restoring the same archive over identical local state is idempotent.
+    await expect(
+      destination.service.restore({
+        archive: parsePortableProjectArchive(serialized),
+        rootPath: source,
+      }),
+    ).resolves.toMatchObject({ projectId: restored.projectId });
+    origin.database.close();
+    destination.database.close();
+  });
+
+  test("format 9 carries workflow overrides with their stage order; format 8 rejects them", () => {
+    const v6 = portableProjectArchiveSchemaV6.shape.state.shape.definitions;
+    const v7 = portableProjectArchiveSchemaV7.shape.state.shape.definitions;
+    const v8 = portableProjectArchiveSchemaV8.shape.state.shape.definitions;
+    const v9 = portableProjectArchiveSchemaV9.shape.state.shape.definitions;
+    const entry = {
+      revision: 1,
+      actorId: "operator",
+      changedAt: "2026-10-06T00:00:00.000Z",
+    };
+    const override = (
+      kind: string,
+      operation: "replace" | "extend" | "disable",
+      payload?: object,
+    ) => ({
+      revision: 1,
+      owned: [],
+      overrides: [
+        {
+          origin: "project_override",
+          source: {
+            id: "org.example.legal",
+            version: "1.0.0",
+            manifestDigest: `sha256:${"a".repeat(64)}`,
+            kind,
+            localId: "custom",
+          },
+          operation,
+          ...(payload === undefined ? {} : { payload }),
+          ...entry,
+        },
+      ],
+    });
+    const owned = (kind: string, payload: object) => ({
+      revision: 1,
+      owned: [
+        {
+          origin: "project_owned",
+          kind,
+          id: "custom",
+          enabled: true,
+          payload,
+          ...entry,
+        },
+      ],
+      overrides: [],
+    });
+    const many = (count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        id: `s${index}`,
+        role: "counsel",
+      }));
+    const envelope = {
+      id: "custom",
+      title: "Custom",
+      description: "House procedure",
+      taskType: "matter",
+      // In no sort order: the archive keeps the list as given.
+      stages: [
+        { id: "z-last", role: "paralegal" },
+        { id: "a-first", role: "counsel" },
+      ],
+    };
+
+    // What only format 9 can carry: every operation on a workflow.
+    for (const state of [
+      override("workflows", "replace", envelope),
+      override("workflows", "replace", {
+        id: "custom",
+        taskType: "matter",
+        stages: [],
+      }),
+      override("workflows", "replace", {
+        id: "custom",
+        taskType: "matter",
+        stages: many(1_000),
+      }),
+      override("workflows", "extend", { title: "Custom" }),
+      override("workflows", "extend", { description: "House procedure" }),
+      override("workflows", "disable"),
+    ]) {
+      expect(v9.safeParse(state).success, JSON.stringify(state)).toBe(true);
+      for (const schema of [v8, v7, v6])
+        expect(schema.safeParse(state).success, JSON.stringify(state)).toBe(
+          false,
+        );
+    }
+    // The stage order survives parsing.
+    const parsed = v9.parse(override("workflows", "replace", envelope));
+    expect(parsed.overrides[0]?.payload).toEqual(envelope);
+    expect(
+      (parsed.overrides[0]?.payload as { stages: { id: string }[] }).stages.map(
+        (stage) => stage.id,
+      ),
+    ).toEqual(["z-last", "a-first"]);
+    // Format 9 has the format-8 contents.
+    for (const state of [
+      override("agents", "disable"),
+      override("agents", "replace", { id: "custom", role: "counsel" }),
+      override("roles", "disable"),
+      override("prompts", "disable"),
+      override("roles", "replace", { id: "custom", title: "Custom" }),
+      owned("agents", { id: "custom", prompts: ["house"] }),
+      owned("workflows", envelope),
+    ]) {
+      expect(v9.safeParse(state).success, JSON.stringify(state)).toBe(true);
+      expect(v8.safeParse(state).success, JSON.stringify(state)).toBe(true);
+    }
+    // Forged format-9 state is rejected.
+    for (const state of [
+      // A replacement of a workflow is the typed envelope, nothing less.
+      override("workflows", "replace", { id: "custom", title: "Custom" }),
+      override("workflows", "replace", { id: "custom", taskType: "matter" }),
+      override("workflows", "replace", { id: "custom", stages: [] }),
+      override("workflows", "replace", { ...envelope, id: "other" }),
+      override("workflows", "replace"),
+      // Nothing beyond the schema-1 workflow fields.
+      override("workflows", "replace", { ...envelope, approvals: ["x"] }),
+      override("workflows", "replace", { ...envelope, role: "counsel" }),
+      override("workflows", "replace", {
+        ...envelope,
+        stages: [{ id: "check", role: "counsel", guard: "x" }],
+      }),
+      // Stage rules: local IDs, unique stage IDs, at most 1,000 stages.
+      override("workflows", "replace", {
+        ...envelope,
+        stages: [{ id: "check", role: "no id" }],
+      }),
+      override("workflows", "replace", {
+        ...envelope,
+        stages: [{ id: "check" }],
+      }),
+      override("workflows", "replace", {
+        ...envelope,
+        stages: [
+          { id: "check", role: "counsel" },
+          { id: "check", role: "paralegal" },
+        ],
+      }),
+      override("workflows", "replace", { ...envelope, stages: many(1_001) }),
+      override("workflows", "replace", { ...envelope, taskType: "no id" }),
+      // An extension stays descriptive and a disable carries no payload.
+      override("workflows", "extend", { title: "Custom", stages: [] }),
+      override("workflows", "extend", { title: "Custom", taskType: "matter" }),
+      override("workflows", "extend", envelope),
+      override("workflows", "extend", {}),
+      override("workflows", "disable", envelope),
+      override("workflows", "disable", { id: "custom" }),
+      // The workflow fields exist on workflows only.
+      override("roles", "replace", envelope),
+      override("agents", "replace", envelope),
+      override("taskTypes", "replace", envelope),
+      // Kinds without an override contract stay out of every format.
+      override("policies", "replace", { id: "custom" }),
+      override("capabilities", "extend", { title: "Custom" }),
+      override("validators", "disable"),
+      override("taskTypes", "disable"),
+    ])
+      expect(v9.safeParse(state).success, JSON.stringify(state)).toBe(false);
+  });
+
+  test("a workflow override is exported as format 9, round-trips in stage order, and cannot be written as format 8", async () => {
+    const source = temporaryRoot("ai-office-gp13-portable-project-");
+    writeFileSync(join(source, "package.json"), '{"name":"gp13"}\n');
+    const origin = openRuntime(
+      temporaryRoot("ai-office-gp13-portable-source-"),
+    );
+    const projectId = (await importProject(origin, source)).projectId;
+    const now = new Date("2026-10-06T00:00:00.000Z");
+    const tuple = {
+      id: parseDomainPackId("org.example.legal"),
+      version: parseDomainPackVersion("1.0.0"),
+      manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+    };
+    const definitions = new SqliteProjectDefinitionRepository(origin.database);
+    const entry = (
+      kind: "roles" | "agents" | "workflows",
+      localId: string,
+      operation: "replace" | "extend" | "disable",
+      payload: object = { id: localId },
+    ) => ({
+      origin: "project_override" as const,
+      source: { ...tuple, kind, localId },
+      operation,
+      revision: 1,
+      ...(operation === "disable"
+        ? {}
+        : { payload: payload as { id: string } }),
+      actorId: "operator",
+      changedAt: now.toISOString(),
+    });
+    const house = {
+      origin: "project_owned" as const,
+      kind: "workflows" as const,
+      id: "house",
+      revision: 1,
+      enabled: true,
+      payload: {
+        id: "house",
+        taskType: "errand",
+        stages: [
+          { id: "second", role: "liaison" },
+          { id: "first", role: "liaison" },
+        ],
+      },
+      actorId: "operator",
+      changedAt: now.toISOString(),
+    };
+    let revision = 0;
+    const store = (
+      owned: (typeof house)[],
+      overrides: ReturnType<typeof entry>[],
+    ) =>
+      definitions.replace(
+        { projectId, revision, owned, overrides },
+        revision++,
+        now,
+      );
+
+    // A project-owned workflow and the GP-12 entries need nothing new.
+    await store([house], [entry("agents", "drafter", "disable")]);
+    const plain = await origin.service.backup(projectId);
+    expect(plain.archive.manifest.formatVersion).toBe(8);
+    expect(portableProjectFormatVersionFor(plain.archive.state)).toBe(8);
+    await store([house], []);
+    expect(
+      (await origin.service.backup(projectId)).archive.manifest.formatVersion,
+    ).toBe(6);
+
+    const review = {
+      id: "review",
+      title: "Our review",
+      taskType: "matter",
+      stages: [
+        { id: "z-last", role: "paralegal" },
+        { id: "a-first", role: "counsel" },
+        { id: "m-middle", role: "auditor" },
+      ],
+    };
+    // Each of these alone needs format 9.
+    for (const overrides of [
+      [entry("workflows", "review", "replace", review)],
+      [entry("workflows", "review", "extend", { description: "Ours" })],
+      [entry("workflows", "review", "disable")],
+    ]) {
+      await store([], overrides);
+      expect(
+        (await origin.service.backup(projectId)).archive.manifest.formatVersion,
+      ).toBe(9);
+    }
+
+    const stored = await store(
+      [house],
+      [
+        entry("agents", "drafter", "disable"),
+        entry("roles", "clerk", "disable"),
+        entry("workflows", "audit", "disable"),
+        entry("workflows", "intake", "extend", { title: "Our intake" }),
+        entry("workflows", "review", "replace", review),
+      ],
+    );
+    const backup = await origin.service.backup(projectId);
+    expect(backup.archive.manifest.formatVersion).toBe(9);
+    expect(backup.archive.manifest.contents).toEqual(
+      plain.archive.manifest.contents,
+    );
+    expect(backup.archive.state.definitions).toEqual({
+      revision: stored.revision,
+      owned: stored.owned,
+      overrides: stored.overrides,
+    });
+    const serialized = serializePortableProjectArchive(backup.archive);
+    // The stage list is serialized in the order given.
+    expect(serialized).toContain(
+      '"stages":[{"id":"z-last","role":"paralegal"},{"id":"a-first","role":"counsel"},{"id":"m-middle","role":"auditor"}]',
+    );
+
+    // Format 8 cannot carry it, as a producer or as a reader.
+    const asFormat = (formatVersion: 8 | 9) =>
+      portableProjectManifestFor({
+        formatVersion,
+        projectIdentity: backup.archive.manifest.projectIdentity,
+        createdAt: backup.archive.manifest.createdAt,
+        revision: backup.archive.manifest.revision,
+      });
+    expect(() =>
+      createPortableProjectArchive({
+        manifest: asFormat(8),
+        state: backup.archive.state,
+      }),
+    ).toThrow(
+      "Portable project archive format version 8 cannot carry a workflow override; write format version 9",
+    );
+    expect(() =>
+      parsePortableProjectArchive(
+        serialized.replace('"formatVersion":9', '"formatVersion":8'),
+      ),
+    ).toThrow(/Portable project archive state\.definitions\./u);
+    // A forged format-9 archive is rejected by the same schema.
+    expect(() =>
+      parsePortableProjectArchive(
+        serialized.replace('"taskType":"matter",', ""),
+      ),
+    ).toThrow(/Portable project archive/u);
+    expect(() =>
+      parsePortableProjectArchive(
+        serialized.replace('"id":"a-first"', '"id":"z-last"'),
+      ),
+    ).toThrow(/Portable project archive/u);
+    // Reordering the stages of a valid archive breaks its checksums.
+    expect(() =>
+      parsePortableProjectArchive(
+        serialized
+          .replace('{"id":"z-last","role":"paralegal"}', "@")
+          .replace(
+            '{"id":"a-first","role":"counsel"}',
+            '{"id":"z-last","role":"paralegal"}',
+          )
+          .replace("@", '{"id":"a-first","role":"counsel"}'),
+      ),
+    ).toThrow("checksum mismatch");
+    // The format-8 archive of the earlier state is still readable as written.
+    expect(
+      parsePortableProjectArchive(
+        serializePortableProjectArchive(plain.archive),
+      ),
+    ).toEqual(plain.archive);
+
+    const destination = openRuntime(
+      temporaryRoot("ai-office-gp13-portable-destination-"),
+    );
+    const restored = await destination.service.restore({
+      archive: parsePortableProjectArchive(serialized),
+      rootPath: source,
+    });
+    const restoredState = await new SqliteProjectDefinitionRepository(
+      destination.database,
+    ).get(restored.projectId);
+    expect(restoredState).toEqual({ ...stored, projectId: restored.projectId });
+    expect(
+      (
+        restoredState.overrides.at(-1)?.payload as {
+          stages: { id: string }[];
+        }
+      ).stages.map((stage) => stage.id),
+    ).toEqual(["z-last", "a-first", "m-middle"]);
+    const again = await destination.service.backup(restored.projectId);
+    expect(again.archive.manifest.formatVersion).toBe(9);
     expect(again.archive.state).toEqual(backup.archive.state);
     // Restoring the same archive over identical local state is idempotent.
     await expect(

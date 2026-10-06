@@ -421,6 +421,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0043_requirement_updated_event.sql",
       "0044_project_role_omission.sql",
       "0045_project_agent_disable.sql",
+      "0046_project_workflow_override.sql",
     ]);
     expect(
       database

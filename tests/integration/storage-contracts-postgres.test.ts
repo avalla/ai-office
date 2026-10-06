@@ -890,6 +890,7 @@ describe.skipIf(connectionString === undefined)(
           "20261003000200_requirement_updated_event.sql",
           "20261005000100_project_role_omission.sql",
           "20261006000100_project_agent_disable.sql",
+          "20261006000200_project_workflow_override.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -1259,6 +1260,7 @@ describe.skipIf(connectionString === undefined)(
           "20261003000200_requirement_updated_event.sql",
           "20261005000100_project_role_omission.sql",
           "20261006000100_project_agent_disable.sql",
+          "20261006000200_project_workflow_override.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(
