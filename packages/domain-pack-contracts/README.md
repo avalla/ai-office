@@ -54,7 +54,9 @@ local ID naming an item of the same manifest's `contributions.roles`, and
 `prompts`, `knowledge` and `capabilities`, arrays of local IDs naming items of
 `contributions.prompts`, `contributions.knowledge` and
 `contributions.capabilities`. The arrays follow the rules of a role's
-`capabilities`: valid, unique local IDs, no empty array, ascending code-unit
+`capabilities`: valid, unique local IDs, no empty array, at most 1,000 entries
+(`maximumContributionReferences`, which also bounds a role's `capabilities`
+since GP-12), ascending code-unit
 order in the validated manifest and in the digest input. An agent's
 `capabilities` are requested capabilities and are bounded by its role: the
 field requires `role`, and every entry must be in that role's `capabilities`.

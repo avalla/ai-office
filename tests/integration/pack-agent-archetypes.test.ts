@@ -12,6 +12,7 @@ import {
 } from "@ai-office/application/domain-pack/reconcile-project-pack-upgrade.ts";
 import { ProjectDefinitionConflictError } from "@ai-office/application/domain-pack/project-definition.ts";
 import { ProjectConfigurationResolutionError } from "@ai-office/application/domain-pack/resolve-project-configuration.ts";
+import { portableProjectArchiveSchemaV8 } from "@ai-office/application/project-portability/project-snapshot.ts";
 import type {
   InstalledDomainPackCatalog,
   PackIdentity,
@@ -473,6 +474,60 @@ describe("GP-12 agent customization in project definitions", () => {
     await expect(h.configuration()).rejects.toMatchObject({
       code: "agent_capability_exceeds_role",
     });
+  });
+
+  test("every list stored through the mutation and upgrade paths is in the order archive format 8 requires", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    const exportable = async () => {
+      const { revision, owned, overrides } =
+        await h.storage.definitions.get("a");
+      // Exactly the `definitions` section a backup writes.
+      return portableProjectArchiveSchemaV8.shape.state.shape.definitions.safeParse(
+        { revision, owned, overrides },
+      );
+    };
+    await h.override(h.v1, "filer", "replace", {
+      id: "filer",
+      role: "counsel",
+      prompts: ["tone", "style", "brief"],
+      knowledge: ["statutes", "precedents"],
+      capabilities: ["review", "draft"],
+    });
+    await h.override(h.v1, "researcher", "extend", { title: "Ours" });
+    for (const id of ["voice", "house"]) await h.add("prompts", id);
+    await h.add("agents", "helper", {
+      id: "helper",
+      prompts: ["voice", "house"],
+    });
+    expect((await exportable()).success).toBe(true);
+    expect(
+      (await h.storage.definitions.get("a")).overrides.find(
+        (item) => item.source.localId === "filer",
+      )?.payload,
+    ).toEqual({
+      id: "filer",
+      role: "counsel",
+      prompts: ["brief", "style", "tone"],
+      knowledge: ["precedents", "statutes"],
+      capabilities: ["draft", "review"],
+    });
+
+    // A converted extension copies the new template's lists.
+    const resolutions = [
+      { source: source(h.v1, "researcher"), action: "convert_to_replace" },
+    ];
+    const plan = await h
+      .upgrade()
+      .preview({ projectId: "a", desired: [h.v2], resolutions });
+    expect(plan.issues).toEqual([]);
+    await applyUpgrade(h, [h.v2], plan.planDigest, resolutions);
+    expect(
+      (await h.storage.definitions.get("a")).overrides.find(
+        (item) => item.source.localId === "researcher",
+      )?.payload,
+    ).toMatchObject({ knowledge: ["precedents", "statutes"] });
+    expect((await exportable()).success).toBe(true);
   });
 
   test("the mutation contract refuses malformed and out-of-scope agent payloads; nothing is written", async () => {
@@ -1129,6 +1184,75 @@ describe("GP-12 agent archetypes across a pack upgrade", () => {
       },
     ]);
     expect(await h.authority()).toEqual(before);
+  });
+
+  test("a new agent that names an omitted role is handled by lifting the omission, upgrading, disabling the agent and omitting again", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    // 2.0.0 adds `auditor`, which names counsel; no 1.0.0 agent may name it.
+    await h.override(h.v1, "drafter", "disable");
+    await h.override(h.v1, "counsel", "disable", undefined, "roles");
+    const blocked = await h
+      .upgrade()
+      .preview({ projectId: "a", desired: [h.v2] });
+    expect(blocked.issues).toMatchObject([
+      {
+        code: "prospective_configuration_invalid",
+        detail: "disabled_required_definition",
+      },
+    ]);
+    expect(blocked.issues[0]?.message).toContain("agents/auditor");
+    // The agent does not exist in the selected version, so it cannot be
+    // disabled beforehand.
+    expect(await conflictCode(h.override(h.v1, "auditor", "disable"))).toBe(
+      "source_definition_missing",
+    );
+
+    await h.mutate({
+      action: "remove_override",
+      source: source(h.v1, "counsel", "roles"),
+    });
+    const plan = await h.upgrade().preview({ projectId: "a", desired: [h.v2] });
+    expect(plan.issues).toEqual([]);
+    await applyUpgrade(h, [h.v2], plan.planDigest);
+    await h.override(h.v2, "auditor", "disable");
+    await h.override(h.v2, "counsel", "disable", undefined, "roles");
+    const resolved = await h.configuration();
+    expect(resolved.omittedRoles).toEqual([pid("roles", "counsel")]);
+    expect(resolved.disabledAgents).toEqual([
+      agentId("auditor"),
+      agentId("drafter"),
+    ]);
+  });
+
+  test("a descriptive replacement stays complete when the new version gives the agent a role", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    await h.override(h.v1, "researcher", "replace", {
+      id: "researcher",
+      title: "Our researcher",
+    });
+    // 2.0.0 gives the researcher a role and more knowledge.
+    const plan = await h.upgrade().preview({ projectId: "a", desired: [h.v2] });
+    expect(plan.issues).toEqual([]);
+    expect(plan.overrides).toMatchObject([
+      { operation: "replace", outcome: "retargeted", upstream: "changed" },
+    ]);
+    expect(
+      plan.templates.availability === "available" &&
+        plan.templates.changes.find((item) => item.localId === "researcher"),
+    ).toMatchObject({ kind: "agents", change: "changed", customized: true });
+    await applyUpgrade(h, [h.v2], plan.planDigest);
+    expect(agentOf(await h.configuration(), agentId("researcher"))).toEqual({
+      agentId: agentId("researcher"),
+      effectiveId: `pack:${packId}@2.0.0#${h.v2.manifestDigest}/agents/researcher`,
+      origin: "pack_owned",
+      title: "Our researcher",
+      prompts: [],
+      knowledge: [],
+      capabilities: [],
+      customization: "replace",
+    });
   });
 
   test("an agent request change is a template change, not a role capability change", async () => {

@@ -714,11 +714,15 @@ or a list of bare local IDs, of a definition declared in the same manifest:
 
 The lists follow the GP-11 rules for a role's `capabilities`: every entry is a
 valid, unique local ID; an empty array is rejected, because "none" has exactly
-one encoding, the absent field; and the validated manifest holds each list in
+one encoding, the absent field; a list holds at most 1,000 entries; and the
+validated manifest holds each list in
 ascending code-unit order, so `manifestDigest` does not depend on the written
-order. The contract package rejects, with a typed `DomainPackManifestError`
+order. The bound is one constant of the contract package, shared with the
+project mutation contract and the portable archive; it applies to a role's
+`capabilities` as well. The contract package rejects, with a typed `DomainPackManifestError`
 (`invalid_contribution`) and the path of the offending member: a malformed
-`role`, a non-array list, an empty list, a malformed or duplicate entry, a
+`role`, a non-array list, an empty list, a list over the bound, a malformed or
+duplicate entry, a
 reference to a definition the manifest does not declare, and any of the four
 fields on a contribution kind other than agents, where it remains an unknown
 field (a role's own `capabilities` is the GP-11 field). References are bare
@@ -781,8 +785,9 @@ storage schemas and the portable archive apply the same rule.
 Validation happens in three places:
 
 - **Mutation contract.** `put_owned` and `put_override` check shape before
-  anything else: an entry that is not a local ID, a non-array or empty list
-  (`malformed_origin_reference`), a duplicate entry
+  anything else: an entry that is not a local ID, a non-array or empty list, a
+  list of more than 1,000 entries (`malformed_origin_reference`), a duplicate
+  entry
   (`conflicting_ownership_metadata`), and `capabilities` without `role`
   (`agent_capability_exceeds_role`: with no role there is no set to request
   from). The stored lists are in ascending code-unit order.
@@ -796,6 +801,21 @@ Validation happens in three places:
   check, for example through restore.
 - **GP-06 resolution**, which is the authority and fails closed, also for
   state that arrived by restore or changed under a binding change.
+
+Only a `replace` on a pack agent is checked against other definitions before
+it is stored. Every other mutation is accepted on its shape alone, as GP-07
+accepts a workflow reference, and stored by `project:definition:apply`:
+
+- omitting a role, or disabling a prompt, that an enabled agent names;
+- adding a project agent that names a project role, prompt or knowledge entry
+  that does not exist, or is disabled.
+
+The configuration then fails closed at resolution
+(`disabled_required_definition` or `missing_agent_reference`) and
+`project:configuration:show` returns the diagnostic until the project corrects
+it, by disabling or replacing the agent, restoring the definition or adding
+the missing one. Nothing else is written or scheduled from the unresolved
+state.
 
 ### Resolution
 
@@ -849,19 +869,20 @@ reflects them through that existing field.
 version change with the GP-08 and GP-11 rules and no new mechanism. Stable
 `agentId` values are identical before and after.
 
-| Project state of the agent      | New pack version                                                 | Outcome                                                                                                                                                         |
-| ------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Not customized                  | Changed                                                          | The new template applies. Reported as a template change.                                                                                                        |
-| `replace`                       | Changed, the project's references still resolve                  | `retargeted`. The project's envelope wins whole and `upstream: changed` is reported.                                                                            |
-| `replace`                       | A referenced definition is gone, or the request exceeds the role | Blocks as `prospective_configuration_invalid` with the GP-06 code (`missing_agent_reference`, `disabled_required_definition`, `agent_capability_exceeds_role`). |
-| `extend`                        | Changed, extended fields still absent upstream                   | `retargeted`. The project's fields fill the gaps and the references are the new version's.                                                                      |
-| `extend`                        | Now sets a field the project extends                             | Blocks as `extend_conflict` until resolved with `convert_to_replace` or `remove_override`.                                                                      |
-| `disable`                       | Changed                                                          | `retargeted`. The agent stays disabled and `upstream: changed` is reported.                                                                                     |
-| Any override                    | Agent removed                                                    | Blocks as `source_definition_removed`. `retain_as_project_owned` is accepted only for a `replace` without reference fields; otherwise `remove_override`.        |
-| Any override                    | Pack removed                                                     | Blocks as `source_pack_removed`, resolved the same way.                                                                                                         |
-| Role omitted or prompt disabled | An enabled pack agent now names it                               | Blocks as `prospective_configuration_invalid` (`disabled_required_definition`).                                                                                 |
-| Project-added agent             | Pack starts to provide the same kind and local ID                | Blocks as `prospective_configuration_invalid` (`duplicate_effective_definition`). The project agent is never discarded.                                         |
-| Project-added agent             | Anything else                                                    | Untouched.                                                                                                                                                      |
+| Project state of the agent         | New pack version                                                 | Outcome                                                                                                                                                                                                          |
+| ---------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Not customized                     | Changed                                                          | The new template applies. Reported as a template change.                                                                                                                                                         |
+| `replace`                          | Changed, the project's references still resolve                  | `retargeted`. The project's envelope wins whole and `upstream: changed` is reported.                                                                                                                             |
+| `replace`                          | A referenced definition is gone, or the request exceeds the role | Blocks as `prospective_configuration_invalid` with the GP-06 code (`missing_agent_reference`, `disabled_required_definition`, `agent_capability_exceeds_role`).                                                  |
+| `replace` without reference fields | The agent gains a role or references                             | `retargeted` with no issue. The replacement stays the complete envelope, so the agent still has no role and no references; the change is visible only as a `customized` template change and `upstream: changed`. |
+| `extend`                           | Changed, extended fields still absent upstream                   | `retargeted`. The project's fields fill the gaps and the references are the new version's.                                                                                                                       |
+| `extend`                           | Now sets a field the project extends                             | Blocks as `extend_conflict` until resolved with `convert_to_replace` or `remove_override`.                                                                                                                       |
+| `disable`                          | Changed                                                          | `retargeted`. The agent stays disabled and `upstream: changed` is reported.                                                                                                                                      |
+| Any override                       | Agent removed                                                    | Blocks as `source_definition_removed`. `retain_as_project_owned` is accepted only for a `replace` without reference fields; otherwise `remove_override`.                                                         |
+| Any override                       | Pack removed                                                     | Blocks as `source_pack_removed`, resolved the same way.                                                                                                                                                          |
+| Role omitted or prompt disabled    | An enabled pack agent now names it                               | Blocks as `prospective_configuration_invalid` (`disabled_required_definition`).                                                                                                                                  |
+| Project-added agent                | Pack starts to provide the same kind and local ID                | Blocks as `prospective_configuration_invalid` (`duplicate_effective_definition`). The project agent is never discarded.                                                                                          |
+| Project-added agent                | Anything else                                                    | Untouched.                                                                                                                                                                                                       |
 
 A `prospective_configuration_invalid` issue carries the GP-06 code as its
 `detail`, and its message ends with the GP-06 diagnostic, which names the
@@ -872,6 +893,20 @@ changing the replacement so that it is valid against both versions (a
 replacement can always drop the reference), or by removing the override, the
 role omission or the prompt disable that causes it. Nothing is rewritten on the
 project's behalf.
+
+One sequence needs several steps. When the new version adds a new agent that
+names a role the project omits or a prompt it disables, the upgrade blocks as
+`prospective_configuration_invalid` (`disabled_required_definition`). The
+agent cannot be disabled beforehand, because it does not exist in the current
+version and an override must name a definition of the selected tuple. The
+operator removes the omission, upgrades, disables the new agent and omits the
+role again; each step is an explicit, audited change.
+
+Appending the GP-06 diagnostic changed the message of every
+`prospective_configuration_invalid` issue, including the cases that existed
+before GP-12, and therefore the `planDigest` of such blocked plans. This is
+harmless: a blocked plan cannot be approved, and `code` and `detail` are
+unchanged.
 
 `convert_to_replace` on an agent `extend_conflict` builds the replacement from
 both sides: the project's `title` and `description` win where it set them, and
@@ -920,6 +955,11 @@ constraint.
 Portable archive format 8 has the format-7 contents and additionally accepts a
 `disable` override on an agent and the four reference fields in an agent
 payload (three in a project-owned agent, which cannot carry `capabilities`).
+A list in a format-8 payload must be in the order the mutation contract
+stores: at most 1,000 valid local IDs, strictly ascending by code unit, so
+also free of duplicates. Every path that stores a list writes that order, so
+every stored state is exportable; an archive with another order is rejected
+like any other malformed payload.
 Formats 1–7 keep their readers and meanings, and format 7 still rejects both.
 A backup is written as format 8 only when the project state contains an agent
 `disable` override or an agent payload with a reference field; every other
@@ -938,9 +978,12 @@ state is written as before, byte for byte.
   agent cannot name a project-owned role, prompt or knowledge entry, and a
   project-added agent cannot name a pack definition. Qualified cross-namespace
   references are not expressible in schema 1.
-- A pack agent's role cannot be omitted, and a prompt it names cannot be
-  disabled, while the agent is enabled and still names them; the project
-  disables or replaces the agent first.
+- Omitting a role or disabling a prompt that an enabled agent still names is
+  accepted and stored, and the configuration then does not resolve. To keep it
+  resolving, the project disables or replaces the agent first. A new agent of
+  a later pack version can only be disabled after the upgrade.
+- Local IDs have no length limit, for any definition kind. This predates GP-12;
+  only the number of references in a list is bounded.
 - An upgrade blocked by a customization that no longer resolves is resolved by
   editing or removing that customization, not by an upgrade resolution.
 
