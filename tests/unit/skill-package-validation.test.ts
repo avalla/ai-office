@@ -520,6 +520,52 @@ describe("task-delivery workflow invariants", () => {
       "policy:installed-is-not-required",
       /Being\s+installed does not make a reviewer required/u,
     ],
+    ["policy:ask-what-to-deliver", "3. **Some tasks of one milestone**"],
+    [
+      "policy:check-dependencies-before-summary",
+      /The\s+check always runs; when individual tasks were chosen/u,
+    ],
+    [
+      "policy:unresolved-dependency-proposals",
+      /propose adding it to the run or\s+postponing the task that needs it\./u,
+    ],
+    [
+      "policy:stacking-does-not-satisfy-task-dependency",
+      /Stacking neither\s+satisfies nor cancels the logical task dependency/u,
+    ],
+    [
+      "policy:approve-summary-before-preflight",
+      /Start\s+preflight only after the authorizer\s+approves that summary\./u,
+    ],
+    ["policy:settle-project-pipeline", "Settle which pipeline applies before"],
+    [
+      "policy:run-never-merges-to-unblock",
+      /The run never merges a\s+pull request merely to unblock a later selected task\./u,
+    ],
+    [
+      "policy:project-pipeline-keeps-gates",
+      /it never removes a gate of this skill,\s+and the non-negotiable rules above still hold\./u,
+    ],
+    [
+      "policy:keep-task-state-true",
+      /Mark the task\s+started in preflight, before the first change\./u,
+    ],
+    [
+      "policy:refused-transition-stops",
+      /A transition the\s+tracker\s+refuses\s+is\s+a\s+stop\s+condition/u,
+    ],
+    [
+      "policy:no-binding-run-you-cannot-finish",
+      /Never start a binding run\s+you\s+cannot finish/u,
+    ],
+    [
+      "policy:never-choose-the-target",
+      "Never pick a milestone or a task yourself.",
+    ],
+    [
+      "policy:preflight-dependencies-done",
+      /logical\s+dependencies are DONE or the authorizer has decided how to proceed/u,
+    ],
     ["policy:scope", "Stay in scope."],
   ];
 
@@ -616,6 +662,526 @@ describe("task-delivery workflow invariants", () => {
     expect(validateSkillPackage(skillRoot)).toContain(
       "SKILL.md is missing required content: policy:scope",
     );
+  });
+
+  test("task state is kept true: started, in review, done, and never forced", () => {
+    const core = canonicalSkill
+      .slice(0, canonicalSkill.indexOf("<!-- executors:start -->"))
+      .replace(/\s+/gu, " ");
+    const reference = (name: string): string =>
+      readFileSync(
+        join(canonicalSkillRoot, "references", name),
+        "utf8",
+      ).replace(/\s+/gu, " ");
+
+    // The three transitions, in order, each tied to its moment.
+    // One trigger, stated in the core: enabled, or a command, or a tracker
+    // the project documents - and only an explicit switch turns it off.
+    expect(core).toMatch(
+      /## Task state The project tracks task state when its configuration enables that or configures a command for it, or when its own instructions describe a system that holds its tasks\. Only a configuration that switches it off explicitly says otherwise\. When you cannot tell, ask in preflight instead of skipping it\./u,
+    );
+    expect(core).toMatch(
+      /Where task state is tracked, keep it true as the work moves\. Mark the task started in preflight, before the first change\. Mark it in review when its pull request is open\. Mark it done only after stage 11\./u,
+    );
+    // How: configured commands, else the project's documented way, else a
+    // report - and a refusal stops the work.
+    expect(core).toMatch(
+      /Use the commands the project configures for this; without them, use the project's own documented way of changing task state, and only where there is none report each transition for someone else to apply\./u,
+    );
+    expect(core.indexOf("## Task state")).toBeLessThan(
+      core.indexOf("## What to deliver"),
+    );
+
+    const lifecycle = reference("lifecycle.md");
+    expect(lifecycle).toMatch(
+      /Where the project tracks task state, mark the task started before the first change\. If the tracker refuses, stop\./u,
+    );
+    expect(lifecycle).toMatch(
+      /Where the project tracks task state, mark the task as in review\. - Do not request merge\./u,
+    );
+    expect(lifecycle).toMatch(
+      /After the post-merge verification passes, mark the task done where the project tracks task state\./u,
+    );
+    // Done is marked in the post-merge stage and nowhere earlier.
+    expect(lifecycle.indexOf("mark the task done")).toBeGreaterThan(
+      lifecycle.indexOf("## 11. Post-merge verification / completion"),
+    );
+    expect(reference("stop-conditions.md")).toMatch(
+      /\*\*Refused task transition\.\*\* The system that tracks the project's tasks refuses to mark the task started, in review, or done\. Report what it said; never work around it or change the state another way\./u,
+    );
+
+    const configuration = reference("configuration.md");
+    for (const key of ["start", "review", "complete"])
+      expect(configuration).toContain(`\`task_lifecycle.${key}\``);
+    expect(configuration).toMatch(
+      /In the `task_lifecycle` commands, `\{task\}` stands for the identifier of the task in the system that tracks it\./u,
+    );
+    expect(configuration).toMatch(
+      /When task state is tracked - `task_lifecycle\.enabled` is `true`, a command is configured, or the project's instructions describe a tracker and the key is not `false` - every transition is made: with the configured command; without one, in the project's own documented way of changing task state; and only where there is none, by reporting the transition so the tracker's owner can apply it\. A refused transition is a stop condition\./u,
+    );
+    expect(configuration).toMatch(
+      /`task_lifecycle\.enabled: false` together with a `task_lifecycle` command is an error: the commands would never run\./u,
+    );
+    // The Keys table states the same default as the core: not "false".
+    expect(configuration).toMatch(
+      /\| `task_lifecycle\.enabled` \| `true`: task state is tracked outside Git\. `false`: it is not, and the skill never touches it \| Tracked when a command below is configured or the project's instructions describe a tracker \|/u,
+    );
+    expect(core).toMatch(
+      /Check the task's current state first: a task already in the state you would set needs nothing; when you do not know how the tracker identifies the task, ask\./u,
+    );
+    expect(core).toMatch(
+      /A transition the tracker refuses is a stop condition: report what it said, and never work around it\./u,
+    );
+    expect(core).toMatch(
+      /A transition that would itself start a binding run falls under the rule on binding runs below\./u,
+    );
+  });
+
+  describe("what to deliver", () => {
+    const core = canonicalSkill
+      .slice(0, canonicalSkill.indexOf("<!-- executors:start -->"))
+      .replace(/\s+/gu, " ");
+    const section = core.slice(
+      core.indexOf("## What to deliver"),
+      core.indexOf("## Lifecycle"),
+    );
+    const reference = (name: string): string =>
+      readFileSync(
+        join(canonicalSkillRoot, "references", name),
+        "utf8",
+      ).replace(/\s+/gu, " ");
+
+    const documents: [string, string][] = [
+      ["SKILL.md", core],
+      ...[
+        "branch-policy.md",
+        "configuration.md",
+        "evidence.md",
+        "lifecycle.md",
+        "qa-checklist.md",
+        "review-checklist.md",
+        "stop-conditions.md",
+      ].map((name): [string, string] => [name, reference(name)]),
+      [
+        "pr-template.md",
+        readFileSync(
+          join(canonicalSkillRoot, "assets", "pr-template.md"),
+          "utf8",
+        ).replace(/\s+/gu, " "),
+      ],
+    ];
+
+    test("a run without a target asks before preflight, with three choices", () => {
+      expect(core.indexOf("## What to deliver")).toBeGreaterThan(-1);
+      expect(core.indexOf("## What to deliver")).toBeLessThan(
+        core.indexOf("### 1. Preflight"),
+      );
+      expect(section).toMatch(/ask before doing anything else/u);
+      expect(section.match(/\b\d\. \*\*/gu)).toHaveLength(3);
+      expect(section).toMatch(/1\. \*\*A whole milestone\*\*/u);
+      expect(section).toMatch(/2\. \*\*One or more tasks\*\*/u);
+      expect(section).toMatch(/3\. \*\*Some tasks of one milestone\*\*/u);
+      expect(section).toMatch(/wait for the answer/u);
+      expect(section).toMatch(/Never pick a milestone or a task yourself\./u);
+      expect(section).toMatch(
+        /When the request already names the target, do not ask for the target again\./u,
+      );
+    });
+
+    test("dependencies are checked, then summarized, then approved", () => {
+      const check = section.indexOf("check the dependencies of the selection");
+      const summary = section.indexOf(
+        "Then show a summary and ask for the go-ahead",
+      );
+      const approval = section.indexOf(
+        "Start preflight only after the authorizer approves that summary",
+      );
+      expect(check).toBeGreaterThan(-1);
+      expect(summary).toBeGreaterThan(check);
+      expect(approval).toBeGreaterThan(summary);
+      expect(section).toMatch(
+        /A run that covers several tasks gives each task its own branch, pull request, and evidence\./u,
+      );
+    });
+
+    // A logical task dependency and a Git branch dependency are independent.
+    // The section is short, so every sentence of it is pinned: an edit or an
+    // added sentence has to be made here too, in view of this distinction.
+    // This is a tripwire for accidental drift, not a proof of meaning.
+    test("the section is exactly these sentences", () => {
+      const sentences = section
+        .replace(/^## What to deliver /u, "")
+        .split(/(?<=[.:]) (?=[A-Z0-9]|- )/u)
+        .map((sentence) => sentence.trim())
+        .filter((sentence) => sentence !== "");
+
+      expect(sentences).toEqual([
+        "When the request does not say what to deliver - the skill was started with no task, milestone, or other target - ask before doing anything else.",
+        "Offer these choices and wait for the answer:",
+        "1. **A whole milestone**: every open task of one milestone.",
+        "2. **One or more tasks**: the tasks the authorizer names.",
+        "3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.",
+        "The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
+        "Settle which pipeline applies before preflight, and never choose one yourself:",
+        "- When the project enforces a pipeline, state which one applies; there is no choice to offer.",
+        "- When the project defines a default pipeline, ask whether to use it and wait for the answer.",
+        "If it is declined, ask what to follow instead.",
+        "- When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use, if any.",
+        "- When the project defines no pipeline, do not ask.",
+        "A project pipeline that is used decides the stages, assignments, and transitions of the work.",
+        "Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence.",
+        "A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
+        "Following a project pipeline does not by itself mean starting anything in the project's systems.",
+        "Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage.",
+        "If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence.",
+        "When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer.",
+        "Never start a binding run you cannot finish, and never override or cancel one on your own.",
+        "Never pick a milestone or a task yourself.",
+        "Once the answer is in, and before showing anything for approval, check the dependencies of the selection.",
+        "The check always runs; when individual tasks were chosen it is done for every selected task: find the tasks it logically depends on and their state, and separate the dependencies that are already DONE, those that are part of the selection, and those that are neither.",
+        "A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
+        "A selected prerequisite is planned, not resolved: for the task that needs it, it stays unresolved until it is DONE.",
+        "Never drop or reorder a task silently to make the selection work.",
+        "When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, explicitly, a Git branch dependency on that branch, as the [branch policy](references/branch-policy.md) describes.",
+        "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
+        "A selected prerequisite is worked on before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.",
+        "Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
+        "Start preflight only after the authorizer approves that summary.",
+        "A run that covers several tasks gives each task its own branch, pull request, and evidence.",
+        "Each task's pre-merge delivery ends at READY FOR MERGE.",
+        "The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency.",
+        "The run never merges a pull request merely to unblock a later selected task.",
+        "A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency.",
+        "Where task state is tracked, the tracker may refuse to start a task whose prerequisite is not DONE even on an approved Git branch dependency; that refusal stands, and the task waits.",
+        "When the request already names the target, do not ask for the target again.",
+        "The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
+        "The dependency check and the summary still apply whenever the request covers more than one task.",
+        "For a single named task, make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
+      ]);
+    });
+
+    // Across the core, the references and the pull request template, no
+    // statement about a task, a dependency, a prerequisite, a branch or a
+    // pull request may count or treat it as DONE, satisfied, resolved,
+    // merged, delivered or met - the usual shape of a sentence that lets an
+    // open pull request, a READY FOR MERGE task or a stacked branch stand in
+    // for a finished task. The one statement that matches is the rule
+    // forbidding it. Other prose is none of this test's business.
+    test("no task or dependency is counted or treated as done before it is", () => {
+      const equivalence =
+        /\b(?:counts?|counted|counting|treat(?:s|ed|ing)?|regard(?:s|ed|ing)?|consider(?:s|ed|ing)?|good|same)\b[^.]{0,80}?\bas (?:done|satisfied|resolved|merged|delivered|met|accepted|completed?)\b/iu;
+      // Statements are read from the Markdown as written: a heading, a list
+      // item, a table row and a paragraph are separate blocks, and a block is
+      // split into sentences at ".", "?" and "!" only - never at a dash or a
+      // colon inside a sentence. A statement's subject is named in the
+      // statement itself; only when it speaks of "it" or "them" does the
+      // statement before it count.
+      const subject =
+        /\btasks?\b|dependenc|prerequisite|branch|pull request|stack|READY FOR MERGE/iu;
+      const pronoun =
+        /\b(?:counts?|counted|counting|treat(?:s|ed|ing)?|regard(?:s|ed|ing)?|consider(?:s|ed|ing)?)\s+(?:it|them|this|that|these|those)\b/iu;
+      const statementsOf = (markdown: string): string[] =>
+        markdown
+          // A heading line is a block of its own, with or without blank
+          // lines around it.
+          .replace(/^(#{1,6} .*)$/gmu, "\n\n$1\n\n")
+          .split(/\n{2,}|\n(?=[ \t]*(?:[-*]|\d+\.) )|\n(?=\|)/u)
+          .flatMap((block) => {
+            const text = block.replace(/\s+/gu, " ").trim();
+            return /^#{1,6} /u.test(text)
+              ? [text]
+              : text.split(/(?<=[.?!]) (?=\S)/u);
+          })
+          .map((statement) => statement.replace(/^(?:[-*]|\d+\.) /u, ""))
+          .filter((statement) => statement !== "");
+      const matchesIn = (markdown: string): string[] => {
+        const statements = statementsOf(markdown);
+        return statements.filter(
+          (statement, index) =>
+            equivalence.test(statement) &&
+            (subject.test(statement) ||
+              (pronoun.test(statement) &&
+                subject.test(statements[index - 1] ?? ""))),
+        );
+      };
+      const raw = (path: string[]): string =>
+        readFileSync(join(canonicalSkillRoot, ...path), "utf8");
+      const texts = [
+        canonicalSkill.slice(
+          0,
+          canonicalSkill.indexOf("<!-- executors:start -->"),
+        ),
+        ...[
+          "lifecycle.md",
+          "stop-conditions.md",
+          "branch-policy.md",
+          "evidence.md",
+          "configuration.md",
+          "review-checklist.md",
+          "qa-checklist.md",
+        ].map((name) => raw(["references", name])),
+        raw(["assets", "pr-template.md"]),
+      ];
+
+      expect(texts.flatMap(matchesIn)).toEqual([
+        "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
+      ]);
+
+      // The guard itself. Sentence-initial imperatives are caught whatever
+      // their case, with the subject in the statement or just before "it" -
+      // also when that earlier sentence has dashes or a colon in it, and when
+      // it is the list item above.
+      const caught = (markdown: string): string[] => matchesIn(markdown);
+      expect(
+        caught(
+          "- A prerequisite whose pull request is READY FOR MERGE. Treat it as DONE and continue.",
+        ),
+      ).toEqual(["Treat it as DONE and continue."]);
+      expect(
+        caught(
+          "- A prerequisite whose pull request is open - reviewed or not - is close enough. Treat it as DONE and continue.",
+        ),
+      ).toEqual(["Treat it as DONE and continue."]);
+      expect(
+        caught(
+          "- A prerequisite waits on two checks: 1 review and 1 verification. Treat it as DONE and continue.",
+        ),
+      ).toEqual(["Treat it as DONE and continue."]);
+      expect(
+        caught(
+          "- The pull request is approved - every check is green. Count it as merged.",
+        ),
+      ).toEqual(["Count it as merged."]);
+      expect(
+        caught(
+          "- A prerequisite is still open.\n- Treat it as DONE and continue.",
+        ),
+      ).toEqual(["Treat it as DONE and continue."]);
+      expect(
+        caught("A stacked dependency Counts As Satisfied here."),
+      ).toHaveLength(1);
+
+      // Prose about something else is left alone wherever it is placed:
+      // alone, after a sentence or a question that mentions a task, in a
+      // list, directly under a heading that names a dependency or a pull
+      // request, and before text that starts with a code span.
+      const unrelated =
+        "Always treat a finding as resolved only after its test fails without the fix.";
+      for (const markdown of [
+        unrelated,
+        `Is every changed file needed for this task? ${unrelated}`,
+        `Read the code of the pull request. ${unrelated} Report each finding.`,
+        `## Tests\n\n- Do tests fail without the change and pass with it?\n- ${unrelated}\n- Are tests isolated from the branch under review?`,
+        `## Two different dependencies\n\n${unrelated}\n\nA task dependency is logical.`,
+        `## 4. Pull Request\n\n${unrelated}`,
+        `## Dependencies\n${unrelated}`,
+        `# Branch and dependency policy\n\n${unrelated}`,
+        `${unrelated}\n\n\`integration_branch\` names the branch tasks start from.`,
+        `| Task B depends on A | Base for B |\n| --- | --- |\n| No | ${unrelated} |`,
+      ])
+        expect(caught(markdown)).toEqual([]);
+    });
+
+    test("the pipeline is settled before preflight and never chosen by the executor", () => {
+      const settle = section.indexOf(
+        "Settle which pipeline applies before preflight, and never choose one yourself:",
+      );
+      expect(settle).toBeGreaterThan(
+        section.indexOf("3. **Some tasks of one milestone**"),
+      );
+      expect(settle).toBeLessThan(
+        section.indexOf("check the dependencies of the selection"),
+      );
+      // One rule per situation: enforced, default, several, none.
+      expect(section).toMatch(
+        /- When the project enforces a pipeline, state which one applies; there is no choice to offer\. - When the project defines a default pipeline, ask whether to use it and wait for the answer\. If it is declined, ask what to follow instead\. - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use, if any\. - When the project defines no pipeline, do not ask\./u,
+      );
+      // A named target skips the target question, not the pipeline.
+      expect(section).toMatch(
+        /When the request already names the target, do not ask for the target again\. The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer\./u,
+      );
+      // The choice is part of what the authorizer approves.
+      expect(section).toMatch(
+        /the pipeline that will be used, and anything excluded\. Start preflight only after the authorizer approves that summary\./u,
+      );
+      // The neutral core names no product for it.
+      expect(section).not.toMatch(/office|runtime|daemon/iu);
+    });
+
+    // An executor that started the project's enforced pipeline run could not
+    // complete its first stage: only the project's own registered performers
+    // could. The skill must check before starting, and never force its way
+    // out afterwards.
+    test("a binding pipeline run is never started by an executor who cannot finish it", () => {
+      expect(section).toMatch(
+        /Following a project pipeline does not by itself mean starting anything in the project's systems\./u,
+      );
+      expect(section).toMatch(
+        /Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage\. If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence\./u,
+      );
+      // In doubt the answer is the same: do not start it, ask.
+      expect(section).toMatch(
+        /When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer\./u,
+      );
+      expect(section).toMatch(
+        /Never start a binding run you cannot finish, and never override or cancel one on your own\./u,
+      );
+      // The check comes with the pipeline, before dependencies and preflight.
+      expect(
+        section.indexOf("Never start a binding run you cannot finish"),
+      ).toBeLessThan(
+        section.indexOf("check the dependencies of the selection"),
+      );
+      expect(reference("stop-conditions.md")).toMatch(
+        /\*\*Binding run you cannot complete\.\*\* Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it - or such a run is already active for the task and you cannot complete it - or you cannot tell whether either is the case\. Do not start, override, or cancel it; report what it requires and wait\./u,
+      );
+    });
+
+    test("a project pipeline maps onto the gates without removing any", () => {
+      expect(section).toMatch(
+        /Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence\./u,
+      );
+      expect(section).toMatch(
+        /A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold\./u,
+      );
+    });
+
+    // The contract about project pipelines lives in these statements and
+    // nowhere else. The list is closed across the core, the references and
+    // the pull request template, so a statement about pipelines added to
+    // another document - for example one letting a shorter pipeline drop a
+    // gate - has to be added here deliberately. It checks where pipelines
+    // are mentioned, not what any other prose means.
+    test("the statements about pipelines are exactly these", () => {
+      const statements = documents.flatMap(([name, text]) =>
+        text
+          .split(/(?<=[.:]) (?=[A-Z0-9*`[<-])| \| | (?=#{2,3} )/u)
+          .map((part) => part.trim())
+          .filter((part) => /pipeline/iu.test(part))
+          .map((part) => `${name}: ${part}`),
+      );
+
+      expect(statements).toEqual([
+        "SKILL.md: Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge. license:",
+        "SKILL.md: The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
+        "SKILL.md: Settle which pipeline applies before preflight, and never choose one yourself:",
+        "SKILL.md: - When the project enforces a pipeline, state which one applies; there is no choice to offer.",
+        "SKILL.md: - When the project defines a default pipeline, ask whether to use it and wait for the answer.",
+        "SKILL.md: - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use, if any.",
+        "SKILL.md: - When the project defines no pipeline, do not ask.",
+        "SKILL.md: A project pipeline that is used decides the stages, assignments, and transitions of the work.",
+        "SKILL.md: A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
+        "SKILL.md: Following a project pipeline does not by itself mean starting anything in the project's systems.",
+        "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
+        "SKILL.md: The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
+        "configuration.md: A project may bind them to its own role names and to any executor; the pipeline stays the same when the executor changes.",
+        "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it - or such a run is already active for the task and you cannot complete it - or you cannot tell whether either is the case.",
+      ]);
+    });
+
+    test("a run over dependent tasks stops at READY FOR MERGE and never merges to unblock", () => {
+      expect(section).toMatch(
+        /Each task's pre-merge delivery ends at READY FOR MERGE\. The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency\. The run never merges a pull request merely to unblock a later selected task\. A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency\./u,
+      );
+      expect(section).not.toMatch(/one at a time|whole lifecycle/iu);
+      // The tracker stays authoritative: an approved stack does not let a
+      // task start when the tracker refuses it.
+      expect(section).toMatch(
+        /Where task state is tracked, the tracker may refuse to start a task whose prerequisite is not DONE even on an approved Git branch dependency; that refusal stands, and the task waits\./u,
+      );
+      expect(core).toMatch(/READY FOR MERGE != DONE/u);
+      expect(core).toMatch(/Never merge without explicit authorization/u);
+    });
+
+    // Every sentence, list item and table cell in the skill that speaks of
+    // satisfying, resolving or settling something about a dependency, a
+    // prerequisite, a base, a branch or stacking. The list is closed: a new
+    // statement on the subject, anywhere in the package, has to be added
+    // here deliberately. Like every wording check this is a tripwire for
+    // accidental drift; it cannot stop a rewrite that avoids these words.
+    test("the statements about satisfying a dependency are exactly these", () => {
+      const statements = documents.flatMap(([name, text]) =>
+        text
+          .split(/(?<=[.:]) (?=[A-Z0-9*`[<-])| \| | (?=#{2,3} )/u)
+          .map((part) => part.trim())
+          .filter(
+            (part) =>
+              /satisf|resolv|settl/iu.test(part) &&
+              /\bdepend|stack|prerequisite|\bbase\b|branch/iu.test(part),
+          )
+          .map((part) => `${name}: ${part}`),
+      );
+
+      expect(statements).toEqual([
+        "SKILL.md: A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
+        "SKILL.md: A selected prerequisite is planned, not resolved: for the task that needs it, it stays unresolved until it is DONE.",
+        "SKILL.md: Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
+        "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
+        "SKILL.md: The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency.",
+        "SKILL.md: A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency.",
+        "SKILL.md: For a single named task, make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
+        "branch-policy.md: - A satisfied Git dependency does not satisfy a task dependency: being stacked on A's branch does not mean A's task is accepted.",
+        "lifecycle.md: A dependency that is not DONE is unresolved: stop until the authorizer decides.",
+        "lifecycle.md: Decide the Git base separately, following the [branch policy](branch-policy.md); a stacked base never resolves a task dependency.",
+        "stop-conditions.md: - **Unresolved task dependency.** The task logically depends on a task that is not DONE, and the authorizer has not decided how to proceed.",
+        "stop-conditions.md: Behavior that is available on a stacked base lets work continue only under an approved Git branch dependency; it never satisfies the task dependency.",
+      ]);
+    });
+
+    test("the rule and the table that define the two dependencies are intact", () => {
+      expect(core).toMatch(
+        /3\. \*\*Task dependency != Git branch dependency\.\*\* A task may logically depend on another without its branch being stacked on it, and the reverse\. Decide each one separately; see \[branch policy\]\(references\/branch-policy\.md\)\. 4\./u,
+      );
+      expect(reference("branch-policy.md")).toMatch(
+        /\| Yes \| No \| Wait for A, or stack B on A's head if the project allows stacked work\. \| ## Rules/u,
+      );
+    });
+
+    test("no part of the section lets a branch settle a task dependency", () => {
+      expect(section).not.toMatch(/branch policy (?:allows|permits)/iu);
+      expect(section).not.toMatch(/\bunsatisfied\b|\bdelivered\b/iu);
+      // The guard itself: it must be able to fail.
+      expect("is delivered before").toMatch(/\bunsatisfied\b|\bdelivered\b/iu);
+      expect("an unsatisfied dependency").toMatch(
+        /\bunsatisfied\b|\bdelivered\b/iu,
+      );
+      expect(section).not.toMatch(
+        /\b(?:counts? as|treat(?:ed)? (?:it|its dependency|the dependency) as|is then) (?:satisfied|resolved|DONE)\b/iu,
+      );
+    });
+
+    test("the rest of the skill says the same about dependencies", () => {
+      expect(core).toMatch(/Task dependency != Git branch dependency/u);
+      expect(core).toMatch(
+        /### 1\. Preflight Confirm the task is deliverable: acceptance criteria are explicit, logical dependencies are DONE or the authorizer has decided how to proceed, the working tree is clean, the base branch is chosen and current, and the full verification is green on the base commit before you change anything\. ### 2\. Design/u,
+      );
+      expect(core).not.toMatch(/satisfied or deliberately deferred/u);
+
+      const stopConditions = reference("stop-conditions.md");
+      expect(stopConditions).toMatch(
+        /\*\*Unresolved task dependency\.\*\* The task logically depends on a task that is not DONE, and the authorizer has not decided how to proceed\. Behavior that is available on a stacked base lets work continue only under an approved Git branch dependency; it never satisfies the task dependency\./u,
+      );
+      expect(stopConditions).not.toMatch(
+        /neither merged nor available on the chosen base/u,
+      );
+
+      expect(reference("lifecycle.md")).toMatch(
+        /A dependency that is not DONE is unresolved: stop until the authorizer decides\. Decide the Git base separately, following the \[branch policy\]\(branch-policy\.md\); a stacked base never resolves a task dependency\./u,
+      );
+      expect(reference("branch-policy.md")).toMatch(
+        /A satisfied Git dependency does not satisfy a task dependency: being stacked on A's branch does not mean A's task is accepted\./u,
+      );
+      expect(reference("branch-policy.md")).toMatch(
+        /Stacking is the exception: it needs the authorizer's approval and a reason stated in the pull request\./u,
+      );
+      // The stop condition is one bullet with nothing appended to it.
+      expect(stopConditions).toMatch(
+        /it never satisfies the task dependency\. - \*\*Red baseline\.\*\*/u,
+      );
+      expect(reference("lifecycle.md")).toMatch(
+        /a stacked base never resolves a task dependency\. - Confirm the working tree is clean/u,
+      );
+    });
   });
 
   test("keeps the lifecycle stages in delivery order", () => {
