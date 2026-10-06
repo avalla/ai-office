@@ -1421,8 +1421,10 @@ describe("GP-10B-1 documentation", () => {
     expect(morePolicy).toEqual([]);
     expect(policy).toContain("Pack policy contribution contract");
     expect(policy).toContain(policyTaskId);
-    expect(policy).toContain("Provisional number");
-    expect(policy).toContain("owner-approved scope proposal");
+    // GP-25's scope proposal is approved and its number confirmed, so the
+    // row is the approved one (see the GP-25 section).
+    expect(policy).not.toContain("Provisional number");
+    expect(policy).toContain("GP-08, GP-11, GP-13, GP-10B-1");
     expect(plan).toContain(
       "GP-10B-1 + GP-10B-2 + GP-25 → Runtime task a45ddb12 execution parity",
     );
