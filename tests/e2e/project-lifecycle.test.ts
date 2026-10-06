@@ -761,9 +761,7 @@ describe("project lifecycle UX", () => {
     expect(existsSync(join(harness.projectRoot, "AGENTS.md"))).toBe(false);
     expect(existsSync(join(harness.projectRoot, "CLAUDE.md"))).toBe(false);
     expect(
-      existsSync(
-        join(harness.projectRoot, ".claude/skills/ai-office/SKILL.md"),
-      ),
+      existsSync(join(harness.projectRoot, ".claude/skills/ai-office/SKILL.md")),
     ).toBe(false);
     expect(
       existsSync(
@@ -821,10 +819,7 @@ describe("project lifecycle UX", () => {
       harness.projectRoot,
       ".agents/skills/ai-office/SKILL.md",
     );
-    writeFileSync(
-      skillPath,
-      `${readFileSync(skillPath, "utf8")}\nlocal drift\n`,
-    );
+    writeFileSync(skillPath, `${readFileSync(skillPath, "utf8")}\nlocal drift\n`);
     const skillDrifted = await run(harness, ["status", "--json"]);
     expect(skillDrifted.exitCode).toBe(1);
     expect(JSON.parse(skillDrifted.stdout[0]!)).toMatchObject({
@@ -851,7 +846,9 @@ describe("project lifecycle UX", () => {
     const reconciled = await run(harness, ["install", ".", "--json"]);
     expect(reconciled.exitCode).toBe(0);
     expect(JSON.parse(reconciled.stdout[0]!)).toMatchObject({
-      changes: [expect.objectContaining({ relativePath: "AI-OFFICE.md" })],
+      changes: [
+        expect.objectContaining({ relativePath: "AI-OFFICE.md" }),
+      ],
       clients: [
         {
           clientId: "codex",
@@ -865,9 +862,9 @@ describe("project lifecycle UX", () => {
         },
       ],
     });
-    expect(
-      readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8"),
-    ).toContain("AI-OFFICE.md");
+    expect(readFileSync(join(harness.projectRoot, "AGENTS.md"), "utf8")).toContain(
+      "AI-OFFICE.md",
+    );
   });
 
   test("preflights client conflicts before binding or office configuration", async () => {

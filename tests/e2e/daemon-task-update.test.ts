@@ -232,9 +232,9 @@ describe("task:update over the Runtime socket", () => {
       // task:list reads the task repository; office:workspace reads the
       // operational read model. Both see the new priority.
       expect(await boardOrder()).toEqual([low, high]);
-      expect((await run(["task:list", "--project", projectId]))[1]).toMatch(
-        new RegExp(`^${low}\\s+pending\\s+\\S+\\s+10\\s+Low$`, "u"),
-      );
+      expect(
+        (await run(["task:list", "--project", projectId]))[1],
+      ).toMatch(new RegExp(`^${low}\\s+pending\\s+\\S+\\s+10\\s+Low$`, "u"));
       expect(
         (await workspaceTasks(run, projectId)).map(({ taskId, priority }) => ({
           taskId,
@@ -251,9 +251,9 @@ describe("task:update over the Runtime socket", () => {
           (task) => task.taskId,
         ),
       ).toEqual([low]);
-      expect(await workspaceTasks(run, projectId, "--priority", "-1")).toEqual(
-        [],
-      );
+      expect(
+        await workspaceTasks(run, projectId, "--priority", "-1"),
+      ).toEqual([]);
     });
   });
 
