@@ -725,13 +725,43 @@ describe("GP-10A documentation", () => {
     // is the table of the GP-10B-1 section; it is compared entry for entry
     // in the GP-10B-1 documentation tests below.
     const rows = tableRows(section, 4);
-    expect(rows.map((cells) => cells.slice(0, 2))).toEqual(
-      outsidePackVocabulary().entries.map((entry) => [
+    // Subject, field and GP-09 gap code are still those of the list. The
+    // owner column is history, so it is pinned here and not read from it.
+    const gp10aOwners = [
+      "GP-10B",
+      "a45ddb12",
+      "a45ddb12",
+      "a45ddb12",
+      "GP-10C",
+      "a45ddb12",
+      "a45ddb12",
+      "GP-10B",
+      "a45ddb12",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+      "GP-10B",
+    ];
+    expect(rows).toEqual(
+      outsidePackVocabulary().entries.map((entry, index) => [
         subjectLabels[entry.subject],
         fieldLabel(entry),
+        gp10aOwners[index],
+        entry.gp09Gap === null
+          ? expect.stringMatching(/^none/u)
+          : entry.inDefaultState
+            ? `\`${entry.gp09Gap}\``
+            : `\`${entry.gp09Gap}\` if used; unused by the defaults`,
       ]),
     );
     expect(rows).toHaveLength(19);
+    expect(gp10aOwners).toHaveLength(19);
     expect(rows.filter((cells) => cells[2] === "GP-10B")).toHaveLength(12);
     expect(prose).toContain(
       "The owners above are the ones GP-10A assigned. GP-10B has since been split, and the GP-10B-1 section holds the current list with the current owners.",
