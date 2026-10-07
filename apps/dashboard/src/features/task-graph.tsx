@@ -503,9 +503,17 @@ function TaskGraphCanvas({
 
   // Re-frame only when the layout itself changes, never on selection or on a
   // live refresh that leaves the visible set untouched.
-  // Keyed on what the user chose, not on the visible set: a live refresh that
-  // completes a task, or a focus jump, must not throw the viewport away.
-  const layoutSignature = `${direction}|${focusOnly}|${JSON.stringify(filters)}`;
+  // Keyed on what the user chose and on the project's structure (its tasks and
+  // dependencies), not on task state: a refresh that completes a task, or a
+  // focus jump, keeps the viewport, while new tasks or links re-frame it.
+  const structure = useMemo(
+    () =>
+      `${graph.tasks.length}|${graph.edges
+        .map((edge) => `${edge.dependsOnTaskId}>${edge.taskId}`)
+        .join(",")}`,
+    [graph.edges, graph.tasks.length],
+  );
+  const layoutSignature = `${direction}|${focusOnly}|${JSON.stringify(filters)}|${structure}`;
   // Isolation belongs to a selection; do not carry it into the next one.
   useEffect(() => {
     if (related === null) setFocusOnly(false);

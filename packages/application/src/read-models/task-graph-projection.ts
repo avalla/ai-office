@@ -54,9 +54,11 @@ export function projectTaskGraphNodes(
 }
 
 /**
- * Longest chain of unfinished tasks following prerequisite edges. Edges are
- * acyclic by construction; a defensive visited guard keeps a corrupted store
- * from looping.
+ * Longest chain of unfinished (non-terminal) tasks following prerequisite
+ * edges. Iterative, linear in nodes plus edges, with no recursion and no
+ * per-node path copies, so a very long chain cannot exhaust the stack.
+ * Edges are acyclic by construction; any node a cycle would leave unvisited is
+ * simply left out. Ties pick the smallest task id, so the result is stable.
  */
 export function projectCriticalPath(
   nodes: readonly TaskGraphNode[],
@@ -68,35 +70,61 @@ export function projectCriticalPath(
       .map((node) => node.taskId),
   );
   const dependents = new Map<string, string[]>();
+  const waitingOn = new Map<string, number>();
+  for (const id of unfinished) waitingOn.set(id, 0);
   for (const edge of edges) {
     if (!unfinished.has(edge.taskId) || !unfinished.has(edge.dependsOnTaskId))
       continue;
-    const values = dependents.get(edge.dependsOnTaskId) ?? [];
-    values.push(edge.taskId);
-    dependents.set(edge.dependsOnTaskId, values);
+    const values = dependents.get(edge.dependsOnTaskId);
+    if (values === undefined)
+      dependents.set(edge.dependsOnTaskId, [edge.taskId]);
+    else values.push(edge.taskId);
+    waitingOn.set(edge.taskId, (waitingOn.get(edge.taskId) ?? 0) + 1);
   }
-  const best = new Map<string, string[]>();
-  const visiting = new Set<string>();
-  const longestFrom = (id: string): string[] => {
-    const known = best.get(id);
-    if (known !== undefined) return known;
-    if (visiting.has(id)) return [id];
-    visiting.add(id);
-    let tail: string[] = [];
-    for (const next of (dependents.get(id) ?? []).sort()) {
-      const candidate = longestFrom(next);
-      if (candidate.length > tail.length) tail = candidate;
+  // Kahn's algorithm: prerequisites before dependents.
+  const order: string[] = [];
+  const queue = [...unfinished].filter((id) => waitingOn.get(id) === 0);
+  for (let head = 0; head < queue.length; head += 1) {
+    const id = queue[head]!;
+    order.push(id);
+    for (const next of dependents.get(id) ?? []) {
+      const remaining = (waitingOn.get(next) ?? 0) - 1;
+      waitingOn.set(next, remaining);
+      if (remaining === 0) queue.push(next);
     }
-    visiting.delete(id);
-    const path = [id, ...tail];
-    best.set(id, path);
-    return path;
-  };
-  let result: string[] = [];
-  for (const id of [...unfinished].sort()) {
-    const path = longestFrom(id);
-    if (path.length > result.length) result = path;
   }
+  // Longest chain starting at each node, and the dependent that continues it.
+  const length = new Map<string, number>();
+  const successor = new Map<string, string>();
+  for (let index = order.length - 1; index >= 0; index -= 1) {
+    const id = order[index]!;
+    let best = 0;
+    let bestNext: string | undefined;
+    for (const next of dependents.get(id) ?? []) {
+      const candidate = length.get(next) ?? 0;
+      if (
+        candidate > best ||
+        (candidate === best && bestNext !== undefined && next < bestNext)
+      ) {
+        best = candidate;
+        bestNext = next;
+      }
+    }
+    length.set(id, best + 1);
+    if (bestNext !== undefined) successor.set(id, bestNext);
+  }
+  let start: string | undefined;
+  for (const id of order) {
+    const current = length.get(id) ?? 0;
+    const known = start === undefined ? 0 : (length.get(start) ?? 0);
+    if (
+      current > known ||
+      (current === known && start !== undefined && id < start)
+    )
+      start = id;
+  }
+  const path: string[] = [];
+  for (let id = start; id !== undefined; id = successor.get(id)) path.push(id);
   // A lone task is not a chain.
-  return result.length < 2 ? [] : result;
+  return path.length < 2 ? [] : path;
 }
