@@ -25,6 +25,7 @@ import type {
   PackIdentity,
 } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { officeTaskKinds } from "@ai-office/domain/office/office-manifest.ts";
+import { legacyRoleGuidanceDigest } from "@ai-office/application/domain-pack/legacy-development-profile.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -36,17 +37,19 @@ import {
   defaultStateViolations,
   developmentPackBytes,
   developmentPackManifestDigest,
+  developmentPackVersion,
   legacyRoleIds,
   legacyRoutes,
   missingGp09Gaps,
   mutatedDevelopmentPackBytes,
   outsidePackVocabulary,
+  projectLegacyGuidance,
   projectLegacyProfile,
   projectResolvedConfiguration,
+  projectResolvedGuidance,
   shippedAgentsDirectory,
   shippedOfficeManifestPath,
   testCatalogWith,
-  unexpressedLegacyRoute,
   type RawPackManifest,
 } from "../helpers/development-pack-parity.ts";
 import {
@@ -61,7 +64,8 @@ import {
   type LegacyStores,
 } from "../helpers/legacy-development-fixture.ts";
 
-// GP-10A and GP-10B-1 expressible-subset parity on stored state: the
+// GP-10A, GP-10B-1 and GP-10B-2 (pack 0.3.0) expressible-subset parity on
+// stored state: the
 // resolved configuration of a project bound to the development pack through
 // a catalog that exists only here, against the GP-09 legacy profile of the
 // same project. Once on the frozen GP-09 fixture, once on the defaults the
@@ -248,6 +252,10 @@ async function parityOfShippedCopy(
   );
   return {
     equal: JSON.stringify(result.pack) === JSON.stringify(result.legacy),
+    /** Guidance is compared apart from the shared shape (GP-10B-2). */
+    guidanceEqual:
+      JSON.stringify(projectResolvedGuidance(result.configuration)) ===
+      JSON.stringify(projectLegacyGuidance(result.profile)),
     ...result,
   };
 }
@@ -268,7 +276,7 @@ describe("GP-10A expressible-subset parity on the GP-09 fixture state", () => {
     expect(result.configuration.selectedPacks).toEqual([
       {
         id: "org.ai-office.development",
-        version: "0.2.0",
+        version: developmentPackVersion,
         manifestDigest: developmentPackManifestDigest,
       },
     ]);
@@ -621,7 +629,7 @@ const routesMissingFrom = (
   );
 
 describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture state", () => {
-  test("a fixture project bound to the pack resolves the four workflows its legacy pipelines describe, and the one route it lacks is maintenance -> delivery", async () => {
+  test("a fixture project bound to the pack resolves the four workflows its legacy pipelines describe, with their stage descriptions, and all five routes", async () => {
     const result = await boundProjections(fixtureProject(), legacyProjectId);
     expect(result.pack.workflows).toEqual(result.legacy.workflows);
     expect(result.pack.routes).toEqual(result.legacy.routes);
@@ -635,15 +643,21 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
           id: pipeline.id,
           title: pipeline.name,
           description: pipeline.description,
-          taskTypes: pipeline.defaultFor.filter(
-            (kind) => kind !== "maintenance",
-          ),
+          taskTypes: [...pipeline.defaultFor].sort(),
           stages: pipeline.stages.map((stage) => ({
             id: stage.id,
             role: stage.roleId,
+            title: stage.name,
+            objective: stage.objective,
+            checks: stage.checks,
           })),
         })),
     );
+    // The roles carry the office role responsibilities, in order.
+    expect(result.pack.roles).toEqual(result.legacy.roles);
+    expect(
+      result.pack.roles.every((role) => role.responsibilities.length === 5),
+    ).toBe(true);
     // Stable identity and origin of what was resolved: pack declarations.
     expect(
       result.configuration.workflows.map((workflow) => [
@@ -659,17 +673,16 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
       ]),
     );
     expect(result.configuration.disabledWorkflows).toEqual([]);
-    // Every pack route is a legacy route; one legacy route is not in the pack.
+    // Every pack route is a legacy route and no legacy route is missing:
+    // the GP-10B-1 difference, maintenance -> delivery, is gone.
     const all = legacyRoutes(result.profile);
     for (const route of result.pack.routes) expect(all).toContainEqual(route);
-    expect(result.pack.routes).toHaveLength(4);
-    expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual([
-      { taskType: "maintenance", workflow: "delivery" },
-    ]);
-    expect(unexpressedLegacyRoute).toEqual({
+    expect(result.pack.routes).toHaveLength(5);
+    expect(result.pack.routes).toContainEqual({
       taskType: "maintenance",
       workflow: "delivery",
     });
+    expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual([]);
   });
 
   test("binding the pack creates no pipeline, run, pin, approval, guard or job from a workflow", async () => {
@@ -732,7 +745,19 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
         manifest.contributions.workflows![3]!.stages![0]!.role = "architect";
       },
       (manifest: RawPackManifest) => {
-        manifest.contributions.workflows![0]!.taskType = "maintenance";
+        manifest.contributions.workflows![0]!.taskType = "research";
+      },
+      (manifest: RawPackManifest) => {
+        delete manifest.contributions.workflows![0]!.additionalTaskTypes;
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.workflows![2]!.stages![0]!.title = "Explore";
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.workflows![1]!.stages![0]!.objective += ".";
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.workflows![0]!.stages![1]!.checks!.push("More");
       },
     ]) {
       const result = await boundProjections(
@@ -750,6 +775,33 @@ describe("GP-10B-1 expressible-subset parity for workflows on the GP-09 fixture 
   });
 });
 
+describe("GP-10B-2 PR 2 role responsibilities on stored state", () => {
+  test("a role responsibility that changes, is reordered or is removed in a copy of the pack breaks parity on stored state", async () => {
+    for (const mutate of [
+      (manifest: RawPackManifest) => {
+        manifest.contributions.roles![1]!.responsibilities!.pop();
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.roles![0]!.responsibilities!.reverse();
+      },
+      (manifest: RawPackManifest) => {
+        manifest.contributions.roles![3]!.responsibilities![0] += " (edited)";
+      },
+    ]) {
+      const result = await boundProjections(
+        fixtureProject(),
+        legacyProjectId,
+        mutatedDevelopmentPackBytes(mutate),
+      );
+      expect(result.pack).not.toEqual(result.legacy);
+      expect({ ...result.pack, roles: [] }).toEqual({
+        ...result.legacy,
+        roles: [],
+      });
+    }
+  });
+});
+
 describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaults", () => {
   test("the shipped default pipelines equal the pack workflows, and a project built from them has no run", async () => {
     const stores = await projectFrom(
@@ -762,19 +814,17 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
     expect(result.pack.workflows.map((workflow) => workflow.id)).toEqual(
       packWorkflowIds,
     );
-    expect(result.pack.routes).toEqual([
+    const routes = [
       { taskType: "bugfix", workflow: "bugfix" },
       { taskType: "feature", workflow: "delivery" },
+      { taskType: "maintenance", workflow: "delivery" },
       { taskType: "release", workflow: "release" },
       { taskType: "research", workflow: "discovery" },
-    ]);
-    // The one shipped route the pack lacks, as a literal: the comparison
-    // drops the route of the `maintenance` task kind whatever it points to,
-    // so only this says that it points to `delivery`.
-    expect(legacyRoutes(result.profile)).toHaveLength(5);
-    expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual([
-      { taskType: "maintenance", workflow: "delivery" },
-    ]);
+    ];
+    expect(result.pack.routes).toEqual(routes);
+    // The shipped routes, as a literal, and none of them is missing.
+    expect(legacyRoutes(result.profile)).toEqual(routes);
+    expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual([]);
     // The shipped manifest has exactly these four pipelines.
     const shipped = JSON.parse(
       readFileSync(shippedOfficeManifestPath, "utf8"),
@@ -822,17 +872,13 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
       expect((await parityOfShippedCopy(editOffice(mutate))).equal).toBe(false);
   });
 
-  test("a shipped maintenance route that is removed or points elsewhere leaves parity equal and is no longer the pinned route", async () => {
-    const pinned = [{ taskType: "maintenance", workflow: "delivery" }];
+  test("a shipped maintenance route that is removed or points elsewhere breaks parity, because the pack carries it", async () => {
     const untouched = await parityOfShippedCopy(() => undefined);
+    expect(untouched.equal).toBe(true);
     expect(routesMissingFrom(untouched.pack.routes, untouched.profile)).toEqual(
-      pinned,
+      [],
     );
-    for (const [target, missing] of [
-      [null, []],
-      ["bugfix", [{ taskType: "maintenance", workflow: "bugfix" }]],
-      ["discovery", [{ taskType: "maintenance", workflow: "discovery" }]],
-    ] as const) {
+    for (const target of [null, "bugfix", "discovery"] as const) {
       const result = await parityOfShippedCopy(
         editOffice((office) => {
           pipelineOf(office, "delivery").defaultFor = ["feature"];
@@ -840,17 +886,44 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
             pipelineOf(office, target).defaultFor.push("maintenance");
         }),
       );
-      // Parity does not see the route, and a count of routes sees only its
-      // removal: the literal is what a moved route breaks.
-      expect([target, result.equal]).toEqual([target, true]);
-      expect(legacyRoutes(result.profile)).toHaveLength(
-        target === null ? 4 : 5,
+      expect([target, result.equal]).toEqual([target, false]);
+      // The route comparison names the change: the legacy side lost or moved
+      // maintenance -> delivery, which the pack still declares.
+      expect([target, result.pack.routes]).not.toEqual([
+        target,
+        result.legacy.routes,
+      ]);
+      expect(
+        routesMissingFrom(result.pack.routes, result.profile),
+      ).not.toContainEqual({ taskType: "maintenance", workflow: "delivery" });
+      expect(routesMissingFrom(result.legacy.routes, result.profile)).toEqual(
+        [],
       );
-      expect(routesMissingFrom(result.pack.routes, result.profile)).toEqual(
-        missing,
-      );
-      expect(missing).not.toEqual(pinned);
     }
+  });
+
+  test("a shipped pipeline, stage or role that changes in what pack 0.3.0 carries breaks parity", async () => {
+    for (const mutate of [
+      (office: EditableOffice) => {
+        pipelineOf(office, "delivery").stages[0]!.name = "Plan";
+      },
+      (office: EditableOffice) => {
+        pipelineOf(office, "bugfix").stages[1]!.objective = "Fix it";
+      },
+      (office: EditableOffice) => {
+        pipelineOf(office, "release").stages[1]!.checks.push("Signed off");
+      },
+      (office: EditableOffice) => {
+        pipelineOf(office, "delivery").stages[1]!.checks.reverse();
+      },
+      (office: EditableOffice) => {
+        office.office.roles[0]!.responsibilities.push("Write the ADR");
+      },
+      (office: EditableOffice) => {
+        office.office.roles[2]!.responsibilities.reverse();
+      },
+    ])
+      expect((await parityOfShippedCopy(editOffice(mutate))).equal).toBe(false);
   });
 
   test("a shipped pipeline that changes outside the expressible subset moves the legacy profile and leaves parity equal", async () => {
@@ -860,24 +933,6 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
       (entry) => `${entry.subject}.${entry.field}`,
     );
     for (const [key, mutate] of [
-      [
-        "stage.name",
-        (office: EditableOffice) => {
-          pipelineOf(office, "delivery").stages[0]!.name = "Plan";
-        },
-      ],
-      [
-        "stage.objective",
-        (office: EditableOffice) => {
-          pipelineOf(office, "bugfix").stages[1]!.objective = "Fix it";
-        },
-      ],
-      [
-        "stage.checks",
-        (office: EditableOffice) => {
-          pipelineOf(office, "release").stages[1]!.checks.push("Signed off");
-        },
-      ],
       [
         "stage.requiresApproval",
         (office: EditableOffice) => {
@@ -911,26 +966,6 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
           pipelineOf(office, "delivery").enforcement = "guidance";
         },
       ],
-      // The maintenance route, removed and moved.
-      [
-        "pipeline.defaultFor",
-        (office: EditableOffice) => {
-          pipelineOf(office, "delivery").defaultFor = ["feature"];
-        },
-      ],
-      [
-        "task_kind.pipelineId",
-        (office: EditableOffice) => {
-          pipelineOf(office, "delivery").defaultFor = ["feature"];
-          pipelineOf(office, "bugfix").defaultFor.push("maintenance");
-        },
-      ],
-      [
-        "office_role.responsibilities",
-        (office: EditableOffice) => {
-          office.office.roles[0]!.responsibilities.push("Write the ADR");
-        },
-      ],
     ] as const) {
       const result = await parityOfShippedCopy(editOffice(mutate));
       expect([key, result.equal]).toEqual([key, true]);
@@ -939,6 +974,93 @@ describe("GP-10B-1 expressible-subset parity for workflows on the shipped defaul
         untouched.profile.profileDigest,
       ]);
       expect(listed).toContain(key);
+      expect(
+        outsidePackVocabulary().entries.find(
+          (entry) => `${entry.subject}.${entry.field}` === key,
+        )!.owner,
+      ).toBe("GP-25");
     }
+  });
+});
+
+// GP-10B-2 PR 2: role guidance on the shipped defaults.
+
+describe("GP-10B-2 PR 2 role guidance parity on the shipped defaults", () => {
+  test("the guidance prompt of each role has the digest the legacy profile of the shipped defaults reports", async () => {
+    const stores = await projectFrom(
+      shippedOfficeManifestPath,
+      shippedAgentsDirectory,
+    );
+    const result = await boundProjections(stores, shippedProjectId);
+    const pack = projectResolvedGuidance(result.configuration);
+    const legacy = projectLegacyGuidance(result.profile);
+    expect(pack).toEqual(legacy);
+    expect(legacy.map((entry) => entry.role)).toEqual(
+      [...legacyRoleIds].sort(),
+    );
+    for (const entry of legacy) {
+      expect(entry.digest).toBe(
+        legacyRoleGuidanceDigest(
+          readFileSync(
+            join(shippedAgentsDirectory, entry.role, "system.md"),
+            "utf8",
+          ),
+        ),
+      );
+      expect(entry.digest).not.toBeNull();
+    }
+    // The pack text is the loader's guidance text, not only the file's.
+    for (const { definition } of new YamlAgentDefinitionLoader().load(
+      shippedAgentsDirectory,
+      { requireGuidance: true },
+    ))
+      expect(
+        result.configuration.effectiveDefinitions.prompts.find(
+          (prompt) => prompt.localId === `${definition.roleKey}-guidance`,
+        )!.payload,
+      ).toMatchObject({ text: definition.roleGuidance });
+  });
+
+  test("a shipped guidance file that changes without the pack leaves the expressible subset equal and breaks guidance parity", async () => {
+    const untouched = await parityOfShippedCopy(() => undefined);
+    expect(untouched.guidanceEqual).toBe(true);
+    for (const id of legacyRoleIds) {
+      const result = await parityOfShippedCopy((copy) =>
+        edit(join(copy.agents, id, "system.md"), "\n", "\nAn added line.\n"),
+      );
+      expect([id, result.equal]).toEqual([id, true]);
+      expect([id, result.guidanceEqual]).toEqual([id, false]);
+      expect(result.profile.profileDigest).not.toBe(
+        untouched.profile.profileDigest,
+      );
+    }
+    // The pack, edited the same way, is not at guidance parity either.
+    for (const mutate of [
+      (manifest: RawPackManifest) => {
+        manifest.contributions.prompts![0]!.text += "An added line.\n";
+      },
+      (manifest: RawPackManifest) => {
+        delete manifest.contributions.agents![2]!.prompts;
+      },
+    ]) {
+      const result = await boundProjections(
+        await projectFrom(shippedOfficeManifestPath, shippedAgentsDirectory),
+        shippedProjectId,
+        mutatedDevelopmentPackBytes(mutate),
+      );
+      expect(projectResolvedGuidance(result.configuration)).not.toEqual(
+        projectLegacyGuidance(result.profile),
+      );
+      expect(result.pack).toEqual(result.legacy);
+    }
+  });
+
+  test("on the GP-09 fixture the guidance is synthetic and is not compared", async () => {
+    const result = await boundProjections(fixtureProject(), legacyProjectId);
+    expect(result.pack).toEqual(result.legacy);
+    expect(projectResolvedGuidance(result.configuration)).not.toEqual(
+      projectLegacyGuidance(result.profile),
+    );
+    expect(result.profile.profileDigest).toBe(fixtureProfileDigest);
   });
 });

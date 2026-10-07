@@ -100,6 +100,17 @@ name roles of the same pack), extend its description or disable it; stage
 order is preserved as given. A workflow override is carried by portable
 archive format 9. The pipeline engine, pipeline runs, pins, approvals and
 guards are neither read nor written, and runs do not pin pack configuration.
+GP-16 lets a pack capability declare the connector operations it needs, by
+name and mode, as required or optional. The Runtime host exposes the
+descriptors of its composed connector registry through the read-only
+`OperationProviderCatalog` application port: provider ID, version and
+operations with mode, and nothing else. Resolution, binding preview and apply,
+and upgrade fail closed when a required operation has no registered provider
+or the provider offers it in another mode, and the resolved configuration
+reports each binding in a derived `capabilities` view. The binding is
+host-local availability: it is not digest or pin material, it is not stored,
+and it grants nothing. The policy engine, grants, approval and the
+controlled-action gateway do not read it, and no run is gated by it.
 GP-09 adds a second derived read model beside the resolved configuration: the
 legacy development profile, a pure function of the latest office manifest and
 the project's Runtime roles and agents, printed by the read-only
@@ -116,7 +127,34 @@ pack contract can express (expressible-subset parity). GP-10B-1 adds the four
 development workflows to that manifest as data. They are compared with the
 legacy default pipelines over the same kind of subset; no pipeline, run, pin,
 approval or guard is created from a pack workflow and nothing is scheduled from
-one.
+one. The GP-10B-2 contract adds descriptive vocabulary to manifest schema 1
+without a schema or core contract version change: a workflow stage may carry
+a `title`, an `objective` and ordered `checks`, a role ordered
+`responsibilities`, a prompt its `text`, and a workflow `additionalTaskTypes`
+beside its `taskType`. Project-owned definitions and `replace` overrides
+carry the same fields, `extend` does not, and the resolved configuration
+reports them. They are stored in the existing JSON payload columns with no
+migration and are carried by portable archive format 10; format 9 rejects
+them. They are declarative text and references: the Runtime reads none of
+them, generates no instruction file from them and sends no pack prompt to a
+provider.
+Development pack `0.3.0` (the second GP-10B-2 pull request) carries them as
+data: role responsibilities, stage titles, objectives and checks, the
+`maintenance` route of `delivery`, the role guidance prompts that each agent
+names and reference prompts for the static instruction-contract text and the
+requirement-assessment message. Tests compare that text and those fields with
+the legacy defaults (expressible-subset parity); the Runtime still reads only
+the legacy sources.
+GP-25 types the pack `policies` contribution: a policy
+(`pack:<packId>/policies/<localId>`) targets one workflow of its own pack and
+declares enforcement, approval, independent approval, agent separation and
+admitted operation names per stage. The declaration is pack-owned and
+mandatory: a project has no operation on a policy, a workflow replacement
+must keep the governed stages and their separation order, and the policy of
+an existing workflow changes only through the reviewed upgrade plan. The
+derived view lists the policies; they are declarations only, the pipeline
+engine, runs, approvals, guards, grants and controlled-action authorization
+do not read them, and a policy without a target workflow still fails closed.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

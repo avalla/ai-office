@@ -1971,13 +1971,52 @@ is unchanged, the pack is still unregistered and unread by the Runtime, and
 nothing was removed from the legacy path; the pack must not become
 authoritative for Runtime execution without a separately approved task. The
 execution parity task `a45ddb12-3159-4b60-9b8b-c26516720834` depends on
-GP-10B-1, GP-10B-2 and the policy task. Aliases, Development Pack prompts
-and the descriptive contract extension (GP-10B-2), pack policy contributions
-(GP-25), declarative development evidence, knowledge and capability entries
-(GP-10C-1), automatic
-selection, remote marketplace/downloads and executable validators remain
-deferred. Adoption (GP-10C-2) and Runtime execution from packs are planned
-for M16.5. M16 remains incomplete until its re-scoped exit criteria are met.
+GP-10B-1, GP-10B-2 and the policy task. GP-10B-2 is delivered as two pull
+requests. The first, the contract, is an additive schema-1 extension with the
+descriptive vocabulary that residue needs: workflow stage `title`,
+`objective` and `checks`, role `responsibilities`, prompt `text` and workflow
+`additionalTaskTypes`, with the same fields in project-owned and `replace`
+payloads, the resolved view, upgrade reconciliation and portable archive
+format 10. It adds no migration, CLI command or error code, leaves the
+development pack at `0.2.0` and the legacy path untouched, and records two
+limits: project text stays bounded at 16,000 UTF-16 code units, below the
+65,536-byte legacy guidance bound, and a mutation over the 16 KiB argument
+limit cannot be sent. The fields are declarative; nothing in the Runtime
+reads them. The second pull request extends the development pack to `0.3.0`
+with the descriptive defaults (role responsibilities, stage title, objective
+and checks), the `maintenance -> delivery` route as `additionalTaskTypes`,
+the four role guidance prompts (the bytes of `agents/<id>/system.md`, named
+by the agent of the role) and reference prompts for the static
+instruction-contract text and the requirement-assessment message. It proves
+expressible-subset parity on the GP-09 fixture and on the shipped defaults
+and moves the residue list to `schemaVersion` 3 with the seven GP-10B-2
+entries delivered. It is not execution parity; `knowledge` and `policies`
+stay empty, the pack is still unregistered and unread by the Runtime, no
+instruction file or provider request is generated from a pack prompt and
+nothing was removed from the legacy path. GP-25, whose number is now
+confirmed, gives the schema-1 `policies` contribution a typed form: a policy
+targets one workflow of its own pack and declares its `enforcement` and, per
+stage, `requiresApproval`, `requiresIndependentApproval`,
+`requiresDifferentAgentFrom` and the admitted `operations`, which are opaque
+operation names independent of pack capabilities and of GP-16. A pack whose
+policies are all typed resolves, and `project:configuration:show` lists a
+derived `policies` view; a policy without a target workflow still fails
+closed. Policies are pack-owned: a project cannot override or own one, a
+workflow replacement must keep every governed stage and separation order
+(`policy_target_missing`), and the policy of an existing workflow changes
+only through `project:pack:upgrade`, whose plan reports `policyChanges` and
+`targetPolicies` (`project:pack:apply` refuses it with
+`policy_change_requires_upgrade`). It adds no migration and no archive
+format, and nothing is enforced from a policy: the Runtime still reads only
+the OfficeManifest pipelines. The policies of the development reference pack
+and their parity tests are a second GP-25 pull request that follows the pack
+version of GP-10B-2. Aliases, the development pack's policy data (GP-25, second pull
+request) and declarative development evidence, knowledge and capability
+entries (GP-10C-1) remain planned work of M16; automatic selection, remote
+marketplace/downloads and executable validators remain deferred. Runtime
+enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and Runtime
+execution from packs are planned for M16.5. M16 remains incomplete until its
+re-scoped exit criteria are met.
 
 ### Post-GP-06 hardening follow-ups
 
@@ -2036,6 +2075,35 @@ depends on the other, and no other GP task depends on them.
 
 Scope, exact acceptance criteria and non-goals are in the
 [plan's hardening section](generic-core-domain-packs.md#post-gp-06-hardening-follow-ups).
+
+### GP-16 pack capability contracts
+
+Status: implemented; the contract was approved by the owner on 2026-10-06.
+
+GP-16 is a definition-layer task. A pack capability may declare the operations
+it needs, by connector operation name and mode, as required or optional. The
+Runtime host exposes its registered connector descriptors through a read-only
+application port. Resolution, `project:pack:preview`, `project:pack:apply` and
+`project:pack:upgrade` fail closed with `missing_required_capability_provider`
+or `capability_provider_mismatch` when a required operation has no registered
+provider or the provider offers it in another mode. `project:configuration:show`
+reports each binding in a derived `capabilities` view. A change to an existing
+capability's contract is refused by `project:pack:apply` and reviewed through
+`project:pack:upgrade`, whose plan lists it under `planDigest`.
+
+A binding grants nothing. Grants, constraints, approval and controlled
+execution are unchanged and still separately authorize every use; a request
+for a bound operation without a grant is denied as before. There is no
+scheduler or run gate: rejecting a run for a missing provider belongs to the
+execution parity task `a45ddb12-3159-4b60-9b8b-c26516720834` and GP-24.
+Provider binding is host-local availability and is not part of
+`configurationDigest`, which narrows ADR-0026 on purpose. GP-25 stage
+operations are opaque names and do not reference these declarations. No migration and no portable archive
+format are added, and the development pack is not edited.
+
+The contract, the three meanings of "capability", the owner decisions, the
+acceptance criteria and what is unmet relative to the original wording are in
+the [plan's GP-16 section](generic-core-domain-packs.md#gp-16-pack-capability-contracts).
 
 Exit, re-scoped by owner decision on 2026-10-06 to the definition and
 contract layer plus reference fixtures: the development, legal and

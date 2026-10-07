@@ -4,6 +4,7 @@ import {
   type Contribution,
   type ContributionKind,
   type DomainPackManifest,
+  type PolicyContribution,
   type WorkflowContribution,
 } from "../../../domain-pack-contracts/src/index.ts";
 import { canonicalizeJcsJson } from "../../../domain-pack-contracts/src/jcs.ts";
@@ -12,7 +13,15 @@ import {
   type InstalledDomainPackCatalog,
   type PackIdentity,
 } from "../ports/installed-domain-pack-catalog.port.ts";
+import {
+  noOperationProviders,
+  type OperationProviderCatalog,
+} from "../ports/operation-provider-catalog.port.ts";
 import type { ProjectPackBinding } from "../ports/project-pack-binding-repository.port.ts";
+import {
+  bindCapabilityContracts,
+  type ResolvedCapability,
+} from "./capability-contracts.ts";
 import {
   compareExactSources,
   compareOwnedDefinitions,
@@ -28,7 +37,14 @@ import {
   type ProjectDefinitionPayload,
   type ProjectDefinitionState,
   type ProjectOwnedDefinition,
+  type RoleDefinition,
 } from "./project-definition.ts";
+import {
+  policyClauses,
+  policyTargetMissing,
+  policyTargetViolations,
+  type PolicyClauses,
+} from "./pack-policy-clauses.ts";
 import {
   CapturedPackManifestError,
   resolveInstalledPackManifests,
@@ -49,6 +65,9 @@ export type ConfigurationIssueCode =
   | "disabled_required_definition"
   | "agent_capability_exceeds_role"
   | "unsupported_security_composition"
+  | typeof policyTargetMissing
+  | "missing_required_capability_provider"
+  | "capability_provider_mismatch"
   | "configuration_invariant"
   | "stale_resolution";
 
@@ -87,6 +106,8 @@ export interface ResolvedRole {
   readonly origin: "pack_owned" | "project_owned";
   readonly title?: string;
   readonly description?: string;
+  /** Descriptive and ordered (GP-10B-2); present only when the role has any. */
+  readonly responsibilities?: readonly string[];
   readonly capabilities: readonly string[];
   readonly customization: "none" | "replace" | "extend";
 }
@@ -125,13 +146,47 @@ export interface ResolvedWorkflow {
   readonly title?: string;
   readonly description?: string;
   readonly taskTypeId: string;
-  readonly stages: readonly { readonly id: string; readonly roleId: string }[];
+  /**
+   * Stable IDs of the further task types the workflow routes (GP-10B-2), in
+   * ascending order of their local ID; present only when there is one.
+   */
+  readonly additionalTaskTypeIds?: readonly string[];
+  /** A stage's `title`, `objective` and `checks` are present only when set. */
+  readonly stages: readonly {
+    readonly id: string;
+    readonly roleId: string;
+    readonly title?: string;
+    readonly objective?: string;
+    readonly checks?: readonly string[];
+  }[];
   readonly customization: "none" | "replace" | "extend";
+}
+
+/**
+ * The declared policy of one pack workflow (GP-25). `policyId` and
+ * `workflowId` are stable slot identities. `state` is `inert` when the
+ * project disabled the target workflow: nothing is left to govern. The
+ * clauses are the pack's under every customization; a project cannot change
+ * them. Nothing here is enforced, approved or granted.
+ */
+export interface ResolvedPolicy extends PolicyClauses {
+  readonly policyId: string;
+  readonly effectiveId: string;
+  readonly origin: "pack_owned";
+  readonly title?: string;
+  readonly description?: string;
+  readonly workflowId: string;
+  readonly state: "active" | "inert";
 }
 
 export interface ResolvedWorkflowReferences {
   readonly workflowId: string;
   readonly taskTypeId: string;
+  /**
+   * Present only for a workflow with additional task types, so the digest of
+   * a configuration without any is what it was before the field existed.
+   */
+  readonly additionalTaskTypeIds?: readonly string[];
   readonly stages: readonly { readonly id: string; readonly roleId: string }[];
 }
 
@@ -194,6 +249,17 @@ export interface ResolvedProjectConfiguration {
   readonly workflows: readonly ResolvedWorkflow[];
   /** Stable IDs of disabled workflows, which are absent from `workflows`. */
   readonly disabledWorkflows: readonly string[];
+  /**
+   * Derived capability contract view over the resolved pack closure (GP-16):
+   * each declared operation with the provider this host bound it to. It is
+   * not digest or pin material, and a binding grants nothing.
+   */
+  readonly capabilities: readonly ResolvedCapability[];
+  /**
+   * Derived policy contract view over `effectiveDefinitions.policies`. Like
+   * the other views, it is not digest material.
+   */
+  readonly policies: readonly ResolvedPolicy[];
   /** The minimum evidence future run records must pin. */
   readonly pin: {
     readonly configurationDigest: string;
@@ -346,7 +412,7 @@ function storedOverride(entry: ProjectDefinitionOverride): {
     if (error instanceof ProjectDefinitionConflictError)
       failure(
         "unresolved_override",
-        `Stored override violates the override contract: ${error.code}`,
+        `Stored override violates the override contract: ${error.code}: ${error.message}`,
       );
     throw error;
   }
@@ -359,6 +425,11 @@ export function resolveProjectConfiguration(input: {
   readonly definitions: ProjectDefinitionState;
   readonly catalog: InstalledDomainPackCatalog;
   readonly coreContractVersion: number;
+  /**
+   * The host's registered operation providers. Absent means none, so a
+   * required operation is never bound by omission.
+   */
+  readonly providers?: OperationProviderCatalog;
 }): ResolvedProjectConfiguration {
   const {
     projectId: owner,
@@ -436,7 +507,12 @@ export function resolveProjectConfiguration(input: {
 
   for (const pack of resolvedPacks) {
     const manifest = manifests.get(tupleKey(pack))!;
-    if (manifest.contributions.policies.length)
+    // A policy without a target workflow has no typed clause (GP-25).
+    if (
+      manifest.contributions.policies.some(
+        (policy) => policy.workflow === undefined,
+      )
+    )
       failure(
         "unsupported_security_composition",
         `Pack ${pack.id}@${pack.version} has schema-1 policy declarations without typed clauses`,
@@ -526,8 +602,9 @@ export function resolveProjectConfiguration(input: {
     let next: ResolvedDefinition;
     if (entry.operation === "disable") next = { ...current, enabled: false };
     else if (entry.operation === "replace" && payload) {
-      // A replacement substitutes the descriptive envelope only. A role's
-      // capability set stays the pack's: a project payload cannot carry one.
+      // A replacement substitutes the descriptive envelope only, with its
+      // responsibilities or text when it carries them. A role's capability
+      // set stays the pack's: a project payload cannot carry one.
       // An agent's references are project-controlled: its replacement is the
       // complete agent envelope and is never merged with the pack's. The
       // same holds for a workflow's task type and ordered stages.
@@ -654,13 +731,32 @@ export function resolveProjectConfiguration(input: {
     // originating pack tuple. Stage order is the payload's, never sorted.
     const payload = workflow.payload as WorkflowContribution;
     const taskType = resolveReference(workflow, "taskTypes", payload.taskType);
+    // Further routes resolve exactly like the task type.
+    const additionalTaskTypes = (payload.additionalTaskTypes ?? []).map(
+      (localId) => resolveReference(workflow, "taskTypes", localId),
+    );
     const stages = payload.stages.map((stage) => ({
       id: stage.id,
       role: resolveReference(workflow, "roles", stage.role),
+      // Descriptive fields are reported as they are, only when set.
+      described: {
+        ...(stage.title === undefined ? {} : { title: stage.title }),
+        ...(stage.objective === undefined
+          ? {}
+          : { objective: stage.objective }),
+        ...(stage.checks === undefined ? {} : { checks: stage.checks }),
+      },
     }));
     resolvedWorkflowReferences.push({
       workflowId: workflow.effectiveId,
       taskTypeId: taskType.effectiveId,
+      ...(additionalTaskTypes.length === 0
+        ? {}
+        : {
+            additionalTaskTypeIds: additionalTaskTypes.map(
+              (target) => target.effectiveId,
+            ),
+          }),
       stages: stages.map((stage) => ({
         id: stage.id,
         roleId: stage.role.effectiveId,
@@ -678,12 +774,65 @@ export function resolveProjectConfiguration(input: {
       ...(title === undefined ? {} : { title }),
       ...(description === undefined ? {} : { description }),
       taskTypeId: stableId(taskType),
+      ...(additionalTaskTypes.length === 0
+        ? {}
+        : { additionalTaskTypeIds: additionalTaskTypes.map(stableId) }),
       stages: stages.map((stage) => ({
         id: stage.id,
         roleId: stableId(stage.role),
+        ...stage.described,
       })),
       customization:
         operation === "replace" || operation === "extend" ? operation : "none",
+    });
+  }
+
+  // A pack policy is mandatory and pack-owned: its clauses are the pack's,
+  // and the effective workflow, the pack's or the project's replacement,
+  // must still carry every stage the policy names, in the required order.
+  const policies: ResolvedPolicy[] = [];
+  for (const definition of byKind.policies) {
+    const provenance = provenanceOf(definition.effectiveId);
+    const policy = definition.payload as PolicyContribution;
+    if (provenance.origin !== "pack_owned" || policy.workflow === undefined)
+      failure(
+        "unsupported_security_composition",
+        `Policy ${definition.effectiveId} has no typed pack clauses`,
+      );
+    const target = source.get(
+      packId(provenance.pack, "workflows", policy.workflow),
+    );
+    if (!target)
+      failure(
+        policyTargetMissing,
+        `Policy ${definition.effectiveId} targets workflows/${policy.workflow}, which its pack does not declare`,
+      );
+    // A disabled workflow leaves the configuration: nothing to govern.
+    if (target.enabled) {
+      const violation = policyTargetViolations(
+        policy,
+        (target.payload as WorkflowContribution).stages.map(
+          (stage) => stage.id,
+        ),
+      )[0];
+      if (violation)
+        failure(
+          policyTargetMissing,
+          violation.kind === "stage_missing"
+            ? `Policy ${definition.effectiveId} governs stage ${violation.stage}, which workflow ${target.effectiveId} does not declare`
+            : `Policy ${definition.effectiveId} requires stage ${violation.predecessor} before stage ${violation.stage} in workflow ${target.effectiveId}`,
+        );
+    }
+    const { title, description } = definition.payload;
+    policies.push({
+      policyId: stableId(definition),
+      effectiveId: definition.effectiveId,
+      origin: "pack_owned",
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      workflowId: stableId(target),
+      state: target.enabled ? "active" : "inert",
+      ...policyClauses(policy),
     });
   }
 
@@ -708,6 +857,7 @@ export function resolveProjectConfiguration(input: {
       continue;
     }
     const { title, description } = definition.payload;
+    const { responsibilities } = definition.payload as RoleDefinition;
     const operation =
       provenance.origin === "pack_owned"
         ? provenance.override?.operation
@@ -718,6 +868,7 @@ export function resolveProjectConfiguration(input: {
       origin: provenance.origin,
       ...(title === undefined ? {} : { title }),
       ...(description === undefined ? {} : { description }),
+      ...(responsibilities === undefined ? {} : { responsibilities }),
       // Only a pack source declares capabilities; they are reported by the
       // stable ID of the capability the same pack declares.
       capabilities:
@@ -803,6 +954,15 @@ export function resolveProjectConfiguration(input: {
     });
   }
 
+  // GP-16: every capability of the closure, whether or not a role or an agent
+  // names it. A capability has no override, so nothing above can hide one.
+  const bound = bindCapabilityContracts(
+    closure,
+    input.providers ?? noOperationProviders,
+  );
+  if ("issues" in bound)
+    failure(bound.issues[0]!.code, bound.issues[0]!.message);
+
   const sortedOrigins = Object.fromEntries(
     Object.keys(origins)
       .sort(compareIds)
@@ -848,6 +1008,8 @@ export function resolveProjectConfiguration(input: {
     disabledAgents,
     workflows,
     disabledWorkflows,
+    capabilities: bound.capabilities,
+    policies,
     pin: {
       configurationDigest,
       coreContractVersion,

@@ -12,9 +12,18 @@ import {
 } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
 import type { PackIdentity } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
+import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
+import {
+  planProjectPackUpgrade,
+  ReconcileProjectPackUpgrade,
+} from "@ai-office/application/domain-pack/reconcile-project-pack-upgrade.ts";
 import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import { resolveProjectConfiguration } from "@ai-office/application/domain-pack/resolve-project-configuration.ts";
 import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
+import {
+  portableProjectArchiveSchemaV9,
+  portableProjectArchiveSchemaV10,
+} from "@ai-office/application/project-portability/project-snapshot.ts";
 import type {
   LinkedRequirement,
   TaskRequirementRepository,
@@ -28,11 +37,17 @@ import {
 import type { RequirementStatus } from "@ai-office/domain/governance/governance.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
+import type { AuditEvent } from "@ai-office/domain/event/audit-event.ts";
 import {
+  computeArtifactDigest,
+  computeManifestDigest,
+  contributionKinds,
   parseDomainPackId,
+  parseDomainPackManifest,
   parseDomainPackVersion,
   parseManifestDigest,
 } from "../../packages/domain-pack-contracts/src/index.ts";
+import { InMemoryInstalledDomainPackCatalog } from "../../packages/runtime-host/src/installed-domain-pack-catalog.ts";
 
 export interface RepositoryContractHarness {
   projects: ProjectRepository;
@@ -719,6 +734,175 @@ export function defineProjectStorageContracts(
             ),
           ).rejects.toThrow();
         expect(await definitions().get(projectId)).toEqual(current);
+      });
+
+      test("stores the descriptive vocabulary unchanged, in list order, and exportable at format 10 only", async () => {
+        const projectId = (
+          await createProject(harness, `${prefix}-definition-descriptive`)
+        ).snapshot().id;
+        const tuple = {
+          id: parseDomainPackId("org.example.legal"),
+          version: parseDomainPackVersion("1.0.0"),
+          manifestDigest: parseManifestDigest(`sha256:${"a".repeat(64)}`),
+        };
+        const entry = {
+          origin: "project_override" as const,
+          operation: "replace" as const,
+          revision: 1,
+          actorId: "operator",
+          changedAt: now.toISOString(),
+        };
+        // Lists in no sort order, with a repeated entry; text with line
+        // breaks, a non-BMP character and the full project text bound.
+        const long = "x".repeat(16_000);
+        const text = `Line one\nLine two 😀\n\n${long.slice(0, 200)}`;
+        const stages = [
+          {
+            id: "z-last",
+            role: "paralegal",
+            title: "Last",
+            objective: long,
+            checks: ["b second", "a first", "b second", "C third"],
+          },
+          { id: "a-first", role: "counsel", checks: ["only"] },
+          { id: "m-middle", role: "clerk" },
+        ];
+        const state = {
+          projectId,
+          revision: 0,
+          owned: [
+            {
+              ...owned,
+              kind: "prompts" as const,
+              id: "house",
+              payload: { id: "house", title: "House", text },
+            },
+            {
+              ...owned,
+              id: "liaison",
+              payload: {
+                id: "liaison",
+                responsibilities: ["z write", "a call", "z write", "M meet"],
+              },
+            },
+            {
+              ...owned,
+              kind: "workflows" as const,
+              id: "ours",
+              payload: {
+                id: "ours",
+                taskType: "errand",
+                additionalTaskTypes: ["Zeta", "appeal", "visit"],
+                stages,
+              },
+            },
+          ],
+          overrides: [
+            {
+              ...entry,
+              source: { ...tuple, kind: "prompts" as const, localId: "brief" },
+              payload: { id: "brief", text: long },
+            },
+            {
+              ...entry,
+              source: { ...tuple, kind: "roles" as const, localId: "counsel" },
+              payload: {
+                id: "counsel",
+                title: "Our counsel",
+                responsibilities: ["z sign", "a advise"],
+              },
+            },
+            {
+              ...entry,
+              source: {
+                ...tuple,
+                kind: "workflows" as const,
+                localId: "review",
+              },
+              payload: {
+                id: "review",
+                taskType: "matter",
+                additionalTaskTypes: ["appeal", "filing"],
+                stages,
+              },
+            },
+          ],
+        };
+        const current = await definitions().replace(state, 0, now);
+        expect(current).toEqual({ ...state, revision: 1 });
+        const read = await definitions().get(projectId);
+        expect(read).toEqual(current);
+        // Order is the stored order, not a sorted one.
+        const payloads = [...read.owned, ...read.overrides].map(
+          (item) => item.payload as unknown as Record<string, unknown>,
+        );
+        expect(payloads[1]?.responsibilities).toEqual([
+          "z write",
+          "a call",
+          "z write",
+          "M meet",
+        ]);
+        expect(payloads[4]?.responsibilities).toEqual(["z sign", "a advise"]);
+        for (const index of [2, 5]) {
+          const stored = payloads[index]?.stages as {
+            id: string;
+            checks?: string[];
+          }[];
+          expect(stored.map((stage) => stage.id)).toEqual([
+            "z-last",
+            "a-first",
+            "m-middle",
+          ]);
+          expect(stored[0]?.checks).toEqual([
+            "b second",
+            "a first",
+            "b second",
+            "C third",
+          ]);
+          expect(Object.hasOwn(stored[2]!, "checks")).toBe(false);
+        }
+        expect(payloads[0]?.text).toBe(text);
+        expect(payloads[3]?.text).toBe(long);
+
+        // What was read back is exportable: it is a valid format-10
+        // definition section, and no earlier format accepts it.
+        const section = {
+          revision: read.revision,
+          owned: read.owned,
+          overrides: read.overrides,
+        };
+        const exported =
+          portableProjectArchiveSchemaV10.shape.state.shape.definitions.safeParse(
+            section,
+          );
+        expect(exported.success).toBe(true);
+        expect(exported.data).toEqual(section);
+        expect(
+          portableProjectArchiveSchemaV9.shape.state.shape.definitions.safeParse(
+            section,
+          ).success,
+        ).toBe(false);
+
+        // An update that drops the fields leaves none behind.
+        const plain = await definitions().replace(
+          {
+            projectId,
+            revision: 1,
+            owned: [
+              {
+                ...owned,
+                id: "liaison",
+                revision: 2,
+                payload: { id: "liaison" },
+              },
+            ],
+            overrides: [],
+          },
+          1,
+          now,
+        );
+        expect(await definitions().get(projectId)).toEqual(plain);
+        expect(plain.owned[0]?.payload).toEqual({ id: "liaison" });
       });
 
       test("creates, updates and removes ordered owned and exact-source entries", async () => {
@@ -1490,6 +1674,292 @@ export function defineProjectStorageContracts(
             coreContractVersion: 1,
           }).configurationDigest,
         );
+      });
+
+      test("a pack with policies binds, resolves and upgrades with provider-independent results", async () => {
+        if (
+          !harness.packBindings ||
+          !harness.definitions ||
+          !harness.definitionRowCounts
+        )
+          throw new Error("Configuration source repositories are required");
+        const { packBindings, definitions } = harness;
+        const projectId = (
+          await createProject(harness, `${prefix}-configuration-policies`)
+        ).snapshot().id;
+        // GP-25: one governed workflow whose policy changes in version 2.
+        const encoder = new TextEncoder();
+        const packBytes = (version: string, operations: string[]) => {
+          const draft = {
+            schemaVersion: 1,
+            id: "org.example.governed",
+            version,
+            manifestDigest: `sha256:${"0".repeat(64)}`,
+            coreContract: { minInclusive: 1, maxExclusive: 3 },
+            metadata: { name: "Governed", description: "Policy fixture" },
+            dependencies: [],
+            contributions: {
+              ...Object.fromEntries(
+                contributionKinds.map((kind) => [kind, [] as unknown[]]),
+              ),
+              roles: [{ id: "author" }, { id: "reviewer" }],
+              taskTypes: [{ id: "change" }],
+              workflows: [
+                {
+                  id: "delivery",
+                  taskType: "change",
+                  stages: [
+                    { id: "implement", role: "author" },
+                    { id: "review", role: "reviewer" },
+                  ],
+                },
+              ],
+              policies: [
+                {
+                  id: "delivery-governance",
+                  title: "Delivery governance",
+                  workflow: "delivery",
+                  enforcement: "enforced",
+                  stages: [
+                    {
+                      stage: "review",
+                      requiresApproval: true,
+                      requiresIndependentApproval: true,
+                      requiresDifferentAgentFrom: ["implement"],
+                      operations,
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+          return encoder.encode(
+            JSON.stringify({
+              ...draft,
+              manifestDigest: computeManifestDigest(
+                parseDomainPackManifest(encoder.encode(JSON.stringify(draft))),
+              ),
+            }),
+          );
+        };
+        const catalog = new InMemoryInstalledDomainPackCatalog(1, [
+          "local-distribution",
+        ]);
+        const [v1, v2] = [
+          packBytes("1.0.0", ["filesystem.read"]),
+          packBytes("2.0.0", ["filesystem.read", "git:commit"]),
+        ].map((bytes) =>
+          catalog.register({
+            bytes,
+            artifactDigest: computeArtifactDigest(bytes),
+            provenance: {
+              installerId: "local-distribution",
+              reference: "contract",
+            },
+          }),
+        ) as [PackIdentity, PackIdentity];
+        const events: AuditEvent[] = [];
+        let sequence = 0;
+        const ports = {
+          projects: harness.projects,
+          bindings: packBindings,
+          definitions,
+          catalog,
+          auditEvents: {
+            append: async (event: AuditEvent) => {
+              events.push(event);
+            },
+          },
+          transactions: harness.transactions,
+          clock: { now: () => now },
+          ids: { generate: () => `${prefix}-audit-${++sequence}` },
+        };
+        const binding = new ManageProjectPackBinding(ports);
+        const mutations = new ManageProjectDefinitions(ports);
+        const upgrade = new ReconcileProjectPackUpgrade(ports);
+        const reader = new ReadProjectConfiguration({ ...ports });
+        const policyOf = (operations: string[]) => ({
+          policyId: "pack:org.example.governed/policies/delivery-governance",
+          workflowId: "pack:org.example.governed/workflows/delivery",
+          enforcement: "enforced",
+          stages: [
+            {
+              stage: "review",
+              requiresApproval: true,
+              requiresIndependentApproval: true,
+              requiresDifferentAgentFrom: ["implement"],
+              operations,
+            },
+          ],
+        });
+        const replace = (stages: { id: string; role: string }[]) => ({
+          action: "put_override",
+          source: { ...v1, kind: "workflows", localId: "delivery" },
+          operation: "replace",
+          payload: { id: "delivery", taskType: "change", stages },
+        });
+
+        // Binding.
+        expect(
+          await binding.apply({
+            projectId,
+            desired: [v1],
+            expectedRevision: 0,
+            actorId: "operator",
+          }),
+        ).toMatchObject({ configurationRevision: 1, packs: [v1] });
+
+        // A replacement that drops the governed stage is refused before it
+        // reaches storage; one that keeps it and adds a stage is stored.
+        await expect(
+          mutations.apply({
+            projectId,
+            mutation: replace([{ id: "implement", role: "author" }]),
+            expectedRevision: 0,
+            actorId: "operator",
+          }),
+        ).rejects.toMatchObject({ code: "policy_target_missing" });
+        expect(await harness.definitionRowCounts(projectId)).toEqual({
+          heads: 0,
+          owned: 0,
+          overrides: 0,
+        });
+        await mutations.apply({
+          projectId,
+          mutation: replace([
+            { id: "implement", role: "author" },
+            { id: "document", role: "author" },
+            { id: "review", role: "reviewer" },
+          ]),
+          expectedRevision: 0,
+          actorId: "operator",
+        });
+
+        // Resolution equals the pure resolver over the stored sources.
+        const resolved = await reader.read(projectId);
+        expect(resolved.policies).toEqual([
+          {
+            ...policyOf(["filesystem.read"]),
+            effectiveId: `pack:${v1.id}@${v1.version}#${v1.manifestDigest}/policies/delivery-governance`,
+            origin: "pack_owned",
+            title: "Delivery governance",
+            state: "active",
+          },
+        ]);
+        const pure = async () =>
+          resolveProjectConfiguration({
+            projectId: "provider-independent",
+            binding: {
+              ...(await packBindings.get(projectId)),
+              projectId: "provider-independent",
+            },
+            definitions: {
+              ...(await definitions.get(projectId)),
+              projectId: "provider-independent",
+            },
+            catalog,
+            coreContractVersion: 1,
+          });
+        expect(resolved).toEqual(await pure());
+
+        // The policy change is refused as a plain selection change.
+        const refused = await binding.preview(projectId, [v2]);
+        expect(refused.issues.map((issue) => issue.code)).toEqual([
+          "policy_change_requires_upgrade",
+        ]);
+        await expect(
+          binding.apply({
+            projectId,
+            desired: [v2],
+            expectedRevision: 1,
+            actorId: "operator",
+          }),
+        ).rejects.toMatchObject({ code: "policy_change_requires_upgrade" });
+        expect(await packBindings.get(projectId)).toMatchObject({
+          configurationRevision: 1,
+          packs: [v1],
+        });
+
+        // The reviewed upgrade carries it out.
+        const plan = await upgrade.preview({ projectId, desired: [v2] });
+        expect(plan).toEqual(
+          planProjectPackUpgrade({
+            binding: await packBindings.get(projectId),
+            definitions: await definitions.get(projectId),
+            desired: [v2],
+            resolutions: [],
+            catalog,
+          }),
+        );
+        expect(plan.issues).toEqual([]);
+        expect(plan.policyChanges).toEqual({
+          availability: "available",
+          changes: [
+            {
+              workflowId: "pack:org.example.governed/workflows/delivery",
+              change: "changed",
+              before: policyOf(["filesystem.read"]),
+              after: policyOf(["filesystem.read", "git:commit"]),
+              customized: true,
+            },
+          ],
+        });
+        expect(plan.targetPolicies).toEqual([
+          policyOf(["filesystem.read", "git:commit"]),
+        ]);
+        const before = events.length;
+        expect(
+          await upgrade.apply({
+            projectId,
+            desired: [v2],
+            approvedPlanDigest: plan.planDigest,
+            actorId: "operator",
+          }),
+        ).toMatchObject({ result: "applied", packs: [v2] });
+        expect(
+          events.slice(before).map((event) => event.snapshot().eventType),
+        ).toEqual(["project.pack_upgrade_applied"]);
+        expect(events.at(-1)!.snapshot().payload).toMatchObject({
+          policyChanges: plan.policyChanges,
+          targetPolicies: plan.targetPolicies,
+        });
+        const upgraded = await reader.read(projectId);
+        expect(upgraded.configurationDigest).toBe(
+          plan.prospectiveConfigurationDigest,
+        );
+        expect(upgraded).toEqual(await pure());
+        expect(upgraded.policies[0]).toMatchObject(
+          policyOf(["filesystem.read", "git:commit"]),
+        );
+        expect(upgraded.workflows[0]!.stages.map((stage) => stage.id)).toEqual([
+          "implement",
+          "document",
+          "review",
+        ]);
+
+        // Stored state that violates the policy fails closed at resolution.
+        const stored = await definitions.get(projectId);
+        await definitions.replace(
+          {
+            ...stored,
+            overrides: stored.overrides.map((item) => ({
+              ...item,
+              payload: {
+                id: "delivery",
+                taskType: "change",
+                stages: [
+                  { id: "review", role: "reviewer" },
+                  { id: "implement", role: "author" },
+                ],
+              },
+            })),
+          },
+          stored.revision,
+          now,
+        );
+        await expect(reader.read(projectId)).rejects.toMatchObject({
+          code: "policy_target_missing",
+        });
       });
 
       test("stored definitions resolve to the provider-independent digest and order", async () => {

@@ -18,6 +18,10 @@ import {
   type ProjectDefinitionOverride,
   type ProjectOwnedDefinition,
 } from "./project-definition.ts";
+import {
+  policyTargetMissing,
+  policyTargetViolations,
+} from "./pack-policy-clauses.ts";
 import { resolveInstalledPacks } from "./resolve-installed-packs.ts";
 import {
   packDefinitionCollision,
@@ -138,11 +142,11 @@ function agentReferenceIssues(
 }
 
 /**
- * GP-06 rejects a workflow whose task type or stage roles do not resolve in
- * its own pack. Report that for a replacement before it is stored, against
- * the exact source manifest, in envelope order and once per missing
- * reference. Whether a referenced role is omitted depends on the other
- * project entries and stays with the resolver.
+ * GP-06 rejects a workflow whose task type, additional task types or stage
+ * roles do not resolve in its own pack. Report that for a replacement before
+ * it is stored, against the exact source manifest, in envelope order and once
+ * per missing reference. Whether a referenced role is omitted depends on the
+ * other project entries and stays with the resolver.
  */
 function workflowReferenceIssues(
   manifest: DomainPackManifest,
@@ -165,8 +169,37 @@ function workflowReferenceIssues(
   const roles = [...new Set(payload.stages.map((stage) => stage.role))];
   return [
     ...missing("taskTypes", payload.taskType),
+    // Further routes (GP-10B-2) are task types of the same exact source.
+    ...(payload.additionalTaskTypes ?? []).flatMap((taskType) =>
+      missing("taskTypes", taskType),
+    ),
     ...roles.flatMap((role) => missing("roles", role)),
   ];
+}
+
+/**
+ * GP-06 rejects a replacement of a governed workflow that no longer carries
+ * every stage its pack policy names, or that moves a separation predecessor
+ * after the stage that names it (GP-25). Report that before the replacement
+ * is stored, against the exact source manifest, once per violation.
+ */
+function workflowPolicyIssues(
+  manifest: DomainPackManifest,
+  payload: WorkflowDefinition,
+): ProjectDefinitionIssue[] {
+  const workflow = `workflows/${payload.id}`;
+  const stageIds = payload.stages.map((stage) => stage.id);
+  return manifest.contributions.policies
+    .filter((policy) => policy.workflow === payload.id)
+    .flatMap((policy) =>
+      policyTargetViolations(policy, stageIds).map((violation) => ({
+        code: policyTargetMissing,
+        message:
+          violation.kind === "stage_missing"
+            ? `Workflow ${workflow} must keep stage ${violation.stage}, which policy policies/${policy.id} of exact source governs`
+            : `Workflow ${workflow} must keep stage ${violation.predecessor} before stage ${violation.stage}, as policy policies/${policy.id} of exact source requires`,
+      })),
+    );
 }
 
 /**
@@ -336,10 +369,13 @@ export class ManageProjectDefinitions {
         item.payload
       )
         // storedOverrideIssues established the workflow envelope above.
-        return workflowReferenceIssues(
-          manifest,
-          item.payload as WorkflowDefinition,
-        );
+        return [
+          ...workflowReferenceIssues(
+            manifest,
+            item.payload as WorkflowDefinition,
+          ),
+          ...workflowPolicyIssues(manifest, item.payload as WorkflowDefinition),
+        ];
       return [];
     } catch (error) {
       return [installedSourceIssue(error)];
