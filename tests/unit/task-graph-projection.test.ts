@@ -3,7 +3,7 @@ import type {
   TaskGraphEdge,
   TaskGraphNode,
 } from "@ai-office/application/read-models/operational-read-models.ts";
-import { projectCriticalPath } from "@ai-office/application/read-models/task-graph-projection.ts";
+import { projectLongestDependencyChain } from "@ai-office/application/read-models/task-graph-projection.ts";
 import type { TaskStatus } from "@ai-office/domain/task/task.ts";
 
 const node = (
@@ -19,13 +19,15 @@ const node = (
   milestoneIds: [],
   unmetPrerequisiteIds: [],
   ready: false,
+  waiting: false,
+  needsAttention: false,
 });
 const edge = (dependsOnTaskId: string, taskId: string): TaskGraphEdge => ({
   taskId,
   dependsOnTaskId,
 });
 
-describe("projectCriticalPath", () => {
+describe("projectLongestDependencyChain", () => {
   test("handles a very long chain without recursion or quadratic copies", () => {
     const length = 50_000;
     const ids = Array.from(
@@ -36,7 +38,7 @@ describe("projectCriticalPath", () => {
     const edges = ids.slice(1).map((id, i) => edge(ids[i]!, id));
 
     const started = performance.now();
-    const path = projectCriticalPath(nodes, edges);
+    const path = projectLongestDependencyChain(nodes, edges);
 
     expect(path).toHaveLength(length);
     expect(path[0]).toBe(ids[0]);
@@ -52,14 +54,22 @@ describe("projectCriticalPath", () => {
       edge("b", "d"),
       edge("c", "d"),
     ];
-    expect(projectCriticalPath(nodes, edges)).toEqual(["a", "b", "d"]);
+    expect(projectLongestDependencyChain(nodes, edges)).toEqual([
+      "a",
+      "b",
+      "d",
+    ]);
   });
 
   test("prefers the longest chain over the smallest id", () => {
     const nodes = ["a", "b", "x", "y", "z"].map((id) => node(id));
     // a -> b is short; x -> y -> z is long.
     const edges = [edge("a", "b"), edge("x", "y"), edge("y", "z")];
-    expect(projectCriticalPath(nodes, edges)).toEqual(["x", "y", "z"]);
+    expect(projectLongestDependencyChain(nodes, edges)).toEqual([
+      "x",
+      "y",
+      "z",
+    ]);
   });
 
   test("ignores terminal tasks and a lone unfinished task", () => {
@@ -70,7 +80,7 @@ describe("projectCriticalPath", () => {
       node("d", "cancelled"),
     ];
     const edges = [edge("a", "b"), edge("c", "b"), edge("b", "d")];
-    expect(projectCriticalPath(nodes, edges)).toEqual([]);
+    expect(projectLongestDependencyChain(nodes, edges)).toEqual([]);
   });
 
   test("a corrupted cycle neither loops nor throws", () => {
@@ -78,6 +88,6 @@ describe("projectCriticalPath", () => {
     const edges = [edge("a", "b"), edge("b", "a"), edge("a", "c")];
     // With every node on or behind the cycle, nothing is ever ready to start,
     // so no chain is reported rather than a misleading partial one.
-    expect(projectCriticalPath(nodes, edges)).toEqual([]);
+    expect(projectLongestDependencyChain(nodes, edges)).toEqual([]);
   });
 });

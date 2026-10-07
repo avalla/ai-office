@@ -961,6 +961,29 @@ export interface TaskGraphNode {
    * over the whole project. A blocked or terminal task is never ready.
    */
   ready: boolean;
+  /**
+   * Not finished and at least one prerequisite is not completed (it is
+   * `unmetPrerequisiteIds.length > 0` on non-terminal work). A task can be both
+   * waiting and in any non-terminal status.
+   */
+  waiting: boolean;
+  /** The task carries at least one authoritative attention reason. */
+  needsAttention: boolean;
+}
+
+/**
+ * Whole-project operational counts, computed from the same nodes as the graph
+ * so a summary and the graph can never disagree. Each task is counted in every
+ * bucket that applies.
+ */
+export interface TaskGraphSummary {
+  total: number;
+  ready: number;
+  waiting: number;
+  /** Operational status `blocked`. */
+  blocked: number;
+  inProgress: number;
+  needsAttention: number;
 }
 
 export interface TaskGraphMilestone {
@@ -988,10 +1011,13 @@ export interface TaskGraph {
   tasks: readonly TaskGraphNode[];
   milestones: readonly TaskGraphMilestone[];
   edges: readonly TaskGraphEdge[];
+  summary: TaskGraphSummary;
   /**
-   * The longest prerequisite chain through unfinished (non-terminal) work, from the first task
-   * to start to the last to finish. Empty when nothing is unfinished. Ties are
-   * broken by task id so the result is deterministic.
+   * The longest chain of prerequisite-linked, non-terminal tasks, from the first
+   * to start to the last to finish. It counts tasks, not time: there are no
+   * duration estimates, so this is not a project-management critical path.
+   * Empty when no chain of two or more exists. Ties are broken by task id so the
+   * result is deterministic.
    */
-  criticalPath: readonly string[];
+  longestDependencyChain: readonly string[];
 }

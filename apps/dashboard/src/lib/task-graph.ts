@@ -2,41 +2,66 @@ import { graphlib, layout } from "@dagrejs/dagre";
 import type {
   TaskGraph,
   TaskGraphEdge,
-  TaskGraphMilestone,
   TaskGraphNode,
   TaskOperationalStatus,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 
-export const nodeSize = { width: 264, height: 80 } as const;
-export const milestoneNodeSize = { width: 264, height: 64 } as const;
+export const nodeSize = { width: 264, height: 96 } as const;
 
 export type GraphDirection = "LR" | "TB";
 
+/**
+ * Operational shortcuts. Every value is a flag or status the read model already
+ * computed; the browser only selects among them.
+ */
+export const quickFilters = [
+  "ready",
+  "waiting",
+  "blocked",
+  "in_progress",
+  "attention",
+] as const;
+export type QuickFilter = (typeof quickFilters)[number];
+
 export interface GraphFilters {
+  /** Applied only when the user asked to filter the graph by the search text. */
   search: string;
   status: TaskOperationalStatus | "";
   /** "" = all, "none" = tasks without a milestone, otherwise a milestone id. */
   milestone: string;
-  readyOnly: boolean;
+  quick: QuickFilter | "";
   hideCompleted: boolean;
-  showMilestones: boolean;
 }
 
 export const defaultGraphFilters: GraphFilters = {
   search: "",
   status: "",
   milestone: "",
-  readyOnly: false,
+  quick: "",
   hideCompleted: true,
-  showMilestones: true,
 };
+
+export function matchesQuickFilter(
+  task: TaskGraphNode,
+  quick: QuickFilter,
+): boolean {
+  switch (quick) {
+    case "ready":
+      return task.ready;
+    case "waiting":
+      return task.waiting;
+    case "blocked":
+      return task.operationalStatus === "blocked";
+    case "in_progress":
+      return task.operationalStatus === "in_progress";
+    case "attention":
+      return task.needsAttention;
+  }
+}
 
 export interface VisibleGraph {
   tasks: readonly TaskGraphNode[];
-  milestones: readonly TaskGraphMilestone[];
   edges: readonly TaskGraphEdge[];
-  /** Task → milestone membership edges between visible nodes. */
-  membership: readonly { taskId: string; milestoneId: string }[];
   hiddenTaskCount: number;
 }
 
@@ -55,16 +80,17 @@ export function filterGraph(
   const tasks = graph.tasks.filter((task) => {
     if (only !== undefined) return only.has(task.taskId);
     if (keep.has(task.taskId)) return true;
-    if (filters.hideCompleted && filters.status === "") {
-      if (
-        task.operationalStatus === "completed" ||
-        task.operationalStatus === "cancelled"
-      )
-        return false;
-    }
+    if (
+      filters.hideCompleted &&
+      filters.status === "" &&
+      (task.operationalStatus === "completed" ||
+        task.operationalStatus === "cancelled")
+    )
+      return false;
     if (filters.status !== "" && task.operationalStatus !== filters.status)
       return false;
-    if (filters.readyOnly && !task.ready) return false;
+    if (filters.quick !== "" && !matchesQuickFilter(task, filters.quick))
+      return false;
     if (filters.milestone === "none" && task.milestoneIds.length > 0)
       return false;
     if (
@@ -73,35 +99,53 @@ export function filterGraph(
       !task.milestoneIds.includes(filters.milestone)
     )
       return false;
-    if (
-      search !== "" &&
-      !task.taskId.toLowerCase().includes(search) &&
-      !task.title.toLowerCase().includes(search)
-    )
-      return false;
+    if (search !== "" && !matchesSearch(task, search)) return false;
     return true;
   });
   const ids = new Set(tasks.map((task) => task.taskId));
-  const membership = filters.showMilestones
-    ? tasks.flatMap((task) =>
-        task.milestoneIds.map((milestoneId) => ({
-          taskId: task.taskId,
-          milestoneId,
-        })),
-      )
-    : [];
-  const usedMilestones = new Set(membership.map((link) => link.milestoneId));
   return {
     tasks,
-    milestones: graph.milestones.filter((m) =>
-      usedMilestones.has(m.milestoneId),
-    ),
     edges: graph.edges.filter(
       (edge) => ids.has(edge.taskId) && ids.has(edge.dependsOnTaskId),
     ),
-    membership,
     hiddenTaskCount: graph.tasks.length - tasks.length,
   };
+}
+
+function matchesSearch(task: TaskGraphNode, search: string): boolean {
+  return (
+    task.taskId.toLowerCase().includes(search) ||
+    task.title.toLowerCase().includes(search)
+  );
+}
+
+/**
+ * Tasks matching the search text anywhere in the project, best match first:
+ * title prefix, then title substring, then id. Used to locate a task without
+ * removing the rest of the graph.
+ */
+export function searchTasks(
+  graph: TaskGraph,
+  text: string,
+  limit = 8,
+): { matches: readonly TaskGraphNode[]; total: number } {
+  const search = text.trim().toLowerCase();
+  if (search === "") return { matches: [], total: 0 };
+  const rank = (task: TaskGraphNode) =>
+    task.title.toLowerCase().startsWith(search)
+      ? 0
+      : task.title.toLowerCase().includes(search)
+        ? 1
+        : 2;
+  const found = graph.tasks
+    .filter((task) => matchesSearch(task, search))
+    .sort(
+      (a, b) =>
+        rank(a) - rank(b) ||
+        a.title.localeCompare(b.title) ||
+        a.taskId.localeCompare(b.taskId),
+    );
+  return { matches: found.slice(0, limit), total: found.length };
 }
 
 export interface Lineage {
@@ -146,7 +190,10 @@ export interface Positioned {
   y: number;
 }
 
-/** Layered layout: prerequisites left of (or above) their dependents. */
+/**
+ * Layered layout of task dependencies only: prerequisites left of (or above)
+ * their dependents. Nothing else takes part in the geometry.
+ */
 export function layoutGraph(
   visible: VisibleGraph,
   direction: GraphDirection,
@@ -163,30 +210,22 @@ export function layoutGraph(
   for (const task of visible.tasks)
     // dagre writes x/y into the label, so each node needs its own object.
     g.setNode(taskKey(task.taskId), { ...nodeSize });
-  for (const milestone of visible.milestones)
-    g.setNode(milestoneKey(milestone.milestoneId), { ...milestoneNodeSize });
   for (const edge of visible.edges)
     g.setEdge(taskKey(edge.dependsOnTaskId), taskKey(edge.taskId));
-  for (const link of visible.membership)
-    g.setEdge(taskKey(link.taskId), milestoneKey(link.milestoneId), {
-      weight: 0,
-    });
   layout(g);
   const positions = new Map<string, Positioned>();
   for (const id of g.nodes()) {
     const node = g.node(id);
-    const size = id.startsWith("m:") ? milestoneNodeSize : nodeSize;
     // dagre reports centres; React Flow positions the top-left corner.
     positions.set(id, {
-      x: node.x - size.width / 2,
-      y: node.y - size.height / 2,
+      x: node.x - nodeSize.width / 2,
+      y: node.y - nodeSize.height / 2,
     });
   }
   return positions;
 }
 
 export const taskKey = (taskId: string) => `t:${taskId}`;
-export const milestoneKey = (milestoneId: string) => `m:${milestoneId}`;
 
 export type FramingDecision = "focus" | "frame" | "keep";
 

@@ -1,7 +1,7 @@
 /**
  * Pure projection of the task dependency graph.
  *
- * Readiness and the critical path are computed here once so that every
+ * Readiness and the longest dependency chain are computed here once so that every
  * presentation surface agrees; a browser only lays the result out.
  */
 
@@ -11,6 +11,7 @@ import { isTerminalTaskStatus } from "@ai-office/domain/task/task.ts";
 import type {
   TaskGraphEdge,
   TaskGraphNode,
+  TaskGraphSummary,
   TaskOperationalState,
 } from "./operational-read-models.ts";
 
@@ -48,6 +49,8 @@ export function projectTaskGraphNodes(
         unmetPrerequisiteIds: unmet,
         // The admission rule of ManageTaskDependencies.readiness, not a copy.
         ready: isTaskRunnable(task.recordedStatus) && unmet.length === 0,
+        waiting: !isTerminalTaskStatus(task.recordedStatus) && unmet.length > 0,
+        needsAttention: task.attentionReasons.length > 0,
       };
     })
     .sort((a, b) => a.taskId.localeCompare(b.taskId));
@@ -60,7 +63,7 @@ export function projectTaskGraphNodes(
  * Edges are acyclic by construction; any node a cycle would leave unvisited is
  * simply left out. Ties pick the smallest task id, so the result is stable.
  */
-export function projectCriticalPath(
+export function projectLongestDependencyChain(
   nodes: readonly TaskGraphNode[],
   edges: readonly TaskGraphEdge[],
 ): string[] {
@@ -127,4 +130,19 @@ export function projectCriticalPath(
   for (let id = start; id !== undefined; id = successor.get(id)) path.push(id);
   // A lone task is not a chain.
   return path.length < 2 ? [] : path;
+}
+
+export function projectTaskGraphSummary(
+  nodes: readonly TaskGraphNode[],
+): TaskGraphSummary {
+  const count = (matches: (node: TaskGraphNode) => boolean) =>
+    nodes.filter(matches).length;
+  return {
+    total: nodes.length,
+    ready: count((node) => node.ready),
+    waiting: count((node) => node.waiting),
+    blocked: count((node) => node.operationalStatus === "blocked"),
+    inProgress: count((node) => node.operationalStatus === "in_progress"),
+    needsAttention: count((node) => node.needsAttention),
+  };
 }

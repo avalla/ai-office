@@ -5,11 +5,11 @@ import type {
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
   decideFraming,
+  searchTasks,
   defaultGraphFilters,
   filterGraph,
   layoutGraph,
   lineage,
-  milestoneKey,
   taskKey,
 } from "../../apps/dashboard/src/lib/task-graph.ts";
 
@@ -27,6 +27,8 @@ function node(
     milestoneIds: [],
     unmetPrerequisiteIds: [],
     ready: true,
+    waiting: false,
+    needsAttention: false,
     ...overrides,
   };
 }
@@ -46,11 +48,18 @@ const graph: TaskGraph = {
     node("a", { milestoneIds: ["m1"] }),
     node("b", {
       ready: false,
+      waiting: true,
       unmetPrerequisiteIds: ["a"],
       milestoneIds: ["m1"],
     }),
-    node("c", { ready: false, unmetPrerequisiteIds: ["a"] }),
-    node("d", { ready: false, unmetPrerequisiteIds: ["b", "c"] }),
+    node("c", { ready: false, waiting: true, unmetPrerequisiteIds: ["a"] }),
+    node("d", {
+      ready: false,
+      waiting: true,
+      needsAttention: true,
+      operationalStatus: "blocked",
+      unmetPrerequisiteIds: ["b", "c"],
+    }),
     node("lone"),
   ],
   milestones: [
@@ -68,10 +77,19 @@ const graph: TaskGraph = {
     { taskId: "d", dependsOnTaskId: "b" },
     { taskId: "d", dependsOnTaskId: "c" },
   ],
-  criticalPath: ["a", "b", "d"],
+  summary: {
+    total: 6,
+    ready: 2,
+    waiting: 3,
+    blocked: 1,
+    inProgress: 0,
+    needsAttention: 1,
+  },
+  longestDependencyChain: ["a", "b", "d"],
 };
 
 const ids = (tasks: readonly TaskGraphNode[]) => tasks.map((t) => t.taskId);
+const all = { ...defaultGraphFilters, hideCompleted: false };
 
 describe("dashboard task graph", () => {
   test("hides completed work by default but keeps counts exact", () => {
@@ -82,22 +100,32 @@ describe("dashboard task graph", () => {
     expect(visible.edges).toHaveLength(4);
   });
 
-  test("filters by status, milestone, readiness and search", () => {
-    const filters = { ...defaultGraphFilters, hideCompleted: false };
+  test("filters by status, milestone and each operational shortcut", () => {
     expect(
-      ids(filterGraph(graph, { ...filters, status: "completed" }).tasks),
+      ids(filterGraph(graph, { ...all, status: "completed" }).tasks),
     ).toEqual(["done"]);
+    expect(ids(filterGraph(graph, { ...all, milestone: "m1" }).tasks)).toEqual([
+      "a",
+      "b",
+    ]);
     expect(
-      ids(filterGraph(graph, { ...filters, milestone: "m1" }).tasks),
-    ).toEqual(["a", "b"]);
-    expect(
-      ids(filterGraph(graph, { ...filters, milestone: "none" }).tasks),
+      ids(filterGraph(graph, { ...all, milestone: "none" }).tasks),
     ).toEqual(["done", "c", "d", "lone"]);
+    expect(ids(filterGraph(graph, { ...all, quick: "ready" }).tasks)).toEqual([
+      "a",
+      "lone",
+    ]);
+    expect(ids(filterGraph(graph, { ...all, quick: "waiting" }).tasks)).toEqual(
+      ["b", "c", "d"],
+    );
+    expect(ids(filterGraph(graph, { ...all, quick: "blocked" }).tasks)).toEqual(
+      ["d"],
+    );
     expect(
-      ids(filterGraph(graph, { ...filters, readyOnly: true }).tasks),
-    ).toEqual(["a", "lone"]);
+      ids(filterGraph(graph, { ...all, quick: "attention" }).tasks),
+    ).toEqual(["d"]);
     expect(
-      ids(filterGraph(graph, { ...filters, search: " TITLE C" }).tasks),
+      ids(filterGraph(graph, { ...all, search: " TITLE C" }).tasks),
     ).toEqual(["c"]);
   });
 
@@ -110,19 +138,41 @@ describe("dashboard task graph", () => {
     expect(ids(visible.tasks)).toEqual(["d", "lone"]);
   });
 
-  test("shows milestone nodes and membership only when enabled and used", () => {
-    const withMilestones = filterGraph(graph, defaultGraphFilters);
-    expect(withMilestones.milestones.map((m) => m.milestoneId)).toEqual(["m1"]);
-    expect(withMilestones.membership).toEqual([
-      { taskId: "a", milestoneId: "m1" },
-      { taskId: "b", milestoneId: "m1" },
+  test("milestones never take part in the dependency layout", () => {
+    const visible = filterGraph(graph, defaultGraphFilters);
+    const positions = layoutGraph(visible, "LR");
+    expect([...positions.keys()].sort()).toEqual(
+      visible.tasks.map((t) => taskKey(t.taskId)).sort(),
+    );
+    // The same tasks and edges lay out identically with or without milestone
+    // data, because the layout never sees it.
+    const stripped = {
+      ...graph,
+      milestones: [],
+      tasks: graph.tasks.map((t) => ({ ...t, milestoneIds: [] })),
+    };
+    expect(
+      layoutGraph(filterGraph(stripped, defaultGraphFilters), "LR"),
+    ).toEqual(positions);
+    // A task keeps its milestone association.
+    expect(graph.tasks.find((t) => t.taskId === "a")?.milestoneIds).toEqual([
+      "m1",
     ]);
-    const without = filterGraph(graph, {
-      ...defaultGraphFilters,
-      showMilestones: false,
-    });
-    expect(without.milestones).toEqual([]);
-    expect(without.membership).toEqual([]);
+  });
+
+  test("search locates tasks across the whole project, best match first", () => {
+    const found = searchTasks(graph, "title");
+    expect(found.total).toBe(6);
+    expect(found.matches).toHaveLength(6);
+    expect(searchTasks(graph, "title b").matches.map((t) => t.taskId)).toEqual([
+      "b",
+    ]);
+    expect(searchTasks(graph, "   ")).toEqual({ matches: [], total: 0 });
+    expect(searchTasks(graph, "title", 2).matches).toHaveLength(2);
+    // Completed tasks are searchable even though the graph hides them.
+    expect(searchTasks(graph, "done").matches.map((t) => t.taskId)).toEqual([
+      "done",
+    ]);
   });
 
   test("computes the transitive lineage over the whole graph", () => {
@@ -133,6 +183,13 @@ describe("dashboard task graph", () => {
       upstream: new Set(),
       downstream: new Set(),
     });
+  });
+
+  test("isolating a lineage shows exactly those tasks, ignoring filters", () => {
+    const related = new Set(["done", "a", "b", "d"]);
+    const visible = filterGraph(graph, defaultGraphFilters, { only: related });
+    expect(ids(visible.tasks)).toEqual(["done", "a", "b", "d"]);
+    expect(visible.edges).toHaveLength(3);
   });
 
   test("lays prerequisites before their dependents in both directions", () => {
@@ -148,7 +205,11 @@ describe("dashboard task graph", () => {
     expect(vertical.get(taskKey("a"))!.y).toBeLessThan(
       vertical.get(taskKey("d"))!.y,
     );
-    expect(horizontal.has(milestoneKey("m1"))).toBe(true);
+  });
+
+  test("layout is deterministic", () => {
+    const visible = filterGraph(graph, defaultGraphFilters);
+    expect(layoutGraph(visible, "LR")).toEqual(layoutGraph(visible, "LR"));
   });
 
   describe("decideFraming", () => {

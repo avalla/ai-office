@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Hourglass } from "lucide-react";
 import { Link } from "react-router-dom";
 import {
   Background,
@@ -14,7 +15,6 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { terminalTaskOperationalStatuses } from "@ai-office/application/read-models/operational-read-models.ts";
 import type {
   TaskGraph,
   TaskGraphMilestone,
@@ -29,29 +29,29 @@ import {
   filterGraph,
   layoutGraph,
   lineage,
-  milestoneKey,
-  milestoneNodeSize,
   nodeSize,
+  quickFilters,
+  searchTasks,
   taskKey,
   type GraphDirection,
   type GraphFilters,
+  type QuickFilter,
 } from "../lib/task-graph.ts";
-import {
-  milestoneStatusTone,
-  taskStatusTone,
-  type ToneName,
-} from "../ui/view-model.ts";
+import { taskStatusTone, type ToneName } from "../ui/view-model.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Colours (fixed so SVG markers render the same in light and dark mode)       */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Few meanings, few colours. Meaning is never colour alone: blocking edges are
+ * dashed, the chain is thicker, and the legend and side panel say it in text.
+ */
 const colour = {
-  edge: "#8b95a7",
+  neutral: "#8b95a7",
   blocking: "#d97706",
-  satisfied: "#10b981",
-  focus: "#2563eb",
-  critical: "#dc2626",
+  lineage: "#2563eb",
+  chain: "#dc2626",
 } as const;
 
 const miniMapColour: Record<ToneName, string> = {
@@ -76,69 +76,68 @@ const statusOptions: readonly TaskOperationalStatus[] = [
 const statusLabel = (status: TaskOperationalStatus) =>
   status.replaceAll("_", " ");
 
+const quickLabels: Record<QuickFilter, string> = {
+  ready: "Ready",
+  waiting: "Waiting on prerequisites",
+  blocked: "Blocked",
+  in_progress: "In progress",
+  attention: "Needs attention",
+};
+
+const blockers = (count: number) => `${count} blocker${count === 1 ? "" : "s"}`;
+
 /* -------------------------------------------------------------------------- */
 /* Nodes                                                                       */
 /* -------------------------------------------------------------------------- */
 
 interface TaskNodeData extends Record<string, unknown> {
   task: TaskGraphNode;
+  /** First milestone title, and how many more the task belongs to. */
+  milestone: { title: string; more: number } | null;
   dimmed: boolean;
   selected: boolean;
-  critical: boolean;
-  direction: GraphDirection;
-  onSelect: (key: string) => void;
-}
-
-interface MilestoneNodeData extends Record<string, unknown> {
-  milestone: TaskGraphMilestone;
-  memberCount: number;
-  dimmed: boolean;
-  selected: boolean;
+  onChain: boolean;
   direction: GraphDirection;
   onSelect: (key: string) => void;
 }
 
 type TaskFlowNode = Node<TaskNodeData, "task">;
-type MilestoneFlowNode = Node<MilestoneNodeData, "milestone">;
-
-function handles(direction: GraphDirection) {
-  return {
-    target: direction === "LR" ? Position.Left : Position.Top,
-    source: direction === "LR" ? Position.Right : Position.Bottom,
-  };
-}
 
 const hiddenHandle = "!h-1 !w-1 !border-0 !bg-transparent !min-h-0 !min-w-0";
 
 function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
-  const { task } = data;
-  const sides = handles(data.direction);
-  const waiting = task.unmetPrerequisiteIds.length;
+  const { task, milestone } = data;
+  const target = data.direction === "LR" ? Position.Left : Position.Top;
+  const source = data.direction === "LR" ? Position.Right : Position.Bottom;
+  const waitingOn = task.unmetPrerequisiteIds.length;
+  const state = task.ready
+    ? "Ready to start"
+    : waitingOn > 0
+      ? `Waiting on ${blockers(waitingOn)}`
+      : "Not startable";
   return (
     <>
       <Handle
         type="target"
-        position={sides.target}
+        position={target}
         className={hiddenHandle}
         isConnectable={false}
       />
       <button
         type="button"
         aria-pressed={data.selected}
-        aria-label={`${task.title}. ${statusLabel(task.operationalStatus)}. ${
-          task.ready
-            ? "Runnable"
-            : waiting > 0
-              ? `Waiting on ${waiting} prerequisite${waiting === 1 ? "" : "s"}`
-              : "Not startable"
-        }.`}
+        aria-label={`${task.title}. ${statusLabel(task.operationalStatus)}. ${state}. Priority ${task.priority}.${
+          milestone === null
+            ? ""
+            : ` Milestone ${milestone.title}${milestone.more > 0 ? ` and ${milestone.more} more` : ""}.`
+        }`}
         onClick={() => data.onSelect(taskKey(task.taskId))}
         style={{ width: nodeSize.width, height: nodeSize.height }}
         className={cn(
           "flex flex-col justify-between rounded-lg border bg-surface px-3 py-2 text-left shadow-sm transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           data.selected
             ? "border-primary ring-2 ring-primary"
-            : data.critical
+            : data.onChain
               ? "border-red-500"
               : "border-border",
           data.dimmed && "opacity-25",
@@ -152,27 +151,40 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
             label={statusLabel(task.operationalStatus)}
             tone={taskStatusTone(task.operationalStatus)}
           />
-          <span className="flex items-center gap-1.5 text-xs text-subtle tabular-nums">
-            {task.ready && (
-              <span className="rounded border border-emerald-300 px-1 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300">
-                runnable
-              </span>
-            )}
-            {waiting > 0 && (
-              <span
-                title={`${waiting} unmet prerequisite${waiting === 1 ? "" : "s"}`}
-                className="rounded border border-amber-400 px-1 text-amber-800 dark:text-amber-300"
-              >
-                ⧗ {waiting}
-              </span>
-            )}
-            <span title="Priority">P{task.priority}</span>
+          {milestone !== null && (
+            <span
+              title={`Milestone: ${milestone.title}`}
+              className="max-w-[8rem] truncate rounded border border-border bg-muted px-1.5 text-xs text-subtle"
+            >
+              {milestone.title}
+              {milestone.more > 0 && ` +${milestone.more}`}
+            </span>
+          )}
+        </span>
+        <span className="flex items-center justify-between gap-2 text-xs tabular-nums">
+          {task.ready ? (
+            <span className="rounded border border-emerald-400 px-1 font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-600 dark:text-emerald-300">
+              Ready
+            </span>
+          ) : waitingOn > 0 ? (
+            <span
+              title={`${blockers(waitingOn)}: prerequisites not completed`}
+              className="rounded border border-amber-400 px-1 text-amber-800 dark:text-amber-300"
+            >
+              <Hourglass aria-hidden="true" className="mr-1 inline h-3 w-3" />
+              {blockers(waitingOn)}
+            </span>
+          ) : (
+            <span />
+          )}
+          <span className="text-subtle" title="Priority">
+            P{task.priority}
           </span>
         </span>
       </button>
       <Handle
         type="source"
-        position={sides.source}
+        position={source}
         className={hiddenHandle}
         isConnectable={false}
       />
@@ -180,60 +192,13 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
   );
 }
 
-function MilestoneNodeView({ data }: NodeProps<MilestoneFlowNode>) {
-  const { milestone } = data;
-  const sides = handles(data.direction);
-  const { verified, total } = milestone.requirements;
-  return (
-    <>
-      <Handle
-        type="target"
-        position={sides.target}
-        className={hiddenHandle}
-        isConnectable={false}
-      />
-      <button
-        type="button"
-        aria-pressed={data.selected}
-        aria-label={`Milestone ${milestone.title}. ${milestone.status}. ${verified} of ${total} requirements verified. ${data.memberCount} visible tasks.`}
-        onClick={() => data.onSelect(milestoneKey(milestone.milestoneId))}
-        style={{ width: milestoneNodeSize.width }}
-        className={cn(
-          "flex flex-col gap-1 rounded-lg border-2 border-dashed bg-muted px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          data.selected ? "border-primary" : "border-subtle",
-          data.dimmed && "opacity-25",
-        )}
-      >
-        <span className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-semibold">
-            ◆ {milestone.title}
-          </span>
-          <StatusBadge
-            label={milestone.status}
-            tone={milestoneStatusTone(milestone.status)}
-          />
-        </span>
-        <span className="text-xs text-subtle tabular-nums">
-          {verified}/{total} requirements verified · {data.memberCount} tasks
-        </span>
-      </button>
-      <Handle
-        type="source"
-        position={sides.source}
-        className={hiddenHandle}
-        isConnectable={false}
-      />
-    </>
-  );
-}
-
-const nodeTypes = { task: TaskNodeView, milestone: MilestoneNodeView };
+const nodeTypes = { task: TaskNodeView };
 
 /* -------------------------------------------------------------------------- */
 /* Page                                                                        */
 /* -------------------------------------------------------------------------- */
 
-const readableZoom = 0.55;
+const readableZoom = 0.7;
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
@@ -261,14 +226,22 @@ function TaskGraphCanvas({
   projectId: string;
 }) {
   const [filters, setFilters] = useState<GraphFilters>(defaultGraphFilters);
+  const [query, setQuery] = useState("");
+  const [filterByQuery, setFilterByQuery] = useState(false);
   const [direction, setDirection] = useState<GraphDirection>("LR");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [focusOnly, setFocusOnly] = useState(false);
-  const [showCritical, setShowCritical] = useState(true);
+  const [showChain, setShowChain] = useState(true);
+  const [showMinimap, setShowMinimap] = useState(true);
   const { fitView, setViewport } = useReactFlow();
 
   const patch = (change: Partial<GraphFilters>) =>
     setFilters((current) => ({ ...current, ...change }));
+  // Searching locates by default; it filters only when asked to.
+  const effectiveFilters = useMemo(
+    () => ({ ...filters, search: filterByQuery ? query : "" }),
+    [filters, filterByQuery, query],
+  );
 
   const tasksById = useMemo(
     () => new Map(graph.tasks.map((task) => [task.taskId, task])),
@@ -279,46 +252,36 @@ function TaskGraphCanvas({
     [graph.milestones],
   );
 
-  // A live refresh can remove the selected item; never keep a dangling one.
+  // A live refresh can remove the selected task; never keep a dangling one.
   const selectedTask =
-    selectedKey?.startsWith("t:") === true
-      ? (tasksById.get(selectedKey.slice(2)) ?? null)
-      : null;
-  const selectedMilestone =
-    selectedKey?.startsWith("m:") === true
-      ? (milestonesById.get(selectedKey.slice(2)) ?? null)
-      : null;
+    selectedKey === null ? null : (tasksById.get(selectedKey.slice(2)) ?? null);
 
   const selectedLineage = useMemo(
     () =>
       selectedTask === null ? null : lineage(graph.edges, selectedTask.taskId),
     [graph.edges, selectedTask],
   );
-  const related = useMemo(() => {
-    if (selectedTask !== null && selectedLineage !== null)
-      return new Set([
-        selectedTask.taskId,
-        ...selectedLineage.upstream,
-        ...selectedLineage.downstream,
-      ]);
-    if (selectedMilestone !== null)
-      return new Set(
-        graph.tasks
-          .filter((t) => t.milestoneIds.includes(selectedMilestone.milestoneId))
-          .map((t) => t.taskId),
-      );
-    return null;
-  }, [graph.tasks, selectedLineage, selectedMilestone, selectedTask]);
+  const related = useMemo(
+    () =>
+      selectedTask === null || selectedLineage === null
+        ? null
+        : new Set([
+            selectedTask.taskId,
+            ...selectedLineage.upstream,
+            ...selectedLineage.downstream,
+          ]),
+    [selectedLineage, selectedTask],
+  );
 
   const visible = useMemo(
     () =>
-      filterGraph(graph, filters, {
+      filterGraph(graph, effectiveFilters, {
         ...(selectedTask === null
           ? {}
           : { keep: new Set([selectedTask.taskId]) }),
         ...(focusOnly && related !== null ? { only: related } : {}),
       }),
-    [filters, focusOnly, graph, related, selectedTask],
+    [effectiveFilters, focusOnly, graph, related, selectedTask],
   );
 
   const positions = useMemo(
@@ -326,24 +289,18 @@ function TaskGraphCanvas({
     [visible, direction],
   );
 
-  const criticalIds = useMemo(
-    () => new Set(showCritical ? graph.criticalPath : []),
-    [graph.criticalPath, showCritical],
+  const chainIds = useMemo(
+    () => new Set(showChain ? graph.longestDependencyChain : []),
+    [graph.longestDependencyChain, showChain],
   );
-  const criticalEdges = useMemo(() => {
+  const chainEdges = useMemo(() => {
     const pairs = new Set<string>();
-    if (!showCritical) return pairs;
-    for (let i = 1; i < graph.criticalPath.length; i += 1)
-      pairs.add(`${graph.criticalPath[i - 1]}>${graph.criticalPath[i]}`);
+    if (!showChain) return pairs;
+    const chain = graph.longestDependencyChain;
+    for (let i = 1; i < chain.length; i += 1)
+      pairs.add(`${chain[i - 1]}>${chain[i]}`);
     return pairs;
-  }, [graph.criticalPath, showCritical]);
-
-  const memberCount = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const link of visible.membership)
-      counts.set(link.milestoneId, (counts.get(link.milestoneId) ?? 0) + 1);
-    return counts;
-  }, [visible.membership]);
+  }, [graph.longestDependencyChain, showChain]);
 
   const select = useCallback(
     (key: string) =>
@@ -351,11 +308,12 @@ function TaskGraphCanvas({
     [],
   );
 
-  const nodes = useMemo<(TaskFlowNode | MilestoneFlowNode)[]>(() => {
-    const result: (TaskFlowNode | MilestoneFlowNode)[] = [];
+  const nodes = useMemo<TaskFlowNode[]>(() => {
+    const result: TaskFlowNode[] = [];
     for (const task of visible.tasks) {
       const position = positions.get(taskKey(task.taskId));
       if (position === undefined) continue;
+      const first = milestonesById.get(task.milestoneIds[0] ?? "");
       result.push({
         id: taskKey(task.taskId),
         type: "task",
@@ -368,40 +326,13 @@ function TaskGraphCanvas({
         data: {
           task,
           direction,
+          milestone:
+            first === undefined
+              ? null
+              : { title: first.title, more: task.milestoneIds.length - 1 },
           selected: selectedKey === taskKey(task.taskId),
-          critical: criticalIds.has(task.taskId),
+          onChain: chainIds.has(task.taskId),
           dimmed: related !== null && !related.has(task.taskId),
-          onSelect: select,
-        },
-      });
-    }
-    for (const milestone of visible.milestones) {
-      const position = positions.get(milestoneKey(milestone.milestoneId));
-      if (position === undefined) continue;
-      const members = new Set(
-        graph.tasks
-          .filter((t) => t.milestoneIds.includes(milestone.milestoneId))
-          .map((t) => t.taskId),
-      );
-      result.push({
-        id: milestoneKey(milestone.milestoneId),
-        type: "milestone",
-        position,
-        width: milestoneNodeSize.width,
-        height: milestoneNodeSize.height,
-        draggable: false,
-        connectable: false,
-        focusable: false,
-        data: {
-          milestone,
-          direction,
-          memberCount: memberCount.get(milestone.milestoneId) ?? 0,
-          selected: selectedKey === milestoneKey(milestone.milestoneId),
-          dimmed:
-            related !== null &&
-            selectedMilestone?.milestoneId !== milestone.milestoneId &&
-            ![...members].some((id) => related.has(id)) &&
-            selectedTask === null,
           onSelect: select,
         },
       });
@@ -417,22 +348,17 @@ function TaskGraphCanvas({
       return a1! - b1! || a2! - b2!;
     });
   }, [
-    criticalIds,
+    chainIds,
     direction,
-    graph.tasks,
-    memberCount,
+    milestonesById,
     positions,
     related,
     select,
     selectedKey,
-    selectedMilestone,
-    selectedTask,
-    visible.milestones,
     visible.tasks,
   ]);
 
   const edges = useMemo<Edge[]>(() => {
-    const result: Edge[] = [];
     const lineageScope =
       selectedTask !== null && selectedLineage !== null
         ? {
@@ -440,26 +366,24 @@ function TaskGraphCanvas({
             down: new Set([selectedTask.taskId, ...selectedLineage.downstream]),
           }
         : null;
-    for (const edge of visible.edges) {
-      const prerequisite = tasksById.get(edge.dependsOnTaskId);
-      const blocking = prerequisite?.recordedStatus !== "completed";
+    return visible.edges.map((edge) => {
+      const blocking =
+        tasksById.get(edge.dependsOnTaskId)?.recordedStatus !== "completed";
       const onLineage =
         lineageScope !== null &&
         ((lineageScope.up.has(edge.taskId) &&
           lineageScope.up.has(edge.dependsOnTaskId)) ||
           (lineageScope.down.has(edge.taskId) &&
             lineageScope.down.has(edge.dependsOnTaskId)));
-      const critical = criticalEdges.has(
-        `${edge.dependsOnTaskId}>${edge.taskId}`,
-      );
+      const onChain = chainEdges.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
       const stroke = onLineage
-        ? colour.focus
-        : critical
-          ? colour.critical
+        ? colour.lineage
+        : onChain
+          ? colour.chain
           : blocking
             ? colour.blocking
-            : colour.satisfied;
-      result.push({
+            : colour.neutral;
+      return {
         id: `d:${edge.dependsOnTaskId}>${edge.taskId}`,
         source: taskKey(edge.dependsOnTaskId),
         target: taskKey(edge.taskId),
@@ -467,40 +391,15 @@ function TaskGraphCanvas({
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
         style: {
           stroke,
-          strokeWidth: onLineage || critical ? 3 : 1.5,
-          opacity: lineageScope !== null && !onLineage ? 0.12 : 1,
+          strokeWidth: onLineage || onChain ? 3 : 1.5,
+          // A completed prerequisite no longer constrains anything: recede.
+          strokeDasharray: blocking && !onLineage && !onChain ? "6 4" : "none",
+          opacity:
+            lineageScope !== null && !onLineage ? 0.12 : blocking ? 1 : 0.55,
         },
-      });
-    }
-    for (const link of visible.membership) {
-      const dim =
-        (related !== null && selectedTask !== null) ||
-        (selectedMilestone !== null &&
-          selectedMilestone.milestoneId !== link.milestoneId);
-      result.push({
-        id: `m:${link.taskId}>${link.milestoneId}`,
-        source: taskKey(link.taskId),
-        target: milestoneKey(link.milestoneId),
-        type: "default",
-        style: {
-          stroke: colour.edge,
-          strokeDasharray: "4 4",
-          strokeWidth: 1,
-          opacity: dim ? 0.08 : 0.7,
-        },
-      });
-    }
-    return result;
-  }, [
-    criticalEdges,
-    related,
-    selectedLineage,
-    selectedMilestone,
-    selectedTask,
-    tasksById,
-    visible.edges,
-    visible.membership,
-  ]);
+      };
+    });
+  }, [chainEdges, selectedLineage, selectedTask, tasksById, visible.edges]);
 
   // Isolation belongs to one selection: choosing another item, or clearing,
   // ends it.
@@ -568,7 +467,7 @@ function TaskGraphCanvas({
         .join("|"),
     [positions],
   );
-  const actionKey = `${direction}|${focusOnly}|${JSON.stringify(filters)}`;
+  const actionKey = `${direction}|${focusOnly}|${JSON.stringify(effectiveFilters)}`;
   const userMoved = useRef(false);
   const lastAction = useRef<string | null>(null);
   const selectedKeyRef = useRef(selectedKey);
@@ -620,7 +519,7 @@ function TaskGraphCanvas({
       }
     });
     return () => cancelAnimationFrame(handle);
-  }, [layoutKey, actionKey, focusNode]);
+  }, [layoutKey, actionKey]);
 
   const clearSelection = () => {
     const focusWasInPanel = asideRef.current?.contains(document.activeElement);
@@ -629,41 +528,36 @@ function TaskGraphCanvas({
     if (focusWasInPanel) requestAnimationFrame(() => asideRef.current?.focus());
   };
 
-  const focusOn = useCallback(
-    (key: string) => {
-      pendingFocus.current = { key, at: Date.now() };
-      setSelectedKey(key);
-      requestAnimationFrame(() => void focusNode(key));
-    },
-    [focusNode],
-  );
-
-  const readyTasks = useMemo(
-    () =>
-      visible.tasks
-        .filter((t) => t.ready)
-        .sort(
-          (a, b) => b.priority - a.priority || a.taskId.localeCompare(b.taskId),
-        ),
-    [visible.tasks],
-  );
-
-  const totals = {
-    ready: graph.tasks.filter((t) => t.ready).length,
-    waiting: graph.tasks.filter(
-      (t) =>
-        t.unmetPrerequisiteIds.length > 0 &&
-        !terminalTaskOperationalStatuses.includes(t.operationalStatus),
-    ).length,
+  const focusOn = (key: string) => {
+    pendingFocus.current = { key, at: Date.now() };
+    setSelectedKey(key);
+    requestAnimationFrame(() => void focusNode(key));
   };
 
+  const fitGraph = () => {
+    userMoved.current = false;
+    frame();
+  };
+
+  const search = useMemo(() => searchTasks(graph, query), [graph, query]);
+
+  const byPriority = (a: TaskGraphNode, b: TaskGraphNode) =>
+    b.priority - a.priority || a.taskId.localeCompare(b.taskId);
+  const readyTasks = useMemo(
+    () => graph.tasks.filter((t) => t.ready).sort(byPriority),
+    [graph.tasks],
+  );
+  const attentionTasks = useMemo(
+    () => graph.tasks.filter((t) => t.needsAttention).sort(byPriority),
+    [graph.tasks],
+  );
+
   const filtered =
-    filters.search !== "" ||
+    query !== "" ||
     filters.status !== "" ||
     filters.milestone !== "" ||
-    filters.readyOnly ||
-    !filters.hideCompleted ||
-    !filters.showMilestones;
+    filters.quick !== "" ||
+    !filters.hideCompleted;
 
   if (graph.tasks.length === 0)
     return (
@@ -675,23 +569,99 @@ function TaskGraphCanvas({
   return (
     <Section
       title="Dependency graph"
-      detail={`${visible.tasks.length} of ${graph.tasks.length} tasks · ${visible.edges.length} of ${graph.edges.length} dependencies`}
+      detail={`${graph.tasks.length} tasks · ${graph.edges.length} dependencies`}
     >
+      <ul
+        aria-label="Operational summary"
+        className="flex flex-wrap gap-2 text-sm"
+      >
+        {quickFilters.map((quick) => (
+          <li key={quick}>
+            <button
+              type="button"
+              aria-pressed={filters.quick === quick}
+              onClick={() =>
+                patch({ quick: filters.quick === quick ? "" : quick })
+              }
+              className="flex items-baseline gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-pressed:border-primary aria-pressed:bg-muted"
+            >
+              <span className="text-lg font-semibold tabular-nums">
+                {
+                  graph.summary[
+                    quick === "attention"
+                      ? "needsAttention"
+                      : quick === "in_progress"
+                        ? "inProgress"
+                        : quick
+                  ]
+                }
+              </span>
+              <span className="text-subtle">{quickLabels[quick]}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+
       <form
         className="flex flex-wrap items-end gap-3"
         role="search"
         aria-label="Graph filters"
         onSubmit={(event) => event.preventDefault()}
       >
-        <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-subtle">
-          Search tasks
+        <div className="relative flex min-w-56 flex-1 flex-col gap-1 text-xs text-subtle">
+          <label htmlFor="graph-search">Find a task</label>
           <Input
+            id="graph-search"
             type="search"
-            value={filters.search}
-            placeholder="Title or id"
-            onChange={(event) => patch({ search: event.target.value })}
+            value={query}
+            placeholder="Title or id, Enter to jump"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              const first = search.matches[0];
+              if (
+                event.key === "Enter" &&
+                !filterByQuery &&
+                first !== undefined
+              )
+                focusOn(taskKey(first.taskId));
+            }}
           />
-        </label>
+          {query.trim() !== "" && !filterByQuery && (
+            <div
+              className="absolute left-0 right-0 top-full z-20 mt-1 rounded-md border border-border bg-surface p-1 text-sm text-foreground shadow-lg"
+              aria-live="polite"
+            >
+              {search.total === 0 ? (
+                <p className="px-2 py-1 text-subtle">No task matches.</p>
+              ) : (
+                <>
+                  <ul>
+                    {search.matches.map((task) => (
+                      <li key={task.taskId}>
+                        <button
+                          type="button"
+                          className="flex w-full justify-between gap-2 rounded px-2 py-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          onClick={() => focusOn(taskKey(task.taskId))}
+                        >
+                          <span className="truncate">{task.title}</span>
+                          <span className="shrink-0 text-xs text-subtle">
+                            {statusLabel(task.operationalStatus)}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  {search.total > search.matches.length && (
+                    <p className="px-2 py-1 text-xs text-subtle">
+                      {search.total - search.matches.length} more; refine the
+                      text or filter the graph.
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
         <label className="flex flex-col gap-1 text-xs text-subtle">
           Status
           <Select
@@ -725,200 +695,233 @@ function TaskGraphCanvas({
             ))}
           </Select>
         </label>
-        <div
-          role="group"
-          aria-label="Layout direction"
-          className="flex flex-col gap-1 text-xs text-subtle"
-        >
-          Layout
-          <div className="flex gap-1">
-            {(
-              [
-                ["LR", "Left → right"],
-                ["TB", "Top ↓ down"],
-              ] as const
-            ).map(([value, label]) => (
-              <Button
-                key={value}
-                type="button"
-                size="sm"
-                variant={direction === value ? "default" : "outline"}
-                aria-pressed={direction === value}
-                onClick={() => setDirection(value)}
+        <details className="relative text-sm">
+          <summary className="flex h-10 cursor-pointer items-center rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            More filters
+          </summary>
+          <div className="absolute right-0 z-20 mt-2 flex w-72 flex-col gap-2 rounded-md border border-border bg-surface p-3 shadow-lg">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={filters.hideCompleted}
+                onChange={(event) =>
+                  patch({ hideCompleted: event.target.checked })
+                }
+              />
+              Hide completed
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={filterByQuery}
+                onChange={(event) => setFilterByQuery(event.target.checked)}
+              />
+              Show only tasks matching the search
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-subtle">
+              Operational view
+              <Select
+                value={filters.quick}
+                onChange={(event) =>
+                  patch({ quick: event.target.value as QuickFilter | "" })
+                }
               >
-                {label}
-              </Button>
-            ))}
+                <option value="">All tasks</option>
+                {quickFilters.map((quick) => (
+                  <option key={quick} value={quick}>
+                    {quickLabels[quick]}
+                  </option>
+                ))}
+              </Select>
+            </label>
           </div>
-        </div>
-      </form>
-
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-        {(
-          [
-            [
-              "Runnable only",
-              filters.readyOnly,
-              (v: boolean) => patch({ readyOnly: v }),
-            ],
-            [
-              "Hide completed",
-              filters.hideCompleted,
-              (v: boolean) => patch({ hideCompleted: v }),
-            ],
-            [
-              "Milestones",
-              filters.showMilestones,
-              (v: boolean) => patch({ showMilestones: v }),
-            ],
-            ["Critical path", showCritical, setShowCritical],
-          ] as const
-        ).map(([label, checked, set]) => (
-          <label key={label} className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={(event) => set(event.target.checked)}
-            />
-            {label}
-          </label>
-        ))}
-        {related !== null && (
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={focusOnly}
-              onChange={(event) => setFocusOnly(event.target.checked)}
-            />
-            Only the selection&rsquo;s{" "}
-            {selectedTask === null ? "tasks" : "lineage"}
-          </label>
-        )}
+        </details>
         {filtered && (
           <Button
             type="button"
             size="sm"
             variant="ghost"
-            onClick={() => setFilters(defaultGraphFilters)}
+            onClick={() => {
+              setFilters(defaultGraphFilters);
+              setQuery("");
+              setFilterByQuery(false);
+            }}
           >
             Reset filters
           </Button>
         )}
-      </div>
+      </form>
 
       <div
-        className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]"
+        className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(18rem,1fr)]"
         onKeyDown={(event) => {
           if (event.key === "Escape" && selectedKey !== null) clearSelection();
         }}
       >
-        <div
-          ref={canvasRef}
-          className="h-[70vh] min-h-[26rem] overflow-hidden rounded-xl border border-border bg-surface"
-        >
-          {visible.tasks.length === 0 ? (
-            <div className="p-6">
-              <Empty>No tasks match these filters.</Empty>
-            </div>
-          ) : (
-            <ReactFlow
-              nodes={nodes}
-              edges={edges}
-              nodeTypes={nodeTypes}
-              minZoom={0.05}
-              maxZoom={1.75}
-              nodesDraggable={false}
-              nodesConnectable={false}
-              nodesFocusable={false}
-              edgesFocusable={false}
-              elementsSelectable={false}
-              onlyRenderVisibleElements
-              onMove={() => {
-                // Fires only when the transform really changes (a click does
-                // not), from any source; ours are inside the programmatic window.
-                if (Date.now() > programmaticUntil.current)
-                  userMoved.current = true;
-              }}
-              onPaneClick={clearSelection}
-              proOptions={{ hideAttribution: true }}
-              aria-label="Task dependency graph. The side panel lists give keyboard access to runnable, critical-path and related tasks."
-            >
-              <Background gap={24} />
-              <Controls showInteractive={false} />
-              <MiniMap
-                className="!hidden sm:!block"
-                pannable
-                zoomable
-                nodeColor={(node) =>
-                  node.type === "task"
-                    ? miniMapColour[
+        <div className="flex min-w-0 flex-col gap-2">
+          <div
+            ref={canvasRef}
+            className="h-[70vh] min-h-[26rem] overflow-hidden rounded-xl border border-border bg-surface"
+          >
+            {visible.tasks.length === 0 ? (
+              <div className="p-6">
+                <Empty>No tasks match these filters.</Empty>
+              </div>
+            ) : (
+              <ReactFlow
+                nodes={nodes}
+                edges={edges}
+                nodeTypes={nodeTypes}
+                minZoom={0.05}
+                maxZoom={1.75}
+                nodesDraggable={false}
+                nodesConnectable={false}
+                nodesFocusable={false}
+                edgesFocusable={false}
+                elementsSelectable={false}
+                onlyRenderVisibleElements
+                onMove={() => {
+                  // Fires only when the transform really changes (a click does
+                  // not), from any source; ours are inside the programmatic
+                  // window.
+                  if (Date.now() > programmaticUntil.current)
+                    userMoved.current = true;
+                }}
+                onPaneClick={clearSelection}
+                proOptions={{ hideAttribution: true }}
+                aria-label="Task dependency graph. The side panel lists give keyboard access to ready, attention and related tasks."
+              >
+                <Background gap={24} />
+                <Controls showInteractive={false} showFitView={false} />
+                {showMinimap && (
+                  <MiniMap
+                    className="!hidden sm:!block"
+                    pannable
+                    zoomable
+                    nodeColor={(node) =>
+                      miniMapColour[
                         taskStatusTone(
                           (node.data as TaskNodeData).task.operationalStatus,
                         )
                       ]
-                    : colour.edge
-                }
-                bgColor="hsl(var(--surface))"
-                maskColor="rgba(120,130,150,0.18)"
+                    }
+                    bgColor="hsl(var(--surface))"
+                    maskColor="rgba(120,130,150,0.18)"
+                  />
+                )}
+              </ReactFlow>
+            )}
+          </div>
+          <div
+            role="group"
+            aria-label="Graph view"
+            className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm"
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={fitGraph}
+            >
+              Fit graph
+            </Button>
+            <div
+              role="group"
+              aria-label="Layout direction"
+              className="flex gap-1"
+            >
+              {(
+                [
+                  ["LR", "Left → right"],
+                  ["TB", "Top ↓ down"],
+                ] as const
+              ).map(([value, label]) => (
+                <Button
+                  key={value}
+                  type="button"
+                  size="sm"
+                  variant={direction === value ? "default" : "outline"}
+                  aria-pressed={direction === value}
+                  onClick={() => setDirection(value)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={showChain}
+                onChange={(event) => setShowChain(event.target.checked)}
               />
-            </ReactFlow>
-          )}
+              Longest dependency chain
+            </label>
+            <label className="hidden items-center gap-2 sm:flex">
+              <input
+                type="checkbox"
+                checked={showMinimap}
+                onChange={(event) => setShowMinimap(event.target.checked)}
+              />
+              Minimap
+            </label>
+            <span className="text-xs text-subtle tabular-nums">
+              Showing {visible.tasks.length} of {graph.tasks.length} tasks
+            </span>
+          </div>
         </div>
 
         <aside
           ref={asideRef}
           tabIndex={-1}
-          aria-label="Graph details"
-          className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring flex max-h-[70vh] min-h-0 flex-col gap-4 overflow-y-auto rounded-xl border border-border bg-surface p-4 text-sm"
+          aria-label="What happens next"
+          className="flex max-h-[70vh] min-h-0 flex-col gap-4 overflow-y-auto rounded-xl border border-border bg-surface p-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {selectedTask !== null && selectedLineage !== null ? (
             <TaskPanel
               projectId={projectId}
               task={selectedTask}
               tasksById={tasksById}
-              dependents={graph.edges
-                .filter((e) => e.dependsOnTaskId === selectedTask.taskId)
-                .map((e) => e.taskId)}
+              edges={graph.edges}
               lineage={selectedLineage}
               milestones={selectedTask.milestoneIds.flatMap((id) => {
                 const m = milestonesById.get(id);
                 return m === undefined ? [] : [m];
               })}
-              onFocus={focusOn}
-              onClear={clearSelection}
-            />
-          ) : selectedMilestone !== null ? (
-            <MilestonePanel
-              milestone={selectedMilestone}
-              tasks={graph.tasks.filter((t) =>
-                t.milestoneIds.includes(selectedMilestone.milestoneId),
-              )}
+              focusOnly={focusOnly}
+              onFocusOnly={setFocusOnly}
               onFocus={focusOn}
               onClear={clearSelection}
             />
           ) : (
             <>
-              <dl className="grid grid-cols-2 gap-3">
-                <Fact label="Runnable now" value={totals.ready} />
-                <Fact label="Waiting on prerequisites" value={totals.waiting} />
-                <Fact label="Dependencies" value={graph.edges.length} />
-                <Fact label="Critical path" value={graph.criticalPath.length} />
-              </dl>
               <TaskList
-                title="Runnable now"
-                empty="Nothing visible is runnable."
-                tasks={readyTasks.slice(0, 10)}
+                title="Ready to start"
+                empty="Nothing is ready."
+                tasks={readyTasks.slice(0, 8)}
+                showPriority
                 onFocus={focusOn}
                 note={
-                  readyTasks.length > 10
-                    ? `${readyTasks.length - 10} more; narrow the filters to see them.`
+                  readyTasks.length > 8
+                    ? `${readyTasks.length - 8} more ready tasks; use the Ready summary to see them all.`
                     : undefined
                 }
               />
               <TaskList
-                title="Critical path"
-                empty="No chain of unfinished dependent tasks."
-                tasks={graph.criticalPath.flatMap((id) => {
+                title="Needs attention"
+                empty="Nothing needs attention."
+                tasks={attentionTasks.slice(0, 8)}
+                showPriority
+                onFocus={focusOn}
+                note={
+                  attentionTasks.length > 8
+                    ? `${attentionTasks.length - 8} more; use the Needs attention summary to see them all.`
+                    : undefined
+                }
+              />
+              <TaskList
+                title="Longest dependency chain"
+                empty="No chain of dependent unfinished tasks."
+                tasks={graph.longestDependencyChain.flatMap((id) => {
                   const t = tasksById.get(id);
                   return t === undefined ? [] : [t];
                 })}
@@ -944,21 +947,13 @@ function TaskGraphCanvas({
 /* Side panel                                                                  */
 /* -------------------------------------------------------------------------- */
 
-function Fact({ label, value }: { label: string; value: number }) {
-  return (
-    <div>
-      <dt className="text-xs text-subtle">{label}</dt>
-      <dd className="text-xl font-semibold tabular-nums">{value}</dd>
-    </div>
-  );
-}
-
 function TaskList({
   title,
   tasks,
   empty,
   onFocus,
   ordered = false,
+  showPriority = false,
   note,
 }: {
   title: string;
@@ -966,6 +961,7 @@ function TaskList({
   empty: string;
   onFocus: (key: string) => void;
   ordered?: boolean;
+  showPriority?: boolean;
   note?: string | undefined;
 }) {
   const List = ordered ? "ol" : "ul";
@@ -982,10 +978,15 @@ function TaskList({
             <li key={task.taskId}>
               <button
                 type="button"
-                className="w-full rounded px-1 py-0.5 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="flex w-full justify-between gap-2 rounded px-1 py-0.5 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => onFocus(taskKey(task.taskId))}
               >
-                {task.title}
+                <span>{task.title}</span>
+                {showPriority && (
+                  <span className="shrink-0 text-xs text-subtle tabular-nums">
+                    P{task.priority}
+                  </span>
+                )}
               </button>
             </li>
           ))}
@@ -1000,18 +1001,22 @@ function TaskPanel({
   projectId,
   task,
   tasksById,
-  dependents,
+  edges,
   lineage: tree,
   milestones,
+  focusOnly,
+  onFocusOnly,
   onFocus,
   onClear,
 }: {
   projectId: string;
   task: TaskGraphNode;
   tasksById: ReadonlyMap<string, TaskGraphNode>;
-  dependents: readonly string[];
+  edges: readonly { taskId: string; dependsOnTaskId: string }[];
   lineage: { upstream: ReadonlySet<string>; downstream: ReadonlySet<string> };
   milestones: readonly TaskGraphMilestone[];
+  focusOnly: boolean;
+  onFocusOnly: (value: boolean) => void;
   onFocus: (key: string) => void;
   onClear: () => void;
 }) {
@@ -1020,6 +1025,14 @@ function TaskPanel({
       const found = tasksById.get(id);
       return found === undefined ? [] : [found];
     });
+  const prerequisites = edges
+    .filter((edge) => edge.taskId === task.taskId)
+    .map((edge) => edge.dependsOnTaskId);
+  const unmet = new Set(task.unmetPrerequisiteIds);
+  const dependents = edges
+    .filter((edge) => edge.dependsOnTaskId === task.taskId)
+    .map((edge) => edge.taskId);
+  const waitingOn = task.unmetPrerequisiteIds.length;
   return (
     <>
       <div className="space-y-2">
@@ -1035,16 +1048,16 @@ function TaskPanel({
             label={statusLabel(task.operationalStatus)}
             tone={taskStatusTone(task.operationalStatus)}
           />
-          <span className="text-xs text-subtle">
-            recorded {task.recordedStatus.replaceAll("_", " ")} · priority{" "}
+          <span className="text-xs text-subtle tabular-nums">
+            recorded {task.recordedStatus.replaceAll("_", " ")} · P
             {task.priority}
           </span>
         </div>
         <p className="text-xs">
           {task.ready
-            ? "Runnable: its status allows work and every prerequisite is completed."
-            : task.unmetPrerequisiteIds.length > 0
-              ? `Blocked by ${task.unmetPrerequisiteIds.length} unfinished prerequisite${task.unmetPrerequisiteIds.length === 1 ? "" : "s"}.`
+            ? "Ready: its status allows work and every prerequisite is completed."
+            : waitingOn > 0
+              ? `Waiting on ${blockers(waitingOn)}.`
               : "Not startable in its current state."}
         </p>
         {task.assignedAgent !== null && (
@@ -1061,7 +1074,7 @@ function TaskPanel({
           {tree.upstream.size} upstream · {tree.downstream.size} downstream
           (transitive)
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button asChild size="sm">
             <Link
               to={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(task.taskId)}`}
@@ -1073,6 +1086,14 @@ function TaskPanel({
             Clear
           </Button>
         </div>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={focusOnly}
+            onChange={(event) => onFocusOnly(event.target.checked)}
+          />
+          Only this lineage
+        </label>
       </div>
       <TaskList
         title="Waiting on"
@@ -1084,43 +1105,13 @@ function TaskPanel({
         title="Unblocks"
         empty="Nothing depends on this task."
         tasks={pick(dependents)}
+        showPriority
         onFocus={onFocus}
       />
-    </>
-  );
-}
-
-function MilestonePanel({
-  milestone,
-  tasks,
-  onFocus,
-  onClear,
-}: {
-  milestone: TaskGraphMilestone;
-  tasks: readonly TaskGraphNode[];
-  onFocus: (key: string) => void;
-  onClear: () => void;
-}) {
-  return (
-    <>
-      <div className="space-y-2">
-        <h3 className="text-base font-semibold">◆ {milestone.title}</h3>
-        <StatusBadge
-          label={milestone.status}
-          tone={milestoneStatusTone(milestone.status)}
-        />
-        <p className="text-xs text-subtle tabular-nums">
-          {milestone.requirements.verified}/{milestone.requirements.total}{" "}
-          requirements verified · {tasks.length} linked tasks
-        </p>
-        <Button type="button" size="sm" variant="outline" onClick={onClear}>
-          Clear
-        </Button>
-      </div>
       <TaskList
-        title="Linked tasks"
-        empty="No task is linked to this milestone."
-        tasks={tasks}
+        title="Completed prerequisites"
+        empty="None."
+        tasks={pick(prerequisites.filter((id) => !unmet.has(id)))}
         onFocus={onFocus}
       />
     </>
@@ -1128,11 +1119,13 @@ function MilestonePanel({
 }
 
 function Legend() {
-  const swatch = (hex: string, dashed = false) => (
+  const swatch = (hex: string, dashed = false, thick = false) => (
     <span
       aria-hidden="true"
       className="inline-block w-6 align-middle"
-      style={{ borderTop: `3px ${dashed ? "dashed" : "solid"} ${hex}` }}
+      style={{
+        borderTop: `${thick ? 4 : 2}px ${dashed ? "dashed" : "solid"} ${hex}`,
+      }}
     />
   );
   return (
@@ -1141,12 +1134,16 @@ function Legend() {
         Legend
       </h3>
       <ul className="space-y-1 text-xs text-subtle">
-        <li>{swatch(colour.blocking)} prerequisite not completed</li>
-        <li>{swatch(colour.satisfied)} prerequisite completed</li>
-        <li>{swatch(colour.critical)} critical path</li>
-        <li>{swatch(colour.focus)} selected lineage</li>
-        <li>{swatch(colour.edge, true)} task belongs to milestone</li>
+        <li>
+          {swatch(colour.blocking, true)} dashed: prerequisite not completed
+        </li>
+        <li>{swatch(colour.neutral)} faint: prerequisite completed</li>
+        <li>{swatch(colour.chain, false, true)} thick red: longest chain</li>
+        <li>
+          {swatch(colour.lineage, false, true)} thick blue: selected lineage
+        </li>
         <li>Arrows point from a prerequisite to the task that needs it.</li>
+        <li>Milestones appear as a label on each task.</li>
       </ul>
     </section>
   );

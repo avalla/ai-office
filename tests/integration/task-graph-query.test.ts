@@ -85,7 +85,7 @@ async function fixture() {
 }
 
 describe("task dependency graph read model", () => {
-  test("reports readiness, unmet prerequisites and the critical path", async () => {
+  test("reports readiness, unmet prerequisites and the longest dependency chain", async () => {
     const f = await fixture();
     await f.project("p");
     for (const id of ["done", "a", "b", "c", "d", "lone"])
@@ -114,7 +114,7 @@ describe("task dependency graph read model", () => {
     expect(byId.get("done")?.ready).toBe(false);
     // The completed prerequisite is not part of unfinished work; the diamond
     // resolves its tie by task id.
-    expect(graph.criticalPath).toEqual(["a", "b", "d"]);
+    expect(graph.longestDependencyChain).toEqual(["a", "b", "d"]);
   });
 
   test("never drops a task or an edge to a presentation limit", async () => {
@@ -135,7 +135,7 @@ describe("task dependency graph read model", () => {
 
     expect(graph.tasks).toHaveLength(length);
     expect(graph.edges).toHaveLength(length - 1);
-    expect(graph.criticalPath).toHaveLength(length);
+    expect(graph.longestDependencyChain).toHaveLength(length);
   });
 
   test("derives milestones from explicit requirement links and isolates projects", async () => {
@@ -168,7 +168,7 @@ describe("task dependency graph read model", () => {
     const graph = await f.queries.getTaskGraph("p");
 
     expect(graph.edges).toEqual([]);
-    expect(graph.criticalPath).toEqual([]);
+    expect(graph.longestDependencyChain).toEqual([]);
     expect(graph.milestones).toEqual([
       expect.objectContaining({ milestoneId, title: "M1" }),
     ]);
@@ -233,7 +233,7 @@ describe("task dependency graph read model", () => {
     expect(ready("needs-pending")).toBe(false);
   });
 
-  test("failed work is not unfinished and never sits on the critical path", async () => {
+  test("failed work is not unfinished and never sits on the longest dependency chain", async () => {
     const f = await fixture();
     await f.project("p");
     for (const id of ["lone-failed", "a", "bad", "z"]) await f.task("p", id);
@@ -247,7 +247,7 @@ describe("task dependency graph read model", () => {
 
     // A failed task alone is not a chain, and it is removed from the chain it
     // sits in: a and z are no longer connected through unfinished work.
-    expect(graph.criticalPath).toEqual([]);
+    expect(graph.longestDependencyChain).toEqual([]);
     // Existing prerequisite rules still hold for the dependent.
     expect(graph.tasks.find((t) => t.taskId === "z")).toMatchObject({
       ready: false,
@@ -307,7 +307,60 @@ describe("task dependency graph read model", () => {
       tasks: [],
       edges: [],
       milestones: [],
-      criticalPath: [],
+      longestDependencyChain: [],
     });
+  });
+
+  test("summarises the project from the same nodes as the graph", async () => {
+    const f = await fixture();
+    await f.project("p");
+    for (const id of ["ready", "waits", "blocked", "failed", "running", "done"])
+      await f.task("p", id);
+    await f.depend("p", "waits", "ready");
+    f.setStatus("blocked", "blocked");
+    f.setStatus("failed", "failed");
+    f.setStatus("running", "running");
+    f.complete("done");
+
+    const graph = await f.queries.getTaskGraph("p");
+    const byId = new Map(graph.tasks.map((t) => [t.taskId, t]));
+
+    expect(byId.get("waits")).toMatchObject({ waiting: true, ready: false });
+    expect(byId.get("ready")).toMatchObject({ waiting: false, ready: true });
+    // Terminal work is never "waiting", even with an unmet prerequisite.
+    expect(byId.get("blocked")?.needsAttention).toBe(true);
+    expect(byId.get("failed")?.needsAttention).toBe(true);
+    expect(byId.get("done")).toMatchObject({
+      waiting: false,
+      needsAttention: false,
+    });
+    expect(graph.summary).toEqual({
+      total: 6,
+      ready: graph.tasks.filter((t) => t.ready).length,
+      waiting: 1,
+      blocked: graph.tasks.filter((t) => t.operationalStatus === "blocked")
+        .length,
+      inProgress: graph.tasks.filter(
+        (t) => t.operationalStatus === "in_progress",
+      ).length,
+      needsAttention: graph.tasks.filter((t) => t.needsAttention).length,
+    });
+    expect(graph.summary.needsAttention).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a terminal task with an unmet prerequisite is not waiting", async () => {
+    const f = await fixture();
+    await f.project("p");
+    for (const id of ["pre", "cancelled"]) await f.task("p", id);
+    await f.depend("p", "cancelled", "pre");
+    f.setStatus("cancelled", "cancelled");
+
+    const graph = await f.queries.getTaskGraph("p");
+
+    expect(graph.tasks.find((t) => t.taskId === "cancelled")).toMatchObject({
+      waiting: false,
+      unmetPrerequisiteIds: ["pre"],
+    });
+    expect(graph.summary.waiting).toBe(0);
   });
 });

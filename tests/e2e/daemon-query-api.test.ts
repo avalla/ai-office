@@ -121,7 +121,7 @@ describe("daemon query API", () => {
         graph: {
           projectId,
           edges: [{ taskId: second, dependsOnTaskId: first }],
-          criticalPath: [first, second],
+          longestDependencyChain: [first, second],
         },
       });
       expect(

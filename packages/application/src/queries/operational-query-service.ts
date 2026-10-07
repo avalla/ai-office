@@ -39,7 +39,8 @@ import {
 } from "../protocol/query-protocol.ts";
 import { projectActivityEntry } from "../read-models/activity-sanitization.ts";
 import {
-  projectCriticalPath,
+  projectLongestDependencyChain,
+  projectTaskGraphSummary,
   projectTaskGraphNodes,
 } from "../read-models/task-graph-projection.ts";
 import {
@@ -1026,7 +1027,7 @@ export class OperationalQueryService {
   /**
    * The exhaustive dependency graph. Tasks are projected in bounded batches
    * of one fixed snapshot (no transaction spans the batches) but none is
-   * dropped: readiness and the critical path must never depend on a
+   * dropped: readiness and the longest dependency chain must never depend on a
    * presentation limit or on concurrent writes.
    */
   async getTaskGraph(projectId: string): Promise<TaskGraph> {
@@ -1086,7 +1087,8 @@ export class OperationalQueryService {
         };
       }),
       edges,
-      criticalPath: projectCriticalPath(tasks, edges),
+      summary: projectTaskGraphSummary(tasks),
+      longestDependencyChain: projectLongestDependencyChain(tasks, edges),
     };
   }
 
