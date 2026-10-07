@@ -39,6 +39,8 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Actor/execution observation proposal](adr/ADR-0028-actor-execution-and-observation.md): proposed M17 decision gate for actor, role, assignment, execution, presence, evidence and provider hook authority; not accepted current architecture.
 - [M18 strong executor filesystem confinement](development/m18-strong-executor-filesystem-confinement.md): planned executor-neutral OS/container confinement, confinement levels, fail-closed admission, per-run filesystem root and adversarial verification; not implemented.
 - [Executor confinement proposal](adr/ADR-0029-executor-confinement-and-filesystem-trust-boundary.md): proposed M18 decision gate for the filesystem trust boundary outside the executor client; not accepted current architecture.
+- [Task delivery profiles and handoff](development/task-delivery-profiles.md): plan for lite/full/custom delivery profiles, a slimmer skill, a handoff packet and `delivery:validate`; not implemented.
+- [Runtime-owned delivery state proposal](adr/ADR-0031-runtime-owned-delivery-state.md): proposed decision gate for recording delivery runs in the Runtime; not accepted current architecture.
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
