@@ -8,10 +8,10 @@
   requirements - and, where the project allows stacked work, to stack each
   task's branch on the one before it. Once every task is clarified, the
   dependency check and the branch plan are recomputed, and a materially changed
-  plan needs a new approval before preflight. Declining run-wide stacking
-  - or not answering the offer - leaves separately approved Git branch
-    dependencies unchanged, and a stopped task stops the tasks stacked on it. Each task keeps
-    its own pull request and gates; nothing is merged without authorization.
+  plan needs a new approval before preflight. Declining run-wide stacking, or not answering the offer, leaves separately
+  approved Git branch dependencies unchanged, and a stopped task stops the
+  tasks stacked on it. Each task keeps
+  its own pull request and gates; nothing is merged without authorization.
 - `task-delivery` 0.2.0: started without a target, the skill asks whether to
   deliver a whole milestone, one or more tasks, or some tasks of one
   milestone, and whether to use the project's default delivery pipeline when

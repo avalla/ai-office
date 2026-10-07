@@ -166,7 +166,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:run-stacking-needs-summary-approval",
         pattern:
-          /The authorizer's approval of the summary approves these Git branch dependencies for the run\./u,
+          /An answer that accepts the stacking offer approves these Git branch dependencies for the run\./u,
       },
       {
         id: "policy:recompute-whole-selection",
@@ -176,7 +176,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:unanswered-stacking-offer-declines",
         pattern:
-          /A go-ahead that does not answer the stacking offer declines it\./u,
+          /A go-ahead that does not answer the stacking offer declines it/u,
       },
       {
         id: "policy:stacking-changes-only-where-branches-start",
@@ -184,9 +184,28 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
           /Stacking the run changes where branches start and nothing else/u,
       },
       {
+        id: "policy:stacking-only-while-predecessor-unmerged",
+        pattern:
+          /while that task is unmerged, and from the updated integration branch once it is merged/u,
+      },
+      {
+        id: "policy:any-difference-is-material",
+        pattern: /Any difference in these items is material\./u,
+      },
+      {
+        id: "policy:git-tracked-clarification-must-be-in-effect",
+        pattern:
+          /counts as recorded only once it is in effect on the integration branch/u,
+      },
+      {
+        id: "policy:run-stack-start-needs-prerequisite-beneath",
+        pattern:
+          /A task may start on a run-wide stack only if the branch of each of its prerequisites is beneath it/u,
+      },
+      {
         id: "policy:stopped-task-stops-stacked-tasks",
         pattern:
-          /the tasks stacked on it stop too, and the authorizer decides how their branches are rebuilt/u,
+          /the tasks whose branches are stacked on it stop too, and the authorizer decides how their branches are rebuilt/u,
       },
       {
         id: "policy:declining-run-stacking-keeps-selective-dependencies",

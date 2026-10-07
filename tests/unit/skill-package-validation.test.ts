@@ -543,7 +543,7 @@ describe("task-delivery workflow invariants", () => {
     ],
     [
       "policy:run-stacking-needs-summary-approval",
-      /approval\s+of\s+the\s+summary\s+approves\s+these\s+Git\s+branch\s+dependencies\s+for\s+the\s+run/u,
+      /An\s+answer\s+that\s+accepts\s+the\s+stacking\s+offer\s+approves\s+these\s+Git\s+branch\s+dependencies\s+for\s+the\s+run/u,
     ],
     [
       "policy:recompute-whole-selection",
@@ -551,15 +551,31 @@ describe("task-delivery workflow invariants", () => {
     ],
     [
       "policy:unanswered-stacking-offer-declines",
-      /A\s+go-ahead\s+that\s+does\s+not\s+answer\s+the\s+stacking\s+offer\s+declines\s+it\./u,
+      /A\s+go-ahead\s+that\s+does\s+not\s+answer\s+the\s+stacking\s+offer\s+declines\s+it/u,
     ],
     [
       "policy:stacking-changes-only-where-branches-start",
       /Stacking\s+the\s+run\s+changes\s+where\s+branches\s+start\s+and\s+nothing\s+else/u,
     ],
     [
+      "policy:stacking-only-while-predecessor-unmerged",
+      /while\s+that\s+task\s+is\s+unmerged,\s+and\s+from\s+the\s+updated\s+integration\s+branch\s+once\s+it\s+is\s+merged/u,
+    ],
+    [
+      "policy:any-difference-is-material",
+      /Any\s+difference\s+in\s+these\s+items\s+is\s+material\./u,
+    ],
+    [
+      "policy:git-tracked-clarification-must-be-in-effect",
+      /counts\s+as\s+recorded\s+only\s+once\s+it\s+is\s+in\s+effect\s+on\s+the\s+integration\s+branch/u,
+    ],
+    [
+      "policy:run-stack-start-needs-prerequisite-beneath",
+      /A\s+task\s+may\s+start\s+on\s+a\s+run-wide\s+stack\s+only\s+if\s+the\s+branch\s+of\s+each\s+of\s+its\s+prerequisites\s+is\s+beneath\s+it/u,
+    ],
+    [
       "policy:stopped-task-stops-stacked-tasks",
-      /the\s+tasks\s+stacked\s+on\s+it\s+stop\s+too,\s+and\s+the\s+authorizer\s+decides\s+how\s+their\s+branches\s+are\s+rebuilt/u,
+      /the\s+tasks\s+whose\s+branches\s+are\s+stacked\s+on\s+it\s+stop\s+too,\s+and\s+the\s+authorizer\s+decides\s+how\s+their\s+branches\s+are\s+rebuilt/u,
     ],
     [
       "policy:declining-run-stacking-keeps-selective-dependencies",
@@ -885,6 +901,7 @@ describe("task-delivery workflow invariants", () => {
         "For each task, read it with its requirements and acceptance criteria, and ask together every question whose answer would change what is built.",
         "Record the answers where the project keeps its tasks and requirements, through the project's own way of changing them, and show what was changed; where the project has no such place, report the clarified task instead.",
         "Where the project keeps its tasks and requirements in Git, record the answers through the project's normal route for such changes, with its own branch and review, kept apart from the development branches.",
+        "Such a change counts as recorded only once it is in effect on the integration branch, merged with the authorizer's authorization, or the authorizer has accepted the open change as the reference; until then wait, and have reviewers judge the work against the clarified version.",
         "Development starts only when no selected task has an open question.",
         "A question that only comes up later is still a stop condition.",
         "Once every selected task is clarified and its answers are recorded, run the dependency check again over the whole selection and recompute the order and the Git branch plan.",
@@ -895,13 +912,14 @@ describe("task-delivery workflow invariants", () => {
         "A task added to the selection this way is clarified in the same way, and the check and the comparison run again until a pass changes nothing materially.",
         "An answer recorded later, while a task is in progress, goes through the same recheck and comparison before work resumes.",
         "Stacking the run is proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it while that task is unmerged, and from the updated integration branch once it is merged, so later tasks build on earlier ones without waiting for a merge.",
-        "The summary lists the resulting base of every task and says that each stacked task carries the unmerged commits of the tasks beneath it.",
-        "The authorizer's approval of the summary approves these Git branch dependencies for the run.",
-        "A go-ahead that does not answer the stacking offer declines it.",
+        "The summary lists the base of every task with run-wide stacking and without it, and says that each stacked task carries the unmerged commits of the tasks beneath it.",
+        "An answer that accepts the stacking offer approves these Git branch dependencies for the run.",
+        "A go-ahead that does not answer the stacking offer declines it, and the plan then uses the bases without run-wide stacking.",
+        "A task may start on a run-wide stack only if the branch of each of its prerequisites is beneath it; otherwise the prerequisite must be DONE, or the task needs an explicit Git branch dependency on it.",
         "Declining run-wide stacking leaves separately approved Git branch dependencies unchanged.",
         "Every other task starts from the integration branch unless another explicitly approved Git branch dependency applies.",
         "Stacking the run changes where branches start and nothing else: every task keeps its own pull request and gates, and its task dependencies stay as they were.",
-        "When a task in a stacked run stops or is postponed, the tasks stacked on it stop too, and the authorizer decides how their branches are rebuilt.",
+        "When a task stops or is postponed, the tasks whose branches are stacked on it stop too, and the authorizer decides how their branches are rebuilt.",
         "A run that covers several tasks gives each task its own branch, pull request, and evidence.",
         "Each task's pre-merge delivery ends at READY FOR MERGE.",
         "The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency.",
@@ -1186,7 +1204,7 @@ describe("task-delivery workflow invariants", () => {
         /Stacking the run is proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it/u,
       );
       expect(section).toMatch(
-        /The authorizer's approval of the summary approves these Git branch dependencies for the run\. A go-ahead that does not answer the stacking offer declines it\. Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another explicitly approved Git branch dependency applies\./u,
+        /An answer that accepts the stacking offer approves these Git branch dependencies for the run\. A go-ahead that does not answer the stacking offer declines it, and the plan then uses the bases without run-wide stacking\. A task may start on a run-wide stack only if the branch of each of its prerequisites is beneath it; otherwise the prerequisite must be DONE, or the task needs an explicit Git branch dependency on it\. Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another explicitly approved Git branch dependency applies\./u,
       );
       // A declined run-wide stack never forces every task onto the
       // integration branch: it would drop a separately approved dependency.
@@ -1205,10 +1223,10 @@ describe("task-delivery workflow invariants", () => {
         /In a stacked run the first task starts from the integration branch and each later task's branch starts from the branch of the task before it while that task is unmerged; once it is merged, the next branch starts from the updated integration branch\. A separately approved Git branch dependency takes precedence over the run chain for its task\./u,
       );
       expect(branchPolicy).toMatch(
-        /Declining run-wide stacking leaves separately approved Git branch dependencies unchanged; every other task starts from the integration branch unless another explicitly approved Git branch dependency applies\. A go-ahead that does not answer the stacking offer declines it\./u,
+        /Declining run-wide stacking leaves separately approved Git branch dependencies unchanged; every other task starts from the integration branch unless another explicitly approved Git branch dependency applies\. A go-ahead that does not answer the stacking offer declines it\. A task may start on a run-wide stack only if the branch of each of its prerequisites is beneath it; otherwise the prerequisite must be DONE, or the task needs an explicit Git branch dependency on it\./u,
       );
       expect(branchPolicy).toMatch(
-        /When a task in a stacked run stops or is postponed, the tasks stacked on it stop too, and the authorizer decides how their branches are rebuilt\. Never rewrite reviewed history to do so\./u,
+        /When a task stops or is postponed, the tasks whose branches are stacked on it stop too, and the authorizer decides how their branches are rebuilt\. Never rewrite reviewed history to do so\./u,
       );
       expect(branchPolicy).toMatch(
         /An unrelated task must not inherit another task's unmerged commits, except in a run the authorizer approved as stacked\./u,

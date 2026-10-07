@@ -159,7 +159,10 @@ changing them, and show what was changed; where the project has no such place,
 report the clarified task instead. Where the project keeps its tasks and
 requirements in Git, record the answers through the project's normal route for
 such changes, with its own branch and review, kept apart from the development
-branches. Development starts only when no selected
+branches. Such a change counts as recorded only once it is in effect on the
+integration branch, merged with the authorizer's authorization, or the
+authorizer has accepted the open change as the reference; until then wait,
+and have reviewers judge the work against the clarified version. Development starts only when no selected
 task has an open question. A question that only comes up later is still a stop
 condition.
 
@@ -180,17 +183,21 @@ Stacking the run is proposed by default where the project allows stacked work:
 each task's branch starts from the branch of the task before it while that
 task is unmerged, and from the updated integration branch once it is merged, so
 later tasks build on earlier ones without waiting for a merge. The summary
-lists the resulting base of every task and says that each stacked task carries
-the unmerged commits of the tasks beneath it. The authorizer's approval of the
-summary approves these Git branch dependencies for the run. A go-ahead that
-does not answer the stacking offer declines it.
+lists the base of every task with run-wide stacking and without it, and says
+that each stacked task carries the unmerged commits of the tasks beneath it.
+An answer that accepts the stacking offer approves these Git branch
+dependencies for the run. A go-ahead that does not answer the stacking offer
+declines it, and the plan then uses the bases without run-wide stacking. A task
+may start on a run-wide stack only if the branch of each of its prerequisites
+is beneath it; otherwise the prerequisite must be DONE, or the task needs an
+explicit Git branch dependency on it.
 Declining run-wide stacking leaves separately approved Git branch
 dependencies unchanged. Every other task starts from the integration branch
 unless another explicitly approved Git branch dependency applies. Stacking the
 run changes where branches start and nothing else: every task keeps its own pull
-request and gates, and its task dependencies stay as they were. When a task in
-a stacked run stops or is postponed, the tasks stacked on it stop too, and the
-authorizer decides how their branches are rebuilt.
+request and gates, and its task dependencies stay as they were. When a task
+stops or is postponed, the tasks whose branches are stacked on it stop too,
+and the authorizer decides how their branches are rebuilt.
 
 A run that covers several tasks gives each task its own branch, pull request,
 and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run
