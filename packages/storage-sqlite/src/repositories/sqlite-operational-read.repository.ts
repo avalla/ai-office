@@ -754,12 +754,12 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
   async readTaskGraphSnapshot(
     projectId: string,
   ): Promise<TaskGraphSnapshotRecord> {
-    // One read transaction: both statements see the same committed state, so
-    // an edge can never reference a task the task list lacks.
+    // One read transaction: tasks, edges, and milestone links see the same
+    // committed state. Full task text is fetched only for a selected task.
     return this.database.transaction(() => ({
       tasks: this.database
         .query<TaskRow, [string]>(
-          `SELECT id, project_id, title, description, status, priority,
+          `SELECT id, project_id, title, NULL AS description, status, priority,
                   created_at, updated_at
            FROM task
            WHERE project_id = ?
@@ -778,6 +778,21 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
         .map((row) => ({
           taskId: row.task_id,
           dependsOnTaskId: row.depends_on_task_id,
+        })),
+      milestoneLinks: this.database
+        .query<{ task_id: string; milestone_id: string }, [string, string]>(
+          `SELECT l.task_id, r.milestone_id
+           FROM task_requirement l
+           JOIN task t ON t.id = l.task_id
+           JOIN requirement r ON r.id = l.requirement_id
+           WHERE t.project_id = ? AND r.project_id = ?
+             AND r.milestone_id IS NOT NULL
+           ORDER BY l.task_id, r.milestone_id`,
+        )
+        .all(projectId, projectId)
+        .map((row) => ({
+          taskId: row.task_id,
+          milestoneId: row.milestone_id,
         })),
     }))();
   }

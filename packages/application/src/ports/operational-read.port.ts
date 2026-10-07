@@ -89,8 +89,11 @@ export interface CountRecord {
 }
 
 export interface TaskGraphSnapshotRecord {
+  /** Complete task set with graph facts only; descriptions stay task-scoped. */
   tasks: TaskProps[];
   dependencies: { taskId: string; dependsOnTaskId: string }[];
+  /** Explicit task→requirement→milestone facts, without requirement text. */
+  milestoneLinks: { taskId: string; milestoneId: string }[];
 }
 
 export interface OperationalMilestoneRecord {
@@ -511,10 +514,10 @@ export interface OperationalReadRepository {
   listRequirements(projectId: string): Promise<OperationalRequirementRecord[]>;
   listAgents(projectIds: readonly string[]): Promise<OperationalAgentRecord[]>;
   /**
-   * Every task and every hard prerequisite edge of the project, read in one
-   * consistent snapshot. Deliberately not a page: OFFSET pages drift under
-   * concurrent inserts or reprioritisation and would skip or repeat tasks, and
-   * reading edges separately could reference a task the snapshot lacks.
+   * Every task, hard prerequisite edge, and task→milestone link of the project,
+   * read in one consistent snapshot. Deliberately not a page: OFFSET pages
+   * drift under concurrent inserts or reprioritisation and would skip or repeat
+   * tasks, and reading edges separately could reference a task the snapshot lacks.
    */
   readTaskGraphSnapshot(projectId: string): Promise<TaskGraphSnapshotRecord>;
 

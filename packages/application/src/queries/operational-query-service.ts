@@ -134,27 +134,34 @@ function agentIndex(
   );
 }
 
-function taskMilestoneIndex(
+function* requirementMilestoneLinks(
   requirements: readonly {
     milestoneId: string | null;
     taskReferences: readonly { taskId: string }[];
   }[],
+): Iterable<{ taskId: string; milestoneId: string }> {
+  for (const requirement of requirements) {
+    if (requirement.milestoneId === null) continue;
+    for (const reference of requirement.taskReferences)
+      yield { taskId: reference.taskId, milestoneId: requirement.milestoneId };
+  }
+}
+
+function taskMilestoneIndex(
+  links: Iterable<{ taskId: string; milestoneId: string }>,
   milestones: readonly TaskMilestoneReference[],
 ): Map<string, TaskMilestoneReference[]> {
   const milestonesById = new Map(
     milestones.map((milestone) => [milestone.milestoneId, milestone]),
   );
   const result = new Map<string, TaskMilestoneReference[]>();
-  for (const requirement of requirements) {
-    if (requirement.milestoneId === null) continue;
-    const milestone = milestonesById.get(requirement.milestoneId);
+  for (const link of links) {
+    const milestone = milestonesById.get(link.milestoneId);
     if (milestone === undefined) continue;
-    for (const reference of requirement.taskReferences) {
-      const linked = result.get(reference.taskId) ?? [];
-      if (!linked.some((value) => value.milestoneId === milestone.milestoneId))
-        linked.push(milestone);
-      result.set(reference.taskId, linked);
-    }
+    const linked = result.get(link.taskId) ?? [];
+    if (!linked.some((value) => value.milestoneId === milestone.milestoneId))
+      linked.push(milestone);
+    result.set(link.taskId, linked);
   }
   for (const linked of result.values())
     linked.sort(
@@ -606,7 +613,7 @@ export class OperationalQueryService {
       }),
     );
     const taskMilestones = taskMilestoneIndex(
-      requirementRecords,
+      requirementMilestoneLinks(requirementRecords),
       milestoneReferences,
     );
     const taskRequirements = taskRequirementIndex(requirementRecords);
@@ -1037,25 +1044,22 @@ export class OperationalQueryService {
   async getTaskGraph(projectId: string): Promise<TaskGraph> {
     const project = await this.requireProject(projectId);
     const now = this.clock.now();
-    // Tasks and edges come from one consistent snapshot; the loop below only
-    // slices that fixed array, so no task can be skipped or repeated.
-    const [snapshot, milestoneRecords, requirementRecords, requirementCounts] =
-      await Promise.all([
-        this.reads.readTaskGraphSnapshot(projectId),
-        this.reads.listMilestones([projectId]),
-        this.reads.listRequirements(projectId),
-        this.reads.countRequirementsByStatus([projectId]),
-      ]);
+    // Tasks, edges, and milestone links come from one consistent snapshot; the
+    // loop below only slices that fixed array, so no task can be skipped or repeated.
+    const [snapshot, milestoneRecords, requirementCounts] = await Promise.all([
+      this.reads.readTaskGraphSnapshot(projectId),
+      this.reads.listMilestones([projectId]),
+      this.reads.countRequirementsByStatus([projectId]),
+    ]);
     const agentRecords = await this.reads.listAgents([projectId]);
     const taskMilestones = taskMilestoneIndex(
-      requirementRecords,
+      snapshot.milestoneLinks,
       milestoneRecords.map((record) => ({
         milestoneId: record.id,
         title: record.title,
         status: record.status,
       })),
     );
-    const taskRequirements = taskRequirementIndex(requirementRecords);
     const agents = agentIndex(agentRecords);
     const batchSize = taskGraphFactBatchSize;
     const states: TaskOperationalState[] = [];
@@ -1067,7 +1071,6 @@ export class OperationalQueryService {
           agents,
           now,
           taskMilestones,
-          taskRequirements,
         )),
       );
     }

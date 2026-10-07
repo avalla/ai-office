@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -191,7 +191,22 @@ describe("task dependency graph read model", () => {
       now,
     });
 
+    f.database
+      .prepare("UPDATE task SET description = ? WHERE id = 'a'")
+      .run("Task detail loaded only on selection");
+    const snapshot = await f.reads.readTaskGraphSnapshot("p");
+    expect(snapshot.milestoneLinks).toEqual([{ taskId: "a", milestoneId }]);
+    expect(
+      snapshot.tasks.find((task) => task.id === "a")?.description,
+    ).toBeUndefined();
+    const fullRequirementRead = vi
+      .spyOn(f.reads, "listRequirements")
+      .mockRejectedValue(
+        new Error("graph should not load full requirement text"),
+      );
     const graph = await f.queries.getTaskGraph("p");
+    expect(fullRequirementRead).not.toHaveBeenCalled();
+    fullRequirementRead.mockRestore();
 
     expect(graph.edges).toEqual([]);
     expect(graph.longestDependencyChain).toEqual([]);
