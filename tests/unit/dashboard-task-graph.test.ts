@@ -4,6 +4,7 @@ import type {
   TaskGraphNode,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
+  decideFraming,
   defaultGraphFilters,
   filterGraph,
   layoutGraph,
@@ -148,5 +149,38 @@ describe("dashboard task graph", () => {
       vertical.get(taskKey("d"))!.y,
     );
     expect(horizontal.has(milestoneKey("m1"))).toBe(true);
+  });
+
+  describe("decideFraming", () => {
+    const idle = {
+      pendingKey: null,
+      selectedKey: null,
+      actionChanged: false,
+      cleared: false,
+      userMoved: false,
+    };
+    test("frames an untouched view whatever changed the layout", () => {
+      expect(decideFraming(idle)).toBe("frame");
+    });
+    test("leaves a user-moved view alone on a data-driven change", () => {
+      expect(decideFraming({ ...idle, userMoved: true })).toBe("keep");
+    });
+    test("a user action or a cleared selection re-frames a moved view", () => {
+      expect(
+        decideFraming({ ...idle, userMoved: true, actionChanged: true }),
+      ).toBe("frame");
+      expect(decideFraming({ ...idle, userMoved: true, cleared: true })).toBe(
+        "frame",
+      );
+    });
+    test("a pending focus wins only for the current selection", () => {
+      const jump = { ...idle, userMoved: true, actionChanged: true };
+      expect(
+        decideFraming({ ...jump, pendingKey: "t:a", selectedKey: "t:a" }),
+      ).toBe("focus");
+      expect(
+        decideFraming({ ...jump, pendingKey: "t:a", selectedKey: "t:b" }),
+      ).toBe("frame");
+    });
   });
 });

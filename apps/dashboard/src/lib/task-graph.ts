@@ -187,3 +187,25 @@ export function layoutGraph(
 
 export const taskKey = (taskId: string) => `t:${taskId}`;
 export const milestoneKey = (milestoneId: string) => `m:${milestoneId}`;
+
+export type FramingDecision = "focus" | "frame" | "keep";
+
+/**
+ * What the canvas does after a layout or action change: honour a pending focus
+ * jump, re-frame the graph, or leave the viewport alone. Only a data-driven
+ * change (nothing the user did) after the user moved the viewport is left alone.
+ */
+export function decideFraming(input: {
+  pendingKey: string | null;
+  selectedKey: string | null;
+  /** Direction, filters or isolation changed since the last pass. */
+  actionChanged: boolean;
+  /** A selection was cleared since the last pass. */
+  cleared: boolean;
+  userMoved: boolean;
+}): FramingDecision {
+  if (input.pendingKey !== null && input.pendingKey === input.selectedKey)
+    return "focus";
+  if (input.actionChanged || input.cleared || !input.userMoved) return "frame";
+  return "keep";
+}

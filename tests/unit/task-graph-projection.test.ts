@@ -76,8 +76,8 @@ describe("projectCriticalPath", () => {
   test("a corrupted cycle neither loops nor throws", () => {
     const nodes = ["a", "b", "c"].map((id) => node(id));
     const edges = [edge("a", "b"), edge("b", "a"), edge("a", "c")];
-    // Nodes on or downstream of a cycle never become ready, so nothing is
-    // reported rather than a misleading partial chain.
+    // With every node on or behind the cycle, nothing is ever ready to start,
+    // so no chain is reported rather than a misleading partial one.
     expect(projectCriticalPath(nodes, edges)).toEqual([]);
   });
 });

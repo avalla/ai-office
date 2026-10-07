@@ -24,6 +24,7 @@ import type {
 import { Empty, Section, StatusBadge } from "../components/operations.tsx";
 import { Button, Input, Select, cn } from "../components/ui/primitives.tsx";
 import {
+  decideFraming,
   defaultGraphFilters,
   filterGraph,
   layoutGraph,
@@ -533,6 +534,7 @@ function TaskGraphCanvas({
       size * zoom <= available
         ? (available - size * zoom) / 2 - origin * zoom
         : margin - origin * zoom;
+    markProgrammatic(prefersReducedMotion() ? 0 : 200);
     void setViewport(
       {
         x: place(width, element.clientWidth, minX),
@@ -547,16 +549,15 @@ function TaskGraphCanvas({
   // A focus jump that also changes the layout must win over the automatic
   // framing, whichever animation frame runs last.
   const pendingFocus = useRef<{ key: string; at: number } | null>(null);
-  const focusNode = useCallback(
-    (key: string) =>
-      fitView({
-        nodes: [{ id: key }],
-        maxZoom: 1.1,
-        padding: 0.6,
-        duration: prefersReducedMotion() ? 0 : 250,
-      }),
-    [fitView],
-  );
+  const focusNode = (key: string) => {
+    markProgrammatic(prefersReducedMotion() ? 0 : 250);
+    return fitView({
+      nodes: [{ id: key }],
+      maxZoom: 1.1,
+      padding: 0.6,
+      duration: prefersReducedMotion() ? 0 : 250,
+    });
+  };
   // Re-frame whenever the computed layout changes, whatever caused it. The one
   // exception is a data-driven change (a live refresh, no user action) after the
   // user has moved the viewport: their view is left alone.
@@ -572,36 +573,61 @@ function TaskGraphCanvas({
   const lastAction = useRef<string | null>(null);
   const selectedKeyRef = useRef(selectedKey);
   selectedKeyRef.current = selectedKey;
+  // Our own animated moves (frame, focus) must not look like the user's. Any
+  // move outside that window is the user's: wheel, drag, Controls or minimap.
+  const programmaticUntil = useRef(0);
+  const markProgrammatic = (duration: number) => {
+    programmaticUntil.current = Date.now() + duration + 150;
+  };
   // Clearing a selection is a user action even when it only removes a node that
-  // was kept visible past the filters.
-  const clears = useRef(0);
+  // was kept visible past the filters. The flag lives for one framing pass: it
+  // is consumed there, or dropped two frames later when the layout did not move.
+  const clearedSelection = useRef(false);
   const previousSelection = useRef<string | null>(null);
   useEffect(() => {
-    if (selectedKey === null && previousSelection.current !== null)
-      clears.current += 1;
+    if (selectedKey === null && previousSelection.current !== null) {
+      clearedSelection.current = true;
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          clearedSelection.current = false;
+        }),
+      );
+    }
     previousSelection.current = selectedKey;
   }, [selectedKey]);
   useEffect(() => {
     const handle = requestAnimationFrame(() => {
-      const action = `${actionKey}|${clears.current}`;
-      const actionChanged = lastAction.current !== action;
-      lastAction.current = action;
       const pending = pendingFocus.current;
       pendingFocus.current = null;
-      if (
-        pending !== null &&
-        pending.key === selectedKeyRef.current &&
-        Date.now() - pending.at < 400
-      ) {
+      const decision = decideFraming({
+        pendingKey:
+          pending !== null && Date.now() - pending.at < 2000
+            ? pending.key
+            : null,
+        selectedKey: selectedKeyRef.current,
+        actionChanged: lastAction.current !== actionKey,
+        cleared: clearedSelection.current,
+        userMoved: userMoved.current,
+      });
+      lastAction.current = actionKey;
+      clearedSelection.current = false;
+      if (decision === "focus" && pending !== null) {
         userMoved.current = false;
         void focusNode(pending.key);
-      } else if (actionChanged || !userMoved.current) {
+      } else if (decision === "frame") {
         userMoved.current = false;
         frameRef.current();
       }
     });
     return () => cancelAnimationFrame(handle);
   }, [layoutKey, actionKey, focusNode]);
+
+  const clearSelection = () => {
+    const focusWasInPanel = asideRef.current?.contains(document.activeElement);
+    setSelectedKey(null);
+    // The panel content unmounts; keep keyboard focus inside the region.
+    if (focusWasInPanel) requestAnimationFrame(() => asideRef.current?.focus());
+  };
 
   const focusOn = useCallback(
     (key: string) => {
@@ -783,14 +809,7 @@ function TaskGraphCanvas({
       <div
         className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]"
         onKeyDown={(event) => {
-          if (event.key !== "Escape" || selectedKey === null) return;
-          const focusWasInPanel = asideRef.current?.contains(
-            document.activeElement,
-          );
-          setSelectedKey(null);
-          // The panel content unmounts; keep keyboard focus inside the region.
-          if (focusWasInPanel)
-            requestAnimationFrame(() => asideRef.current?.focus());
+          if (event.key === "Escape" && selectedKey !== null) clearSelection();
         }}
       >
         <div
@@ -814,11 +833,13 @@ function TaskGraphCanvas({
               edgesFocusable={false}
               elementsSelectable={false}
               onlyRenderVisibleElements
-              onMoveStart={(event) => {
-                // Programmatic moves carry no event; only the user's count.
-                if (event !== null) userMoved.current = true;
+              onMove={() => {
+                // Fires only when the transform really changes (a click does
+                // not), from any source; ours are inside the programmatic window.
+                if (Date.now() > programmaticUntil.current)
+                  userMoved.current = true;
               }}
-              onPaneClick={() => setSelectedKey(null)}
+              onPaneClick={clearSelection}
               proOptions={{ hideAttribution: true }}
               aria-label="Task dependency graph. The side panel lists give keyboard access to runnable, critical-path and related tasks."
             >
@@ -848,7 +869,7 @@ function TaskGraphCanvas({
           ref={asideRef}
           tabIndex={-1}
           aria-label="Graph details"
-          className="focus:outline-none flex max-h-[70vh] min-h-0 flex-col gap-4 overflow-y-auto rounded-xl border border-border bg-surface p-4 text-sm"
+          className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring flex max-h-[70vh] min-h-0 flex-col gap-4 overflow-y-auto rounded-xl border border-border bg-surface p-4 text-sm"
         >
           {selectedTask !== null && selectedLineage !== null ? (
             <TaskPanel
@@ -864,7 +885,7 @@ function TaskGraphCanvas({
                 return m === undefined ? [] : [m];
               })}
               onFocus={focusOn}
-              onClear={() => setSelectedKey(null)}
+              onClear={clearSelection}
             />
           ) : selectedMilestone !== null ? (
             <MilestonePanel
@@ -873,7 +894,7 @@ function TaskGraphCanvas({
                 t.milestoneIds.includes(selectedMilestone.milestoneId),
               )}
               onFocus={focusOn}
-              onClear={() => setSelectedKey(null)}
+              onClear={clearSelection}
             />
           ) : (
             <>
