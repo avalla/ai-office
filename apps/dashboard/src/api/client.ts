@@ -154,7 +154,9 @@ export async function queryRoute(
         ? (route.taskQuery ?? { status: "active" })
         : {},
     );
-    parameters.set("taskView", "paged");
+    // The graph section reads its own exhaustive projection; a paged detail
+    // would project every task a second time for nothing.
+    if (route.section !== "graph") parameters.set("taskView", "paged");
     const [project, activePipelines, activeRuns, graph] = await Promise.all([
       get<{ project: ProjectDetail }>(
         `${projectPath(route.projectId)}?${parameters}`,

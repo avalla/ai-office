@@ -31,6 +31,7 @@ function node(
     ready: true,
     waiting: false,
     needsAttention: false,
+    completionUnblocks: [],
     ...overrides,
   };
 }

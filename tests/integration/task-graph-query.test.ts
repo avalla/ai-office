@@ -377,4 +377,31 @@ describe("task dependency graph read model", () => {
     });
     expect(graph.summary.waiting).toBe(0);
   });
+
+  test("completion unblocks only dependents it makes ready on its own", async () => {
+    const f = await fixture();
+    await f.project("p");
+    for (const id of ["a", "b", "c", "d", "stuck", "dead", "after-dead"])
+      await f.task("p", id);
+    await f.depend("p", "b", "a");
+    await f.depend("p", "c", "a");
+    await f.depend("p", "d", "b");
+    await f.depend("p", "d", "c");
+    // A dependent whose own status forbids work is not made ready.
+    await f.depend("p", "stuck", "a");
+    f.setStatus("stuck", "blocked");
+    // A prerequisite that is already terminal can never complete.
+    await f.depend("p", "after-dead", "dead");
+    f.setStatus("dead", "failed");
+
+    const graph = await f.queries.getTaskGraph("p");
+    const unblocks = (id: string) =>
+      graph.tasks.find((t) => t.taskId === id)?.completionUnblocks;
+
+    // d still waits on c, and stuck is blocked: only b and c become ready.
+    expect(unblocks("a")).toEqual(["b", "c"]);
+    expect(unblocks("b")).toEqual([]);
+    expect(unblocks("c")).toEqual([]);
+    expect(unblocks("dead")).toEqual([]);
+  });
 });

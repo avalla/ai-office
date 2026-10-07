@@ -969,6 +969,12 @@ export interface TaskGraphNode {
   waiting: boolean;
   /** The task carries at least one authoritative attention reason. */
   needsAttention: boolean;
+  /**
+   * Dependents that become ready when this task completes: this task is their
+   * only unmet prerequisite and their own status allows work. Empty for a
+   * terminal task, which can never complete. Sorted by id.
+   */
+  completionUnblocks: readonly string[];
 }
 
 /**

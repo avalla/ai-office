@@ -1140,17 +1140,37 @@ function TaskPanel({
           Only this lineage
         </label>
       </div>
+      {task.waiting ? (
+        <TaskList
+          title="Waiting on"
+          empty="No unfinished prerequisites."
+          tasks={pick(task.unmetPrerequisiteIds)}
+          onFocus={onFocus}
+        />
+      ) : (
+        task.unmetPrerequisiteIds.length > 0 && (
+          // A finished task is not waiting, but the record stays honest.
+          <TaskList
+            title="Prerequisites never completed"
+            empty=""
+            tasks={pick(task.unmetPrerequisiteIds)}
+            onFocus={onFocus}
+          />
+        )
+      )}
       <TaskList
-        title="Waiting on"
-        empty="No unfinished prerequisites."
-        tasks={pick(task.unmetPrerequisiteIds)}
+        title="Unblocks when completed"
+        empty="Completing it makes no other task ready on its own."
+        tasks={pick(task.completionUnblocks)}
+        showPriority
         onFocus={onFocus}
       />
       <TaskList
-        title="Unblocks"
-        empty="Nothing depends on this task."
-        tasks={pick(dependents)}
-        showPriority
+        title="Other dependents"
+        empty="None."
+        tasks={pick(
+          dependents.filter((id) => !task.completionUnblocks.includes(id)),
+        )}
         onFocus={onFocus}
       />
       <TaskList

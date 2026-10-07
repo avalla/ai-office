@@ -216,6 +216,9 @@ only presents it:
   `unmetPrerequisiteIds` lists them.
 - `needsAttention`: the task carries an authoritative attention reason
   (blocked, failed, and the other documented attention kinds).
+- `completionUnblocks`: the dependents that become ready when the task
+  completes (it is their only unmet prerequisite and their status allows work);
+  empty for a terminal task, which can never complete.
 - `summary`: counts of `ready`, `waiting`, operationally `blocked`,
   `inProgress` and `needsAttention`, derived from the same nodes (a task counts
   in every bucket that applies).
@@ -247,7 +250,8 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   minimap), distinct from the data filters;
 - a side panel: with no selection, a "what happens next" list (ready tasks by
   priority, tasks needing attention, the longest dependency chain, legend); with
-  a selection, its blockers, what it unblocks, completed prerequisites (also
+  a selection, its blockers (only while it is waiting), what completing it
+  unblocks, its other dependents, completed prerequisites (also
   when those tasks are hidden from the canvas), milestones, and an "Only this
   lineage" option that exists only while something is selected.
 
@@ -262,7 +266,8 @@ is not in the URL. Persisting search, status, milestone and the operational view
 in the hash would refetch the graph on every change with the current route
 model, so it is a follow-up (it needs section-level query parameters that do not
 trigger a refetch). The graph section is the only one that fetches this
-endpoint.
+endpoint, and it skips the paged task projection of the project detail so tasks
+are not projected twice.
 
 ### Task search, filters, and pages
 

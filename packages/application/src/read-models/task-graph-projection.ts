@@ -28,16 +28,37 @@ export function projectTaskGraphNodes(
     values.push(edge.dependsOnTaskId);
     prerequisites.set(edge.taskId, values);
   }
-  return tasks
-    .map((task) => {
+  const unmetById = new Map<string, string[]>();
+  for (const task of tasks)
+    unmetById.set(
+      task.taskId,
       // The domain rule itself; the snapshot guarantees every prerequisite exists.
-      const unmet = blockingPrerequisites(
+      blockingPrerequisites(
         task.taskId,
         prerequisites.get(task.taskId) ?? [],
         statuses,
       )
         .map((blocker) => blocker.taskId)
-        .sort();
+        .sort(),
+    );
+  // A dependent is unblocked by completing X when X is its only unmet
+  // prerequisite and its own status would then allow work. A prerequisite that
+  // is already terminal can never complete, so it unblocks nothing.
+  const unblocks = new Map<string, string[]>();
+  for (const task of tasks) {
+    const unmet = unmetById.get(task.taskId) ?? [];
+    const only = unmet.length === 1 ? unmet[0] : undefined;
+    if (
+      only === undefined ||
+      !isTaskRunnable(task.recordedStatus) ||
+      isTerminalTaskStatus(statuses.get(only) ?? "completed")
+    )
+      continue;
+    unblocks.set(only, [...(unblocks.get(only) ?? []), task.taskId]);
+  }
+  return tasks
+    .map((task) => {
+      const unmet = unmetById.get(task.taskId) ?? [];
       return {
         taskId: task.taskId,
         title: task.title,
@@ -51,6 +72,7 @@ export function projectTaskGraphNodes(
         ready: isTaskRunnable(task.recordedStatus) && unmet.length === 0,
         waiting: !isTerminalTaskStatus(task.recordedStatus) && unmet.length > 0,
         needsAttention: task.attentionReasons.length > 0,
+        completionUnblocks: (unblocks.get(task.taskId) ?? []).sort(),
       };
     })
     .sort((a, b) => a.taskId.localeCompare(b.taskId));

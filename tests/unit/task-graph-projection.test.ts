@@ -21,6 +21,7 @@ const node = (
   ready: false,
   waiting: false,
   needsAttention: false,
+  completionUnblocks: [],
 });
 const edge = (dependsOnTaskId: string, taskId: string): TaskGraphEdge => ({
   taskId,
