@@ -219,6 +219,29 @@ describe("GP-17 legal reference pack", () => {
       expectedRevision: 0,
       actorId: "project-owner",
     });
+    const workflowMutation = {
+      action: "put_override",
+      source: { ...v1!, kind: "workflows", localId: "matter-workflow" },
+      operation: "replace",
+      payload: {
+        ...manifest.contributions.workflows[0]!,
+        title: "Project matter review",
+        stages: manifest.contributions.workflows[0]!.stages.map((stage) =>
+          stage.id === "draft"
+            ? { ...stage, objective: "Prepare a project draft for review" }
+            : stage,
+        ),
+      },
+    };
+    expect(
+      (await h.definitions.preview("legal", workflowMutation)).issues,
+    ).toEqual([]);
+    await h.definitions.apply({
+      projectId: "legal",
+      mutation: workflowMutation,
+      expectedRevision: 1,
+      actorId: "project-owner",
+    });
     const plan = await h.upgrade.preview({
       projectId: "legal",
       desired: [v2!],
@@ -243,6 +266,18 @@ describe("GP-17 legal reference pack", () => {
     });
     const after = await h.configuration.read("legal");
     expect(after.selectedPacks).toEqual([v2]);
+    expect(after.workflows[0]).toMatchObject({
+      workflowId: "pack:org.ai-office.legal/workflows/matter-workflow",
+      title: "Project matter review",
+      customization: "replace",
+      stages: [
+        { id: "intake" },
+        { id: "research" },
+        { id: "draft", objective: "Prepare a project draft for review" },
+        { id: "citation-review" },
+        { id: "human-approval" },
+      ],
+    });
     expect(
       after.roles.find((role) => role.roleId.endsWith("/reviewer")),
     ).toMatchObject({
