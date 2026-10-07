@@ -36,6 +36,11 @@ import {
   packDefinitionCollisions,
 } from "./pack-definition-collisions.ts";
 import {
+  closureKnowledgeIds,
+  knowledgeGuidanceDifferences,
+  type KnowledgeGuidanceDifference,
+} from "./pack-knowledge-changes.ts";
+import {
   closureWorkflowIds,
   workflowPolicyDifferences,
   type WorkflowPolicyDifference,
@@ -70,10 +75,14 @@ export const capabilityContractChangeRequiresUpgrade =
 export const policyChangeRequiresUpgrade =
   "policy_change_requires_upgrade" as const;
 
+export const knowledgeChangeRequiresUpgrade =
+  "knowledge_change_requires_upgrade" as const;
+
 /**
  * A selection change this command does not carry out. A role capability
  * change, a change to the operation contract of an existing capability
- * (GP-16), and a change to the policy of an existing workflow (GP-25) are
+ * (GP-16), a change to the policy of an existing workflow (GP-25) and a
+ * change to the typed guidance of an existing knowledge entry (GP-15) are
  * reviewed and approved through `project:pack:upgrade` only.
  */
 export class ProjectPackBindingRefusedError extends Error {
@@ -81,7 +90,8 @@ export class ProjectPackBindingRefusedError extends Error {
     readonly code:
       | typeof roleCapabilityChangeRequiresUpgrade
       | typeof capabilityContractChangeRequiresUpgrade
-      | typeof policyChangeRequiresUpgrade,
+      | typeof policyChangeRequiresUpgrade
+      | typeof knowledgeChangeRequiresUpgrade,
     message: string,
   ) {
     super(message);
@@ -162,6 +172,39 @@ function policyChangeGuard(
   };
 }
 
+/**
+ * A knowledge guidance change is never incidental (GP-15). A selection change
+ * that alters the typed guidance of an entry present in both closures is
+ * refused: changed guidance, guidance added to an existing entry and guidance
+ * removed from one. An entry that only one closure provides is an addition or
+ * a removal of the entry, which stays an explicit selection change.
+ */
+function knowledgeChangeGuard(
+  previous: readonly ResolvedPackManifest[],
+  target: readonly ResolvedPackManifest[],
+): {
+  changes: KnowledgeGuidanceDifference[];
+  issue?: { code: string; message: string };
+} {
+  const changes = knowledgeGuidanceDifferences(previous, target);
+  const before = closureKnowledgeIds(previous);
+  const after = closureKnowledgeIds(target);
+  const altered = changes.find(
+    ({ knowledgeId }) => before.has(knowledgeId) && after.has(knowledgeId),
+  );
+  return {
+    changes,
+    ...(altered
+      ? {
+          issue: {
+            code: knowledgeChangeRequiresUpgrade,
+            message: `The selection changes the guidance of knowledge ${altered.knowledgeId}; review and approve it with project:pack:upgrade`,
+          },
+        }
+      : {}),
+  };
+}
+
 function collisionIssues(
   closure: readonly ResolvedPackManifest[],
   owned: readonly ProjectOwnedDefinition[],
@@ -229,12 +272,28 @@ export interface ProjectPackBindingPreview {
         readonly detail: string;
       };
   /**
+   * Knowledge guidance differences between the current and the proposed
+   * resolved closures (GP-15), computed as in the upgrade plan and with the
+   * availability of `roleCapabilityChanges`.
+   */
+  readonly knowledgeChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly KnowledgeGuidanceDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason:
+          "previous_closure_unresolved" | "proposed_closure_unreadable";
+        readonly detail: string;
+      };
+  /**
    * In order: a GP-04 selection or availability failure, alone; then one
    * `pack_definition_collision` for each project-owned definition that the
    * proposed closure also contains; then the GP-16 provider issues of the
    * proposed closure; then the GP-11 capability refusal; then the GP-16
-   * contract change refusal; then the GP-25 policy refusal. Apply raises the
-   * first.
+   * contract change refusal; then the GP-25 policy refusal; then the GP-15
+   * knowledge guidance refusal. Apply raises the first.
    */
   readonly issues: readonly { code: string; message: string }[];
 }
@@ -396,6 +455,10 @@ export class ManageProjectPackBinding {
       availability: "available",
       changes: [],
     };
+    let knowledgeChanges: ProjectPackBindingPreview["knowledgeChanges"] = {
+      availability: "available",
+      changes: [],
+    };
     // An unchanged selection reads no further artifact, as before GP-11. A
     // collision does not hide the capability refusal; it is listed first.
     if (resolved && added.length + removed.length + changed.length > 0) {
@@ -406,15 +469,26 @@ export class ManageProjectPackBinding {
       if (guard.contractIssue) issues.push(guard.contractIssue);
       // GP-25: the same two closures. Where they cannot be read the GP-11
       // rule above already refused everything but a pure removal.
-      if (guard.roleCapabilityChanges.availability === "unavailable")
+      if (guard.roleCapabilityChanges.availability === "unavailable") {
         policyChanges = guard.roleCapabilityChanges;
-      else if (guard.closures !== undefined) {
+        knowledgeChanges = guard.roleCapabilityChanges;
+      } else if (guard.closures !== undefined) {
         const policy = policyChangeGuard(
           guard.closures.previous,
           guard.closures.target,
         );
         policyChanges = { availability: "available", changes: policy.changes };
         if (policy.issue) issues.push(policy.issue);
+        // GP-15: the same two closures.
+        const knowledge = knowledgeChangeGuard(
+          guard.closures.previous,
+          guard.closures.target,
+        );
+        knowledgeChanges = {
+          availability: "available",
+          changes: knowledge.changes,
+        };
+        if (knowledge.issue) issues.push(knowledge.issue);
       }
     }
     return {
@@ -427,6 +501,7 @@ export class ManageProjectPackBinding {
         roleCapabilityChanges,
         capabilityContractChanges,
         policyChanges,
+        knowledgeChanges,
         issues,
       },
       ...(closure === undefined ? {} : { closure }),
@@ -593,7 +668,8 @@ export class ManageProjectPackBinding {
       if (
         first?.code === roleCapabilityChangeRequiresUpgrade ||
         first?.code === capabilityContractChangeRequiresUpgrade ||
-        first?.code === policyChangeRequiresUpgrade
+        first?.code === policyChangeRequiresUpgrade ||
+        first?.code === knowledgeChangeRequiresUpgrade
       )
         throw new ProjectPackBindingRefusedError(first.code, first.message);
       if (preview.issues[0])

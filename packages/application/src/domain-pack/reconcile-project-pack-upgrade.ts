@@ -55,6 +55,12 @@ import {
   type ResolvedPackManifest,
 } from "./resolve-installed-pack-manifests.ts";
 import {
+  closureKnowledgeGuidance,
+  knowledgeGuidanceDifferences,
+  type KnowledgeGuidanceDifference,
+  type PackKnowledgeGuidance,
+} from "./pack-knowledge-changes.ts";
+import {
   closureWorkflowPolicies,
   workflowPolicyDifferences,
   type WorkflowPolicy,
@@ -139,6 +145,12 @@ export interface RoleCapabilityChange extends RoleCapabilityDifference {
 /** A workflow policy difference, marked when a project override names it. */
 export interface PolicyChange extends WorkflowPolicyDifference {
   /** A project override names this workflow; it cannot alter the policy. */
+  readonly customized: boolean;
+}
+
+/** A knowledge guidance difference, marked when a project override names it. */
+export interface KnowledgeChange extends KnowledgeGuidanceDifference {
+  /** A project override names this entry; it cannot alter the guidance. */
   readonly customized: boolean;
 }
 
@@ -232,6 +244,23 @@ export interface PackUpgradePlan {
    * even when the previous closure cannot be read.
    */
   readonly targetPolicies: readonly WorkflowPolicy[];
+  /**
+   * Typed knowledge guidance differences over the resolved closures (GP-15).
+   * Reviewed and approved with the plan, like a policy change. Identities and
+   * guidance values only; no upgrade rewrites a project value.
+   */
+  readonly knowledgeChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly KnowledgeChange[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason: "previous_closure_unresolved";
+        readonly detail: string;
+      };
+  /** Every knowledge entry of the target closure that declares guidance. */
+  readonly targetKnowledge: readonly PackKnowledgeGuidance[];
   readonly overrides: readonly OverrideReconciliation[];
   /** Supplied resolutions that matched no conflict; they change nothing. */
   readonly ignoredResolutions: readonly OverrideResolution[];
@@ -448,6 +477,24 @@ function policyChanges(
   }));
 }
 
+function knowledgeChanges(
+  before: readonly ResolvedPackManifest[],
+  after: readonly ResolvedPackManifest[],
+  overrides: readonly ProjectDefinitionOverride[],
+): KnowledgeChange[] {
+  const customized = new Set(
+    overrides
+      .filter(({ source }) => source.kind === "knowledge")
+      .map(({ source }) =>
+        stablePackDefinitionId(source.id, "knowledge", source.localId),
+      ),
+  );
+  return knowledgeGuidanceDifferences(before, after).map((item) => ({
+    ...item,
+    customized: customized.has(item.knowledgeId),
+  }));
+}
+
 /**
  * The definition state after the plan's override outcomes. A surviving override
  * is carried over whole: only the pack tuple of a retargeted source changes.
@@ -590,6 +637,8 @@ function reconcileProjectPackUpgrade(input: {
       | "capabilityContractChanges"
       | "policyChanges"
       | "targetPolicies"
+      | "knowledgeChanges"
+      | "targetKnowledge"
       | "overrides"
       | "ignoredResolutions"
       | "issues"
@@ -617,6 +666,8 @@ function reconcileProjectPackUpgrade(input: {
       capabilityContractChanges: { availability: "available", changes: [] },
       policyChanges: { availability: "available", changes: [] },
       targetPolicies: [],
+      knowledgeChanges: { availability: "available", changes: [] },
+      targetKnowledge: [],
       overrides: definitions.overrides.map(({ source, operation }) => ({
         source,
         operation,
@@ -657,6 +708,10 @@ function reconcileProjectPackUpgrade(input: {
     availability: "available",
     changes: [],
   };
+  let knowledgeDifferences: PackUpgradePlan["knowledgeChanges"] = {
+    availability: "available",
+    changes: [],
+  };
   if (target && selectionChanged)
     try {
       const previous = resolveInstalledPackManifests(catalog, currentPacks);
@@ -676,6 +731,10 @@ function reconcileProjectPackUpgrade(input: {
         availability: "available",
         changes: policyChanges(previous, target, definitions.overrides),
       };
+      knowledgeDifferences = {
+        availability: "available",
+        changes: knowledgeChanges(previous, target, definitions.overrides),
+      };
     } catch (error) {
       const detail = closureFailure(error);
       if (detail === null) throw error;
@@ -687,9 +746,11 @@ function reconcileProjectPackUpgrade(input: {
       capabilityChanges = templates;
       contractChanges = templates;
       policyDifferences = templates;
+      knowledgeDifferences = templates;
     }
   const targetRoleCapabilities = roleCapabilitySets(target ?? []);
   const targetPolicies = closureWorkflowPolicies(target ?? []);
+  const targetKnowledge = closureKnowledgeGuidance(target ?? []);
 
   const targetManifests = new Map<string, DomainPackManifest>(
     (target ?? []).map((entry) => [tupleKey(entry.identity), entry.manifest]),
@@ -1034,6 +1095,8 @@ function reconcileProjectPackUpgrade(input: {
     capabilityContractChanges: contractChanges,
     policyChanges: policyDifferences,
     targetPolicies,
+    knowledgeChanges: knowledgeDifferences,
+    targetKnowledge,
     overrides,
     ignoredResolutions: resolutions.filter(
       (item) => !usedResolutions.has(sourceKey(item.source)),
@@ -1218,6 +1281,9 @@ export class ReconcileProjectPackUpgrade {
             // Policy and workflow identities and clause values only.
             policyChanges: plan.policyChanges,
             targetPolicies: plan.targetPolicies,
+            // Knowledge identities and guidance values; a seed stays opaque.
+            knowledgeChanges: plan.knowledgeChanges,
+            targetKnowledge: plan.targetKnowledge,
             prospectiveConfigurationDigest:
               plan.prospectiveConfigurationDigest ?? null,
             result: "applied",
