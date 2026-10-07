@@ -404,4 +404,22 @@ describe("task dependency graph read model", () => {
     expect(unblocks("c")).toEqual([]);
     expect(unblocks("dead")).toEqual([]);
   });
+
+  test("terminal follows the recorded status, not the operational one", async () => {
+    const f = await fixture();
+    await f.project("p");
+    for (const id of ["open", "failed", "retry", "next"]) await f.task("p", id);
+    f.setStatus("failed", "failed");
+    await f.depend("p", "next", "retry");
+
+    const graph = await f.queries.getTaskGraph("p");
+    const by = (id: string) => graph.tasks.find((t) => t.taskId === id)!;
+
+    expect(by("open").terminal).toBe(false);
+    expect(by("failed").terminal).toBe(true);
+    // A pending task stays non-terminal and still unblocks its dependent, which
+    // is what the panel must keep offering.
+    expect(by("retry")).toMatchObject({ terminal: false });
+    expect(by("retry").completionUnblocks).toEqual(["next"]);
+  });
 });

@@ -72,6 +72,7 @@ export function projectTaskGraphNodes(
         unmetPrerequisiteIds: unmet,
         // The admission rule of ManageTaskDependencies.readiness, not a copy.
         ready: isTaskRunnable(task.recordedStatus) && unmet.length === 0,
+        terminal: isTerminalTaskStatus(task.recordedStatus),
         waiting: !isTerminalTaskStatus(task.recordedStatus) && unmet.length > 0,
         needsAttention: task.attentionReasons.length > 0,
         completionUnblocks: (unblocks.get(task.taskId) ?? []).sort(),

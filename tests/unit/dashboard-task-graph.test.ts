@@ -32,6 +32,7 @@ function node(
     waiting: false,
     needsAttention: false,
     completionUnblocks: [],
+    terminal: false,
     ...overrides,
   };
 }

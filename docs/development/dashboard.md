@@ -212,6 +212,9 @@ only presents it:
   prerequisite's recorded status is `completed`: the same rule as
   `ManageTaskDependencies.readiness`. A cancelled or failed prerequisite keeps
   its dependents unmet.
+- `terminal`: the recorded status is terminal (`isTerminalTaskStatus`); not the
+  same as an operational `failed`, which a runnable task can show after a failed
+  run.
 - `waiting`: not terminal and at least one prerequisite is unmet;
   `unmetPrerequisiteIds` lists them.
 - `needsAttention`: the task carries an authoritative attention reason

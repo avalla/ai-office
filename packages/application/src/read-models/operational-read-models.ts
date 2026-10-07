@@ -970,6 +970,12 @@ export interface TaskGraphNode {
   /** The task carries at least one authoritative attention reason. */
   needsAttention: boolean;
   /**
+   * The recorded status is terminal (`isTerminalTaskStatus`). Distinct from the
+   * operational status: a runnable task whose latest run failed reads
+   * operationally `failed` yet can still complete.
+   */
+  terminal: boolean;
+  /**
    * Dependents that become ready when this task completes: this task is their
    * only unmet prerequisite and their own status allows work. Empty for a
    * terminal task: a completed task is nobody's unmet prerequisite any more, and

@@ -15,7 +15,6 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { terminalTaskOperationalStatuses } from "@ai-office/application/read-models/operational-read-models.ts";
 import type {
   TaskGraph,
   TaskGraphMilestone,
@@ -1167,7 +1166,7 @@ function TaskPanel({
           />
         )
       )}
-      {!terminalTaskOperationalStatuses.includes(task.operationalStatus) && (
+      {!task.terminal && (
         <TaskList
           title="Unblocks when completed"
           empty="Completing it makes no other task ready on its own."
