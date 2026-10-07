@@ -111,6 +111,69 @@ describe("dashboard task graph", () => {
     expect(visible.edges).toHaveLength(4);
   });
 
+  test("keeps cancelled prerequisites visible while they block open work", () => {
+    const cancelled = (taskId: string) =>
+      node(taskId, {
+        recordedStatus: "cancelled",
+        operationalStatus: "cancelled",
+        terminal: true,
+        ready: false,
+      });
+    const blockedGraph: TaskGraph = {
+      ...graph,
+      tasks: [
+        cancelled("blocking-cancelled"),
+        cancelled("unrelated-cancelled"),
+        node("waiting-on-cancelled", {
+          ready: false,
+          waiting: true,
+          unmetPrerequisiteIds: ["blocking-cancelled"],
+        }),
+        node("finished-dependent", {
+          recordedStatus: "failed",
+          operationalStatus: "failed",
+          terminal: true,
+          ready: false,
+          unmetPrerequisiteIds: ["unrelated-cancelled"],
+        }),
+      ],
+      edges: [
+        {
+          taskId: "waiting-on-cancelled",
+          dependsOnTaskId: "blocking-cancelled",
+        },
+        {
+          taskId: "finished-dependent",
+          dependsOnTaskId: "unrelated-cancelled",
+        },
+      ],
+    };
+    const visible = filterGraph(blockedGraph, defaultGraphFilters);
+    expect(ids(visible.tasks)).toEqual([
+      "blocking-cancelled",
+      "waiting-on-cancelled",
+      "finished-dependent",
+    ]);
+    expect(visible.edges).toEqual([
+      { taskId: "waiting-on-cancelled", dependsOnTaskId: "blocking-cancelled" },
+    ]);
+    expect(visible.hiddenTaskCount).toBe(1);
+    expect(
+      ids(
+        filterGraph(blockedGraph, { ...defaultGraphFilters, quick: "waiting" })
+          .tasks,
+      ),
+    ).toEqual(["waiting-on-cancelled"]);
+    expect(
+      ids(
+        filterGraph(blockedGraph, {
+          ...defaultGraphFilters,
+          search: "waiting-on",
+        }).tasks,
+      ),
+    ).toEqual(["waiting-on-cancelled"]);
+  });
+
   test("filters by status, milestone and each operational shortcut", () => {
     expect(
       ids(filterGraph(graph, { ...all, status: "completed" }).tasks),

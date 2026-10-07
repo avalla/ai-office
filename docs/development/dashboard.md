@@ -275,9 +275,11 @@ The whole-project summary counts remain exact. Search can locate any task;
 ready, attention, and longest dependency chain lists are available in pages of
 25 rather than thousands of DOM nodes at once. Lists for a selected task also
 use pages of 25; direct dependent membership checks remain linear even for a
-large hub. A selection can still isolate its lineage. Completed and
-cancelled tasks are hidden by default (an operational shortcut or a status
-filter overrides that).
+large hub. A selection can still isolate its lineage. Completed tasks and
+cancelled tasks that block no open work are hidden by default. A cancelled
+prerequisite remains visible with its edge when it still blocks a non-terminal
+task; an explicit search or filter may narrow it away. An operational shortcut
+or status filter overrides the default hiding rule.
 
 Filter and selection state is component state, so it survives live refresh and
 resets when the project changes, but is not in the URL. Persisting search,

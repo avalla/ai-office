@@ -787,7 +787,7 @@ function TaskGraphCanvas({
                   patch({ hideCompleted: event.target.checked })
                 }
               />
-              Hide completed and cancelled
+              Hide completed and nonblocking cancelled
             </label>
             <label className="flex items-center gap-2">
               <input

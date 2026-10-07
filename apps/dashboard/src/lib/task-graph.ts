@@ -88,6 +88,23 @@ export function filterGraph(
 ): VisibleGraph {
   const { keep = new Set<string>(), only } = scope;
   const search = filters.search.trim().toLowerCase();
+  // The default overview must retain cancelled prerequisites that the read
+  // model says still block open work. Explicit filters may narrow them away.
+  const cancelledBlockers = new Set<string>();
+  if (
+    only === undefined &&
+    filters.hideCompleted &&
+    filters.status === "" &&
+    filters.quick === "" &&
+    filters.milestone === "" &&
+    search === ""
+  ) {
+    for (const task of graph.tasks) {
+      if (task.terminal) continue;
+      for (const prerequisiteId of task.unmetPrerequisiteIds)
+        cancelledBlockers.add(prerequisiteId);
+    }
+  }
   const tasks = graph.tasks.filter((task) => {
     if (only !== undefined) return only.has(task.taskId);
     if (keep.has(task.taskId)) return true;
@@ -98,7 +115,8 @@ export function filterGraph(
       // can sit on finished tasks: it must not be hidden from itself.
       filters.quick === "" &&
       (task.operationalStatus === "completed" ||
-        task.operationalStatus === "cancelled")
+        (task.operationalStatus === "cancelled" &&
+          !cancelledBlockers.has(task.taskId)))
     )
       return false;
     if (filters.status !== "" && task.operationalStatus !== filters.status)
