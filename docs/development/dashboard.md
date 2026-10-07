@@ -256,8 +256,9 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   minimap), distinct from the data filters;
 - a side panel: with no selection, a "what happens next" list (ready tasks by
   priority, tasks needing attention, the longest dependency chain, legend); with
-  a selection, its blockers (only while it is waiting), what completing it
-  unblocks, its other dependents, completed prerequisites (also
+  a selection, the task description and explicitly linked requirement titles,
+  statuses and descriptions, followed by its blockers (only while it is waiting),
+  what completing it unblocks, its other dependents, completed prerequisites (also
   when those tasks are hidden from the canvas), milestones, and an "Only this
   lineage" option that exists only while something is selected.
 
@@ -289,7 +290,12 @@ model, so it is a follow-up (it needs section-level query parameters that do not
 trigger a refetch). The Graph route fetches only the exhaustive graph endpoint;
 the shell's shared project summaries supply its header and navigation. It does
 not request project detail or its active run and pipeline samples, avoiding a
-second requirement-link read and task projection on live refresh.
+second requirement-link read and task projection on live refresh. Selecting a
+task fetches only that task's existing detail endpoint. This keeps full task and
+requirement text out of the exhaustive graph payload; selection changes cancel
+the previous request, and a live graph refresh updates the selected detail.
+The side panel scrolls independently and initially shows eight requirement
+references, with a control to reveal the rest in batches of eight.
 
 ### Task search, filters, and pages
 

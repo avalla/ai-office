@@ -1,6 +1,9 @@
 import { expect, test, vi } from "vitest";
 import type { TaskGraph } from "@ai-office/application/read-models/operational-read-models.ts";
-import { queryRoute } from "../../apps/dashboard/src/api/client.ts";
+import {
+  getTaskDetail,
+  queryRoute,
+} from "../../apps/dashboard/src/api/client.ts";
 import { parseRoute } from "../../apps/dashboard/src/ui/view-model.ts";
 
 test("graph route reads only the exhaustive graph projection", async () => {
@@ -34,6 +37,25 @@ test("graph route reads only the exhaustive graph projection", async () => {
       graph,
     });
     expect(requests).toEqual(["/api/projects/project-1/graph"]);
+  } finally {
+    fetchSpy.mockRestore();
+  }
+});
+
+test("selected graph task reads its scoped detail with an abort signal", async () => {
+  const detail = { task: { taskId: "task/1", description: "Task details" } };
+  const controller = new AbortController();
+  const fetchSpy = vi
+    .spyOn(globalThis, "fetch")
+    .mockImplementation(async (_input, _init) => Response.json(detail));
+  try {
+    expect(
+      await getTaskDetail("project/1", "task/1", controller.signal),
+    ).toEqual(detail.task);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/projects/project%2F1/tasks/task%2F1",
+      expect.objectContaining({ signal: controller.signal }),
+    );
   } finally {
     fetchSpy.mockRestore();
   }

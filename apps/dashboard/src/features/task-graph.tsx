@@ -16,11 +16,14 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import type {
+  TaskDetail,
   TaskGraph,
   TaskGraphMilestone,
   TaskGraphNode,
   TaskOperationalStatus,
+  TaskOperationalState,
 } from "@ai-office/application/read-models/operational-read-models.ts";
+import { getTaskDetail } from "../api/client.ts";
 import { Empty, Section, StatusBadge } from "../components/operations.tsx";
 import { Button, Input, Select, cn } from "../components/ui/primitives.tsx";
 import {
@@ -47,7 +50,11 @@ import {
   type GraphFilters,
   type QuickFilter,
 } from "../lib/task-graph.ts";
-import { taskStatusTone, type ToneName } from "../ui/view-model.ts";
+import {
+  requirementStatusTone,
+  taskStatusTone,
+  type ToneName,
+} from "../ui/view-model.ts";
 
 /* -------------------------------------------------------------------------- */
 /* Colours (fixed so SVG markers render the same in light and dark mode)       */
@@ -267,6 +274,44 @@ function TaskGraphCanvas({
   const staleReset = useRef(false);
   const selectedTask =
     selectedKey === null ? null : (tasksById.get(selectedKey.slice(2)) ?? null);
+  const selectedTaskId = selectedTask?.taskId ?? null;
+  const [detailRequest, setDetailRequest] = useState(0);
+  const [detailState, setDetailState] = useState<{
+    graph: TaskGraph;
+    taskId: string;
+    detail: TaskDetail | null;
+    error: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (selectedTaskId === null) return;
+    const controller = new AbortController();
+    void getTaskDetail(projectId, selectedTaskId, controller.signal)
+      .then((detail) => {
+        if (!controller.signal.aborted)
+          setDetailState({
+            graph,
+            taskId: selectedTaskId,
+            detail,
+            error: false,
+          });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setDetailState({
+            graph,
+            taskId: selectedTaskId,
+            detail: null,
+            error: true,
+          });
+      });
+    return () => controller.abort();
+  }, [detailRequest, graph, projectId, selectedTaskId]);
+
+  const currentDetail =
+    detailState?.graph === graph && detailState.taskId === selectedTaskId
+      ? detailState
+      : null;
 
   // A selection that a live refresh removed must not come back with its
   // isolation if the id reappears.
@@ -978,6 +1023,13 @@ function TaskGraphCanvas({
               key={selectedTask.taskId}
               projectId={projectId}
               task={selectedTask}
+              detail={currentDetail?.detail ?? null}
+              detailLoading={currentDetail === null}
+              detailError={currentDetail?.error ?? false}
+              onRetryDetail={() => {
+                setDetailState(null);
+                setDetailRequest((request) => request + 1);
+              }}
               tasksById={tasksById}
               prerequisites={selectedRelationships.prerequisites}
               dependents={selectedRelationships.dependents}
@@ -1235,6 +1287,10 @@ function PagedTaskList({
 function TaskPanel({
   projectId,
   task,
+  detail,
+  detailLoading,
+  detailError,
+  onRetryDetail,
   tasksById,
   prerequisites,
   dependents,
@@ -1247,6 +1303,10 @@ function TaskPanel({
 }: {
   projectId: string;
   task: TaskGraphNode;
+  detail: TaskDetail | null;
+  detailLoading: boolean;
+  detailError: boolean;
+  onRetryDetail: () => void;
   tasksById: ReadonlyMap<string, TaskGraphNode>;
   prerequisites: readonly string[];
   dependents: readonly string[];
@@ -1321,6 +1381,25 @@ function TaskPanel({
           Only this lineage
         </label>
       </div>
+      {detailLoading ? (
+        <p role="status" className="text-xs text-subtle">
+          Loading task and requirement details…
+        </p>
+      ) : detailError ? (
+        <div role="alert" className="space-y-2 text-xs">
+          <p>Task and requirement details could not be loaded.</p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onRetryDetail}
+          >
+            Retry
+          </Button>
+        </div>
+      ) : detail !== null ? (
+        <GraphTaskDetailSections task={detail.task} />
+      ) : null}
       {task.waiting ? (
         <PagedTaskList
           title="Waiting on"
@@ -1365,6 +1444,97 @@ function TaskPanel({
         tasksById={tasksById}
         onFocus={onFocus}
       />
+    </>
+  );
+}
+
+export function GraphTaskDetailSections({
+  task,
+}: {
+  task: Pick<
+    TaskOperationalState,
+    "description" | "requirements" | "requirementReferences"
+  >;
+}) {
+  const [visibleRequirements, setVisibleRequirements] = useState(8);
+  const references = task.requirementReferences ?? [];
+  return (
+    <>
+      <section
+        aria-label="Task details"
+        className="space-y-2 border-t border-border pt-3"
+      >
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-subtle">
+          Task details
+        </h4>
+        <p className="whitespace-pre-wrap break-words text-xs">
+          {task.description?.trim() || "No description recorded."}
+        </p>
+      </section>
+      <section
+        aria-label="Linked requirements"
+        className="space-y-2 border-t border-border pt-3"
+      >
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-subtle">
+          Requirements
+        </h4>
+        {task.requirements.availability === "unavailable" ? (
+          <p className="text-xs text-subtle">{task.requirements.explanation}</p>
+        ) : (
+          <>
+            <p className="text-xs text-subtle">
+              {task.requirements.value.verified} of{" "}
+              {task.requirements.value.total} verified
+            </p>
+            {references.length === 0 ? (
+              <p className="text-xs text-subtle">
+                {task.requirements.value.total === 0
+                  ? "No requirements linked."
+                  : "Linked requirement details are unavailable."}
+              </p>
+            ) : (
+              <>
+                <ul className="space-y-3">
+                  {references
+                    .slice(0, visibleRequirements)
+                    .map((requirement) => (
+                      <li
+                        key={requirement.requirementId}
+                        className="space-y-1 rounded border border-border p-2"
+                      >
+                        <p className="break-words text-xs font-medium">
+                          <span className="font-mono text-subtle">
+                            {requirement.key}
+                          </span>{" "}
+                          {requirement.title}
+                        </p>
+                        <StatusBadge
+                          label={requirement.status}
+                          tone={requirementStatusTone(requirement.status)}
+                        />
+                        <p className="whitespace-pre-wrap break-words text-xs text-subtle">
+                          {requirement.description.trim() ||
+                            "No description recorded."}
+                        </p>
+                      </li>
+                    ))}
+                </ul>
+                {references.length > visibleRequirements && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setVisibleRequirements((count) => count + 8)}
+                  >
+                    Show more requirements (
+                    {references.length - visibleRequirements} remaining)
+                  </Button>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </section>
     </>
   );
 }

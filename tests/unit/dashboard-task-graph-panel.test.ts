@@ -2,7 +2,10 @@ import { describe, expect, test } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { TaskGraphNode } from "@ai-office/application/read-models/operational-read-models.ts";
-import { OverviewTaskLists } from "../../apps/dashboard/src/features/task-graph.tsx";
+import {
+  GraphTaskDetailSections,
+  OverviewTaskLists,
+} from "../../apps/dashboard/src/features/task-graph.tsx";
 
 function node(id: string): TaskGraphNode {
   return {
@@ -94,4 +97,35 @@ describe("graph overview task lists", () => {
     expect(laterPage).not.toContain("Title r0");
     expect(laterPage).not.toContain("Title a0");
   });
+});
+
+test("selected task panel shows task text and linked requirement details in bounded pages", () => {
+  const requirements = Array.from({ length: 9 }, (_, index) => ({
+    requirementId: `requirement-${index}`,
+    key: `REQ-${index}`,
+    title: `Requirement ${index}`,
+    description: `Acceptance text ${index}`,
+    status: "verified" as const,
+    milestoneId: null,
+  }));
+  const html = renderToStaticMarkup(
+    createElement(GraphTaskDetailSections, {
+      task: {
+        description: "Implement the graph panel",
+        requirements: {
+          availability: "available",
+          value: { total: 9, open: 0, terminal: 9, verified: 9, rejected: 0 },
+        },
+        requirementReferences: requirements,
+      },
+    }),
+  );
+
+  expect(html).toContain("Implement the graph panel");
+  expect(html).toContain("9 of 9 verified");
+  expect(html).toContain("REQ-0");
+  expect(html).toContain("Acceptance text 0");
+  expect(html).toContain("REQ-7");
+  expect(html).not.toContain("REQ-8");
+  expect(html).toContain("Show more requirements (1 remaining)");
 });
