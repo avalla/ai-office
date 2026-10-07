@@ -17,8 +17,10 @@ import {
   developmentPackManifestDigest,
   developmentPackVersion,
   legacyRoleIds,
+  projectLegacyGuidance,
   projectLegacyProfile,
   projectResolvedConfiguration,
+  projectResolvedGuidance,
   shippedAgentsDirectory,
   testCatalogWith,
 } from "../helpers/development-pack-parity.ts";
@@ -28,9 +30,10 @@ import { createTestUnixSocket } from "../helpers/unix-socket.ts";
 // from a catalog a test supplies: the Runtime's own composition holds no pack
 // and no command binds one. With such a catalog, a project installed with
 // the shipped defaults and explicitly bound resolves the roles, agents and
-// task types its legacy profile describes, and since GP-10B-1 the workflows
-// its legacy pipelines describe. What the Runtime reads to run work stays the
-// same.
+// task types its legacy profile describes, since GP-10B-1 the workflows its
+// legacy pipelines describe, and since GP-10B-2 their stage descriptions, all
+// five routes and the role guidance. What the Runtime reads to run work stays
+// the same.
 
 /** `project:configuration:show` of a project with no selection and no definition. */
 const emptyConfiguration = {
@@ -66,6 +69,8 @@ const emptyConfiguration = {
   disabledAgents: [],
   workflows: [],
   disabledWorkflows: [],
+  capabilities: [],
+  policies: [],
   pin: {
     configurationDigest:
       "sha256:c272fa286a92c8d3732e97fec7b0373c3a7854cb70e4a108a7690acb92bd7b19",
@@ -405,7 +410,21 @@ describe("GP-10A development pack over the Runtime socket", () => {
       expect(projectResolvedConfiguration(resolved).routes).toEqual(
         projectLegacyProfile(bound).routes,
       );
-      expect(projectLegacyProfile(bound).routes).toHaveLength(4);
+      expect(projectLegacyProfile(bound).routes).toHaveLength(5);
+      expect(projectResolvedConfiguration(resolved).routes).toContainEqual({
+        taskType: "maintenance",
+        workflow: "delivery",
+      });
+      // GP-10B-2: the guidance prompt of each role has the digest of the
+      // guidance that `agent:sync` stored from the shipped directory.
+      expect(projectResolvedGuidance(resolved)).toEqual(
+        projectLegacyGuidance(bound),
+      );
+      expect(
+        projectResolvedGuidance(resolved).every(
+          (entry) => entry.digest !== null,
+        ),
+      ).toBe(true);
 
       // The binding is the only thing the legacy profile reports as changed.
       expect(bound.profileDigest).toBe(unbound.profileDigest);

@@ -219,7 +219,7 @@ const blockedIssue = {
   code: "prospective_configuration_invalid",
   detail: "unresolved_override",
   message:
-    "The reconciled project configuration would not resolve: Stored override violates the override contract: malformed_origin_reference",
+    "The reconciled project configuration would not resolve: Stored override violates the override contract: malformed_origin_reference: description must be bounded text",
 };
 
 function definePolicyContract(open: () => Promise<Backend>): void {

@@ -6,6 +6,8 @@ import {
   type Contribution,
   type ContributionKind,
   type DomainPackManifest,
+  type PromptContribution,
+  type RoleContribution,
   type WorkflowContribution,
 } from "../../../domain-pack-contracts/src/index.ts";
 import { canonicalizeJcsJson } from "../../../domain-pack-contracts/src/jcs.ts";
@@ -15,6 +17,7 @@ import {
   type InstalledDomainPackCatalog,
   type PackIdentity,
 } from "../ports/installed-domain-pack-catalog.port.ts";
+import type { OperationProviderCatalog } from "../ports/operation-provider-catalog.port.ts";
 import {
   StaleProjectPackBindingError,
   type ProjectPackBinding,
@@ -43,10 +46,20 @@ import {
   type ProjectOwnedDefinition,
 } from "./project-definition.ts";
 import {
+  capabilityContractDifferences,
+  type CapabilityContractDifference,
+} from "./capability-contracts.ts";
+import {
   CapturedPackManifestError,
   resolveInstalledPackManifests,
   type ResolvedPackManifest,
 } from "./resolve-installed-pack-manifests.ts";
+import {
+  closureWorkflowPolicies,
+  workflowPolicyDifferences,
+  type WorkflowPolicy,
+  type WorkflowPolicyDifference,
+} from "./pack-policy-changes.ts";
 import {
   roleCapabilityDifferences,
   roleCapabilitySets,
@@ -123,6 +136,12 @@ export interface RoleCapabilityChange extends RoleCapabilityDifference {
   readonly customized: boolean;
 }
 
+/** A workflow policy difference, marked when a project override names it. */
+export interface PolicyChange extends WorkflowPolicyDifference {
+  /** A project override names this workflow; it cannot alter the policy. */
+  readonly customized: boolean;
+}
+
 export type PackUpgradeIssueCode =
   | "target_closure_unresolved"
   | "unresolved_override_conflict"
@@ -178,6 +197,41 @@ export interface PackUpgradePlan {
    * binds these sets even when the previous closure cannot be read.
    */
   readonly targetRoleCapabilities: readonly RoleCapabilitySet[];
+  /**
+   * Operation contract differences of pack capabilities over the resolved
+   * closures (GP-16): added and removed operations and requirement changes.
+   * Like a role capability change, it is reviewed and approved with the plan.
+   */
+  readonly capabilityContractChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly CapabilityContractDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason: "previous_closure_unresolved";
+        readonly detail: string;
+      };
+  /**
+   * Workflow policy differences over the resolved closures (GP-25). Like a
+   * capability change, a policy change is reviewed and approved with the
+   * plan. Identities and clause values only.
+   */
+  readonly policyChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly PolicyChange[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason: "previous_closure_unresolved";
+        readonly detail: string;
+      };
+  /**
+   * Every typed policy of the target closure. Approval binds these policies
+   * even when the previous closure cannot be read.
+   */
+  readonly targetPolicies: readonly WorkflowPolicy[];
   readonly overrides: readonly OverrideReconciliation[];
   /** Supplied resolutions that matched no conflict; they change nothing. */
   readonly ignoredResolutions: readonly OverrideResolution[];
@@ -376,6 +430,24 @@ function roleCapabilityChanges(
   }));
 }
 
+function policyChanges(
+  before: readonly ResolvedPackManifest[],
+  after: readonly ResolvedPackManifest[],
+  overrides: readonly ProjectDefinitionOverride[],
+): PolicyChange[] {
+  const customized = new Set(
+    overrides
+      .filter(({ source }) => source.kind === "workflows")
+      .map(({ source }) =>
+        stablePackDefinitionId(source.id, "workflows", source.localId),
+      ),
+  );
+  return workflowPolicyDifferences(before, after).map((item) => ({
+    ...item,
+    customized: customized.has(item.workflowId),
+  }));
+}
+
 /**
  * The definition state after the plan's override outcomes. A surviving override
  * is carried over whole: only the pack tuple of a retargeted source changes.
@@ -467,6 +539,7 @@ export function planProjectPackUpgrade(input: {
   readonly desired: readonly PackIdentity[];
   readonly resolutions: readonly OverrideResolution[];
   readonly catalog: InstalledDomainPackCatalog;
+  readonly providers?: OperationProviderCatalog;
 }): PackUpgradePlan {
   return reconcileProjectPackUpgrade(input).plan;
 }
@@ -477,6 +550,7 @@ function reconcileProjectPackUpgrade(input: {
   readonly desired: readonly PackIdentity[];
   readonly resolutions: readonly OverrideResolution[];
   readonly catalog: InstalledDomainPackCatalog;
+  readonly providers?: OperationProviderCatalog;
 }): UpgradeReconciliation {
   const { binding, definitions, catalog, resolutions } = input;
   const currentPacks = binding.packs.map(identity);
@@ -513,6 +587,9 @@ function reconcileProjectPackUpgrade(input: {
       | "templates"
       | "roleCapabilityChanges"
       | "targetRoleCapabilities"
+      | "capabilityContractChanges"
+      | "policyChanges"
+      | "targetPolicies"
       | "overrides"
       | "ignoredResolutions"
       | "issues"
@@ -537,6 +614,9 @@ function reconcileProjectPackUpgrade(input: {
       // A no-op reads no artifact, so it has no capability set to report.
       roleCapabilityChanges: { availability: "available", changes: [] },
       targetRoleCapabilities: [],
+      capabilityContractChanges: { availability: "available", changes: [] },
+      policyChanges: { availability: "available", changes: [] },
+      targetPolicies: [],
       overrides: definitions.overrides.map(({ source, operation }) => ({
         source,
         operation,
@@ -569,6 +649,14 @@ function reconcileProjectPackUpgrade(input: {
     availability: "available",
     changes: [],
   };
+  let contractChanges: PackUpgradePlan["capabilityContractChanges"] = {
+    availability: "available",
+    changes: [],
+  };
+  let policyDifferences: PackUpgradePlan["policyChanges"] = {
+    availability: "available",
+    changes: [],
+  };
   if (target && selectionChanged)
     try {
       const previous = resolveInstalledPackManifests(catalog, currentPacks);
@@ -580,6 +668,14 @@ function reconcileProjectPackUpgrade(input: {
         availability: "available",
         changes: roleCapabilityChanges(previous, target, definitions.overrides),
       };
+      contractChanges = {
+        availability: "available",
+        changes: capabilityContractDifferences(previous, target),
+      };
+      policyDifferences = {
+        availability: "available",
+        changes: policyChanges(previous, target, definitions.overrides),
+      };
     } catch (error) {
       const detail = closureFailure(error);
       if (detail === null) throw error;
@@ -589,8 +685,11 @@ function reconcileProjectPackUpgrade(input: {
         detail,
       };
       capabilityChanges = templates;
+      contractChanges = templates;
+      policyDifferences = templates;
     }
   const targetRoleCapabilities = roleCapabilitySets(target ?? []);
+  const targetPolicies = closureWorkflowPolicies(target ?? []);
 
   const targetManifests = new Map<string, DomainPackManifest>(
     (target ?? []).map((entry) => [tupleKey(entry.identity), entry.manifest]),
@@ -789,10 +888,19 @@ function reconcileProjectPackUpgrade(input: {
         source.kind === "workflows"
           ? (nextEntry as WorkflowContribution)
           : undefined;
+      // Nor does it set a descriptive field (GP-10B-2): a role's
+      // responsibilities, a prompt's text, a stage's title, objective and
+      // checks and a workflow's additional task types are the template's.
+      const { responsibilities }: RoleContribution =
+        source.kind === "roles" ? nextEntry : { id: nextEntry.id };
+      const { text }: PromptContribution =
+        source.kind === "prompts" ? nextEntry : { id: nextEntry.id };
       conversions.set(sourceKey(source), {
         id: source.localId,
         ...(title === undefined ? {} : { title }),
         ...(description === undefined ? {} : { description }),
+        ...(responsibilities === undefined ? {} : { responsibilities }),
+        ...(text === undefined ? {} : { text }),
         ...(role === undefined ? {} : { role }),
         ...(prompts === undefined ? {} : { prompts }),
         ...(knowledge === undefined ? {} : { knowledge }),
@@ -801,10 +909,24 @@ function reconcileProjectPackUpgrade(input: {
           ? {}
           : {
               taskType: workflow.taskType,
-              stages: workflow.stages.map(({ id, role: stageRole }) => ({
-                id,
-                role: stageRole,
-              })),
+              ...(workflow.additionalTaskTypes === undefined
+                ? {}
+                : { additionalTaskTypes: workflow.additionalTaskTypes }),
+              stages: workflow.stages.map(
+                ({
+                  id,
+                  role: stageRole,
+                  title: stageTitle,
+                  objective,
+                  checks,
+                }) => ({
+                  id,
+                  role: stageRole,
+                  ...(stageTitle === undefined ? {} : { title: stageTitle }),
+                  ...(objective === undefined ? {} : { objective }),
+                  ...(checks === undefined ? {} : { checks }),
+                }),
+              ),
             }),
       });
       overrides.push({
@@ -888,6 +1010,11 @@ function reconcileProjectPackUpgrade(input: {
         },
         catalog,
         coreContractVersion: catalog.coreContractVersion,
+        // GP-16: a target whose required provider is missing does not
+        // resolve, so the upgrade is blocked like any invalid target.
+        ...(input.providers === undefined
+          ? {}
+          : { providers: input.providers }),
       }).configurationDigest;
     } catch (error) {
       if (!(error instanceof ProjectConfigurationResolutionError)) throw error;
@@ -904,6 +1031,9 @@ function reconcileProjectPackUpgrade(input: {
     templates,
     roleCapabilityChanges: capabilityChanges,
     targetRoleCapabilities,
+    capabilityContractChanges: contractChanges,
+    policyChanges: policyDifferences,
+    targetPolicies,
     overrides,
     ignoredResolutions: resolutions.filter(
       (item) => !usedResolutions.has(sourceKey(item.source)),
@@ -928,6 +1058,8 @@ export class ReconcileProjectPackUpgrade {
       bindings: ProjectPackBindingRepository;
       definitions: ProjectDefinitionRepository;
       catalog: InstalledDomainPackCatalog;
+      /** Absent means no registered provider; see the resolver. */
+      providers?: OperationProviderCatalog;
       auditEvents: AuditEventRepository;
       transactions: TransactionRunner;
       clock: Clock;
@@ -974,6 +1106,9 @@ export class ReconcileProjectPackUpgrade {
       desired,
       resolutions,
       catalog: this.dependencies.catalog,
+      ...(this.dependencies.providers === undefined
+        ? {}
+        : { providers: this.dependencies.providers }),
     });
   }
 
@@ -1078,6 +1213,11 @@ export class ReconcileProjectPackUpgrade {
             // Role and capability identities only.
             roleCapabilityChanges: plan.roleCapabilityChanges,
             targetRoleCapabilities: plan.targetRoleCapabilities,
+            // Capability IDs, operation names, modes and requirements only.
+            capabilityContractChanges: plan.capabilityContractChanges,
+            // Policy and workflow identities and clause values only.
+            policyChanges: plan.policyChanges,
+            targetPolicies: plan.targetPolicies,
             prospectiveConfigurationDigest:
               plan.prospectiveConfigurationDigest ?? null,
             result: "applied",

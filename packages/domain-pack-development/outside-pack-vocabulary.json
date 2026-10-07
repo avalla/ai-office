@@ -1,11 +1,11 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "pack": {
     "id": "org.ai-office.development",
-    "version": "0.2.0"
+    "version": "0.3.0"
   },
   "claim": "expressible-subset parity",
-  "description": "Legacy development fields that the schema-1 pack vocabulary cannot express, in whole or in part. The parity comparison does not cover the residue. delivered is the part of the field the development pack carries since GP-10B-1, or null when it carries none of it. residue is what stays outside the pack, and owner is the task that owns that residue next. gp09Gap is the GP-09 vocabulary gap code that reports the field in a state that uses it. inDefaultState is true for a field observed in the default legacy state and false for a legacy field the default state does not use, listed so that its owner is on record.",
+  "description": "Legacy development fields that the schema-1 pack vocabulary cannot express, in whole or in part, and the fields the development pack has come to carry. The parity comparison does not cover the residue. delivered is the part of the field the development pack carries, or null when it carries none of it. residue is what stays outside the pack, or null when the pack carries the whole field since GP-10B-2 PR 2. owner is the task that owns the residue next, or, for an entry with no residue, the task that delivered it. gp09Gap is the GP-09 vocabulary gap code that reports the field in a state that uses it. inDefaultState is true for a field observed in the default legacy state and false for a legacy field the default state does not use, listed so that its owner is on record.",
   "owners": {
     "GP-10B-2": "Development descriptive contract extension and prompts (Runtime task e890324a-ecd4-4fcc-b1f8-37fdbdaca319)",
     "GP-25": "Pack policy contribution contract (provisional number; Runtime task 1a883c04-0905-4b36-a57b-12d45fdfd59f)",
@@ -17,11 +17,11 @@
       "subject": "office_role",
       "field": "responsibilities",
       "owner": "GP-10B-2",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "The ordered responsibilities of each default role, as the `responsibilities` of the pack role of the same ID.",
+      "residue": null,
       "gp09Gap": "role_fields_not_expressible",
       "inDefaultState": true,
-      "reason": "Authored responsibility statements of an office role. A pack role has a title and a description only."
+      "reason": "Authored responsibility statements of an office role. The legacy field; a pack role could not carry it before GP-10B-2 PR 1; carried since pack 0.3.0."
     },
     {
       "subject": "runtime_role",
@@ -88,11 +88,11 @@
       "subject": "runtime_role",
       "field": "guidance",
       "owner": "GP-10B-2",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "The guidance text and its digest: the prompt `<role>-guidance`, referenced by the agent of the role, whose text is the bytes of `agents/<role>/system.md`. The guidance version is covered by the separate Runtime role `version` entry.",
+      "residue": null,
       "gp09Gap": "runtime_role_fields_not_expressible",
       "inDefaultState": true,
-      "reason": "Role guidance, the system instructions shipped as system.md: its text, digest and version."
+      "reason": "Role guidance, the system instructions shipped as system.md: its text, digest and version. The text and the digest are carried since pack 0.3.0; the guidance version is covered by the separate runtime_role.version entry (owner a45ddb12)."
     },
     {
       "subject": "agent",
@@ -108,21 +108,21 @@
       "subject": "task_kind",
       "field": "pipelineId",
       "owner": "GP-10B-2",
-      "delivered": "The routes feature -> delivery, bugfix -> bugfix, research -> discovery and release -> release, each as the taskType of the workflow of that ID.",
-      "residue": "The route maintenance -> delivery.",
+      "delivered": "All five routes, each as a task type of the workflow of that ID: `taskType` for feature, bugfix, research and release, and `additionalTaskTypes` for maintenance -> delivery.",
+      "residue": null,
       "gp09Gap": null,
       "inDefaultState": true,
-      "reason": "Routing of a task kind to a pipeline. A pack workflow names one task type, so the second kind of a pipeline that routes two has no place in the pack."
+      "reason": "Routing of a task kind to a pipeline. The legacy field; a pack workflow named one task type before GP-10B-2 PR 1, so the second kind of a pipeline that routes two had no place in the pack; carried since pack 0.3.0 as additionalTaskTypes."
     },
     {
       "subject": "pipeline",
       "field": "defaultFor",
       "owner": "GP-10B-2",
-      "delivered": "One task kind per pipeline, as the taskType of its workflow: the routes feature -> delivery, bugfix -> bugfix, research -> discovery and release -> release.",
-      "residue": "The second task kind of the delivery pipeline: the route maintenance -> delivery.",
+      "delivered": "Every task kind of each pipeline, as the task types of its workflow, including both task kinds of the delivery pipeline.",
+      "residue": null,
       "gp09Gap": "pipeline_routes_several_task_kinds",
       "inDefaultState": true,
-      "reason": "One pipeline routes several task kinds; a pack workflow names one task type."
+      "reason": "One pipeline routes several task kinds. The legacy field; a pack workflow named one task type before GP-10B-2 PR 1; carried since pack 0.3.0."
     },
     {
       "subject": "pipeline",
@@ -138,18 +138,18 @@
       "subject": "stage",
       "field": "name",
       "owner": "GP-10B-2",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "The stage name, as the stage `title`.",
+      "residue": null,
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
-      "reason": "Stage name. A pack workflow stage is an ID and a role."
+      "reason": "Stage name. The legacy field; a pack workflow stage was an ID and a role before GP-10B-2 PR 1; carried since pack 0.3.0 as its title."
     },
     {
       "subject": "stage",
       "field": "objective",
       "owner": "GP-10B-2",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "The stage objective, as the stage `objective`.",
+      "residue": null,
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Stage objective."
@@ -158,8 +158,8 @@
       "subject": "stage",
       "field": "checks",
       "owner": "GP-10B-2",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "The ordered checks of the stage, as the stage `checks`.",
+      "residue": null,
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
       "reason": "Check semantics: the checks a stage must satisfy."

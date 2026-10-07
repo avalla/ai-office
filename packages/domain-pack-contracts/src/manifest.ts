@@ -60,6 +60,13 @@ export interface Contribution {
  */
 export interface RoleContribution extends Contribution {
   readonly capabilities?: readonly ContributionLocalId[];
+  /** Descriptive, ordered and never sorted (GP-10B-2). Absent when none. */
+  readonly responsibilities?: readonly string[];
+}
+
+/** A prompt. `text` is its declarative body; nothing sends it anywhere. */
+export interface PromptContribution extends Contribution {
+  readonly text?: string;
 }
 
 /**
@@ -76,14 +83,75 @@ export interface AgentContribution extends Contribution {
   readonly capabilities?: readonly ContributionLocalId[];
 }
 
+/** One operation a capability needs: a connector operation name and mode. */
+export interface CapabilityOperation {
+  readonly operation: string;
+  readonly mode: "read" | "mutation";
+}
+
+export type CapabilityRequirement = "required" | "optional";
+
+/**
+ * A capability. With only an `id` it is a label. `operations` names the
+ * operations it needs (GP-16); the validated list is a set in ascending
+ * code-unit order of the operation name, and `requirement` is then always
+ * present, `required` unless the manifest says `optional`. The declaration
+ * states a need and grants nothing.
+ */
+export interface CapabilityContribution extends Contribution {
+  readonly operations?: readonly CapabilityOperation[];
+  readonly requirement?: CapabilityRequirement;
+}
+
+/**
+ * `title`, `objective` and `checks` are descriptive (GP-10B-2): no approval,
+ * guard or check is enforced because of them. `checks` keeps its order.
+ */
 export interface WorkflowStage {
   readonly id: ContributionLocalId;
   readonly role: ContributionLocalId;
+  readonly title?: string;
+  readonly objective?: string;
+  readonly checks?: readonly string[];
 }
 
+/**
+ * A workflow's routes are `taskType` and `additionalTaskTypes`, task types of
+ * the same manifest. The validated list is a set in ascending code-unit order
+ * that never holds `taskType`, absent when empty.
+ */
 export interface WorkflowContribution extends Contribution {
   readonly taskType: ContributionLocalId;
+  readonly additionalTaskTypes?: readonly ContributionLocalId[];
   readonly stages: readonly WorkflowStage[];
+}
+
+/**
+ * The clauses a policy declares for one stage of its target workflow (GP-25).
+ * A flag is present only as `true`. `requiresDifferentAgentFrom` names earlier
+ * stages of the workflow and `operations` the operation names admitted on the
+ * stage; absent `operations` means that none is admitted. Each validated list
+ * is a set in ascending code-unit order, absent when empty.
+ */
+export interface PolicyStageClause {
+  readonly stage: ContributionLocalId;
+  readonly requiresApproval?: true;
+  readonly requiresIndependentApproval?: true;
+  readonly requiresDifferentAgentFrom?: readonly ContributionLocalId[];
+  readonly operations?: readonly string[];
+}
+
+/**
+ * A policy. With `workflow` it is typed: it targets one workflow of the same
+ * manifest and declares `enforcement` (absent means guidance), stage clauses,
+ * or both. `stages` is a set in ascending code-unit order of `stage`. Without
+ * `workflow` it is descriptive only and has no clause. The clauses are
+ * declarations: this package enforces nothing and they grant nothing.
+ */
+export interface PolicyContribution extends Contribution {
+  readonly workflow?: ContributionLocalId;
+  readonly enforcement?: "enforced";
+  readonly stages?: readonly PolicyStageClause[];
 }
 
 export type DomainPackContributions = {
@@ -93,7 +161,13 @@ export type DomainPackContributions = {
       ? RoleContribution
       : K extends "agents"
         ? AgentContribution
-        : Contribution)[];
+        : K extends "prompts"
+          ? PromptContribution
+          : K extends "policies"
+            ? PolicyContribution
+            : K extends "capabilities"
+              ? CapabilityContribution
+              : Contribution)[];
 };
 
 export interface DomainPackManifest {
@@ -268,8 +342,10 @@ function keys(
 }
 
 /**
- * The one rule for manifest text: metadata name and description, and every
- * contribution title and description. A lone surrogate has no canonical JSON
+ * The one rule for manifest text: metadata name and description, every
+ * contribution title and description, and the descriptive text of GP-10B-2
+ * (stage title and objective, list entries, prompt text; the last two must
+ * also be non-empty). A lone surrogate has no canonical JSON
  * form. U+0000 is allowed by design (GP-23): manifest text is not written to
  * project storage, unlike project definition text, which rejects it.
  */
@@ -334,6 +410,47 @@ function referenceList(
   return parsed;
 }
 
+/**
+ * The most entries one descriptive list may hold: a stage's `checks` or a
+ * role's `responsibilities`. Shared with the project mutation contract and
+ * the portable archive, so every accepted list stays storable and exportable.
+ */
+export const maximumDescriptiveListEntries = 64;
+
+/**
+ * An ordered list of descriptive text: a stage's `checks` or a role's
+ * `responsibilities`. Order is kept as written and duplicates are allowed.
+ * Every entry is non-empty manifest text.
+ */
+function descriptiveList(value: unknown, path: string): readonly string[] {
+  if (!Array.isArray(value))
+    return fail("invalid_contribution", path, "expected array");
+  // "None" has one encoding: the absent field.
+  if (value.length === 0)
+    return fail(
+      "invalid_contribution",
+      path,
+      "expected at least one entry; omit the field instead",
+    );
+  if (value.length > maximumDescriptiveListEntries)
+    return fail(
+      "invalid_contribution",
+      path,
+      `expected at most ${maximumDescriptiveListEntries} entries`,
+    );
+  return value.map((entry: unknown, index: number) =>
+    nonEmptyString(entry, `${path}[${index}]`),
+  );
+}
+
+/** Manifest text that must say something: a list entry or a prompt text. */
+function nonEmptyString(value: unknown, path: string): string {
+  const text = string(value, path, "invalid_contribution");
+  if (text.length === 0)
+    return fail("invalid_contribution", path, "expected non-empty string");
+  return text;
+}
+
 /** The list fields of an agent, with the noun used in their diagnostics. */
 const agentReferenceLists = [
   ["prompts", "prompt"],
@@ -341,17 +458,305 @@ const agentReferenceLists = [
   ["capabilities", "capability"],
 ] as const;
 
+/** The most operation names one policy stage may admit. */
+export const maximumPolicyStageOperations = 64;
+/** The most characters of one policy operation name. */
+export const maximumPolicyOperationLength = 128;
+const policyOperationPattern = /^[a-z][a-z0-9]*(?:[._:-][a-z0-9]+)*$/;
+const policyStageFlags = [
+  "requiresApproval",
+  "requiresIndependentApproval",
+] as const;
+
+/**
+ * Shape of a policy item (GP-25), in its written order. Whether the workflow,
+ * the stages and the separation targets exist, and the one order of each set,
+ * are settled once every section has been read.
+ */
+function policyContribution(
+  record: Record<string, unknown>,
+  path: string,
+  common: Contribution,
+): PolicyContribution {
+  if (record.workflow === undefined) {
+    // An untyped policy is descriptive: a clause needs a target.
+    if (record.enforcement !== undefined || record.stages !== undefined)
+      fail(
+        "invalid_contribution",
+        `${path}.workflow`,
+        "policy clauses need a target workflow",
+      );
+    return common;
+  }
+  const workflow = localId(
+    record.workflow,
+    `${path}.workflow`,
+    "invalid_contribution",
+  );
+  // Guidance has one encoding: the absent field.
+  if (record.enforcement !== undefined && record.enforcement !== "enforced")
+    fail(
+      "invalid_contribution",
+      `${path}.enforcement`,
+      'expected "enforced"; omit the field for guidance',
+    );
+  if (record.enforcement === undefined && record.stages === undefined)
+    fail(
+      "invalid_contribution",
+      path,
+      "typed policy declares neither enforcement nor stages",
+    );
+  const typed = {
+    ...common,
+    workflow,
+    ...(record.enforcement === undefined
+      ? {}
+      : { enforcement: "enforced" as const }),
+  };
+  if (record.stages === undefined) return typed;
+  if (!Array.isArray(record.stages))
+    return fail("invalid_contribution", `${path}.stages`, "expected array");
+  if (record.stages.length === 0)
+    return fail(
+      "invalid_contribution",
+      `${path}.stages`,
+      "expected at least one stage entry; omit the field instead",
+    );
+  const seen = new Set<string>();
+  const stages = record.stages.map(
+    (entry: unknown, index: number): PolicyStageClause => {
+      const stagePath = `${path}.stages[${index}]`;
+      const item = object(entry, stagePath, "invalid_contribution");
+      for (const key of Object.keys(item))
+        if (
+          ![
+            "stage",
+            ...policyStageFlags,
+            "requiresDifferentAgentFrom",
+            "operations",
+          ].includes(key)
+        )
+          fail("invalid_contribution", `${stagePath}.${key}`, "unknown field");
+      const stage = localId(
+        item.stage,
+        `${stagePath}.stage`,
+        "invalid_contribution",
+      );
+      if (seen.has(stage))
+        fail(
+          "invalid_contribution",
+          `${stagePath}.stage`,
+          "duplicate stage entry",
+        );
+      seen.add(stage);
+      // A flag has one encoding: present as true, or absent.
+      for (const flag of policyStageFlags)
+        if (item[flag] !== undefined && item[flag] !== true)
+          fail(
+            "invalid_contribution",
+            `${stagePath}.${flag}`,
+            "expected true; omit the field instead",
+          );
+      if (
+        item.requiresIndependentApproval === true &&
+        item.requiresApproval !== true
+      )
+        fail(
+          "invalid_contribution",
+          `${stagePath}.requiresIndependentApproval`,
+          "independent approval requires requiresApproval",
+        );
+      const clause = {
+        stage,
+        ...(item.requiresApproval === true
+          ? { requiresApproval: true as const }
+          : {}),
+        ...(item.requiresIndependentApproval === true
+          ? { requiresIndependentApproval: true as const }
+          : {}),
+        ...(item.requiresDifferentAgentFrom === undefined
+          ? {}
+          : {
+              requiresDifferentAgentFrom: referenceList(
+                item.requiresDifferentAgentFrom,
+                `${stagePath}.requiresDifferentAgentFrom`,
+                "stage",
+              ),
+            }),
+        ...(item.operations === undefined
+          ? {}
+          : {
+              operations: policyOperations(
+                item.operations,
+                `${stagePath}.operations`,
+              ),
+            }),
+      };
+      if (Object.keys(clause).length === 1)
+        fail("invalid_contribution", stagePath, "stage entry has no clause");
+      return clause;
+    },
+  );
+  return { ...typed, stages };
+}
+
+/**
+ * Operation names admitted on a policy stage: opaque strings in the legacy
+ * operation-name grammar. They are not references to capability
+ * contributions and are compared exactly.
+ */
+function policyOperations(value: unknown, path: string): readonly string[] {
+  if (!Array.isArray(value))
+    return fail("invalid_contribution", path, "expected array");
+  // "No operation admitted" has one encoding: the absent field.
+  if (value.length === 0)
+    return fail(
+      "invalid_contribution",
+      path,
+      "expected at least one operation; omit the field instead",
+    );
+  if (value.length > maximumPolicyStageOperations)
+    return fail(
+      "invalid_contribution",
+      path,
+      `expected at most ${maximumPolicyStageOperations} operations`,
+    );
+  const parsed = value.map((entry: unknown, index: number): string => {
+    if (
+      typeof entry !== "string" ||
+      entry.length > maximumPolicyOperationLength ||
+      !policyOperationPattern.test(entry)
+    )
+      return fail(
+        "invalid_contribution",
+        `${path}[${index}]`,
+        "expected operation name",
+      );
+    return entry;
+  });
+  if (new Set(parsed).size !== parsed.length)
+    fail("invalid_contribution", path, "duplicate operation");
+  return parsed;
+}
+
+/** The most operations one capability may declare. */
+export const maximumCapabilityOperations = 100;
+
+/**
+ * A connector operation name, `<connectorId>.<name>`: two or more ASCII
+ * segments. A wildcard is not a name.
+ */
+const operationNamePattern =
+  /^[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9][A-Za-z0-9_-]*)+$/;
+const maximumOperationNameLength = 128;
+const capabilityRequirements: readonly CapabilityRequirement[] = [
+  "required",
+  "optional",
+];
+
+/** The operation contract of a capability entry (GP-16). */
+function capabilityContract(
+  record: Record<string, unknown>,
+  path: string,
+): Pick<CapabilityContribution, "operations" | "requirement"> {
+  const requirement = capabilityRequirements.find(
+    (candidate) => candidate === record.requirement,
+  );
+  if (record.requirement !== undefined && requirement === undefined)
+    return fail(
+      "invalid_contribution",
+      `${path}.requirement`,
+      "expected required or optional",
+    );
+  if (record.operations === undefined) {
+    // A requirement states nothing without an operation to require.
+    if (requirement !== undefined)
+      fail(
+        "invalid_contribution",
+        `${path}.requirement`,
+        "requirement needs operations",
+      );
+    return {};
+  }
+  const list = record.operations;
+  const listPath = `${path}.operations`;
+  if (!Array.isArray(list))
+    return fail("invalid_contribution", listPath, "expected array");
+  // "None" has one encoding: the absent field.
+  if (list.length === 0)
+    return fail(
+      "invalid_contribution",
+      listPath,
+      "expected at least one operation; omit the field instead",
+    );
+  if (list.length > maximumCapabilityOperations)
+    return fail(
+      "invalid_contribution",
+      listPath,
+      `expected at most ${maximumCapabilityOperations} operations`,
+    );
+  const operations = list.map(
+    (entry: unknown, index: number): CapabilityOperation => {
+      const entryPath = `${listPath}[${index}]`;
+      const item = object(entry, entryPath, "invalid_contribution");
+      keys(item, ["operation", "mode"], entryPath, "invalid_contribution");
+      const { operation, mode } = item;
+      if (
+        typeof operation !== "string" ||
+        operation.length > maximumOperationNameLength ||
+        !operationNamePattern.test(operation)
+      )
+        return fail(
+          "invalid_contribution",
+          `${entryPath}.operation`,
+          "expected operation name <connector>.<name>",
+        );
+      if (mode !== "read" && mode !== "mutation")
+        return fail(
+          "invalid_contribution",
+          `${entryPath}.mode`,
+          "expected read or mutation",
+        );
+      return { operation, mode };
+    },
+  );
+  if (new Set(operations.map((entry) => entry.operation)).size !== list.length)
+    fail("invalid_contribution", listPath, "duplicate operation");
+  return {
+    // A set: one order, so the digest does not depend on the written order.
+    operations: operations.sort((left, right) =>
+      compareCodeUnits(left.operation, right.operation),
+    ),
+    // The default has one canonical form.
+    requirement: requirement ?? "required",
+  };
+}
+
 function contribution(
   value: unknown,
   path: string,
   kind: ContributionKind,
-): Contribution | RoleContribution | AgentContribution | WorkflowContribution {
+):
+  | Contribution
+  | RoleContribution
+  | AgentContribution
+  | PromptContribution
+  | CapabilityContribution
+  | WorkflowContribution
+  | PolicyContribution {
   const record = object(value, path, "invalid_contribution");
   const workflow = kind === "workflows";
   const allowed = workflow
-    ? ["id", "title", "description", "taskType", "stages"]
+    ? [
+        "id",
+        "title",
+        "description",
+        "taskType",
+        "additionalTaskTypes",
+        "stages",
+      ]
     : kind === "roles"
-      ? ["id", "title", "description", "capabilities"]
+      ? ["id", "title", "description", "capabilities", "responsibilities"]
       : kind === "agents"
         ? [
             "id",
@@ -362,7 +767,20 @@ function contribution(
             "knowledge",
             "capabilities",
           ]
-        : ["id", "title", "description"];
+        : kind === "prompts"
+          ? ["id", "title", "description", "text"]
+          : kind === "policies"
+            ? [
+                "id",
+                "title",
+                "description",
+                "workflow",
+                "enforcement",
+                "stages",
+              ]
+            : ["id", "title", "description"];
+  // GP-16: a capability entry may also carry its operation contract.
+  if (kind === "capabilities") allowed.push("operations", "requirement");
   for (const key of Object.keys(record))
     if (!allowed.includes(key))
       fail("invalid_contribution", `${path}.${key}`, "unknown field");
@@ -385,16 +803,30 @@ function contribution(
         }),
   };
   if (kind === "roles")
-    return record.capabilities === undefined
+    return {
+      ...common,
+      ...(record.capabilities === undefined
+        ? {}
+        : {
+            capabilities: referenceList(
+              record.capabilities,
+              `${path}.capabilities`,
+              "capability",
+            ),
+          }),
+      ...(record.responsibilities === undefined
+        ? {}
+        : {
+            responsibilities: descriptiveList(
+              record.responsibilities,
+              `${path}.responsibilities`,
+            ),
+          }),
+    };
+  if (kind === "prompts")
+    return record.text === undefined
       ? common
-      : {
-          ...common,
-          capabilities: referenceList(
-            record.capabilities,
-            `${path}.capabilities`,
-            "capability",
-          ),
-        };
+      : { ...common, text: nonEmptyString(record.text, `${path}.text`) };
   if (kind === "agents")
     return {
       ...common,
@@ -411,6 +843,9 @@ function contribution(
         ),
       ),
     };
+  if (kind === "policies") return policyContribution(record, path, common);
+  if (kind === "capabilities")
+    return { ...common, ...capabilityContract(record, path) };
   if (!workflow) return common;
   if (!Array.isArray(record.stages))
     return fail("invalid_contribution", `${path}.stages`, "expected array");
@@ -418,10 +853,36 @@ function contribution(
     (entry: unknown, index: number): WorkflowStage => {
       const stagePath = `${path}.stages[${index}]`;
       const stage = object(entry, stagePath, "invalid_contribution");
-      keys(stage, ["id", "role"], stagePath, "invalid_contribution");
+      for (const key of Object.keys(stage))
+        if (!["id", "role", "title", "objective", "checks"].includes(key))
+          fail("invalid_contribution", `${stagePath}.${key}`, "unknown field");
+      for (const key of ["id", "role"])
+        if (!Object.hasOwn(stage, key))
+          fail("invalid_contribution", `${stagePath}.${key}`, "missing field");
       return {
         id: localId(stage.id, `${stagePath}.id`, "invalid_contribution"),
         role: localId(stage.role, `${stagePath}.role`, "invalid_contribution"),
+        ...Object.fromEntries(
+          (["title", "objective"] as const).flatMap((field) =>
+            stage[field] === undefined
+              ? []
+              : [
+                  [
+                    field,
+                    string(
+                      stage[field],
+                      `${stagePath}.${field}`,
+                      "invalid_contribution",
+                    ),
+                  ],
+                ],
+          ),
+        ),
+        ...(stage.checks === undefined
+          ? {}
+          : {
+              checks: descriptiveList(stage.checks, `${stagePath}.checks`),
+            }),
       };
     },
   );
@@ -435,6 +896,15 @@ function contribution(
       `${path}.taskType`,
       "invalid_contribution",
     ),
+    ...(record.additionalTaskTypes === undefined
+      ? {}
+      : {
+          additionalTaskTypes: referenceList(
+            record.additionalTaskTypes,
+            `${path}.additionalTaskTypes`,
+            "task type",
+          ),
+        }),
     stages,
   };
 }
@@ -594,6 +1064,112 @@ export function validateDomainPackManifest(value: unknown): DomainPackManifest {
       lists[field] = [...references].sort(compareCodeUnits);
     }
     return { ...agent, ...lists };
+  });
+  // A workflow's additional routes follow the same rule: bare local IDs of
+  // task types this manifest declares, a set in one order. The task type
+  // itself is not an additional one.
+  const taskTypes = new Set(contributions.taskTypes.map((entry) => entry.id));
+  contributions.workflows = (
+    contributions.workflows as readonly WorkflowContribution[]
+  ).map((workflow, index) => {
+    if (workflow.additionalTaskTypes === undefined) return workflow;
+    const path = `contributions.workflows[${index}].additionalTaskTypes`;
+    for (const [
+      position,
+      reference,
+    ] of workflow.additionalTaskTypes.entries()) {
+      if (reference === workflow.taskType)
+        fail(
+          "invalid_contribution",
+          `${path}[${position}]`,
+          "the task type is not an additional task type",
+        );
+      if (!taskTypes.has(reference))
+        fail(
+          "invalid_contribution",
+          `${path}[${position}]`,
+          "task type is not declared by this manifest",
+        );
+    }
+    return {
+      ...workflow,
+      additionalTaskTypes: [...workflow.additionalTaskTypes].sort(
+        compareCodeUnits,
+      ),
+    };
+  });
+  // A typed policy governs one workflow of this manifest, and a workflow has
+  // at most one policy. Stage and separation references are checked in the
+  // written order; each set is then held in one order.
+  const workflowStages = new Map(
+    (contributions.workflows as readonly WorkflowContribution[]).map(
+      (workflow) => [
+        workflow.id as string,
+        workflow.stages.map((stage) => stage.id as string),
+      ],
+    ),
+  );
+  const governed = new Set<string>();
+  contributions.policies = (
+    contributions.policies as readonly PolicyContribution[]
+  ).map((policy, index) => {
+    if (policy.workflow === undefined) return policy;
+    const path = `contributions.policies[${index}]`;
+    const order = workflowStages.get(policy.workflow);
+    if (order === undefined)
+      return fail(
+        "invalid_contribution",
+        `${path}.workflow`,
+        "workflow is not declared by this manifest",
+      );
+    if (governed.has(policy.workflow))
+      fail(
+        "invalid_contribution",
+        `${path}.workflow`,
+        "workflow already has a policy in this manifest",
+      );
+    governed.add(policy.workflow);
+    if (policy.stages === undefined) return policy;
+    const stages = policy.stages.map((clause, position) => {
+      const stagePath = `${path}.stages[${position}]`;
+      const at = order.indexOf(clause.stage);
+      if (at < 0)
+        fail(
+          "invalid_contribution",
+          `${stagePath}.stage`,
+          "stage is not declared by the target workflow",
+        );
+      for (const [entry, predecessor] of (
+        clause.requiresDifferentAgentFrom ?? []
+      ).entries()) {
+        const before = order.indexOf(predecessor);
+        if (before < 0 || before >= at)
+          fail(
+            "invalid_contribution",
+            `${stagePath}.requiresDifferentAgentFrom[${entry}]`,
+            "separation target is not an earlier stage of the target workflow",
+          );
+      }
+      return {
+        ...clause,
+        ...(clause.requiresDifferentAgentFrom === undefined
+          ? {}
+          : {
+              requiresDifferentAgentFrom: [
+                ...clause.requiresDifferentAgentFrom,
+              ].sort(compareCodeUnits),
+            }),
+        ...(clause.operations === undefined
+          ? {}
+          : { operations: [...clause.operations].sort(compareCodeUnits) }),
+      };
+    });
+    return {
+      ...policy,
+      stages: stages.sort((left, right) =>
+        compareCodeUnits(left.stage, right.stage),
+      ),
+    };
   });
   return {
     schemaVersion: 1,

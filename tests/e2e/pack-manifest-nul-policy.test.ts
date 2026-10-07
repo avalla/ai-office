@@ -234,7 +234,7 @@ describe("GP-23 pack manifest U+0000 policy over the Runtime socket", () => {
       expect(refused.exitCode).toBe(1);
       expect(refused.stdout).toEqual([]);
       expect(refused.stderr).toEqual([
-        "Pack upgrade is blocked: The reconciled project configuration would not resolve: Stored override violates the override contract: malformed_origin_reference",
+        "Pack upgrade is blocked: The reconciled project configuration would not resolve: Stored override violates the override contract: malformed_origin_reference: description must be bounded text",
       ]);
       expect(stored()).toEqual({
         payloads: [JSON.stringify({ title: "Ours" })],
