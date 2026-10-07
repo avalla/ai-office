@@ -592,8 +592,8 @@ describe("GP-22 binding composition preflight: project:pack:preview and project:
       expect(refused).toBeInstanceOf(ProjectPackBindingRefusedError);
       expect(refused).toMatchObject(refusal);
 
-      // The current closure cannot be resolved: GP-11 refuses anything but a
-      // pure removal, and the collision is still reported first.
+      // The current closure cannot be resolved: GP-11 refuses every changed
+      // selection, and the collision is still reported first.
       await host.own("a", [["roles", "auditor"]]);
       const onlyV2 = catalogOf(legalV2Bytes, customBytes).catalog;
       const unresolved = await host.binding(onlyV2).preview("a", [legalV2]);
@@ -608,15 +608,19 @@ describe("GP-22 binding composition preflight: project:pack:preview and project:
       await expect(
         host.apply([legalV2], 1, host.binding(onlyV2)),
       ).rejects.toBeInstanceOf(ProjectPackBindingCollisionError);
-      // A pure removal is still applied while the current closure is absent.
+      // A pure removal is refused while the current closure is absent.
       await host.bind("a", [custom, legal]);
       await host.own("a", [["roles", "counsel"]]);
       expect(
         (await host.binding(onlyV2).preview("a", [custom])).issues,
-      ).toEqual([]);
-      expect(await host.apply([custom], 2, host.binding(onlyV2))).toMatchObject(
-        { configurationRevision: 3, packs: [custom] },
-      );
+      ).toMatchObject([{ code: "role_capability_change_requires_upgrade" }]);
+      await expect(
+        host.apply([custom], 2, host.binding(onlyV2)),
+      ).rejects.toBeInstanceOf(ProjectPackBindingRefusedError);
+      expect(await host.storage.packBindings.get("a")).toMatchObject({
+        configurationRevision: 2,
+        packs: [custom, legal],
+      });
 
       // A proposed closure that does not resolve reports its GP-04 code only.
       const missing = await host.binding(onlyV2).preview("a", [legal]);
@@ -624,11 +628,11 @@ describe("GP-22 binding composition preflight: project:pack:preview and project:
         "missing_pack",
       ]);
       await expect(
-        host.apply([legal], 3, host.binding(onlyV2)),
+        host.apply([legal], 2, host.binding(onlyV2)),
       ).rejects.toMatchObject({ code: "missing_pack" });
       expect(await host.storage.packBindings.get("a")).toMatchObject({
-        configurationRevision: 3,
-        packs: [custom],
+        configurationRevision: 2,
+        packs: [custom, legal],
       });
     } finally {
       host.database.close();

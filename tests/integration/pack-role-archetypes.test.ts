@@ -1505,7 +1505,7 @@ describe("GP-11 project:pack:apply never changes a role capability set", () => {
     }
   });
 
-  test("with the current artifacts gone, only a pure removal is applied, even for packs without role capabilities", async () => {
+  test("with the current artifacts gone, a pure removal requires an approved upgrade even without role capabilities", async () => {
     const pack = (id: string, version: string, title?: string) =>
       packBytes(
         version,
@@ -1558,23 +1558,100 @@ describe("GP-11 project:pack:apply never changes a role capability set", () => {
     }
     expect(applyAudits(h)).toEqual([]);
 
-    // A pure removal leaves only exact tuples the project already selected.
+    // No old contribution can be inferred from the tuples, even on removal.
     for (const proposed of [[kept!, oldPlain!], [kept!], []]) {
       await reset();
+      const before = await h.authority();
       const preview = await h.selection(partial).preview("a", proposed);
-      expect(preview.roleCapabilityChanges).toMatchObject({
+      const unavailable = {
         availability: "unavailable",
         reason: "previous_closure_unresolved",
-      });
-      expect(preview.issues).toEqual([]);
-      expect((await apply(h, proposed, partial)).packs).toEqual(proposed);
+        detail: "missing_pack",
+      };
+      for (const field of [
+        preview.roleCapabilityChanges,
+        preview.capabilityContractChanges,
+        preview.policyChanges,
+        preview.knowledgeChanges,
+        preview.evidenceContractChanges,
+      ])
+        expect(field).toEqual(unavailable);
+      expect(preview.issues).toEqual([
+        {
+          code: "role_capability_change_requires_upgrade",
+          message: unverifiable,
+        },
+      ]);
+      expect(await refusal(apply(h, proposed, partial))).toEqual(
+        preview.issues[0],
+      );
+      expect(await h.authority()).toEqual(before);
+      expect(applyAudits(h)).toEqual([]);
     }
-    // The refused changes go through the reviewed upgrade instead.
+    // The refused removal is recoverable through an exact approved plan.
     await reset();
     const plan = await h
       .upgrade(partial)
-      .preview({ projectId: "a", desired: [kept!, newPlain!] });
+      .preview({ projectId: "a", desired: [kept!, oldPlain!] });
     expect(plan.issues).toEqual([]);
+    expect(plan.removed).toEqual([gone]);
+    expect(plan.templates).toEqual({
+      availability: "unavailable",
+      reason: "previous_closure_unresolved",
+      detail: "missing_pack",
+    });
+    for (const field of [
+      plan.roleCapabilityChanges,
+      plan.capabilityContractChanges,
+      plan.policyChanges,
+      plan.knowledgeChanges,
+      plan.evidenceContractChanges,
+    ])
+      expect(field).toEqual(plan.templates);
+    const beforeApproval = await h.authority();
+    await expect(
+      h.upgrade(partial).apply({
+        projectId: "a",
+        desired: [kept!, oldPlain!],
+        approvedPlanDigest: "sha256:wrong",
+        actorId: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "plan_not_approved" });
+    expect(await h.authority()).toEqual(beforeApproval);
+    const result = await h.upgrade(partial).apply({
+      projectId: "a",
+      desired: [kept!, oldPlain!],
+      approvedPlanDigest: plan.planDigest,
+      actorId: "operator",
+    });
+    expect(result).toMatchObject({
+      result: "applied",
+      packs: [kept!, oldPlain!],
+    });
+    const [audit] = h.audits("project.pack_upgrade_applied");
+    expect(audit?.payload).toMatchObject({
+      planDigest: plan.planDigest,
+      previousClosureUnavailableRemoval: {
+        removedPacks: [gone],
+        reason: "previous_closure_unresolved",
+        detail: "missing_pack",
+        approvedPlanDigest: plan.planDigest,
+      },
+      policyChanges: plan.templates,
+      evidenceContractChanges: plan.templates,
+    });
+    expect(JSON.stringify(audit?.payload)).not.toMatch(/"before"|"after"/u);
+    // A plan from before the approved removal cannot authorize another write.
+    const afterApproval = await h.authority();
+    await expect(
+      h.upgrade(partial).apply({
+        projectId: "a",
+        desired: [],
+        approvedPlanDigest: plan.planDigest,
+        actorId: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "plan_not_approved" });
+    expect(await h.authority()).toEqual(afterApproval);
   });
 
   test("an identical selection stays a no-op that reads no artifact, and a stale revision still fails first", async () => {

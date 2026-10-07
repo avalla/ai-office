@@ -751,9 +751,11 @@ function reconcileProjectPackUpgrade(input: {
     availability: "available",
     changes: [],
   };
+  let previousClosure: readonly ResolvedPackManifest[] | null = null;
   if (target && selectionChanged)
     try {
       const previous = resolveInstalledPackManifests(catalog, currentPacks);
+      previousClosure = previous;
       templates = {
         availability: "available",
         changes: templateChanges(previous, target, definitions.overrides),
@@ -800,8 +802,17 @@ function reconcileProjectPackUpgrade(input: {
   const targetManifests = new Map<string, DomainPackManifest>(
     (target ?? []).map((entry) => [tupleKey(entry.identity), entry.manifest]),
   );
-  const previousManifests = new Map<string, DomainPackManifest | null>();
+  // Never use a partial catalog to reconstruct an unavailable previous
+  // closure. When it is available, an override can still name an older
+  // version that is no longer selected, so read that source as before.
+  const previousManifests = new Map<string, DomainPackManifest | null>(
+    (previousClosure ?? []).map((entry) => [
+      tupleKey(entry.identity),
+      entry.manifest,
+    ]),
+  );
   const previousManifest = (pack: PackIdentity): DomainPackManifest | null => {
+    if (previousClosure === null && selectionChanged) return null;
     const key = tupleKey(pack);
     if (!previousManifests.has(key)) {
       let manifest: DomainPackManifest | null = null;
@@ -887,13 +898,15 @@ function reconcileProjectPackUpgrade(input: {
       source.kind
     ].find((entry) => entry.id === source.localId);
     const upstream: UpstreamChange =
-      nextEntry === undefined
-        ? "removed"
-        : previousEntry === undefined
-          ? "unknown"
-          : sameContribution(previousEntry, nextEntry)
-            ? "unchanged"
-            : "changed";
+      previousClosure === null && selectionChanged
+        ? "unknown"
+        : nextEntry === undefined
+          ? "removed"
+          : previousEntry === undefined
+            ? "unknown"
+            : sameContribution(previousEntry, nextEntry)
+              ? "unchanged"
+              : "changed";
     const retarget: ExactPackDefinitionSource | null =
       next && nextEntry
         ? { ...identity(next), kind: source.kind, localId: source.localId }
@@ -1301,6 +1314,17 @@ export class ReconcileProjectPackUpgrade {
             newDefinitionRevision: definitions.revision,
             previousPacks: plan.currentPacks,
             packs: plan.proposedPacks,
+            ...(plan.removed.length > 0 &&
+            plan.templates.availability === "unavailable"
+              ? {
+                  previousClosureUnavailableRemoval: {
+                    removedPacks: plan.removed,
+                    reason: plan.templates.reason,
+                    detail: plan.templates.detail,
+                    approvedPlanDigest: plan.planDigest,
+                  },
+                }
+              : {}),
             // Identities and outcomes only; never a definition body.
             overrides: plan.overrides.filter(
               (item) => item.outcome !== "unchanged",
