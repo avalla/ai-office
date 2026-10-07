@@ -35,7 +35,11 @@ describe("graph overview task lists", () => {
         attentionTasks,
         chainIds: [],
         tasksById,
+        readyPageIndex: 0,
+        attentionPageIndex: 0,
         chainPageIndex: 0,
+        onReadyPageChange: () => {},
+        onAttentionPageChange: () => {},
         onChainPageChange: () => {},
         onFocus: () => {},
       }),
@@ -47,5 +51,25 @@ describe("graph overview task lists", () => {
     expect(html).toContain("Title a24");
     expect(html).not.toContain("Title r25");
     expect(html).not.toContain("Title a25");
+
+    const laterPage = renderToStaticMarkup(
+      createElement(OverviewTaskLists, {
+        readyTasks,
+        attentionTasks,
+        chainIds: [],
+        tasksById,
+        readyPageIndex: 1,
+        attentionPageIndex: 1,
+        chainPageIndex: 0,
+        onReadyPageChange: () => {},
+        onAttentionPageChange: () => {},
+        onChainPageChange: () => {},
+        onFocus: () => {},
+      }),
+    );
+    expect(laterPage).toContain("Title r25");
+    expect(laterPage).toContain("Title a25");
+    expect(laterPage).not.toContain("Title r0");
+    expect(laterPage).not.toContain("Title a0");
   });
 });

@@ -236,6 +236,8 @@ function TaskGraphCanvas({
   const [focusOnly, setFocusOnly] = useState(false);
   const [showChain, setShowChain] = useState(true);
   const [showMinimap, setShowMinimap] = useState(true);
+  const [readyPageIndex, setReadyPageIndex] = useState(0);
+  const [attentionPageIndex, setAttentionPageIndex] = useState(0);
   const [chainPageIndex, setChainPageIndex] = useState(0);
   const [memoizedLayout] = useState(createLayoutMemo);
   const { fitView, setViewport } = useReactFlow();
@@ -849,8 +851,8 @@ function TaskGraphCanvas({
                   dependencies. Narrow the view with a summary shortcut, a
                   status or milestone filter, or select a task from the lists
                   and use &ldquo;Only this lineage&rdquo;. Summary counts remain
-                  complete. Search can find any task; the chain list is paged,
-                  while ready and attention lists show eight items each.
+                  complete. Search can find any task; ready, attention, and
+                  chain lists are paged.
                 </Empty>
               </div>
             ) : (
@@ -989,7 +991,11 @@ function TaskGraphCanvas({
               attentionTasks={attentionTasks}
               chainIds={graph.longestDependencyChain}
               tasksById={tasksById}
+              readyPageIndex={readyPageIndex}
+              attentionPageIndex={attentionPageIndex}
               chainPageIndex={chainPageIndex}
+              onReadyPageChange={setReadyPageIndex}
+              onAttentionPageChange={setAttentionPageIndex}
               onChainPageChange={setChainPageIndex}
               onFocus={focusOn}
             />
@@ -1015,7 +1021,11 @@ export function OverviewTaskLists({
   attentionTasks,
   chainIds,
   tasksById,
+  readyPageIndex,
+  attentionPageIndex,
   chainPageIndex,
+  onReadyPageChange,
+  onAttentionPageChange,
   onChainPageChange,
   onFocus,
 }: {
@@ -1023,7 +1033,11 @@ export function OverviewTaskLists({
   attentionTasks: readonly TaskGraphNode[];
   chainIds: readonly string[];
   tasksById: ReadonlyMap<string, TaskGraphNode>;
+  readyPageIndex: number;
+  attentionPageIndex: number;
   chainPageIndex: number;
+  onReadyPageChange: (page: number) => void;
+  onAttentionPageChange: (page: number) => void;
   onChainPageChange: (page: number) => void;
   onFocus: (key: string) => void;
 }) {
@@ -1043,6 +1057,8 @@ export function OverviewTaskLists({
         empty="Nothing is ready."
         ids={readyIds}
         tasksById={tasksById}
+        requestedPage={readyPageIndex}
+        onRequestedPageChange={onReadyPageChange}
         showPriority
         onFocus={onFocus}
       />
@@ -1051,6 +1067,8 @@ export function OverviewTaskLists({
         empty="Nothing needs attention."
         ids={attentionIds}
         tasksById={tasksById}
+        requestedPage={attentionPageIndex}
+        onRequestedPageChange={onAttentionPageChange}
         showPriority
         onFocus={onFocus}
       />
@@ -1169,6 +1187,8 @@ function PagedTaskList({
   empty,
   onFocus,
   showPriority = false,
+  requestedPage,
+  onRequestedPageChange,
 }: {
   title: string;
   ids: readonly string[];
@@ -1176,9 +1196,11 @@ function PagedTaskList({
   empty: string;
   onFocus: (key: string) => void;
   showPriority?: boolean;
+  requestedPage?: number;
+  onRequestedPageChange?: (page: number) => void;
 }) {
-  const [requestedPage, setRequestedPage] = useState(0);
-  const page = chainPage(ids, tasksById, requestedPage);
+  const [localPage, setLocalPage] = useState(0);
+  const page = chainPage(ids, tasksById, requestedPage ?? localPage);
   return (
     <>
       <TaskList
@@ -1192,7 +1214,7 @@ function PagedTaskList({
         title={title}
         page={page.page}
         totalPages={page.totalPages}
-        onPageChange={setRequestedPage}
+        onPageChange={onRequestedPageChange ?? setLocalPage}
       />
     </>
   );
