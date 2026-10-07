@@ -122,11 +122,12 @@ describe("dashboard task graph", () => {
     const blockedGraph: TaskGraph = {
       ...graph,
       tasks: [
-        cancelled("blocking-cancelled"),
-        cancelled("unrelated-cancelled"),
+        { ...cancelled("blocking-cancelled"), milestoneIds: ["m1"] },
+        { ...cancelled("unrelated-cancelled"), milestoneIds: ["m1"] },
         node("waiting-on-cancelled", {
           ready: false,
           waiting: true,
+          milestoneIds: ["m1"],
           unmetPrerequisiteIds: ["blocking-cancelled"],
         }),
         node("finished-dependent", {
@@ -134,6 +135,7 @@ describe("dashboard task graph", () => {
           operationalStatus: "failed",
           terminal: true,
           ready: false,
+          milestoneIds: ["m1"],
           unmetPrerequisiteIds: ["unrelated-cancelled"],
         }),
       ],
@@ -158,6 +160,26 @@ describe("dashboard task graph", () => {
       { taskId: "waiting-on-cancelled", dependsOnTaskId: "blocking-cancelled" },
     ]);
     expect(visible.hiddenTaskCount).toBe(1);
+    expect(
+      ids(
+        filterGraph(blockedGraph, {
+          ...defaultGraphFilters,
+          milestone: "m1",
+        }).tasks,
+      ),
+    ).toEqual([
+      "blocking-cancelled",
+      "waiting-on-cancelled",
+      "finished-dependent",
+    ]);
+    expect(
+      ids(
+        filterGraph(blockedGraph, {
+          ...defaultGraphFilters,
+          search: "cancelled",
+        }).tasks,
+      ),
+    ).toEqual(["blocking-cancelled", "waiting-on-cancelled"]);
     expect(
       ids(
         filterGraph(blockedGraph, { ...defaultGraphFilters, quick: "waiting" })

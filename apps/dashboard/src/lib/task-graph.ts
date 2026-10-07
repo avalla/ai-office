@@ -88,37 +88,9 @@ export function filterGraph(
 ): VisibleGraph {
   const { keep = new Set<string>(), only } = scope;
   const search = filters.search.trim().toLowerCase();
-  // The default overview must retain cancelled prerequisites that the read
-  // model says still block open work. Explicit filters may narrow them away.
-  const cancelledBlockers = new Set<string>();
-  if (
-    only === undefined &&
-    filters.hideCompleted &&
-    filters.status === "" &&
-    filters.quick === "" &&
-    filters.milestone === "" &&
-    search === ""
-  ) {
-    for (const task of graph.tasks) {
-      if (task.terminal) continue;
-      for (const prerequisiteId of task.unmetPrerequisiteIds)
-        cancelledBlockers.add(prerequisiteId);
-    }
-  }
-  const tasks = graph.tasks.filter((task) => {
+  const matchingTasks = graph.tasks.filter((task) => {
     if (only !== undefined) return only.has(task.taskId);
     if (keep.has(task.taskId)) return true;
-    if (
-      filters.hideCompleted &&
-      filters.status === "" &&
-      // An operational shortcut asks about work needing action, and attention
-      // can sit on finished tasks: it must not be hidden from itself.
-      filters.quick === "" &&
-      (task.operationalStatus === "completed" ||
-        (task.operationalStatus === "cancelled" &&
-          !cancelledBlockers.has(task.taskId)))
-    )
-      return false;
     if (filters.status !== "" && task.operationalStatus !== filters.status)
       return false;
     if (filters.quick !== "" && !matchesQuickFilter(task, filters.quick))
@@ -133,6 +105,33 @@ export function filterGraph(
       return false;
     if (search !== "" && !matchesSearch(task, search)) return false;
     return true;
+  });
+  // Use projected unmet prerequisites of the open tasks that matched the
+  // explicit filters. A cancelled node remains only if it also matched those
+  // filters and still blocks a visible task.
+  const cancelledBlockers = new Set<string>();
+  if (
+    only === undefined &&
+    filters.hideCompleted &&
+    filters.status === "" &&
+    filters.quick === ""
+  ) {
+    for (const task of matchingTasks) {
+      if (task.terminal) continue;
+      for (const prerequisiteId of task.unmetPrerequisiteIds)
+        cancelledBlockers.add(prerequisiteId);
+    }
+  }
+  const tasks = matchingTasks.filter((task) => {
+    if (only !== undefined || keep.has(task.taskId)) return true;
+    // An operational shortcut or status filter overrides default hiding.
+    if (!filters.hideCompleted || filters.status !== "" || filters.quick !== "")
+      return true;
+    return (
+      task.operationalStatus !== "completed" &&
+      (task.operationalStatus !== "cancelled" ||
+        cancelledBlockers.has(task.taskId))
+    );
   });
   const ids = new Set(tasks.map((task) => task.taskId));
   return {
