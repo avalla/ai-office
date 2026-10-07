@@ -159,6 +159,76 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
           /Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE\./u,
       },
       {
+        id: "policy:clarify-before-development",
+        pattern:
+          /development starts only when no selected task has an open question\./u,
+      },
+      {
+        id: "policy:run-stacking-needs-summary-approval",
+        pattern:
+          /An answer that accepts the stacking offer approves these Git branch dependencies for the run\./u,
+      },
+      {
+        id: "policy:recompute-whole-selection",
+        pattern:
+          /run the dependency check again over the whole selection and recompute the order and the Git branch plan/u,
+      },
+      {
+        id: "policy:unanswered-stacking-offer-declines",
+        pattern:
+          /A go-ahead that does not answer the stacking offer declines it/u,
+      },
+      {
+        id: "policy:stacking-changes-only-where-branches-start",
+        pattern:
+          /Stacking the run changes where branches start and how a stop spreads along the stack, and nothing else/u,
+      },
+      {
+        id: "policy:stacking-only-while-predecessor-unmerged",
+        pattern:
+          /while that task is unmerged, and from the updated integration branch once it is merged/u,
+      },
+      {
+        id: "policy:any-difference-is-material",
+        pattern:
+          /Any difference in these items is material, except a base that changes only because a task was merged, as the approved plan anticipated\./u,
+      },
+      {
+        id: "policy:git-tracked-clarification-must-be-in-effect",
+        pattern:
+          /counts as recorded only once it is in effect on the integration branch/u,
+      },
+      {
+        id: "policy:run-stack-start-needs-prerequisite-beneath",
+        pattern:
+          /A task starts only on a base that contains the work of each of its prerequisites/u,
+      },
+      {
+        id: "policy:repeated-offer-spares-created-bases",
+        pattern:
+          /The repeated offer applies only to tasks not yet started: a base already created under an accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it\./u,
+      },
+      {
+        id: "policy:stopped-task-stops-stacked-tasks",
+        pattern:
+          /When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it, directly or through other tasks, stop too/u,
+      },
+      {
+        id: "policy:stop-resume-needs-go-ahead",
+        pattern:
+          /If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them/u,
+      },
+      {
+        id: "policy:declining-run-stacking-keeps-selective-dependencies",
+        pattern:
+          /Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another separately approved Git branch dependency applies\./u,
+      },
+      {
+        id: "policy:recompute-plan-after-clarification",
+        pattern:
+          /If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given\./u,
+      },
+      {
         id: "policy:approve-summary-before-preflight",
         pattern:
           /Start preflight only after the authorizer approves that summary/u,

@@ -66,8 +66,13 @@ Started without a target, the skill first asks what to deliver: a whole
 milestone, one or more tasks, or some tasks of one milestone. It also settles
 which project pipeline applies - stated when enforced, confirmed when there is
 a default, chosen by you when there are several - without ever removing one of
-its own gates. It then checks
-the dependencies of the selection, shows a summary, and waits for the go-ahead.
+its own gates. It then checks the dependencies of the selection, shows a
+summary, and waits for the go-ahead. For a run over several tasks the summary
+also offers to clarify every task before development starts, updating tasks and
+requirements with your answers, and, where the project allows stacked work, to
+stack each task on the one before it; an unanswered stacking offer is declined.
+After clarifying, it recomputes the plan and asks again only if it changed
+materially.
 
 - **Claude Code**: discovered from `.claude/skills/task-delivery`. Invoke with
   `/task-delivery`, or ask to "deliver task X". Codex, when present in the
