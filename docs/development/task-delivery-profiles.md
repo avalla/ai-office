@@ -66,7 +66,7 @@ Rules:
 
 - Absent `delivery.profile` means `full`: existing projects behave as today.
 - The accepted `stages` keys are `design`, `review`, `second_review`, `qa` and `external_review`; any other key, including `hardening`, which is not configurable, is an unknown-key error.
-- Under `custom`, `false` means different things by key: for `design` and `qa` it selects the reduced form of the gate (the short design record, and `verification.full`), never the absence of the gate; for `review`, `second_review` and `external_review` it turns the gate off. `review: false` together with `qa: false` is a configuration error unless an external review is required, so that a hardening fix always has an independent re-check.
+- Under `custom`, `false` means different things by key: for `design` and `qa` it selects the reduced form of the gate (the short design record, and `verification.full`), never the absence of the gate; for `review`, `second_review` and `external_review` it turns the gate off. `review: false` together with `qa: false` is a configuration error unless `external_review.command` is set, so that a hardening fix always has an independent re-check.
 - Under `custom`, a `stages` key that is omitted takes the value of that gate in `full`, so every configuration yields one deterministic selection; the one exception is `second_review`, which is off when `review` is off and omitted.
 - `stages` with a profile other than `custom` is an error, and so is `second_review: true` while `review` is off, since there is no review whose findings and hardening a second review could confirm. Gates that are always on are not `stages` keys.
 - Floor: when the diff touches migrations, controlled actions or connectors,
@@ -84,7 +84,7 @@ Rules:
   - an authorizer may raise the profile, never lower it below the computed
     floor.
 - External review keeps its current meaning: configured or requested makes it required, whatever the profile says. A configuration that disables it while `external_review.command` is set (`lite`, or `custom` with `stages.external_review: false`) is a configuration error rather than a silent skip.
-- Hardening is a step that runs on demand, whenever any gate (review, QA, external review) yields findings, in every profile, as `lifecycle.md` already routes failures. Its fixes are followed by the failing gate run again on the new head. When `review` is off, that independent gate (QA or external review) is the confirmation of the hardening diff, so the implementation context never approves its own fix, and the non-convergence stop condition counts returns to hardening, as `lifecycle.md` does today.
+- Hardening is a step that runs on demand, whenever any gate (review, QA, external review) yields findings, in every profile, as `lifecycle.md` already routes failures. Its fixes are followed by the failing gate run again on the new head, for review, QA and a required external review; a best-effort external review is not repeated, as the skill already says, and its findings are confirmed by the independent QA re-run on the final head. When `review` is off, that independent gate (QA or external review) is the confirmation of the hardening diff, so the implementation context never approves its own fix, and the non-convergence stop condition counts returns to hardening, as `lifecycle.md` does today.
 - Review without a second review (`lite`, or `custom` with `review` on and `second_review` off): one full round on the reviewed head. When hardening produces commits, the same reviewer confirms the hardening diff, which is a confirmation of the answers to the findings and not a second full review, and the full verification runs green on the final head. The confirmation and the verification are the evidence for the current head, so the head-binding rule is unchanged. Hardening stays limited to the findings, as the skill already requires.
 - Readiness: `ready_for_merge` checks, on the current head, the selected gates that precede it, plus any such gate the floor made required, plus a required external review (configured by the project or requested by the authorizer, as today, whatever the profile selects), plus the stages of an enforced Runtime pipeline that governs the task, which stay authoritative whatever the profile selects; `post_merge` runs only after an authorized merge and is never part of this check. A profile that omits a gate does not need its evidence. Step 1 audits every statement in `SKILL.md` and its references that presupposes the full lifecycle and rewords it for "selected or floor-required gates". The audit covers at least: the stage 10 wording; the `lifecycle.md` sentence that requires every earlier gate to have evidence for the current head; the part-way rule of `SKILL.md`; the independence sentence of `SKILL.md` (independent contexts for the gates the profile selects or the floor requires); the routing in `lifecycle.md` of QA failures and external-review findings through Hardening and a new Second Review, which becomes Second Review when selected or floor-required and otherwise the reviewer's confirmation of the hardening diff, together with the non-convergence stop condition anchored on whichever re-review applies, or on returns to hardening when `review` is off; the sentence of `references/configuration.md` that says no key can waive a gate, which becomes: no key can waive the non-negotiable rules or a gate the floor requires; and the pipeline sentence "a project pipeline never removes a gate", which becomes: a profile may omit the optional gates, a project pipeline still may not. Each reworded sentence is pinned by a contract invariant with a removal test, the validator's required-sentence patterns and the tests that pin the old wording are updated with them, and a test asserts that no reference text still requires an omittable gate unconditionally.
 - Design: a profile that shortens `design` still produces a written design record before `implementation` starts; it is linked or copied into the pull request.
@@ -120,8 +120,8 @@ next action
 - Cut points are gate boundaries only. After a gate, a context reset is allowed
   and recommended when the context is large.
 - Multi-task runs: an orchestrator holds the queue and a report of at most 15
-  lines per task; each task runs in a fresh context started from its packet.
-- Reviewer and verifier inputs stay as the skill defines them: the task, the acceptance criteria and the diff. The packet is read by the implementation context only; the implementer's claims and reasoning never reach the reviewer or the verifier.
+  lines per task; each task's first context starts from the approved run summary and the task statement, and its later contexts start from its packet.
+- Reviewer and verifier inputs stay as the skill defines them: the task, the acceptance criteria and the diff. The packet is read by the implementation context only; the implementer's design reasoning, summaries and claims never reach the reviewer or the verifier. A second review, or the confirmation of a hardening diff, also receives the per-finding responses, which are a fix commit or a rejection reason, because deciding whether a rejection is justified needs them.
 
 ### 1.4 CLI: `delivery:validate`
 
@@ -149,7 +149,7 @@ next action
 
 Shared parser and validation module (no Runtime needed, tested directly):
 
-- every new key, wrong type, `stages` without `custom`, `second_review: true` with `review` off, `review: false` with `qa: false` and no required external review, the meaning of `false` for `design` and `qa` (reduced form, never absent), an omitted `second_review` while `review` is off (resolves to off), an external reviewer configured while `lite` or `custom` disables it, and an omitted `custom` stage taking its `full` value;
+- every new key, wrong type, `stages` without `custom`, `second_review: true` with `review` off, `review: false` with `qa: false` and no `external_review.command`, the meaning of `false` for `design` and `qa` (reduced form, never absent), an omitted `second_review` while `review` is off (resolves to off), an external reviewer configured while `lite` or `custom` disables it, and an omitted `custom` stage taking its `full` value;
 - configured profile and configuration-derived gate selection for `lite`, `full`, `custom`, and for an absent `delivery.profile` (equals `full`); the output is never labelled effective, and a test asserts that it carries no floor.
 
 Skill contract and package validation (handoff packet included):
@@ -157,7 +157,9 @@ Skill contract and package validation (handoff packet included):
 - stage table and references stay consistent with the gate catalog; a gate a
   profile turns off does not require its reference;
 - generated copies stay in sync (`skills:check`);
-- handoff packet rules are pinned by contract invariants and removal tests: the per-task packet location (`.task-delivery/<task>/handoff.md`) and its ignore through the common-directory exclude, so a clean tree stays clean; the per-gate, per-changed-commit invalidation on a head change, with the existing merge-in exception and verification re-run; cut points only at gate boundaries; reviewer and verifier inputs exclude the implementer's reasoning, claims and the packet itself;
+- the audit rule is proven: each reworded skill sentence has a contract invariant with a removal test, the required-sentence patterns and the tests that pin the old wording (for example the "never removes a gate" sentence) are updated, a test asserts that no reference text still requires an omittable gate unconditionally, and the old stage 10 wording is gone;
+- with `review` off, the re-run of the failing independent gate confirms the hardening diff, a best-effort external review is not repeated, and non-convergence counts returns to hardening;
+- handoff packet rules are pinned by contract invariants and removal tests: the per-task packet location (`.task-delivery/<task>/handoff.md`) and its ignore through the common-directory exclude, so a clean tree stays clean; the per-gate, per-changed-commit invalidation on a head change, with the existing merge-in exception and verification re-run; cut points only at gate boundaries; reviewer and verifier inputs exclude the implementer's design reasoning, summaries, claims and the packet itself, and a second review or hardening confirmation receives the per-finding responses;
 - floor rules are pinned by contract invariants and removal tests: floor
   determined at preflight; re-evaluated before leaving `implementation`, before
   `ready_for_merge` and on a head change that can alter the classification;
@@ -167,7 +169,7 @@ CLI `delivery:validate`, end to end through the Unix-socket protocol with a
 Runtime available (daemon-backed):
 
 - valid file, invalid file, `--json` shape;
-- `--root` omitted: the client's cwd is validated;
+- `--root` omitted: the client's cwd, exactly, is validated, from a subdirectory too; a root without `.task-delivery.yaml` is reported as "no configuration found at <absolute root>" with a status distinct from a valid configuration, so a wrong directory is visible;
 - `--root` relative: resolved against the client's cwd, and the Runtime
   receives an absolute path;
 - `--root` absolute: passed unchanged;
