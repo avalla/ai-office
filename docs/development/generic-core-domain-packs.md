@@ -4296,7 +4296,8 @@ The owner approved these on 2026-10-07.
    restore still rejects stored state of kind `validators` with the GP-06
    codes.
 2. There is no port and no adapter registration check. The adapter reference
-   is unchecked data and the resolved view shows `registration: "unchecked"`.
+   is unchecked data and the resolved view of a validator that declares an
+   adapter shows `registration: "unchecked"`.
    A validator never enters the operation provider catalog, the connector
    registry or the controlled-action gateway; the adapter ID has a grammar of
    its own.
@@ -4424,8 +4425,9 @@ request adds the derived views.
 definition of the kind, in the GP-06 definition order, with a stable ID
 `pack:<packId>/<kind>/<localId>` (no version or digest), `origin`
 (`pack_owned`), `title` and `description` when present, and the typed members
-as declared. A validator view shows its `adapter` and the literal
-`registration: "unchecked"`: nothing was looked up. The views are derived from
+as declared. A validator view that declares an adapter shows it and the literal
+`registration: "unchecked"`: nothing was looked up. A label-only validator has
+neither. The views are derived from
 the effective definitions and are not part of the version-1
 `configurationDigest` material; the empty-input digest vector and the digest of
 a configuration without typed definitions are unchanged. A project `replace`
@@ -4465,7 +4467,9 @@ The upgrade report gains two fields, both covered by `planDigest`:
 
 A no-op plan reads no artifact and carries both empty. The
 `project.pack_upgrade_applied` audit event records the identities, the adapter
-ID, the adapter version and the failure policy, never a schema body or a text.
+ID, the adapter version, the failure policy and a hash of each canonical
+contract (so a change of only a limit or a schema stays visible), never a
+schema body or a text.
 `project:pack:apply` refuses a selection change that alters a typed definition
 present in both closures with the typed error
 `evidence_contract_change_requires_upgrade` (exit 1, nothing written). It still
@@ -4539,6 +4543,13 @@ proved in both.
 - Project-authored artifact, evidence or validator types, a project override
   of a typed member, and disabling a type.
 - Development evidence types (GP-10C-1).
+
+### Known limitations
+
+- A pure pack removal while the current closure cannot be resolved skips the
+  policy guard and the evidence contract guard. The GP-11 rule applies only a
+  pure removal in that case, and neither guard has a closure to compare. This
+  is inherited from GP-25 and is unchanged here.
 
 ### Implementation record
 

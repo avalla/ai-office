@@ -172,7 +172,8 @@ presentation, a typed key in a project payload is refused, and a contract
 changes only through the reviewed upgrade plan (`evidenceContractChanges`,
 `targetEvidenceContracts`; `project:pack:apply` refuses it with
 `evidence_contract_change_requires_upgrade`). The derived configuration lists
-the three views, and a validator reports `registration: "unchecked"`: no
+the three views, and a validator that declares an adapter reports
+`registration: "unchecked"`: no
 adapter is looked up, registered or run, no port exists for one, and nothing is
 validated or enforced. Fail-closed evidence and version-bound review are GP-14B.
 
