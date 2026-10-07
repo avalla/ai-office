@@ -161,7 +161,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:clarify-before-development",
         pattern:
-          /Development starts only when no selected task has an open question\./u,
+          /development starts only when no selected task has an open question\./u,
       },
       {
         id: "policy:run-stacking-needs-summary-approval",
@@ -200,7 +200,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:run-stack-start-needs-prerequisite-beneath",
         pattern:
-          /A task may start on a run-wide stack only if the branch of each of its prerequisites is beneath it/u,
+          /A task starts only on a base that contains the work of each of its prerequisites/u,
       },
       {
         id: "policy:stopped-task-stops-stacked-tasks",

@@ -161,8 +161,9 @@ requirements in Git, record the answers through the project's normal route for
 such changes, with its own branch and review, kept apart from the development
 branches. Such a change counts as recorded only once it is in effect on the
 integration branch, merged with the authorizer's authorization, or the
-authorizer has accepted the open change as the reference; until then wait,
-and have reviewers judge the work against the clarified version. Development starts only when no selected
+authorizer has accepted the open change as the reference; until then wait.
+Reviewers judge the work against the clarified version. With clarify-first,
+development starts only when no selected
 task has an open question. A question that only comes up later is still a stop
 condition.
 
@@ -172,7 +173,8 @@ the Git branch plan. Compare the result with the summary the authorizer
 approved. If the selection, the order, a task dependency, a Git branch
 dependency, the pipeline, or the exclusions changed materially, show a new
 summary and ask for a new approval, and start neither preflight nor
-development before it is given. Any difference in these items is material. If
+development before it is given. The new summary repeats the stacking offer
+with the recomputed bases, and an earlier answer does not carry over. Any difference in these items is material. If
 nothing changed materially, say so and do not ask a second time. A task added
 to the selection this way is clarified in the same way, and the check and the
 comparison run again until a pass changes nothing materially. An answer
@@ -188,16 +190,21 @@ that each stacked task carries the unmerged commits of the tasks beneath it.
 An answer that accepts the stacking offer approves these Git branch
 dependencies for the run. A go-ahead that does not answer the stacking offer
 declines it, and the plan then uses the bases without run-wide stacking. A task
-may start on a run-wide stack only if the branch of each of its prerequisites
-is beneath it; otherwise the prerequisite must be DONE, or the task needs an
-explicit Git branch dependency on it.
+starts only on a base that contains the work of each of its prerequisites: the
+branch of each unmerged prerequisite beneath it on the stack, and the merged
+work of each prerequisite that is DONE. A prerequisite beneath the task in an
+approved stacked run counts as an approved Git branch dependency on it;
+otherwise the task waits, or needs an explicit Git branch dependency on the
+prerequisite.
 Declining run-wide stacking leaves separately approved Git branch
 dependencies unchanged. Every other task starts from the integration branch
 unless another explicitly approved Git branch dependency applies. Stacking the
 run changes where branches start and nothing else: every task keeps its own pull
 request and gates, and its task dependencies stay as they were. When a task
-stops or is postponed, the tasks whose branches are stacked on it stop too,
-and the authorizer decides how their branches are rebuilt.
+stops or is postponed, it leaves the chain: the tasks whose branches are
+stacked on it stop too, and the authorizer decides how their branches are
+rebuilt; a task not yet started stacks on the nearest active task beneath it,
+or on the integration branch.
 
 A run that covers several tasks gives each task its own branch, pull request,
 and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run
