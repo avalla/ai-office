@@ -154,6 +154,94 @@ export interface PolicyContribution extends Contribution {
   readonly stages?: readonly PolicyStageClause[];
 }
 
+/**
+ * A closed, purpose-built data schema (GP-14A), not JSON Schema. Every object
+ * is closed: undeclared members are always rejected, so the form carries no
+ * `additionalProperties`. There is no `$ref`, no pattern and nothing remote.
+ * `enum` values and `required` are sets in ascending code-unit order, and
+ * `properties` holds its names in the same order. The schema is data: nothing
+ * in this package or in the Runtime validates a value against it.
+ */
+export type PackDataSchema =
+  | {
+      readonly type: "string";
+      readonly minLength?: number;
+      readonly maxLength?: number;
+    }
+  | {
+      readonly type: "integer" | "number";
+      readonly minimum?: number;
+      readonly maximum?: number;
+    }
+  | { readonly type: "boolean" }
+  | { readonly type: "enum"; readonly values: readonly string[] }
+  | {
+      readonly type: "array";
+      readonly items: PackDataSchema;
+      readonly minItems?: number;
+      readonly maxItems?: number;
+    }
+  | {
+      readonly type: "object";
+      readonly properties: { readonly [name: string]: PackDataSchema };
+      readonly required?: readonly string[];
+    };
+
+/**
+ * A domain artifact type (GP-14A). `mediaTypes` is a set in ascending
+ * code-unit order. The fields are declarations: no artifact is stored,
+ * validated or reviewed because of them, and a project cannot change them.
+ */
+export interface ArtifactTypeContribution extends Contribution {
+  readonly mediaTypes?: readonly string[];
+  readonly maximumBytes?: number;
+  readonly contentSchema?: PackDataSchema;
+}
+
+/**
+ * A domain evidence type (GP-14A). `subject` names an artifact type of the
+ * same manifest. Declarative only: no evidence record exists.
+ */
+export interface EvidenceTypeContribution extends Contribution {
+  readonly subject?: ContributionLocalId;
+  readonly payloadSchema?: PackDataSchema;
+}
+
+/**
+ * The trusted adapter a validator reference names. `id` is a name in a
+ * grammar of its own and is never looked up: the reference is unchecked data
+ * (GP-14A), and the exact `version` is `MAJOR.MINOR.PATCH`.
+ */
+export interface ValidatorAdapterReference {
+  readonly id: string;
+  readonly version: string;
+}
+
+/** An artifact or evidence type of the same manifest a validator accepts. */
+export interface ValidatorInputReference {
+  readonly kind: "artifactTypes" | "evidenceTypes";
+  readonly id: ContributionLocalId;
+}
+
+/**
+ * A validator reference (GP-14A). With only an `id` it is a label. With
+ * `adapter` it is typed and every other member below is required. Nothing
+ * runs: the adapter is not resolved, registered or executed, and
+ * `failurePolicy` is only `fail_closed` until a later task enforces it.
+ * `accepts` is a set in ascending order of `kind` then `id`.
+ */
+export interface ValidatorContribution extends Contribution {
+  readonly adapter?: ValidatorAdapterReference;
+  readonly accepts?: readonly ValidatorInputReference[];
+  readonly inputSchema?: PackDataSchema;
+  readonly produces?: ContributionLocalId;
+  readonly outputSchema?: PackDataSchema;
+  readonly failurePolicy?: "fail_closed";
+  readonly timeoutMs?: number;
+  readonly maxInputBytes?: number;
+  readonly maxOutputBytes?: number;
+}
+
 export type DomainPackContributions = {
   readonly [K in ContributionKind]: readonly (K extends "workflows"
     ? WorkflowContribution
@@ -167,7 +255,13 @@ export type DomainPackContributions = {
             ? PolicyContribution
             : K extends "capabilities"
               ? CapabilityContribution
-              : Contribution)[];
+              : K extends "artifactTypes"
+                ? ArtifactTypeContribution
+                : K extends "evidenceTypes"
+                  ? EvidenceTypeContribution
+                  : K extends "validators"
+                    ? ValidatorContribution
+                    : Contribution)[];
 };
 
 export interface DomainPackManifest {
@@ -732,6 +826,558 @@ function capabilityContract(
   };
 }
 
+/** The deepest nesting of a data schema; the root is depth 1 (GP-14A). */
+export const maximumSchemaDepth = 4;
+/** The most properties one object schema may declare. */
+export const maximumSchemaProperties = 64;
+/** The most schema nodes one data schema may hold, the root included. */
+export const maximumSchemaNodes = 256;
+/** The most values one enum schema may list, and the longest of them. */
+export const maximumSchemaEnumValues = 64;
+export const maximumSchemaEnumValueLength = 128;
+/** Ceilings for the optional string length and array size bounds. */
+export const maximumSchemaStringLength = 1_048_576;
+export const maximumSchemaArrayItems = 100_000;
+const schemaPropertyPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+/** Names that would shadow an object member; rejected by name as well. */
+const reservedSchemaPropertyNames = ["__proto__", "constructor", "prototype"];
+const schemaMembers: Readonly<Record<string, readonly string[]>> = {
+  string: ["type", "minLength", "maxLength"],
+  integer: ["type", "minimum", "maximum"],
+  number: ["type", "minimum", "maximum"],
+  boolean: ["type"],
+  enum: ["type", "values"],
+  array: ["type", "items", "minItems", "maxItems"],
+  object: ["type", "properties", "required"],
+};
+
+/**
+ * Text inside a data schema (an enum value): the project definition rule
+ * without its length bound. A lone surrogate has no canonical JSON form and
+ * U+0000 is not stored by every provider, so schemas, unlike manifest text
+ * (GP-23), exclude it. The check lives here because this package cannot
+ * depend on the application layer that owns `isDefinitionText`.
+ */
+function schemaText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    !value.includes("\u0000") &&
+    !hasLoneSurrogate(value)
+  );
+}
+
+function boundedInteger(
+  value: unknown,
+  path: string,
+  minimum: number,
+  maximum: number,
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < minimum ||
+    value > maximum
+  )
+    return fail(
+      "invalid_contribution",
+      path,
+      `expected integer from ${minimum} to ${maximum}`,
+    );
+  return value;
+}
+
+/** A set of names in ascending code-unit order, duplicates rejected. */
+function sortedUnique(values: readonly string[], path: string): string[] {
+  if (new Set(values).size !== values.length)
+    fail("invalid_contribution", path, "duplicate entry");
+  return [...values].sort(compareCodeUnits);
+}
+
+/**
+ * Shape of a data schema (GP-14A): the closed subset described by
+ * `PackDataSchema`. `budget` counts nodes across the whole schema.
+ */
+function dataSchema(
+  value: unknown,
+  path: string,
+  depth: number,
+  budget: { nodes: number },
+): PackDataSchema {
+  const record = object(value, path, "invalid_contribution");
+  budget.nodes += 1;
+  if (budget.nodes > maximumSchemaNodes)
+    fail(
+      "invalid_contribution",
+      path,
+      `schema may hold at most ${maximumSchemaNodes} nodes`,
+    );
+  if (depth > maximumSchemaDepth)
+    fail(
+      "invalid_contribution",
+      path,
+      `schema may nest at most ${maximumSchemaDepth} levels`,
+    );
+  const type = record.type;
+  const allowed =
+    typeof type === "string" && Object.hasOwn(schemaMembers, type)
+      ? schemaMembers[type]!
+      : undefined;
+  if (allowed === undefined)
+    return fail(
+      "invalid_contribution",
+      `${path}.type`,
+      "expected string, integer, number, boolean, enum, array or object",
+    );
+  for (const key of Object.keys(record))
+    if (!allowed.includes(key))
+      fail(
+        "invalid_contribution",
+        `${path}.${key}`,
+        key === "additionalProperties"
+          ? "unknown field; an object schema is always closed"
+          : "unknown field",
+      );
+  switch (type) {
+    case "boolean":
+      return { type };
+    case "string": {
+      const minLength =
+        record.minLength === undefined
+          ? undefined
+          : boundedInteger(
+              record.minLength,
+              `${path}.minLength`,
+              0,
+              maximumSchemaStringLength,
+            );
+      const maxLength =
+        record.maxLength === undefined
+          ? undefined
+          : boundedInteger(
+              record.maxLength,
+              `${path}.maxLength`,
+              0,
+              maximumSchemaStringLength,
+            );
+      if (
+        minLength !== undefined &&
+        maxLength !== undefined &&
+        minLength > maxLength
+      )
+        fail(
+          "invalid_contribution",
+          `${path}.minLength`,
+          "minLength exceeds maxLength",
+        );
+      return {
+        type,
+        ...(minLength === undefined ? {} : { minLength }),
+        ...(maxLength === undefined ? {} : { maxLength }),
+      };
+    }
+    case "integer":
+    case "number": {
+      const bound = (field: "minimum" | "maximum"): number | undefined => {
+        const entry = record[field];
+        if (entry === undefined) return undefined;
+        if (
+          typeof entry !== "number" ||
+          !Number.isFinite(entry) ||
+          (type === "integer" && !Number.isSafeInteger(entry))
+        )
+          return fail(
+            "invalid_contribution",
+            `${path}.${field}`,
+            type === "integer" ? "expected safe integer" : "expected number",
+          );
+        return entry;
+      };
+      const minimum = bound("minimum");
+      const maximum = bound("maximum");
+      if (minimum !== undefined && maximum !== undefined && minimum > maximum)
+        fail(
+          "invalid_contribution",
+          `${path}.minimum`,
+          "minimum exceeds maximum",
+        );
+      return {
+        type,
+        ...(minimum === undefined ? {} : { minimum }),
+        ...(maximum === undefined ? {} : { maximum }),
+      };
+    }
+    case "enum": {
+      const values = record.values;
+      const valuesPath = `${path}.values`;
+      if (!Array.isArray(values))
+        return fail("invalid_contribution", valuesPath, "expected array");
+      if (values.length === 0 || values.length > maximumSchemaEnumValues)
+        return fail(
+          "invalid_contribution",
+          valuesPath,
+          `expected 1 to ${maximumSchemaEnumValues} values`,
+        );
+      const parsed = values.map((entry: unknown, index: number): string => {
+        if (
+          !schemaText(entry) ||
+          entry.length === 0 ||
+          entry.length > maximumSchemaEnumValueLength
+        )
+          return fail(
+            "invalid_contribution",
+            `${valuesPath}[${index}]`,
+            `expected non-empty text of at most ${maximumSchemaEnumValueLength} characters without U+0000 or a lone surrogate`,
+          );
+        return entry;
+      });
+      return { type, values: sortedUnique(parsed, valuesPath) };
+    }
+    case "array": {
+      if (record.items === undefined)
+        return fail("invalid_contribution", `${path}.items`, "missing field");
+      const minItems =
+        record.minItems === undefined
+          ? undefined
+          : boundedInteger(
+              record.minItems,
+              `${path}.minItems`,
+              0,
+              maximumSchemaArrayItems,
+            );
+      const maxItems =
+        record.maxItems === undefined
+          ? undefined
+          : boundedInteger(
+              record.maxItems,
+              `${path}.maxItems`,
+              0,
+              maximumSchemaArrayItems,
+            );
+      if (
+        minItems !== undefined &&
+        maxItems !== undefined &&
+        minItems > maxItems
+      )
+        fail(
+          "invalid_contribution",
+          `${path}.minItems`,
+          "minItems exceeds maxItems",
+        );
+      return {
+        type,
+        items: dataSchema(record.items, `${path}.items`, depth + 1, budget),
+        ...(minItems === undefined ? {} : { minItems }),
+        ...(maxItems === undefined ? {} : { maxItems }),
+      };
+    }
+    default: {
+      const propertiesPath = `${path}.properties`;
+      const members = object(
+        record.properties,
+        propertiesPath,
+        "invalid_contribution",
+      );
+      const names = Object.keys(members);
+      if (names.length === 0 || names.length > maximumSchemaProperties)
+        return fail(
+          "invalid_contribution",
+          propertiesPath,
+          `expected 1 to ${maximumSchemaProperties} properties`,
+        );
+      for (const name of names)
+        if (
+          !schemaPropertyPattern.test(name) ||
+          reservedSchemaPropertyNames.includes(name)
+        )
+          fail(
+            "invalid_contribution",
+            `${propertiesPath}.${name}`,
+            "expected property name of a letter, then letters, digits, _ or -",
+          );
+      const properties = Object.fromEntries(
+        names
+          .sort(compareCodeUnits)
+          .map((name) => [
+            name,
+            dataSchema(
+              members[name],
+              `${propertiesPath}.${name}`,
+              depth + 1,
+              budget,
+            ),
+          ]),
+      );
+      if (record.required === undefined) return { type: "object", properties };
+      const requiredPath = `${path}.required`;
+      if (!Array.isArray(record.required))
+        return fail("invalid_contribution", requiredPath, "expected array");
+      // "None required" has one encoding: the absent field.
+      if (record.required.length === 0)
+        return fail(
+          "invalid_contribution",
+          requiredPath,
+          "expected at least one name; omit the field instead",
+        );
+      const required = record.required.map(
+        (entry: unknown, index: number): string => {
+          if (typeof entry !== "string" || !Object.hasOwn(properties, entry))
+            return fail(
+              "invalid_contribution",
+              `${requiredPath}[${index}]`,
+              "required name is not a declared property",
+            );
+          return entry;
+        },
+      );
+      return {
+        type: "object",
+        properties,
+        required: sortedUnique(required, requiredPath),
+      };
+    }
+  }
+}
+
+/** A data schema member of a contribution, with a fresh node budget. */
+function contractSchema(value: unknown, path: string): PackDataSchema {
+  return dataSchema(value, path, 1, { nodes: 0 });
+}
+
+/** The most media types one artifact type may declare. */
+export const maximumArtifactMediaTypes = 16;
+/** The most characters of one media type. */
+export const maximumMediaTypeLength = 127;
+/** Core ceiling of an artifact type's `maximumBytes`: 1 GiB. */
+export const maximumArtifactTypeBytes = 1_073_741_824;
+/**
+ * `type/subtype` with the RFC 6838 restricted-name characters and no
+ * parameter or wildcard. Lower case only, so a media type has one encoding.
+ */
+const mediaTypePattern =
+  /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/;
+
+/** The typed members of an artifact type entry (GP-14A). */
+function artifactTypeContract(
+  record: Record<string, unknown>,
+  path: string,
+): Pick<
+  ArtifactTypeContribution,
+  "mediaTypes" | "maximumBytes" | "contentSchema"
+> {
+  let mediaTypes: readonly string[] | undefined;
+  if (record.mediaTypes !== undefined) {
+    const listPath = `${path}.mediaTypes`;
+    if (!Array.isArray(record.mediaTypes))
+      return fail("invalid_contribution", listPath, "expected array");
+    if (
+      record.mediaTypes.length === 0 ||
+      record.mediaTypes.length > maximumArtifactMediaTypes
+    )
+      return fail(
+        "invalid_contribution",
+        listPath,
+        `expected 1 to ${maximumArtifactMediaTypes} media types; omit the field for none`,
+      );
+    mediaTypes = sortedUnique(
+      record.mediaTypes.map((entry: unknown, index: number): string => {
+        if (
+          typeof entry !== "string" ||
+          entry.length > maximumMediaTypeLength ||
+          !mediaTypePattern.test(entry)
+        )
+          return fail(
+            "invalid_contribution",
+            `${listPath}[${index}]`,
+            "expected lower-case type/subtype media type",
+          );
+        return entry;
+      }),
+      listPath,
+    );
+  }
+  return {
+    ...(mediaTypes === undefined ? {} : { mediaTypes }),
+    ...(record.maximumBytes === undefined
+      ? {}
+      : {
+          maximumBytes: boundedInteger(
+            record.maximumBytes,
+            `${path}.maximumBytes`,
+            1,
+            maximumArtifactTypeBytes,
+          ),
+        }),
+    ...(record.contentSchema === undefined
+      ? {}
+      : {
+          contentSchema: contractSchema(
+            record.contentSchema,
+            `${path}.contentSchema`,
+          ),
+        }),
+  };
+}
+
+/** Core ceilings of a validator reference's declared limits. */
+export const maximumValidatorTimeoutMs = 60_000;
+export const maximumValidatorInputBytes = 67_108_864;
+export const maximumValidatorOutputBytes = 16_777_216;
+/** The most input references one validator may accept. */
+export const maximumValidatorAccepts = 64;
+/** The most characters of an adapter ID. */
+export const maximumValidatorAdapterIdLength = 128;
+/**
+ * An adapter name, a grammar of its own: lower-case segments separated by
+ * `.`, `_` or `-`. It is not a connector operation name, a path or a URL.
+ */
+const validatorAdapterIdPattern = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
+/** Members that would make a validator look like something that runs. */
+const executableValidatorKeys = ["command", "entry", "module", "url", "script"];
+const validatorTypedMembers = [
+  "accepts",
+  "inputSchema",
+  "produces",
+  "outputSchema",
+  "failurePolicy",
+  "timeoutMs",
+  "maxInputBytes",
+  "maxOutputBytes",
+] as const;
+const validatorInputKinds = ["artifactTypes", "evidenceTypes"] as const;
+
+/**
+ * The typed members of a validator entry (GP-14A). Without `adapter` the
+ * entry is a label and carries no other member; with it, every member is
+ * required, so a typed validator has one complete encoding. Whether `accepts`
+ * and `produces` name declared types is settled once every section has been
+ * read.
+ */
+function validatorContract(
+  record: Record<string, unknown>,
+  path: string,
+): Omit<ValidatorContribution, keyof Contribution> {
+  if (record.adapter === undefined) {
+    for (const member of validatorTypedMembers)
+      if (record[member] !== undefined)
+        fail(
+          "invalid_contribution",
+          `${path}.adapter`,
+          `${member} needs an adapter reference`,
+        );
+    return {};
+  }
+  for (const member of validatorTypedMembers)
+    if (record[member] === undefined)
+      fail("invalid_contribution", `${path}.${member}`, "missing field");
+  const adapterPath = `${path}.adapter`;
+  const adapter = object(record.adapter, adapterPath, "invalid_contribution");
+  for (const key of Object.keys(adapter))
+    if (!["id", "version"].includes(key))
+      fail(
+        "invalid_contribution",
+        `${adapterPath}.${key}`,
+        executableValidatorKeys.includes(key)
+          ? "unknown field; an adapter is named, never executed"
+          : "unknown field",
+      );
+  if (
+    typeof adapter.id !== "string" ||
+    adapter.id.length > maximumValidatorAdapterIdLength ||
+    !validatorAdapterIdPattern.test(adapter.id)
+  )
+    fail(
+      "invalid_contribution",
+      `${adapterPath}.id`,
+      "expected lower-case adapter name of segments joined by . _ or -",
+    );
+  if (
+    typeof adapter.version !== "string" ||
+    !versionPattern.test(adapter.version)
+  )
+    fail(
+      "invalid_contribution",
+      `${adapterPath}.version`,
+      "expected exact MAJOR.MINOR.PATCH",
+    );
+  const acceptsPath = `${path}.accepts`;
+  if (!Array.isArray(record.accepts))
+    return fail("invalid_contribution", acceptsPath, "expected array");
+  if (
+    record.accepts.length === 0 ||
+    record.accepts.length > maximumValidatorAccepts
+  )
+    return fail(
+      "invalid_contribution",
+      acceptsPath,
+      `expected 1 to ${maximumValidatorAccepts} references`,
+    );
+  const accepts = record.accepts.map(
+    (entry: unknown, index: number): ValidatorInputReference => {
+      const entryPath = `${acceptsPath}[${index}]`;
+      const item = object(entry, entryPath, "invalid_contribution");
+      keys(item, ["kind", "id"], entryPath, "invalid_contribution");
+      const kind = validatorInputKinds.find(
+        (candidate) => candidate === item.kind,
+      );
+      if (kind === undefined)
+        return fail(
+          "invalid_contribution",
+          `${entryPath}.kind`,
+          "expected artifactTypes or evidenceTypes",
+        );
+      return {
+        kind,
+        id: localId(item.id, `${entryPath}.id`, "invalid_contribution"),
+      };
+    },
+  );
+  if (
+    new Set(accepts.map((entry) => `${entry.kind}\u0000${entry.id}`)).size !==
+    accepts.length
+  )
+    fail("invalid_contribution", acceptsPath, "duplicate reference");
+  if (record.failurePolicy !== "fail_closed")
+    fail(
+      "invalid_contribution",
+      `${path}.failurePolicy`,
+      'expected "fail_closed"',
+    );
+  return {
+    adapter: { id: adapter.id as string, version: adapter.version as string },
+    accepts: accepts.sort(
+      (left, right) =>
+        compareCodeUnits(left.kind, right.kind) ||
+        compareCodeUnits(left.id, right.id),
+    ),
+    inputSchema: contractSchema(record.inputSchema, `${path}.inputSchema`),
+    produces: localId(
+      record.produces,
+      `${path}.produces`,
+      "invalid_contribution",
+    ),
+    outputSchema: contractSchema(record.outputSchema, `${path}.outputSchema`),
+    failurePolicy: "fail_closed",
+    timeoutMs: boundedInteger(
+      record.timeoutMs,
+      `${path}.timeoutMs`,
+      1,
+      maximumValidatorTimeoutMs,
+    ),
+    maxInputBytes: boundedInteger(
+      record.maxInputBytes,
+      `${path}.maxInputBytes`,
+      1,
+      maximumValidatorInputBytes,
+    ),
+    maxOutputBytes: boundedInteger(
+      record.maxOutputBytes,
+      `${path}.maxOutputBytes`,
+      1,
+      maximumValidatorOutputBytes,
+    ),
+  };
+}
+
 function contribution(
   value: unknown,
   path: string,
@@ -743,7 +1389,10 @@ function contribution(
   | PromptContribution
   | CapabilityContribution
   | WorkflowContribution
-  | PolicyContribution {
+  | PolicyContribution
+  | ArtifactTypeContribution
+  | EvidenceTypeContribution
+  | ValidatorContribution {
   const record = object(value, path, "invalid_contribution");
   const workflow = kind === "workflows";
   const allowed = workflow
@@ -781,9 +1430,20 @@ function contribution(
             : ["id", "title", "description"];
   // GP-16: a capability entry may also carry its operation contract.
   if (kind === "capabilities") allowed.push("operations", "requirement");
+  // GP-14A: typed artifact, evidence and validator declarations.
+  if (kind === "artifactTypes")
+    allowed.push("mediaTypes", "maximumBytes", "contentSchema");
+  if (kind === "evidenceTypes") allowed.push("subject", "payloadSchema");
+  if (kind === "validators") allowed.push("adapter", ...validatorTypedMembers);
   for (const key of Object.keys(record))
     if (!allowed.includes(key))
-      fail("invalid_contribution", `${path}.${key}`, "unknown field");
+      fail(
+        "invalid_contribution",
+        `${path}.${key}`,
+        kind === "validators" && executableValidatorKeys.includes(key)
+          ? "unknown field; a validator is referenced, never executed"
+          : "unknown field",
+      );
   const id = localId(record.id, `${path}.id`, "invalid_contribution");
   const common: Contribution = {
     id,
@@ -846,6 +1506,31 @@ function contribution(
   if (kind === "policies") return policyContribution(record, path, common);
   if (kind === "capabilities")
     return { ...common, ...capabilityContract(record, path) };
+  if (kind === "artifactTypes")
+    return { ...common, ...artifactTypeContract(record, path) };
+  if (kind === "evidenceTypes")
+    return {
+      ...common,
+      ...(record.subject === undefined
+        ? {}
+        : {
+            subject: localId(
+              record.subject,
+              `${path}.subject`,
+              "invalid_contribution",
+            ),
+          }),
+      ...(record.payloadSchema === undefined
+        ? {}
+        : {
+            payloadSchema: contractSchema(
+              record.payloadSchema,
+              `${path}.payloadSchema`,
+            ),
+          }),
+    };
+  if (kind === "validators")
+    return { ...common, ...validatorContract(record, path) };
   if (!workflow) return common;
   if (!Array.isArray(record.stages))
     return fail("invalid_contribution", `${path}.stages`, "expected array");
@@ -1171,6 +1856,46 @@ export function validateDomainPackManifest(value: unknown): DomainPackManifest {
       ),
     };
   });
+  // GP-14A references are bare local IDs of this manifest as well: an
+  // evidence type's subject is an artifact type, and a validator accepts
+  // artifact or evidence types and produces an evidence type.
+  const artifactTypeIds = new Set(
+    contributions.artifactTypes.map((entry) => entry.id),
+  );
+  const evidenceTypeIds = new Set(
+    contributions.evidenceTypes.map((entry) => entry.id),
+  );
+  for (const [index, entry] of (
+    contributions.evidenceTypes as readonly EvidenceTypeContribution[]
+  ).entries())
+    if (entry.subject !== undefined && !artifactTypeIds.has(entry.subject))
+      fail(
+        "invalid_contribution",
+        `contributions.evidenceTypes[${index}].subject`,
+        "artifact type is not declared by this manifest",
+      );
+  for (const [index, entry] of (
+    contributions.validators as readonly ValidatorContribution[]
+  ).entries()) {
+    const path = `contributions.validators[${index}]`;
+    for (const [position, input] of (entry.accepts ?? []).entries())
+      if (
+        !(
+          input.kind === "artifactTypes" ? artifactTypeIds : evidenceTypeIds
+        ).has(input.id)
+      )
+        fail(
+          "invalid_contribution",
+          `${path}.accepts[${position}].id`,
+          `${input.kind === "artifactTypes" ? "artifact" : "evidence"} type is not declared by this manifest`,
+        );
+    if (entry.produces !== undefined && !evidenceTypeIds.has(entry.produces))
+      fail(
+        "invalid_contribution",
+        `${path}.produces`,
+        "evidence type is not declared by this manifest",
+      );
+  }
   return {
     schemaVersion: 1,
     id: parseDomainPackId(record.id),
