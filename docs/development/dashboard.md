@@ -218,7 +218,8 @@ only presents it:
   (blocked, failed, and the other documented attention kinds).
 - `completionUnblocks`: the dependents that become ready when the task
   completes (it is their only unmet prerequisite and their status allows work);
-  empty for a terminal task, which can never complete.
+  empty for a terminal task (a completed task is nobody's unmet prerequisite
+  any more; a failed or cancelled one can never complete).
 - `summary`: counts of `ready`, `waiting`, operationally `blocked`,
   `inProgress` and `needsAttention`, derived from the same nodes (a task counts
   in every bucket that applies).

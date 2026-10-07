@@ -972,7 +972,8 @@ export interface TaskGraphNode {
   /**
    * Dependents that become ready when this task completes: this task is their
    * only unmet prerequisite and their own status allows work. Empty for a
-   * terminal task, which can never complete. Sorted by id.
+   * terminal task: a completed task is nobody's unmet prerequisite any more, and
+   * a failed or cancelled one can never complete. Sorted by id.
    */
   completionUnblocks: readonly string[];
 }

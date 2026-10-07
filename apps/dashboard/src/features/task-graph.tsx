@@ -15,6 +15,7 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
+import { terminalTaskOperationalStatuses } from "@ai-office/application/read-models/operational-read-models.ts";
 import type {
   TaskGraph,
   TaskGraphMilestone,
@@ -195,6 +196,8 @@ const nodeTypes = { task: TaskNodeView };
 /* -------------------------------------------------------------------------- */
 
 const readableZoom = 0.7;
+/** How long a focus jump may wait for the layout pass it triggered. */
+const pendingFocusWindow = 800;
 
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
@@ -516,7 +519,7 @@ function TaskGraphCanvas({
       pendingFocus.current = null;
       const decision = decideFraming({
         pendingKey:
-          pending !== null && Date.now() - pending.at < 2000
+          pending !== null && Date.now() - pending.at < pendingFocusWindow
             ? pending.key
             : null,
         selectedKey: selectedKeyRef.current,
@@ -547,7 +550,13 @@ function TaskGraphCanvas({
   const focusOn = (key: string) => {
     // Activating a panel list item replaces the panel content; keep focus there.
     const focusWasInPanel = asideRef.current?.contains(document.activeElement);
-    pendingFocus.current = { key, at: Date.now() };
+    const at = Date.now();
+    pendingFocus.current = { key, at };
+    // A jump that changes no layout never reaches the framing pass; drop its
+    // pending focus so it cannot override a later, unrelated re-frame.
+    window.setTimeout(() => {
+      if (pendingFocus.current?.at === at) pendingFocus.current = null;
+    }, pendingFocusWindow);
     setSelectedKey(key);
     requestAnimationFrame(() => {
       void focusNode(key);
@@ -1158,13 +1167,15 @@ function TaskPanel({
           />
         )
       )}
-      <TaskList
-        title="Unblocks when completed"
-        empty="Completing it makes no other task ready on its own."
-        tasks={pick(task.completionUnblocks)}
-        showPriority
-        onFocus={onFocus}
-      />
+      {!terminalTaskOperationalStatuses.includes(task.operationalStatus) && (
+        <TaskList
+          title="Unblocks when completed"
+          empty="Completing it makes no other task ready on its own."
+          tasks={pick(task.completionUnblocks)}
+          showPriority
+          onFocus={onFocus}
+        />
+      )}
       <TaskList
         title="Other dependents"
         empty="None."

@@ -54,7 +54,9 @@ export function projectTaskGraphNodes(
       isTerminalTaskStatus(statuses.get(only) ?? "completed")
     )
       continue;
-    unblocks.set(only, [...(unblocks.get(only) ?? []), task.taskId]);
+    const list = unblocks.get(only);
+    if (list === undefined) unblocks.set(only, [task.taskId]);
+    else list.push(task.taskId);
   }
   return tasks
     .map((task) => {
