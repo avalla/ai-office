@@ -6,7 +6,9 @@ import type {
   BoundedList,
   PipelineRunState,
   ProjectDetail,
+  ProjectSummary,
   RequirementSummary,
+  TaskGraph,
   TaskPageQuery,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import { taskPageParameters } from "@ai-office/application/protocol/query-protocol.ts";
@@ -457,13 +459,18 @@ export function AgentsPage({
 }
 
 function ProjectHeader({
-  detail,
+  header,
   section,
 }: {
-  detail: ProjectDetail;
+  header: {
+    projectId: string;
+    name: string;
+    description: string | null;
+    localPaths: readonly string[];
+  };
   section?: string;
 }) {
-  const id = encodeURIComponent(detail.summary.projectId);
+  const id = encodeURIComponent(header.projectId);
   const sections = [
     ["Overview", `/projects/${id}`],
     ["Pipeline", `/projects/${id}/pipeline`],
@@ -477,10 +484,9 @@ function ProjectHeader({
     <>
       <div>
         {heading(
-          detail.summary.name,
-          detail.summary.description ??
-            (detail.summary.repository.localPaths.join(" · ") ||
-              "Project operations"),
+          header.name,
+          header.description ??
+            (header.localPaths.join(" · ") || "Project operations"),
         )}
       </div>
       <nav
@@ -1119,7 +1125,12 @@ export function ProjectPage({
   return (
     <div className="page-stack">
       <ProjectHeader
-        detail={project}
+        header={{
+          projectId: project.summary.projectId,
+          name: project.summary.name,
+          description: project.summary.description,
+          localPaths: project.summary.repository.localPaths,
+        }}
         {...(section === undefined ? {} : { section })}
       />
       {section === "pipeline" ? (
@@ -1128,15 +1139,6 @@ export function ProjectPage({
         <ProjectTasks project={project} />
       ) : section === "milestones" ? (
         <ProjectMilestones project={project} />
-      ) : section === "graph" ? (
-        data.graph === undefined ? (
-          <Empty>The dependency graph is not available.</Empty>
-        ) : (
-          <TaskGraphView
-            graph={data.graph}
-            projectId={project.summary.projectId}
-          />
-        )
       ) : section === "requirements" ? (
         <ProjectRequirements project={project} />
       ) : section === "agents" ? (
@@ -1149,6 +1151,30 @@ export function ProjectPage({
       ) : (
         <ProjectOverview data={data} />
       )}
+    </div>
+  );
+}
+
+export function ProjectGraphPage({
+  graph,
+  project,
+}: {
+  graph: TaskGraph;
+  project: ProjectSummary | null;
+}) {
+  const current = project?.projectId === graph.projectId ? project : null;
+  return (
+    <div className="page-stack">
+      <ProjectHeader
+        header={{
+          projectId: graph.projectId,
+          name: graph.projectName,
+          description: current?.description ?? null,
+          localPaths: current?.repository.localPaths ?? [],
+        }}
+        section="graph"
+      />
+      <TaskGraphView graph={graph} projectId={graph.projectId} />
     </div>
   );
 }

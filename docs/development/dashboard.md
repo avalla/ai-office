@@ -286,9 +286,10 @@ resets when the project changes, but is not in the URL. Persisting search,
 status, milestone and the operational view
 in the hash would refetch the graph on every change with the current route
 model, so it is a follow-up (it needs section-level query parameters that do not
-trigger a refetch). The graph section is the only one that fetches this
-endpoint, and it skips the paged task projection of the project detail so tasks
-are not projected twice.
+trigger a refetch). The Graph route fetches only the exhaustive graph endpoint;
+the shell's shared project summaries supply its header and navigation. It does
+not request project detail or its active run and pipeline samples, avoiding a
+second requirement-link read and task projection on live refresh.
 
 ### Task search, filters, and pages
 

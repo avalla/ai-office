@@ -84,11 +84,10 @@ export type DashboardData =
   | {
       kind: "project";
       project: ProjectDetail;
-      /** Present only on the graph section; it is an exhaustive projection. */
-      graph?: TaskGraph;
       activePipelines: BoundedList<PipelineRunState>;
       activeRuns: BoundedList<AgentRunState>;
     }
+  | { kind: "graph"; graph: TaskGraph }
   | { kind: "task"; detail: TaskDetail }
   | { kind: "run"; detail: AgentRunDetail; task: TaskDetail | null }
   | { kind: "memory"; memory: GlobalMemoryOverview }
@@ -148,16 +147,20 @@ export async function queryRoute(
     return { kind: "memory", memory: body.memory };
   }
   if (route.kind === "project") {
+    if (route.section === "graph") {
+      const body = await get<{ graph: TaskGraph }>(
+        `${projectPath(route.projectId)}/graph`,
+      );
+      return { kind: "graph", graph: body.graph };
+    }
     const parameters = taskPageParameters(
       route.section === "tasks" ||
         (route.section === undefined && route.taskQuery !== undefined)
         ? (route.taskQuery ?? { status: "active" })
         : {},
     );
-    // The graph section reads its own exhaustive projection; a paged detail
-    // would project every task a second time for nothing.
-    if (route.section !== "graph") parameters.set("taskView", "paged");
-    const [project, activePipelines, activeRuns, graph] = await Promise.all([
+    parameters.set("taskView", "paged");
+    const [project, activePipelines, activeRuns] = await Promise.all([
       get<{ project: ProjectDetail }>(
         `${projectPath(route.projectId)}?${parameters}`,
       ),
@@ -167,14 +170,10 @@ export async function queryRoute(
       get<{ runs: BoundedList<AgentRunState> }>(
         `/api/runs?project=${encodeURIComponent(route.projectId)}&active=true`,
       ),
-      route.section === "graph"
-        ? get<{ graph: TaskGraph }>(`${projectPath(route.projectId)}/graph`)
-        : Promise.resolve(null),
     ]);
     return {
       kind: "project",
       project: project.project,
-      ...(graph === null ? {} : { graph: graph.graph }),
       activePipelines: activePipelines.pipelines,
       activeRuns: activeRuns.runs,
     };

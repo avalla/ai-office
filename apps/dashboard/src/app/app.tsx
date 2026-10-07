@@ -43,6 +43,7 @@ import {
   MemoryPage,
   OverviewPage,
   PipelinesPage,
+  ProjectGraphPage,
   ProjectPage,
   ProjectsPage,
   RunPage,
@@ -336,14 +337,22 @@ function DashboardShell() {
               <span className="sr-only">Loading operational state</span>
             </div>
           ) : (
-            <Page data={data} route={route} />
+            <Page data={data} route={route} currentProject={currentProject} />
           )}
         </div>
       </main>
     </div>
   );
 }
-function Page({ data, route }: { data: DashboardData; route: DashboardRoute }) {
+function Page({
+  data,
+  route,
+  currentProject,
+}: {
+  data: DashboardData;
+  route: DashboardRoute;
+  currentProject: ProjectSummary | null;
+}) {
   if (data.kind === "invalid")
     return (
       <div role="alert">
@@ -367,6 +376,8 @@ function Page({ data, route }: { data: DashboardData; route: DashboardRoute }) {
     );
   if (data.kind === "run") return <RunPage data={data} />;
   if (data.kind === "memory") return <MemoryPage data={data} />;
+  if (data.kind === "graph")
+    return <ProjectGraphPage graph={data.graph} project={currentProject} />;
   const section =
     route.kind === "project"
       ? (route.section ?? (route.taskQuery ? "tasks" : undefined))
