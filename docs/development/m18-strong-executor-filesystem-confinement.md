@@ -140,7 +140,9 @@ Neither reaches `process_owned`: the process-group wait is unbounded where the
 Runtime is not the reaper of orphans, and a process that starts a new session
 is not owned (`agent-runtime.md`). They become `process_owned` only after
 SFC-REQ-15 bounded detached-child handling is implemented and verified. Process
-isolation is its own dimension and is never implied by a filesystem level.
+ownership (the Runtime ends the tree) and process isolation (a PID namespace)
+are separate dimensions. A filesystem level does not provide either on its own;
+`process_owned` is reached only through a verified provider, for confined runs.
 
 ### Fail-closed admission
 
@@ -163,7 +165,7 @@ it. Names inside the namespace are logical and independent of host paths.
 | `/output` | controlled artifact destination | writable, private |
 | `/credentials` | minimal materialized executor credentials | owner-only, run copy |
 | `/tmp` | private run-local temporary state | writable, private |
-| `/cache` | optional selected cache | absent |
+| `/cache` | optional Runtime-owned cache, never a repository path | absent |
 
 Nothing is exposed because it exists. Hidden by default: the Runtime user's
 HOME and other homes; SSH, Git, cloud and package-registry credentials;
@@ -231,7 +233,8 @@ that is ambiguous or overlapping is refused at admission.
 PR #94 left a documented limitation: an abrupt Runtime host death can leave
 temporary run state behind. Recovery identifies AI Office-owned run roots by
 an ownership marker, distinguishes an active run from an abandoned one against
-authoritative run state, removes stale credentials and workspaces, never
+authoritative run state, removes stale credentials and run-local state, unmounts any surviving mount
+point without traversing it, never follows symlinks while deleting, never
 deletes anything outside an owned root, and records the cleanup as an audit
 event. It follows the existing run-recovery contract (ADR-0016) and does not
 resume or complete a run.
@@ -290,7 +293,7 @@ All requirements are `proposed` and belong to M18. Keys are stable.
 | SFC-REQ-04 | Per-run isolation | Every AgentRun receives its own run root, namespace and credential copy. Concurrent runs, including runs of the same executor, model and provider, cannot observe each other's workspace, temporary state, credentials or unpublished output. |
 | SFC-REQ-05 | Credential confinement | Operator source credentials stay outside the executor namespace. Only a minimal, explicitly materialized per-run copy with owner-only permissions is visible; no mutable credential directory is shared between runs; there is no fallback to the operator HOME; the copy is removed on every terminal outcome; the materialization seam admits future Runtime-owned credentials. |
 | SFC-REQ-06 | Workspace access policy | Repository or workspace exposure is an explicit policy value none \| read_only, mounted at a logical executor path independent of the host path. read_only is enforced by the provider, not by the client. No run receives a workspace by default; A read-write workspace is not a defined value: repository mutation stays on the controlled-action path. Cache and output mounts are separate explicit entries. |
-| SFC-REQ-07 | Path escape resistance | Symlinked mount sources and destinations, '..' traversal, non-canonical paths, bind-mount escape, case-insensitive path collisions, overlapping mount roots and host aliases cannot widen visibility. Mount sources are canonicalized and validated before use, an exposed path never exposes a broader parent tree, and an ambiguous or overlapping policy is refused at admission. |
+| SFC-REQ-07 | Path escape resistance | Symlinked mount sources and destinations, '..' traversal, non-canonical paths, bind-mount escape, case-insensitive path collisions, overlapping mount roots and host aliases cannot widen visibility. Mount sources are canonicalized and validated before use, an exposed path never exposes a broader parent tree, and an ambiguous or overlapping policy is refused at admission. A cache source is Runtime-owned storage outside every repository and workspace path, with a stated access mode (per-run writable, or shared read-only); a writable cache is never shared between runs, and a cache source inside a repository or workspace is refused. |
 | SFC-REQ-08 | Deterministic cleanup | Success, failure, cancellation and timeout each remove the run's private state. After an abrupt Runtime host death, recovery identifies only AI Office-owned run roots by an ownership marker, safely distinguishes active from abandoned runs, removes stale credentials and workspaces, never deletes a path outside an owned root, and records an auditable cleanup event. |
 | SFC-REQ-09 | Confinement provenance | Every real external execution records confinement provider, provider version, policy version, requested level, effective level, logical mounts and capabilities, workspace access mode and whether enforcement was actually active. No secret credential path or unnecessary host path is persisted. Executions that predate the record report confinement as not recorded; it is never inferred. |
 | SFC-REQ-10 | Executor neutrality | Codex, Claude Code and future executors obtain confinement through one generic policy and provider port owned by the core. No executor adapter contains provider-specific sandbox logic, and no second executor-specific security architecture exists. |

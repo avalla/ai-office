@@ -55,8 +55,9 @@ Runtime can detect. A confidentiality guarantee cannot rest on them.
    restriction never raises the level. The current bounded Codex and Claude
    workers are `none`, with their client-enforced restrictions recorded
    separately, until bounded detached-child handling (SFC-REQ-15) makes them
-   `process_owned`. Process isolation is a separate
-   dimension and is not implied by a filesystem level.
+   `process_owned` for confined runs. Process ownership and process isolation
+   are separate dimensions, and a filesystem level provides neither on its
+   own.
 5. **Admission fails closed.** If the required level has no available,
    verified provider, the run fails with `WORKER_UNAVAILABLE` before dispatch.
    There is no unconfined run, no client-sandbox fallback, no level reduction
@@ -65,6 +66,8 @@ Runtime can detect. A confidentiality guarantee cannot rest on them.
 6. **The Runtime owns a per-run filesystem root.** The executor's view is
    built from logical mounts (`input`, `workspace`, `output`, `credentials`,
    `tmp`, optional `cache`); everything else on the host is absent by default.
+   A cache source is Runtime-owned storage outside any repository or
+   workspace path, never writable across runs.
    Workspace access is `none` or `read_only`; repository mutation stays on the controlled-action path. Credentials are a
    minimal per-run copy. The environment is the one AI Office constructs.
    Mount sources are canonicalized and overlapping or ambiguous policy is

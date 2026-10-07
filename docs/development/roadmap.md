@@ -2127,7 +2127,9 @@ for confined runs, the unbounded process-group wait and the stale temporary
 run state recorded from the bounded Codex worker.
 
 Strong confinement is a prerequisite for enabling production autonomous
-Developer agents with repository write access (M14). Delegated child runs must
+Developer agents with repository write access (M14). Their writes remain
+controlled actions performed by the Runtime, never direct writes by the
+executor. Delegated child runs must
 inherit or narrow the parent policy; M18 records that rule and does not
 implement delegation. Rollout is staged and opt-in first: existing executions
 are not required to be strongly confined when the capability is introduced.
