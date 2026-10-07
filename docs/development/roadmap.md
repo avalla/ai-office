@@ -1798,7 +1798,9 @@ See [Professional-work verticals](professional-work-verticals.md).
 ## M16 — Generic Core & Domain Packs
 
 Status: active in AI Office and in progress. GP-01 through GP-09, GP-10A,
-GP-10B-1, GP-11 through GP-13, GP-22 and GP-23 are merged: public contracts,
+GP-10B-1, GP-10B-2, GP-11 through GP-13, GP-16, GP-22 and GP-23 are merged,
+as is the GP-25 contract (its development pack data, 0.4.0, is a second pull
+request): public contracts,
 host-local catalog/resolver, exact project binding, definition ownership and
 source-pinned overrides, derived effective configuration with read-only
 inspection, reviewed upgrades, the legacy development profile, role, agent
@@ -2171,7 +2173,9 @@ proposal:
 - GP-10C-2: previewed explicit adoption of the development pack and its
   registration, preserving old bindings.
 - The GP-16 run gate: bind registered providers at bootstrap and reject a
-  missing required provider before runs.
+  missing required provider before runs. The delivered GP-16 section names
+  `a45ddb12` and GP-24 as its owners; this item's scope proposal decides the
+  split and is not a second owner.
 
 Exit: to be defined with the scope proposal. It is expected to carry the
 clauses that left the M16 exit: Runtime execution consumes the generic

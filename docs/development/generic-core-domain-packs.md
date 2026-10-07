@@ -4053,7 +4053,7 @@ a core lifecycle from a pack is M16.5 (see
 | A — development   | CTO/Architect/Developer/QA; requirement → implementation → review → hardening → complete; project may replace roles or insert security, QA and human approval stages.           |
 | B — legal         | Counsel/Researcher/Reviewer; matter intake → research → draft → review → approval, with source/citation evidence and human authority. No production legal service claim.        |
 | C — manufacturing | Planner/Operator/Quality Engineer/Supervisor; production order → execution → inspection → deviation review → release. No MES/PLC mutation.                                      |
-| D — empty/custom  | No official pack; project-created roles, agents, pipeline, artifact types and policies. It eventually runs and audits through the same contracts without modifying core source. |
+| D — empty/custom  | No official pack; project-created roles, agents, pipeline and artifact types; policies are pack-owned, so it carries none. It eventually runs and audits through the same contracts without modifying core source. |
 
 ## Compatibility stages
 
@@ -4145,9 +4145,10 @@ explicit exclusion. The linked AI Office task and requirement descriptions
 carry the same fields. Runtime records for the split keys (GP-14A, GP-14B,
 GP-10C-1, GP-10C-2) and for the rows reworded by the M16 exit re-scope are
 updated separately; until then the records carry the pre-split GP-14 and
-GP-10C. GP-01 through GP-09, GP-10A, GP-10B-1, GP-11 through
-GP-13, GP-22 and GP-23 have passed review and merged. GP-24 and GP-25 exist
-as tasks; GP-24 is planned for M16.5 and is listed in
+GP-10C. GP-01 through GP-09, GP-10A, GP-10B-1, GP-10B-2 (#118, #121),
+GP-11 through GP-13, GP-16 (#116), GP-22 and GP-23 have passed review and
+merged, and the GP-25 contract has merged (#117) while its development pack
+data (0.4.0) is open (#122). GP-24 exists as a task; GP-24 is planned for M16.5 and is listed in
 [M16 exit re-scope](#m16-exit-re-scope-owner-decision-2026-10-06), with the
 other work that left the M16 exit.
 
@@ -4175,7 +4176,7 @@ other work that left the M16 exit.
 | GP-16 — Pack capability contracts                                 | GP-06                           | Definition layer: a pack capability declares required or optional operations by name and mode; the Runtime host exposes its registered providers read-only; resolution, binding preview/apply and upgrade fail closed on a missing or mismatched required provider; the resolved view reports each binding. Grants, constraints, approval and controlled execution are unchanged and still separately authorize use. No scheduler gate. | Capability contract, provider catalog port, fail-closed resolution/preflight tests, and controlled-action tests proving a binding grants nothing.                                        | Pack-granted authority or direct credentials; run gating and pins (`a45ddb12`, GP-24); stage or policy semantics (GP-25); validator adapters (GP-14); abstract multi-provider contracts. |
 | GP-17 — Legal reference fixture                                   | GP-11–13, GP-14A, 15, 16, 25    | Matter intake, research, draft, citation/evidence review and human approval are defined through public contracts with no software defaults. The fixture binds through a test-supplied catalog, resolves, and is customized and upgraded; it does not run a core lifecycle.                                                                                                | Minimal legal pack/fixture and bind, resolve, customize and upgrade tests for roles, workflow, artifact, knowledge and governance definitions.                                           | Production legal service or filing adapter; lifecycle execution (M16.5).                                    |
 | GP-18 — Manufacturing reference fixture                           | GP-11–13, GP-14A, 15, 16, 25    | Production order, execution, inspection, deviation and supervisor approval are defined through public contracts with no software defaults. The fixture binds through a test-supplied catalog, resolves, and is customized and upgraded; it does not run a core lifecycle.                                                                                                 | Minimal manufacturing pack/fixture and bind, resolve, customize and upgrade tests for provenance, policy and capability definitions.                                                     | MES, ERP, OPC-UA or PLC writes; lifecycle execution (M16.5).                                                |
-| GP-19 — Empty/custom domain fixture                               | GP-11–13, GP-14A, 15, 16, 25    | Zero official packs: the fixture resolves with an empty selection; project-defined roles, agents, workflow, artifacts, policy and knowledge definitions are added and customized without core edits. Pack upgrade does not apply to it. It does not run a core lifecycle.                                                                                                 | Custom-domain fixture and tests: empty-selection resolution; adding and customizing project-owned definitions.                                                                           | Making `custom` a privileged official pack; lifecycle execution (M16.5).                                    |
+| GP-19 — Empty/custom domain fixture                               | GP-11–13, GP-14A, 15, 16, 25    | Zero official packs: the fixture resolves with an empty selection; project-defined roles, agents, workflow, artifacts and knowledge definitions are added and customized without core edits. Pack upgrade does not apply to it. It does not run a core lifecycle.                                                                                                 | Custom-domain fixture and tests: empty-selection resolution; adding and customizing project-owned definitions.                                                                           | Making `custom` a privileged official pack; lifecycle execution (M16.5).                                    |
 | GP-20 — Core purity and legacy regression gate                    | GP-10C-1, GP-17–GP-19, GP-25    | Enforce `pack → public core contracts` and no core import of official packs; run the four-domain fixtures at the definition layer (bind, resolve, customize, upgrade) and the pre-pack fixtures against lifecycle, approval, storage, knowledge, audit and fencing on the legacy path.                                                                                    | Architecture rule and integration suite; `bun run check` plus DB upgrade/RLS checks as applicable.                                                                                       | Broad refactor outside M16; execution from packs (M16.5).                                                   |
 | GP-21 — Pack authoring and operations guide                       | GP-20                           | Document manifest, lifecycle, project ownership/customization, conflicts, upgrades, local install/validate and custom/three reference examples using actual commands.                                                                                                                                                                                                     | Authoring guide and tested examples; docs/CLI parity review.                                                                                                                             | Marketplace, remote registry or speculative CLI commands.                                                   |
 
@@ -4599,9 +4600,9 @@ project has adopted the development pack.
 - GP-17, GP-18 and GP-19 also depend on GP-25. A fixture that carries policy
   or governance definitions cannot resolve before GP-25, because GP-06
   rejects a non-empty policy section as `unsupported_security_composition`.
-  For GP-19 the dependency is provisional: it has no pack, and whether
-  project-owned policy definitions in a pack-free project fall under GP-25
-  is set by GP-25's scope.
+  GP-19 has no pack and carries no policy definitions: GP-25 policies are
+  pack-owned, with no project override and no project-owned policy, so its
+  dependency on GP-25 is only ordering.
 - The sections of delivered tasks and the committed
   `outside-pack-vocabulary.json` still name GP-10C and GP-14 as owners and
   are not rewritten. Read registration, install and adoption as GP-10C-2,
@@ -4617,22 +4618,24 @@ project has adopted the development pack.
   activation (provisional, see the table below).
 
 **Rows owned by other pull requests.** The same owner decision set the M16
-part of three tasks whose table rows this record does not edit. Until each
-task's own pull request updates its row, read the rows as follows.
+part of three tasks whose table rows this record did not edit. GP-16 and
+GP-25 have since merged and updated their own rows (#116, #117); read the
+GP-15 row as follows until its pull request updates it.
 
-- GP-16. The row still lists "bind registered providers at bootstrap" and
-  "reject missing required provider before runs". Those two clauses are the
-  run gate and are M16.5. In M16, GP-16 is delivered as capability
+- GP-16. The original row listed "bind registered providers at bootstrap"
+  and "reject missing required provider before runs". Those two clauses are
+  the run gate and are M16.5. In M16, GP-16 is delivered as capability
   declarations plus fail-closed provider availability at resolution and at
-  binding preflight, with no run or scheduler gate. The GP-16 row and its
-  contract section now state this, and the run gate remains M16.5.
+  binding preflight, with no run or scheduler gate. The merged GP-16 row and
+  contract section state exactly this.
 - GP-15. The row still reads as use of the AgentKnowledgeStore. In M16,
   GP-15 is delivered as a definition layer only: no store call and no
   seeding. Store use, seeding, and "outage and provenance" behaviour beyond
   proving that the store is untouched are not M16; this record assigns them
   to no milestone.
 - GP-25. The pack policy contribution contract is an M16 task: a definition
-  layer, pack-owned. Its row and scope are updated by its own pull request.
+  layer, pack-owned. Its row and scope were updated by its own pull request
+  (#117); its development pack data (0.4.0) is a second pull request (#122).
 
 **Planned for M16.5.** None of these rows is M16 work and none has
 owner-approved acceptance criteria yet; each needs a scope proposal before
@@ -4646,7 +4649,7 @@ order, and each entry is set by the item's scope proposal.
 | Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`   | GP-10B-1, GP-10B-2, GP-25; activation | Execution parity: compare execution from a resolved configuration with legacy execution.                                                                                                                                                                      |
 | GP-14B — Evidence and validator enforcement           | GP-14A; M11.6 Phase B                 | Stale evidence and invalid validator output fail closed; version-bound review, atop the generic version/provenance/review contracts.                                                                                                                          |
 | GP-10C-2 — Development pack adoption                  | GP-10C-1; activation                  | Previewed explicit adoption of the development pack and its catalog registration, preserving old bindings; legacy snapshot, approval, action and provenance regression tests.                                                                                 |
-| GP-16 run gate                                        | GP-16; activation                     | Bind registered providers at bootstrap and reject a missing required provider before runs. The M16 row of GP-16 still lists these clauses; see "Rows owned by other pull requests" above.                                                                     |
+| GP-16 run gate                                        | GP-16; activation                     | Bind registered providers at bootstrap and reject a missing required provider before runs. The merged GP-16 row records only the definition layer; the delivered GP-16 sections name `a45ddb12` and GP-24 as owners of the run gate and the run pin, so the scope proposal for this item decides how the gate is split between them and it is not a second owner.                                                                     |
 
 **Left open by this decision.**
 
