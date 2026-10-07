@@ -826,6 +826,11 @@ function capabilityContract(
   };
 }
 
+/*
+ * Ceilings of the GP-14A contract are part of the published contract: a pack
+ * that declares a value at a ceiling stays valid only while the ceiling holds.
+ * Raising a ceiling is compatible; lowering one is not.
+ */
 /** The deepest nesting of a data schema; the root is depth 1 (GP-14A). */
 export const maximumSchemaDepth = 4;
 /** The most properties one object schema may declare. */
@@ -836,8 +841,8 @@ export const maximumSchemaNodes = 256;
 export const maximumSchemaEnumValues = 64;
 export const maximumSchemaEnumValueLength = 128;
 /** Ceilings for the optional string length and array size bounds. */
-export const maximumSchemaStringLength = 1_048_576;
-export const maximumSchemaArrayItems = 100_000;
+export const maximumSchemaStringLength = 65_536;
+export const maximumSchemaArrayItems = 10_000;
 const schemaPropertyPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 /** Names that would shadow an object member; rejected by name as well. */
 const reservedSchemaPropertyNames = ["__proto__", "constructor", "prototype"];
@@ -1094,18 +1099,23 @@ function dataSchema(
             `${propertiesPath}.${name}`,
             "expected property name of a letter, then letters, digits, _ or -",
           );
-      const properties = Object.fromEntries(
-        names
-          .sort(compareCodeUnits)
-          .map((name) => [
-            name,
-            dataSchema(
-              members[name],
-              `${propertiesPath}.${name}`,
-              depth + 1,
-              budget,
-            ),
-          ]),
+      // A null prototype: an inherited name such as `toString` can never be
+      // read as a declared property.
+      const properties: { [name: string]: PackDataSchema } = Object.assign(
+        Object.create(null) as object,
+        Object.fromEntries(
+          names
+            .sort(compareCodeUnits)
+            .map((name) => [
+              name,
+              dataSchema(
+                members[name],
+                `${propertiesPath}.${name}`,
+                depth + 1,
+                budget,
+              ),
+            ]),
+        ),
       );
       if (record.required === undefined) return { type: "object", properties };
       const requiredPath = `${path}.required`;
@@ -1147,8 +1157,8 @@ function contractSchema(value: unknown, path: string): PackDataSchema {
 export const maximumArtifactMediaTypes = 16;
 /** The most characters of one media type. */
 export const maximumMediaTypeLength = 127;
-/** Core ceiling of an artifact type's `maximumBytes`: 1 GiB. */
-export const maximumArtifactTypeBytes = 1_073_741_824;
+/** Core ceiling of an artifact type's `maximumBytes`: 64 MiB. */
+export const maximumArtifactTypeBytes = 67_108_864;
 /**
  * `type/subtype` with the RFC 6838 restricted-name characters and no
  * parameter or wildcard. Lower case only, so a media type has one encoding.
@@ -1220,7 +1230,7 @@ function artifactTypeContract(
 
 /** Core ceilings of a validator reference's declared limits. */
 export const maximumValidatorTimeoutMs = 60_000;
-export const maximumValidatorInputBytes = 67_108_864;
+export const maximumValidatorInputBytes = 16_777_216;
 export const maximumValidatorOutputBytes = 16_777_216;
 /** The most input references one validator may accept. */
 export const maximumValidatorAccepts = 64;
@@ -1261,8 +1271,8 @@ function validatorContract(
       if (record[member] !== undefined)
         fail(
           "invalid_contribution",
-          `${path}.adapter`,
-          `${member} needs an adapter reference`,
+          `${path}.${member}`,
+          "needs an adapter reference",
         );
     return {};
   }

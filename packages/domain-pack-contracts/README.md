@@ -124,7 +124,7 @@ Artifact, evidence and validator definitions (GP-14A). These are data only:
 nothing is stored, validated, looked up or run because of them. An artifact
 type item may carry `mediaTypes` (a set of 1 to 16 lower-case `type/subtype`
 names, `maximumArtifactMediaTypes`), `maximumBytes` (an integer up to
-`maximumArtifactTypeBytes`, 1 GiB) and `contentSchema`. An evidence type item
+`maximumArtifactTypeBytes`, 64 MiB) and `contentSchema`. An evidence type item
 may carry `subject`, a local ID naming an artifact type of the same manifest,
 and `payloadSchema`. A validator item with only `id`, `title` and
 `description` is a label. With `adapter`, `{ id, version }`, it is typed and
@@ -133,10 +133,11 @@ artifact or evidence types of the same manifest), `inputSchema`, `produces`
 (a local evidence type ID), `outputSchema`, `failurePolicy`, `timeoutMs`,
 `maxInputBytes` and `maxOutputBytes`. The adapter `id` follows
 `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$` (at most 128 characters) and is never
-looked up; the `version` is an exact `MAJOR.MINOR.PATCH`, so a range, a tag
+looked up as, and never shares a namespace with, a connector operation; the `version` is an exact `MAJOR.MINOR.PATCH`, so a range, a tag
 and a wildcard are rejected. `failurePolicy` is only `"fail_closed"`. The
 limits are bounded by `maximumValidatorTimeoutMs` (60,000),
-`maximumValidatorInputBytes` and `maximumValidatorOutputBytes`. No `command`,
+`maximumValidatorInputBytes` (16 MiB) and `maximumValidatorOutputBytes` (16 MiB).
+Raising a ceiling is compatible with published packs; lowering one is not. No `command`,
 `entry`, `module`, `url` or `script` key exists; they are unknown fields.
 
 A schema is a closed purpose-built subset, not JSON Schema (`PackDataSchema`):
@@ -145,7 +146,7 @@ optional length, range and size bounds. An object is always closed and
 declares 1 to 64 `properties` and optionally `required`; there is no
 `additionalProperties`, `$ref`, `pattern`, `format` or composition keyword. A
 schema nests at most 4 levels and holds at most 256 nodes; an enum lists 1 to
-64 values of at most 128 characters; property names are `^[A-Za-z][A-Za-z0-9_-]*$`
+64 values of at most 128 characters; property names are `^[A-Za-z][A-Za-z0-9_-]{0,63}$`
 and never `__proto__`, `constructor` or `prototype`. Schema text follows the
 definition text rule: no lone surrogate and no U+0000. Every set is held in
 ascending code-unit order, so the written order does not change the digest.

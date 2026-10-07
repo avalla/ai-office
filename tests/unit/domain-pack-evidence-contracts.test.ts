@@ -7,7 +7,9 @@ import {
   maximumArtifactMediaTypes,
   maximumArtifactTypeBytes,
   maximumSchemaDepth,
+  maximumSchemaArrayItems,
   maximumSchemaEnumValues,
+  maximumSchemaStringLength,
   maximumSchemaNodes,
   maximumSchemaProperties,
   maximumValidatorAccepts,
@@ -20,6 +22,7 @@ import {
 } from "../../packages/domain-pack-contracts/src/index.ts";
 import {
   ProjectDefinitionConflictError,
+  isDefinitionText,
   parseDefinitionMutation,
 } from "../../packages/application/src/domain-pack/project-definition.ts";
 
@@ -272,6 +275,34 @@ describe("GP-14A typed artifact, evidence and validator declarations", () => {
   });
 });
 
+describe("GP-14A published ceilings", () => {
+  test("the ceilings are the published values, inclusive, and one more is refused", () => {
+    // Raising a ceiling is compatible with published packs; lowering is not.
+    expect(maximumArtifactTypeBytes).toBe(64 * 1024 * 1024);
+    expect(maximumValidatorInputBytes).toBe(16 * 1024 * 1024);
+    expect(maximumValidatorOutputBytes).toBe(16 * 1024 * 1024);
+    expect(maximumValidatorTimeoutMs).toBe(60_000);
+    expect(maximumSchemaArrayItems).toBe(10_000);
+    expect(maximumSchemaStringLength).toBe(64 * 1024);
+    const path = "contributions.artifactTypes[0].contentSchema";
+    for (const [member, type, ceiling] of [
+      ["maxItems", "array", maximumSchemaArrayItems],
+      ["maxLength", "string", maximumSchemaStringLength],
+    ] as const) {
+      const schema = (value: number) =>
+        withSchema({
+          type,
+          ...(type === "array" ? { items: { type: "boolean" } } : {}),
+          [member]: value,
+        });
+      expect(() =>
+        parseDomainPackManifest(bytes(schema(ceiling))),
+      ).not.toThrow();
+      expectRejected(schema(ceiling + 1), `${path}.${member}`);
+    }
+  });
+});
+
 describe("GP-14A rejections carry the member path", () => {
   test("artifact type members", () => {
     const path = "contributions.artifactTypes[0]";
@@ -438,7 +469,7 @@ describe("GP-14A rejections carry the member path", () => {
             },
           ],
         }),
-        `${path}.adapter`,
+        `${path}.${member}`,
       );
       // An adapter without one of the members.
       expectRejected(inValidator(member, undefined), `${path}.${member}`);
@@ -825,15 +856,74 @@ describe("GP-14A closed data schema", () => {
     expectRejected(object(["__proto__"]), `${base}[0]`);
   });
 
-  test("a lone surrogate in raw manifest bytes is malformed input", () => {
-    // The JSON reader rejects it before any schema rule applies.
-    const source = JSON.stringify(withSchema({ type: "boolean" })).replace(
-      '"boolean"',
-      '"\\ud800"',
+  test("a lone surrogate in raw manifest bytes is malformed input, and only that rule can reject it", () => {
+    // The enum is otherwise valid, so the surrogate alone decides. The strict
+    // reader refuses it first, with its own code and no member path.
+    const valid = JSON.stringify(
+      withSchema({ type: "enum", values: ["a", "MARK"] }),
     );
-    expect(() => parseDomainPackManifest(encoder.encode(source))).toThrow(
-      DomainPackManifestError,
+    expect(() => parseDomainPackManifest(encoder.encode(valid))).not.toThrow();
+    const source = valid.replace("MARK", "b\\ud800c");
+    expect(source).toContain("\\ud800");
+    try {
+      parseDomainPackManifest(encoder.encode(source));
+      throw new Error("Expected rejection");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DomainPackManifestError);
+      expect((error as DomainPackManifestError).code).toBe("malformed_input");
+    }
+  });
+
+  test("schema text follows isDefinitionText for every string a schema accepts", () => {
+    const samples = [
+      "",
+      "plain",
+      "b\u0000c",
+      "\u0000",
+      "b\ud800c",
+      "\udc00",
+      "\ud800",
+      "ok \u{1F600} ok",
+      "e\u0301",
+      "\u{10FFFF}",
+      "x".repeat(128),
+    ];
+    for (const sample of samples) {
+      const accepted = (() => {
+        try {
+          validateDomainPackManifest(
+            withSchema({ type: "enum", values: [sample] }),
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      // The enum rule adds only non-empty; the text rule is the shared one.
+      expect([sample, accepted]).toEqual([
+        sample,
+        sample.length > 0 && isDefinitionText(sample),
+      ]);
+    }
+  });
+
+  test("declared properties are own members: an inherited name is not one", () => {
+    const parsed = parseDomainPackManifest(
+      bytes(
+        withSchema({
+          type: "object",
+          properties: { a: { type: "boolean" } },
+        }),
+      ),
     );
+    const schema = parsed.contributions.artifactTypes[0]?.contentSchema;
+    if (schema?.type !== "object") throw new Error("Expected object schema");
+    expect(Object.getPrototypeOf(schema.properties)).toBeNull();
+    expect(schema.properties.toString).toBeUndefined();
+    expect("constructor" in schema.properties).toBe(false);
+    expect(Object.keys(schema.properties)).toEqual(["a"]);
+    // Re-validation and canonicalization of the parsed form are unaffected.
+    expect(() => canonicalizeDomainPackManifest(parsed)).not.toThrow();
   });
 
   test("a __proto__ member written in JSON is an own key and is refused", () => {
