@@ -66,7 +66,7 @@ Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`.
 full. Each entry states what the pack delivers of the field, what remains as
 residue (`null` when the pack carries the whole field) and the task that owns
 it. The seven fields that GP-10B-2 owned and the five governance fields of
-GP-25 are delivered. `tools` stays with GP-10C, and the Runtime role name,
+GP-25 are delivered. `tools` stays with GP-10C-1, and the Runtime role name,
 version, model policy, limits, capability order and agent enablement with the
 execution parity task.
 
