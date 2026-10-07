@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 
 // GP-14A declares validator references as data. Nothing that reads or
@@ -46,19 +46,53 @@ describe("GP-14A boundary", () => {
       );
   });
 
-  test("the resolver and the contract views import no connector, adapter or provider package", () => {
+  test("the contract modules reach no connector, adapter, provider or host module, directly or transitively", () => {
+    const newModules = [
+      "packages/application/src/domain-pack/pack-evidence-contracts.ts",
+      "packages/application/src/domain-pack/pack-evidence-contract-changes.ts",
+    ];
+    // The transitive closure of relative imports, as repository paths.
+    const closure = new Set<string>();
+    const visit = (file: string): void => {
+      if (closure.has(file)) return;
+      closure.add(file);
+      for (const value of specifiers(read(file)))
+        if (value.startsWith("."))
+          visit(relative(root, resolve(root, dirname(file), value)));
+    };
+    for (const file of newModules) visit(file);
+    expect(closure.size).toBeGreaterThan(newModules.length);
+    // The closure runs through the resolver, which already imports the
+    // application-level GP-16 provider port; no infrastructure module is in it.
+    for (const file of closure)
+      expect([
+        file,
+        /connector|llm-gateway|storage-|runtime-host|^apps\//u.test(file),
+      ]).toEqual([file, false]);
+    // Bare specifiers are the contracts package and hashing, nothing else.
+    for (const file of closure)
+      for (const value of specifiers(read(file)).filter(
+        (entry) => !entry.startsWith("."),
+      ))
+        expect([file, value]).toEqual([
+          file,
+          expect.stringMatching(/^node:crypto$|domain-pack-contracts/u),
+        ]);
+  });
+
+  test("the resolver's import of the provider port is the GP-16 binding only, never a validator path", () => {
+    // The resolver may import the operation provider port for capability
+    // binding; the new modules must not be the path that leads there. The
+    // limit: this inspects imports, not what a function does with them.
     for (const file of [
       "packages/application/src/domain-pack/pack-evidence-contracts.ts",
       "packages/application/src/domain-pack/pack-evidence-contract-changes.ts",
-      "packages/application/src/domain-pack/resolve-project-configuration.ts",
     ])
-      for (const value of specifiers(read(file)).filter(
-        (entry) => entry !== "node:crypto",
-      ))
-        expect([
-          file,
-          value.startsWith(".") || value.includes("domain-pack-contracts"),
-        ]).toEqual([file, true]);
+      expect(
+        specifiers(read(file)).filter((value) =>
+          /operation-provider|capability-contracts/u.test(value),
+        ),
+      ).toEqual([]);
   });
 
   test("no validator vocabulary reaches the operation provider port or the connector registry", () => {

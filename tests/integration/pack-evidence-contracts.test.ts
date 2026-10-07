@@ -21,6 +21,7 @@ import {
   ProjectConfigurationResolutionError,
   type ResolvedProjectConfiguration,
 } from "@ai-office/application/domain-pack/resolve-project-configuration.ts";
+import { summarizeEvidenceContract } from "@ai-office/application/domain-pack/pack-evidence-contract-changes.ts";
 import { StaleProjectPackBindingError } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
 import type { OperationProviderCatalog } from "@ai-office/application/ports/operation-provider-catalog.port.ts";
 import type {
@@ -610,6 +611,13 @@ describe("GP-14A resolution and the derived views", () => {
         maxOutputBytes: 65_536,
       },
     ]);
+    // The view type narrows members by kind (checked by the compiler).
+    // @ts-expect-error an artifact type view has no adapter
+    void view.artifactTypes[0]?.adapter;
+    // @ts-expect-error an evidence type view has no limit
+    void view.evidenceTypes[0]?.timeoutMs;
+    // @ts-expect-error only a validator view reports a registration
+    void view.artifactTypes[0]?.registration;
     // The identities carry no version or digest.
     for (const entry of [
       ...view.artifactTypes,
@@ -1076,6 +1084,68 @@ describe("GP-14A contract changes in the upgrade plan", () => {
       [pid("evidenceTypes", "citation-check"), "removed"],
       [pid("validators", "cite-checker"), "removed"],
     ]);
+  });
+
+  test("the audit summary carries a content hash, so a limit-only change is visible without a body", async () => {
+    const host = await project();
+    await host.bind([v1]);
+    // A no-op plan reads nothing, so the version-1 summary comes from a
+    // project that has no selection yet.
+    const fresh = await project();
+    const summarize = async (desired: PackIdentity) => {
+      const plan = await fresh
+        .upgrade()
+        .preview({ projectId: "a", desired: [desired] });
+      return plan.targetEvidenceContracts.map(summarizeEvidenceContract);
+    };
+    const before = await summarize(v1);
+    const after = await summarize(v3);
+    const hashes = (list: typeof before) =>
+      Object.fromEntries(
+        list.map((item) => [item.contractId, item.contentHash]),
+      );
+    for (const item of [...before, ...after])
+      expect(item.contentHash).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    // Only the validator's timeout changed: only its hash differs, and the
+    // adapter, version and failure policy read the same.
+    const id = pid("validators", "cite-checker");
+    expect(hashes(after)[id]).not.toBe(hashes(before)[id]);
+    expect(hashes(after)[pid("artifactTypes", "filing")]).toBe(
+      hashes(before)[pid("artifactTypes", "filing")],
+    );
+    const pick = (list: typeof before) =>
+      list.find((item) => item.contractId === id);
+    expect({ ...pick(after), contentHash: "" }).toEqual({
+      ...pick(before),
+      contentHash: "",
+    });
+    expect(JSON.stringify(after)).not.toMatch(
+      /timeoutMs|20000|30000|minLength|verified|application\/pdf/u,
+    );
+    // The hash is the one the apply path records.
+    const plan = await host
+      .upgrade()
+      .preview({ projectId: "a", desired: [v3] });
+    await host.upgrade().apply({
+      projectId: "a",
+      desired: [v3],
+      approvedPlanDigest: plan.planDigest,
+      actorId: "approver",
+    });
+    const recorded = host.audits("project.pack_upgrade_applied")[0] as {
+      evidenceContractChanges: {
+        changes: {
+          before: { contentHash: string };
+          after: { contentHash: string };
+        }[];
+      };
+    };
+    expect(
+      recorded.evidenceContractChanges.changes[0]!.before.contentHash,
+    ).toBe(hashes(before)[id]);
+    expect(recorded.evidenceContractChanges.changes[0]!.after.contentHash).toBe(
+      hashes(after)[id],
+    );
   });
 
   test("a no-op plan carries both fields empty and reads no artifact", async () => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { canonicalizeJcsJson } from "../../../domain-pack-contracts/src/jcs.ts";
 import {
   evidenceContractKinds,
@@ -118,12 +119,14 @@ export function evidenceContractDifferences(
 
 /**
  * What the audit trail keeps of a contract: its identity, and for a validator
- * the adapter ID, the adapter version and the failure policy. Never a schema,
- * a limit, a media type or a text.
+ * the adapter ID, the adapter version and the failure policy, and for every
+ * kind a hash of the canonical contract, so a change that alters only a limit
+ * or a schema stays visible. Never a schema, a limit, a media type or a text.
  */
 export interface EvidenceContractAuditSummary {
   readonly contractId: string;
   readonly kind: EvidenceContractKind;
+  readonly contentHash: string;
   readonly adapter?: { readonly id: string; readonly version: string };
   readonly failurePolicy?: "fail_closed";
 }
@@ -134,17 +137,24 @@ export function summarizeEvidenceContract(
   return {
     contractId: contract.contractId,
     kind: contract.kind,
-    ...(contract.adapter === undefined
-      ? {}
-      : {
-          adapter: {
-            id: contract.adapter.id,
-            version: contract.adapter.version,
-          },
-        }),
-    ...(contract.failurePolicy === undefined
-      ? {}
-      : { failurePolicy: contract.failurePolicy }),
+    // The same canonical form the plan compares, so that two summaries differ
+    // exactly when the contracts do, a limit or schema change included.
+    contentHash: `sha256:${createHash("sha256").update(canonical(contract)).digest("hex")}`,
+    ...(contract.kind === "validators"
+      ? {
+          ...(contract.adapter === undefined
+            ? {}
+            : {
+                adapter: {
+                  id: contract.adapter.id,
+                  version: contract.adapter.version,
+                },
+              }),
+          ...(contract.failurePolicy === undefined
+            ? {}
+            : { failurePolicy: contract.failurePolicy }),
+        }
+      : {}),
   };
 }
 

@@ -42,6 +42,7 @@ import {
 import {
   evidenceContractMembersOf,
   type EvidenceContractKind,
+  type EvidenceContractMembersByKind,
 } from "./pack-evidence-contracts.ts";
 import {
   policyClauses,
@@ -188,8 +189,8 @@ export interface ResolvedPolicy extends PolicyClauses {
  * validator reference (GP-14A), with the typed members as declared. The ID is
  * the stable slot identity `pack:<packId>/<kind>/<localId>`. Typed members
  * are the pack's under every customization. Nothing here is validated,
- * stored, run or enforced; for a validator `registration` is always
- * `unchecked` because no adapter is looked up.
+ * stored, run or enforced; a validator that declares an adapter
+ * reports `registration: "unchecked"` because no adapter is looked up.
  */
 export type ResolvedEvidenceDefinition<
   K extends EvidenceContractKind = EvidenceContractKind,
@@ -200,8 +201,9 @@ export type ResolvedEvidenceDefinition<
   readonly origin: "pack_owned";
   readonly title?: string;
   readonly description?: string;
-  readonly registration?: "unchecked";
-} & NonNullable<ReturnType<typeof evidenceContractMembersOf>>;
+} & EvidenceContractMembersByKind[K] &
+  // Only a validator that declares an adapter has a registration to report.
+  (K extends "validators" ? { readonly registration?: "unchecked" } : unknown);
 
 export interface ResolvedWorkflowReferences {
   readonly workflowId: string;
@@ -883,32 +885,53 @@ export function resolveProjectConfiguration(input: {
   // declarations. A project cannot override a typed member, so each view
   // lists the pack's; project-owned artifact and evidence types are
   // descriptive and appear in `effectiveDefinitions` only.
-  const evidenceView = <K extends EvidenceContractKind>(
-    kind: K,
-  ): ResolvedEvidenceDefinition<K>[] =>
+  const packOwned = <K extends EvidenceContractKind>(kind: K) =>
     byKind[kind].flatMap((definition) => {
       if (provenanceOf(definition.effectiveId).origin !== "pack_owned")
         return [];
       const { title, description } = definition.payload;
-      const members = evidenceContractMembersOf(kind, definition.payload);
       return [
         {
-          kind,
-          definitionId: stableId(definition),
-          effectiveId: definition.effectiveId,
-          origin: "pack_owned",
-          ...(title === undefined ? {} : { title }),
-          ...(description === undefined ? {} : { description }),
-          ...(kind === "validators" && members?.adapter !== undefined
-            ? { registration: "unchecked" as const }
-            : {}),
-          ...members,
-        } as ResolvedEvidenceDefinition<K>,
+          definition,
+          base: {
+            kind,
+            definitionId: stableId(definition),
+            effectiveId: definition.effectiveId,
+            origin: "pack_owned" as const,
+            ...(title === undefined ? {} : { title }),
+            ...(description === undefined ? {} : { description }),
+          },
+        },
       ];
     });
-  const artifactTypes = evidenceView("artifactTypes");
-  const evidenceTypes = evidenceView("evidenceTypes");
-  const validators = evidenceView("validators");
+  const artifactTypes = packOwned("artifactTypes").map(
+    ({ definition, base }): ResolvedEvidenceDefinition<"artifactTypes"> => ({
+      ...base,
+      ...evidenceContractMembersOf("artifactTypes", definition.payload),
+    }),
+  );
+  const evidenceTypes = packOwned("evidenceTypes").map(
+    ({ definition, base }): ResolvedEvidenceDefinition<"evidenceTypes"> => ({
+      ...base,
+      ...evidenceContractMembersOf("evidenceTypes", definition.payload),
+    }),
+  );
+  const validators = packOwned("validators").map(
+    ({ definition, base }): ResolvedEvidenceDefinition<"validators"> => {
+      const members = evidenceContractMembersOf(
+        "validators",
+        definition.payload,
+      );
+      return {
+        ...base,
+        // Only a validator that declares an adapter has one to leave unchecked.
+        ...(members?.adapter === undefined
+          ? {}
+          : { registration: "unchecked" as const }),
+        ...members,
+      };
+    },
+  );
 
   const roles: ResolvedRole[] = [];
   const omittedRoles: string[] = [];

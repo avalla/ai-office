@@ -1,6 +1,5 @@
 import type {
   ArtifactTypeContribution,
-  Contribution,
   EvidenceTypeContribution,
   ValidatorContribution,
 } from "../../../domain-pack-contracts/src/index.ts";
@@ -44,26 +43,45 @@ export const evidenceContractMembers: Readonly<
   ],
 };
 
-type TypedMembers = Omit<
-  ArtifactTypeContribution & EvidenceTypeContribution & ValidatorContribution,
-  keyof Contribution
->;
+/** The typed members each kind may carry, and no other kind's. */
+export interface EvidenceContractMembersByKind {
+  readonly artifactTypes: Pick<
+    ArtifactTypeContribution,
+    "mediaTypes" | "maximumBytes" | "contentSchema"
+  >;
+  readonly evidenceTypes: Pick<
+    EvidenceTypeContribution,
+    "subject" | "payloadSchema"
+  >;
+  readonly validators: Pick<
+    ValidatorContribution,
+    | "adapter"
+    | "accepts"
+    | "inputSchema"
+    | "produces"
+    | "outputSchema"
+    | "failurePolicy"
+    | "timeoutMs"
+    | "maxInputBytes"
+    | "maxOutputBytes"
+  >;
+}
 
 /**
  * The typed members of a definition, or `undefined` for a label that has none.
  * Plain JSON data, compared in canonical form.
  */
-export function evidenceContractMembersOf(
-  kind: EvidenceContractKind,
+export function evidenceContractMembersOf<K extends EvidenceContractKind>(
+  kind: K,
   payload: object,
-): TypedMembers | undefined {
+): EvidenceContractMembersByKind[K] | undefined {
   const entries = evidenceContractMembers[kind].flatMap((member) => {
     const value = (payload as Record<string, unknown>)[member];
     return value === undefined ? [] : [[member, value] as const];
   });
   return entries.length === 0
     ? undefined
-    : (Object.fromEntries(entries) as TypedMembers);
+    : (Object.fromEntries(entries) as EvidenceContractMembersByKind[K]);
 }
 
 /**
@@ -71,7 +89,9 @@ export function evidenceContractMembersOf(
  * closure: its stable identity and its typed members, never a title or a
  * description. Nothing declared here runs, registers or is enforced.
  */
-export type EvidenceContract = TypedMembers & {
-  readonly contractId: string;
-  readonly kind: EvidenceContractKind;
-};
+export type EvidenceContract = {
+  [K in EvidenceContractKind]: EvidenceContractMembersByKind[K] & {
+    readonly contractId: string;
+    readonly kind: K;
+  };
+}[EvidenceContractKind];

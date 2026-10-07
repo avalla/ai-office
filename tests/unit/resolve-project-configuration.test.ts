@@ -571,9 +571,10 @@ function independentCanonicalJson(value: unknown): string {
 function independentDigest(
   result: ReturnType<typeof resolveProjectConfiguration>,
 ): string {
-  // The GP-11 role view, the GP-12 agent view, the GP-13 workflow view and
-  // the GP-25 policy view and the GP-14A artifact type, evidence type and
-  // validator views are derived from the material; they are not part of it. Nor is the GP-16 capability view, which also depends on the host's
+  // The GP-11 role view, the GP-12 agent view, the GP-13 workflow view, the
+  // GP-25 policy view and the GP-14A artifact type, evidence type and
+  // validator views are derived from the material; they are not part of it.
+  // Nor is the GP-16 capability view, which also depends on the host's
   // providers.
   const {
     configurationDigest: _digest,
