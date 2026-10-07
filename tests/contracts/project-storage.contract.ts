@@ -12,6 +12,7 @@ import {
 } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
 import type { PackIdentity } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
+import { knowledgeAuditRecord } from "@ai-office/application/domain-pack/pack-knowledge-changes.ts";
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import {
   planProjectPackUpgrade,
@@ -2142,8 +2143,7 @@ export function defineProjectStorageContracts(
           actorId: "operator",
         });
         expect(events.at(-1)!.snapshot().payload).toMatchObject({
-          knowledgeChanges: plan.knowledgeChanges,
-          targetKnowledge: plan.targetKnowledge,
+          ...knowledgeAuditRecord(plan),
         });
         const upgraded = await reader.read(projectId);
         expect(upgraded.configurationDigest).toBe(

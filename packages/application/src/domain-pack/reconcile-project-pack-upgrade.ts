@@ -56,6 +56,7 @@ import {
 } from "./resolve-installed-pack-manifests.ts";
 import {
   closureKnowledgeGuidance,
+  knowledgeAuditRecord,
   knowledgeGuidanceDifferences,
   type KnowledgeGuidanceDifference,
   type PackKnowledgeGuidance,
@@ -1281,9 +1282,8 @@ export class ReconcileProjectPackUpgrade {
             // Policy and workflow identities and clause values only.
             policyChanges: plan.policyChanges,
             targetPolicies: plan.targetPolicies,
-            // Knowledge identities and guidance values; a seed stays opaque.
-            knowledgeChanges: plan.knowledgeChanges,
-            targetKnowledge: plan.targetKnowledge,
+            // Knowledge identities and one digest per guidance; no text or seed.
+            ...knowledgeAuditRecord(plan),
             prospectiveConfigurationDigest:
               plan.prospectiveConfigurationDigest ?? null,
             result: "applied",

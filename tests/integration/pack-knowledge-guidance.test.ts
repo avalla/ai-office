@@ -11,6 +11,7 @@ import {
   ManageProjectPackBinding,
   ProjectPackBindingRefusedError,
 } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
+import { knowledgeAuditRecord } from "@ai-office/application/domain-pack/pack-knowledge-changes.ts";
 import { ProjectDefinitionConflictError } from "@ai-office/application/domain-pack/project-definition.ts";
 import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import { ReconcileProjectPackUpgrade } from "@ai-office/application/domain-pack/reconcile-project-pack-upgrade.ts";
@@ -346,7 +347,7 @@ const clausesGuidance = {
     { field: "jurisdiction", description: "Where the clause applies" },
     { field: "clause", description: "The clause text" },
   ],
-  seeds: ["seed:clauses/standard", "seed:clauses/nda"],
+  seeds: ["seed:clauses/standard", "https://user:token@host/x"],
   retrieval: {
     maxResults: 3,
     hint: "Prefer the clause of the matter's jurisdiction",
@@ -452,7 +453,7 @@ const clausesReported = {
     { field: "clause", description: "The clause text" },
     { field: "jurisdiction", description: "Where the clause applies" },
   ],
-  seeds: ["seed:clauses/nda", "seed:clauses/standard"],
+  seeds: ["https://user:token@host/x", "seed:clauses/standard"],
   retrieval: {
     maxResults: 3,
     hint: "Prefer the clause of the matter's jurisdiction",
@@ -795,11 +796,28 @@ describe("GP-15 knowledge guidance changes in the upgrade plan", () => {
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
       planDigest: plan.planDigest,
-      knowledgeChanges: plan.knowledgeChanges,
-      targetKnowledge: plan.targetKnowledge,
+      ...knowledgeAuditRecord(plan),
     });
     const recorded = JSON.stringify(events[0]);
-    for (const body of ["Clauses", "Reference clauses", "Mine"])
+    // Identities and digests only: no guidance text, hint or seed.
+    expect(events[0]!.targetKnowledge).toEqual([
+      {
+        knowledgeId: clausesId,
+        guidanceDigest: expect.stringMatching(/^sha256:[0-9a-f]{64}$/u),
+      },
+    ]);
+    for (const body of [
+      "Clauses",
+      "Reference clauses",
+      "Mine",
+      "https://user:token@host/x",
+      "token@host",
+      "seed:clauses",
+      "The clause text",
+      "Where the clause applies",
+      "Prefer the clause",
+      "precedents",
+    ])
       expect(recorded).not.toContain(body);
     // No upgrade rewrites a project value: the override is carried over whole,
     // only the pack tuple of its source is retargeted.

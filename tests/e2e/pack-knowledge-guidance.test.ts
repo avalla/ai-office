@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { knowledgeAuditRecord } from "@ai-office/application/domain-pack/pack-knowledge-changes.ts";
 import { bootstrap } from "../../apps/daemon/src/bootstrap.ts";
 import type { AgentKnowledgeStore } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { AgentKnowledgeConfiguration } from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
@@ -423,10 +424,17 @@ describe("GP-15 pack knowledge guidance over the Runtime socket", () => {
       );
       expect(upgraded.exitCode).toBe(0);
       expect(upgradePayload()).toMatchObject({
-        knowledgeChanges: plan.knowledgeChanges,
-        targetKnowledge: plan.targetKnowledge,
+        ...knowledgeAuditRecord(
+          plan as Parameters<typeof knowledgeAuditRecord>[0],
+        ),
       });
-      expect(JSON.stringify(upgradePayload())).not.toContain("Project clauses");
+      for (const text of [
+        "Project clauses",
+        "file:///etc/passwd",
+        "Prefer the matter's law",
+        "The clause text",
+      ])
+        expect(JSON.stringify(upgradePayload())).not.toContain(text);
       const after = await command("project:configuration:show");
       expect(JSON.parse(after.stdout[0]!)).toMatchObject({
         configuration: {
