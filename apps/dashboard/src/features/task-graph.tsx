@@ -27,7 +27,7 @@ import {
   blockers,
   unmetEdgeKeys,
   chainPage,
-  createLineageMemo,
+  createGraphRelationshipMemo,
   createLayoutMemo,
   decideFraming,
   exceedsLayoutLimit,
@@ -214,7 +214,7 @@ export function TaskGraphView({
   projectId: string;
 }) {
   return (
-    <ReactFlowProvider>
+    <ReactFlowProvider key={projectId}>
       <TaskGraphCanvas graph={graph} projectId={projectId} />
     </ReactFlowProvider>
   );
@@ -240,7 +240,7 @@ function TaskGraphCanvas({
   const [attentionPageIndex, setAttentionPageIndex] = useState(0);
   const [chainPageIndex, setChainPageIndex] = useState(0);
   const [memoizedLayout] = useState(createLayoutMemo);
-  const [memoizedLineage] = useState(createLineageMemo);
+  const [memoizedRelationships] = useState(createGraphRelationshipMemo);
   const { fitView, setViewport } = useReactFlow();
 
   const patch = (change: Partial<GraphFilters>) =>
@@ -278,13 +278,14 @@ function TaskGraphCanvas({
     }
   }, [selectedKey, selectedTask]);
 
-  const selectedLineage = useMemo(
+  const selectedRelationships = useMemo(
     () =>
       selectedTask === null
         ? null
-        : memoizedLineage(graph.edges, selectedTask.taskId),
-    [graph.edges, selectedTask, memoizedLineage],
+        : memoizedRelationships(graph.edges, selectedTask.taskId),
+    [graph.edges, selectedTask, memoizedRelationships],
   );
+  const selectedLineage = selectedRelationships?.lineage ?? null;
   const related = useMemo(
     () =>
       selectedTask === null || selectedLineage === null
@@ -971,14 +972,15 @@ function TaskGraphCanvas({
           aria-label="What happens next"
           className="flex max-h-[70vh] min-h-0 flex-col gap-4 overflow-y-auto rounded-xl border border-border bg-surface p-4 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          {selectedTask !== null && selectedLineage !== null ? (
+          {selectedTask !== null && selectedRelationships !== null ? (
             <TaskPanel
               key={selectedTask.taskId}
               projectId={projectId}
               task={selectedTask}
               tasksById={tasksById}
-              edges={graph.edges}
-              lineage={selectedLineage}
+              prerequisites={selectedRelationships.prerequisites}
+              dependents={selectedRelationships.dependents}
+              lineage={selectedRelationships.lineage}
               milestones={selectedTask.milestoneIds.flatMap((id) => {
                 const m = milestonesById.get(id);
                 return m === undefined ? [] : [m];
@@ -1227,7 +1229,8 @@ function TaskPanel({
   projectId,
   task,
   tasksById,
-  edges,
+  prerequisites,
+  dependents,
   lineage: tree,
   milestones,
   focusOnly,
@@ -1238,7 +1241,8 @@ function TaskPanel({
   projectId: string;
   task: TaskGraphNode;
   tasksById: ReadonlyMap<string, TaskGraphNode>;
-  edges: readonly { taskId: string; dependsOnTaskId: string }[];
+  prerequisites: readonly string[];
+  dependents: readonly string[];
   lineage: { upstream: ReadonlySet<string>; downstream: ReadonlySet<string> };
   milestones: readonly TaskGraphMilestone[];
   focusOnly: boolean;
@@ -1246,13 +1250,7 @@ function TaskPanel({
   onFocus: (key: string) => void;
   onClear: () => void;
 }) {
-  const prerequisites = edges
-    .filter((edge) => edge.taskId === task.taskId)
-    .map((edge) => edge.dependsOnTaskId);
   const unmet = new Set(task.unmetPrerequisiteIds);
-  const dependents = edges
-    .filter((edge) => edge.dependsOnTaskId === task.taskId)
-    .map((edge) => edge.taskId);
   const waitingOn = task.unmetPrerequisiteIds.length;
   return (
     <>

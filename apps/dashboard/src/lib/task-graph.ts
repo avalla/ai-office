@@ -174,6 +174,12 @@ interface LineageIndex {
   dependents: ReadonlyMap<string, readonly string[]>;
 }
 
+export interface TaskRelationships {
+  prerequisites: readonly string[];
+  dependents: readonly string[];
+  lineage: Lineage;
+}
+
 function buildLineageIndex(edges: readonly TaskGraphEdge[]): LineageIndex {
   const prerequisites = new Map<string, string[]>();
   const dependents = new Map<string, string[]>();
@@ -219,12 +225,12 @@ export function lineage(
   return lineageFromIndex(buildLineageIndex(edges), taskId);
 }
 
-/** Keep the adjacency index and selected lineage across fact-only refreshes. */
-export function createLineageMemo() {
+/** Keep direct and transitive relationships across fact-only refreshes. */
+export function createGraphRelationshipMemo() {
   let previousEdges: readonly TaskGraphEdge[] | null = null;
   let index: LineageIndex | null = null;
   let previousTaskId: string | null = null;
-  let previousResult: Lineage | null = null;
+  let previousResult: TaskRelationships | null = null;
   const sameEdges = (
     a: readonly TaskGraphEdge[],
     b: readonly TaskGraphEdge[],
@@ -236,7 +242,10 @@ export function createLineageMemo() {
           edge.taskId === b[i]?.taskId &&
           edge.dependsOnTaskId === b[i]?.dependsOnTaskId,
       ));
-  return (edges: readonly TaskGraphEdge[], taskId: string): Lineage => {
+  return (
+    edges: readonly TaskGraphEdge[],
+    taskId: string,
+  ): TaskRelationships => {
     if (
       index === null ||
       previousEdges === null ||
@@ -249,7 +258,11 @@ export function createLineageMemo() {
     previousEdges = edges;
     if (previousTaskId === taskId && previousResult !== null)
       return previousResult;
-    const result = lineageFromIndex(index, taskId);
+    const result = {
+      prerequisites: index.prerequisites.get(taskId) ?? [],
+      dependents: index.dependents.get(taskId) ?? [],
+      lineage: lineageFromIndex(index, taskId),
+    };
     previousTaskId = taskId;
     previousResult = result;
     return result;

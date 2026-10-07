@@ -265,8 +265,8 @@ Searching locates: results are listed from the whole project, Enter or a click
 selects the task, frames it and dims the rest of the graph. "Show only tasks
 matching the search" turns the same text into a real filter. The framing follows
 the computed layout and leaves a viewport the user moved alone on live refresh.
-The lineage adjacency index is reused across selections and fact-only refreshes
-when dependency edges are unchanged.
+The lineage adjacency index and direct task relationships are reused across
+selections and fact-only refreshes when dependency edges are unchanged.
 The canvas lays out only when visible tasks plus visible dependency edges total
 at most 300. Dagre runs synchronously; a dense graph can cost much more than a
 chain with the same task count. When the budget is exceeded, an announced canvas
@@ -279,8 +279,9 @@ large hub. A selection can still isolate its lineage. Completed and
 cancelled tasks are hidden by default (an operational shortcut or a status
 filter overrides that).
 
-Filter and selection state is component state, so it survives live refresh but
-is not in the URL. Persisting search, status, milestone and the operational view
+Filter and selection state is component state, so it survives live refresh and
+resets when the project changes, but is not in the URL. Persisting search,
+status, milestone and the operational view
 in the hash would refetch the graph on every change with the current route
 model, so it is a follow-up (it needs section-level query parameters that do not
 trigger a refetch). The graph section is the only one that fetches this

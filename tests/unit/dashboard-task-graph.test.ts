@@ -8,7 +8,7 @@ import {
   exceedsLayoutLimit,
   maxLayoutWeight,
   createLayoutMemo,
-  createLineageMemo,
+  createGraphRelationshipMemo,
   chainPage,
   chainPageSize,
   otherDependentIds,
@@ -265,12 +265,16 @@ describe("dashboard task graph", () => {
     });
   });
 
-  test("reuses lineage across selections and structure-preserving refreshes", () => {
-    const memo = createLineageMemo();
+  test("reuses direct and transitive relationships across fact-only refreshes", () => {
+    const memo = createGraphRelationshipMemo();
     const first = memo(graph.edges, "b");
     const refreshedEdges = graph.edges.map((edge) => ({ ...edge }));
     expect(memo(refreshedEdges, "b")).toBe(first);
-    expect([...memo(refreshedEdges, "d").upstream].sort()).toEqual([
+    expect(memo(refreshedEdges, "d")).toMatchObject({
+      prerequisites: ["b", "c"],
+      dependents: [],
+    });
+    expect([...memo(refreshedEdges, "d").lineage.upstream].sort()).toEqual([
       "a",
       "b",
       "c",
@@ -281,12 +285,13 @@ describe("dashboard task graph", () => {
         ? { taskId: "lone", dependsOnTaskId: "c" }
         : edge,
     );
-    expect([...memo(rewiredEdges, "c").downstream]).toEqual(["lone"]);
+    expect(memo(rewiredEdges, "c").dependents).toEqual(["lone"]);
+    expect([...memo(rewiredEdges, "c").lineage.downstream]).toEqual(["lone"]);
     const changedEdges = [
       ...refreshedEdges,
       { taskId: "lone", dependsOnTaskId: "d" },
     ];
-    expect([...memo(changedEdges, "b").downstream].sort()).toEqual([
+    expect([...memo(changedEdges, "b").lineage.downstream].sort()).toEqual([
       "d",
       "lone",
     ]);
