@@ -34,19 +34,19 @@ configuration with a repository script instead of the product CLI. The goal is:
 
 Gates become a catalog with stable ids. A profile selects gates.
 
-| Gate id           | lite                | full        | custom      |
-| ----------------- | ------------------- | ----------- | ----------- |
-| `preflight`       | on                  | on          | always on   |
-| `design`          | short, in the PR    | written     | choice      |
-| `implementation`  | on                  | on          | always on   |
-| `pull_request`    | on                  | on          | always on   |
-| `review`          | one round           | on          | choice      |
-| `hardening`       | with `review`       | on          | with review |
-| `second_review`   | off                 | on          | choice      |
-| `qa`              | `verification.full` | independent | choice      |
-| `external_review` | off                 | as today    | choice      |
-| `ready_for_merge` | on                  | on          | always on   |
-| `post_merge`      | on                  | on          | always on   |
+| Gate id           | lite                                  | full        | custom      |
+| ----------------- | ------------------------------------- | ----------- | ----------- |
+| `preflight`       | on                                    | on          | always on   |
+| `design`          | short record, before `implementation` | written     | choice      |
+| `implementation`  | on                                    | on          | always on   |
+| `pull_request`    | on                                    | on          | always on   |
+| `review`          | one round                             | on          | choice      |
+| `hardening`       | with `review`                         | on          | with review |
+| `second_review`   | off                                   | on          | choice      |
+| `qa`              | `verification.full`                   | independent | choice      |
+| `external_review` | off                                   | as today    | choice      |
+| `ready_for_merge` | on                                    | on          | always on   |
+| `post_merge`      | on                                    | on          | always on   |
 
 Configuration (additive, optional keys; all values unquoted booleans or one of
 three words):
@@ -75,14 +75,13 @@ Rules:
     the classification (for example a migration, a controlled action or a
     connector, a security boundary, or a public contract added after a
     `lite` start);
-  - it only moves up. When it moves from `lite` to `full`, every gate that is
-    now required and was omitted is executed before the task proceeds, and
-    evidence gathered under the reduced profile does not cover them;
+  - it is applied gate by gate: every gate the `full` profile requires becomes required, whatever the configured profile is (`lite`, or `custom` with gates turned off), and a gate the configuration turns on stays on;
+  - it only moves up. A gate that becomes required and was omitted is executed before the task proceeds, and evidence gathered under the reduced profile does not cover it;
   - an authorizer may raise the profile, never lower it below the computed
     floor.
-- External review keeps its current meaning: configured or requested makes it
-  required, whatever the profile says; `lite` with a configured external
-  reviewer is a configuration error rather than a silent skip.
+- External review keeps its current meaning: configured or requested makes it required, whatever the profile says. A configuration that disables it while `external_review.command` is set (`lite`, or `custom` with `stages.external_review: false`) is a configuration error rather than a silent skip.
+- Readiness: `ready_for_merge` checks the gates that are selected, plus any gate the floor made required, on the current head. A profile that omits a gate does not need its evidence; the skill's stage 10 wording, which names review, hardening and verification, is updated in step 1 to refer to the selected gates.
+- Design: a profile that shortens `design` still produces a written design record before `implementation` starts; it is linked or copied into the pull request.
 - This amends the current sentence "a project pipeline never removes a gate":
   a profile may omit the optional gates above, a project pipeline still may
   not.
@@ -140,17 +139,16 @@ next action
   - the Runtime rejects a relative path with a typed error instead of
     interpreting it against its own working directory, and never infers the
     caller's filesystem context from the daemon's cwd.
-- It also reports the effective profile and gate list, so the skill can read
-  them instead of re-deriving them.
+- It also reports the configured profile and the gate selection that follows from the configuration alone. The floor depends on the task, the diff and the head commit, which the command does not receive, so the skill applies the floor on top of this selection and never treats the reported list as the effective one.
 
 ### Tests and acceptance criteria
 
 Shared parser and validation module (no Runtime needed, tested directly):
 
 - every new key, wrong type, `stages` without `custom`, an always-on gate set
-  to `false`, `lite` with a configured external reviewer;
-- effective profile and gate list for `lite`, `full`, `custom`, and for an
-  absent `delivery.profile` (equals `full`).
+  to `false`, and an external reviewer configured while `lite` or `custom`
+  disables it;
+- configured profile and configuration-derived gate selection for `lite`, `full`, `custom`, and for an absent `delivery.profile` (equals `full`); the output is never labelled effective, and a test asserts that it carries no floor.
 
 Skill contract and package validation:
 
@@ -160,8 +158,7 @@ Skill contract and package validation:
 - floor rules are pinned by contract invariants and removal tests: floor
   determined at preflight; re-evaluated before leaving `implementation`, before
   `ready_for_merge` and on a head change that can alter the classification;
-  floor only moves up; omitted gates become required and are executed when it
-  moves from `lite` to `full`; lowering below the floor is refused.
+  floor is applied gate by gate, including to `custom` with gates turned off; it only moves up; an omitted gate that becomes required is executed before the task proceeds; lowering below the floor is refused; `ready_for_merge` checks the selected gates plus the gates the floor made required; a shortened `design` still has a written record before `implementation`.
 
 CLI `delivery:validate`, end to end through the Unix-socket protocol with a
 Runtime available (daemon-backed):
@@ -196,9 +193,7 @@ subject of the ADR.
 
 ## Delivery order
 
-1. The `task-delivery` 0.3.0 change (clarifying tasks before a run and run-wide
-   stacking, currently pull request #126) is on `main`. Step 1 starts from
-   that `main`. No earlier interim branch of this work is a prerequisite.
+1. The `task-delivery` 0.3.0 change (clarifying tasks before a run and run-wide stacking, currently pull request #126, still open) is merged to `main`. Step 1 starts only after that, from the resulting `main`. No earlier interim branch of this work is a prerequisite.
 2. Step 1 in its own pull request, from the resulting `main`.
 3. ADR-0031 reviewed and decided.
 4. Step 2 planned as its own milestone task, only after ADR-0031 is accepted.
