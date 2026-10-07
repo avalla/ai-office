@@ -411,6 +411,27 @@ describe("task dependency graph read model", () => {
     for (const id of ["open", "failed", "retry", "next"]) await f.task("p", id);
     f.setStatus("failed", "failed");
     await f.depend("p", "next", "retry");
+    // A failed latest run changes the operational status, but leaves the
+    // recorded task pending and eligible to be completed after a retry.
+    f.database
+      .prepare(
+        `INSERT INTO role(id,project_id,role_key,name,version,capabilities_json,tools_json,
+          model_policy,limits_json,source_path,created_at,updated_at)
+         VALUES ('role','p','role','Role',1,'[]','[]','default','{}','fixture',?,?)`,
+      )
+      .run(now.toISOString(), now.toISOString());
+    f.database
+      .prepare(
+        `INSERT INTO agent(id,project_id,role_id,name,enabled,created_at,updated_at)
+         VALUES ('agent','p','role','Agent',1,?,?)`,
+      )
+      .run(now.toISOString(), now.toISOString());
+    f.database
+      .prepare(
+        `INSERT INTO agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at)
+         VALUES ('retry-failed-run','p','retry','agent','failed',?,?)`,
+      )
+      .run(now.toISOString(), now.toISOString());
 
     const graph = await f.queries.getTaskGraph("p");
     const by = (id: string) => graph.tasks.find((t) => t.taskId === id)!;
@@ -419,7 +440,11 @@ describe("task dependency graph read model", () => {
     expect(by("failed").terminal).toBe(true);
     // A pending task stays non-terminal and still unblocks its dependent, which
     // is what the panel must keep offering.
-    expect(by("retry")).toMatchObject({ terminal: false });
+    expect(by("retry")).toMatchObject({
+      recordedStatus: "pending",
+      operationalStatus: "failed",
+      terminal: false,
+    });
     expect(by("retry").completionUnblocks).toEqual(["next"]);
   });
 });
