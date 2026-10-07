@@ -12,4 +12,4 @@ Overview begins with authoritative totals and active work. Project overview stay
 
 Task search, operational status, persisted numeric priority, current agent, unassigned, milestone, sort, and pagination stay in the hash URL. Draft controls remain mounted through live refresh. Task and run details show recorded facts and operational interpretation separately. Exact totals accompany truncated samples.
 
-Native links, labelled controls, visible focus, heading order, screen-reader status, reduced motion, responsive table scrolling, and bounded text widths are required. Avoid nested cards and decorative charts.
+Native links, labelled controls, visible focus, heading order, screen-reader status, reduced motion, responsive table scrolling, and bounded text widths are required. Avoid nested cards and decorative charts. The Graph section is functional, not decorative: every node is a native button, edge colour never carries meaning alone (the legend and side panel repeat it as text), and the side-panel lists give a keyboard path through the graph.

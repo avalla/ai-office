@@ -201,6 +201,9 @@ export class QueryApi {
           ),
         });
 
+      if (segments.length === 3 && third === "graph")
+        return json({ graph: await this.queries.getTaskGraph(projectId) });
+
       if (segments.length === 3 && third === "pipelines")
         return json({
           pipelines: await this.queries.listPipelineRuns(projectId, {

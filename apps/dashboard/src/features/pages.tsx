@@ -40,6 +40,7 @@ import {
   Select,
   Separator,
 } from "../components/ui/primitives.tsx";
+import { TaskGraphView } from "./task-graph.tsx";
 import { elapsed, formatDuration, formatTimestamp } from "../lib/formatting.ts";
 import { taskFilterQuery, type TaskFilterValues } from "../lib/task-filters.ts";
 import {
@@ -468,6 +469,7 @@ function ProjectHeader({
     ["Pipeline", `/projects/${id}/pipeline`],
     ["Tasks", `/projects/${id}/tasks`],
     ["Milestones", `/projects/${id}/milestones`],
+    ["Graph", `/projects/${id}/graph`],
     ["Requirements", `/projects/${id}/requirements`],
     ["Agents", `/projects/${id}/agents`],
   ] as const;
@@ -1126,6 +1128,15 @@ export function ProjectPage({
         <ProjectTasks project={project} />
       ) : section === "milestones" ? (
         <ProjectMilestones project={project} />
+      ) : section === "graph" ? (
+        data.graph === undefined ? (
+          <Empty>The dependency graph is not available.</Empty>
+        ) : (
+          <TaskGraphView
+            graph={data.graph}
+            projectId={project.summary.projectId}
+          />
+        )
       ) : section === "requirements" ? (
         <ProjectRequirements project={project} />
       ) : section === "agents" ? (

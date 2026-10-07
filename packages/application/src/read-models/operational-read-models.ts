@@ -935,3 +935,62 @@ export interface ProjectDetail {
   reviews: BoundedList<ReviewState>;
   recentActivity: ActivityPage;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Task dependency graph                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One task in the dependency graph. Carries only what the graph needs; the
+ * task detail remains the owner of everything else.
+ */
+export interface TaskGraphNode {
+  taskId: string;
+  title: string;
+  priority: number;
+  recordedStatus: TaskStatus;
+  operationalStatus: TaskOperationalStatus;
+  assignedAgent: AgentReference | null;
+  /** Milestones derived from explicit task→requirement→milestone links. */
+  milestoneIds: readonly string[];
+  /** Prerequisites whose recorded status is not `completed`, sorted by id. */
+  unmetPrerequisiteIds: readonly string[];
+  /**
+   * Not finished, not cancelled, and every prerequisite is completed: the same
+   * rule that gates admission, evaluated over the whole project.
+   */
+  ready: boolean;
+}
+
+export interface TaskGraphMilestone {
+  milestoneId: string;
+  title: string;
+  status: MilestoneStatus;
+  requirements: RequirementCounts;
+}
+
+/** `taskId` depends on `dependsOnTaskId` (the prerequisite). */
+export interface TaskGraphEdge {
+  taskId: string;
+  dependsOnTaskId: string;
+}
+
+/**
+ * Exhaustive dependency graph of a project. Never a sample: a missing edge
+ * would silently change which tasks look ready, so every task and every edge
+ * is present.
+ */
+export interface TaskGraph {
+  generatedAt: IsoTimestamp;
+  projectId: string;
+  projectName: string;
+  tasks: readonly TaskGraphNode[];
+  milestones: readonly TaskGraphMilestone[];
+  edges: readonly TaskGraphEdge[];
+  /**
+   * The longest prerequisite chain through unfinished work, from the first task
+   * to start to the last to finish. Empty when nothing is unfinished. Ties are
+   * broken by task id so the result is deterministic.
+   */
+  criticalPath: readonly string[];
+}

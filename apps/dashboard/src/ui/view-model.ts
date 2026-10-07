@@ -45,6 +45,7 @@ export const projectSections = [
   "pipeline",
   "tasks",
   "milestones",
+  "graph",
   "requirements",
   "agents",
 ] as const;

@@ -9,6 +9,7 @@ import type {
   ProjectDetail,
   ProjectSummary,
   TaskDetail,
+  TaskGraph,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import { taskPageParameters } from "@ai-office/application/protocol/query-protocol.ts";
 import type { DashboardRoute } from "../ui/view-model.ts";
@@ -83,6 +84,8 @@ export type DashboardData =
   | {
       kind: "project";
       project: ProjectDetail;
+      /** Present only on the graph section; it is an exhaustive projection. */
+      graph?: TaskGraph;
       activePipelines: BoundedList<PipelineRunState>;
       activeRuns: BoundedList<AgentRunState>;
     }
@@ -152,7 +155,7 @@ export async function queryRoute(
         : {},
     );
     parameters.set("taskView", "paged");
-    const [project, activePipelines, activeRuns] = await Promise.all([
+    const [project, activePipelines, activeRuns, graph] = await Promise.all([
       get<{ project: ProjectDetail }>(
         `${projectPath(route.projectId)}?${parameters}`,
       ),
@@ -162,10 +165,14 @@ export async function queryRoute(
       get<{ runs: BoundedList<AgentRunState> }>(
         `/api/runs?project=${encodeURIComponent(route.projectId)}&active=true`,
       ),
+      route.section === "graph"
+        ? get<{ graph: TaskGraph }>(`${projectPath(route.projectId)}/graph`)
+        : Promise.resolve(null),
     ]);
     return {
       kind: "project",
       project: project.project,
+      ...(graph === null ? {} : { graph: graph.graph }),
       activePipelines: activePipelines.pipelines,
       activeRuns: activeRuns.runs,
     };

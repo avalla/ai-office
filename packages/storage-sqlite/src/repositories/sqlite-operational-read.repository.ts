@@ -353,6 +353,23 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
       }));
   }
 
+  async listTaskDependencies(
+    projectId: string,
+  ): Promise<{ taskId: string; dependsOnTaskId: string }[]> {
+    return this.database
+      .query<{ task_id: string; depends_on_task_id: string }, [string]>(
+        `SELECT task_id, depends_on_task_id
+         FROM task_dependency
+         WHERE project_id = ?
+         ORDER BY task_id, depends_on_task_id`,
+      )
+      .all(projectId)
+      .map((row) => ({
+        taskId: row.task_id,
+        dependsOnTaskId: row.depends_on_task_id,
+      }));
+  }
+
   async listRequirements(
     projectId: string,
   ): Promise<OperationalRequirementRecord[]> {

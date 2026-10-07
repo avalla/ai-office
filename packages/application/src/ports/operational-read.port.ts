@@ -503,10 +503,15 @@ export interface OperationalReadRepository {
   listMilestones(
     projectIds: readonly string[],
   ): Promise<OperationalMilestoneRecord[]>;
-  listRequirements(
-    projectId: string,
-  ): Promise<OperationalRequirementRecord[]>;
+  listRequirements(projectId: string): Promise<OperationalRequirementRecord[]>;
   listAgents(projectIds: readonly string[]): Promise<OperationalAgentRecord[]>;
+  /**
+   * Every hard prerequisite edge of the project, never a page: a missing edge
+   * would silently change which tasks look ready.
+   */
+  listTaskDependencies(
+    projectId: string,
+  ): Promise<{ taskId: string; dependsOnTaskId: string }[]>;
 
   /* --- scoped projection inputs ------------------------------------------ */
 

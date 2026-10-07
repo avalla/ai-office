@@ -39,6 +39,10 @@ import {
 } from "../protocol/query-protocol.ts";
 import { projectActivityEntry } from "../read-models/activity-sanitization.ts";
 import {
+  projectCriticalPath,
+  projectTaskGraphNodes,
+} from "../read-models/task-graph-projection.ts";
+import {
   activeAgentRunStatuses,
   agentReference,
   agentRunAttentionReasons,
@@ -76,6 +80,7 @@ import {
   terminalTaskOperationalStatuses,
   type TaskOperationalState,
   type TaskDetail,
+  type TaskGraph,
   type TaskPageInfo,
   type TaskPageQuery,
   type TaskOperationalStatus,
@@ -1017,6 +1022,85 @@ export class OperationalQueryService {
   /* ---------------------------------------------------------------------- */
   /* Internals                                                               */
   /* ---------------------------------------------------------------------- */
+
+  /**
+   * The exhaustive dependency graph. Tasks are projected in bounded batches
+   * (no transaction spans them) but none is dropped: readiness and the critical
+   * path must never depend on a presentation limit.
+   */
+  async getTaskGraph(projectId: string): Promise<TaskGraph> {
+    const project = await this.requireProject(projectId);
+    const now = this.clock.now();
+    const [
+      taskCounts,
+      milestoneRecords,
+      requirementRecords,
+      requirementCounts,
+    ] = await Promise.all([
+      this.reads.countTasksByStatus([projectId]),
+      this.reads.listMilestones([projectId]),
+      this.reads.listRequirements(projectId),
+      this.reads.countRequirementsByStatus([projectId]),
+    ]);
+    const [agentRecords, dependencies] = await Promise.all([
+      this.reads.listAgents([projectId]),
+      this.reads.listTaskDependencies(projectId),
+    ]);
+    const taskMilestones = taskMilestoneIndex(
+      requirementRecords,
+      milestoneRecords.map((record) => ({
+        milestoneId: record.id,
+        title: record.title,
+        status: record.status,
+      })),
+    );
+    const taskRequirements = taskRequirementIndex(requirementRecords);
+    const agents = agentIndex(agentRecords);
+    const total = taskCounts.reduce((sum, record) => sum + record.count, 0);
+    const batchSize = queryLimits.tasks.default;
+    const states: TaskOperationalState[] = [];
+    for (let cursor = 0; cursor < total; cursor += batchSize) {
+      const records = await this.reads.listTasks(projectId, batchSize, cursor);
+      if (records.length === 0) break;
+      states.push(
+        ...(await this.projectTasks(
+          projectId,
+          records,
+          agents,
+          now,
+          taskMilestones,
+          taskRequirements,
+        )),
+      );
+    }
+    const known = new Set(states.map((state) => state.taskId));
+    const edges = dependencies
+      .filter(
+        (edge) => known.has(edge.taskId) && known.has(edge.dependsOnTaskId),
+      )
+      .map((edge) => ({
+        taskId: edge.taskId,
+        dependsOnTaskId: edge.dependsOnTaskId,
+      }));
+    const tasks = projectTaskGraphNodes(states, edges);
+    return {
+      generatedAt: now.toISOString(),
+      projectId,
+      projectName: project.name,
+      tasks,
+      milestones: milestoneRecords.map((record) => {
+        const summary = projectMilestoneSummary(record, requirementCounts);
+        return {
+          milestoneId: summary.milestoneId,
+          title: summary.title,
+          status: summary.status,
+          requirements: summary.requirements,
+        };
+      }),
+      edges,
+      criticalPath: projectCriticalPath(tasks, edges),
+    };
+  }
 
   private async requireProject(
     projectId: string,

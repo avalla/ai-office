@@ -155,6 +155,7 @@ audit event id; the SQLite `rowid` is deliberately not part of the contract.
 | `GET /api/projects/:id`               | Project detail data used by the section pages                   |
 | `GET /api/projects/:id/tasks`         | Task operational state                                          |
 | `GET /api/projects/:id/tasks/:taskId` | Task detail, active assignment, run history and scoped activity |
+| `GET /api/projects/:id/graph`         | Exhaustive task dependency graph (see below)                    |
 | `GET /api/projects/:id/pipelines`     | Pipeline runs (`?active=true`)                                  |
 | `GET /api/projects/:id/agents`        | Agent activity                                                  |
 | `GET /api/runs`                       | Agent runs (`?project=`, `?active=true`)                        |
@@ -194,6 +195,31 @@ The active section is marked with `aria-current="page"`, and task filter state
 remains in the URL so reloads, pagination, and task-detail round trips are
 stable. The overview remains the compact operational summary; it does not
 duplicate the full task, milestone, requirement, or agent tables.
+
+### Task dependency graph
+
+`GET /api/projects/:id/graph` returns a `TaskGraph`: every task, every hard
+prerequisite edge, the project's milestones, and the critical path. It is an
+authoritative projection input, never a sample, so it is not paginated or
+truncated; tasks are projected in bounded batches but none is dropped.
+
+Readiness and the critical path are computed once in the application layer.
+A task is `ready` when it is not completed, cancelled, or failed and every
+prerequisite's recorded status is `completed` (the admission rule); a
+cancelled or failed prerequisite keeps its dependents blocked. The critical
+path is the longest chain of unfinished prerequisite-linked tasks, with ties
+broken by task id. Milestone membership is the same derived
+task→requirement→milestone link used elsewhere; there is no task→milestone
+dependency.
+
+The **Graph** project section lays the result out with React Flow and dagre. It
+offers pan, zoom, a minimap, left-to-right and top-down layouts, search and
+status/milestone/readiness filters, completed-work hiding, selection with
+transitive upstream/downstream highlighting (optionally isolated), a critical
+path overlay, and a side panel whose lists (ready tasks, critical path,
+waiting-on, unblocks) are the keyboard path through the graph. Filter and
+selection state is component state, so it survives live refresh but is not in
+the URL. The graph section is the only one that fetches this endpoint.
 
 ### Task search, filters, and pages
 
