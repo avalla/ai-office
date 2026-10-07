@@ -10,14 +10,16 @@ They are independent. Decide each explicitly and write both in the pull request.
 
 | Task B depends on A | A is merged | Base for B                                                             |
 | ------------------- | ----------- | ---------------------------------------------------------------------- |
-| No                  | -           | Integration branch. Never stack on A just because A came first.        |
+| No                  | -           | Integration branch, unless the authorizer approved stacking the run.   |
 | Yes                 | Yes         | Integration branch, updated to include A.                              |
 | Yes                 | No          | Wait for A, or stack B on A's head if the project allows stacked work. |
 
 ## Rules
 
 - Default base is the integration branch. Stacking is the exception: it needs
-  the authorizer's approval and a reason stated in the pull request.
+  the authorizer's approval and a reason stated in the pull request. The
+  authorizer may approve it once for a whole run, in which case each task's
+  branch starts from the branch of the task before it.
 - A stacked pull request targets the branch it is stacked on, and says so. Its
   review covers only its own diff. An external review command is run against
   that branch, not against the integration branch.
@@ -38,7 +40,8 @@ They are independent. Decide each explicitly and write both in the pull request.
   always runs on the current head.
 - A satisfied Git dependency does not satisfy a task dependency: being stacked
   on A's branch does not mean A's task is accepted.
-- An unrelated task must not inherit another task's unmerged commits.
+- An unrelated task must not inherit another task's unmerged commits, except
+  in a run the authorizer approved as stacked.
 
 ## Working copy
 

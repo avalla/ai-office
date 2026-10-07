@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `task-delivery` 0.3.0: for a run over several tasks the summary offers to
+  clarify every task before development starts - questions asked together,
+  task by task, with the answers recorded in the project's tasks and
+  requirements - and, where the project allows stacked work, to stack each
+  task's branch on the one before it. Each task keeps its own pull request and
+  gates; nothing is merged without authorization.
 - `task-delivery` 0.2.0: started without a target, the skill asks whether to
   deliver a whole milestone, one or more tasks, or some tasks of one
   milestone, and whether to use the project's default delivery pipeline when

@@ -535,7 +535,15 @@ describe("task-delivery workflow invariants", () => {
     ],
     [
       "policy:approve-summary-before-preflight",
-      /Start\s+preflight only after the authorizer\s+approves that summary\./u,
+      /Start\s+preflight\s+only after the authorizer\s+approves that summary\./u,
+    ],
+    [
+      "policy:clarify-before-development",
+      "Development starts only when no selected",
+    ],
+    [
+      "policy:run-stacking-needs-summary-approval",
+      /approval of the summary approves these Git branch dependencies for the run/u,
     ],
     ["policy:settle-project-pipeline", "Settle which pipeline applies before"],
     [
@@ -846,7 +854,17 @@ describe("task-delivery workflow invariants", () => {
         "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
         "A selected prerequisite is worked on before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.",
         "Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
+        "For a run that covers several tasks, the summary also asks two things: whether to clarify every task before development starts, and, where the project allows stacked work, whether to stack each task on the one before it.",
         "Start preflight only after the authorizer approves that summary.",
+        "Clarifying first keeps development from stopping for questions.",
+        "When the authorizer chooses it, take the selected tasks one at a time, in the approved order, before any branch is created or any code is written.",
+        "For each task, read it with its requirements and acceptance criteria, and ask together every question whose answer would change what is built.",
+        "Record the answers where the project keeps its tasks and requirements, through the project's own way of changing them, and show what was changed; where the project has no such place, report the clarified task instead.",
+        "Development starts only when no selected task has an open question.",
+        "A question that only comes up later is still a stop condition.",
+        "Stacking the run is proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it, so later tasks build on earlier ones without waiting for a merge.",
+        "The authorizer's approval of the summary approves these Git branch dependencies for the run, and declining it keeps every task on the integration branch.",
+        "Stacking the run changes where branches start and nothing else: every task keeps its own pull request and gates, and its task dependencies stay as they were.",
         "A run that covers several tasks gives each task its own branch, pull request, and evidence.",
         "Each task's pre-merge delivery ends at READY FOR MERGE.",
         "The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency.",
@@ -1002,7 +1020,7 @@ describe("task-delivery workflow invariants", () => {
       );
       // The choice is part of what the authorizer approves.
       expect(section).toMatch(
-        /the pipeline that will be used, and anything excluded\. Start preflight only after the authorizer approves that summary\./u,
+        /the pipeline that will be used, and anything excluded\./u,
       );
       // The neutral core names no product for it.
       expect(section).not.toMatch(/office|runtime|daemon/iu);
@@ -1079,11 +1097,61 @@ describe("task-delivery workflow invariants", () => {
       ]);
     });
 
+    test("a run may clarify every task before development starts", () => {
+      const offer = section.indexOf(
+        "whether to clarify every task before development starts",
+      );
+      expect(offer).toBeGreaterThan(
+        section.indexOf("Then show a summary and ask for the go-ahead"),
+      );
+      expect(offer).toBeLessThan(
+        section.indexOf(
+          "Start preflight only after the authorizer approves that summary",
+        ),
+      );
+      expect(section).toMatch(
+        /When the authorizer chooses it, take the selected tasks one at a time, in the approved order, before any branch is created or any code is written\./u,
+      );
+      expect(section).toMatch(
+        /ask together every question whose answer would change what is built\. Record the answers where the project keeps its tasks and requirements, through the project's own way of changing them, and show what was changed; where the project has no such place, report the clarified task instead\./u,
+      );
+      expect(section).toMatch(
+        /Development starts only when no selected task has an open question\. A question that only comes up later is still a stop condition\./u,
+      );
+    });
+
+    test("stacking a run is offered, approved in the summary, and changes only where branches start", () => {
+      expect(section).toMatch(
+        /where the project allows stacked work, whether to stack each task on the one before it\. Start preflight only after the authorizer approves that summary\./u,
+      );
+      expect(section).toMatch(
+        /Stacking the run is proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it/u,
+      );
+      expect(section).toMatch(
+        /The authorizer's approval of the summary approves these Git branch dependencies for the run, and declining it keeps every task on the integration branch\./u,
+      );
+      expect(section).toMatch(
+        /Stacking the run changes where branches start and nothing else: every task keeps its own pull request and gates, and its task dependencies stay as they were\./u,
+      );
+      const branchPolicy = reference("branch-policy.md");
+      expect(branchPolicy).toMatch(
+        /\| No \| - \| Integration branch, unless the authorizer approved stacking the run\. \|/u,
+      );
+      expect(branchPolicy).toMatch(
+        /The authorizer may approve it once for a whole run, in which case each task's branch starts from the branch of the task before it\./u,
+      );
+      expect(branchPolicy).toMatch(
+        /An unrelated task must not inherit another task's unmerged commits, except in a run the authorizer approved as stacked\./u,
+      );
+    });
+
     test("a run over dependent tasks stops at READY FOR MERGE and never merges to unblock", () => {
       expect(section).toMatch(
         /Each task's pre-merge delivery ends at READY FOR MERGE\. The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has explicitly approved the required Git branch dependency\. The run never merges a pull request merely to unblock a later selected task\. A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency\./u,
       );
-      expect(section).not.toMatch(/one at a time|whole lifecycle/iu);
+      expect(section).not.toMatch(
+        /delivers them one at a time|whole lifecycle/iu,
+      );
       // The tracker stays authoritative: an approved stack does not let a
       // task start when the tracker refuses it.
       expect(section).toMatch(

@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
 ---
 
 # Task Delivery
@@ -143,8 +143,30 @@ dependency on it.
 Then show a summary and ask for the go-ahead: the tasks in the order you
 propose, what each depends on, every unresolved dependency with the proposal
 for it, any Git branch dependency you propose, kept apart from the task
-dependencies, the pipeline that will be used, and anything excluded. Start
-preflight only after the authorizer approves that summary.
+dependencies, the pipeline that will be used, and anything excluded. For a run
+that covers several tasks, the summary also asks two things: whether to
+clarify every task before development starts, and, where the project allows
+stacked work, whether to stack each task on the one before it. Start preflight
+only after the authorizer approves that summary.
+
+Clarifying first keeps development from stopping for questions. When the
+authorizer chooses it, take the selected tasks one at a time, in the approved
+order, before any branch is created or any code is written. For each task,
+read it with its requirements and acceptance criteria, and ask together every
+question whose answer would change what is built. Record the answers where the
+project keeps its tasks and requirements, through the project's own way of
+changing them, and show what was changed; where the project has no such place,
+report the clarified task instead. Development starts only when no selected
+task has an open question. A question that only comes up later is still a stop
+condition.
+
+Stacking the run is proposed by default where the project allows stacked work:
+each task's branch starts from the branch of the task before it, so later
+tasks build on earlier ones without waiting for a merge. The authorizer's
+approval of the summary approves these Git branch dependencies for the run,
+and declining it keeps every task on the integration branch. Stacking the run
+changes where branches start and nothing else: every task keeps its own pull
+request and gates, and its task dependencies stay as they were.
 
 A run that covers several tasks gives each task its own branch, pull request,
 and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run

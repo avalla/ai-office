@@ -159,6 +159,16 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
           /Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE\./u,
       },
       {
+        id: "policy:clarify-before-development",
+        pattern:
+          /Development starts only when no selected task has an open question\./u,
+      },
+      {
+        id: "policy:run-stacking-needs-summary-approval",
+        pattern:
+          /The authorizer's approval of the summary approves these Git branch dependencies for the run, and declining it keeps every task on the integration branch\./u,
+      },
+      {
         id: "policy:approve-summary-before-preflight",
         pattern:
           /Start preflight only after the authorizer approves that summary/u,

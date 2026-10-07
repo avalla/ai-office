@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "skill": "task-delivery",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "files": {
-    "SKILL.md": "ceedf46c8799a5a8980f127e8c6fdc86cff9fdaee3defb63cc8bdfdb93ba2417",
+    "SKILL.md": "212d8ab0d763e98be9a8309b9ffd46fb47d208a4b16d83496c875669643c6ce3",
     "assets/pr-template.md": "042cd175402f40447a0f37ca548d9fec08e76f1428e9b9d75262f79613c7c1b7",
     "assets/task-delivery.example.yaml": "f0e3b918d03ad5b88cd11bc51f7c08320a583a40d8c29fb19e42069ce31a09a8",
-    "references/branch-policy.md": "9b3d6b8a9007aff5d04f17973d26aef9bdccee96f35b658fd69c31af9d0b1a88",
+    "references/branch-policy.md": "5441a623852fa272c27204032bbd962f9a4af151d5fda5aea494faa4a7f600b0",
     "references/configuration.md": "760d4262de2802a1421dafc25c2bcabf0986189923b434572a03b1bcde8f4bd4",
     "references/evidence.md": "1ba1dad8fbc23e10763e81a23904823315505e831873b5bb71c1b4e70d7cf385",
     "references/lifecycle.md": "a7c5b5da4ef8e2cad92135cb8364513f1300f3aaf0a3d7e9f4472c60f62e99f1",
