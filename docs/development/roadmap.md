@@ -2022,8 +2022,20 @@ shipped defaults, in both directions for all five fields, and marks the five
 GP-25 entries of the residue list delivered. It is not execution parity: a
 policy is a declaration, nothing is enforced from it, the pack is still
 unregistered and unread by the Runtime, and nothing was removed from the
-legacy path. Aliases and declarative development evidence, knowledge and
-capability entries (GP-10C-1) remain planned work of M16; automatic selection,
+legacy path. GP-14A (two pull requests) gives the schema-1 `artifactTypes`,
+`evidenceTypes` and `validators` contributions a typed, data-only form: media
+types, a size bound and a content schema; a subject and a payload schema; and
+validator references with an unchecked adapter ID, an exact version, closed
+input and output schemas, a `fail_closed` policy and declared limits. The
+declarations are pack-owned and change only through `project:pack:upgrade`,
+whose plan reports `evidenceContractChanges` and `targetEvidenceContracts`
+(`project:pack:apply` refuses a change with
+`evidence_contract_change_requires_upgrade`); the derived configuration lists
+them. No adapter is looked up or run, nothing is validated or enforced, and
+there is no migration, archive format or development pack change (the
+development pack stays at `0.4.0`). Aliases and declarative development
+evidence, knowledge and capability entries (GP-10C-1) remain planned work of
+M16; automatic selection,
 remote marketplace/downloads and executable validators remain deferred.
 Runtime enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and
 Runtime execution from packs are planned for M16.5. M16 remains incomplete
