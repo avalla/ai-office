@@ -369,6 +369,7 @@ describe("GP-09 project:configuration:legacy over the Runtime socket", () => {
         "disabledWorkflows",
         "capabilities",
         "policies",
+        "knowledge",
         "artifactTypes",
         "evidenceTypes",
         "validators",

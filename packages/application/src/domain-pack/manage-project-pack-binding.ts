@@ -42,6 +42,11 @@ import {
   type EvidenceContractDifference,
 } from "./pack-evidence-contract-changes.ts";
 import {
+  closureKnowledgeIds,
+  knowledgeGuidanceDifferences,
+  type KnowledgeGuidanceDifference,
+} from "./pack-knowledge-changes.ts";
+import {
   closureWorkflowIds,
   workflowPolicyDifferences,
   type WorkflowPolicyDifference,
@@ -76,13 +81,16 @@ export const capabilityContractChangeRequiresUpgrade =
 export const policyChangeRequiresUpgrade =
   "policy_change_requires_upgrade" as const;
 
+export const knowledgeChangeRequiresUpgrade =
+  "knowledge_change_requires_upgrade" as const;
+
 /**
  * A selection change this command does not carry out. A role capability
  * change, a change to the operation contract of an existing capability
- * (GP-16), a change to the policy of an existing workflow (GP-25), and a
- * change to the typed contract of an existing artifact type, evidence type or
- * validator reference (GP-14A) are reviewed and approved through
- * `project:pack:upgrade` only.
+ * (GP-16), a change to the policy of an existing workflow (GP-25), a change
+ * to the typed contract of an artifact type, evidence type or validator
+ * reference (GP-14A), and a change to knowledge guidance (GP-15) are reviewed
+ * and approved through `project:pack:upgrade` only.
  */
 export class ProjectPackBindingRefusedError extends Error {
   constructor(
@@ -90,7 +98,8 @@ export class ProjectPackBindingRefusedError extends Error {
       | typeof roleCapabilityChangeRequiresUpgrade
       | typeof capabilityContractChangeRequiresUpgrade
       | typeof policyChangeRequiresUpgrade
-      | typeof evidenceContractChangeRequiresUpgrade,
+      | typeof evidenceContractChangeRequiresUpgrade
+      | typeof knowledgeChangeRequiresUpgrade,
     message: string,
   ) {
     super(message);
@@ -172,13 +181,39 @@ function policyChangeGuard(
 }
 
 /**
- * An evidence contract change is never incidental (GP-14A). A selection
- * change that alters the typed contract of an artifact type, evidence type or
- * validator reference present in both closures is refused: a changed
- * contract, one added to an existing label and one removed from it, an
- * adapter version bump included. A definition only one closure provides is an
- * addition or a removal, which stays an explicit selection change.
+ * A knowledge guidance change is never incidental (GP-15). A selection change
+ * that alters the typed guidance of an entry present in both closures is
+ * refused: changed guidance, guidance added to an existing entry and guidance
+ * removed from one. An entry that only one closure provides is an addition or
+ * a removal of the entry, which stays an explicit selection change.
  */
+function knowledgeChangeGuard(
+  previous: readonly ResolvedPackManifest[],
+  target: readonly ResolvedPackManifest[],
+): {
+  changes: KnowledgeGuidanceDifference[];
+  issue?: { code: string; message: string };
+} {
+  const changes = knowledgeGuidanceDifferences(previous, target);
+  const before = closureKnowledgeIds(previous);
+  const after = closureKnowledgeIds(target);
+  const altered = changes.find(
+    ({ knowledgeId }) => before.has(knowledgeId) && after.has(knowledgeId),
+  );
+  return {
+    changes,
+    ...(altered
+      ? {
+          issue: {
+            code: knowledgeChangeRequiresUpgrade,
+            message: `The selection changes the guidance of knowledge ${altered.knowledgeId}; review and approve it with project:pack:upgrade`,
+          },
+        }
+      : {}),
+  };
+}
+
+/** A typed evidence contract changes only through a reviewed upgrade (GP-14A). */
 function evidenceContractGuard(
   previous: readonly ResolvedPackManifest[],
   target: readonly ResolvedPackManifest[],
@@ -272,6 +307,22 @@ export interface ProjectPackBindingPreview {
         readonly detail: string;
       };
   /**
+   * Knowledge guidance differences between the current and the proposed
+   * resolved closures (GP-15), computed as in the upgrade plan and with the
+   * availability of `roleCapabilityChanges`.
+   */
+  readonly knowledgeChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly KnowledgeGuidanceDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason:
+          "previous_closure_unresolved" | "proposed_closure_unreadable";
+        readonly detail: string;
+      };
+  /**
    * Artifact type, evidence type and validator contract differences between
    * the current and the proposed resolved closures (GP-14A), computed as in
    * the upgrade plan and with the availability of `roleCapabilityChanges`.
@@ -292,8 +343,9 @@ export interface ProjectPackBindingPreview {
    * `pack_definition_collision` for each project-owned definition that the
    * proposed closure also contains; then the GP-16 provider issues of the
    * proposed closure; then the GP-11 capability refusal; then the GP-16
-   * contract change refusal; then the GP-25 policy refusal; then the GP-14A
-   * evidence contract refusal. Apply raises the first.
+   * contract change refusal; then the GP-25 policy refusal; then the GP-15
+   * knowledge guidance refusal; then the GP-14A evidence contract refusal.
+   * Apply raises the first.
    */
   readonly issues: readonly { code: string; message: string }[];
 }
@@ -455,6 +507,10 @@ export class ManageProjectPackBinding {
       availability: "available",
       changes: [],
     };
+    let knowledgeChanges: ProjectPackBindingPreview["knowledgeChanges"] = {
+      availability: "available",
+      changes: [],
+    };
     let evidenceContractChanges: ProjectPackBindingPreview["evidenceContractChanges"] =
       { availability: "available", changes: [] };
     // An unchanged selection reads no further artifact, as before GP-11. A
@@ -467,15 +523,26 @@ export class ManageProjectPackBinding {
       if (guard.contractIssue) issues.push(guard.contractIssue);
       // GP-25: the same two closures. Where they cannot be read the GP-11
       // rule above already refused everything but a pure removal.
-      if (guard.roleCapabilityChanges.availability === "unavailable")
+      if (guard.roleCapabilityChanges.availability === "unavailable") {
         policyChanges = guard.roleCapabilityChanges;
-      else if (guard.closures !== undefined) {
+        knowledgeChanges = guard.roleCapabilityChanges;
+      } else if (guard.closures !== undefined) {
         const policy = policyChangeGuard(
           guard.closures.previous,
           guard.closures.target,
         );
         policyChanges = { availability: "available", changes: policy.changes };
         if (policy.issue) issues.push(policy.issue);
+        // GP-15: the same two closures.
+        const knowledge = knowledgeChangeGuard(
+          guard.closures.previous,
+          guard.closures.target,
+        );
+        knowledgeChanges = {
+          availability: "available",
+          changes: knowledge.changes,
+        };
+        if (knowledge.issue) issues.push(knowledge.issue);
       }
       // GP-14A: the same two closures, with the same availability rule.
       if (guard.roleCapabilityChanges.availability === "unavailable")
@@ -502,6 +569,7 @@ export class ManageProjectPackBinding {
         roleCapabilityChanges,
         capabilityContractChanges,
         policyChanges,
+        knowledgeChanges,
         evidenceContractChanges,
         issues,
       },
@@ -670,6 +738,7 @@ export class ManageProjectPackBinding {
         first?.code === roleCapabilityChangeRequiresUpgrade ||
         first?.code === capabilityContractChangeRequiresUpgrade ||
         first?.code === policyChangeRequiresUpgrade ||
+        first?.code === knowledgeChangeRequiresUpgrade ||
         first?.code === evidenceContractChangeRequiresUpgrade
       )
         throw new ProjectPackBindingRefusedError(first.code, first.message);

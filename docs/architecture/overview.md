@@ -177,6 +177,17 @@ the three views, and a validator that declares an adapter reports
 adapter is looked up, registered or run, no port exists for one, and nothing is
 validated or enforced. Fail-closed evidence and version-bound review are GP-14B.
 
+GP-15 types the pack `knowledge` contribution: an entry
+(`pack:<packId>/knowledge/<localId>`) may declare a category, a field schema,
+opaque seed references and retrieval guidance, which agents select through
+their existing `knowledge` references. It is a definition layer only: the
+AgentKnowledgeStore keeps its trusted tenant and repository scope and is
+never called because a pack declares knowledge, a seed is never resolved, and
+a pack declares no scope, store or credential. The guidance is pack-owned: a
+project cannot declare it, the derived view lists it, and it changes only
+through the reviewed upgrade plan. The development pack still declares no
+knowledge entry.
+
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,
 readiness dimensions, the repository-maturity heuristic, the review fingerprint

@@ -154,6 +154,38 @@ export interface PolicyContribution extends Contribution {
   readonly stages?: readonly PolicyStageClause[];
 }
 
+/** One field of the declarative schema a knowledge entry describes (GP-15). */
+export interface KnowledgeSchemaField {
+  readonly field: ContributionLocalId;
+  readonly description: string;
+}
+
+/**
+ * Retrieval guidance of a knowledge entry (GP-15). Every member is optional,
+ * at least one is present. `categories` is a set in ascending code-unit order.
+ */
+export interface KnowledgeRetrievalGuidance {
+  readonly maxResults?: number;
+  readonly hint?: string;
+  readonly categories?: readonly ContributionLocalId[];
+}
+
+/**
+ * A knowledge entry. The typed members are declarative guidance and pack-owned:
+ * a category, a field schema and retrieval guidance, plus opaque seed
+ * references. A seed is never resolved or fetched, and an entry declares no
+ * scope, store or endpoint. `schema` is in ascending code-unit order of
+ * `field` and `seeds` and `retrieval.categories` are sets in ascending
+ * code-unit order. Each member is absent when it has no value. This package
+ * reads, stores and seeds nothing.
+ */
+export interface KnowledgeContribution extends Contribution {
+  readonly category?: ContributionLocalId;
+  readonly schema?: readonly KnowledgeSchemaField[];
+  readonly seeds?: readonly string[];
+  readonly retrieval?: KnowledgeRetrievalGuidance;
+}
+
 /**
  * A closed, purpose-built data schema (GP-14A), not JSON Schema. Every object
  * is closed: undeclared members are always rejected, so the form carries no
@@ -253,15 +285,17 @@ export type DomainPackContributions = {
           ? PromptContribution
           : K extends "policies"
             ? PolicyContribution
-            : K extends "capabilities"
-              ? CapabilityContribution
-              : K extends "artifactTypes"
-                ? ArtifactTypeContribution
-                : K extends "evidenceTypes"
-                  ? EvidenceTypeContribution
-                  : K extends "validators"
-                    ? ValidatorContribution
-                    : Contribution)[];
+            : K extends "knowledge"
+              ? KnowledgeContribution
+              : K extends "capabilities"
+                ? CapabilityContribution
+                : K extends "artifactTypes"
+                  ? ArtifactTypeContribution
+                  : K extends "evidenceTypes"
+                    ? EvidenceTypeContribution
+                    : K extends "validators"
+                      ? ValidatorContribution
+                      : Contribution)[];
 };
 
 export interface DomainPackManifest {
@@ -731,6 +765,181 @@ function policyOperations(value: unknown, path: string): readonly string[] {
   if (new Set(parsed).size !== parsed.length)
     fail("invalid_contribution", path, "duplicate operation");
   return parsed;
+}
+
+/** The most field entries of a knowledge schema (GP-15). */
+export const maximumKnowledgeSchemaFields = maximumDescriptiveListEntries;
+/** The most opaque seed references of one knowledge entry. */
+export const maximumKnowledgeSeeds = 64;
+/** The most characters of one seed reference or of a retrieval hint. */
+export const maximumKnowledgeTextLength = 512;
+/** The most categories one retrieval guidance names. */
+export const maximumKnowledgeRetrievalCategories = 64;
+/**
+ * The most results a retrieval guidance may suggest. It equals the Runtime
+ * bound `knowledgeRetrievalLimits.maxResults`; this package cannot import the
+ * application port, and a unit test keeps the two equal.
+ */
+export const maximumKnowledgeRetrievalResults = 5;
+
+/** The typed members of a knowledge entry (GP-15), in their written order. */
+function knowledgeGuidance(
+  record: Record<string, unknown>,
+  path: string,
+): Pick<KnowledgeContribution, "category" | "schema" | "seeds" | "retrieval"> {
+  return {
+    ...(record.category === undefined
+      ? {}
+      : {
+          category: localId(
+            record.category,
+            `${path}.category`,
+            "invalid_contribution",
+          ),
+        }),
+    ...(record.schema === undefined
+      ? {}
+      : { schema: knowledgeSchema(record.schema, `${path}.schema`) }),
+    ...(record.seeds === undefined
+      ? {}
+      : { seeds: knowledgeSeeds(record.seeds, `${path}.seeds`) }),
+    ...(record.retrieval === undefined
+      ? {}
+      : {
+          retrieval: knowledgeRetrieval(record.retrieval, `${path}.retrieval`),
+        }),
+  };
+}
+
+/** A non-empty, bounded array; "none" has one encoding: the absent field. */
+function boundedArray(
+  value: unknown,
+  path: string,
+  maximum: number,
+  noun: string,
+): readonly unknown[] {
+  if (!Array.isArray(value))
+    return fail("invalid_contribution", path, "expected array");
+  if (value.length === 0)
+    return fail(
+      "invalid_contribution",
+      path,
+      `expected at least one ${noun}; omit the field instead`,
+    );
+  if (value.length > maximum)
+    return fail(
+      "invalid_contribution",
+      path,
+      `expected at most ${maximum} ${noun} entries`,
+    );
+  return value;
+}
+
+/** A set of declared schema fields, held in ascending code-unit order. */
+function knowledgeSchema(
+  value: unknown,
+  path: string,
+): readonly KnowledgeSchemaField[] {
+  const fields = boundedArray(
+    value,
+    path,
+    maximumKnowledgeSchemaFields,
+    "field",
+  ).map((entry: unknown, index: number): KnowledgeSchemaField => {
+    const entryPath = `${path}[${index}]`;
+    const item = object(entry, entryPath, "invalid_contribution");
+    keys(item, ["field", "description"], entryPath, "invalid_contribution");
+    return {
+      field: localId(item.field, `${entryPath}.field`, "invalid_contribution"),
+      description: boundedKnowledgeText(
+        item.description,
+        `${entryPath}.description`,
+      ),
+    };
+  });
+  if (new Set(fields.map((entry) => entry.field)).size !== fields.length)
+    fail("invalid_contribution", path, "duplicate field");
+  return fields.sort((left, right) =>
+    compareCodeUnits(left.field, right.field),
+  );
+}
+
+/** Bounded manifest text: a seed reference or a retrieval hint. */
+function boundedKnowledgeText(value: unknown, path: string): string {
+  const text = nonEmptyString(value, path);
+  if (text.length > maximumKnowledgeTextLength)
+    return fail(
+      "invalid_contribution",
+      path,
+      `expected at most ${maximumKnowledgeTextLength} characters`,
+    );
+  return text;
+}
+
+/**
+ * Opaque seed references, as a set in ascending code-unit order. A seed is
+ * kept as given text: it is never parsed, resolved, fetched or read.
+ */
+function knowledgeSeeds(value: unknown, path: string): readonly string[] {
+  const seeds = boundedArray(value, path, maximumKnowledgeSeeds, "seed").map(
+    (entry: unknown, index: number) =>
+      boundedKnowledgeText(entry, `${path}[${index}]`),
+  );
+  if (new Set(seeds).size !== seeds.length)
+    fail("invalid_contribution", path, "duplicate seed");
+  return seeds.sort(compareCodeUnits);
+}
+
+function knowledgeRetrieval(
+  value: unknown,
+  path: string,
+): KnowledgeRetrievalGuidance {
+  const item = object(value, path, "invalid_contribution");
+  for (const key of Object.keys(item))
+    if (!["maxResults", "hint", "categories"].includes(key))
+      fail("invalid_contribution", `${path}.${key}`, "unknown field");
+  // An explicitly undefined member is absent, as in the JSON the byte parser
+  // reads, so only defined members count.
+  if (Object.values(item).every((member) => member === undefined))
+    fail(
+      "invalid_contribution",
+      path,
+      "expected at least one member; omit the field instead",
+    );
+  const { maxResults } = item;
+  if (
+    maxResults !== undefined &&
+    (typeof maxResults !== "number" ||
+      !Number.isInteger(maxResults) ||
+      maxResults < 1 ||
+      maxResults > maximumKnowledgeRetrievalResults)
+  )
+    fail(
+      "invalid_contribution",
+      `${path}.maxResults`,
+      `expected an integer from 1 to ${maximumKnowledgeRetrievalResults}`,
+    );
+  let categories: readonly ContributionLocalId[] | undefined;
+  if (item.categories !== undefined) {
+    categories = boundedArray(
+      item.categories,
+      `${path}.categories`,
+      maximumKnowledgeRetrievalCategories,
+      "category",
+    ).map((entry: unknown, index: number) =>
+      localId(entry, `${path}.categories[${index}]`, "invalid_contribution"),
+    );
+    if (new Set(categories).size !== categories.length)
+      fail("invalid_contribution", `${path}.categories`, "duplicate category");
+    categories = [...categories].sort(compareCodeUnits);
+  }
+  return {
+    ...(maxResults === undefined ? {} : { maxResults: maxResults as number }),
+    ...(item.hint === undefined
+      ? {}
+      : { hint: boundedKnowledgeText(item.hint, `${path}.hint`) }),
+    ...(categories === undefined ? {} : { categories }),
+  };
 }
 
 /** The most operations one capability may declare. */
@@ -1396,6 +1605,7 @@ function contribution(
   | CapabilityContribution
   | WorkflowContribution
   | PolicyContribution
+  | KnowledgeContribution
   | ArtifactTypeContribution
   | EvidenceTypeContribution
   | ValidatorContribution {
@@ -1433,7 +1643,17 @@ function contribution(
                 "enforcement",
                 "stages",
               ]
-            : ["id", "title", "description"];
+            : kind === "knowledge"
+              ? [
+                  "id",
+                  "title",
+                  "description",
+                  "category",
+                  "schema",
+                  "seeds",
+                  "retrieval",
+                ]
+              : ["id", "title", "description"];
   // GP-16: a capability entry may also carry its operation contract.
   if (kind === "capabilities") allowed.push("operations", "requirement");
   // GP-14A: typed artifact, evidence and validator declarations.
@@ -1510,6 +1730,8 @@ function contribution(
       ),
     };
   if (kind === "policies") return policyContribution(record, path, common);
+  if (kind === "knowledge")
+    return { ...common, ...knowledgeGuidance(record, path) };
   if (kind === "capabilities")
     return { ...common, ...capabilityContract(record, path) };
   if (kind === "artifactTypes")

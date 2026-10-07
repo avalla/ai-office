@@ -4,6 +4,7 @@ import {
   type Contribution,
   type ContributionKind,
   type DomainPackManifest,
+  type KnowledgeContribution,
   type PolicyContribution,
   type WorkflowContribution,
 } from "../../../domain-pack-contracts/src/index.ts";
@@ -39,6 +40,10 @@ import {
   type ProjectOwnedDefinition,
   type RoleDefinition,
 } from "./project-definition.ts";
+import {
+  knowledgeGuidance,
+  type KnowledgeGuidance,
+} from "./pack-knowledge-guidance.ts";
 import {
   evidenceContractMembersOf,
   type EvidenceContractKind,
@@ -91,12 +96,19 @@ export interface ResolvedPackRolePayload extends DescriptiveDefinition {
   readonly capabilities?: readonly string[];
 }
 
+/** A pack knowledge entry: its descriptive envelope and typed guidance (GP-15). */
+export type ResolvedPackKnowledgePayload = DescriptiveDefinition &
+  KnowledgeGuidance;
+
 export interface ResolvedDefinition {
   readonly effectiveId: string;
   readonly kind: ContributionKind;
   readonly localId: string;
   readonly enabled: boolean;
-  readonly payload: ProjectDefinitionPayload | ResolvedPackRolePayload;
+  readonly payload:
+    | ProjectDefinitionPayload
+    | ResolvedPackRolePayload
+    | ResolvedPackKnowledgePayload;
 }
 
 /**
@@ -182,6 +194,21 @@ export interface ResolvedPolicy extends PolicyClauses {
   readonly description?: string;
   readonly workflowId: string;
   readonly state: "active" | "inert";
+}
+
+/**
+ * The declarative contract of one knowledge entry (GP-15). `knowledgeId` is
+ * the stable slot identity, like `roleId`. The typed guidance is the pack's
+ * under every customization; a project cannot change it, and a project-owned
+ * entry has none. Nothing here reads, seeds or searches a knowledge store.
+ */
+export interface ResolvedKnowledge extends KnowledgeGuidance {
+  readonly knowledgeId: string;
+  readonly effectiveId: string;
+  readonly origin: "pack_owned" | "project_owned";
+  readonly title?: string;
+  readonly description?: string;
+  readonly customization: "none" | "replace" | "extend";
 }
 
 /**
@@ -286,6 +313,11 @@ export interface ResolvedProjectConfiguration {
    * the other views, it is not digest material.
    */
   readonly policies: readonly ResolvedPolicy[];
+  /**
+   * Derived knowledge contract view over `effectiveDefinitions.knowledge`.
+   * Like the other views, it is not digest material.
+   */
+  readonly knowledge: readonly ResolvedKnowledge[];
   /**
    * Derived artifact type, evidence type and validator views over
    * `effectiveDefinitions` (GP-14A), one entry for every pack-owned
@@ -647,20 +679,24 @@ export function resolveProjectConfiguration(input: {
         current.kind === "roles"
           ? (current.payload as ResolvedPackRolePayload).capabilities
           : undefined;
-      // The typed members of an artifact or evidence type stay the pack's
-      // (GP-14A), like a role's capability set.
+      // Typed knowledge guidance is the pack's too (GP-15).
+      const guidance =
+        current.kind === "knowledge"
+          ? knowledgeGuidance(current.payload as KnowledgeContribution)
+          : {};
+      // Artifact and evidence contracts remain pack-owned under replace.
       const typedMembers =
         current.kind === "artifactTypes" || current.kind === "evidenceTypes"
           ? evidenceContractMembersOf(current.kind, current.payload)
           : undefined;
       next = {
         ...current,
-        payload:
-          capabilities !== undefined
-            ? { ...payload, capabilities }
-            : typedMembers !== undefined
-              ? { ...payload, ...typedMembers }
-              : payload,
+        payload: {
+          ...payload,
+          ...(capabilities === undefined ? {} : { capabilities }),
+          ...guidance,
+          ...(typedMembers === undefined ? {} : typedMembers),
+        },
       };
     } else if (
       entry.operation === "extend" &&
@@ -881,6 +917,28 @@ export function resolveProjectConfiguration(input: {
     });
   }
 
+  // A knowledge entry carries its pack's typed guidance under every
+  // customization: a replacement keeps it and an extension cannot touch it.
+  const knowledge: ResolvedKnowledge[] = byKind.knowledge.map((definition) => {
+    const provenance = provenanceOf(definition.effectiveId);
+    const { title, description } = definition.payload;
+    const operation =
+      provenance.origin === "pack_owned"
+        ? provenance.override?.operation
+        : undefined;
+    return {
+      knowledgeId: stableId(definition),
+      effectiveId: definition.effectiveId,
+      origin: provenance.origin,
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      ...(provenance.origin === "pack_owned"
+        ? knowledgeGuidance(definition.payload as KnowledgeContribution)
+        : {}),
+      customization:
+        operation === "replace" || operation === "extend" ? operation : "none",
+    };
+  });
   // GP-14A: artifact types, evidence types and validator references are
   // declarations. A project cannot override a typed member, so each view
   // lists the pack's; project-owned artifact and evidence types are
@@ -1107,6 +1165,7 @@ export function resolveProjectConfiguration(input: {
     disabledWorkflows,
     capabilities: bound.capabilities,
     policies,
+    knowledge,
     artifactTypes,
     evidenceTypes,
     validators,

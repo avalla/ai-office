@@ -1,5 +1,14 @@
 import ts from "typescript";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
@@ -934,6 +943,150 @@ test("only the Runtime admission service writes native knowledge", () => {
     "packages/runtime-host/src/commands/knowledge.ts",
     "packages/runtime-host/src/runtime-command.ts",
   ]);
+});
+
+describe("GP-15 pack knowledge guidance stays a definition layer", () => {
+  /** The knowledge store port, its SurrealDB adapter and the admission service. */
+  const knowledgeStoreModule =
+    /(?:^|\/)(?:agent-knowledge-store\.port|surreal-agent-knowledge\.store|manage-knowledge-admission)(?:\.ts)?$/u;
+
+  function knowledgeStoreImports(file: string, source: string): string[] {
+    return importedSpecifiers(source).filter(
+      (specifier) =>
+        knowledgeStoreModule.test(specifier) ||
+        knowledgeStoreModule.test(resolvedTarget(file, specifier) ?? ""),
+    );
+  }
+
+  test("no domain-pack module imports the knowledge store port, its SurrealDB adapter or the admission service", () => {
+    const directories = [
+      "packages/application/src/domain-pack",
+      ...readdirSync(join(repositoryRoot, "packages"))
+        .filter((name) => name.startsWith("domain-pack-"))
+        .map((name) => `packages/${name}`),
+    ];
+    const scanned = directories.flatMap((directory) =>
+      typescriptFiles(join(repositoryRoot, directory)),
+    );
+    // The scan sees the pack modules, so an empty result is not blindness.
+    expect(scanned.map((file) => relative(repositoryRoot, file))).toEqual(
+      expect.arrayContaining([
+        "packages/application/src/domain-pack/pack-knowledge-guidance.ts",
+        "packages/application/src/domain-pack/resolve-project-configuration.ts",
+        "packages/domain-pack-contracts/src/manifest.ts",
+      ]),
+    );
+    expect(
+      scanned.flatMap((file) =>
+        knowledgeStoreImports(file, readFileSync(file, "utf8")).map(
+          (specifier) => `${relative(repositoryRoot, file)} -> ${specifier}`,
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  /** The source file a relative or `@ai-office/<package>/...` import names. */
+  function importedFile(file: string, specifier: string): string | null {
+    const alias = /^@ai-office\/([^/]+)\/(.+)$/u.exec(specifier);
+    const base = specifier.startsWith(".")
+      ? resolve(dirname(file), specifier)
+      : alias === null
+        ? null
+        : join(repositoryRoot, "packages", alias[1]!, "src", alias[2]!);
+    if (base === null) return null;
+    return (
+      [base, `${base}.ts`].find(
+        (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
+      ) ?? null
+    );
+  }
+
+  /** Every repository file reachable from `roots` through imports. */
+  function reachable(roots: readonly string[]): Map<string, string> {
+    const via = new Map<string, string>();
+    const queue = [...roots];
+    for (const root of roots) via.set(root, root);
+    while (queue.length > 0) {
+      const file = queue.shift()!;
+      for (const specifier of importedSpecifiers(readFileSync(file, "utf8"))) {
+        const next = importedFile(file, specifier);
+        if (next === null || via.has(next)) continue;
+        via.set(next, file);
+        queue.push(next);
+      }
+    }
+    return via;
+  }
+
+  test("no module reachable from the domain-pack modules, through any chain of imports, is the knowledge store port, its adapter or the admission service", () => {
+    const roots = [
+      "packages/application/src/domain-pack",
+      ...readdirSync(join(repositoryRoot, "packages"))
+        .filter((name) => name.startsWith("domain-pack-"))
+        .map((name) => `packages/${name}`),
+    ].flatMap((directory) => typescriptFiles(join(repositoryRoot, directory)));
+    const graph = reachable(roots);
+    // The walk leaves the pack modules, so a clean result is not blindness.
+    expect(graph.size).toBeGreaterThan(roots.length);
+    expect(
+      [...graph.keys()]
+        .filter((file) => knowledgeStoreModule.test(file))
+        .map(
+          (file) =>
+            `${relative(repositoryRoot, file)} <- ${relative(repositoryRoot, graph.get(file)!)}`,
+        ),
+    ).toEqual([]);
+  });
+
+  test("the transitive walk finds a store module behind an intermediate file", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ai-office-gp15-walk-"));
+    try {
+      writeFileSync(join(directory, "store.port.ts"), "export const x = 1;\n");
+      writeFileSync(
+        join(directory, "agent-knowledge-store.port.ts"),
+        "export const x = 1;\n",
+      );
+      writeFileSync(
+        join(directory, "middle.ts"),
+        'import { x } from "./agent-knowledge-store.port.ts";\nexport const y = x;\n',
+      );
+      writeFileSync(
+        join(directory, "root.ts"),
+        'import { y } from "./middle.ts";\nexport const z = y;\n',
+      );
+      const found = [...reachable([join(directory, "root.ts")]).keys()].filter(
+        (file) => knowledgeStoreModule.test(file),
+      );
+      expect(found.map((file) => relative(directory, file))).toEqual([
+        "agent-knowledge-store.port.ts",
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("the scan recognizes each forbidden module by relative and aliased specifier", () => {
+    const file = join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/example.ts",
+    );
+    for (const specifier of [
+      "../ports/agent-knowledge-store.port.ts",
+      "@ai-office/application/ports/agent-knowledge-store.port.ts",
+      "../../../storage-surrealdb/src/surreal-agent-knowledge.store.ts",
+      "../agent-knowledge/manage-knowledge-admission.ts",
+      "@ai-office/application/agent-knowledge/manage-knowledge-admission.ts",
+    ])
+      expect(
+        knowledgeStoreImports(file, `import { x } from "${specifier}";`),
+      ).toEqual([specifier]);
+    expect(
+      knowledgeStoreImports(
+        file,
+        'import { x } from "./pack-knowledge-guidance.ts";',
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("GP-10A development pack stays a reference artifact outside production", () => {

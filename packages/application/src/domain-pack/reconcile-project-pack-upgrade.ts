@@ -55,6 +55,13 @@ import {
   type ResolvedPackManifest,
 } from "./resolve-installed-pack-manifests.ts";
 import {
+  closureKnowledgeGuidance,
+  knowledgeAuditRecord,
+  knowledgeGuidanceDifferences,
+  type KnowledgeGuidanceDifference,
+  type PackKnowledgeGuidance,
+} from "./pack-knowledge-changes.ts";
+import {
   closureEvidenceContracts,
   evidenceContractDifferences,
   summarizeEvidenceContract,
@@ -150,6 +157,12 @@ export interface PolicyChange extends WorkflowPolicyDifference {
   readonly customized: boolean;
 }
 
+/** A knowledge guidance difference, marked when a project override names it. */
+export interface KnowledgeChange extends KnowledgeGuidanceDifference {
+  /** A project override names this entry; it cannot alter the guidance. */
+  readonly customized: boolean;
+}
+
 export type PackUpgradeIssueCode =
   | "target_closure_unresolved"
   | "unresolved_override_conflict"
@@ -241,6 +254,21 @@ export interface PackUpgradePlan {
    */
   readonly targetPolicies: readonly WorkflowPolicy[];
   /**
+   * Typed knowledge guidance differences over the resolved closures (GP-15).
+   * Reviewed and approved with the plan, like a policy change. Identities and
+   * guidance values only; no upgrade rewrites a project value.
+   */
+  readonly knowledgeChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly KnowledgeChange[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason: "previous_closure_unresolved";
+        readonly detail: string;
+      };
+  /**
    * Artifact type, evidence type and validator contract differences over the
    * resolved closures (GP-14A): an adapter ID or version bump, a limit change
    * and a schema change each count. Reviewed and approved with the plan. The
@@ -257,6 +285,8 @@ export interface PackUpgradePlan {
         readonly reason: "previous_closure_unresolved";
         readonly detail: string;
       };
+  /** Every knowledge entry of the target closure that declares guidance. */
+  readonly targetKnowledge: readonly PackKnowledgeGuidance[];
   /**
    * Every typed contract of the target closure. Approval binds these even
    * when the previous closure cannot be read.
@@ -478,6 +508,24 @@ function policyChanges(
   }));
 }
 
+function knowledgeChanges(
+  before: readonly ResolvedPackManifest[],
+  after: readonly ResolvedPackManifest[],
+  overrides: readonly ProjectDefinitionOverride[],
+): KnowledgeChange[] {
+  const customized = new Set(
+    overrides
+      .filter(({ source }) => source.kind === "knowledge")
+      .map(({ source }) =>
+        stablePackDefinitionId(source.id, "knowledge", source.localId),
+      ),
+  );
+  return knowledgeGuidanceDifferences(before, after).map((item) => ({
+    ...item,
+    customized: customized.has(item.knowledgeId),
+  }));
+}
+
 /**
  * The definition state after the plan's override outcomes. A surviving override
  * is carried over whole: only the pack tuple of a retargeted source changes.
@@ -620,6 +668,8 @@ function reconcileProjectPackUpgrade(input: {
       | "capabilityContractChanges"
       | "policyChanges"
       | "targetPolicies"
+      | "knowledgeChanges"
+      | "targetKnowledge"
       | "evidenceContractChanges"
       | "targetEvidenceContracts"
       | "overrides"
@@ -649,6 +699,8 @@ function reconcileProjectPackUpgrade(input: {
       capabilityContractChanges: { availability: "available", changes: [] },
       policyChanges: { availability: "available", changes: [] },
       targetPolicies: [],
+      knowledgeChanges: { availability: "available", changes: [] },
+      targetKnowledge: [],
       evidenceContractChanges: { availability: "available", changes: [] },
       targetEvidenceContracts: [],
       overrides: definitions.overrides.map(({ source, operation }) => ({
@@ -691,6 +743,10 @@ function reconcileProjectPackUpgrade(input: {
     availability: "available",
     changes: [],
   };
+  let knowledgeDifferences: PackUpgradePlan["knowledgeChanges"] = {
+    availability: "available",
+    changes: [],
+  };
   let evidenceDifferences: PackUpgradePlan["evidenceContractChanges"] = {
     availability: "available",
     changes: [],
@@ -714,6 +770,10 @@ function reconcileProjectPackUpgrade(input: {
         availability: "available",
         changes: policyChanges(previous, target, definitions.overrides),
       };
+      knowledgeDifferences = {
+        availability: "available",
+        changes: knowledgeChanges(previous, target, definitions.overrides),
+      };
       evidenceDifferences = {
         availability: "available",
         changes: evidenceContractDifferences(previous, target),
@@ -729,10 +789,12 @@ function reconcileProjectPackUpgrade(input: {
       capabilityChanges = templates;
       contractChanges = templates;
       policyDifferences = templates;
+      knowledgeDifferences = templates;
       evidenceDifferences = templates;
     }
   const targetRoleCapabilities = roleCapabilitySets(target ?? []);
   const targetPolicies = closureWorkflowPolicies(target ?? []);
+  const targetKnowledge = closureKnowledgeGuidance(target ?? []);
   const targetEvidenceContracts = closureEvidenceContracts(target ?? []);
 
   const targetManifests = new Map<string, DomainPackManifest>(
@@ -1078,6 +1140,8 @@ function reconcileProjectPackUpgrade(input: {
     capabilityContractChanges: contractChanges,
     policyChanges: policyDifferences,
     targetPolicies,
+    knowledgeChanges: knowledgeDifferences,
+    targetKnowledge,
     evidenceContractChanges: evidenceDifferences,
     targetEvidenceContracts,
     overrides,
@@ -1264,6 +1328,8 @@ export class ReconcileProjectPackUpgrade {
             // Policy and workflow identities and clause values only.
             policyChanges: plan.policyChanges,
             targetPolicies: plan.targetPolicies,
+            // Knowledge identities and one digest per guidance; no text or seed.
+            ...knowledgeAuditRecord(plan),
             // Identities, adapter ID, version and failure policy only; never
             // a schema, a limit, a media type or a text.
             evidenceContractChanges:

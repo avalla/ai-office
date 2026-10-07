@@ -302,6 +302,18 @@ export function hasDescriptiveVocabulary(payload: object): boolean {
   );
 }
 
+/**
+ * Typed knowledge guidance belongs to the pack that declares the entry
+ * (GP-15), never to a project payload: a project cannot declare, change or
+ * remove a category, a schema, a seed or retrieval guidance.
+ */
+const knowledgeGuidanceKeys: readonly string[] = [
+  "category",
+  "schema",
+  "seeds",
+  "retrieval",
+];
+
 const descriptiveKinds: readonly ContributionKind[] = [
   "roles",
   "taskTypes",
@@ -439,6 +451,14 @@ export function parseDefinitionPayload(
   kind?: ContributionKind,
 ): DescriptiveDefinition | RoleDefinition | PromptDefinition {
   const item = record(value);
+  if (
+    kind === "knowledge" &&
+    Object.keys(item).some((key) => knowledgeGuidanceKeys.includes(key))
+  )
+    throw new ProjectDefinitionConflictError(
+      "protected_security_invariant",
+      "Knowledge guidance is declared by the pack; a project cannot declare it",
+    );
   const extra =
     partial || kind === undefined ? undefined : descriptiveFieldOfKind[kind];
   const allowed = partial

@@ -572,8 +572,8 @@ function independentDigest(
   result: ReturnType<typeof resolveProjectConfiguration>,
 ): string {
   // The GP-11 role view, the GP-12 agent view, the GP-13 workflow view, the
-  // GP-25 policy view and the GP-14A artifact type, evidence type and
-  // validator views are derived from the material; they are not part of it.
+  // GP-25 policy view, GP-14A artifact/evidence/validator views and GP-15
+  // knowledge view are derived from the material, not part of it.
   // Nor is the GP-16 capability view, which also depends on the host's
   // providers.
   const {
@@ -587,6 +587,7 @@ function independentDigest(
     disabledWorkflows: _disabledWorkflows,
     capabilities: _capabilities,
     policies: _policies,
+    knowledge: _knowledge,
     artifactTypes: _artifactTypes,
     evidenceTypes: _evidenceTypes,
     validators: _validators,

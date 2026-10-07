@@ -154,6 +154,26 @@ Every rejection is `invalid_contribution` with the member's path, and a
 manifest without these members keeps its digest. A project cannot change the
 typed members: they are pack-owned.
 
+A knowledge item may carry four optional fields (GP-15): `category`, one local
+ID; `schema`, an array of `{ field, description }` with a local-ID `field`, a `description` of at most 512 UTF-16 code units and
+at most 64 entries (`maximumKnowledgeSchemaFields`); `seeds`, at most 64
+(`maximumKnowledgeSeeds`) opaque reference strings of at most 512 UTF-16 code units
+(`maximumKnowledgeTextLength`); and `retrieval`, an object with at least one of
+`maxResults` (an integer from 1 to `maximumKnowledgeRetrievalResults`, the
+Runtime's retrieval bound), `hint` (text of at most 512 UTF-16 code units) and
+`categories` (at most 64 local IDs). A non-array, empty, over-bound or
+duplicate list, a malformed local ID, an empty, over-long or non-text value,
+an empty or unknown `retrieval` member, any scope, tenant, repository,
+project, store, endpoint, collection or credential key and any of the fields
+on another contribution kind fail with `invalid_contribution` and the member's
+path. `schema` is held in ascending code-unit order of `field`, and `seeds`
+and `retrieval.categories` in ascending code-unit order, so the digest does
+not depend on the written order; a member is canonical only when present, so a
+manifest without them keeps its digest. Whitespace-only text is accepted, as for every non-empty manifest text. A seed is opaque text: this package
+never parses, resolves or fetches it. The fields are declarative guidance
+that this package does not read, seed or search, and a pack declares no
+scope.
+
 Descriptive vocabulary (GP-10B-2). A workflow stage may carry `title`,
 `objective` and `checks`; a role item `responsibilities`; a prompt item
 `text`; and a workflow item `additionalTaskTypes`. All are optional.

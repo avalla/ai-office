@@ -73,6 +73,7 @@ const emptyConfiguration = {
   disabledWorkflows: [],
   capabilities: [],
   policies: [],
+  knowledge: [],
   artifactTypes: [],
   evidenceTypes: [],
   validators: [],

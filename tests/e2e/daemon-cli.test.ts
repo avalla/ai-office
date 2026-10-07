@@ -2078,6 +2078,7 @@ profiles:
         "disabledWorkflows",
         "capabilities",
         "policies",
+        "knowledge",
         "artifactTypes",
         "evidenceTypes",
         "validators",
