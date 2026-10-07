@@ -2170,6 +2170,252 @@ export function defineProjectStorageContracts(
         });
       });
 
+      test("a pack with typed evidence contracts binds, resolves and upgrades with provider-independent results", async () => {
+        if (
+          !harness.packBindings ||
+          !harness.definitions ||
+          !harness.definitionRowCounts
+        )
+          throw new Error("Configuration source repositories are required");
+        const { packBindings, definitions } = harness;
+        const projectId = (
+          await createProject(harness, `${prefix}-configuration-evidence`)
+        ).snapshot().id;
+        // GP-14A: one validator whose adapter version changes in version 2.
+        const encoder = new TextEncoder();
+        const schema = {
+          type: "object",
+          properties: { verified: { type: "boolean" } },
+        };
+        const packBytes = (version: string, adapterVersion: string) => {
+          const draft = {
+            schemaVersion: 1,
+            id: "org.example.evidence",
+            version,
+            manifestDigest: `sha256:${"0".repeat(64)}`,
+            coreContract: { minInclusive: 1, maxExclusive: 3 },
+            metadata: { name: "Evidence", description: "Contract fixture" },
+            dependencies: [],
+            contributions: {
+              ...Object.fromEntries(
+                contributionKinds.map((kind) => [kind, [] as unknown[]]),
+              ),
+              artifactTypes: [
+                {
+                  id: "filing",
+                  title: "Filing",
+                  mediaTypes: ["application/pdf"],
+                  contentSchema: schema,
+                },
+              ],
+              evidenceTypes: [{ id: "check", subject: "filing" }],
+              validators: [
+                {
+                  id: "checker",
+                  adapter: { id: "legal.citations", version: adapterVersion },
+                  accepts: [{ kind: "artifactTypes", id: "filing" }],
+                  inputSchema: schema,
+                  produces: "check",
+                  outputSchema: schema,
+                  failurePolicy: "fail_closed",
+                  timeoutMs: 1000,
+                  maxInputBytes: 1000,
+                  maxOutputBytes: 1000,
+                },
+              ],
+            },
+          };
+          return encoder.encode(
+            JSON.stringify({
+              ...draft,
+              manifestDigest: computeManifestDigest(
+                parseDomainPackManifest(encoder.encode(JSON.stringify(draft))),
+              ),
+            }),
+          );
+        };
+        const catalog = new InMemoryInstalledDomainPackCatalog(1, [
+          "local-distribution",
+        ]);
+        const [v1, v2] = [
+          packBytes("1.0.0", "1.0.0"),
+          packBytes("2.0.0", "1.1.0"),
+        ].map((bytes) =>
+          catalog.register({
+            bytes,
+            artifactDigest: computeArtifactDigest(bytes),
+            provenance: {
+              installerId: "local-distribution",
+              reference: "contract",
+            },
+          }),
+        ) as [PackIdentity, PackIdentity];
+        const events: AuditEvent[] = [];
+        let sequence = 0;
+        const ports = {
+          projects: harness.projects,
+          bindings: packBindings,
+          definitions,
+          catalog,
+          auditEvents: {
+            append: async (event: AuditEvent) => {
+              events.push(event);
+            },
+          },
+          transactions: harness.transactions,
+          clock: { now: () => now },
+          ids: { generate: () => `${prefix}-evidence-audit-${++sequence}` },
+        };
+        const binding = new ManageProjectPackBinding(ports);
+        const mutations = new ManageProjectDefinitions(ports);
+        const upgrade = new ReconcileProjectPackUpgrade(ports);
+        const reader = new ReadProjectConfiguration({ ...ports });
+        const pure = async () =>
+          resolveProjectConfiguration({
+            projectId: "provider-independent",
+            binding: {
+              ...(await packBindings.get(projectId)),
+              projectId: "provider-independent",
+            },
+            definitions: {
+              ...(await definitions.get(projectId)),
+              projectId: "provider-independent",
+            },
+            catalog,
+            coreContractVersion: 1,
+          });
+
+        expect(
+          await binding.apply({
+            projectId,
+            desired: [v1],
+            expectedRevision: 0,
+            actorId: "operator",
+          }),
+        ).toMatchObject({ configurationRevision: 1, packs: [v1] });
+
+        // A typed key in a project payload is refused before storage.
+        await expect(
+          mutations.apply({
+            projectId,
+            mutation: {
+              action: "put_override",
+              source: { ...v1, kind: "artifactTypes", localId: "filing" },
+              operation: "replace",
+              payload: { id: "filing", mediaTypes: ["text/plain"] },
+            },
+            expectedRevision: 0,
+            actorId: "operator",
+          }),
+        ).rejects.toMatchObject({ code: "protected_security_invariant" });
+        expect(await harness.definitionRowCounts(projectId)).toEqual({
+          heads: 0,
+          owned: 0,
+          overrides: 0,
+        });
+        // A descriptive replacement is stored and keeps the typed members.
+        await mutations.apply({
+          projectId,
+          mutation: {
+            action: "put_override",
+            source: { ...v1, kind: "artifactTypes", localId: "filing" },
+            operation: "replace",
+            payload: { id: "filing", title: "Mine" },
+          },
+          expectedRevision: 0,
+          actorId: "operator",
+        });
+
+        // Resolution equals the pure resolver over the stored sources.
+        const resolved = await reader.read(projectId);
+        expect(resolved).toEqual(await pure());
+        expect(resolved.artifactTypes).toMatchObject([
+          {
+            definitionId: "pack:org.example.evidence/artifactTypes/filing",
+            title: "Mine",
+            mediaTypes: ["application/pdf"],
+            contentSchema: schema,
+          },
+        ]);
+        expect(resolved.validators).toMatchObject([
+          {
+            definitionId: "pack:org.example.evidence/validators/checker",
+            registration: "unchecked",
+            adapter: { id: "legal.citations", version: "1.0.0" },
+          },
+        ]);
+
+        // The adapter bump is refused as a plain selection change.
+        const refused = await binding.preview(projectId, [v2]);
+        expect(refused.issues.map((issue) => issue.code)).toEqual([
+          "evidence_contract_change_requires_upgrade",
+        ]);
+        await expect(
+          binding.apply({
+            projectId,
+            desired: [v2],
+            expectedRevision: 1,
+            actorId: "operator",
+          }),
+        ).rejects.toMatchObject({
+          code: "evidence_contract_change_requires_upgrade",
+        });
+        expect(await packBindings.get(projectId)).toMatchObject({
+          configurationRevision: 1,
+          packs: [v1],
+        });
+
+        // The reviewed upgrade carries it out.
+        const plan = await upgrade.preview({ projectId, desired: [v2] });
+        expect(plan).toEqual(
+          planProjectPackUpgrade({
+            binding: await packBindings.get(projectId),
+            definitions: await definitions.get(projectId),
+            desired: [v2],
+            resolutions: [],
+            catalog,
+          }),
+        );
+        expect(plan.issues).toEqual([]);
+        expect(plan.evidenceContractChanges).toMatchObject({
+          availability: "available",
+          changes: [
+            {
+              contractId: "pack:org.example.evidence/validators/checker",
+              change: "changed",
+              before: { adapter: { id: "legal.citations", version: "1.0.0" } },
+              after: { adapter: { id: "legal.citations", version: "1.1.0" } },
+            },
+          ],
+        });
+        expect(plan.targetEvidenceContracts).toHaveLength(3);
+        const before = events.length;
+        expect(
+          await upgrade.apply({
+            projectId,
+            desired: [v2],
+            approvedPlanDigest: plan.planDigest,
+            actorId: "operator",
+          }),
+        ).toMatchObject({ result: "applied", packs: [v2] });
+        expect(
+          events.slice(before).map((event) => event.snapshot().eventType),
+        ).toEqual(["project.pack_upgrade_applied"]);
+        const recorded = JSON.stringify(events.at(-1)!.snapshot().payload);
+        expect(recorded).toContain("1.1.0");
+        expect(recorded).toContain("fail_closed");
+        for (const body of ["application/pdf", "verified", "contentSchema"])
+          expect(recorded).not.toContain(body);
+        const upgraded = await reader.read(projectId);
+        expect(upgraded.configurationDigest).toBe(
+          plan.prospectiveConfigurationDigest,
+        );
+        expect(upgraded).toEqual(await pure());
+        expect(upgraded.validators[0]).toMatchObject({
+          adapter: { id: "legal.citations", version: "1.1.0" },
+        });
+      });
+
       test("stored definitions resolve to the provider-independent digest and order", async () => {
         if (!harness.definitions)
           throw new Error("Definition repository is required");

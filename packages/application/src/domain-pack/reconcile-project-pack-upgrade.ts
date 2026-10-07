@@ -62,6 +62,14 @@ import {
   type PackKnowledgeGuidance,
 } from "./pack-knowledge-changes.ts";
 import {
+  closureEvidenceContracts,
+  evidenceContractDifferences,
+  summarizeEvidenceContract,
+  summarizeEvidenceContractDifference,
+  type EvidenceContractDifference,
+} from "./pack-evidence-contract-changes.ts";
+import type { EvidenceContract } from "./pack-evidence-contracts.ts";
+import {
   closureWorkflowPolicies,
   workflowPolicyDifferences,
   type WorkflowPolicy,
@@ -260,8 +268,30 @@ export interface PackUpgradePlan {
         readonly reason: "previous_closure_unresolved";
         readonly detail: string;
       };
+  /**
+   * Artifact type, evidence type and validator contract differences over the
+   * resolved closures (GP-14A): an adapter ID or version bump, a limit change
+   * and a schema change each count. Reviewed and approved with the plan. The
+   * typed definitions are reported in full here; the audit event keeps
+   * identities, adapter ID, version and failure policy only.
+   */
+  readonly evidenceContractChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly EvidenceContractDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason: "previous_closure_unresolved";
+        readonly detail: string;
+      };
   /** Every knowledge entry of the target closure that declares guidance. */
   readonly targetKnowledge: readonly PackKnowledgeGuidance[];
+  /**
+   * Every typed contract of the target closure. Approval binds these even
+   * when the previous closure cannot be read.
+   */
+  readonly targetEvidenceContracts: readonly EvidenceContract[];
   readonly overrides: readonly OverrideReconciliation[];
   /** Supplied resolutions that matched no conflict; they change nothing. */
   readonly ignoredResolutions: readonly OverrideResolution[];
@@ -640,6 +670,8 @@ function reconcileProjectPackUpgrade(input: {
       | "targetPolicies"
       | "knowledgeChanges"
       | "targetKnowledge"
+      | "evidenceContractChanges"
+      | "targetEvidenceContracts"
       | "overrides"
       | "ignoredResolutions"
       | "issues"
@@ -669,6 +701,8 @@ function reconcileProjectPackUpgrade(input: {
       targetPolicies: [],
       knowledgeChanges: { availability: "available", changes: [] },
       targetKnowledge: [],
+      evidenceContractChanges: { availability: "available", changes: [] },
+      targetEvidenceContracts: [],
       overrides: definitions.overrides.map(({ source, operation }) => ({
         source,
         operation,
@@ -713,6 +747,10 @@ function reconcileProjectPackUpgrade(input: {
     availability: "available",
     changes: [],
   };
+  let evidenceDifferences: PackUpgradePlan["evidenceContractChanges"] = {
+    availability: "available",
+    changes: [],
+  };
   if (target && selectionChanged)
     try {
       const previous = resolveInstalledPackManifests(catalog, currentPacks);
@@ -736,6 +774,10 @@ function reconcileProjectPackUpgrade(input: {
         availability: "available",
         changes: knowledgeChanges(previous, target, definitions.overrides),
       };
+      evidenceDifferences = {
+        availability: "available",
+        changes: evidenceContractDifferences(previous, target),
+      };
     } catch (error) {
       const detail = closureFailure(error);
       if (detail === null) throw error;
@@ -748,10 +790,12 @@ function reconcileProjectPackUpgrade(input: {
       contractChanges = templates;
       policyDifferences = templates;
       knowledgeDifferences = templates;
+      evidenceDifferences = templates;
     }
   const targetRoleCapabilities = roleCapabilitySets(target ?? []);
   const targetPolicies = closureWorkflowPolicies(target ?? []);
   const targetKnowledge = closureKnowledgeGuidance(target ?? []);
+  const targetEvidenceContracts = closureEvidenceContracts(target ?? []);
 
   const targetManifests = new Map<string, DomainPackManifest>(
     (target ?? []).map((entry) => [tupleKey(entry.identity), entry.manifest]),
@@ -1098,6 +1142,8 @@ function reconcileProjectPackUpgrade(input: {
     targetPolicies,
     knowledgeChanges: knowledgeDifferences,
     targetKnowledge,
+    evidenceContractChanges: evidenceDifferences,
+    targetEvidenceContracts,
     overrides,
     ignoredResolutions: resolutions.filter(
       (item) => !usedResolutions.has(sourceKey(item.source)),
@@ -1284,6 +1330,20 @@ export class ReconcileProjectPackUpgrade {
             targetPolicies: plan.targetPolicies,
             // Knowledge identities and one digest per guidance; no text or seed.
             ...knowledgeAuditRecord(plan),
+            // Identities, adapter ID, version and failure policy only; never
+            // a schema, a limit, a media type or a text.
+            evidenceContractChanges:
+              plan.evidenceContractChanges.availability === "available"
+                ? {
+                    availability: "available",
+                    changes: plan.evidenceContractChanges.changes.map(
+                      summarizeEvidenceContractDifference,
+                    ),
+                  }
+                : plan.evidenceContractChanges,
+            targetEvidenceContracts: plan.targetEvidenceContracts.map(
+              summarizeEvidenceContract,
+            ),
             prospectiveConfigurationDigest:
               plan.prospectiveConfigurationDigest ?? null,
             result: "applied",

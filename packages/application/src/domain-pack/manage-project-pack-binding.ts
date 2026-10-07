@@ -35,6 +35,12 @@ import {
   packDefinitionCollision,
   packDefinitionCollisions,
 } from "./pack-definition-collisions.ts";
+import { evidenceContractChangeRequiresUpgrade } from "./pack-evidence-contracts.ts";
+import {
+  closureEvidenceDefinitionIds,
+  evidenceContractDifferences,
+  type EvidenceContractDifference,
+} from "./pack-evidence-contract-changes.ts";
 import {
   closureKnowledgeIds,
   knowledgeGuidanceDifferences,
@@ -81,9 +87,10 @@ export const knowledgeChangeRequiresUpgrade =
 /**
  * A selection change this command does not carry out. A role capability
  * change, a change to the operation contract of an existing capability
- * (GP-16), a change to the policy of an existing workflow (GP-25) and a
- * change to the typed guidance of an existing knowledge entry (GP-15) are
- * reviewed and approved through `project:pack:upgrade` only.
+ * (GP-16), a change to the policy of an existing workflow (GP-25), a change
+ * to the typed contract of an artifact type, evidence type or validator
+ * reference (GP-14A), and a change to knowledge guidance (GP-15) are reviewed
+ * and approved through `project:pack:upgrade` only.
  */
 export class ProjectPackBindingRefusedError extends Error {
   constructor(
@@ -91,6 +98,7 @@ export class ProjectPackBindingRefusedError extends Error {
       | typeof roleCapabilityChangeRequiresUpgrade
       | typeof capabilityContractChangeRequiresUpgrade
       | typeof policyChangeRequiresUpgrade
+      | typeof evidenceContractChangeRequiresUpgrade
       | typeof knowledgeChangeRequiresUpgrade,
     message: string,
   ) {
@@ -205,6 +213,33 @@ function knowledgeChangeGuard(
   };
 }
 
+/** A typed evidence contract changes only through a reviewed upgrade (GP-14A). */
+function evidenceContractGuard(
+  previous: readonly ResolvedPackManifest[],
+  target: readonly ResolvedPackManifest[],
+): {
+  changes: EvidenceContractDifference[];
+  issue?: { code: string; message: string };
+} {
+  const changes = evidenceContractDifferences(previous, target);
+  const before = closureEvidenceDefinitionIds(previous);
+  const after = closureEvidenceDefinitionIds(target);
+  const altered = changes.find(
+    ({ contractId }) => before.has(contractId) && after.has(contractId),
+  );
+  return {
+    changes,
+    ...(altered
+      ? {
+          issue: {
+            code: evidenceContractChangeRequiresUpgrade,
+            message: `The selection changes the contract of ${altered.contractId}; review and approve it with project:pack:upgrade`,
+          },
+        }
+      : {}),
+  };
+}
+
 function collisionIssues(
   closure: readonly ResolvedPackManifest[],
   owned: readonly ProjectOwnedDefinition[],
@@ -288,12 +323,29 @@ export interface ProjectPackBindingPreview {
         readonly detail: string;
       };
   /**
+   * Artifact type, evidence type and validator contract differences between
+   * the current and the proposed resolved closures (GP-14A), computed as in
+   * the upgrade plan and with the availability of `roleCapabilityChanges`.
+   */
+  readonly evidenceContractChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly EvidenceContractDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason:
+          "previous_closure_unresolved" | "proposed_closure_unreadable";
+        readonly detail: string;
+      };
+  /**
    * In order: a GP-04 selection or availability failure, alone; then one
    * `pack_definition_collision` for each project-owned definition that the
    * proposed closure also contains; then the GP-16 provider issues of the
    * proposed closure; then the GP-11 capability refusal; then the GP-16
    * contract change refusal; then the GP-25 policy refusal; then the GP-15
-   * knowledge guidance refusal. Apply raises the first.
+   * knowledge guidance refusal; then the GP-14A evidence contract refusal.
+   * Apply raises the first.
    */
   readonly issues: readonly { code: string; message: string }[];
 }
@@ -459,6 +511,8 @@ export class ManageProjectPackBinding {
       availability: "available",
       changes: [],
     };
+    let evidenceContractChanges: ProjectPackBindingPreview["evidenceContractChanges"] =
+      { availability: "available", changes: [] };
     // An unchanged selection reads no further artifact, as before GP-11. A
     // collision does not hide the capability refusal; it is listed first.
     if (resolved && added.length + removed.length + changed.length > 0) {
@@ -490,6 +544,20 @@ export class ManageProjectPackBinding {
         };
         if (knowledge.issue) issues.push(knowledge.issue);
       }
+      // GP-14A: the same two closures, with the same availability rule.
+      if (guard.roleCapabilityChanges.availability === "unavailable")
+        evidenceContractChanges = guard.roleCapabilityChanges;
+      else if (guard.closures !== undefined) {
+        const evidence = evidenceContractGuard(
+          guard.closures.previous,
+          guard.closures.target,
+        );
+        evidenceContractChanges = {
+          availability: "available",
+          changes: evidence.changes,
+        };
+        if (evidence.issue) issues.push(evidence.issue);
+      }
     }
     return {
       preview: {
@@ -502,6 +570,7 @@ export class ManageProjectPackBinding {
         capabilityContractChanges,
         policyChanges,
         knowledgeChanges,
+        evidenceContractChanges,
         issues,
       },
       ...(closure === undefined ? {} : { closure }),
@@ -669,7 +738,8 @@ export class ManageProjectPackBinding {
         first?.code === roleCapabilityChangeRequiresUpgrade ||
         first?.code === capabilityContractChangeRequiresUpgrade ||
         first?.code === policyChangeRequiresUpgrade ||
-        first?.code === knowledgeChangeRequiresUpgrade
+        first?.code === knowledgeChangeRequiresUpgrade ||
+        first?.code === evidenceContractChangeRequiresUpgrade
       )
         throw new ProjectPackBindingRefusedError(first.code, first.message);
       if (preview.issues[0])

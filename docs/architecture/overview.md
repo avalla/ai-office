@@ -161,6 +161,22 @@ approval on `delivery/review`, `bugfix/review` and `release/verification`,
 with no admitted operation. Tests compare them with the legacy pipelines
 (expressible-subset parity); nothing is enforced from them and the Runtime
 still reads only the legacy sources.
+GP-14A types the pack `artifactTypes`, `evidenceTypes` and `validators`
+contributions as data: an artifact type declares media types, a size bound and
+a content schema, an evidence type a subject artifact type and a payload
+schema, and a validator reference an adapter ID at an exact version, accepted
+and produced types, input and output schemas, a `fail_closed` policy and
+declared time and size limits. Schemas are a closed, purpose-built subset, not
+JSON Schema. The declarations are pack-owned: a project can change only
+presentation, a typed key in a project payload is refused, and a contract
+changes only through the reviewed upgrade plan (`evidenceContractChanges`,
+`targetEvidenceContracts`; `project:pack:apply` refuses it with
+`evidence_contract_change_requires_upgrade`). The derived configuration lists
+the three views, and a validator that declares an adapter reports
+`registration: "unchecked"`: no
+adapter is looked up, registered or run, no port exists for one, and nothing is
+validated or enforced. Fail-closed evidence and version-bound review are GP-14B.
+
 GP-15 types the pack `knowledge` contribution: an entry
 (`pack:<packId>/knowledge/<localId>`) may declare a category, a field schema,
 opaque seed references and retrieval guidance, which agents select through

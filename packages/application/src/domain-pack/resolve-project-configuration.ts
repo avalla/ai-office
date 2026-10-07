@@ -45,6 +45,11 @@ import {
   type KnowledgeGuidance,
 } from "./pack-knowledge-guidance.ts";
 import {
+  evidenceContractMembersOf,
+  type EvidenceContractKind,
+  type EvidenceContractMembersByKind,
+} from "./pack-evidence-contracts.ts";
+import {
   policyClauses,
   policyTargetMissing,
   policyTargetViolations,
@@ -206,6 +211,27 @@ export interface ResolvedKnowledge extends KnowledgeGuidance {
   readonly customization: "none" | "replace" | "extend";
 }
 
+/**
+ * The declared contract of one pack-owned artifact type, evidence type or
+ * validator reference (GP-14A), with the typed members as declared. The ID is
+ * the stable slot identity `pack:<packId>/<kind>/<localId>`. Typed members
+ * are the pack's under every customization. Nothing here is validated,
+ * stored, run or enforced; a validator that declares an adapter
+ * reports `registration: "unchecked"` because no adapter is looked up.
+ */
+export type ResolvedEvidenceDefinition<
+  K extends EvidenceContractKind = EvidenceContractKind,
+> = {
+  readonly kind: K;
+  readonly definitionId: string;
+  readonly effectiveId: string;
+  readonly origin: "pack_owned";
+  readonly title?: string;
+  readonly description?: string;
+} & EvidenceContractMembersByKind[K] &
+  // Only a validator that declares an adapter has a registration to report.
+  (K extends "validators" ? { readonly registration?: "unchecked" } : unknown);
+
 export interface ResolvedWorkflowReferences {
   readonly workflowId: string;
   readonly taskTypeId: string;
@@ -292,6 +318,15 @@ export interface ResolvedProjectConfiguration {
    * Like the other views, it is not digest material.
    */
   readonly knowledge: readonly ResolvedKnowledge[];
+  /**
+   * Derived artifact type, evidence type and validator views over
+   * `effectiveDefinitions` (GP-14A), one entry for every pack-owned
+   * definition of the kind, in the GP-06 definition order. Like the other
+   * views, they are not digest material.
+   */
+  readonly artifactTypes: readonly ResolvedEvidenceDefinition<"artifactTypes">[];
+  readonly evidenceTypes: readonly ResolvedEvidenceDefinition<"evidenceTypes">[];
+  readonly validators: readonly ResolvedEvidenceDefinition<"validators">[];
   /** The minimum evidence future run records must pin. */
   readonly pin: {
     readonly configurationDigest: string;
@@ -649,12 +684,18 @@ export function resolveProjectConfiguration(input: {
         current.kind === "knowledge"
           ? knowledgeGuidance(current.payload as KnowledgeContribution)
           : {};
+      // Artifact and evidence contracts remain pack-owned under replace.
+      const typedMembers =
+        current.kind === "artifactTypes" || current.kind === "evidenceTypes"
+          ? evidenceContractMembersOf(current.kind, current.payload)
+          : undefined;
       next = {
         ...current,
         payload: {
           ...payload,
           ...(capabilities === undefined ? {} : { capabilities }),
           ...guidance,
+          ...(typedMembers === undefined ? {} : typedMembers),
         },
       };
     } else if (
@@ -898,6 +939,57 @@ export function resolveProjectConfiguration(input: {
         operation === "replace" || operation === "extend" ? operation : "none",
     };
   });
+  // GP-14A: artifact types, evidence types and validator references are
+  // declarations. A project cannot override a typed member, so each view
+  // lists the pack's; project-owned artifact and evidence types are
+  // descriptive and appear in `effectiveDefinitions` only.
+  const packOwned = <K extends EvidenceContractKind>(kind: K) =>
+    byKind[kind].flatMap((definition) => {
+      if (provenanceOf(definition.effectiveId).origin !== "pack_owned")
+        return [];
+      const { title, description } = definition.payload;
+      return [
+        {
+          definition,
+          base: {
+            kind,
+            definitionId: stableId(definition),
+            effectiveId: definition.effectiveId,
+            origin: "pack_owned" as const,
+            ...(title === undefined ? {} : { title }),
+            ...(description === undefined ? {} : { description }),
+          },
+        },
+      ];
+    });
+  const artifactTypes = packOwned("artifactTypes").map(
+    ({ definition, base }): ResolvedEvidenceDefinition<"artifactTypes"> => ({
+      ...base,
+      ...evidenceContractMembersOf("artifactTypes", definition.payload),
+    }),
+  );
+  const evidenceTypes = packOwned("evidenceTypes").map(
+    ({ definition, base }): ResolvedEvidenceDefinition<"evidenceTypes"> => ({
+      ...base,
+      ...evidenceContractMembersOf("evidenceTypes", definition.payload),
+    }),
+  );
+  const validators = packOwned("validators").map(
+    ({ definition, base }): ResolvedEvidenceDefinition<"validators"> => {
+      const members = evidenceContractMembersOf(
+        "validators",
+        definition.payload,
+      );
+      return {
+        ...base,
+        // Only a validator that declares an adapter has one to leave unchecked.
+        ...(members?.adapter === undefined
+          ? {}
+          : { registration: "unchecked" as const }),
+        ...members,
+      };
+    },
+  );
 
   const roles: ResolvedRole[] = [];
   const omittedRoles: string[] = [];
@@ -1074,6 +1166,9 @@ export function resolveProjectConfiguration(input: {
     capabilities: bound.capabilities,
     policies,
     knowledge,
+    artifactTypes,
+    evidenceTypes,
+    validators,
     pin: {
       configurationDigest,
       coreContractVersion,

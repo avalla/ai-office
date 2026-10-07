@@ -2079,6 +2079,9 @@ profiles:
         "capabilities",
         "policies",
         "knowledge",
+        "artifactTypes",
+        "evidenceTypes",
+        "validators",
         "pin",
       ]);
       expect(

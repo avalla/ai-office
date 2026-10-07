@@ -30,14 +30,14 @@ ASCII `id` and optional `title`/`description`; workflow items also have a
 `taskType` and ordered `stages` with `id`/`role`, role items may have
 `capabilities`, agent items may have `role`, `prompts`, `knowledge` and
 `capabilities`, capability items may have `operations` and `requirement`,
-policy items may have `workflow`, `enforcement` and `stages`, and GP-10B-2 adds
+policy items may have `workflow`, `enforcement` and `stages`, GP-14A adds
+typed artifact type, evidence type and validator entries, and GP-10B-2 adds
 descriptive fields to stages, roles, prompts and workflows (see below).
 Unknown fields fail validation,
 including executable entry points and embedded credentials. Later GP slices
 must explicitly extend section schemas through a compatible manifest/schema
 decision before they can add fields. The current generic `Contribution` type is
-not the final field-level schema for artifact types, evidence types,
-knowledge, capabilities, prompts or validators, and the agent fields
+not the final field-level schema for knowledge or prompts, and the agent fields
 below are not the final agent schema: model, tools, pipeline participation and
 approval eligibility are not expressible.
 
@@ -119,6 +119,40 @@ digest covers. Operation names are opaque strings, not references to
 `contributions.capabilities`. The clauses are declarative: they are not
 enforced by this package or by the Runtime and grant nothing. A policy
 without `workflow` still parses as `id`, `title` and `description`.
+
+Artifact, evidence and validator definitions (GP-14A). These are data only:
+nothing is stored, validated, looked up or run because of them. An artifact
+type item may carry `mediaTypes` (a set of 1 to 16 lower-case `type/subtype`
+names, `maximumArtifactMediaTypes`), `maximumBytes` (an integer up to
+`maximumArtifactTypeBytes`, 64 MiB) and `contentSchema`. An evidence type item
+may carry `subject`, a local ID naming an artifact type of the same manifest,
+and `payloadSchema`. A validator item with only `id`, `title` and
+`description` is a label. With `adapter`, `{ id, version }`, it is typed and
+must also carry `accepts` (a set of 1 to 64 `{ kind, id }` references to
+artifact or evidence types of the same manifest), `inputSchema`, `produces`
+(a local evidence type ID), `outputSchema`, `failurePolicy`, `timeoutMs`,
+`maxInputBytes` and `maxOutputBytes`. The adapter `id` follows
+`^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$` (at most 128 characters) and is never
+looked up as, and never shares a namespace with, a connector operation; the `version` is an exact `MAJOR.MINOR.PATCH`, so a range, a tag
+and a wildcard are rejected. `failurePolicy` is only `"fail_closed"`. The
+limits are bounded by `maximumValidatorTimeoutMs` (60,000),
+`maximumValidatorInputBytes` (16 MiB) and `maximumValidatorOutputBytes` (16 MiB).
+Raising a ceiling is compatible with published packs; lowering one is not. No `command`,
+`entry`, `module`, `url` or `script` key exists; they are unknown fields.
+
+A schema is a closed purpose-built subset, not JSON Schema (`PackDataSchema`):
+`string`, `integer`, `number`, `boolean`, `enum`, `array` and `object`, with
+optional length, range and size bounds. An object is always closed and
+declares 1 to 64 `properties` and optionally `required`; there is no
+`additionalProperties`, `$ref`, `pattern`, `format` or composition keyword. A
+schema nests at most 4 levels and holds at most 256 nodes; an enum lists 1 to
+64 values of at most 128 characters; property names are `^[A-Za-z][A-Za-z0-9_-]{0,63}$`
+and never `__proto__`, `constructor` or `prototype`. Schema text follows the
+definition text rule: no lone surrogate and no U+0000. Every set is held in
+ascending code-unit order, so the written order does not change the digest.
+Every rejection is `invalid_contribution` with the member's path, and a
+manifest without these members keeps its digest. A project cannot change the
+typed members: they are pack-owned.
 
 A knowledge item may carry four optional fields (GP-15): `category`, one local
 ID; `schema`, an array of `{ field, description }` with a local-ID `field`, a `description` of at most 512 UTF-16 code units and
