@@ -160,12 +160,23 @@ report the clarified task instead. Development starts only when no selected
 task has an open question. A question that only comes up later is still a stop
 condition.
 
+Once every selected task is clarified and its answers are recorded, run the
+dependency check again over the whole selection and recompute the order and
+the Git branch plan. Compare the result with the summary the authorizer
+approved. If the selection, the order, a task dependency, a Git branch
+dependency, the pipeline, or the exclusions changed materially, show a new
+summary and ask for a new approval, and start neither preflight nor
+development before it is given. If nothing changed materially, do not ask a
+second time.
+
 Stacking the run is proposed by default where the project allows stacked work:
 each task's branch starts from the branch of the task before it, so later
 tasks build on earlier ones without waiting for a merge. The authorizer's
-approval of the summary approves these Git branch dependencies for the run,
-and declining it keeps every task on the integration branch. Stacking the run
-changes where branches start and nothing else: every task keeps its own pull
+approval of the summary approves these Git branch dependencies for the run.
+Declining run-wide stacking leaves separately approved Git branch
+dependencies unchanged. Every other task starts from the integration branch
+unless another explicitly approved Git branch dependency applies. Stacking the
+run changes where branches start and nothing else: every task keeps its own pull
 request and gates, and its task dependencies stay as they were.
 
 A run that covers several tasks gives each task its own branch, pull request,

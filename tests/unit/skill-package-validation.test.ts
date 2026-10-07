@@ -545,6 +545,14 @@ describe("task-delivery workflow invariants", () => {
       "policy:run-stacking-needs-summary-approval",
       /approval of the summary approves these Git branch dependencies for the run/u,
     ],
+    [
+      "policy:declining-run-stacking-keeps-selective-dependencies",
+      /Declining\s+run-wide\s+stacking\s+leaves\s+separately\s+approved\s+Git\s+branch\s+dependencies\s+unchanged/u,
+    ],
+    [
+      "policy:recompute-plan-after-clarification",
+      /start\s+neither\s+preflight\s+nor\s+development\s+before\s+it\s+is\s+given/u,
+    ],
     ["policy:settle-project-pipeline", "Settle which pipeline applies before"],
     [
       "policy:run-never-merges-to-unblock",
@@ -862,8 +870,14 @@ describe("task-delivery workflow invariants", () => {
         "Record the answers where the project keeps its tasks and requirements, through the project's own way of changing them, and show what was changed; where the project has no such place, report the clarified task instead.",
         "Development starts only when no selected task has an open question.",
         "A question that only comes up later is still a stop condition.",
+        "Once every selected task is clarified and its answers are recorded, run the dependency check again over the whole selection and recompute the order and the Git branch plan.",
+        "Compare the result with the summary the authorizer approved.",
+        "If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given.",
+        "If nothing changed materially, do not ask a second time.",
         "Stacking the run is proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it, so later tasks build on earlier ones without waiting for a merge.",
-        "The authorizer's approval of the summary approves these Git branch dependencies for the run, and declining it keeps every task on the integration branch.",
+        "The authorizer's approval of the summary approves these Git branch dependencies for the run.",
+        "Declining run-wide stacking leaves separately approved Git branch dependencies unchanged.",
+        "Every other task starts from the integration branch unless another explicitly approved Git branch dependency applies.",
         "Stacking the run changes where branches start and nothing else: every task keeps its own pull request and gates, and its task dependencies stay as they were.",
         "A run that covers several tasks gives each task its own branch, pull request, and evidence.",
         "Each task's pre-merge delivery ends at READY FOR MERGE.",
@@ -1091,6 +1105,7 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
         "SKILL.md: Following a project pipeline does not by itself mean starting anything in the project's systems.",
         "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
+        "SKILL.md: If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given.",
         "SKILL.md: The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
         "configuration.md: A project may bind them to its own role names and to any executor; the pipeline stays the same when the executor changes.",
         "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it - or such a run is already active for the task and you cannot complete it - or you cannot tell whether either is the case.",
@@ -1120,6 +1135,26 @@ describe("task-delivery workflow invariants", () => {
       );
     });
 
+    test("the plan is recomputed after clarification and a materially changed plan is approved again", () => {
+      const recompute = section.indexOf(
+        "Once every selected task is clarified and its answers are recorded, run the dependency check again over the whole selection",
+      );
+      // After the clarification rule, before the stacking rule.
+      expect(recompute).toBeGreaterThan(
+        section.indexOf(
+          "A question that only comes up later is still a stop condition.",
+        ),
+      );
+      expect(recompute).toBeLessThan(
+        section.indexOf("Stacking the run is proposed by default"),
+      );
+      expect(section).toMatch(
+        /recompute the order and the Git branch plan\. Compare the result with the summary the authorizer approved\. If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given\. If nothing changed materially, do not ask a second time\./u,
+      );
+      // Task and Git branch dependencies stay two separate things.
+      expect(section).toMatch(/a task dependency, a Git branch dependency/u);
+    });
+
     test("stacking a run is offered, approved in the summary, and changes only where branches start", () => {
       expect(section).toMatch(
         /where the project allows stacked work, whether to stack each task on the one before it\. Start preflight only after the authorizer approves that summary\./u,
@@ -1128,8 +1163,11 @@ describe("task-delivery workflow invariants", () => {
         /Stacking the run is proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it/u,
       );
       expect(section).toMatch(
-        /The authorizer's approval of the summary approves these Git branch dependencies for the run, and declining it keeps every task on the integration branch\./u,
+        /The authorizer's approval of the summary approves these Git branch dependencies for the run\. Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another explicitly approved Git branch dependency applies\./u,
       );
+      // A declined run-wide stack never forces every task onto the
+      // integration branch: it would drop a separately approved dependency.
+      expect(section).not.toMatch(/declining it keeps every task/u);
       expect(section).toMatch(
         /Stacking the run changes where branches start and nothing else: every task keeps its own pull request and gates, and its task dependencies stay as they were\./u,
       );
@@ -1139,6 +1177,9 @@ describe("task-delivery workflow invariants", () => {
       );
       expect(branchPolicy).toMatch(
         /The authorizer may approve it once for a whole run, in which case each task's branch starts from the branch of the task before it\./u,
+      );
+      expect(branchPolicy).toMatch(
+        /Declining run-wide stacking leaves separately approved Git branch dependencies unchanged; every other task starts from the integration branch unless another explicitly approved Git branch dependency applies\./u,
       );
       expect(branchPolicy).toMatch(
         /An unrelated task must not inherit another task's unmerged commits, except in a run the authorizer approved as stacked\./u,

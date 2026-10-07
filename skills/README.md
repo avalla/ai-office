@@ -68,7 +68,8 @@ which project pipeline applies - stated when enforced, confirmed when there is
 a default, chosen by you when there are several - without ever removing one of
 its own gates. For a run over several tasks it offers to clarify every task
 before development starts, updating tasks and requirements with your answers,
-and to stack each task on the one before it. It then checks the dependencies
+and to stack each task on the one before it; after clarifying, it recomputes
+the plan and asks again only if it changed materially. It then checks the dependencies
 of the selection, shows a summary, and waits for the go-ahead.
 
 - **Claude Code**: discovered from `.claude/skills/task-delivery`. Invoke with

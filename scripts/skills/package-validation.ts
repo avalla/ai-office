@@ -166,7 +166,17 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:run-stacking-needs-summary-approval",
         pattern:
-          /The authorizer's approval of the summary approves these Git branch dependencies for the run, and declining it keeps every task on the integration branch\./u,
+          /The authorizer's approval of the summary approves these Git branch dependencies for the run\./u,
+      },
+      {
+        id: "policy:declining-run-stacking-keeps-selective-dependencies",
+        pattern:
+          /Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another explicitly approved Git branch dependency applies\./u,
+      },
+      {
+        id: "policy:recompute-plan-after-clarification",
+        pattern:
+          /If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given\./u,
       },
       {
         id: "policy:approve-summary-before-preflight",

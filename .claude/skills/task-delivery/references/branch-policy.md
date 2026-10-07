@@ -19,7 +19,10 @@ They are independent. Decide each explicitly and write both in the pull request.
 - Default base is the integration branch. Stacking is the exception: it needs
   the authorizer's approval and a reason stated in the pull request. The
   authorizer may approve it once for a whole run, in which case each task's
-  branch starts from the branch of the task before it.
+  branch starts from the branch of the task before it. Declining
+  run-wide stacking leaves separately approved Git branch dependencies
+  unchanged; every other task starts from the integration branch unless another
+  explicitly approved Git branch dependency applies.
 - A stacked pull request targets the branch it is stacked on, and says so. Its
   review covers only its own diff. An external review command is run against
   that branch, not against the integration branch.
