@@ -501,19 +501,6 @@ function TaskGraphCanvas({
     visible.membership,
   ]);
 
-  // Re-frame only when the layout itself changes, never on selection or on a
-  // live refresh that leaves the visible set untouched.
-  // Keyed on what the user chose and on the project's structure (its tasks and
-  // dependencies), not on task state: a refresh that completes a task, or a
-  // focus jump, keeps the viewport, while new tasks or links re-frame it.
-  const structure = useMemo(
-    () =>
-      `${graph.tasks.length}|${graph.edges
-        .map((edge) => `${edge.dependsOnTaskId}>${edge.taskId}`)
-        .join(",")}`,
-    [graph.edges, graph.tasks.length],
-  );
-  const layoutSignature = `${direction}|${focusOnly}|${JSON.stringify(filters)}|${structure}`;
   // Isolation belongs to one selection: choosing another item, or clearing,
   // ends it.
   useEffect(() => {
@@ -521,6 +508,7 @@ function TaskGraphCanvas({
   }, [selectedKey]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
   /**
    * Frame the whole graph, but never below a readable zoom: a long chain fitted
    * entirely into view is unreadable, so past that floor the view starts at the
@@ -569,16 +557,51 @@ function TaskGraphCanvas({
       }),
     [fitView],
   );
+  // Re-frame whenever the computed layout changes, whatever caused it. The one
+  // exception is a data-driven change (a live refresh, no user action) after the
+  // user has moved the viewport: their view is left alone.
+  const layoutKey = useMemo(
+    () =>
+      [...positions]
+        .map(([id, at]) => `${id}@${Math.round(at.x)},${Math.round(at.y)}`)
+        .join("|"),
+    [positions],
+  );
+  const actionKey = `${direction}|${focusOnly}|${JSON.stringify(filters)}`;
+  const userMoved = useRef(false);
+  const lastAction = useRef<string | null>(null);
+  const selectedKeyRef = useRef(selectedKey);
+  selectedKeyRef.current = selectedKey;
+  // Clearing a selection is a user action even when it only removes a node that
+  // was kept visible past the filters.
+  const clears = useRef(0);
+  const previousSelection = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedKey === null && previousSelection.current !== null)
+      clears.current += 1;
+    previousSelection.current = selectedKey;
+  }, [selectedKey]);
   useEffect(() => {
     const handle = requestAnimationFrame(() => {
+      const action = `${actionKey}|${clears.current}`;
+      const actionChanged = lastAction.current !== action;
+      lastAction.current = action;
       const pending = pendingFocus.current;
       pendingFocus.current = null;
-      if (pending !== null && Date.now() - pending.at < 1000)
+      if (
+        pending !== null &&
+        pending.key === selectedKeyRef.current &&
+        Date.now() - pending.at < 400
+      ) {
+        userMoved.current = false;
         void focusNode(pending.key);
-      else frameRef.current();
+      } else if (actionChanged || !userMoved.current) {
+        userMoved.current = false;
+        frameRef.current();
+      }
     });
     return () => cancelAnimationFrame(handle);
-  }, [layoutSignature, focusNode]);
+  }, [layoutKey, actionKey, focusNode]);
 
   const focusOn = useCallback(
     (key: string) => {
@@ -760,7 +783,14 @@ function TaskGraphCanvas({
       <div
         className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]"
         onKeyDown={(event) => {
-          if (event.key === "Escape") setSelectedKey(null);
+          if (event.key !== "Escape" || selectedKey === null) return;
+          const focusWasInPanel = asideRef.current?.contains(
+            document.activeElement,
+          );
+          setSelectedKey(null);
+          // The panel content unmounts; keep keyboard focus inside the region.
+          if (focusWasInPanel)
+            requestAnimationFrame(() => asideRef.current?.focus());
         }}
       >
         <div
@@ -784,6 +814,10 @@ function TaskGraphCanvas({
               edgesFocusable={false}
               elementsSelectable={false}
               onlyRenderVisibleElements
+              onMoveStart={(event) => {
+                // Programmatic moves carry no event; only the user's count.
+                if (event !== null) userMoved.current = true;
+              }}
               onPaneClick={() => setSelectedKey(null)}
               proOptions={{ hideAttribution: true }}
               aria-label="Task dependency graph. The side panel lists give keyboard access to runnable, critical-path and related tasks."
@@ -811,8 +845,10 @@ function TaskGraphCanvas({
         </div>
 
         <aside
+          ref={asideRef}
+          tabIndex={-1}
           aria-label="Graph details"
-          className="flex max-h-[70vh] min-h-0 flex-col gap-4 overflow-y-auto rounded-xl border border-border bg-surface p-4 text-sm"
+          className="focus:outline-none flex max-h-[70vh] min-h-0 flex-col gap-4 overflow-y-auto rounded-xl border border-border bg-surface p-4 text-sm"
         >
           {selectedTask !== null && selectedLineage !== null ? (
             <TaskPanel
