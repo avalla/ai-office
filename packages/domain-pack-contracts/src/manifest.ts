@@ -1354,11 +1354,7 @@ function validatorContract(
     );
   return {
     adapter: { id: adapter.id as string, version: adapter.version as string },
-    accepts: accepts.sort(
-      (left, right) =>
-        compareCodeUnits(left.kind, right.kind) ||
-        compareCodeUnits(left.id, right.id),
-    ),
+    accepts,
     inputSchema: contractSchema(record.inputSchema, `${path}.inputSchema`),
     produces: localId(
       record.produces,
@@ -1884,9 +1880,9 @@ export function validateDomainPackManifest(value: unknown): DomainPackManifest {
         `contributions.evidenceTypes[${index}].subject`,
         "artifact type is not declared by this manifest",
       );
-  for (const [index, entry] of (
+  contributions.validators = (
     contributions.validators as readonly ValidatorContribution[]
-  ).entries()) {
+  ).map((entry, index) => {
     const path = `contributions.validators[${index}]`;
     for (const [position, input] of (entry.accepts ?? []).entries())
       if (
@@ -1905,7 +1901,17 @@ export function validateDomainPackManifest(value: unknown): DomainPackManifest {
         `${path}.produces`,
         "evidence type is not declared by this manifest",
       );
-  }
+    return entry.accepts === undefined
+      ? entry
+      : {
+          ...entry,
+          accepts: [...entry.accepts].sort(
+            (left, right) =>
+              compareCodeUnits(left.kind, right.kind) ||
+              compareCodeUnits(left.id, right.id),
+          ),
+        };
+  });
   return {
     schemaVersion: 1,
     id: parseDomainPackId(record.id),

@@ -505,6 +505,22 @@ describe("GP-14A rejections carry the member path", () => {
       inValidator("accepts", [{ kind: "artifactTypes", id: "ghost" }]),
       `${path}.accepts[0].id`,
     );
+    // Reference errors report the written position, even when canonical
+    // ordering would move the invalid entry.
+    expectRejected(
+      inValidator("accepts", [
+        { kind: "evidenceTypes", id: "ghost" },
+        { kind: "artifactTypes", id: "filing" },
+      ]),
+      `${path}.accepts[0].id`,
+    );
+    expectRejected(
+      inValidator("accepts", [
+        { kind: "evidenceTypes", id: "citation-check" },
+        { kind: "artifactTypes", id: "ghost" },
+      ]),
+      `${path}.accepts[1].id`,
+    );
     // The kind decides the section: an evidence ID is not an artifact type.
     expectRejected(
       inValidator("accepts", [{ kind: "artifactTypes", id: "citation-check" }]),
