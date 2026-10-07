@@ -161,6 +161,16 @@ approval on `delivery/review`, `bugfix/review` and `release/verification`,
 with no admitted operation. Tests compare them with the legacy pipelines
 (expressible-subset parity); nothing is enforced from them and the Runtime
 still reads only the legacy sources.
+GP-15 types the pack `knowledge` contribution: an entry
+(`pack:<packId>/knowledge/<localId>`) may declare a category, a field schema,
+opaque seed references and retrieval guidance, which agents select through
+their existing `knowledge` references. It is a definition layer only: the
+AgentKnowledgeStore keeps its trusted tenant and repository scope and is
+never called because a pack declares knowledge, a seed is never resolved, and
+a pack declares no scope, store or credential. The guidance is pack-owned: a
+project cannot declare it, the derived view lists it, and it changes only
+through the reviewed upgrade plan. The development pack still declares no
+knowledge entry.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

@@ -1801,8 +1801,8 @@ See [Professional-work verticals](professional-work-verticals.md).
 ## M16 — Generic Core & Domain Packs
 
 Status: active in AI Office and in progress. GP-01 through GP-09, GP-10A,
-GP-10B-1, GP-10B-2, GP-11 through GP-13, GP-16, GP-22, GP-23 and GP-25 (the
-contract and development pack 0.4.0) are merged: public contracts,
+GP-10B-1, GP-10B-2, GP-11 through GP-13, GP-15, GP-16, GP-22, GP-23 and GP-25
+(the contract and development pack 0.4.0) are merged: public contracts,
 host-local catalog/resolver, exact project binding, definition ownership and
 source-pinned overrides, derived effective configuration with read-only
 inspection, reviewed upgrades, the legacy development profile, role, agent
@@ -1864,8 +1864,8 @@ than import order. Pack upgrades do not overwrite project-owned modifications.
 
 Delivery tasks GP-01–GP-21 (with the GP-10A, GP-10B-1, GP-10B-2 and
 GP-10C-1 extraction slices and GP-14A), the post-GP-06 hardening follow-ups
-GP-22 and GP-23, the pack policy contribution contract GP-25, and their
-dependency graph, acceptance criteria, extraction inventory, migration stages,
+GP-22 and GP-23, the pack policy contribution contract GP-25, the pack
+knowledge guidance contract GP-15, and their dependency graph, acceptance criteria, extraction inventory, migration stages,
 and non-goals are in the
 [Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
 [accepted core/pack boundary ADR](../adr/ADR-0026-core-domain-pack-boundary.md)
@@ -2022,8 +2022,20 @@ shipped defaults, in both directions for all five fields, and marks the five
 GP-25 entries of the residue list delivered. It is not execution parity: a
 policy is a declaration, nothing is enforced from it, the pack is still
 unregistered and unread by the Runtime, and nothing was removed from the
-legacy path. Aliases and declarative development evidence, knowledge and
-capability entries (GP-10C-1) remain planned work of M16; automatic selection,
+legacy path. GP-15 gives the schema-1 `knowledge` contribution a typed
+declarative form: a category, a field schema, opaque seed references and
+retrieval guidance, used through the existing agent `knowledge` references. It
+is a definition layer only: the AgentKnowledgeStore is not called, nothing is
+seeded, and a pack declares no tenant, project, repository or scope (every
+such key is an unknown field). The guidance is pack-owned: a project cannot
+declare it, `project:configuration:show` lists a derived `knowledge` view, and
+the guidance of an existing entry changes only through `project:pack:upgrade`,
+whose plan reports `knowledgeChanges` and `targetKnowledge`
+(`project:pack:apply` refuses it with `knowledge_change_requires_upgrade`). It
+adds no migration, no archive format and no pack data, and carries the scope
+compatibility plan for a later consumer. Aliases and declarative development
+evidence, knowledge and capability entries (GP-10C-1) remain planned work of
+M16; automatic selection,
 remote marketplace/downloads and executable validators remain deferred.
 Runtime enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and
 Runtime execution from packs are planned for M16.5. M16 remains incomplete

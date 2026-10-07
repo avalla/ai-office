@@ -246,6 +246,12 @@ example a restore onto a host where the packs were not yet installed.
 | Workflows (all three since GP-13)                     | The complete typed workflow envelope              | Absent title/description only | Supported   |
 | Policies, capabilities, validators                    | Unsupported                                       | Unsupported                   | Unsupported |
 
+Since GP-15 a knowledge entry may also carry typed guidance (category, field
+schema, seed references, retrieval guidance). It belongs to the pack: it is
+not part of any project operation, a project payload that carries one is
+rejected with `protected_security_invariant`, and the project `replace` and
+`extend` of knowledge stay descriptive (see the GP-15 section).
+
 `replace` supplies the complete schema-1 descriptive envelope, for an agent
 the reference fields of GP-12 and for a workflow the `taskType` and ordered
 `stages` of GP-13; `extend` fills
@@ -3181,9 +3187,9 @@ proposal. They are the decisions of GP-10B-2 that concern the data.
 2. The per-pipeline line of the generated instruction contract is derived
    from the pipelines and mixes stage titles with `enforcement` (GP-25). It
    is recorded as derived and is not a prompt.
-3. `knowledge` (GP-15) and `policies` (GP-25) stay empty, as do
-   `artifactTypes`, `evidenceTypes` and `validators`. No agent names
-   knowledge.
+3. `knowledge` (GP-15) and `policies` (GP-25) stay empty in this pack
+   version, as do `artifactTypes`, `evidenceTypes` and `validators`. No agent
+   names knowledge.
 4. Parity of the requirement-assessment prompt is shown by capturing the
    provider request of `requirement:validate` with a deterministic provider.
    `requirement.ts` is not edited and exports nothing new.
@@ -4009,7 +4015,9 @@ contract are in the GP-25 section.
    The identity of a policy is part of its equality (GP-25 implementation
    record), so a later version that renames one is a reported change.
 8. `knowledge` stays empty, as do `artifactTypes`, `evidenceTypes` and
-   `validators`. Nothing else in the pack changes.
+   `validators`. GP-15 types the `knowledge` contribution without adding an
+   entry to the pack; the pack declares knowledge in GP-10C-1. Nothing else in
+   the pack changes.
 9. The residue list stays at `schemaVersion` 3 with 19 entries, names pack
    `0.4.0`, and marks the five GP-25 entries delivered with `residue: null`.
    Each states what the pack carries and that nothing is enforced by the
@@ -4146,8 +4154,9 @@ fit the data.
 - No enforcement, approval, separation or admitted-operation behavior from a
   pack policy, and no change to the pipeline engine, runs, pins, approvals,
   guards, grants or controlled-action authorization (`a45ddb12`).
-- No knowledge entry (GP-15), no evidence or professional-decision clause
-  (GP-14, GP-17, GP-18) and no capability or provider vocabulary (GP-16).
+- No knowledge entry (typed by GP-15, declared in the pack by GP-10C-1), no
+  evidence or professional-decision clause (GP-14, GP-17, GP-18) and no
+  capability or provider vocabulary (GP-16).
 - No registration, install or adoption of the pack (GP-10C).
 - No removal or modification of any legacy default, and no change to the
   frozen GP-09 profile, its gap codes or its fixtures.
@@ -4241,6 +4250,326 @@ This pack is within the legacy bound because it declares no separation list.
   time, so whether a Runtime that executed these policies would behave like
   the legacy pipelines is not shown and is the subject of task
   `a45ddb12-3159-4b60-9b8b-c26516720834`.
+
+## GP-15 pack knowledge guidance
+
+Status: implemented. The owner approved the design on 2026-10-07; every
+decision below is that approval. Runtime task GP-15, milestone M16. It is one
+pull request: the contract, the resolver and upgrade changes and their tests.
+It adds no pack data: the development reference pack still declares no
+knowledge entry, which is GP-10C-1.
+
+Formal scope:
+
+> Give the schema-1 `knowledge` contribution a typed declarative form: a
+> category, a field schema, opaque seed references and retrieval guidance,
+> used by agents through their existing `knowledge` reference list. Resolve it
+> into a derived view, keep it pack-owned, and let it change only through a
+> reviewed upgrade. Definition layer only: the AgentKnowledgeStore is not
+> called, nothing is seeded, no outage is handled, and no tenant, project,
+> repository or scope is declared.
+
+Anti-goal:
+
+> pack content must not choose a store, a scope, an endpoint, a credential or
+> an operational record, and nothing in M16 may read, write, seed or search the
+> AgentKnowledgeStore because a pack declares knowledge
+
+GP-15 is a definition layer, like GP-11, GP-12, GP-13 and GP-25. A guidance
+entry is a declaration. The Runtime still reaches the AgentKnowledgeStore only
+through its own admission service and run-context assembler, with the trusted
+tenant and portable `repositoryId` of `KnowledgeScope`; no pack module imports
+the store port, its SurrealDB adapter or the admission service, and a test
+keeps that true.
+
+### Decisions
+
+The owner approved these on 2026-10-07.
+
+1. The typed fields are pack-owned. A project `replace` or `extend` of a
+   knowledge entry stays descriptive, and a typed key in a project payload is
+   rejected with the typed error GP-25 uses for a governance key
+   (`protected_security_invariant`); nothing is written. No portable archive
+   format is added.
+2. `disable` of a knowledge entry stays unsupported, so no migration is
+   needed.
+3. A pack declares no scope. A tenant, project, repository, scope, store,
+   endpoint, collection or credential key is an unknown field and is rejected
+   by the strict allowlist. Agent settings reuse the agent `knowledge`
+   reference list (GP-12); no agent field is added. The compatibility plan
+   below lives in this section only.
+4. The row of this task in the delivery table reads "definition layer only;
+   store untouched".
+
+### Knowledge item
+
+A schema-1 knowledge item keeps `id` and the optional `title` and
+`description` and gains four optional fields, valid on `knowledge` only:
+
+```text
+{ id, title?, description?,
+  category?: <local ID>,
+  schema?: [ { field: <local ID>, description: <text> }, ... ],
+  seeds?: [ <opaque reference string>, ... ],
+  retrieval?: { maxResults?: <integer 1..5>,
+                hint?: <text>,
+                categories?: [ <local ID>, ... ] } }
+```
+
+| Field                  | Meaning                                          | Bound                                                                                                                             |
+| ---------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `category`             | The category label of the entry.                 | A local ID.                                                                                                                       |
+| `schema`               | The fields the entry's records are described by. | 1 to 64 entries (`maximumDescriptiveListEntries`); `field` follows the local ID rule; `description` is non-empty manifest text.   |
+| `seeds`                | Opaque references to seed material.              | 1 to 64 entries (`maximumKnowledgeSeeds`), each non-empty manifest text of at most 512 characters (`maximumKnowledgeTextLength`). |
+| `retrieval.maxResults` | The most results retrieval guidance suggests.    | An integer from 1 to `knowledgeRetrievalLimits.maxResults` (5).                                                                   |
+| `retrieval.hint`       | Free-text retrieval guidance.                    | Non-empty manifest text of at most 512 characters.                                                                                |
+| `retrieval.categories` | The categories retrieval should prefer.          | 1 to 64 local IDs (`maximumKnowledgeRetrievalCategories`).                                                                        |
+
+Every fact has one encoding. A member is canonical only when present: an
+empty list is rejected and the field is omitted instead, and `retrieval` holds
+at least one member. `schema`, `seeds` and `retrieval.categories` are sets:
+the validated manifest holds `schema` in ascending code-unit order of `field`
+and the two lists in ascending code-unit order, so `manifestDigest` does not
+depend on the written order. A duplicate `field`, seed or category is
+rejected.
+
+The text rule is the shared manifest text rule: a lone surrogate has no
+canonical JSON form and is rejected, and U+0000 is allowed by design (GP-23).
+A seed is opaque text. It is never parsed, resolved, fetched, read from a path
+or checked against a scheme: `file:///etc/passwd`, `../../x` and
+`surreal://tenant-b/repository-b/memory` are kept byte for byte and mean
+nothing to this package or to the resolver. `categories` and `category` are
+labels, not references to a contribution; whether a category is also the
+`category` of another entry is not checked.
+
+The contract package rejects, with a typed `DomainPackManifestError`
+(`invalid_contribution`) and the path of the offending member:
+
+- `category` that is not a local ID;
+- `schema`, `seeds` or `retrieval.categories` that is not an array, is empty,
+  holds more than its bound, or holds a duplicate;
+- a `schema` entry that is not an object, has an unknown or missing key, a
+  `field` that is not a local ID or a `description` that is empty or not text;
+- a seed or hint that is empty, not text, over 512 characters or holding a
+  lone surrogate;
+- `retrieval` that is not an object, is empty, has an unknown key, a
+  `maxResults` that is not an integer from 1 to 5, or a `hint` or `categories`
+  that fails the rules above;
+- any other key, in the entry and in every nested object, including
+  `tenantId`, `repositoryId`, `projectUid`, `projectId`, `scope`, `store`,
+  `endpoint`, `collection`, `credential` and `__proto__`;
+- any of the four fields on another contribution kind, where it remains an
+  unknown field.
+
+This is an additive section-schema extension within manifest schema 1 and core
+contract version 1. A manifest without the fields keeps its canonical form and
+`manifestDigest`; the golden fixture digests and the digests of the published
+development pack versions are unchanged. A Runtime built before GP-15 rejects
+a manifest that uses the fields as unknown fields; it never ignores them.
+
+### Resolution
+
+Resolution is unchanged for every pack: a knowledge entry resolves as before
+and an agent still names it by local ID, resolved to its stable ID in the
+agent's own namespace. `project:configuration:show` gains a derived
+`knowledge` view next to the role, agent, workflow and policy views:
+
+- `knowledge`: one entry for every knowledge definition, in the GP-06
+  definition order, with `knowledgeId`, `effectiveId`, `origin`, the `title`
+  and `description` when present, the typed members the pack declares
+  (`category`, `schema`, `seeds`, `retrieval`, each present only when
+  declared) and `customization` (`none`, `replace` or `extend`).
+
+`knowledgeId` is the stable ID `pack:<packId>/knowledge/<localId>`, or
+`project:knowledge/<localId>` for a project-owned entry, which has no typed
+member. The view is derived and is not part of the version-1
+`configurationDigest` material. The digest format and the documented
+empty-input vector are unchanged, and a configuration without typed knowledge
+keeps its digest. A typed member is already covered by the digest through the
+pack payload in `effectiveDefinitions` and its entry in `origins`, so changing
+one changes the digest.
+
+### Knowledge guidance is pack-owned
+
+1. A project payload cannot carry a typed key. `category`, `schema`, `seeds`
+   and `retrieval` in a `replace`, an `extend` or a project-owned knowledge
+   payload are rejected with `protected_security_invariant` and the message
+   "Knowledge guidance is declared by the pack; a project cannot declare it";
+   any other unknown key keeps its GP-07 rejection. Nothing is written, and
+   `project:definition:preview` reports the same.
+2. A `replace` substitutes the descriptive envelope only. The resolver keeps
+   the pack's typed members under every customization, as it keeps a role's
+   capabilities (GP-11), and an `extend` fills absent title or description
+   only. Stored state that carries a typed key is untrusted: GP-06 resolution
+   fails closed with `unresolved_override` instead of merging it, and the
+   portable archive schema, which is strict, cannot export it.
+3. `disable` of a knowledge entry stays `unsupported_override_operation`, and
+   `put_owned` and `put_override` of every other kind are as before.
+4. The agent `knowledge` list is unchanged. An agent that names an entry
+   selects the pack's guidance for that entry; it cannot alter it, and it
+   cannot name another pack's entry.
+
+### Change control
+
+A guidance change is never incidental, like a policy change in GP-25.
+`project:pack:upgrade` is the only command that carries one out for an
+existing entry, under an approved plan.
+
+The upgrade report adds two fields, both covered by `planDigest`:
+
+- `knowledgeChanges`: for every knowledge entry whose typed guidance differs
+  between the old and new resolved closures, the `knowledgeId`, the `change`
+  (`added`, `removed` or `changed`), the guidance `before` and `after` where
+  each exists, and whether a project override names the entry (`customized`).
+  A guidance is reported as `{ knowledgeId, category?, schema?, seeds?,
+retrieval? }`; `title` and `description` are presentation and are not
+  compared. It has the availability rule of `policyChanges`: `unavailable`
+  (`previous_closure_unresolved`) when the previous artifacts are no longer
+  installed, and empty when the selection itself does not change.
+- `targetKnowledge`: every entry of the target closure that declares guidance,
+  in the same form, in ascending `knowledgeId` order. Approval therefore binds
+  the resulting guidance even when the previous closure cannot be read.
+
+A no-op plan carries both fields empty. The `project.pack_upgrade_applied`
+audit event records both fields: identities and guidance values only, never a
+title, a description or a project payload. No upgrade rewrites a project
+value: an override is carried over whole and only the pack tuple of its source
+is retargeted.
+
+`project:pack:apply` refuses a selection change that alters the guidance of an
+entry present in both resolved closures (same `knowledgeId`): changed
+guidance, guidance added to an existing entry and guidance removed from one.
+Its preview reports `knowledgeChanges`, computed by the same function as the
+upgrade plan and without the `customized` mark, and adds the issue
+`knowledge_change_requires_upgrade` after the GP-25 policy refusal. The CLI
+prints the message, which names `project:pack:upgrade`, on stderr and exits 1;
+no state is written. The addition or removal of a pack, a version change that
+alters presentation only, and a version change that adds or removes a whole
+entry are still applied. When the closures cannot be read, `knowledgeChanges`
+is `unavailable` with the reason `policyChanges` carries.
+
+### Scope compatibility plan
+
+This section is a plan only; no code reads it. The store scopes every record
+by the trusted tenant of the Runtime composition and the portable
+`repositoryId` of the project (`KnowledgeScope`). Decision 3 keeps both out of
+pack content, so a pack can never widen, narrow or redirect a scope.
+
+A later task that consumes this guidance, which no milestone owns, must:
+
+- derive the scope from project authority and Runtime composition, never from
+  a manifest member, and keep every existing key and provenance of legacy
+  records readable;
+- decide, as its own architectural change, the stable scope of a project that
+  has no repository, which the audit of this plan names as a generic
+  abstraction the port needs;
+- treat `category`, `schema`, `retrieval.categories` and `hint` as advisory
+  labels within that scope, and `maxResults` as a request bounded by
+  `knowledgeRetrievalLimits.maxResults`, never as an authorization;
+- resolve a seed only in trusted Runtime composition, as a reference the host
+  understands, never as a path, endpoint or credential a pack supplies, and
+  record the result through the admission service with its own provenance;
+- add old and new knowledge fixtures and the outage and provenance behavior
+  this task does not deliver.
+
+### Persistence
+
+None. No migration is added on either backend, and no archive format:
+guidance lives in the pack artifact and in derived output, and no project
+state of a new kind exists. An archive of a project bound to a pack with
+guidance is written at the format it had before. SQLite and PostgreSQL run the
+same provider-independent contract test.
+
+### Acceptance
+
+1. The manifest parser accepts the typed knowledge item. Each validation
+   failure listed above raises `invalid_contribution` with the member path.
+   Golden fixture digests and the digests of the published pack versions are
+   unchanged.
+2. The written order of `schema`, `seeds` and `retrieval.categories` does not
+   change `manifestDigest`; a member that is present changes it.
+3. A pack with typed knowledge resolves, and `project:configuration:show`
+   lists `knowledge` with stable IDs; agents keep their references.
+4. The empty-input `configurationDigest` vector and the digest of every
+   configuration without typed knowledge are unchanged.
+5. A typed key in a project `replace`, `extend` or project-owned payload is
+   rejected with `protected_security_invariant` and nothing is written;
+   `disable` is still unsupported; stored state with a typed key fails
+   resolution closed.
+6. A project `replace` keeps the pack's guidance in the resolved view.
+7. Upgrade: `knowledgeChanges` and `targetKnowledge` are present, covered by
+   `planDigest` and recorded in the audit event without a definition body; a
+   no-op plan carries both empty; `knowledgeChanges` is `unavailable` when the
+   previous artifacts are not installed, while `targetKnowledge` still lists
+   the target closure; no project value is rewritten.
+8. `project:pack:apply` refuses a version change that alters an existing
+   entry's guidance, with the typed error, exit 1 and no state or audit
+   event, and still applies the cases listed above.
+9. An archive of a project bound to such a pack is written at the format it
+   had before and restores; a project payload with a typed key cannot be
+   exported.
+10. A recording agent knowledge store injected in the Runtime composition
+    sees zero calls through bind, resolve, replace, upgrade, backup and
+    restore over the Unix socket, and no domain-pack module imports the store
+    port, its SurrealDB adapter or the admission service.
+11. The scope keys, hostile seed strings, oversized lists and a lone
+    surrogate are rejected or kept opaque as specified, and the Runtime
+    tables other than the audit event and pack binding rows are identical
+    after binding a pack with guidance to the GP-09 fixture.
+12. SQLite and PostgreSQL (existing gated contract suite) produce the same
+    results.
+
+### Non-goals
+
+- No call to the AgentKnowledgeStore, no seeding, no seed resolution, no
+  outage handling and no change to the run context assembler or knowledge
+  admission.
+- No new port, persistence abstraction, migration or archive format, and no
+  new manifest error code.
+- No scope, tenant, project, repository, store, endpoint, collection or
+  credential in a pack, and no project-owned guidance.
+- No change to the development pack data (GP-10C-1) or to
+  `outside-pack-vocabulary.json`, and no registration, install or adoption of
+  any pack.
+- No new vector or graph store, and no change to the Runtime's use of
+  knowledge.
+
+### Known limitations
+
+- `maximumKnowledgeRetrievalResults` repeats the Runtime bound
+  `knowledgeRetrievalLimits.maxResults` because the contract package cannot
+  import the application port; a unit test keeps the two equal.
+- The 512-character bound of a seed and of a hint, and the 64-entry bound of
+  `seeds` and `retrieval.categories`, are chosen by this task; the 64-entry
+  bound of `schema` is the descriptive list bound of GP-10B-2.
+- A seed has no scheme or format check by design, so a later consumer must
+  validate what it resolves.
+- A category is a label: a `retrieval.categories` entry that names no
+  category is not rejected.
+- The statement that a Runtime built before GP-15 rejects the fields rests on
+  the unchanged strict allowlist of that code; it was checked once against the
+  previous parser and is not kept as a test.
+
+### Implementation record
+
+- Contract: `packages/domain-pack-contracts/src/manifest.ts` parses the four
+  fields, exports the bounds and the `KnowledgeContribution` type, and holds
+  the sets in code-unit order.
+- Application: `pack-knowledge-guidance.ts` extracts the guidance of an entry;
+  `pack-knowledge-changes.ts` computes the closure guidance and the
+  differences; `resolve-project-configuration.ts` adds the `knowledge` view
+  and keeps the pack's guidance under a `replace`; `project-definition.ts`
+  rejects a typed key; `reconcile-project-pack-upgrade.ts` and
+  `manage-project-pack-binding.ts` add the plan fields, the audit payload and
+  the `knowledge_change_requires_upgrade` refusal.
+- Tests: `tests/unit/domain-pack-knowledge-guidance.test.ts` (contract),
+  `tests/integration/pack-knowledge-guidance.test.ts` (SQLite flow),
+  the provider-independent case in
+  `tests/contracts/project-storage.contract.ts`, the boundary test in
+  `tests/unit/architecture-boundaries.test.ts` and
+  `tests/e2e/pack-knowledge-guidance.test.ts` (Unix socket, recording store).
+- No development pack file, `outside-pack-vocabulary.json`, migration or
+  archive module changed.
 
 ## Objective and decision boundary
 
@@ -4490,7 +4819,7 @@ other work that left the M16 exit.
 | GP-12 — Pack agent archetypes                                     | GP-11                           | Definition layer: stable agent identity; declarative role, prompt, knowledge and requested-capability references bounded by the role; project replace, disable and add; identity and project changes kept on an upgrade.                                                                                                                                                  | Agent configuration contracts and upgrade/authority tests.                                                                                                                               | Runtime agents, model, tools, pipeline, approval, grants.                                                   |
 | GP-13 — Pack workflow templates                                   | GP-11, GP-12                    | Definition layer: stable workflow and stage identity; project replace (rename, reorder, add or remove stages with pack-local references), extend and disable of a pack workflow; customizations kept on an upgrade; generic engine, runs, pins, approvals and guards untouched.                                                                                           | Workflow customization contracts and upgrade/preservation tests.                                                                                                                         | Pipeline engine, Runtime pipelines, in-flight pinned runs (GP-24).                                          |
 | GP-14A — Artifact, evidence and validator definitions             | GP-03, GP-06                    | First half of the split GP-14; no M11.6 dependency. Definition layer: declare domain artifact and evidence types and trusted validator references (adapter ID, exact version, input/output schema, failure policy); project customization and upgrade rules as its contract section defines. No validator runs and no evidence or review state is enforced.               | Typed fixture schemas and definition, customization and upgrade tests.                                                                                                                   | Running arbitrary pack code; fail-closed evidence and version-bound review (GP-14B, M16.5).                 |
-| GP-15 — Pack knowledge guidance                                   | GP-06                           | Contribute categories, schemas, seed references, retrieval guidance and agent settings through AgentKnowledgeStore with trusted tenant/project scope.                                                                                                                                                                                                                     | Scope compatibility plan and old/new knowledge fixtures; outage and provenance tests.                                                                                                    | New vector/graph store or authority.                                                                        |
+| GP-15 — Pack knowledge guidance                                   | GP-06                           | Definition layer only; store untouched. Give the schema-1 `knowledge` contribution a typed form (category, field schema, opaque seed references, retrieval guidance) used through the existing agent `knowledge` references; pack-owned, resolved into a derived view and changed only by a reviewed upgrade. No AgentKnowledgeStore call, seeding, scope or outage handling. | Contract section, scope compatibility plan, contract, SQLite/PostgreSQL and Unix-socket tests; a recording store sees zero calls. | New vector/graph store or authority; store use, seeding and scope declared by a pack. |
 | GP-16 — Pack capability contracts                                 | GP-06                           | Definition layer: a pack capability declares required or optional operations by name and mode; the Runtime host exposes its registered providers read-only; resolution, binding preview/apply and upgrade fail closed on a missing or mismatched required provider; the resolved view reports each binding. Grants, constraints, approval and controlled execution are unchanged and still separately authorize use. No scheduler gate. | Capability contract, provider catalog port, fail-closed resolution/preflight tests, and controlled-action tests proving a binding grants nothing.                                        | Pack-granted authority or direct credentials; run gating and pins (`a45ddb12`, GP-24); stage or policy semantics (GP-25); validator adapters (GP-14B); abstract multi-provider contracts. |
 | GP-17 — Legal reference fixture                                   | GP-11–13, GP-14A, 15, 16, 25    | Matter intake, research, draft, citation/evidence review and human approval are defined through public contracts with no software defaults. The fixture binds through a test-supplied catalog, resolves, and is customized and upgraded; it does not run a core lifecycle.                                                                                                | Minimal legal pack/fixture and bind, resolve, customize and upgrade tests for roles, workflow, artifact, knowledge and governance definitions.                                           | Production legal service or filing adapter; lifecycle execution (M16.5).                                    |
 | GP-18 — Manufacturing reference fixture                           | GP-11–13, GP-14A, 15, 16, 25    | Production order, execution, inspection, deviation and supervisor approval are defined through public contracts with no software defaults. The fixture binds through a test-supplied catalog, resolves, and is customized and upgraded; it does not run a core lifecycle.                                                                                                 | Minimal manufacturing pack/fixture and bind, resolve, customize and upgrade tests for provenance, policy and capability definitions.                                                     | MES, ERP, OPC-UA or PLC writes; lifecycle execution (M16.5).                                                |
@@ -4936,9 +5265,9 @@ project has adopted the development pack.
   activation (provisional, see the table below).
 
 **Rows owned by other pull requests.** The same owner decision set the M16
-part of three tasks whose table rows this record did not edit. GP-16 and
-GP-25 have since merged and updated their own rows (#116, #117); read the
-GP-15 row as follows until its pull request updates it.
+part of three tasks whose table rows this record did not edit. GP-16,
+GP-25 and GP-15 have since merged and updated their own rows (#116, #117 and
+the GP-15 pull request); read the GP-16 and GP-25 rows as follows.
 
 - GP-16. The original row listed "bind registered providers at bootstrap"
   and "reject missing required provider before runs". Those two clauses are
@@ -4946,11 +5275,6 @@ GP-15 row as follows until its pull request updates it.
   declarations plus fail-closed provider availability at resolution and at
   binding preflight, with no run or scheduler gate. The merged GP-16 row and
   contract section state exactly this.
-- GP-15. The row still reads as use of the AgentKnowledgeStore. In M16,
-  GP-15 is delivered as a definition layer only: no store call and no
-  seeding. Store use, seeding, and "outage and provenance" behaviour beyond
-  proving that the store is untouched are not M16; this record assigns them
-  to no milestone.
 - GP-25. The pack policy contribution contract is an M16 task: a definition
   layer, pack-owned. Its row and scope were updated by its own pull request
   (#117); its development pack data (0.4.0) was delivered by a second pull
