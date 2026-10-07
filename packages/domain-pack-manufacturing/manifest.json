@@ -1,0 +1,322 @@
+{
+  "schemaVersion": 1,
+  "id": "org.ai-office.manufacturing",
+  "version": "0.1.0",
+  "manifestDigest": "sha256:6b2c9ca7f752f38d165d065d051158552a8e3fa1b1749cdb7d4c308afe4e9b94",
+  "coreContract": {
+    "minInclusive": 1,
+    "maxExclusive": 2
+  },
+  "metadata": {
+    "name": "Manufacturing reference",
+    "description": "Declarative production-order fixture; it does not operate equipment or run a Runtime pipeline."
+  },
+  "dependencies": [],
+  "contributions": {
+    "roles": [
+      {
+        "id": "planner",
+        "title": "Production planner"
+      },
+      {
+        "id": "operator",
+        "title": "Production operator",
+        "capabilities": ["record-order"]
+      },
+      {
+        "id": "inspector",
+        "title": "Quality inspector"
+      },
+      {
+        "id": "deviation-coordinator",
+        "title": "Deviation coordinator"
+      },
+      {
+        "id": "supervisor",
+        "title": "Supervisor"
+      }
+    ],
+    "taskTypes": [
+      {
+        "id": "production-order"
+      }
+    ],
+    "workflows": [
+      {
+        "id": "production-flow",
+        "title": "Production order review",
+        "taskType": "production-order",
+        "stages": [
+          {
+            "id": "plan",
+            "role": "planner",
+            "title": "Plan",
+            "objective": "Record the production order"
+          },
+          {
+            "id": "execute",
+            "role": "operator",
+            "title": "Execute",
+            "objective": "Record work against the order"
+          },
+          {
+            "id": "inspect",
+            "role": "inspector",
+            "title": "Inspect",
+            "objective": "Record inspection findings"
+          },
+          {
+            "id": "deviation",
+            "role": "deviation-coordinator",
+            "title": "Deviation",
+            "objective": "Record and review any deviation"
+          },
+          {
+            "id": "supervisor-approval",
+            "role": "supervisor",
+            "title": "Supervisor approval",
+            "objective": "Approve the inspected order and any deviation"
+          }
+        ]
+      }
+    ],
+    "agents": [
+      {
+        "id": "planner-agent",
+        "role": "planner"
+      },
+      {
+        "id": "operator-agent",
+        "role": "operator",
+        "knowledge": ["work-instructions"],
+        "capabilities": ["record-order"]
+      },
+      {
+        "id": "inspector-agent",
+        "role": "inspector",
+        "knowledge": ["work-instructions"]
+      },
+      {
+        "id": "deviation-agent",
+        "role": "deviation-coordinator",
+        "knowledge": ["work-instructions"]
+      },
+      {
+        "id": "supervisor-agent",
+        "role": "supervisor"
+      }
+    ],
+    "artifactTypes": [
+      {
+        "id": "production-order",
+        "title": "Production order",
+        "mediaTypes": ["application/json"],
+        "maximumBytes": 65536,
+        "contentSchema": {
+          "type": "object",
+          "properties": {
+            "orderId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "batchId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["orderId", "batchId"]
+        }
+      },
+      {
+        "id": "inspection-report",
+        "title": "Inspection report",
+        "mediaTypes": ["application/json"],
+        "maximumBytes": 65536,
+        "contentSchema": {
+          "type": "object",
+          "properties": {
+            "orderId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result": {
+              "type": "enum",
+              "values": ["pass", "fail"]
+            }
+          },
+          "required": ["orderId", "result"]
+        }
+      }
+    ],
+    "evidenceTypes": [
+      {
+        "id": "execution-evidence",
+        "title": "Execution provenance",
+        "subject": "production-order",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "sourceRecord": {
+              "type": "string",
+              "minLength": 1
+            },
+            "observedAt": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["sourceRecord", "observedAt"]
+        }
+      },
+      {
+        "id": "inspection-evidence",
+        "title": "Inspection evidence",
+        "subject": "inspection-report",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "inspector": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["inspector"]
+        }
+      },
+      {
+        "id": "deviation-evidence",
+        "title": "Deviation evidence",
+        "subject": "inspection-report",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["reason"]
+        }
+      },
+      {
+        "id": "approval-evidence",
+        "title": "Supervisor approval evidence",
+        "subject": "production-order",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "enum",
+              "values": ["approved", "rejected"]
+            }
+          },
+          "required": ["decision"]
+        }
+      }
+    ],
+    "policies": [
+      {
+        "id": "production-governance",
+        "title": "Production governance",
+        "workflow": "production-flow",
+        "enforcement": "enforced",
+        "stages": [
+          {
+            "stage": "execute",
+            "operations": ["manufacturing.order.record"]
+          },
+          {
+            "stage": "inspect",
+            "requiresApproval": true,
+            "requiresDifferentAgentFrom": ["execute"]
+          },
+          {
+            "stage": "supervisor-approval",
+            "requiresApproval": true,
+            "requiresIndependentApproval": true,
+            "requiresDifferentAgentFrom": ["execute", "inspect"]
+          }
+        ]
+      }
+    ],
+    "knowledge": [
+      {
+        "id": "work-instructions",
+        "title": "Work instruction guidance",
+        "category": "production_procedure",
+        "schema": [
+          {
+            "field": "revision",
+            "description": "Revision of the instruction."
+          },
+          {
+            "field": "source",
+            "description": "Reviewed source of the instruction."
+          }
+        ],
+        "retrieval": {
+          "maxResults": 5,
+          "hint": "Use only the current reviewed instruction and preserve its revision in the work record."
+        }
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "record-order",
+        "operations": [
+          {
+            "operation": "manufacturing.order.record",
+            "mode": "mutation"
+          }
+        ],
+        "requirement": "optional"
+      }
+    ],
+    "prompts": [],
+    "validators": [
+      {
+        "id": "inspection-validator",
+        "title": "Inspection validator reference",
+        "adapter": {
+          "id": "manufacturing.inspection-check",
+          "version": "1.0.0"
+        },
+        "accepts": [
+          {
+            "kind": "artifactTypes",
+            "id": "inspection-report"
+          }
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "orderId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "result": {
+              "type": "enum",
+              "values": ["pass", "fail"]
+            }
+          },
+          "required": ["orderId", "result"]
+        },
+        "produces": "inspection-evidence",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "inspector": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["inspector"]
+        },
+        "failurePolicy": "fail_closed",
+        "timeoutMs": 30000,
+        "maxInputBytes": 65536,
+        "maxOutputBytes": 65536
+      }
+    ]
+  }
+}

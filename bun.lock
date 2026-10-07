@@ -68,6 +68,9 @@
     "packages/domain-pack-development": {
       "name": "@ai-office/domain-pack-development",
     },
+    "packages/domain-pack-manufacturing": {
+      "name": "@ai-office/domain-pack-manufacturing",
+    },
     "packages/filesystem-connector": {
       "name": "@ai-office/filesystem-connector",
     },
@@ -137,6 +140,8 @@
     "@ai-office/domain-pack-contracts": ["@ai-office/domain-pack-contracts@workspace:packages/domain-pack-contracts"],
 
     "@ai-office/domain-pack-development": ["@ai-office/domain-pack-development@workspace:packages/domain-pack-development"],
+
+    "@ai-office/domain-pack-manufacturing": ["@ai-office/domain-pack-manufacturing@workspace:packages/domain-pack-manufacturing"],
 
     "@ai-office/filesystem-connector": ["@ai-office/filesystem-connector@workspace:packages/filesystem-connector"],
 
