@@ -3418,14 +3418,15 @@ to 16 are the contract (PR 1).
 
 ## GP-25 pack policy contribution contract
 
-Status: contract implemented; pack data pending. The owner approved the scope
+Status: implemented. The owner approved the scope
 proposal on 2026-10-06 (option B-M, every decision below at its proposed
 default) and confirmed the number GP-25. Runtime task
-`1a883c04-0905-4b36-a57b-12d45fdfd59f`. GP-25 is delivered in two pull
-requests. The first, the contract, delivers everything in this section except
-the pack data. The second adds the policies to the development reference
-pack, their parity tests and the residue list; it waits for the pack version
-GP-10B-2 publishes, because pack versions are serialized.
+`1a883c04-0905-4b36-a57b-12d45fdfd59f`. GP-25 was delivered in two pull
+requests. The first, the contract, delivered everything in this section except
+the pack data. The second added the policies to the development reference
+pack, their parity tests and the residue list, as development pack `0.4.0`,
+after the pack version GP-10B-2 published, because pack versions are
+serialized; it is the section "GP-25 PR 2 development pack 0.4.0".
 
 Formal scope:
 
@@ -3908,8 +3909,325 @@ instead of `malformed_origin_reference`.
   that a Runtime executing from these declarations would behave like the
   legacy pipelines; that is the subject of task
   `a45ddb12-3159-4b60-9b8b-c26516720834`. The development reference pack
-  declares no policy yet: the policies used on the GP-09 fixture are added to
-  a copy of the pack inside the test.
+  declared no policy in this pull request: the policies used on the GP-09
+  fixture were added to a copy of the pack inside the test. Pack `0.4.0`
+  declares them (see "GP-25 PR 2 development pack 0.4.0").
+
+## GP-25 PR 2 development pack 0.4.0
+
+Status: implemented. The owner approved the scope proposal of GP-25 on
+2026-10-06, option B-M, and with it the second pull request below, every
+decision at its proposed default. This section is the contract of that pull
+request, which landed in three commits: this contract, then the failing tests,
+then the data. "Implementation record" at the end of this section records what
+was built where the contract left a choice, and where the evidence stops.
+
+Formal scope:
+
+> Extend the development reference pack `org.ai-office.development` from
+> `0.3.0` to `0.4.0` with typed policy contributions, in the schema-1 form
+> that the merged GP-25 contract (#117) added, that equal the legacy governance
+> defaults on the five GP-25 entries of the residue list. Prove
+> expressible-subset parity over them. No contract change, Runtime
+> consumption, catalog registration, adoption or legacy-path removal occurs in
+> this pull request.
+
+Anti-goal:
+
+> the pack must not become authoritative for Runtime execution without a
+> separately approved task
+
+The property this pull request proves is **expressible-subset parity**: the
+resolved configuration of a project bound to the pack and the GP-09 legacy
+development state are equal over the subset that schema 1 can now represent.
+That subset is the GP-10B-2 subset plus the legacy governance: pipeline
+`enforcement` and, per stage, `requiresApproval`,
+`requiresIndependentApproval`, `requiresDifferentAgentFrom` and `capabilities`
+(the admitted `operations` of a policy). It is not execution parity. A project
+bound to the pack still runs on the pipelines of its OfficeManifest, exactly
+as before, and the Runtime enforces nothing from a pack policy. A policy is a
+declaration. Comparing execution from a resolved configuration with legacy
+execution stays with the Runtime task "Runtime resolved-configuration
+execution parity" (`a45ddb12-3159-4b60-9b8b-c26516720834`).
+
+Nothing was removed from the legacy path. The default office manifest, its
+four pipelines, their `enforcement`, `requiresApproval` and `capabilities`,
+`officeTaskKinds`, `agents/**`, the pipeline engine, the approval and
+authorization services and the guards are unchanged and remain the only
+sources the Runtime reads. No pipeline, run, pin, approval, guard, grant or
+capability decision is created, read or changed by a policy of the pack.
+Where a policy and the legacy pipeline disagree, the legacy pipeline is what
+runs, and a test fails.
+
+### Decisions
+
+The owner approved these on 2026-10-06, each at the default of the scope
+proposal. They are the decisions of this pull request; the decisions of the
+contract are in the GP-25 section.
+
+1. The pack declares one policy for each of three workflows, `delivery`,
+   `bugfix` and `release`, and none for `discovery`, whose legacy pipeline has
+   no `enforcement` and no stage flag. A guidance workflow carries a policy
+   only for its approval flags, and no `enforcement`.
+2. The `delivery` policy declares `enforcement: "enforced"`. No policy of the
+   pack declares `enforcement: "guidance"`, which the contract does not
+   accept: guidance is the absent field.
+3. The stage approvals are `requiresApproval: true` on `delivery/review`,
+   `bugfix/review` and `release/verification`, the three stages of the
+   default office manifest that carry it. No other stage has a clause.
+4. No operation is admitted on any stage. The legacy `delivery` stages declare
+   `capabilities: []`, and the guidance stages declare none; absent
+   `operations` is the one encoding of both (GP-25 decision 5), so the policies
+   declare no `operations` field and there is no empty list to write.
+5. The two legacy fields that the defaults do not use,
+   `requiresIndependentApproval` and `requiresDifferentAgentFrom`, are not
+   declared. The pack carries the clause form of both, as the contract
+   defines it, and parity for them is that the legacy side holds neither on
+   any stage and that a legacy stage that holds either breaks parity. The
+   pack declares no separation list, so the legacy bound of 16 entries holds
+   vacuously; a test fails if a list is added that exceeds it.
+6. Pack and legacy values are compared as one governance shape. An absent
+   legacy `capabilities` and an empty one are equal, an absent `enforcement`
+   and `"guidance"` are equal, and the lists of a stage are sets: the legacy
+   order of `requiresDifferentAgentFrom` is not compared, as GP-25 treats the
+   list as a set.
+7. At most one policy for one workflow (GP-25 decision 3). The policy local IDs
+   are `delivery-governance`, `bugfix-governance` and `release-governance`.
+   The identity of a policy is part of its equality (GP-25 implementation
+   record), so a later version that renames one is a reported change.
+8. `knowledge` stays empty, as do `artifactTypes`, `evidenceTypes` and
+   `validators`. Nothing else in the pack changes.
+9. The residue list stays at `schemaVersion` 3 with 19 entries, names pack
+   `0.4.0`, and marks the five GP-25 entries delivered with `residue: null`.
+   Each states what the pack carries and that nothing is enforced by the
+   Runtime. The `owner` of a delivered entry names the task that delivered it,
+   which is `GP-25`. The GP-10C and `a45ddb12` entries keep their owner and
+   their residue.
+
+### Reference pack
+
+`org.ai-office.development@0.4.0`, schema 1, core contract `[1, 2)`, still
+data only and unregistered. It declares the roles, agents, task types,
+capabilities, workflows and prompts of `0.3.0` unchanged, with this addition
+and no other:
+
+| Policy                | Workflow   | Declares                                                            |
+| --------------------- | ---------- | ------------------------------------------------------------------- |
+| `delivery-governance` | `delivery` | `enforcement: "enforced"`; stage `review`: `requiresApproval: true` |
+| `bugfix-governance`   | `bugfix`   | stage `review`: `requiresApproval: true`                            |
+| `release-governance`  | `release`  | stage `verification`: `requiresApproval: true`                      |
+
+The `discovery` workflow has no policy. No policy declares `operations`,
+`requiresIndependentApproval` or `requiresDifferentAgentFrom`. Every other
+field of the manifest is as in `0.3.0`, which a pinned digest over that subset
+shows against a frozen copy of the `0.3.0` file. The manifest digest and the
+digest of the file bytes change and are pinned anew.
+
+### Expressible-subset parity
+
+The comparison shape gains one part, `governance`, and both sides must be
+equal on it. For every workflow, which is every legacy pipeline, it holds the
+`enforcement` (`enforced` or `guidance`) and the stages that carry any
+clause, in ascending order of stage ID, each with `requiresApproval`,
+`requiresIndependentApproval`, `requiresDifferentAgentFrom` and `operations`.
+A stage with no clause is not listed, so a change to the stage list that does
+not touch a clause does not move the governance part. On the legacy side the
+value of a stage is its `requiresApproval`, `requiresIndependentApproval`,
+sorted `requiresDifferentAgentFrom` and sorted `capabilities`. On the pack
+side it is the clause of the resolved policy of the workflow, as the
+`policies` view of `project:configuration:show` states it.
+
+The parity comparison runs on the GP-09 fixture state and on legacy state
+built from the shipped defaults, as before. Changing any of the five legacy
+fields in a copy breaks parity on the legacy side, the two that the defaults
+do not use included, by giving a stage the clause. Changing the matching
+clause in a copy of the pack breaks parity on the pack side. A policy that
+declares a clause the legacy stage does not hold, or omits one it holds,
+breaks parity.
+
+### Residue
+
+`outside-pack-vocabulary.json` stays at `schemaVersion` 3 with 19 entries and
+names pack `0.4.0`. This table is the current list; the tables of the
+earlier sections show the owners and deliveries as they were then.
+
+| Subject      | Field                         | GP-25 PR 2 delivers                                                                                                                                                                                                                      | Residue                | Owner    | GP-09 gap code                                                 |
+| ------------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | -------- | -------------------------------------------------------------- |
+| office role  | `responsibilities`            | The ordered responsibilities of each default role, as the `responsibilities` of the pack role of the same ID.                                                                                                                            | none                   | GP-10B-2 | `role_fields_not_expressible`                                  |
+| Runtime role | `name`                        | nothing                                                                                                                                                                                                                                  | The whole field.       | a45ddb12 | none (missing from GP-09's list)                               |
+| Runtime role | `version`                     | nothing                                                                                                                                                                                                                                  | The whole field.       | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | capability order              | nothing                                                                                                                                                                                                                                  | The order of the list. | a45ddb12 | none                                                           |
+| Runtime role | `tools`                       | nothing                                                                                                                                                                                                                                  | The whole field.       | GP-10C   | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `modelPolicy`                 | nothing                                                                                                                                                                                                                                  | The whole field.       | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `limits`                      | nothing                                                                                                                                                                                                                                  | The whole field.       | a45ddb12 | `runtime_role_fields_not_expressible`                          |
+| Runtime role | `guidance`                    | The guidance text and its digest: the prompt `<role>-guidance`, referenced by the agent of the role, whose text is the bytes of `agents/<role>/system.md`. The guidance version is covered by the separate Runtime role `version` entry. | none                   | GP-10B-2 | `runtime_role_fields_not_expressible`                          |
+| agent        | `enabled`                     | nothing                                                                                                                                                                                                                                  | The whole field.       | a45ddb12 | none                                                           |
+| task kind    | `pipelineId`                  | All five routes, each as a task type of the workflow of that ID: `taskType` for feature, bugfix, research and release, and `additionalTaskTypes` for maintenance -> delivery.                                                            | none                   | GP-10B-2 | none                                                           |
+| pipeline     | `defaultFor`                  | Every task kind of each pipeline, as the task types of its workflow, including both task kinds of the delivery pipeline.                                                                                                                 | none                   | GP-10B-2 | `pipeline_routes_several_task_kinds`                           |
+| pipeline     | `enforcement`                 | The enforcement of each workflow: `enforcement: "enforced"` on the `delivery` policy and none, which is guidance, on the other workflows. Declared only; nothing is enforced by the Runtime.                                             | none                   | GP-25    | `pipeline_fields_not_expressible`                              |
+| stage        | `name`                        | The stage name, as the stage `title`.                                                                                                                                                                                                    | none                   | GP-10B-2 | `stage_fields_not_expressible`                                 |
+| stage        | `objective`                   | The stage objective, as the stage `objective`.                                                                                                                                                                                           | none                   | GP-10B-2 | `stage_fields_not_expressible`                                 |
+| stage        | `checks`                      | The ordered checks of the stage, as the stage `checks`.                                                                                                                                                                                  | none                   | GP-10B-2 | `stage_fields_not_expressible`                                 |
+| stage        | `requiresApproval`            | `requiresApproval: true` on `delivery/review`, `bugfix/review` and `release/verification`, in the policy of each workflow. Declared only; nothing is enforced by the Runtime.                                                            | none                   | GP-25    | `stage_fields_not_expressible`                                 |
+| stage        | `capabilities`                | The admitted `operations` of each stage: none, which is the absent field and equals the legacy empty and absent `capabilities`. Declared only; nothing is enforced by the Runtime.                                                       | none                   | GP-25    | `stage_fields_not_expressible`                                 |
+| stage        | `requiresIndependentApproval` | The clause form `requiresIndependentApproval: true`. No default stage uses it, so no policy declares it. Nothing is enforced by the Runtime.                                                                                             | none                   | GP-25    | `stage_fields_not_expressible` if used; unused by the defaults |
+| stage        | `requiresDifferentAgentFrom`  | The clause form `requiresDifferentAgentFrom`, a set of earlier stages. No default stage uses it, so no policy declares it. Nothing is enforced by the Runtime.                                                                           | none                   | GP-25    | `stage_fields_not_expressible` if used; unused by the defaults |
+
+Twelve entries are delivered in full: the seven that GP-10B-2 delivered and
+the five governance entries of GP-25. The `tools` entry stays with GP-10C and
+the other six with the execution parity task `a45ddb12`, each with its residue
+unchanged. The two entries for fields that the default state does not use stay
+marked `inDefaultState: false`: the pack carries their clause form, and no
+default exercises it.
+
+### Acceptance
+
+These continue the numbering of the GP-25 contract section, whose criteria 10
+and 11 this pull request delivers; it numbers its own criteria from 18, as
+GP-10B-2 PR 2 did.
+
+18. `packages/domain-pack-development/manifest.json` is
+    `org.ai-office.development@0.4.0`, passes `verifyDomainPackManifest`
+    against core contract 1, and its manifest and file digests are pinned.
+    Every contribution except `policies` equals that of the frozen `0.3.0`
+    file, by comparison and by a pinned digest over that subset.
+19. The pack declares exactly the three policies of the table above and no
+    other clause: no `operations`, no `requiresIndependentApproval`, no
+    `requiresDifferentAgentFrom`, no policy for `discovery`. Each separation
+    list it declared would stay within the legacy bound of 16 entries and each
+    operation name within 128 characters.
+20. Parity holds on the GP-09 fixture and on the shipped defaults for pipeline
+    `enforcement` and for stage `requiresApproval`,
+    `requiresIndependentApproval`, `requiresDifferentAgentFrom` and
+    `capabilities` against `operations`, through the resolved `policies` view
+    and over the Runtime socket.
+21. Changing any of the five legacy fields in a copy breaks parity on the
+    legacy side, including the two that the defaults do not use, which are
+    given to a stage. Changing the matching clause in a copy of the pack
+    breaks parity on the pack side. The completeness check classifies the
+    three fields of the default state as read by the projection.
+22. The five residue entries are delivered with `residue: null` and a
+    `delivered` statement that says what the pack carries and that the Runtime
+    enforces nothing; the residue list and the table above agree entry for
+    entry; the GP-10C and `a45ddb12` entries keep their owner; the `GP-25`
+    owner is kept for the five delivered entries.
+23. Negative: binding the pack to the GP-09 fixture leaves the run, approval
+    and job tables identical; the GP-09 profile digest and every GP-09 fixture
+    file are unchanged; an unbound project resolves to the pinned empty
+    digest; the production catalog holds no pack; the architecture tests pass
+    unmodified.
+24. The diff touches only the pack package, tests and documentation. It does
+    not touch `packages/domain-pack-contracts/**`, `packages/application/**`,
+    `packages/runtime-host/**`, the storage packages, `apps/**`,
+    `migrations/**`, `supabase/**`, an archive format, an audit event type, a
+    CLI command, `agents/**`, the default office manifest,
+    `legacy-development-profile.ts` or the GP-09 fixtures.
+
+If a legacy value does not fit a contract bound or the resolver cannot
+express it, the work stops and is reported; the contract is not changed to
+fit the data.
+
+### Non-goals
+
+- No contract, schema or archive change, and no Runtime consumption.
+- No enforcement, approval, separation or admitted-operation behavior from a
+  pack policy, and no change to the pipeline engine, runs, pins, approvals,
+  guards, grants or controlled-action authorization (`a45ddb12`).
+- No knowledge entry (GP-15), no evidence or professional-decision clause
+  (GP-14, GP-17, GP-18) and no capability or provider vocabulary (GP-16).
+- No registration, install or adoption of the pack (GP-10C).
+- No removal or modification of any legacy default, and no change to the
+  frozen GP-09 profile, its gap codes or its fixtures.
+- No project-authored policy and no override operation on a policy.
+
+### Limitations
+
+The known limitations recorded by the GP-25 section apply to this pack and
+are not restated or changed here: the two-apply walk-around of the
+`project:pack:apply` guard, the ungoverned project-owned twin of a governed
+workflow, and the separation bound of 1,000 entries against the legacy 16.
+This pack is within the legacy bound because it declares no separation list.
+
+- Parity covers the default legacy state only. A project that lowered an
+  approval in its OfficeManifest does not equal a pack that requires it
+  (GP-25 decision 2); that is a matter for adoption (GP-10C).
+- The two fields that the defaults do not use are proved by a legacy state a
+  test constructs, not by an observed default.
+- Whether a Runtime that executed these policies would behave like the legacy
+  pipelines is not shown; that is task
+  `a45ddb12-3159-4b60-9b8b-c26516720834`.
+
+### Implementation record
+
+- Manifest. `packages/domain-pack-development/manifest.json` is
+  `org.ai-office.development@0.4.0`, schema 1, `coreContract` `[1, 2)`, no
+  dependency, with the three policies of the table above in this order:
+  `delivery-governance`, `bugfix-governance`, `release-governance`. Each has a
+  `title` and a `description` and carries only the keys `workflow`, `stages`
+  and, for `delivery`, `enforcement`; a stage entry carries `stage` and
+  `requiresApproval`. It was produced from the `0.3.0` file by a script that
+  is not committed, then formatted; the tests, not the script, are the
+  evidence. The package still holds the same four files and no source file.
+- Pinned. `manifestDigest` is
+  `sha256:c575ec687088bdf3861cb3fe1fee3b73cc8214c95ff4898c96e57c9ccde59848`.
+  The digest of the exact file bytes is
+  `sha256:59ce1e5a0596a5958c047c1ae446d046e2efe1c38d26e1e554ad6dc713ab0f00`.
+  Every contribution but `policies` keeps the digest
+  `80abc78243d343bfde794b205b739392eadd51e383ca8c3047d609ca52047124`,
+  computed over the JSON of the verified contributions with `policies`
+  removed. It is checked against a frozen copy of the `0.3.0` file,
+  `tests/fixtures/domain-pack/development-0.3.0.json`, whose bytes are those
+  committed before this change and whose manifest digest is
+  `sha256:4f54452420bae28efd34818451b86b256e4edb785c377104cf8e7636d6f48a35`.
+- Comparison shape. `tests/helpers/development-pack-parity.ts` gains a
+  `governance` part: for every workflow its `enforcement` and its stages that
+  carry any clause. A stage with no clause is not listed on either side, so a
+  change that does not touch a clause (a stage rename in `discovery`, the
+  order of a stage list) does not move the part. The legacy side is read from
+  the profile and the pack side from the `policies` view of the resolved
+  configuration. The sets of a stage are compared in code-unit order, so the
+  legacy order of `requiresDifferentAgentFrom` is not compared, as the
+  contract treats the list as a set. An absent legacy `capabilities` and an
+  empty one both equal the absent `operations`.
+- Completeness by mutation. `pipeline.enforcement`, `stage.requiresApproval`
+  and `stage.capabilities` are now read by the projection; the classification
+  of the default state shows it, and an entry of the list that states them as
+  undelivered is reported as in both the projection and the list. The two
+  fields that the default state does not use cannot be classified from it:
+  their entries stay marked `inDefaultState: false`, and the tests give a
+  legacy stage the field and show that the projection reads it.
+- List. `schemaVersion` 3, pack `0.4.0`, 19 entries. The five GP-25 entries
+  have a `delivered` statement and `residue: null`; `owner` stays `GP-25`, the
+  task that delivered them. The `owners` text of GP-25 no longer says
+  "provisional number". The other 14 entries are as GP-10B-2 left them.
+- Tests changed where the pack changed: the pinned version and digests, the
+  count of policies, the GP-10B-2 test that pinned the residue table (now
+  history for fields, owners and gap codes, as the GP-10B-1 one was), the
+  GP-10B-1 cases that changed a governance field and expected parity to stay
+  equal (they now expect it to break), the completeness case that stated a
+  delivered part for `stage.requiresApproval` (it now uses the Runtime role
+  `tools`, which stays with GP-10C), and the pack mutation that removes the
+  `release` workflow, which now removes its policy too because a policy of a
+  workflow the manifest does not declare is refused by the parser.
+- Policy IDs, titles and descriptions are the only wording the contract left
+  open; they are presentation, and the stable `policyId` is what a consumer
+  keys on. A later version that renames a policy reports a change, by the
+  GP-25 implementation record.
+- Unchanged. The GP-09 profile digest of the fixture project is the pinned
+  vector before and after the binding, the checksum of each GP-09 fixture file
+  is pinned, an unbound project resolves to the empty configuration at its
+  pinned digest, the run, approval and job tables are identical before and
+  after binding, and the Runtime's own catalog holds no pack. The
+  architecture tests were not edited.
+- Criterion 24 is a property of this change set. It was checked on the diff
+  against the base commit; no test keeps it true afterwards. PostgreSQL: no
+  storage code is reached, so no PostgreSQL-gated suite covers this change and
+  none was added.
+- Evidence limits. Parity is shown for the default legacy state only. The pack
+  is resolved through a catalog a test supplies. Nothing reads a policy at run
+  time, so whether a Runtime that executed these policies would behave like
+  the legacy pipelines is not shown and is the subject of task
+  `a45ddb12-3159-4b60-9b8b-c26516720834`.
 
 ## Objective and decision boundary
 

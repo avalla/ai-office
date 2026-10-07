@@ -1988,11 +1988,18 @@ only through `project:pack:upgrade`, whose plan reports `policyChanges` and
 `targetPolicies` (`project:pack:apply` refuses it with
 `policy_change_requires_upgrade`). It adds no migration and no archive
 format, and nothing is enforced from a policy: the Runtime still reads only
-the OfficeManifest pipelines. The policies of the development reference pack
-and their parity tests are a second GP-25 pull request that follows the pack
-version of GP-10B-2. Aliases, the development pack's policy data (GP-25, second pull
-request), Runtime enforcement from pack policies (`a45ddb12`), evidence and
-adoption (GP-10C), automatic
+the OfficeManifest pipelines. The second GP-25 pull request extends the
+development pack to `0.4.0` with three typed policies that declare the legacy
+governance defaults: `delivery` is enforced, and `delivery/review`,
+`bugfix/review` and `release/verification` require an approval; no operation is
+admitted on a stage and the two legacy fields the defaults do not use are not
+declared. It proves expressible-subset parity on the GP-09 fixture and on the
+shipped defaults, in both directions for all five fields, and marks the five
+GP-25 entries of the residue list delivered. It is not execution parity: a
+policy is a declaration, nothing is enforced from it, the pack is still
+unregistered and unread by the Runtime, and nothing was removed from the
+legacy path. Aliases, Runtime enforcement from pack policies (`a45ddb12`),
+evidence and adoption (GP-10C), automatic
 selection, remote marketplace/downloads, executable validators and Runtime
 execution from packs remain deferred. M16 remains incomplete until its
 end-to-end exit criteria are met.

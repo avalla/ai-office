@@ -13,7 +13,7 @@ import {
 } from "../../packages/domain-pack-contracts/src/index.ts";
 
 /**
- * GP-10A, GP-10B-1 and GP-10B-2 (pack 0.3.0), test only. The development pack is a committed
+ * GP-10A, GP-10B-1, GP-10B-2 (pack 0.3.0) and GP-25 PR 2 (pack 0.4.0), test only. The development pack is a committed
  * reference artifact that no production code reads. These helpers read it,
  * install it in a catalog that exists only in a test, and project the two
  * sides of expressible-subset parity into one shape: the resolved
@@ -49,10 +49,10 @@ export const shippedOfficeManifestPath = join(
 );
 
 export const developmentPackId = "org.ai-office.development";
-export const developmentPackVersion = "0.3.0";
+export const developmentPackVersion = "0.4.0";
 /** Pinned: it moves only with the pack version. */
 export const developmentPackManifestDigest =
-  "sha256:4f54452420bae28efd34818451b86b256e4edb785c377104cf8e7636d6f48a35";
+  "sha256:c575ec687088bdf3861cb3fe1fee3b73cc8214c95ff4898c96e57c9ccde59848";
 /** The follow-up Runtime task that owns execution parity. */
 export const executionParityTaskId = "a45ddb12-3159-4b60-9b8b-c26516720834";
 /** The Runtime task of GP-10B-2, the descriptive contract extension. */
@@ -89,6 +89,7 @@ export interface RawPackManifest {
       text?: string;
       taskType?: string;
       additionalTaskTypes?: string[];
+      /** A workflow's stages, or the governed stages of a policy. */
       stages?: {
         id: string;
         role: string;
@@ -96,6 +97,9 @@ export interface RawPackManifest {
         objective?: string;
         checks?: string[];
       }[];
+      /** Policy item (GP-25). */
+      workflow?: string;
+      enforcement?: string;
     }[]
   >;
 }
@@ -175,6 +179,29 @@ export interface ExpressibleSubset {
   }[];
   /** Each task type with the workflow it routes to. */
   readonly routes: readonly ExpressedRoute[];
+  /**
+   * The governance of every workflow (GP-25 PR 2): its `enforcement` and the
+   * stages that carry a clause. The legacy side reads `enforcement`,
+   * `requiresApproval`, `requiresIndependentApproval`,
+   * `requiresDifferentAgentFrom` and `capabilities`; the pack side reads the
+   * resolved `policies` view. Both are declarations here.
+   */
+  readonly governance: readonly {
+    readonly id: string;
+    readonly enforcement: "enforced" | "guidance";
+    /** In ascending order of stage ID; a stage with no clause is not listed. */
+    readonly stages: readonly GovernedStage[];
+  }[];
+}
+
+/** The clauses of one stage with every fact stated; lists are sets. */
+export interface GovernedStage {
+  readonly id: string;
+  readonly requiresApproval: boolean;
+  readonly requiresIndependentApproval: boolean;
+  readonly requiresDifferentAgentFrom: readonly string[];
+  /** The legacy stage `capabilities`; absent and empty are equal. */
+  readonly operations: readonly string[];
 }
 
 const byCodeUnits = (left: string, right: string): number =>
@@ -191,6 +218,17 @@ function sortedRoutes(routes: readonly ExpressedRoute[]): ExpressedRoute[] {
       byCodeUnits(left.workflow, right.workflow),
   );
 }
+
+const carriesClause = (stage: GovernedStage): boolean =>
+  stage.requiresApproval ||
+  stage.requiresIndependentApproval ||
+  stage.requiresDifferentAgentFrom.length > 0 ||
+  stage.operations.length > 0;
+
+const governedStages = (stages: readonly GovernedStage[]): GovernedStage[] =>
+  stages
+    .filter(carriesClause)
+    .sort((left, right) => byCodeUnits(left.id, right.id));
 
 type ProfileSections = Pick<
   LegacyDevelopmentProfile,
@@ -258,6 +296,27 @@ export function projectLegacyProfile(
       })),
     ),
     routes: legacyRoutes(profile),
+    governance: byId(
+      profile.pipelines.map((pipeline) => ({
+        id: pipeline.id,
+        enforcement:
+          pipeline.enforcement === "enforced"
+            ? ("enforced" as const)
+            : ("guidance" as const),
+        stages: governedStages(
+          pipeline.stages.map((stage) => ({
+            id: stage.id,
+            requiresApproval: stage.requiresApproval,
+            requiresIndependentApproval:
+              stage.requiresIndependentApproval === true,
+            requiresDifferentAgentFrom: [
+              ...(stage.requiresDifferentAgentFrom ?? []),
+            ].sort(byCodeUnits),
+            operations: [...(stage.capabilities ?? [])].sort(byCodeUnits),
+          })),
+        ),
+      })),
+    ),
   };
 }
 
@@ -306,7 +365,12 @@ function localIdOf(stableId: string, kind: string): string {
 export function projectResolvedConfiguration(
   configuration: Pick<
     ResolvedProjectConfiguration,
-    "roles" | "agents" | "workflows" | "effectiveDefinitions" | "origins"
+    | "roles"
+    | "agents"
+    | "workflows"
+    | "policies"
+    | "effectiveDefinitions"
+    | "origins"
   >,
 ): ExpressibleSubset {
   const local = (effectiveId: string): string => {
@@ -370,6 +434,28 @@ export function projectResolvedConfiguration(
           workflow: workflow.id,
         })),
       ),
+    ),
+    governance: byId(
+      configuration.workflows.map((workflow) => {
+        const policy = configuration.policies.find(
+          (candidate) => candidate.workflowId === workflow.workflowId,
+        );
+        return {
+          id: local(workflow.effectiveId),
+          enforcement: policy?.enforcement ?? ("guidance" as const),
+          stages: governedStages(
+            (policy?.stages ?? []).map((stage) => ({
+              id: stage.stage,
+              requiresApproval: stage.requiresApproval,
+              requiresIndependentApproval: stage.requiresIndependentApproval,
+              requiresDifferentAgentFrom: [
+                ...stage.requiresDifferentAgentFrom,
+              ].sort(byCodeUnits),
+              operations: [...stage.operations].sort(byCodeUnits),
+            })),
+          ),
+        };
+      }),
     ),
   };
 }
