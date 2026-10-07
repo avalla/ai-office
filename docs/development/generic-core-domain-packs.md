@@ -4246,11 +4246,11 @@ This pack is within the legacy bound because it declares no separation list.
 
 ## GP-14A artifact, evidence and validator definition contract
 
-Status: in progress, delivered in two stacked pull requests. The owner
-approved the design on 2026-10-07. The first pull request delivers the
-manifest contract, its unit tests, the rejection of typed keys in project
-payloads and this section. The second delivers the resolved view, the upgrade
-plan and the `project:pack:apply` guard, with integration and Unix-socket
+Status: implemented in two stacked pull requests. The owner approved the
+design on 2026-10-07. The first pull request delivers the manifest contract,
+its unit tests, the rejection of typed keys in project payloads and this
+section. The second delivers the resolved views, the upgrade plan and the
+`project:pack:apply` guard, with integration, storage-contract and Unix-socket
 tests.
 
 Merge order. The first pull request alone accepts typed artifact and evidence
@@ -4416,8 +4416,8 @@ The contract package rejects, with a typed `DomainPackManifestError`
 
 ### Resolution
 
-Resolution is the GP-06 resolver over the pack closure. Part 2 adds the
-derived views; the manifest contract alone changes no resolver output.
+Resolution is the GP-06 resolver over the pack closure; the second pull
+request adds the derived views.
 
 `project:configuration:show` exposes `artifactTypes`, `evidenceTypes` and
 `validators` next to the other derived views, one entry per effective
@@ -4430,7 +4430,9 @@ the effective definitions and are not part of the version-1
 `configurationDigest` material; the empty-input digest vector and the digest of
 a configuration without typed definitions are unchanged. A project `replace`
 or `extend` of an artifact or evidence type keeps the pack's typed members, as
-a role keeps its capability set.
+a role keeps its capability set. The views list pack-owned definitions only;
+a project-owned artifact or evidence type is descriptive and appears in
+`effectiveDefinitions`.
 
 ### Pack-owned and unchanged by a project
 
@@ -4493,7 +4495,8 @@ state of these kinds beyond the existing descriptive overrides exists.
 
 ### Acceptance
 
-Criteria 7 to 10 belong to the second pull request.
+Criteria 7 to 10 belong to the second pull request, and criterion 5 is
+proved in both.
 
 1. The manifest parser accepts the three typed forms. Each rejection listed
    above raises `invalid_contribution` with the member path, including
@@ -4550,6 +4553,30 @@ its descriptive-envelope check already rejects a typed key with the security
 code, and the unit tests now pin that. Media types are held in lower case, a
 choice within the approved token pattern, so that one media type has one
 encoding.
+
+The second pull request adds the resolver views (`artifactTypes`,
+`evidenceTypes`, `validators` on `ResolvedProjectConfiguration`), the
+replacement rule that keeps typed members, `pack-evidence-contracts.ts` (the
+typed members of each kind and the stable contract identity) and
+`pack-evidence-contract-changes.ts` (`evidenceContractDifferences`, used by
+the upgrade plan and the selection guard, and the audit summaries). A
+contract is the typed members of a definition; a definition that carries none
+has no contract, so a label that gains members is an `added` contract and one
+that loses them a `removed` one, and either is refused by `project:pack:apply`
+because the definition exists in both closures. An adapter bump is a
+contract change. The change entries carry the typed definitions in full, since
+the plan is the document an approver reads; the audit event keeps the
+identities, the adapter ID, the adapter version and the failure policy.
+Existing tests that pin the shape this task changes were updated and no other:
+the derived-view list of the independent digest helper in
+`tests/unit/resolve-project-configuration.test.ts` and the key lists of
+`project:configuration:show` in the three e2e files that assert them. The
+SQLite contract suite gains a provider-independent test that the PostgreSQL
+suite runs when a database is configured; it was not run against PostgreSQL in
+the delivery environment. No pack data, pinned digest, parity assertion or
+architecture test was edited, and `PipelineRun`, `ManagePipelineRuns`,
+`OrchestratePipelineStage` and `EvaluatePipelineAuthorization` are not in the
+diff.
 
 ## Objective and decision boundary
 
