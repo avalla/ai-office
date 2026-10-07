@@ -115,9 +115,9 @@ next action
 - `ai-office delivery:validate [--root <path>] [--json]` moves the contract
   check of `.task-delivery.yaml` from `scripts/skills/task-delivery-config.ts`
   into a shared module used by both the CLI and `skills:validate`.
-- It is a local, read-only command that needs no Runtime, so it joins the
-  documented offline paths only if the architecture owner accepts that; the
-  alternative is a Runtime-routed read. Open question below.
+- It is a Runtime-routed read like other product commands: the CLI stays a
+  Runtime client and gains no new offline path (owner decision, 2026-10-07).
+  The repository's `skills:validate` keeps using the shared module directly.
 - It also reports the effective profile and gate list, so the skill can read
   them instead of re-deriving them.
 
@@ -152,11 +152,10 @@ subject of the ADR.
 2. Step 1 in one pull request, built on that branch's content.
 3. ADR-0031 reviewed and decided; step 2 planned as its own milestone task.
 
-## Open questions for the owner
+## Owner decisions (2026-10-07)
 
-1. May `delivery:validate` run offline, or must it route through the Runtime
-   like other stateful commands?
-2. Is the floor list (migrations, controlled actions/connectors, security
-   boundaries, public contracts) right, and who may override it?
-3. Is amending "a project pipeline never removes a gate" to allow optional
-   gates acceptable?
+1. `delivery:validate` is routed through the Runtime; no new offline path.
+2. The floor list (migrations, controlled actions or connectors, security
+   boundaries, public contracts) is accepted.
+3. "A project pipeline never removes a gate" is amended: a profile may omit the
+   optional gates; a project pipeline still may not.

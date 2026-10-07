@@ -55,8 +55,8 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
 - Daemon and CLI end-to-end coverage through the Unix-socket protocol.
 - Two run records (pipeline run and delivery run) must not drift; the relation
   and any deduplication must be settled before implementation.
-- The CLI never falls back to an embedded writer; `delivery:validate` is the
-  only local read-only command and is handled by the step-1 decision.
+- The CLI never falls back to an embedded writer. `delivery:validate` is a
+  Runtime-routed read and adds no offline path.
 
 ## Open questions
 
