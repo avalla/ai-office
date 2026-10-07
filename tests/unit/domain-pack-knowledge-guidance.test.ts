@@ -276,6 +276,18 @@ describe("GP-15 typed knowledge contributions in the schema-1 manifest", () => {
       entry({ schema: [{ field: "a", description: 1 }] }),
       at("schema[0].description"),
     );
+    // The description shares the 512 bound of seeds and hints.
+    const described = (length: number) => ({
+      schema: [{ field: "a", description: "d".repeat(length) }],
+    });
+    expect(
+      parse(withKnowledge(entry(described(maximumKnowledgeTextLength))))
+        .contributions.knowledge[0]!.schema![0]!.description,
+    ).toHaveLength(maximumKnowledgeTextLength);
+    rejected(
+      entry(described(maximumKnowledgeTextLength + 1)),
+      at("schema[0].description"),
+    );
     rejected(
       entry({ schema: [{ field: "a", description: "T", type: "string" }] }),
       at("schema[0].type"),
@@ -360,6 +372,19 @@ describe("GP-15 typed knowledge contributions in the schema-1 manifest", () => {
       parse(withKnowledge(entry({ seeds: ["\u{1F600}"] }))).contributions
         .knowledge[0]!.seeds,
     ).toEqual(["\u{1F600}"]);
+  });
+
+  test("whitespace-only text is accepted, as for every manifest text that must be non-empty", () => {
+    const parsed = parse(
+      withKnowledge(
+        entry({
+          seeds: [" "],
+          retrieval: { hint: "\t" },
+          schema: [{ field: "a", description: "  " }],
+        }),
+      ),
+    );
+    expect(parsed.contributions.knowledge[0]!.seeds).toEqual([" "]);
   });
 
   test("retrieval has known members, at least one, and bounded values", () => {

@@ -757,7 +757,10 @@ function knowledgeSchema(
     keys(item, ["field", "description"], entryPath, "invalid_contribution");
     return {
       field: localId(item.field, `${entryPath}.field`, "invalid_contribution"),
-      description: nonEmptyString(item.description, `${entryPath}.description`),
+      description: boundedKnowledgeText(
+        item.description,
+        `${entryPath}.description`,
+      ),
     };
   });
   if (new Set(fields.map((entry) => entry.field)).size !== fields.length)
