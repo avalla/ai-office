@@ -181,7 +181,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:stacking-changes-only-where-branches-start",
         pattern:
-          /Stacking the run changes where branches start and nothing else/u,
+          /Stacking the run changes where branches start and how a stop spreads along the stack, and nothing else/u,
       },
       {
         id: "policy:stacking-only-while-predecessor-unmerged",
@@ -211,7 +211,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:stopped-task-stops-stacked-tasks",
         pattern:
-          /When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it stop too/u,
+          /When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it, directly or through other tasks, stop too/u,
       },
       {
         id: "policy:stop-resume-needs-go-ahead",
