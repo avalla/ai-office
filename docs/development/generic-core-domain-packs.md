@@ -1886,10 +1886,12 @@ lift `unsupported_security_composition`. GP-25 stage `operations` are opaque
 operation names compared exactly, not references to GP-16 capability
 operations, so GP-25 does not depend on GP-16 (decision 11 is superseded).
 
-**GP-14.** Validators reference separately installed adapter IDs and exact
-versions with their own registration checks. GP-16 does not touch
-`contributions.validators` and does not turn the connector registry into a
-validator registry. Only the fail-closed availability pattern is shared.
+**GP-14A and GP-14B.** Validators reference adapter IDs and exact versions.
+The definition contract is the section "GP-14A artifact, evidence and
+validator definition contract"; registration checks and execution belong to
+GP-14B. GP-16 does not touch `contributions.validators` and does not turn the
+connector registry into a validator registry. Only the fail-closed
+availability pattern is shared.
 
 **Controlled actions.** The policy engine, the pipeline gate, the approval
 flow, the controlled-action gateway and their storage are not edited. A
@@ -2007,7 +2009,7 @@ deliberately not delivered as written.
 
 - No scheduler gate, run gate or run pin (`a45ddb12`, GP-24).
 - No stage, workflow or policy semantics (GP-25) and no validator adapters
-  (GP-14).
+  (GP-14A declares them as data, GP-14B checks and runs them).
 - No pack-granted authority and no credentials. A binding creates no
   resource, grant, action, approval or simulation.
 - No provider version pin or range, and no choice between providers.
@@ -4242,6 +4244,302 @@ This pack is within the legacy bound because it declares no separation list.
   the legacy pipelines is not shown and is the subject of task
   `a45ddb12-3159-4b60-9b8b-c26516720834`.
 
+## GP-14A artifact, evidence and validator definition contract
+
+Status: in progress, delivered in two stacked pull requests. The owner
+approved the design on 2026-10-07. The first pull request delivers the
+manifest contract, its unit tests, the rejection of typed keys in project
+payloads and this section. The second delivers the resolved view, the upgrade
+plan and the `project:pack:apply` guard, with integration and Unix-socket
+tests.
+
+Formal scope:
+
+> Give the schema-1 `artifactTypes`, `evidenceTypes` and `validators`
+> contributions a typed, data-only form: domain artifact types with media
+> types, a size bound and a content schema, evidence types with a subject and
+> a payload schema, and validator references to a named adapter at an exact
+> version with input and output schemas, a failure policy and declared limits.
+> Resolve them into a derived view, keep them pack-owned, and let them change
+> only through a reviewed upgrade. Nothing runs, no adapter is looked up, and
+> no evidence or review state exists or is enforced.
+
+Anti-goal:
+
+> a declaration must not become something that runs, registers an adapter or
+> decides anything without a separately approved task
+
+GP-14A is a definition layer, like GP-11, GP-12, GP-13 and GP-25. GP-03 has no
+artifact or evidence primitive to reuse, so the contribution kinds
+`artifactTypes`, `evidenceTypes` and `validators` that the manifest already
+declares carry the new members. GP-14B (planned for M16.5, after the M11.6
+Phase B artifact contract) owns enforcement: fail-closed evidence, adapter
+registration checks and version-bound review. GP-14A has no M11.6 dependency.
+
+### Decisions
+
+The owner approved these on 2026-10-07.
+
+1. Typed fields are pack-owned. On an artifact or evidence type a project
+   `replace` or `extend` stays descriptive (`title`, `description`); a typed
+   key in a project payload is rejected with `protected_security_invariant`
+   and nothing is written. `validators` stay unsupported for every project
+   operation. Disabling an artifact or evidence type stays unsupported. There
+   is no archive format change, no migration and no storage change, and a
+   restore still rejects stored state of kind `validators` with the GP-06
+   codes.
+2. There is no port and no adapter registration check. The adapter reference
+   is unchecked data and the resolved view shows `registration: "unchecked"`.
+   A validator never enters the operation provider catalog, the connector
+   registry or the controlled-action gateway; the adapter ID has a grammar of
+   its own.
+3. The schema is a closed, purpose-built subset, not JSON Schema, and
+   `failurePolicy` accepts only `"fail_closed"` until GP-14B decides whether
+   an advisory policy exists. `timeoutMs`, `maxInputBytes` and
+   `maxOutputBytes` are declared now, under core-constant ceilings.
+4. The upgrade plan gains `evidenceContractChanges` and
+   `targetEvidenceContracts`, both under `planDigest`, and
+   `project:pack:apply` refuses an existing contract change with
+   `evidence_contract_change_requires_upgrade`, modelled on GP-25.
+5. Development pack data stays at `0.4.0`: declaring development evidence
+   types is GP-10C-1, and `outside-pack-vocabulary.json` is unchanged.
+
+### Manifest schema
+
+All members are optional additions within manifest schema 1 and core contract
+version 1. A manifest that omits them keeps its canonical form and
+`manifestDigest`; the four golden fixture digests and the digest of every
+published development pack version are unchanged. A Runtime built before
+GP-14A rejects a manifest that uses them as unknown fields; it never ignores
+them. Every set is held in ascending code-unit order, so `manifestDigest` does
+not depend on the written order, and an empty list is rejected (the field is
+omitted instead).
+
+```text
+artifactTypes[]: { id, title?, description?,
+  mediaTypes?: [<type/subtype>, ...],       1..16, lower-case, no wildcard
+  maximumBytes?: <integer 1..1073741824>,
+  contentSchema?: <schema> }
+
+evidenceTypes[]: { id, title?, description?,
+  subject?: <local ID of an artifactTypes item of the same manifest>,
+  payloadSchema?: <schema> }
+
+validators[]: { id, title?, description?,
+  adapter?: { id: <adapter name>, version: <exact MAJOR.MINOR.PATCH> },
+  accepts, inputSchema, produces, outputSchema, failurePolicy,
+  timeoutMs, maxInputBytes, maxOutputBytes }   all required with adapter
+```
+
+A validator entry with only `id`, `title` and `description` is a label and
+resolves as before. An entry with `adapter` is typed and must carry every
+other member; an entry without `adapter` that carries any of them is
+rejected, so a typed validator has one complete encoding.
+
+- `mediaTypes` entries follow `type/subtype` with the RFC 6838
+  restricted-name characters, in lower case so that a media type has one
+  encoding, at most 127 characters, with no parameter and no wildcard.
+- `adapter.id` follows `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$` and has at most
+  128 characters. It is not a connector operation name, a path or a URL, and
+  it is never looked up. `adapter.version` is an exact `MAJOR.MINOR.PATCH`,
+  the pack version grammar; a range, a tag, `latest` and a wildcard are
+  rejected.
+- `accepts` is a set of 1 to 64 `{ kind, id }` references, `kind` being
+  `artifactTypes` or `evidenceTypes` and `id` a local ID of that section of
+  the same manifest. `produces` is a local `evidenceTypes` ID. References are
+  bare local IDs checked at parse time, so a type of another pack, a
+  dependency included, cannot be named.
+- `failurePolicy` is `"fail_closed"` and nothing else.
+- `timeoutMs` is an integer from 1 to 60,000. `maxInputBytes` is at most
+  67,108,864 and `maxOutputBytes` at most 16,777,216. The ceilings are
+  contract constants (`maximumValidatorTimeoutMs`,
+  `maximumValidatorInputBytes`, `maximumValidatorOutputBytes`); a pack
+  cannot raise them.
+- No member can make a validator look like something that runs. The keys
+  `command`, `entry`, `module`, `url` and `script`, and every other unknown
+  key, are rejected with the member's path, on the entry and on `adapter`.
+  `__proto__` and `constructor` are rejected as keys and as schema property
+  names.
+
+### Data schema
+
+A schema is a closed subset described by one recursive form. It is data: no
+code in this repository validates a value against it.
+
+| `type`    | Members                                                              |
+| --------- | -------------------------------------------------------------------- |
+| `string`  | `minLength?`, `maxLength?` (0 to 1,048,576, ordered)                 |
+| `integer` | `minimum?`, `maximum?` (safe integers, ordered)                      |
+| `number`  | `minimum?`, `maximum?` (finite numbers, ordered)                     |
+| `boolean` | none                                                                 |
+| `enum`    | `values`: 1 to 64 distinct non-empty strings of at most 128 chars    |
+| `array`   | `items` (a schema), `minItems?`, `maxItems?` (0 to 100,000, ordered) |
+| `object`  | `properties` (1 to 64), `required?` (names of declared properties)   |
+
+An object schema is always closed: `additionalProperties` is not a member, an
+undeclared property is never allowed, and the key is rejected as unknown. There
+is no `$ref`, no `pattern`, no `format`, no composition keyword and nothing
+remote; any of them is an unknown member. A property name is a letter followed
+by letters, digits, `_` or `-`, at most 64 characters, and not `__proto__`,
+`constructor` or `prototype`. The root is depth 1 and a schema nests at most 4
+levels, an array counting as a level; one schema holds at most 256 nodes,
+counted per schema. Enum values and every schema string follow the project
+definition text rule, without its length bound: no lone surrogate and no
+U+0000 (manifest text elsewhere may carry U+0000 by GP-23; schemas, which
+resolve into stored and exported output, do not). `properties`, `required`
+and `values` are held in ascending code-unit order.
+
+The contract package rejects, with a typed `DomainPackManifestError`
+(`invalid_contribution`, no new code) and the path of the member:
+
+- any member of the three sections on another kind, or an unknown member;
+- a malformed, empty, over-bound or duplicate `mediaTypes` list or entry, and
+  a `maximumBytes` that is not an integer from 1 to the ceiling;
+- a `subject`, `accepts` entry or `produces` that names nothing of the same
+  manifest, a reference of the wrong kind, and a duplicate `accepts` entry;
+- an adapter that is not exactly `{ id, version }`, an ID outside the grammar
+  and a version that is not exact;
+- a `failurePolicy` other than `"fail_closed"`;
+- a limit that is not an integer or is outside 1 and its ceiling;
+- a schema outside the subset above, with the path of the offending node.
+
+### Resolution
+
+Resolution is the GP-06 resolver over the pack closure. Part 2 adds the
+derived views; the manifest contract alone changes no resolver output.
+
+`project:configuration:show` exposes `artifactTypes`, `evidenceTypes` and
+`validators` next to the other derived views, one entry per effective
+definition of the kind, in the GP-06 definition order, with a stable ID
+`pack:<packId>/<kind>/<localId>` (no version or digest), `origin`
+(`pack_owned`), `title` and `description` when present, and the typed members
+as declared. A validator view shows its `adapter` and the literal
+`registration: "unchecked"`: nothing was looked up. The views are derived from
+the effective definitions and are not part of the version-1
+`configurationDigest` material; the empty-input digest vector and the digest of
+a configuration without typed definitions are unchanged. A project `replace`
+or `extend` of an artifact or evidence type keeps the pack's typed members, as
+a role keeps its capability set.
+
+### Pack-owned and unchanged by a project
+
+Typed members have no project operation. The mutation contract already limits
+an artifact or evidence type payload to its exact ID and descriptive fields, so
+a typed key in a `put_owned`, `replace` or `extend` payload is rejected as
+`protected_security_invariant` before anything is written. `put_override` of
+kind `validators`, in any operation, stays `unsupported_override_operation`
+and `put_owned` of that kind stays rejected; `disable` of an artifact or
+evidence type stays `unsupported_override_operation`. Both storage schemas and
+the portable archive keep rejecting stored state of kind `validators`.
+
+### Change control
+
+A contract change is never incidental. `project:pack:upgrade` is the only
+command that carries one out for an existing definition (second pull request).
+The upgrade report gains two fields, both covered by `planDigest`:
+
+- `evidenceContractChanges`: for every artifact type, evidence type or
+  validator whose typed definition differs between the old and new resolved
+  closures, the stable ID, the `change` (`added`, `removed` or `changed`) and
+  the typed definition `before` and `after`. An adapter ID or version bump, a
+  limit change and a schema change are each a change. It has the availability
+  rule of GP-25: `unavailable` (`previous_closure_unresolved`) when the
+  previous artifacts are no longer installed, and empty when the selection
+  does not change.
+- `targetEvidenceContracts`: every typed definition of the target closure in
+  the same form, in ascending ID order, so approval binds the result even when
+  the previous closure cannot be read.
+
+A no-op plan reads no artifact and carries both empty. The
+`project.pack_upgrade_applied` audit event records the identities, the adapter
+ID, the adapter version and the failure policy, never a schema body or a text.
+`project:pack:apply` refuses a selection change that alters a typed definition
+present in both closures with the typed error
+`evidence_contract_change_requires_upgrade` (exit 1, nothing written). It still
+applies the addition or removal of a pack and a version change that leaves
+every existing typed definition unchanged.
+
+### Persistence
+
+None. No migration is added on either backend and no archive format: a typed
+definition lives in the pack artifact and in derived output, and no project
+state of these kinds beyond the existing descriptive overrides exists.
+
+### Boundaries
+
+- GP-16 owns capability contracts and provider binding. A validator is not a
+  capability and never enters the provider catalog, the connector registry or
+  the controlled-action gateway; the adapter ID grammar differs on purpose
+  from connector operation names.
+- GP-14B owns adapter registration checks, execution, fail-closed evidence,
+  an advisory failure policy if any, and version-bound review. ADR-0026 states
+  that registration checks identity, version, supported type and limits
+  before use; GP-14A records the declaration those checks will read and
+  performs none of them.
+- GP-25 policies are unchanged and carry no evidence clause.
+- GP-10C-1 declares the development evidence types under this contract; the
+  development pack stays at `0.4.0` here.
+
+### Acceptance
+
+Criteria 7 to 10 belong to the second pull request.
+
+1. The manifest parser accepts the three typed forms. Each rejection listed
+   above raises `invalid_contribution` with the member path, including
+   version ranges, wildcard, path and URL adapter IDs, executable keys,
+   `$ref`, deep nesting, an oversized enum, a node-count bomb, an enum value
+   over 128 characters, `__proto__`, a lone surrogate, U+0000, a cross-pack
+   or nonexistent reference, a duplicate, a `failurePolicy` other than
+   `fail_closed` and a limit above its ceiling.
+2. The written order of every set does not change `manifestDigest`; golden
+   digests and the digest of every published development pack version are
+   unchanged.
+3. A typed key in a project payload is `protected_security_invariant` and
+   writes nothing; `validators` stay unsupported; disabling an artifact or
+   evidence type stays unsupported.
+4. No migration and no archive format change.
+5. The GP-09 profile and fixtures are unchanged and the architecture tests
+   pass unmodified.
+6. This section, with the anti-goal verbatim, the GP-16 and GP-14B
+   boundaries, and the plan row and boundary sentences updated.
+7. `project:configuration:show` lists the three views with stable IDs and
+   `registration: "unchecked"`; the empty `configurationDigest` vector is
+   unchanged.
+8. Upgrade: `evidenceContractChanges` and `targetEvidenceContracts` are
+   present, covered by `planDigest` and recorded without bodies; a no-op plan
+   carries both empty; `unavailable` when the previous closure is not
+   installed.
+9. `project:pack:apply` refuses an existing contract change with the typed
+   error and exit 1, and still applies an addition or removal of a pack.
+10. SQLite and PostgreSQL-gated contract coverage, and Unix-socket end-to-end
+    coverage of preview, refused apply, upgrade, the configuration views and a
+    refused typed key.
+
+### Non-goals
+
+- Running a validator, loading adapter code, looking up or registering an
+  adapter, and any port for either.
+- Evidence records, review state, version-bound review, stale-evidence
+  handling and an advisory failure policy (GP-14B, M16.5).
+- Validating any value against a schema, and artifact storage (M11.6).
+- Project-authored artifact, evidence or validator types, a project override
+  of a typed member, and disabling a type.
+- Development evidence types (GP-10C-1).
+
+### Implementation record
+
+The first pull request builds the manifest contract in
+`packages/domain-pack-contracts/src/manifest.ts` (`ArtifactTypeContribution`,
+`EvidenceTypeContribution`, `ValidatorContribution`, `PackDataSchema`); shape
+is checked when an entry is read and the local references once every section
+has been read, as for roles, agents and policies. The schema text rule is
+restated in the contract package, which cannot depend on the application layer
+that owns `isDefinitionText`. The project mutation contract needed no change:
+its descriptive-envelope check already rejects a typed key with the security
+code, and the unit tests now pin that. Media types are held in lower case, a
+choice within the approved token pattern, so that one media type has one
+encoding.
+
 ## Objective and decision boundary
 
 AI Office should operate governed teams in arbitrary domains. The core owns
@@ -4489,7 +4787,7 @@ other work that left the M16 exit.
 | GP-11 — Pack role archetypes                                      | GP-06, GP-07                    | Define pack roles with stable identity and declarative capabilities; rename, replace, omit and add them in project configuration; preserve identity, capabilities and project changes on upgrade.                                                                                                                                                                         | Role contracts and customization/upgrade tests.                                                                                                                                          | Official role names; Runtime roles, grants or bindings.                                                     |
 | GP-12 — Pack agent archetypes                                     | GP-11                           | Definition layer: stable agent identity; declarative role, prompt, knowledge and requested-capability references bounded by the role; project replace, disable and add; identity and project changes kept on an upgrade.                                                                                                                                                  | Agent configuration contracts and upgrade/authority tests.                                                                                                                               | Runtime agents, model, tools, pipeline, approval, grants.                                                   |
 | GP-13 — Pack workflow templates                                   | GP-11, GP-12                    | Definition layer: stable workflow and stage identity; project replace (rename, reorder, add or remove stages with pack-local references), extend and disable of a pack workflow; customizations kept on an upgrade; generic engine, runs, pins, approvals and guards untouched.                                                                                           | Workflow customization contracts and upgrade/preservation tests.                                                                                                                         | Pipeline engine, Runtime pipelines, in-flight pinned runs (GP-24).                                          |
-| GP-14A — Artifact, evidence and validator definitions             | GP-03, GP-06                    | First half of the split GP-14; no M11.6 dependency. Definition layer: declare domain artifact and evidence types and trusted validator references (adapter ID, exact version, input/output schema, failure policy); project customization and upgrade rules as its contract section defines. No validator runs and no evidence or review state is enforced.               | Typed fixture schemas and definition, customization and upgrade tests.                                                                                                                   | Running arbitrary pack code; fail-closed evidence and version-bound review (GP-14B, M16.5).                 |
+| GP-14A — Artifact, evidence and validator definitions             | GP-03, GP-06                    | First half of the split GP-14; no M11.6 dependency. Definition layer: declare domain artifact and evidence types and trusted validator references (adapter ID, exact version, input/output schema, failure policy); project customization and upgrade rules as its contract section defines. No validator runs and no evidence or review state is enforced.               | Typed fixture schemas and definition, customization and upgrade tests; contract in section "GP-14A artifact, evidence and validator definition contract".                                                                                                                   | Running arbitrary pack code; fail-closed evidence and version-bound review (GP-14B, M16.5).                 |
 | GP-15 — Pack knowledge guidance                                   | GP-06                           | Contribute categories, schemas, seed references, retrieval guidance and agent settings through AgentKnowledgeStore with trusted tenant/project scope.                                                                                                                                                                                                                     | Scope compatibility plan and old/new knowledge fixtures; outage and provenance tests.                                                                                                    | New vector/graph store or authority.                                                                        |
 | GP-16 — Pack capability contracts                                 | GP-06                           | Definition layer: a pack capability declares required or optional operations by name and mode; the Runtime host exposes its registered providers read-only; resolution, binding preview/apply and upgrade fail closed on a missing or mismatched required provider; the resolved view reports each binding. Grants, constraints, approval and controlled execution are unchanged and still separately authorize use. No scheduler gate. | Capability contract, provider catalog port, fail-closed resolution/preflight tests, and controlled-action tests proving a binding grants nothing.                                        | Pack-granted authority or direct credentials; run gating and pins (`a45ddb12`, GP-24); stage or policy semantics (GP-25); validator adapters (GP-14B); abstract multi-provider contracts. |
 | GP-17 — Legal reference fixture                                   | GP-11–13, GP-14A, 15, 16, 25    | Matter intake, research, draft, citation/evidence review and human approval are defined through public contracts with no software defaults. The fixture binds through a test-supplied catalog, resolves, and is customized and upgraded; it does not run a core lifecycle.                                                                                                | Minimal legal pack/fixture and bind, resolve, customize and upgrade tests for roles, workflow, artifact, knowledge and governance definitions.                                           | Production legal service or filing adapter; lifecycle execution (M16.5).                                    |
@@ -4921,9 +5219,10 @@ project has adopted the development pack.
   GP-19 has no pack and carries no policy definitions: GP-25 policies are
   pack-owned, with no project override and no project-owned policy, so its
   dependency on GP-25 is only ordering.
-- The sections of delivered tasks and the committed
-  `outside-pack-vocabulary.json` still name GP-10C and GP-14 as owners and
-  are not rewritten. Read registration, install and adoption as GP-10C-2,
+- The sections of delivered tasks still name GP-10C and GP-14 as owners and
+  the committed `outside-pack-vocabulary.json` names GP-10C; neither is
+  rewritten. Read GP-14 as GP-14A for definitions and as GP-14B for adapter
+  registration, execution and enforcement. Read registration, install and adoption as GP-10C-2,
   and declarative content, including the `tools` residue, as GP-10C-1. The
   list's owner field is updated by the task that next changes it.
 - Two more statements in delivered sections are not rewritten and are read
