@@ -1,0 +1,88 @@
+{
+  "domain": "community-garden",
+  "definitions": [
+    {
+      "action": "put_owned",
+      "kind": "roles",
+      "id": "gardener",
+      "enabled": true,
+      "payload": {
+        "id": "gardener",
+        "title": "Volunteer gardener"
+      }
+    },
+    {
+      "action": "put_owned",
+      "kind": "roles",
+      "id": "coordinator",
+      "enabled": true,
+      "payload": {
+        "id": "coordinator",
+        "title": "Garden coordinator"
+      }
+    },
+    {
+      "action": "put_owned",
+      "kind": "knowledge",
+      "id": "garden-guide",
+      "enabled": true,
+      "payload": {
+        "id": "garden-guide",
+        "title": "Local growing guide"
+      }
+    },
+    {
+      "action": "put_owned",
+      "kind": "taskTypes",
+      "id": "plot-care",
+      "enabled": true,
+      "payload": {
+        "id": "plot-care",
+        "title": "Plot care"
+      }
+    },
+    {
+      "action": "put_owned",
+      "kind": "artifactTypes",
+      "id": "plot-note",
+      "enabled": true,
+      "payload": {
+        "id": "plot-note",
+        "title": "Plot observation note"
+      }
+    },
+    {
+      "action": "put_owned",
+      "kind": "agents",
+      "id": "garden-helper",
+      "enabled": true,
+      "payload": {
+        "id": "garden-helper",
+        "title": "Garden helper",
+        "role": "gardener",
+        "knowledge": ["garden-guide"]
+      }
+    },
+    {
+      "action": "put_owned",
+      "kind": "workflows",
+      "id": "plot-care-flow",
+      "enabled": true,
+      "payload": {
+        "id": "plot-care-flow",
+        "title": "Plot care review",
+        "taskType": "plot-care",
+        "stages": [
+          {
+            "id": "observe",
+            "role": "gardener"
+          },
+          {
+            "id": "review",
+            "role": "coordinator"
+          }
+        ]
+      }
+    }
+  ]
+}
