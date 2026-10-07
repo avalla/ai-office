@@ -1797,11 +1797,19 @@ See [Professional-work verticals](professional-work-verticals.md).
 
 ## M16 — Generic Core & Domain Packs
 
-Status: active in AI Office and in progress. GP-03 public contracts, GP-04
-host-local catalog/resolver, GP-05 exact project binding, GP-07 definition
-ownership and source-pinned overrides, and GP-06 derived effective
-configuration with read-only inspection are merged. Pack-driven Runtime
-behavior remains planned.
+Status: active in AI Office and in progress. GP-01 through GP-09, GP-10A,
+GP-10B-1, GP-10B-2, GP-11 through GP-13, GP-16, GP-22 and GP-23 are merged,
+as is the GP-25 contract (its development pack data, 0.4.0, is a second pull
+request): public contracts,
+host-local catalog/resolver, exact project binding, definition ownership and
+source-pinned overrides, derived effective configuration with read-only
+inspection, reviewed upgrades, the legacy development profile, role, agent
+and workflow definition layers, and the development reference pack with its
+roles, agents, task types and workflows. On 2026-10-06 the owner re-scoped
+the M16 exit to the definition and contract layer plus reference fixtures.
+After M16, packs are a definition, customization and upgrade layer; the
+Runtime does not yet execute from a pack. Pack-driven Runtime behavior is
+planned for M16.5.
 
 AI Office is transitioning from a software-development-oriented implementation
 into a domain-neutral operational core. Domain-specific semantics are supplied
@@ -1812,7 +1820,9 @@ development vertical. M16 depends on the relevant M11/M11.6 orchestration and
 artifact contracts, M14's software workflows as extraction input, M15's
 cross-domain architecture decision, and the existing AgentKnowledgeStore and
 ProjectStorage authority boundaries. M9's broad plugin SDK and a package
-marketplace are not prerequisites.
+marketplace are not prerequisites. Since the 2026-10-06 re-scope of the exit,
+no M16 task depends on M11.6 Phase B; that dependency belongs to GP-14B in
+M16.5.
 
 The core keeps project authority, tasks, AgentRuns, pipeline execution,
 governance, approval enforcement, controlled actions, audit, storage and
@@ -1823,9 +1833,11 @@ guidance, and capability needs. The project owns its instantiated definitions:
 it can replace, extend, disable, or override pack contributions and define a
 complete office with no official pack. A deterministic resolved project
 configuration combines pinned pack versions, project definitions and overrides
-before the existing Runtime consumes it. Pack definitions never grant capability
-or replace core lifecycle engines. Runtime composition may load trusted packs;
-domain and application core packages must not import a pack implementation.
+before the existing Runtime consumes it; M16 delivers the resolved
+configuration, and Runtime consumption is M16.5. Pack definitions never grant
+capability or replace core lifecycle engines. Runtime composition may load
+trusted packs; domain and application core packages must not import a pack
+implementation.
 
 The first reference pack is `development`; final package naming follows the
 package-boundary ADR. It receives the current software roles, repository and
@@ -1841,14 +1853,16 @@ without rewriting their office, roles, agents or pipelines; (4) extract
 development defaults incrementally and prove semantic parity; (5) offer an
 explicit, reviewed development-pack adoption path; (6) consider requiring
 explicit pack selection for _new_ projects only after empty/custom projects are
-supported. Existing projects continue operating at every stage. Missing or
+supported. Stage 5 is outside the M16 exit. Existing projects continue
+operating at every stage. Missing or
 incompatible explicitly selected packs fail closed; legacy compatibility is
 versioned and auditable, never a silent replacement. A future multi-pack
 project uses explicit namespace, conflict, and policy composition rules rather
 than import order. Pack upgrades do not overwrite project-owned modifications.
 
-Delivery tasks GP-01–GP-21 (with GP-10A/B/C extraction slices), the
-post-GP-06 hardening follow-ups GP-22 and GP-23, and their
+Delivery tasks GP-01–GP-21 (with the GP-10A, GP-10B-1, GP-10B-2 and
+GP-10C-1 extraction slices and GP-14A), the post-GP-06 hardening follow-ups
+GP-22 and GP-23, the pack policy contribution contract GP-25, and their
 dependency graph, acceptance criteria, extraction inventory, migration stages,
 and non-goals are in the
 [Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
@@ -1860,8 +1874,16 @@ contract against them after M15-4 integration. The AI
 Office project record has a distinct active M16 milestone with one requirement
 linked to each task. Existing GP task prerequisites are stored as typed task
 dependency edges; GP-02's cross-milestone M15-4 prerequisite is also stored as
-a typed task dependency edge in the project Runtime. GP-10A/B/C remain separately tracked extraction
-slices.
+a typed task dependency edge in the project Runtime. GP-10A, GP-10B-1,
+GP-10B-2 and GP-10C-1 remain separately tracked extraction slices. Runtime
+records for the split keys (GP-14A, GP-14B, GP-10C-1, GP-10C-2) and for the
+rows reworded by the re-scope are updated separately; until then the records
+carry the pre-split GP-14 and GP-10C. GP-14B, GP-10C-2, GP-24, the GP-16 run
+gate, Runtime activation and
+the execution parity task are planned for M16.5 and are not M16 delivery
+tasks; the plan's
+[M16 exit re-scope](generic-core-domain-packs.md#m16-exit-re-scope-owner-decision-2026-10-06)
+records the decision.
 
 GP-01's source audit and extraction map passed final repository review.
 M15-4's authority/evidence decision passed final repository review in PR #81.
@@ -1998,11 +2020,12 @@ shipped defaults, in both directions for all five fields, and marks the five
 GP-25 entries of the residue list delivered. It is not execution parity: a
 policy is a declaration, nothing is enforced from it, the pack is still
 unregistered and unread by the Runtime, and nothing was removed from the
-legacy path. Aliases, Runtime enforcement from pack policies (`a45ddb12`),
-evidence and adoption (GP-10C), automatic
-selection, remote marketplace/downloads, executable validators and Runtime
-execution from packs remain deferred. M16 remains incomplete until its
-end-to-end exit criteria are met.
+legacy path. Aliases and declarative development evidence, knowledge and
+capability entries (GP-10C-1) remain planned work of M16; automatic selection,
+remote marketplace/downloads and executable validators remain deferred.
+Runtime enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and
+Runtime execution from packs are planned for M16.5. M16 remains incomplete
+until its re-scoped exit criteria are met.
 
 ### Post-GP-06 hardening follow-ups
 
@@ -2091,21 +2114,82 @@ The contract, the three meanings of "capability", the owner decisions, the
 acceptance criteria and what is unmet relative to the original wording are in
 the [plan's GP-16 section](generic-core-domain-packs.md#gp-16-pack-capability-contracts).
 
-Exit: development, legal, manufacturing, and empty/custom fixtures run the same
-core lifecycles without changes to core for each domain. Legacy development
-fixtures still load, resolve roles and agents, run pipelines, create tasks,
-complete approvals, retrieve knowledge, persist state, and retain audit and
-provenance. Project-owned roles, agents, prompts, validators, capabilities,
-artifacts, knowledge settings and pipelines can be customized or replaced
-without pack forks; upgrades preserve these choices. Package import and
-cross-domain scenario tests prevent development semantics from returning to
+Exit, re-scoped by owner decision on 2026-10-06 to the definition and
+contract layer plus reference fixtures: the development, legal and
+manufacturing fixtures bind through a test-supplied catalog, resolve, and
+are customized and upgraded through the same public contracts without
+changes to core for each domain. The empty/custom fixture has zero packs, so
+there is nothing to bind or upgrade: it resolves with an empty selection,
+and project-owned definitions are added and customized. Pack upgrade does
+not apply to it; upgrade preservation is proven on the pack-backed fixtures.
+No fixture runs a core lifecycle in M16. Legacy development fixtures
+still load, resolve roles and agents, run pipelines, create tasks, complete
+approvals, retrieve knowledge, persist state, and retain audit and
+provenance, on the legacy path, which stays the only source the Runtime
+executes from. Definitions of roles, agents and workflows, and of prompts,
+validator references, capability declarations, artifact and evidence types,
+knowledge guidance and policy contributions as far as each M16 contract
+allows, can be customized or replaced in project configuration without pack
+forks; upgrades preserve these choices. No Runtime role, agent, pipeline,
+validator run or capability binding is created from them. Package import and
+cross-domain fixture tests prevent development semantics from returning to
 core. Domain-specific adapters remain behind public ports and controlled
 actions.
+
+After M16, Domain Packs are a definition, customization and upgrade layer
+with reference fixtures. The Runtime does not yet execute from a pack: no run
+is created from a resolved configuration or pins one, no pack is registered
+in the production catalog, and no project adopts the development pack. An
+accepted ADR alone does not satisfy the exit. Runtime execution that consumes
+the resolved configuration leaves the M16 exit and is expected to become the
+exit of M16.5.
 
 Non-goals: complete legal software or MES; ERP integration; third-party
 marketplace or remote registry; dynamic downloads or untrusted executable
 plugins; runtime-generated packs; replacement of the pipeline engine,
 governance, ProjectStorage, AgentKnowledgeStore, model routing, or worker queue.
+
+## M16.5 — Domain Pack Runtime Activation
+
+Status: planned. No scope proposal, acceptance criteria or ADR change is
+approved, and nothing here is implemented. The milestone was created by the
+owner's 2026-10-06 re-scope of the M16 exit; its name and number are
+provisional.
+
+Goal: make the Runtime execute from the resolved project configuration that
+M16 defines, and deliver the pack work that needs that execution or the
+M11.6 Phase B artifact contract. It is expected to depend on the M16
+definition contracts and, for evidence and validator enforcement, on M11.6
+Phase B.
+
+Planned contents, each needing an owner-approved scope before work. The
+order and dependencies among them are provisional and are set by each scope
+proposal:
+
+- Runtime activation: Runtime execution consumes the generic resolved
+  configuration, and a new run persists its configuration digest and exact
+  source pack tuples with its existing pins. No task owns this yet.
+- GP-24: block a pack removal while an active run pins that pack. Whether
+  it also blocks a workflow change on such a run is set by its scope
+  proposal. It needs the persisted pins, which activation is expected to
+  deliver.
+- Execution parity, Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`:
+  compare execution from a resolved configuration with legacy execution.
+- GP-14B: stale evidence and invalid validator output fail closed, with
+  version-bound review. Depends on M11.6 Phase B.
+- GP-10C-2: previewed explicit adoption of the development pack and its
+  registration, preserving old bindings.
+- The GP-16 run gate: bind registered providers at bootstrap and reject a
+  missing required provider before runs. The delivered GP-16 section names
+  `a45ddb12` and GP-24 as its owners; this item's scope proposal decides the
+  split and is not a second owner.
+
+Exit: to be defined with the scope proposal. It is expected to carry the
+clauses that left the M16 exit: Runtime execution consumes the generic
+resolved configuration, and the development, legal, manufacturing and
+empty/custom fixtures run the same core lifecycles.
+
+Non-goals: expected to be those of M16; set with the scope proposal.
 
 ## M17 — Execution Observability & Heterogeneous Actors Foundation
 
@@ -2176,6 +2260,10 @@ M6E office definitions + M6 policy/actions + M8.5 context
                           v
        M17 Execution Observability & Heterogeneous Actors
 ```
+
+M16.5, Domain Pack Runtime Activation, is planned beside this chain: it is
+expected to depend on M16 and on M11.6 Phase B, and M17 is not expected to
+depend on it.
 
 These milestones intentionally defer:
 
