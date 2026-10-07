@@ -129,6 +129,26 @@ describe("dashboard task graph", () => {
     ).toEqual(["c"]);
   });
 
+  test("an operational shortcut is not hidden by 'hide completed'", () => {
+    const withFinishedAttention = {
+      ...graph,
+      tasks: [
+        ...graph.tasks,
+        node("finished", {
+          operationalStatus: "completed",
+          recordedStatus: "completed",
+          ready: false,
+          needsAttention: true,
+        }),
+      ],
+    };
+    const visible = filterGraph(withFinishedAttention, {
+      ...defaultGraphFilters,
+      quick: "attention",
+    });
+    expect(ids(visible.tasks)).toEqual(["d", "finished"]);
+  });
+
   test("keeps the selection visible whatever the filters say", () => {
     const visible = filterGraph(
       graph,

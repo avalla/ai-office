@@ -327,25 +327,39 @@ describe("task dependency graph read model", () => {
 
     expect(byId.get("waits")).toMatchObject({ waiting: true, ready: false });
     expect(byId.get("ready")).toMatchObject({ waiting: false, ready: true });
-    // Terminal work is never "waiting", even with an unmet prerequisite.
     expect(byId.get("blocked")?.needsAttention).toBe(true);
     expect(byId.get("failed")?.needsAttention).toBe(true);
     expect(byId.get("done")).toMatchObject({
       waiting: false,
       needsAttention: false,
     });
-    expect(graph.summary).toEqual({
+    // pending: ready + waits(waiting); running: ready, in progress; blocked and
+    // failed carry attention; done is finished.
+    expect(graph.summary).toMatchObject({
       total: 6,
-      ready: graph.tasks.filter((t) => t.ready).length,
       waiting: 1,
-      blocked: graph.tasks.filter((t) => t.operationalStatus === "blocked")
-        .length,
-      inProgress: graph.tasks.filter(
-        (t) => t.operationalStatus === "in_progress",
-      ).length,
-      needsAttention: graph.tasks.filter((t) => t.needsAttention).length,
+      blocked: 1,
+      inProgress: 1,
     });
+    expect(byId.get("running")?.ready).toBe(true);
+    expect(graph.summary.ready).toBe(2);
     expect(graph.summary.needsAttention).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a blocked task with an unmet prerequisite is waiting and not ready", async () => {
+    const f = await fixture();
+    await f.project("p");
+    for (const id of ["pre", "stuck"]) await f.task("p", id);
+    await f.depend("p", "stuck", "pre");
+    f.setStatus("stuck", "blocked");
+
+    const graph = await f.queries.getTaskGraph("p");
+
+    expect(graph.tasks.find((t) => t.taskId === "stuck")).toMatchObject({
+      waiting: true,
+      ready: false,
+      needsAttention: true,
+    });
   });
 
   test("a terminal task with an unmet prerequisite is not waiting", async () => {

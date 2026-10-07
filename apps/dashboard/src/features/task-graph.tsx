@@ -84,6 +84,13 @@ const quickLabels: Record<QuickFilter, string> = {
   attention: "Needs attention",
 };
 
+/** Wording for a task that is neither ready nor waiting (read-model flags). */
+const idleState = (task: TaskGraphNode) =>
+  task.operationalStatus === "completed" ||
+  task.operationalStatus === "cancelled"
+    ? statusLabel(task.operationalStatus).replace(/^./, (c) => c.toUpperCase())
+    : "Not startable";
+
 const blockers = (count: number) => `${count} blocker${count === 1 ? "" : "s"}`;
 
 /* -------------------------------------------------------------------------- */
@@ -112,9 +119,9 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
   const waitingOn = task.unmetPrerequisiteIds.length;
   const state = task.ready
     ? "Ready to start"
-    : waitingOn > 0
+    : task.waiting
       ? `Waiting on ${blockers(waitingOn)}`
-      : "Not startable";
+      : idleState(task);
   return (
     <>
       <Handle
@@ -166,7 +173,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
             <span className="rounded border border-emerald-400 px-1 font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-600 dark:text-emerald-300">
               Ready
             </span>
-          ) : waitingOn > 0 ? (
+          ) : task.waiting ? (
             <span
               title={`${blockers(waitingOn)}: prerequisites not completed`}
               className="rounded border border-amber-400 px-1 text-amber-800 dark:text-amber-300"
@@ -228,6 +235,7 @@ function TaskGraphCanvas({
   const [filters, setFilters] = useState<GraphFilters>(defaultGraphFilters);
   const [query, setQuery] = useState("");
   const [filterByQuery, setFilterByQuery] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(true);
   const [direction, setDirection] = useState<GraphDirection>("LR");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [focusOnly, setFocusOnly] = useState(false);
@@ -238,13 +246,25 @@ function TaskGraphCanvas({
   const patch = (change: Partial<GraphFilters>) =>
     setFilters((current) => ({ ...current, ...change }));
   // Searching locates by default; it filters only when asked to.
+  const appliedSearch = filterByQuery ? query : "";
   const effectiveFilters = useMemo(
-    () => ({ ...filters, search: filterByQuery ? query : "" }),
-    [filters, filterByQuery, query],
+    () => ({ ...filters, search: appliedSearch }),
+    [filters, appliedSearch],
   );
 
   const tasksById = useMemo(
     () => new Map(graph.tasks.map((task) => [task.taskId, task])),
+    [graph.tasks],
+  );
+  // Edges whose prerequisite is unmet for the dependent, taken from the read
+  // model's per-task lists rather than re-derived from statuses.
+  const unmetPairs = useMemo(
+    () =>
+      new Set(
+        graph.tasks.flatMap((task) =>
+          task.unmetPrerequisiteIds.map((id) => `${id}>${task.taskId}`),
+        ),
+      ),
     [graph.tasks],
   );
   const milestonesById = useMemo(
@@ -255,6 +275,15 @@ function TaskGraphCanvas({
   // A live refresh can remove the selected task; never keep a dangling one.
   const selectedTask =
     selectedKey === null ? null : (tasksById.get(selectedKey.slice(2)) ?? null);
+
+  // A selection that a live refresh removed must not come back with its
+  // isolation if the id reappears.
+  useEffect(() => {
+    if (selectedKey !== null && selectedTask === null) {
+      setSelectedKey(null);
+      setFocusOnly(false);
+    }
+  }, [selectedKey, selectedTask]);
 
   const selectedLineage = useMemo(
     () =>
@@ -367,8 +396,7 @@ function TaskGraphCanvas({
           }
         : null;
     return visible.edges.map((edge) => {
-      const blocking =
-        tasksById.get(edge.dependsOnTaskId)?.recordedStatus !== "completed";
+      const blocking = unmetPairs.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
       const onLineage =
         lineageScope !== null &&
         ((lineageScope.up.has(edge.taskId) &&
@@ -399,7 +427,7 @@ function TaskGraphCanvas({
         },
       };
     });
-  }, [chainEdges, selectedLineage, selectedTask, tasksById, visible.edges]);
+  }, [chainEdges, selectedLineage, selectedTask, unmetPairs, visible.edges]);
 
   // Isolation belongs to one selection: choosing another item, or clearing,
   // ends it.
@@ -529,9 +557,18 @@ function TaskGraphCanvas({
   };
 
   const focusOn = (key: string) => {
+    // Activating a panel list item replaces the panel content; keep focus there.
+    const focusWasInPanel = asideRef.current?.contains(document.activeElement);
     pendingFocus.current = { key, at: Date.now() };
     setSelectedKey(key);
-    requestAnimationFrame(() => void focusNode(key));
+    requestAnimationFrame(() => {
+      void focusNode(key);
+      if (focusWasInPanel) asideRef.current?.focus();
+    });
+  };
+  const locate = (key: string) => {
+    focusOn(key);
+    setSearchOpen(false);
   };
 
   const fitGraph = () => {
@@ -615,7 +652,10 @@ function TaskGraphCanvas({
             type="search"
             value={query}
             placeholder="Title or id, Enter to jump"
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setSearchOpen(true);
+            }}
             onKeyDown={(event) => {
               const first = search.matches[0];
               if (
@@ -623,14 +663,16 @@ function TaskGraphCanvas({
                 !filterByQuery &&
                 first !== undefined
               )
-                focusOn(taskKey(first.taskId));
+                locate(taskKey(first.taskId));
             }}
           />
-          {query.trim() !== "" && !filterByQuery && (
-            <div
-              className="absolute left-0 right-0 top-full z-20 mt-1 rounded-md border border-border bg-surface p-1 text-sm text-foreground shadow-lg"
-              aria-live="polite"
-            >
+          <p className="sr-only" aria-live="polite">
+            {query.trim() === "" || filterByQuery
+              ? ""
+              : `${search.total} matching task${search.total === 1 ? "" : "s"}`}
+          </p>
+          {query.trim() !== "" && !filterByQuery && searchOpen && (
+            <div className="absolute left-0 right-0 top-full z-20 mt-1 rounded-md border border-border bg-surface p-1 text-sm text-foreground shadow-lg">
               {search.total === 0 ? (
                 <p className="px-2 py-1 text-subtle">No task matches.</p>
               ) : (
@@ -641,7 +683,7 @@ function TaskGraphCanvas({
                         <button
                           type="button"
                           className="flex w-full justify-between gap-2 rounded px-2 py-1 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                          onClick={() => focusOn(taskKey(task.taskId))}
+                          onClick={() => locate(taskKey(task.taskId))}
                         >
                           <span className="truncate">{task.title}</span>
                           <span className="shrink-0 text-xs text-subtle">
@@ -708,7 +750,7 @@ function TaskGraphCanvas({
                   patch({ hideCompleted: event.target.checked })
                 }
               />
-              Hide completed
+              Hide completed and cancelled
             </label>
             <label className="flex items-center gap-2">
               <input
@@ -1056,9 +1098,9 @@ function TaskPanel({
         <p className="text-xs">
           {task.ready
             ? "Ready: its status allows work and every prerequisite is completed."
-            : waitingOn > 0
+            : task.waiting
               ? `Waiting on ${blockers(waitingOn)}.`
-              : "Not startable in its current state."}
+              : `${idleState(task)}.`}
         </p>
         {task.assignedAgent !== null && (
           <p className="text-xs text-subtle">

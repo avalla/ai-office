@@ -255,7 +255,7 @@ Searching locates: results are listed from the whole project, Enter or a click
 selects the task, frames it and dims the rest of the graph. "Show only tasks
 matching the search" turns the same text into a real filter. The framing follows
 the computed layout and leaves a viewport the user moved alone on live refresh.
-Completed tasks are hidden by default.
+Completed and cancelled tasks are hidden by default (an operational shortcut or a status filter overrides that).
 
 Filter and selection state is component state, so it survives live refresh but
 is not in the URL. Persisting search, status, milestone and the operational view

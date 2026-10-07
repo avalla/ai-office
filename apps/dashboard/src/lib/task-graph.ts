@@ -83,6 +83,9 @@ export function filterGraph(
     if (
       filters.hideCompleted &&
       filters.status === "" &&
+      // An operational shortcut asks about work needing action, and attention
+      // can sit on finished tasks: it must not be hidden from itself.
+      filters.quick === "" &&
       (task.operationalStatus === "completed" ||
         task.operationalStatus === "cancelled")
     )
