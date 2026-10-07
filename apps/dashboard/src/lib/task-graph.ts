@@ -11,6 +11,16 @@ export const nodeSize = { width: 264, height: 96 } as const;
 export type GraphDirection = "LR" | "TB";
 
 /**
+ * Layout runs synchronously while rendering, so it is bounded: beyond this many
+ * visible tasks the canvas asks the user to narrow the view instead of freezing
+ * the page. The read model, the summary and the side-panel lists stay exhaustive.
+ */
+export const maxLaidOutTasks = 1000;
+
+export const exceedsLayoutLimit = (visibleTasks: number) =>
+  visibleTasks > maxLaidOutTasks;
+
+/**
  * Operational shortcuts. Every value is a flag or status the read model already
  * computed; the browser only selects among them.
  */

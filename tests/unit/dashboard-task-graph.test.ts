@@ -5,6 +5,8 @@ import type {
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
   blockingEdgeKeys,
+  exceedsLayoutLimit,
+  maxLaidOutTasks,
   decideFraming,
   nodeStateLabel,
   searchTasks,
@@ -277,6 +279,28 @@ describe("dashboard task graph", () => {
     expect(vertical.get(taskKey("a"))!.y).toBeLessThan(
       vertical.get(taskKey("d"))!.y,
     );
+  });
+
+  test("the canvas only lays out a bounded number of tasks", () => {
+    expect(exceedsLayoutLimit(maxLaidOutTasks)).toBe(false);
+    expect(exceedsLayoutLimit(maxLaidOutTasks + 1)).toBe(true);
+    // The bound keeps the synchronous layout fast at the limit.
+    const count = maxLaidOutTasks;
+    const tasks = Array.from({ length: count }, (_, i) =>
+      node(`t${String(i).padStart(5, "0")}`),
+    );
+    const chain = {
+      ...graph,
+      tasks,
+      edges: tasks.slice(1).map((t, i) => ({
+        taskId: t.taskId,
+        dependsOnTaskId: tasks[i]!.taskId,
+      })),
+    };
+    const started = performance.now();
+    const positions = layoutGraph(filterGraph(chain, all), "LR");
+    expect(positions.size).toBe(count);
+    expect(performance.now() - started).toBeLessThan(10_000);
   });
 
   test("layout is deterministic", () => {

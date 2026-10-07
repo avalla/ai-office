@@ -27,6 +27,8 @@ import {
   blockers,
   blockingEdgeKeys,
   decideFraming,
+  exceedsLayoutLimit,
+  maxLaidOutTasks,
   nodeStateLabel,
   idleState,
   statusLabel,
@@ -300,9 +302,13 @@ function TaskGraphCanvas({
     [effectiveFilters, focusOnly, graph, related, selectedTask],
   );
 
+  const tooLarge = exceedsLayoutLimit(visible.tasks.length);
   const positions = useMemo(
-    () => layoutGraph(visible, direction),
-    [visible, direction],
+    () =>
+      tooLarge
+        ? new Map<string, { x: number; y: number }>()
+        : layoutGraph(visible, direction),
+    [tooLarge, visible, direction],
   );
 
   const chainIds = useMemo(
@@ -382,6 +388,7 @@ function TaskGraphCanvas({
             down: new Set([selectedTask.taskId, ...selectedLineage.downstream]),
           }
         : null;
+    if (tooLarge) return [];
     return visible.edges.map((edge) => {
       const blocking = unmetPairs.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
       const onLineage =
@@ -414,7 +421,14 @@ function TaskGraphCanvas({
         },
       };
     });
-  }, [chainEdges, selectedLineage, selectedTask, unmetPairs, visible.edges]);
+  }, [
+    chainEdges,
+    selectedLineage,
+    selectedTask,
+    tooLarge,
+    unmetPairs,
+    visible.edges,
+  ]);
 
   // Isolation belongs to one selection: choosing another item, or clearing,
   // ends it.
@@ -819,6 +833,16 @@ function TaskGraphCanvas({
             {visible.tasks.length === 0 ? (
               <div className="p-6">
                 <Empty>No tasks match these filters.</Empty>
+              </div>
+            ) : tooLarge ? (
+              <div className="p-6">
+                <Empty>
+                  {visible.tasks.length} tasks match, more than the{" "}
+                  {maxLaidOutTasks} the graph can lay out. Narrow the view with
+                  a summary shortcut, a status or milestone filter, or select a
+                  task from the lists and use &ldquo;Only this lineage&rdquo;.
+                  The summary and the side panel stay complete.
+                </Empty>
               </div>
             ) : (
               <ReactFlow
