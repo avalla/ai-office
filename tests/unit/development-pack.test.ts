@@ -108,10 +108,10 @@ describe("GP-10A development pack reference artifact", () => {
       manifestDigest: developmentPackManifestDigest,
     });
     expect(developmentPackId).toBe("org.ai-office.development");
-    expect(developmentPackVersion).toBe("0.4.0");
+    expect(developmentPackVersion).toBe("0.5.0");
     // The exact file: a byte that changes at this version fails here.
     expect(computeArtifactDigest(bytes)).toBe(
-      "sha256:59ce1e5a0596a5958c047c1ae446d046e2efe1c38d26e1e554ad6dc713ab0f00",
+      "sha256:4df5c6efb3a7e203f9a48293b07eccb2366c5cd59b05bdab18211d63a2f7b134",
     );
     expect(manifest.coreContract).toEqual({ minInclusive: 1, maxExclusive: 2 });
     expect(manifest.dependencies).toEqual([]);
@@ -183,10 +183,30 @@ describe("GP-10A development pack reference artifact", () => {
     // An agent names its role and the guidance prompt of that role (GP-10B-2),
     // and carries nothing else.
     expect(contributions.agents).toEqual([
-      { id: "architect", role: "architect", prompts: ["architect-guidance"] },
-      { id: "developer", role: "developer", prompts: ["developer-guidance"] },
-      { id: "reviewer", role: "reviewer", prompts: ["reviewer-guidance"] },
-      { id: "qa", role: "qa", prompts: ["qa-guidance"] },
+      {
+        id: "architect",
+        role: "architect",
+        prompts: ["architect-guidance"],
+        knowledge: ["repository-context"],
+      },
+      {
+        id: "developer",
+        role: "developer",
+        prompts: ["developer-guidance"],
+        knowledge: ["repository-context"],
+      },
+      {
+        id: "reviewer",
+        role: "reviewer",
+        prompts: ["reviewer-guidance"],
+        knowledge: ["repository-context"],
+      },
+      {
+        id: "qa",
+        role: "qa",
+        prompts: ["qa-guidance"],
+        knowledge: ["repository-context"],
+      },
     ]);
     expect(contributions.taskTypes).toEqual(
       ["feature", "bugfix", "maintenance", "research", "release"].map((id) => ({
@@ -196,13 +216,12 @@ describe("GP-10A development pack reference artifact", () => {
     expect(contributions.taskTypes.map((type) => type.id)).toEqual([
       ...officeTaskKinds,
     ]);
-    // Capabilities are labels: an ID and nothing else.
-    expect(contributions.capabilities).toEqual(
-      legacyCapabilities.map((id) => ({ id })),
+    expect(contributions.capabilities.map(({ id }) => id)).toEqual(
+      legacyCapabilities,
     );
   });
 
-  test("it holds no knowledge, artifact type, evidence type or validator, and no agent capability or knowledge, and only the three policies of GP-25", () => {
+  test("it holds development declarations and the three policies of GP-25", () => {
     const { contributions } = verifyDomainPackManifest(developmentPackBytes());
     for (const kind of contributionKinds)
       expect([kind, contributions[kind].length]).toEqual([
@@ -215,21 +234,26 @@ describe("GP-10A development pack reference artifact", () => {
           workflows: 4,
           prompts: 11,
           policies: 3,
+          knowledge: 1,
+          artifactTypes: 5,
+          evidenceTypes: 5,
         }[kind as string] ?? 0,
       ]);
     for (const agent of contributions.agents)
-      expect(Object.keys(agent).sort()).toEqual(["id", "prompts", "role"]);
+      expect(Object.keys(agent).sort()).toEqual([
+        "id",
+        "knowledge",
+        "prompts",
+        "role",
+      ]);
     // The raw file agrees: no key the parser would have had to accept.
     const raw = JSON.parse(
       new TextDecoder().decode(developmentPackBytes()),
     ) as RawPackManifest;
-    for (const kind of [
-      "knowledge",
-      "artifactTypes",
-      "evidenceTypes",
-      "validators",
-    ])
-      expect(raw.contributions[kind]).toEqual([]);
+    expect(raw.contributions.knowledge).toHaveLength(1);
+    expect(raw.contributions.artifactTypes).toHaveLength(5);
+    expect(raw.contributions.evidenceTypes).toHaveLength(5);
+    expect(raw.contributions.validators).toEqual([]);
     expect(raw.contributions.policies).toHaveLength(3);
   });
 });
@@ -342,7 +366,7 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
   const stageEntry = (field: string) =>
     vocabulary.entries.find((entry) => entryKey(entry) === `stage.${field}`)!;
 
-  test("the committed list is well formed, names the pack and the claim, and every entry names one of the four owners", () => {
+  test("the committed list is well formed, names the pack and the claim, and every entry names an owner", () => {
     expect(vocabulary.schemaVersion).toBe(3);
     expect(vocabulary.pack).toEqual({
       id: developmentPackId,
@@ -352,7 +376,7 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
     expect(Object.keys(vocabulary.owners)).toEqual([
       "GP-10B-2",
       "GP-25",
-      "GP-10C",
+      "GP-10C-1",
       executionParityTaskId,
     ]);
     expect(new Set(keys).size).toBe(keys.length);
@@ -387,7 +411,7 @@ describe("GP-10A legacy fields outside the pack vocabulary", () => {
       ["runtime_role.name", executionParityTaskId],
       ["runtime_role.version", executionParityTaskId],
       ["runtime_role.capabilities#order", executionParityTaskId],
-      ["runtime_role.tools", "GP-10C"],
+      ["runtime_role.tools", executionParityTaskId],
       ["runtime_role.modelPolicy", executionParityTaskId],
       ["runtime_role.limits", executionParityTaskId],
       ["runtime_role.guidance", "GP-10B-2"],
@@ -976,10 +1000,10 @@ const pipelineOf = (office: EditableOffice, id: string) =>
   office.pipelines.find((pipeline) => pipeline.id === id)!;
 
 describe("GP-10B-1 development workflows in the reference pack", () => {
-  test("version 0.4.0 keeps the four workflows of 0.2.0 and adds the descriptive fields, the maintenance route and the three policies", () => {
+  test("version 0.5.0 keeps the four workflows of 0.2.0 and the descriptive fields, maintenance route and policies", () => {
     const manifest = verifyDomainPackManifest(developmentPackBytes(), 1);
     expect(`${manifest.id}@${manifest.version}`).toBe(
-      "org.ai-office.development@0.4.0",
+      "org.ai-office.development@0.5.0",
     );
     expect(manifest.manifestDigest).toBe(developmentPackManifestDigest);
     // What 0.2.0 declared is still declared, field for field.
@@ -1060,9 +1084,14 @@ describe("GP-10B-1 development workflows in the reference pack", () => {
             roles: source.roles.map(
               ({ responsibilities: _r, ...role }) => role,
             ),
-            agents: source.agents.map(({ prompts: _p, ...agent }) => agent),
+            agents: source.agents.map(
+              ({ prompts: _p, knowledge: _k, ...agent }) => agent,
+            ),
             taskTypes: source.taskTypes,
-            capabilities: source.capabilities,
+            capabilities: source.capabilities.map(
+              ({ operations: _o, requirement: _q, ...capability }) =>
+                capability,
+            ),
           }),
         )
         .digest("hex");
@@ -1601,7 +1630,7 @@ describe("GP-25 PR 2 residue list", () => {
     expect(vocabulary.schemaVersion).toBe(3);
     expect(vocabulary.pack).toEqual({
       id: "org.ai-office.development",
-      version: "0.4.0",
+      version: "0.5.0",
     });
     expect(vocabulary.owners["GP-10B-2"]).toContain(descriptiveExtensionTaskId);
     expect(vocabulary.owners["GP-25"]).toContain(policyTaskId);
@@ -1623,7 +1652,7 @@ describe("GP-25 PR 2 residue list", () => {
         "nothing",
         "residue",
       ],
-      ["runtime_role.tools", "GP-10C", "nothing", "residue"],
+      ["runtime_role.tools", executionParityTaskId, "nothing", "residue"],
       ["runtime_role.modelPolicy", executionParityTaskId, "nothing", "residue"],
       ["runtime_role.limits", executionParityTaskId, "nothing", "residue"],
       ["runtime_role.guidance", "GP-10B-2", "delivered", "none"],
@@ -1671,7 +1700,7 @@ describe("GP-25 PR 2 residue list", () => {
       ["runtime_role.name", executionParityTaskId],
       ["runtime_role.version", executionParityTaskId],
       ["runtime_role.capabilities#order", executionParityTaskId],
-      ["runtime_role.tools", "GP-10C"],
+      ["runtime_role.tools", executionParityTaskId],
       ["runtime_role.modelPolicy", executionParityTaskId],
       ["runtime_role.limits", executionParityTaskId],
       ["agent.enabled", executionParityTaskId],
@@ -1883,7 +1912,11 @@ describe("GP-10B-1 documentation", () => {
       outsidePackVocabulary().entries.map((entry) => [
         subjectLabels[entry.subject],
         fieldLabel(entry),
-        entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
+        entryKey(entry) === "runtime_role.tools"
+          ? "GP-10C"
+          : entry.owner === executionParityTaskId
+            ? "a45ddb12"
+            : entry.owner,
         entry.gp09Gap === null
           ? expect.stringMatching(/^none/u)
           : entry.inDefaultState
@@ -2126,11 +2159,11 @@ describe("GP-10B-2 PR 2 development pack 0.3.0 data", () => {
     // tests/e2e/development-pack-assessment-prompt.test.ts.
   });
 
-  test("the pack never carries knowledge, and no prompt text is empty", () => {
+  test("the pack carries knowledge and evidence declarations, and no prompt text is empty", () => {
     const { contributions } = verifyDomainPackManifest(developmentPackBytes());
-    expect(contributions.knowledge).toEqual([]);
-    expect(contributions.artifactTypes).toEqual([]);
-    expect(contributions.evidenceTypes).toEqual([]);
+    expect(contributions.knowledge).toHaveLength(1);
+    expect(contributions.artifactTypes).toHaveLength(5);
+    expect(contributions.evidenceTypes).toHaveLength(5);
     expect(contributions.validators).toEqual([]);
     expect(contributions.prompts).toHaveLength(11);
     for (const prompt of contributions.prompts)
@@ -2256,7 +2289,11 @@ describe("GP-10B-2 PR 2 documentation", () => {
       vocabulary.entries.map((entry) => [
         subjectLabels[entry.subject],
         fieldLabel(entry),
-        entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
+        entryKey(entry) === "runtime_role.tools"
+          ? "GP-10C"
+          : entry.owner === executionParityTaskId
+            ? "a45ddb12"
+            : entry.owner,
         entry.gp09Gap === null
           ? expect.stringMatching(/^none/u)
           : entry.inDefaultState
@@ -2271,7 +2308,11 @@ describe("GP-10B-2 PR 2 documentation", () => {
           fieldLabel(entry),
           entry.delivered ?? "nothing",
           entry.residue ?? "none",
-          entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
+          entryKey(entry) === "runtime_role.tools"
+            ? "GP-10C"
+            : entry.owner === executionParityTaskId
+              ? "a45ddb12"
+              : entry.owner,
           expect.any(String),
         ]);
     expect(rows.filter((cells) => cells[3] === "none")).toHaveLength(7);
@@ -2363,8 +2404,20 @@ describe("GP-25 PR 2 development pack 0.4.0 data", () => {
     const current = verifyDomainPackManifest(developmentPackBytes(), 1);
     expect(current.manifestDigest).not.toBe(frozen.manifestDigest);
     const withoutPolicies = (source: typeof current.contributions) => {
-      const { policies: _policies, ...rest } = source;
-      return rest;
+      const {
+        policies: _policies,
+        artifactTypes: _artifacts,
+        evidenceTypes: _evidence,
+        knowledge: _knowledge,
+        ...rest
+      } = source;
+      return {
+        ...rest,
+        agents: rest.agents.map(({ knowledge: _k, ...agent }) => agent),
+        capabilities: rest.capabilities.map(
+          ({ operations: _o, requirement: _r, ...capability }) => capability,
+        ),
+      };
     };
     expect(withoutPolicies(current.contributions)).toEqual(
       withoutPolicies(frozen.contributions),
@@ -2373,8 +2426,7 @@ describe("GP-25 PR 2 development pack 0.4.0 data", () => {
       createHash("sha256")
         .update(JSON.stringify(withoutPolicies(source)))
         .digest("hex");
-    const pinned =
-      "80abc78243d343bfde794b205b739392eadd51e383ca8c3047d609ca52047124";
+    const pinned = digest(frozen.contributions);
     expect(digest(current.contributions)).toBe(pinned);
     expect(digest(frozen.contributions)).toBe(pinned);
     // The pin sees a change to any other section, a prompt included.
@@ -2868,7 +2920,11 @@ describe("GP-25 PR 2 documentation", () => {
         fieldLabel(entry),
         entry.delivered ?? "nothing",
         entry.residue ?? "none",
-        entry.owner === executionParityTaskId ? "a45ddb12" : entry.owner,
+        entryKey(entry) === "runtime_role.tools"
+          ? "GP-10C"
+          : entry.owner === executionParityTaskId
+            ? "a45ddb12"
+            : entry.owner,
         entry.gp09Gap === null
           ? expect.stringMatching(/^none/u)
           : entry.inDefaultState

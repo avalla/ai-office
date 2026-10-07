@@ -2044,9 +2044,12 @@ the guidance of an existing entry changes only through `project:pack:upgrade`,
 whose plan reports `knowledgeChanges` and `targetKnowledge`
 (`project:pack:apply` refuses it with `knowledge_change_requires_upgrade`). It
 adds no migration, no archive format and no pack data, and carries the scope
-compatibility plan for a later consumer. Aliases and declarative development
-evidence, knowledge and capability entries (GP-10C-1) remain planned work of
-M16; automatic selection,
+compatibility plan for a later consumer. GP-10C-1 advances the development
+reference pack to `0.5.0` with five artifact/evidence pairs, one pack-owned
+knowledge guidance entry and optional filesystem operation declarations.
+Tests resolve these through a test-supplied catalog; no production catalog
+registers the pack, no project adopts it and the Runtime does not consume it.
+Aliases remain planned work of M16; automatic selection,
 remote marketplace/downloads and executable validators remain deferred.
 Runtime enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and
 Runtime execution from packs are planned for M16.5. M16 remains incomplete

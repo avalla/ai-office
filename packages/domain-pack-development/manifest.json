@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "org.ai-office.development",
-  "version": "0.4.0",
-  "manifestDigest": "sha256:c575ec687088bdf3861cb3fe1fee3b73cc8214c95ff4898c96e57c9ccde59848",
+  "version": "0.5.0",
+  "manifestDigest": "sha256:a8f9c9e083b7c76437392b990583d3c675074c1e1d7e0f3394a73a1fbb8864fd",
   "coreContract": {
     "minInclusive": 1,
     "maxExclusive": 2
@@ -211,26 +211,176 @@
       {
         "id": "architect",
         "role": "architect",
-        "prompts": ["architect-guidance"]
+        "prompts": ["architect-guidance"],
+        "knowledge": ["repository-context"]
       },
       {
         "id": "developer",
         "role": "developer",
-        "prompts": ["developer-guidance"]
+        "prompts": ["developer-guidance"],
+        "knowledge": ["repository-context"]
       },
       {
         "id": "reviewer",
         "role": "reviewer",
-        "prompts": ["reviewer-guidance"]
+        "prompts": ["reviewer-guidance"],
+        "knowledge": ["repository-context"]
       },
       {
         "id": "qa",
         "role": "qa",
-        "prompts": ["qa-guidance"]
+        "prompts": ["qa-guidance"],
+        "knowledge": ["repository-context"]
       }
     ],
-    "artifactTypes": [],
-    "evidenceTypes": [],
+    "artifactTypes": [
+      {
+        "id": "repository-state",
+        "title": "Repository state",
+        "description": "A repository identity and a specific revision used as delivery context.",
+        "mediaTypes": ["application/json"],
+        "maximumBytes": 65536,
+        "contentSchema": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string", "minLength": 1 },
+            "revision": { "type": "string", "minLength": 1 }
+          },
+          "required": ["repository", "revision"]
+        }
+      },
+      {
+        "id": "github-reference",
+        "title": "GitHub reference",
+        "description": "A GitHub issue or discussion reference associated with the repository.",
+        "mediaTypes": ["application/json"],
+        "maximumBytes": 65536,
+        "contentSchema": {
+          "type": "object",
+          "properties": {
+            "number": { "type": "integer", "minimum": 1 },
+            "url": { "type": "string", "minLength": 1 }
+          },
+          "required": ["number", "url"]
+        }
+      },
+      {
+        "id": "commit",
+        "title": "Git commit",
+        "description": "A commit reference in the repository.",
+        "mediaTypes": ["application/json"],
+        "maximumBytes": 65536,
+        "contentSchema": {
+          "type": "object",
+          "properties": {
+            "revision": { "type": "string", "minLength": 1 },
+            "repository": { "type": "string", "minLength": 1 }
+          },
+          "required": ["repository", "revision"]
+        }
+      },
+      {
+        "id": "pull-request",
+        "title": "Pull request",
+        "description": "A pull request reference and its proposed head commit.",
+        "mediaTypes": ["application/json"],
+        "maximumBytes": 65536,
+        "contentSchema": {
+          "type": "object",
+          "properties": {
+            "head": { "type": "string", "minLength": 1 },
+            "number": { "type": "integer", "minimum": 1 },
+            "url": { "type": "string", "minLength": 1 }
+          },
+          "required": ["head", "number", "url"]
+        }
+      },
+      {
+        "id": "ci-result",
+        "title": "CI result",
+        "description": "A CI run reference for a specific commit.",
+        "mediaTypes": ["application/json"],
+        "maximumBytes": 65536,
+        "contentSchema": {
+          "type": "object",
+          "properties": {
+            "head": { "type": "string", "minLength": 1 },
+            "status": {
+              "type": "enum",
+              "values": ["failure", "pending", "success"]
+            },
+            "url": { "type": "string", "minLength": 1 }
+          },
+          "required": ["head", "status", "url"]
+        }
+      }
+    ],
+    "evidenceTypes": [
+      {
+        "id": "repository-context",
+        "title": "Repository context evidence",
+        "subject": "repository-state",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "observedAt": { "type": "string", "minLength": 1 }
+          },
+          "required": ["observedAt"]
+        }
+      },
+      {
+        "id": "github-context",
+        "title": "GitHub context evidence",
+        "subject": "github-reference",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "observedAt": { "type": "string", "minLength": 1 }
+          },
+          "required": ["observedAt"]
+        }
+      },
+      {
+        "id": "commit-provenance",
+        "title": "Commit provenance evidence",
+        "subject": "commit",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "observedAt": { "type": "string", "minLength": 1 }
+          },
+          "required": ["observedAt"]
+        }
+      },
+      {
+        "id": "pull-request-review",
+        "title": "Pull request review evidence",
+        "subject": "pull-request",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "enum",
+              "values": ["approved", "changes_requested", "commented"]
+            },
+            "reviewer": { "type": "string", "minLength": 1 }
+          },
+          "required": ["decision", "reviewer"]
+        }
+      },
+      {
+        "id": "ci-verification",
+        "title": "CI verification evidence",
+        "subject": "ci-result",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "checkedAt": { "type": "string", "minLength": 1 }
+          },
+          "required": ["checkedAt"]
+        }
+      }
+    ],
     "policies": [
       {
         "id": "delivery-governance",
@@ -270,7 +420,28 @@
         ]
       }
     ],
-    "knowledge": [],
+    "knowledge": [
+      {
+        "id": "repository-context",
+        "title": "Repository context guidance",
+        "description": "Guidance for retrieving reviewed project and repository knowledge during software delivery.",
+        "category": "repository_context",
+        "schema": [
+          {
+            "field": "source",
+            "description": "The source of the reviewed repository observation."
+          },
+          {
+            "field": "summary",
+            "description": "A concise statement of the relevant repository fact."
+          }
+        ],
+        "retrieval": {
+          "maxResults": 5,
+          "hint": "Use relevant, reviewed repository context as guidance; verify current code and project authority before acting."
+        }
+      }
+    ],
     "capabilities": [
       {
         "id": "approve_or_reject"
@@ -282,7 +453,9 @@
         "id": "assess_tradeoffs"
       },
       {
-        "id": "create_patch"
+        "id": "create_patch",
+        "operations": [{ "operation": "filesystem.write", "mode": "mutation" }],
+        "requirement": "optional"
       },
       {
         "id": "decompose_work"
@@ -291,19 +464,33 @@
         "id": "derive_test_cases"
       },
       {
-        "id": "inspect_code"
+        "id": "inspect_code",
+        "operations": [
+          { "operation": "filesystem.read", "mode": "read" },
+          { "operation": "filesystem.search", "mode": "read" }
+        ],
+        "requirement": "optional"
       },
       {
         "id": "inspect_diff"
       },
       {
-        "id": "inspect_project"
+        "id": "inspect_project",
+        "operations": [
+          { "operation": "filesystem.list", "mode": "read" },
+          { "operation": "filesystem.read", "mode": "read" }
+        ],
+        "requirement": "optional"
       },
       {
-        "id": "inspect_tests"
+        "id": "inspect_tests",
+        "operations": [{ "operation": "filesystem.read", "mode": "read" }],
+        "requirement": "optional"
       },
       {
-        "id": "modify_code"
+        "id": "modify_code",
+        "operations": [{ "operation": "filesystem.write", "mode": "mutation" }],
+        "requirement": "optional"
       },
       {
         "id": "propose_adr"

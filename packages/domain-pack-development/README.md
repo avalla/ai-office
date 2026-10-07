@@ -1,7 +1,7 @@
 # Development Domain Pack (reference artifact)
 
 `manifest.json` is the development Domain Pack,
-`org.ai-office.development@0.4.0`, a schema-1 manifest under the
+`org.ai-office.development@0.5.0`, a schema-1 manifest under the
 [Domain Pack contract](../domain-pack-contracts/README.md). It is a committed
 reference artifact. GP-10A defined the four software development roles
 (`architect`, `developer`, `reviewer`, `qa`), one agent per role, the five
@@ -35,8 +35,13 @@ legacy governance defaults that the GP-25 contract made expressible:
   `requiresIndependentApproval` or `requiresDifferentAgentFrom`, which the
   default stages do not use; `discovery` has no policy.
 
-`knowledge`, `artifactTypes`, `evidenceTypes` and `validators` stay empty. A
-policy is a declaration: nothing is enforced from it.
+GP-10C-1 adds five artifact types and five evidence types for repository,
+GitHub, commit, pull request and CI references; a `repository-context`
+knowledge entry named by the four agents; and optional filesystem operation
+needs for five existing capability labels. These are definitions only. The
+legacy worker tool names are not connector operations, so the Runtime role
+`tools` field remains outside the pack vocabulary. `validators` stays empty.
+A policy is a declaration: nothing is enforced from it.
 
 The package is data only. Nothing in the Runtime reads it, no catalog
 registers it and no project is bound to it. Projects keep running on their
@@ -66,9 +71,9 @@ Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`.
 full. Each entry states what the pack delivers of the field, what remains as
 residue (`null` when the pack carries the whole field) and the task that owns
 it. The seven fields that GP-10B-2 owned and the five governance fields of
-GP-25 are delivered. `tools` stays with GP-10C-1, and the Runtime role name,
-version, model policy, limits, capability order and agent enablement with the
-execution parity task.
+GP-25 are delivered. `tools`, the Runtime role name, version, model policy,
+limits, capability order and agent enablement stay with the execution parity
+task. The pack was `org.ai-office.development@0.4.0` before GP-10C-1.
 
 See the GP-10A, GP-10B-1, "GP-10B-2 PR 2 development pack 0.3.0" and "GP-25 PR
 2 development pack 0.4.0" sections of the

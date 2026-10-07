@@ -1010,12 +1010,13 @@ describe("GP-15 creates nothing in the Runtime", () => {
       new TickingClock("2026-10-06T00:00:00.000Z"),
       new SequenceIds("gp15"),
     );
-    // A copy of the development reference pack with knowledge guidance; the
-    // committed pack is not edited by this pull request.
+    // A copy of the development reference pack with an additional guidance
+    // entry. The existing entry remains because agents reference it.
     const bytes = mutatedDevelopmentPackBytes((manifest) => {
-      (manifest.contributions as Record<string, unknown[]>).knowledge = [
-        { id: "handbook", ...clausesGuidance },
-      ];
+      (manifest.contributions as Record<string, unknown[]>).knowledge!.push({
+        id: "handbook",
+        ...clausesGuidance,
+      });
     });
     const { catalog, pack } = testCatalogWith(bytes);
     const bindings = new SqliteProjectPackBindingRepository(database);
@@ -1043,12 +1044,12 @@ describe("GP-15 creates nothing in the Runtime", () => {
       transactions: stores.transactions,
       catalog,
     }).read(legacyProjectId);
-    expect(resolved.knowledge).toMatchObject([
-      {
+    expect(resolved.knowledge).toContainEqual(
+      expect.objectContaining({
         knowledgeId: "pack:org.ai-office.development/knowledge/handbook",
         ...clausesReported,
-      },
-    ]);
+      }),
+    );
     const after = tableRows(database);
     for (const table of [
       "office_manifest_revision",

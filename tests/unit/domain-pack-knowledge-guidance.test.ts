@@ -194,15 +194,6 @@ describe("GP-15 typed knowledge contributions in the schema-1 manifest", () => {
         decoder.decode(canonicalizeDomainPackManifest(verified)),
       ).not.toMatch(/"seeds"|"retrieval"|"category"/);
     }
-    const published = verifyDomainPackManifest(
-      readFileSync(
-        new URL(
-          "../../packages/domain-pack-development/manifest.json",
-          import.meta.url,
-        ),
-      ),
-    );
-    expect(published.contributions.knowledge).toEqual([]);
     // A descriptive entry has exactly the canonical members it had before.
     const descriptive = parse(
       withKnowledge({ id: "plain", title: "Plain", description: "Text" }),
