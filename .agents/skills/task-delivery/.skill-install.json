@@ -3,10 +3,10 @@
   "skill": "task-delivery",
   "version": "0.3.0",
   "files": {
-    "SKILL.md": "0fb4b1258ec6455435fcee2268fad8fbeef26e91aa77ac03d1feed44a61c8f1f",
+    "SKILL.md": "d8ffa36f7fe8c34a20c3b27417d6fb0884e91ba03f536014128894782af8d86f",
     "assets/pr-template.md": "042cd175402f40447a0f37ca548d9fec08e76f1428e9b9d75262f79613c7c1b7",
     "assets/task-delivery.example.yaml": "f0e3b918d03ad5b88cd11bc51f7c08320a583a40d8c29fb19e42069ce31a09a8",
-    "references/branch-policy.md": "983b41e241adffe12749447a66938ca5619c2ccf3e9a4bfbda0a960a474597f1",
+    "references/branch-policy.md": "db829296a1af72cf8dcf35309af8d8d5fbc04e04cf76c659b24c575ff461dd3b",
     "references/configuration.md": "760d4262de2802a1421dafc25c2bcabf0986189923b434572a03b1bcde8f4bd4",
     "references/evidence.md": "1ba1dad8fbc23e10763e81a23904823315505e831873b5bb71c1b4e70d7cf385",
     "references/lifecycle.md": "a7c5b5da4ef8e2cad92135cb8364513f1300f3aaf0a3d7e9f4472c60f62e99f1",

@@ -578,8 +578,12 @@ describe("task-delivery workflow invariants", () => {
       /The\s+repeated\s+offer\s+applies\s+only\s+to\s+tasks\s+not\s+yet\s+started/u,
     ],
     [
+      "policy:stop-resume-needs-go-ahead",
+      /If\s+the\s+stop\s+is\s+resolved\s+without\s+changing\s+the\s+plan,\s+the\s+authorizer's\s+go-ahead\s+is\s+enough\s+to\s+resume\s+them/u,
+    ],
+    [
       "policy:stopped-task-stops-stacked-tasks",
-      /the\s+authorizer\s+decides\s+how\s+their\s+branches\s+are\s+rebuilt,\s+and\s+the\s+changed\s+plan\s+is\s+shown\s+and\s+approved\s+before\s+any\s+of\s+them\s+starts/u,
+      /When\s+a\s+task\s+in\s+a\s+stacked\s+run\s+stops\s+or\s+is\s+postponed,\s+the\s+tasks\s+whose\s+branches\s+are\s+stacked\s+on\s+it\s+stop\s+too/u,
     ],
     [
       "policy:declining-run-stacking-keeps-selective-dependencies",
@@ -928,7 +932,8 @@ describe("task-delivery workflow invariants", () => {
         "Every other task starts from the integration branch unless another separately approved Git branch dependency applies.",
         "A separately approved Git branch dependency takes precedence over the run chain for its task.",
         "Stacking the run changes where branches start and nothing else: every task keeps its own pull request and gates, and its task dependencies stay as they were.",
-        "When a task stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the run that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts.",
+        "When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts.",
+        "If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them.",
         "A run that covers several tasks gives each task its own branch, pull request, and evidence.",
         "Each task's pre-merge delivery ends at READY FOR MERGE.",
         "The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has approved the required Git branch dependency, separately or by accepting run-wide stacking.",
@@ -1235,7 +1240,7 @@ describe("task-delivery workflow invariants", () => {
         /Declining run-wide stacking leaves separately approved Git branch dependencies unchanged; every other task starts from the integration branch unless another separately approved Git branch dependency applies\. A go-ahead that does not answer the stacking offer declines it\. A task starts only on a base that contains the work of each of its prerequisites: the branch of each unmerged prerequisite beneath it on the stack, and the merged work of each prerequisite that is DONE\. A prerequisite beneath the task in an approved stacked run counts as an approved Git branch dependency on it; otherwise the task waits, or needs a separately approved Git branch dependency on the prerequisite\./u,
       );
       expect(branchPolicy).toMatch(
-        /When a task stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the run that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts\. Never rewrite reviewed history to do so\./u,
+        /When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts\. If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them\. Never rewrite reviewed history to do so\./u,
       );
       expect(branchPolicy).toMatch(
         /An unrelated task must not inherit another task's unmerged commits, except in a run the authorizer approved as stacked\./u,
@@ -1298,7 +1303,7 @@ describe("task-delivery workflow invariants", () => {
         /3\. \*\*Task dependency != Git branch dependency\.\*\* A task may logically depend on another without its branch being stacked on it, and the reverse\. Decide each one separately; see \[branch policy\]\(references\/branch-policy\.md\)\. 4\./u,
       );
       expect(reference("branch-policy.md")).toMatch(
-        /\| Yes \| No \| Wait for A, or stack B on A's head if the project allows stacked work\. \| ## Rules/u,
+        /\| Yes \| No \| Wait for A, or stack B on A's head if the project allows stacked work; in an approved stacked run, the run chain, whose base contains A\. \| ## Rules/u,
       );
     });
 

@@ -211,7 +211,12 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:stopped-task-stops-stacked-tasks",
         pattern:
-          /the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts/u,
+          /When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it stop too/u,
+      },
+      {
+        id: "policy:stop-resume-needs-go-ahead",
+        pattern:
+          /If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them/u,
       },
       {
         id: "policy:declining-run-stacking-keeps-selective-dependencies",

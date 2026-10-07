@@ -8,11 +8,11 @@ is created from branch A, so B's diff only makes sense on top of A.
 
 They are independent. Decide each explicitly and write both in the pull request.
 
-| Task B depends on A | A is merged | Base for B                                                              |
-| ------------------- | ----------- | ----------------------------------------------------------------------- |
-| No                  | -           | Integration branch, unless the authorizer approved stacking the run.    |
-| Yes                 | Yes         | Integration branch, updated to include A, unless a stacked run applies. |
-| Yes                 | No          | Wait for A, or stack B on A's head if the project allows stacked work.  |
+| Task B depends on A | A is merged | Base for B                                                                                                                               |
+| ------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| No                  | -           | Integration branch, unless the authorizer approved stacking the run.                                                                     |
+| Yes                 | Yes         | Integration branch, updated to include A, unless a stacked run applies.                                                                  |
+| Yes                 | No          | Wait for A, or stack B on A's head if the project allows stacked work; in an approved stacked run, the run chain, whose base contains A. |
 
 ## Rules
 
@@ -37,8 +37,7 @@ They are independent. Decide each explicitly and write both in the pull request.
   stacked run counts as an approved Git branch dependency on it; otherwise the
   task waits, or needs a separately approved Git branch dependency on the
   prerequisite.
-- When a task stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the run that is not yet started;
-  the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts. Never rewrite reviewed history to do so.
+- When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts. If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them. Never rewrite reviewed history to do so.
 - A stacked pull request targets the branch it is stacked on, and says so. Its
   review covers only its own diff. An external review command is run against
   that branch, not against the integration branch.

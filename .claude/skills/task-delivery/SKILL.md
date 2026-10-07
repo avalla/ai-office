@@ -204,7 +204,7 @@ unless another separately approved Git branch dependency applies. A
 separately approved Git branch dependency takes precedence over the run chain
 for its task. Stacking the
 run changes where branches start and nothing else: every task keeps its own pull
-request and gates, and its task dependencies stay as they were. When a task stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the run that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts.
+request and gates, and its task dependencies stay as they were. When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts. If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them.
 
 A run that covers several tasks gives each task its own branch, pull request,
 and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run
