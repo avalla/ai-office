@@ -111,7 +111,7 @@ fits it to the existing capability and worker contracts.
 | --- | --- |
 | filesystem confidentiality | none, strong |
 | filesystem write | unrestricted, none, explicit mounts only |
-| workspace | none, read_only, read_write |
+| workspace | none, read_only |
 | temporary state | shared host, private |
 | credentials | ambient, explicit run copy |
 | process | unowned, owned, owned with PID namespace |
@@ -127,15 +127,19 @@ client. SFC-01 accepts or revises the names and definitions.
 | Level | Guarantee |
 | --- | --- |
 | `none` | No confinement guarantee. |
-| `process_owned` | The Runtime owns the executor's process tree and ends it on completion, cancellation and timeout. Nothing about the filesystem. |
+| `process_owned` | The Runtime owns the executor's process tree and ends it, including detached children, on completion, cancellation and timeout within a bounded wait. Nothing about the filesystem. Requires the SFC-REQ-15 behavior; no current worker provides it. |
 | `write_restricted` | The provider prevents writes outside explicitly writable mounts. Reads are not restricted. |
 | `filesystem_confidential` | The "strong" level: only explicitly exposed paths are observable, and outside paths are indistinguishable. Includes private temp, explicit credentials and explicit environment. |
 
 A restriction enforced by the client is recorded as client-enforced and never
 raises the level. On that rule the current workers classify as follows until
-they are migrated: the bounded Codex worker is `process_owned` with a
-client-enforced read-only sandbox and no read confidentiality; the bounded
-Claude worker is `process_owned` with model-visible tool isolation. Process
+they are migrated: both bounded workers are `none`. The Codex worker
+additionally records a client-enforced read-only sandbox with no read
+confidentiality, and the Claude worker records model-visible tool isolation.
+Neither reaches `process_owned`: the process-group wait is unbounded where the
+Runtime is not the reaper of orphans, and a process that starts a new session
+is not owned (`agent-runtime.md`). They become `process_owned` only after
+SFC-REQ-15 bounded detached-child handling is implemented and verified. Process
 isolation is its own dimension and is never implied by a filesystem level.
 
 ### Fail-closed admission
@@ -175,10 +179,17 @@ Two profiles frame the range:
   credential copy only, no repository, no writable host mount, provider
   networking as required. This is the target strong mode for the bounded Codex
   worker.
-- **Development**: `/workspace` read-write, a selected `/cache`, `/output`,
+- **Development**: `/workspace` read-only, a selected `/cache`, `/output`,
   and the build tools the policy names, with the rest of the host invisible.
-  M18 makes this expressible and testable; enabling repository-editing roles
-  is M14 scope.
+  The executor reads the repository and proposes changes; every repository
+  mutation still crosses the controlled-action gateway
+  (`request -> simulate -> inspect -> approve -> execute`) and is performed by
+  the Runtime outside the executor namespace. A read-write `/workspace` would
+  let the executor mutate the repository without an action, simulation,
+  approval, execution-time revalidation or audit record, so it is not a value
+  this plan defines. Admitting one is an architecture change that requires a
+  revised accepted ADR first. M18 makes this profile expressible and testable;
+  enabling repository-editing roles is M14 scope.
 
 ### Credentials, environment, process
 
@@ -278,7 +289,7 @@ All requirements are `proposed` and belong to M18. Keys are stable.
 | SFC-REQ-03 | No silent downgrade | When the confinement a run requires cannot be enforced by an available, verified provider, admission fails with WORKER_UNAVAILABLE before task content is dispatched and before any executor process receives credentials. No unconfined run, client-sandbox fallback, lower-level substitution or other-worker substitution occurs, and an installed executor never implies confinement support. |
 | SFC-REQ-04 | Per-run isolation | Every AgentRun receives its own run root, namespace and credential copy. Concurrent runs, including runs of the same executor, model and provider, cannot observe each other's workspace, temporary state, credentials or unpublished output. |
 | SFC-REQ-05 | Credential confinement | Operator source credentials stay outside the executor namespace. Only a minimal, explicitly materialized per-run copy with owner-only permissions is visible; no mutable credential directory is shared between runs; there is no fallback to the operator HOME; the copy is removed on every terminal outcome; the materialization seam admits future Runtime-owned credentials. |
-| SFC-REQ-06 | Workspace access policy | Repository or workspace exposure is an explicit policy value none \| read_only \| read_write, mounted at a logical executor path independent of the host path. read_only is enforced by the provider, not by the client. No run receives a workspace by default; cache and output mounts are separate explicit entries. |
+| SFC-REQ-06 | Workspace access policy | Repository or workspace exposure is an explicit policy value none \| read_only, mounted at a logical executor path independent of the host path. read_only is enforced by the provider, not by the client. No run receives a workspace by default; A read-write workspace is not a defined value: repository mutation stays on the controlled-action path. Cache and output mounts are separate explicit entries. |
 | SFC-REQ-07 | Path escape resistance | Symlinked mount sources and destinations, '..' traversal, non-canonical paths, bind-mount escape, case-insensitive path collisions, overlapping mount roots and host aliases cannot widen visibility. Mount sources are canonicalized and validated before use, an exposed path never exposes a broader parent tree, and an ambiguous or overlapping policy is refused at admission. |
 | SFC-REQ-08 | Deterministic cleanup | Success, failure, cancellation and timeout each remove the run's private state. After an abrupt Runtime host death, recovery identifies only AI Office-owned run roots by an ownership marker, safely distinguishes active from abandoned runs, removes stale credentials and workspaces, never deletes a path outside an owned root, and records an auditable cleanup event. |
 | SFC-REQ-09 | Confinement provenance | Every real external execution records confinement provider, provider version, policy version, requested level, effective level, logical mounts and capabilities, workspace access mode and whether enforcement was actually active. No secret credential path or unnecessary host path is persisted. Executions that predate the record report confinement as not recorded; it is never inferred. |
@@ -408,9 +419,10 @@ decided when their gates in SFC-14 are met, not by this plan.
 
 ## Relationship to autonomous development
 
-Production autonomous Developer agents with repository write access depend on
-M18: their `/workspace` mount is read-write and everything else on the host is
-invisible. Delegated or hierarchical agents must inherit or narrow the parent
+Production autonomous Developer agents depend on M18 for a read-only
+`/workspace` view in which everything else on the host is invisible. Their
+repository writes remain controlled actions executed by the Runtime, not
+direct writes by the executor. Delegated or hierarchical agents must inherit or narrow the parent
 policy; a child AgentRun never receives broader filesystem access than its
 parent unless Runtime policy explicitly authorizes it. M18 records that rule
 as a contract. It does not implement child delegation.

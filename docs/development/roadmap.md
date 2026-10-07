@@ -2102,7 +2102,8 @@ and an OCI container provider behind a runtime-neutral port. Windows reports
 strong confinement as unsupported. Proposed machine-readable levels are
 `none`, `process_owned`, `write_restricted` and `filesystem_confidential`; a
 client-enforced restriction never raises the level, so the current workers
-remain `process_owned` until migrated. A run whose required level cannot be
+remain `none`, with their client restrictions recorded separately, until
+bounded process-tree ownership is implemented. A run whose required level cannot be
 enforced fails with `WORKER_UNAVAILABLE` before dispatch; there is no silent
 downgrade, client-sandbox fallback or worker substitution.
 
