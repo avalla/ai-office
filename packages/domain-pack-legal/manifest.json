@@ -1,0 +1,274 @@
+{
+  "schemaVersion": 1,
+  "id": "org.ai-office.legal",
+  "version": "0.1.0",
+  "manifestDigest": "sha256:57ba379cfaf3e77936dd28a683dde6343699653aac327ab862af5caa28bd372b",
+  "coreContract": {
+    "minInclusive": 1,
+    "maxExclusive": 2
+  },
+  "metadata": {
+    "name": "Legal reference",
+    "description": "Declarative matter workflow fixture; it does not offer legal services or run a Runtime pipeline."
+  },
+  "dependencies": [],
+  "contributions": {
+    "roles": [
+      {
+        "id": "intake-clerk",
+        "title": "Intake clerk"
+      },
+      {
+        "id": "researcher",
+        "title": "Legal researcher",
+        "capabilities": ["read-matter"]
+      },
+      {
+        "id": "drafter",
+        "title": "Drafting counsel",
+        "capabilities": ["read-matter"]
+      },
+      {
+        "id": "reviewer",
+        "title": "Review counsel",
+        "capabilities": ["read-matter"]
+      },
+      {
+        "id": "approver",
+        "title": "Human approver"
+      }
+    ],
+    "taskTypes": [
+      {
+        "id": "matter"
+      }
+    ],
+    "workflows": [
+      {
+        "id": "matter-workflow",
+        "title": "Matter review",
+        "taskType": "matter",
+        "stages": [
+          {
+            "id": "intake",
+            "role": "intake-clerk",
+            "title": "Intake",
+            "objective": "Record the matter request"
+          },
+          {
+            "id": "research",
+            "role": "researcher",
+            "title": "Research",
+            "objective": "Collect sources and citations"
+          },
+          {
+            "id": "draft",
+            "role": "drafter",
+            "title": "Draft",
+            "objective": "Prepare a draft for review"
+          },
+          {
+            "id": "citation-review",
+            "role": "reviewer",
+            "title": "Citation review",
+            "objective": "Check cited support for the draft"
+          },
+          {
+            "id": "human-approval",
+            "role": "approver",
+            "title": "Human approval",
+            "objective": "Decide whether the reviewed draft is approved"
+          }
+        ]
+      }
+    ],
+    "agents": [
+      {
+        "id": "intake-agent",
+        "role": "intake-clerk"
+      },
+      {
+        "id": "research-agent",
+        "role": "researcher",
+        "knowledge": ["matter-research"],
+        "capabilities": ["read-matter"]
+      },
+      {
+        "id": "draft-agent",
+        "role": "drafter",
+        "knowledge": ["matter-research"],
+        "capabilities": ["read-matter"]
+      },
+      {
+        "id": "review-agent",
+        "role": "reviewer",
+        "knowledge": ["matter-research"],
+        "capabilities": ["read-matter"]
+      },
+      {
+        "id": "approval-agent",
+        "role": "approver"
+      }
+    ],
+    "artifactTypes": [
+      {
+        "id": "matter-draft",
+        "title": "Matter draft",
+        "mediaTypes": ["application/json"],
+        "maximumBytes": 65536,
+        "contentSchema": {
+          "type": "object",
+          "properties": {
+            "body": {
+              "type": "string"
+            }
+          },
+          "required": ["body"]
+        }
+      },
+      {
+        "id": "citation-list",
+        "title": "Citation list",
+        "mediaTypes": ["application/json"],
+        "maximumBytes": 65536,
+        "contentSchema": {
+          "type": "object",
+          "properties": {
+            "sources": {
+              "type": "string"
+            }
+          },
+          "required": ["sources"]
+        }
+      }
+    ],
+    "evidenceTypes": [
+      {
+        "id": "citation-review-evidence",
+        "title": "Citation review evidence",
+        "subject": "matter-draft",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "checkedBy": {
+              "type": "string"
+            }
+          },
+          "required": ["checkedBy"]
+        }
+      },
+      {
+        "id": "approval-evidence",
+        "title": "Human approval evidence",
+        "subject": "matter-draft",
+        "payloadSchema": {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "string"
+            }
+          },
+          "required": ["decision"]
+        }
+      }
+    ],
+    "policies": [
+      {
+        "id": "matter-governance",
+        "title": "Matter governance",
+        "workflow": "matter-workflow",
+        "enforcement": "enforced",
+        "stages": [
+          {
+            "stage": "citation-review",
+            "requiresApproval": true,
+            "requiresDifferentAgentFrom": ["draft"]
+          },
+          {
+            "stage": "human-approval",
+            "requiresApproval": true,
+            "requiresIndependentApproval": true,
+            "requiresDifferentAgentFrom": ["draft", "citation-review"]
+          }
+        ]
+      }
+    ],
+    "knowledge": [
+      {
+        "id": "matter-research",
+        "title": "Matter research guidance",
+        "category": "legal_research",
+        "schema": [
+          {
+            "field": "citation",
+            "description": "Source citation supplied for human review."
+          },
+          {
+            "field": "summary",
+            "description": "A concise note about the cited source."
+          }
+        ],
+        "retrieval": {
+          "maxResults": 5,
+          "hint": "Treat retrieved research as unverified until citations are reviewed."
+        }
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "read-matter",
+        "operations": [
+          {
+            "operation": "legal.matter.read",
+            "mode": "read"
+          }
+        ],
+        "requirement": "optional"
+      }
+    ],
+    "prompts": [],
+    "validators": [
+      {
+        "id": "citation-checker",
+        "title": "Citation checker reference",
+        "adapter": {
+          "id": "legal.citation-checker",
+          "version": "1.0.0"
+        },
+        "accepts": [
+          {
+            "kind": "artifactTypes",
+            "id": "matter-draft"
+          },
+          {
+            "kind": "artifactTypes",
+            "id": "citation-list"
+          }
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "draft": {
+              "type": "string"
+            }
+          },
+          "required": ["draft"]
+        },
+        "produces": "citation-review-evidence",
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "checkedBy": {
+              "type": "string"
+            }
+          },
+          "required": ["checkedBy"]
+        },
+        "failurePolicy": "fail_closed",
+        "timeoutMs": 30000,
+        "maxInputBytes": 65536,
+        "maxOutputBytes": 65536
+      }
+    ]
+  }
+}
