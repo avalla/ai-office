@@ -155,6 +155,7 @@ audit event id; the SQLite `rowid` is deliberately not part of the contract.
 | `GET /api/projects/:id`               | Project detail data used by the section pages                   |
 | `GET /api/projects/:id/tasks`         | Task operational state                                          |
 | `GET /api/projects/:id/tasks/:taskId` | Task detail, active assignment, run history and scoped activity |
+| `GET /api/projects/:id/graph`         | Exhaustive task dependency graph (see below)                    |
 | `GET /api/projects/:id/pipelines`     | Pipeline runs (`?active=true`)                                  |
 | `GET /api/projects/:id/agents`        | Agent activity                                                  |
 | `GET /api/runs`                       | Agent runs (`?project=`, `?active=true`)                        |
@@ -194,6 +195,110 @@ The active section is marked with `aria-current="page"`, and task filter state
 remains in the URL so reloads, pagination, and task-detail round trips are
 stable. The overview remains the compact operational summary; it does not
 duplicate the full task, milestone, requirement, or agent tables.
+
+### Task dependency graph
+
+`GET /api/projects/:id/graph` returns a `TaskGraph`: every task, every hard
+prerequisite edge, the project's milestones, a whole-project `summary`, and the
+`longestDependencyChain`. It is an authoritative projection input, never a
+sample, so it is not paginated or truncated; tasks are projected in bounded
+batches of one fixed snapshot but none is dropped. Fact reads use batches of
+800 task IDs, separate from the 100-task presentation page, to bound storage
+parameters without repeating the related queries for every display page.
+
+The operational meaning is computed once in the application layer; the browser
+only presents it:
+
+- `ready`: `isTaskRunnable` accepts the recorded status (`pending`, `assigned`,
+  `running`, `waiting_review`; never `blocked` or terminal) and every
+  prerequisite's recorded status is `completed`: the same rule as
+  `ManageTaskDependencies.readiness`. A cancelled or failed prerequisite keeps
+  its dependents unmet.
+- `terminal`: the recorded status is terminal (`isTerminalTaskStatus`); not the
+  same as an operational `failed`, which a runnable task can show after a failed
+  run.
+- `waiting`: not terminal and at least one prerequisite is unmet;
+  `unmetPrerequisiteIds` lists them.
+- `needsAttention`: the task carries an authoritative attention reason
+  (blocked, failed, and the other documented attention kinds).
+- `completionUnblocks`: the dependents that become ready when the task
+  completes (it is their only unmet prerequisite and their status allows work);
+  empty for a terminal task (a completed task is nobody's unmet prerequisite
+  any more; a failed or cancelled one can never complete).
+- `summary`: counts of `ready`, `waiting`, operationally `blocked`,
+  `inProgress` and `needsAttention`, derived from the same nodes (a task counts
+  in every bucket that applies).
+- `longestDependencyChain`: the longest chain of prerequisite-linked,
+  non-terminal tasks, ties broken by task id. It counts tasks, not time. There
+  are no duration estimates, so it is **not** a project-management critical
+  path. Renamed from `criticalPath` before release.
+
+Tasks, edges, and task→milestone link facts are read in one consistent SQLite
+read transaction (`readTaskGraphSnapshot`), never with OFFSET pages, so
+concurrent writes cannot skip or repeat a task. The graph snapshot omits full
+task and requirement descriptions; those are fetched from the task detail
+endpoint only when a task is selected. Milestone membership is the existing derived
+task→requirement→milestone link; there is no task→milestone dependency, and
+milestones never take part in the dependency layout.
+
+The **Graph** project section is an operational view of the project, answering
+what can run now, what is blocked and why, and what completing a task unblocks:
+
+- a summary row (Ready, Waiting on prerequisites, Blocked, In progress, Needs
+  attention) whose buttons are filter shortcuts;
+- data filters (find, status, milestone, and under "More filters" hide
+  completed, operational view, filter-by-search);
+- a React Flow canvas of task→task dependencies only (dagre, left-to-right by
+  default, top-down optional), with each task showing status, priority, READY or
+  its blocker count, and its first milestone (`+N` for more). Arrows point from
+  a prerequisite to the task that needs it. Dashed amber edges are unmet
+  prerequisites, completed ones recede, the longest chain is thick red, and a
+  selected task's lineage is thick blue;
+- view controls beside the canvas (Fit graph, layout, longest chain overlay,
+  minimap), distinct from the data filters;
+- a side panel: with no selection, a "what happens next" list (ready tasks by
+  priority, tasks needing attention, the longest dependency chain, legend); with
+  a selection, the task description and explicitly linked requirement titles,
+  statuses and descriptions, followed by its blockers (only while it is waiting),
+  what completing it unblocks, its other dependents, completed prerequisites (also
+  when those tasks are hidden from the canvas), milestones, and an "Only this
+  lineage" option that exists only while something is selected.
+
+Searching locates: results are listed from the whole project, Enter or a click
+selects the task, frames it and dims the rest of the graph. "Show only tasks
+matching the search" turns the same text into a real filter. The framing follows
+the computed layout and leaves a viewport the user moved alone on live refresh.
+Search counts every match but ranks only the eight displayed candidates.
+The lineage adjacency index and direct task relationships are reused across
+selections and fact-only refreshes when dependency edges are unchanged.
+The canvas lays out only when visible tasks plus visible dependency edges total
+at most 300. Dagre runs synchronously; a dense graph can cost much more than a
+chain with the same task count. When the budget is exceeded, an announced canvas
+message asks the user to narrow the view. Canvas-only controls are disabled.
+The whole-project summary counts remain exact. Search can locate any task;
+ready, attention, and longest dependency chain lists are available in pages of
+25 rather than thousands of DOM nodes at once. Lists for a selected task also
+use pages of 25; direct dependent membership checks remain linear even for a
+large hub. A selection can still isolate its lineage. Completed tasks and
+cancelled tasks that block no open work are hidden by default. A cancelled
+prerequisite remains visible with its edge when it still blocks a non-terminal
+task; an explicit search or filter may narrow it away. An operational shortcut
+or status filter overrides the default hiding rule.
+
+Filter and selection state is component state, so it survives live refresh and
+resets when the project changes, but is not in the URL. Persisting search,
+status, milestone and the operational view
+in the hash would refetch the graph on every change with the current route
+model, so it is a follow-up (it needs section-level query parameters that do not
+trigger a refetch). The Graph route fetches only the exhaustive graph endpoint;
+the shell's shared project summaries supply its header and navigation. It does
+not request project detail or its active run and pipeline samples, avoiding a
+second requirement-link read and task projection on live refresh. Selecting a
+task fetches only that task's existing detail endpoint. This keeps full task and
+requirement text out of the exhaustive graph payload; selection changes cancel
+the previous request, and a live graph refresh updates the selected detail.
+The side panel scrolls independently and initially shows eight requirement
+references, with a control to reveal the rest in batches of eight.
 
 ### Task search, filters, and pages
 

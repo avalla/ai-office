@@ -6,7 +6,9 @@ import type {
   BoundedList,
   PipelineRunState,
   ProjectDetail,
+  ProjectSummary,
   RequirementSummary,
+  TaskGraph,
   TaskPageQuery,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import { taskPageParameters } from "@ai-office/application/protocol/query-protocol.ts";
@@ -40,6 +42,7 @@ import {
   Select,
   Separator,
 } from "../components/ui/primitives.tsx";
+import { TaskGraphView } from "./task-graph.tsx";
 import { elapsed, formatDuration, formatTimestamp } from "../lib/formatting.ts";
 import { taskFilterQuery, type TaskFilterValues } from "../lib/task-filters.ts";
 import {
@@ -456,18 +459,24 @@ export function AgentsPage({
 }
 
 function ProjectHeader({
-  detail,
+  header,
   section,
 }: {
-  detail: ProjectDetail;
+  header: {
+    projectId: string;
+    name: string;
+    description: string | null;
+    localPaths: readonly string[];
+  };
   section?: string;
 }) {
-  const id = encodeURIComponent(detail.summary.projectId);
+  const id = encodeURIComponent(header.projectId);
   const sections = [
     ["Overview", `/projects/${id}`],
     ["Pipeline", `/projects/${id}/pipeline`],
     ["Tasks", `/projects/${id}/tasks`],
     ["Milestones", `/projects/${id}/milestones`],
+    ["Graph", `/projects/${id}/graph`],
     ["Requirements", `/projects/${id}/requirements`],
     ["Agents", `/projects/${id}/agents`],
   ] as const;
@@ -475,10 +484,9 @@ function ProjectHeader({
     <>
       <div>
         {heading(
-          detail.summary.name,
-          detail.summary.description ??
-            (detail.summary.repository.localPaths.join(" · ") ||
-              "Project operations"),
+          header.name,
+          header.description ??
+            (header.localPaths.join(" · ") || "Project operations"),
         )}
       </div>
       <nav
@@ -1117,7 +1125,12 @@ export function ProjectPage({
   return (
     <div className="page-stack">
       <ProjectHeader
-        detail={project}
+        header={{
+          projectId: project.summary.projectId,
+          name: project.summary.name,
+          description: project.summary.description,
+          localPaths: project.summary.repository.localPaths,
+        }}
         {...(section === undefined ? {} : { section })}
       />
       {section === "pipeline" ? (
@@ -1138,6 +1151,30 @@ export function ProjectPage({
       ) : (
         <ProjectOverview data={data} />
       )}
+    </div>
+  );
+}
+
+export function ProjectGraphPage({
+  graph,
+  project,
+}: {
+  graph: TaskGraph;
+  project: ProjectSummary | null;
+}) {
+  const current = project?.projectId === graph.projectId ? project : null;
+  return (
+    <div className="page-stack">
+      <ProjectHeader
+        header={{
+          projectId: graph.projectId,
+          name: graph.projectName,
+          description: current?.description ?? null,
+          localPaths: current?.repository.localPaths ?? [],
+        }}
+        section="graph"
+      />
+      <TaskGraphView graph={graph} projectId={graph.projectId} />
     </div>
   );
 }
