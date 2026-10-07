@@ -259,7 +259,7 @@ export function createLayoutMemo() {
 
 export const chainPageSize = 25;
 
-/** Resolve only the current page; the full chain stays searchable and available. */
+/** Resolve only one page of IDs; the complete source list stays available. */
 export function chainPage(
   chain: readonly string[],
   tasksById: ReadonlyMap<string, TaskGraphNode>,
@@ -274,6 +274,15 @@ export function chainPage(
       return task === undefined ? [] : [task];
     });
   return { tasks, page, totalPages };
+}
+
+/** Keep dependent membership checks linear even for a task with many children. */
+export function otherDependentIds(
+  dependents: readonly string[],
+  completionUnblocks: readonly string[],
+): string[] {
+  const unblocked = new Set(completionUnblocks);
+  return dependents.filter((id) => !unblocked.has(id));
 }
 
 export const taskKey = (taskId: string) => `t:${taskId}`;

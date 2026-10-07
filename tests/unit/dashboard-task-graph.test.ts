@@ -10,6 +10,7 @@ import {
   createLayoutMemo,
   chainPage,
   chainPageSize,
+  otherDependentIds,
   decideFraming,
   nodeStateLabel,
   searchTasks,
@@ -343,6 +344,16 @@ describe("dashboard task graph", () => {
     expect(last.tasks).toHaveLength(chainPageSize);
     expect(last.tasks.at(-1)?.taskId).toBe("t49999");
     expect(chainPage(chain, byId, 99_999).page).toBe(1_999);
+  });
+
+  test("a large selected-task panel excludes unblocked dependents in linear time", () => {
+    const dependents = Array.from({ length: 20_000 }, (_, i) => `t${i}`);
+    const unblocks = dependents.slice(0, 19_000);
+    const started = performance.now();
+    expect(otherDependentIds(dependents, unblocks)).toEqual(
+      dependents.slice(19_000),
+    );
+    expect(performance.now() - started).toBeLessThan(200);
   });
 
   test("layout is deterministic", () => {

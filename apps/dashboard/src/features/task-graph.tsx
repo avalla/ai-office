@@ -38,6 +38,7 @@ import {
   filterGraph,
   lineage,
   nodeSize,
+  otherDependentIds,
   quickFilters,
   searchTasks,
   taskKey,
@@ -975,6 +976,7 @@ function TaskGraphCanvas({
         >
           {selectedTask !== null && selectedLineage !== null ? (
             <TaskPanel
+              key={selectedTask.taskId}
               projectId={projectId}
               task={selectedTask}
               tasksById={tasksById}
@@ -1022,38 +1024,12 @@ function TaskGraphCanvas({
                 ordered
                 onFocus={focusOn}
               />
-              {longestChainPage.totalPages > 1 && (
-                <div
-                  role="group"
-                  aria-label="Longest dependency chain pages"
-                  className="flex items-center justify-between gap-2 text-xs"
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={longestChainPage.page === 0}
-                    onClick={() => setChainPageIndex(longestChainPage.page - 1)}
-                  >
-                    Previous
-                  </Button>
-                  <span className="tabular-nums">
-                    Page {longestChainPage.page + 1} of{" "}
-                    {longestChainPage.totalPages.toLocaleString()}
-                  </span>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={
-                      longestChainPage.page === longestChainPage.totalPages - 1
-                    }
-                    onClick={() => setChainPageIndex(longestChainPage.page + 1)}
-                  >
-                    Next
-                  </Button>
-                </div>
-              )}
+              <TaskListPager
+                title="Longest dependency chain"
+                page={longestChainPage.page}
+                totalPages={longestChainPage.totalPages}
+                onPageChange={setChainPageIndex}
+              />
               <Legend />
             </>
           )}
@@ -1123,6 +1099,85 @@ function TaskList({
   );
 }
 
+function TaskListPager({
+  title,
+  page,
+  totalPages,
+  onPageChange,
+}: {
+  title: string;
+  page: number;
+  totalPages: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (totalPages <= 1) return null;
+  return (
+    <div
+      role="group"
+      aria-label={`${title} pages`}
+      className="flex items-center justify-between gap-2 text-xs"
+    >
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={page === 0}
+        onClick={() => onPageChange(page - 1)}
+      >
+        Previous
+      </Button>
+      <span className="tabular-nums">
+        Page {page + 1} of {totalPages.toLocaleString()}
+      </span>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={page === totalPages - 1}
+        onClick={() => onPageChange(page + 1)}
+      >
+        Next
+      </Button>
+    </div>
+  );
+}
+
+function PagedTaskList({
+  title,
+  ids,
+  tasksById,
+  empty,
+  onFocus,
+  showPriority = false,
+}: {
+  title: string;
+  ids: readonly string[];
+  tasksById: ReadonlyMap<string, TaskGraphNode>;
+  empty: string;
+  onFocus: (key: string) => void;
+  showPriority?: boolean;
+}) {
+  const [requestedPage, setRequestedPage] = useState(0);
+  const page = chainPage(ids, tasksById, requestedPage);
+  return (
+    <>
+      <TaskList
+        title={title}
+        empty={empty}
+        tasks={page.tasks}
+        onFocus={onFocus}
+        showPriority={showPriority}
+      />
+      <TaskListPager
+        title={title}
+        page={page.page}
+        totalPages={page.totalPages}
+        onPageChange={setRequestedPage}
+      />
+    </>
+  );
+}
+
 function TaskPanel({
   projectId,
   task,
@@ -1146,11 +1201,6 @@ function TaskPanel({
   onFocus: (key: string) => void;
   onClear: () => void;
 }) {
-  const pick = (ids: readonly string[]) =>
-    ids.flatMap((id) => {
-      const found = tasksById.get(id);
-      return found === undefined ? [] : [found];
-    });
   const prerequisites = edges
     .filter((edge) => edge.taskId === task.taskId)
     .map((edge) => edge.dependsOnTaskId);
@@ -1222,44 +1272,47 @@ function TaskPanel({
         </label>
       </div>
       {task.waiting ? (
-        <TaskList
+        <PagedTaskList
           title="Waiting on"
           empty="No unfinished prerequisites."
-          tasks={pick(task.unmetPrerequisiteIds)}
+          ids={task.unmetPrerequisiteIds}
+          tasksById={tasksById}
           onFocus={onFocus}
         />
       ) : (
         task.unmetPrerequisiteIds.length > 0 && (
           // A finished task is not waiting, but the record stays honest.
-          <TaskList
+          <PagedTaskList
             title="Prerequisites never completed"
             empty=""
-            tasks={pick(task.unmetPrerequisiteIds)}
+            ids={task.unmetPrerequisiteIds}
+            tasksById={tasksById}
             onFocus={onFocus}
           />
         )
       )}
       {!task.terminal && (
-        <TaskList
+        <PagedTaskList
           title="Unblocks when completed"
           empty="Completing it makes no other task ready on its own."
-          tasks={pick(task.completionUnblocks)}
+          ids={task.completionUnblocks}
+          tasksById={tasksById}
           showPriority
           onFocus={onFocus}
         />
       )}
-      <TaskList
+      <PagedTaskList
         title="Other dependents"
         empty="None."
-        tasks={pick(
-          dependents.filter((id) => !task.completionUnblocks.includes(id)),
-        )}
+        ids={otherDependentIds(dependents, task.completionUnblocks)}
+        tasksById={tasksById}
         onFocus={onFocus}
       />
-      <TaskList
+      <PagedTaskList
         title="Completed prerequisites"
         empty="None."
-        tasks={pick(prerequisites.filter((id) => !unmet.has(id)))}
+        ids={prerequisites.filter((id) => !unmet.has(id))}
+        tasksById={tasksById}
         onFocus={onFocus}
       />
     </>

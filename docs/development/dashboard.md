@@ -270,7 +270,9 @@ message asks the user to narrow the view. Canvas-only controls are disabled.
 The whole-project summary counts remain exact. Search can locate any task;
 ready and attention lists show eight items with a route to their filters, and
 the longest dependency chain is available in pages of 25 rather than thousands
-of DOM nodes at once. A selection can still isolate its lineage. Completed and
+of DOM nodes at once. Lists for a selected task also use pages of 25; direct
+dependent membership checks remain linear even for a large hub. A selection can
+still isolate its lineage. Completed and
 cancelled tasks are hidden by default (an operational shortcut or a status
 filter overrides that).
 
