@@ -185,8 +185,13 @@ AgentKnowledgeStore keeps its trusted tenant and repository scope and is
 never called because a pack declares knowledge, a seed is never resolved, and
 a pack declares no scope, store or credential. The guidance is pack-owned: a
 project cannot declare it, the derived view lists it, and it changes only
-through the reviewed upgrade plan. The development pack still declares no
-knowledge entry.
+through the reviewed upgrade plan. Development pack `0.5.0` declares one
+`repository-context` guidance entry, selected by its four agents, plus five
+artifact/evidence pairs for repository, GitHub, commit, pull request and CI
+references. Five existing capability labels declare optional filesystem
+operation needs. These are pack data resolved through a test-supplied catalog:
+the Runtime does not register or consume this pack, and legacy worker tool
+names remain outside the connector operation vocabulary.
 
 Project handover is the organizational transfer of a repository to the virtual
 office. `packages/domain` owns the pure readiness model: handover states,

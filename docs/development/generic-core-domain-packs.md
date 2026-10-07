@@ -4924,6 +4924,32 @@ same provider-independent contract test.
 - No development pack file, `outside-pack-vocabulary.json`, migration or
   archive module changed.
 
+## GP-10C-1 development declarative evidence and declarations
+
+The development reference pack advances to `0.5.0` with no schema, core
+contract, migration or archive change. It declares five artifact types and
+five evidence types covering repository state, a GitHub reference, a commit,
+a pull request and a CI result. Their closed schemas describe reference data;
+they do not validate, store or enforce evidence. No validator adapter is
+declared. One `repository-context` knowledge entry offers field and retrieval
+guidance, and all four pack agents name it through their existing `knowledge`
+reference list. It declares no scope, store or seed to fetch.
+
+Five existing capability labels describe optional needs for the registered
+`filesystem.list`, `filesystem.read`, `filesystem.search` and
+`filesystem.write` operations. The optional form allows a test catalog with
+no provider to resolve and report `unbound_optional`; a test catalog that
+provides those exact names and modes reports bound providers. The declaration
+does not grant filesystem access. Legacy Runtime worker tool names such as
+`git.diff` and `shell.run` are a different interface, so the `tools` residue
+remains whole and moves to the execution parity task. The
+`outside-pack-vocabulary.json` list records this and pins version `0.5.0`.
+
+The package remains data only. Tests install its bytes into a test-supplied
+catalog and inspect the resolved artifact, evidence, knowledge and capability
+views. No production catalog registration, project adoption, Runtime
+consumption, legacy binding change or enforcement belongs to GP-10C-1.
+
 ## Objective and decision boundary
 
 AI Office should operate governed teams in arbitrary domains. The core owns

@@ -49,10 +49,10 @@ export const shippedOfficeManifestPath = join(
 );
 
 export const developmentPackId = "org.ai-office.development";
-export const developmentPackVersion = "0.4.0";
+export const developmentPackVersion = "0.5.0";
 /** Pinned: it moves only with the pack version. */
 export const developmentPackManifestDigest =
-  "sha256:c575ec687088bdf3861cb3fe1fee3b73cc8214c95ff4898c96e57c9ccde59848";
+  "sha256:a8f9c9e083b7c76437392b990583d3c675074c1e1d7e0f3394a73a1fbb8864fd";
 /** The follow-up Runtime task that owns execution parity. */
 export const executionParityTaskId = "a45ddb12-3159-4b60-9b8b-c26516720834";
 /** The Runtime task of GP-10B-2, the descriptive contract extension. */

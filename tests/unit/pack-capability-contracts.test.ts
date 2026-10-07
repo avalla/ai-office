@@ -118,13 +118,12 @@ describe("GP-16 capability contract: schema-1 manifest", () => {
     );
   });
 
-  test("a manifest without the fields keeps its canonical form: golden and development pack digests are unchanged", () => {
+  test("a manifest without the fields keeps its canonical form and golden digests unchanged", () => {
     for (const path of [
       "tests/fixtures/domain-pack/custom.json",
       "tests/fixtures/domain-pack/development.json",
       "tests/fixtures/domain-pack/legal.json",
       "tests/fixtures/domain-pack/manufacturing.json",
-      "packages/domain-pack-development/manifest.json",
     ]) {
       // The declared digest was computed before GP-16; verification recomputes it.
       const manifest = verifyDomainPackManifest(
@@ -879,15 +878,12 @@ describe("GP-16 boundaries", () => {
     ]);
   });
 
-  test("GP-16 adds no migration and does not edit the development pack", () => {
+  test("GP-16 adds no migration", () => {
     const names = (directory: string) =>
       readdirSync(join(repositoryRoot, directory)).filter((name) =>
         /capability[-_]contract|operation[-_]provider/iu.test(name),
       );
     expect(names("migrations/project")).toEqual([]);
     expect(names("supabase/migrations")).toEqual([]);
-    expect(
-      source("packages/domain-pack-development/manifest.json"),
-    ).not.toMatch(/"operations"|"requirement"/u);
   });
 });
