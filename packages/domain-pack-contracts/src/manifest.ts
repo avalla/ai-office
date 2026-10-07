@@ -804,7 +804,9 @@ function knowledgeRetrieval(
   for (const key of Object.keys(item))
     if (!["maxResults", "hint", "categories"].includes(key))
       fail("invalid_contribution", `${path}.${key}`, "unknown field");
-  if (Object.keys(item).length === 0)
+  // An explicitly undefined member is absent, as in the JSON the byte parser
+  // reads, so only defined members count.
+  if (Object.values(item).every((member) => member === undefined))
     fail(
       "invalid_contribution",
       path,

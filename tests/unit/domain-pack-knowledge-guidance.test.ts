@@ -12,6 +12,7 @@ import {
   maximumKnowledgeSeeds,
   maximumKnowledgeTextLength,
   parseDomainPackManifest,
+  validateDomainPackManifest,
   verifyDomainPackManifest,
 } from "../../packages/domain-pack-contracts/src/index.ts";
 
@@ -385,6 +386,57 @@ describe("GP-15 typed knowledge contributions in the schema-1 manifest", () => {
       ),
     );
     expect(parsed.contributions.knowledge[0]!.seeds).toEqual([" "]);
+  });
+
+  test("an explicitly undefined member is absent: the in-memory validator, the digest and the byte parser agree", () => {
+    const inMemory = (member: Record<string, unknown>) =>
+      withKnowledge(entry(member));
+    // Rejected everywhere: no defined retrieval member.
+    for (const retrieval of [
+      { maxResults: undefined },
+      { hint: undefined, categories: undefined },
+    ]) {
+      const value = inMemory({ retrieval });
+      for (const run of [
+        () => validateDomainPackManifest(value),
+        () => computeManifestDigest(value as never),
+        // JSON drops undefined, leaving an empty retrieval object.
+        () => parse(value),
+      ])
+        try {
+          run();
+          throw new Error("Expected manifest rejection");
+        } catch (error) {
+          expect(error).toBeInstanceOf(DomainPackManifestError);
+          expect(error).toMatchObject({
+            code: "invalid_contribution",
+            path: at("retrieval"),
+          });
+        }
+    }
+    // Accepted everywhere, with one canonical form and one digest.
+    for (const member of [
+      { retrieval: { maxResults: 2, hint: undefined } },
+      { category: undefined, seeds: undefined, schema: undefined },
+    ]) {
+      const value = inMemory(member);
+      const viaBytes = parse(value);
+      const viaValidator = validateDomainPackManifest(value);
+      expect(viaValidator).toEqual(viaBytes);
+      expect(computeManifestDigest(value as never)).toBe(
+        computeManifestDigest(viaBytes),
+      );
+    }
+    // A schema entry member that is undefined is missing, as in JSON.
+    for (const run of [
+      () =>
+        validateDomainPackManifest(
+          inMemory({ schema: [{ field: "a", description: undefined }] }),
+        ),
+      () =>
+        parse(inMemory({ schema: [{ field: "a", description: undefined }] })),
+    ])
+      expect(run).toThrow(DomainPackManifestError);
   });
 
   test("retrieval has known members, at least one, and bounded values", () => {
