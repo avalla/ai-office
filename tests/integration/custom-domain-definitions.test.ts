@@ -148,6 +148,32 @@ describe("GP-19 empty/custom domain fixture", () => {
       enabled: true,
       payload: { id: "gardener", title: "Lead volunteer gardener" },
     };
+    const duplicate = {
+      action: update.action,
+      kind: update.kind,
+      id: update.id,
+      enabled: update.enabled,
+      payload: update.payload,
+    };
+    for (const [invalid, code] of [
+      [duplicate, "duplicate_project_definition"],
+      [
+        { ...update, expectedEntryRevision: 99 },
+        "conflicting_ownership_metadata",
+      ],
+    ] as const) {
+      await expect(
+        h.definitions.apply({
+          projectId: "garden",
+          mutation: invalid,
+          expectedRevision: before.definitionRevision,
+          actorId: "garden-owner",
+        }),
+      ).rejects.toMatchObject({ code });
+    }
+    expect((await h.definitions.read("garden")).revision).toBe(
+      before.definitionRevision,
+    );
     const preview = await h.definitions.preview("garden", update);
     expect(preview.issues).toEqual([]);
     await h.definitions.apply({
@@ -229,5 +255,53 @@ describe("GP-19 empty/custom domain fixture", () => {
     expect(
       (await h.configuration.read("garden")).projectOwnedDefinitions,
     ).toEqual([]);
+    expect(
+      h.database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM audit_event WHERE event_type='project.definition_changed'",
+        )
+        .get()?.count,
+    ).toBe(0);
+  });
+
+  test("a dangling project workflow fails resolution until its owner removes it", async () => {
+    const h = await harness();
+    const dangling = {
+      action: "put_owned",
+      kind: "workflows",
+      id: "plot-care-flow",
+      enabled: true,
+      payload: {
+        id: "plot-care-flow",
+        taskType: "missing-task-type",
+        stages: [{ id: "observe", role: "missing-role" }],
+      },
+    };
+    expect((await h.definitions.preview("garden", dangling)).issues).toEqual(
+      [],
+    );
+    await h.definitions.apply({
+      projectId: "garden",
+      mutation: dangling,
+      expectedRevision: 0,
+      actorId: "garden-owner",
+    });
+    expect((await h.definitions.read("garden")).revision).toBe(1);
+    await expect(h.configuration.read("garden")).rejects.toMatchObject({
+      code: "missing_workflow_reference",
+    });
+    await h.definitions.apply({
+      projectId: "garden",
+      mutation: {
+        action: "remove_owned",
+        kind: "workflows",
+        id: "plot-care-flow",
+      },
+      expectedRevision: 1,
+      actorId: "garden-owner",
+    });
+    const recovered = await h.configuration.read("garden");
+    expect(recovered.selectedPacks).toEqual([]);
+    expect(recovered.projectOwnedDefinitions).toEqual([]);
   });
 });
