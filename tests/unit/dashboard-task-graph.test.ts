@@ -344,6 +344,13 @@ describe("dashboard task graph", () => {
     expect(last.tasks).toHaveLength(chainPageSize);
     expect(last.tasks.at(-1)?.taskId).toBe("t49999");
     expect(chainPage(chain, byId, 99_999).page).toBe(1_999);
+    // A live refresh can shorten a selected task's relationship list while
+    // its panel is open on a later page.
+    expect(chainPage(chain.slice(0, 3), byId, 1_999)).toMatchObject({
+      page: 0,
+      totalPages: 1,
+      tasks: chain.slice(0, 3).map((id) => byId.get(id)),
+    });
   });
 
   test("a large selected-task panel excludes unblocked dependents in linear time", () => {
