@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "org.ai-office.legal",
   "version": "0.1.0",
-  "manifestDigest": "sha256:57ba379cfaf3e77936dd28a683dde6343699653aac327ab862af5caa28bd372b",
+  "manifestDigest": "sha256:390490242d800179225b73632e5c873e582278d6c5284e1b9068c976ba2657c0",
   "coreContract": {
     "minInclusive": 1,
     "maxExclusive": 2
@@ -239,20 +239,16 @@
           {
             "kind": "artifactTypes",
             "id": "matter-draft"
-          },
-          {
-            "kind": "artifactTypes",
-            "id": "citation-list"
           }
         ],
         "inputSchema": {
           "type": "object",
           "properties": {
-            "draft": {
+            "body": {
               "type": "string"
             }
           },
-          "required": ["draft"]
+          "required": ["body"]
         },
         "produces": "citation-review-evidence",
         "outputSchema": {

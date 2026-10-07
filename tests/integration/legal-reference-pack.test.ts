@@ -7,12 +7,16 @@ import { Project } from "@ai-office/domain/project/project.ts";
 import { ManageProjectDefinitions } from "@ai-office/application/domain-pack/manage-project-definitions.ts";
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
-import { ReconcileProjectPackUpgrade } from "@ai-office/application/domain-pack/reconcile-project-pack-upgrade.ts";
+import {
+  ProjectPackUpgradeError,
+  ReconcileProjectPackUpgrade,
+} from "@ai-office/application/domain-pack/reconcile-project-pack-upgrade.ts";
 import {
   DomainPackManifestError,
   computeArtifactDigest,
   computeManifestDigest,
   parseDomainPackManifest,
+  parseManifestDigest,
   verifyDomainPackManifest,
 } from "../../packages/domain-pack-contracts/src/index.ts";
 import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/installed-domain-pack-catalog.ts";
@@ -43,7 +47,9 @@ function nextVersion(): Uint8Array {
       roles: manifest.contributions.roles.map((role) =>
         role.id === "researcher"
           ? { ...role, title: "Senior legal researcher" }
-          : role,
+          : role.id === "reviewer"
+            ? { ...role, title: "Upstream review counsel" }
+            : role,
       ),
     },
   };
@@ -151,8 +157,22 @@ describe("GP-17 legal reference pack", () => {
       actorId: "operator",
     });
     const before = await h.configuration.read("legal");
-    expect(before.roles).toHaveLength(5);
-    expect(before.agents).toHaveLength(5);
+    expect(before.selectedPacks).toEqual([v1]);
+    expect(before.roles.map((role) => role.roleId).sort()).toEqual(
+      ["approver", "drafter", "intake-clerk", "researcher", "reviewer"].map(
+        (id) => `pack:org.ai-office.legal/roles/${id}`,
+      ),
+    );
+    expect(before.agents.map((agent) => agent.agentId).sort()).toEqual(
+      [
+        "approval-agent",
+        "draft-agent",
+        "intake-agent",
+        "research-agent",
+        "review-agent",
+      ].map((id) => `pack:org.ai-office.legal/agents/${id}`),
+    );
+    expect(before.effectiveDefinitions.prompts).toEqual([]);
     expect(
       before.effectiveDefinitions.taskTypes.map((item) => item.localId),
     ).toEqual(["matter"]);
@@ -199,6 +219,17 @@ describe("GP-17 legal reference pack", () => {
       desired: [v2!],
     });
     expect(plan.issues).toEqual([]);
+    await expect(
+      h.upgrade.apply({
+        projectId: "legal",
+        desired: [v2!],
+        approvedPlanDigest: `sha256:${"0".repeat(64)}`,
+        actorId: "operator",
+      }),
+    ).rejects.toMatchObject({
+      code: "plan_not_approved",
+    } satisfies Partial<ProjectPackUpgradeError>);
+    expect((await h.binding.read("legal")).packs).toEqual([v1]);
     await h.upgrade.apply({
       projectId: "legal",
       desired: [v2!],
@@ -212,11 +243,58 @@ describe("GP-17 legal reference pack", () => {
     ).toMatchObject({
       title: "Project review counsel",
       customization: "replace",
+      capabilities: ["pack:org.ai-office.legal/capabilities/read-matter"],
     });
     expect(
       after.roles.find((role) => role.roleId.endsWith("/researcher"))?.title,
     ).toBe("Senior legal researcher");
+    const agentContract = (agents: typeof after.agents) =>
+      agents.map(({ agentId, roleId, knowledge, capabilities }) => ({
+        agentId,
+        roleId,
+        knowledge,
+        capabilities,
+      }));
+    expect(agentContract(after.agents)).toEqual(agentContract(before.agents));
+    const policyContract = (policies: typeof after.policies) =>
+      policies.map(({ policyId, workflowId, enforcement, stages }) => ({
+        policyId,
+        workflowId,
+        enforcement,
+        stages,
+      }));
+    expect(policyContract(after.policies)).toEqual(
+      policyContract(before.policies),
+    );
+    const knowledgeContract = (knowledge: typeof after.knowledge) =>
+      knowledge.map(({ knowledgeId, category, schema, retrieval }) => ({
+        knowledgeId,
+        category,
+        schema,
+        retrieval,
+      }));
+    expect(knowledgeContract(after.knowledge)).toEqual(
+      knowledgeContract(before.knowledge),
+    );
+    expect(after.capabilities).toEqual(before.capabilities);
+    expect(after.artifactTypes.map((item) => item.definitionId)).toEqual(
+      before.artifactTypes.map((item) => item.definitionId),
+    );
+    expect(after.evidenceTypes.map((item) => item.definitionId)).toEqual(
+      before.evidenceTypes.map((item) => item.definitionId),
+    );
     expect(after.configurationDigest).not.toBe(before.configurationDigest);
+  });
+
+  test("refuses binding to a tuple with the wrong manifest digest", async () => {
+    const h = await harness();
+    const unavailable = {
+      ...h.versions[0]!,
+      manifestDigest: parseManifestDigest(`sha256:${"0".repeat(64)}`),
+    };
+    const preview = await h.binding.preview("legal", [unavailable]);
+    expect(preview.issues[0]?.code).toBe("manifest_digest_mismatch");
+    expect((await h.binding.read("legal")).packs).toEqual([]);
   });
 
   test("rejects a policy aimed at a missing stage", () => {
@@ -232,10 +310,18 @@ describe("GP-17 legal reference pack", () => {
         ],
       },
     };
-    expect(() =>
+    let error: unknown;
+    try {
       parseDomainPackManifest(
         new TextEncoder().encode(JSON.stringify(invalid)),
-      ),
-    ).toThrow(DomainPackManifestError);
+      );
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(DomainPackManifestError);
+    expect(error).toMatchObject({
+      code: "invalid_contribution",
+      path: "contributions.policies[0].stages[0].stage",
+    });
   });
 });
