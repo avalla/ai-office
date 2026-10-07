@@ -29,18 +29,16 @@ They are independent. Decide each explicitly and write both in the pull request.
   precedence over the run chain for its task.
 - Declining run-wide stacking leaves separately approved Git branch
   dependencies unchanged; every other task starts from the integration branch
-  unless another explicitly approved Git branch dependency applies. A go-ahead
+  unless another separately approved Git branch dependency applies. A go-ahead
   that does not answer the stacking offer declines it. A task starts
   only on a base that contains the work of each of its prerequisites: the branch
   of each unmerged prerequisite beneath it on the stack, and the merged work of
   each prerequisite that is DONE. A prerequisite beneath the task in an approved
   stacked run counts as an approved Git branch dependency on it; otherwise the
-  task waits, or needs an explicit Git branch dependency on the prerequisite.
-- When a task stops or is postponed, it leaves the chain: the tasks whose
-  branches are stacked on it stop too, and the authorizer decides how their
-  branches are rebuilt; a task not yet started stacks on the nearest active
-  task beneath it, or on the integration branch; this needs no new approval unless the stop changes the selection, the exclusions, or a task dependency. Never
-  rewrite reviewed history to do so.
+  task waits, or needs a separately approved Git branch dependency on the
+  prerequisite.
+- When a task stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the run that is not yet started;
+  the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts. Never rewrite reviewed history to do so.
 - A stacked pull request targets the branch it is stacked on, and says so. Its
   review covers only its own diff. An external review command is run against
   that branch, not against the integration branch.

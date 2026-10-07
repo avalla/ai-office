@@ -190,7 +190,8 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       },
       {
         id: "policy:any-difference-is-material",
-        pattern: /Any difference in these items is material\./u,
+        pattern:
+          /Any difference in these items is material, except a base that changes only because a task was merged, as the approved plan anticipated\./u,
       },
       {
         id: "policy:git-tracked-clarification-must-be-in-effect",
@@ -210,12 +211,12 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:stopped-task-stops-stacked-tasks",
         pattern:
-          /the tasks whose branches are stacked on it stop too, and the authorizer decides how their branches are rebuilt/u,
+          /the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts/u,
       },
       {
         id: "policy:declining-run-stacking-keeps-selective-dependencies",
         pattern:
-          /Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another explicitly approved Git branch dependency applies\./u,
+          /Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another separately approved Git branch dependency applies\./u,
       },
       {
         id: "policy:recompute-plan-after-clarification",

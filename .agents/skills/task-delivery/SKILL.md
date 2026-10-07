@@ -175,7 +175,8 @@ dependency, the pipeline, or the exclusions changed materially, show a new
 summary and ask for a new approval, and start neither preflight nor
 development before it is given. The new summary repeats the stacking offer
 with the recomputed bases, and an earlier answer does not carry over. The repeated offer applies only to tasks not yet started: a base already created under an
-accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it. Any difference in these items is material. If
+accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it. Any difference in these items is material, except a base that changes only
+because a task was merged, as the approved plan anticipated. If
 nothing changed materially, say so and do not ask a second time. A task added
 to the selection this way is clarified in the same way, and the check and the
 comparison run again until a pass changes nothing materially. An answer
@@ -195,23 +196,22 @@ starts only on a base that contains the work of each of its prerequisites: the
 branch of each unmerged prerequisite beneath it on the stack, and the merged
 work of each prerequisite that is DONE. A prerequisite beneath the task in an
 approved stacked run counts as an approved Git branch dependency on it;
-otherwise the task waits, or needs an explicit Git branch dependency on the
-prerequisite.
+otherwise the task waits, or needs a separately approved Git branch
+dependency on the prerequisite.
 Declining run-wide stacking leaves separately approved Git branch
 dependencies unchanged. Every other task starts from the integration branch
-unless another explicitly approved Git branch dependency applies. Stacking the
+unless another separately approved Git branch dependency applies. A
+separately approved Git branch dependency takes precedence over the run chain
+for its task. Stacking the
 run changes where branches start and nothing else: every task keeps its own pull
-request and gates, and its task dependencies stay as they were. When a task
-stops or is postponed, it leaves the chain: the tasks whose branches are
-stacked on it stop too, and the authorizer decides how their branches are
-rebuilt; a task not yet started stacks on the nearest active task beneath it,
-or on the integration branch; this needs no new approval unless the stop changes the selection, the exclusions, or a task dependency.
+request and gates, and its task dependencies stay as they were. When a task stops or is postponed, the tasks whose branches are stacked on it stop too, and so does every later task of the run that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts.
 
 A run that covers several tasks gives each task its own branch, pull request,
 and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run
 may then continue with another selected task only if that task has no
 unresolved prerequisite that blocks execution, or if the authorizer has
-explicitly approved the required Git branch dependency. The run never merges a
+approved the required Git branch dependency, separately or by accepting
+run-wide stacking. The run never merges a
 pull request merely to unblock a later selected task. A stacked branch does
 not make the prerequisite task DONE and does not resolve the logical
 dependency. Where task state is tracked, the tracker may refuse to start a task
