@@ -142,7 +142,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
         onClick={() => data.onSelect(taskKey(task.taskId))}
         style={{ width: nodeSize.width, height: nodeSize.height }}
         className={cn(
-          "flex flex-col justify-between rounded-lg border bg-surface px-3 py-2 text-left shadow-sm transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "flex cursor-pointer flex-col justify-between rounded-lg border bg-surface px-3 py-2 text-left shadow-sm transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           data.selected
             ? "border-primary ring-2 ring-primary"
             : data.onChain
@@ -401,6 +401,9 @@ function TaskGraphCanvas({
         draggable: false,
         connectable: false,
         focusable: false,
+        // React Flow otherwise disables pointer events when its own selection
+        // and dragging are off; the button still needs real mouse clicks.
+        style: { pointerEvents: "all" },
         data: {
           task,
           direction,
