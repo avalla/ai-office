@@ -66,9 +66,8 @@ Rules:
 
 - Absent `delivery.profile` means `full`: existing projects behave as today.
 - The accepted `stages` keys are `design`, `review`, `second_review`, `qa` and `external_review`; any other key, including `hardening`, which follows `review`, is an unknown-key error.
-- Under `custom`, a `stages` key that is omitted takes the value of that gate in `full`, so every configuration yields one deterministic selection.
-- `stages` with a profile other than `custom` is an error, as is a stage that
-  is always on being set to `false`.
+- Under `custom`, a `stages` key that is omitted takes the value of that gate in `full`, so every configuration yields one deterministic selection; the one exception is `second_review`, which is off when `review` is off and omitted.
+- `stages` with a profile other than `custom` is an error, and so is `second_review: true` while `review` is off, since there is no hardening diff to re-review. Gates that are always on are not `stages` keys.
 - Floor: when the diff touches migrations, controlled actions or connectors,
   security boundaries, or public contracts, the effective profile is at least
   `full`. The floor is a minimum, never a one-time decision:
@@ -84,8 +83,8 @@ Rules:
   - an authorizer may raise the profile, never lower it below the computed
     floor.
 - External review keeps its current meaning: configured or requested makes it required, whatever the profile says. A configuration that disables it while `external_review.command` is set (`lite`, or `custom` with `stages.external_review: false`) is a configuration error rather than a silent skip.
-- `lite` review: one full round on the reviewed head. When hardening produces commits, the same reviewer confirms the hardening diff, which is a confirmation of the answers to the findings and not a second full review, and the full verification runs green on the final head. The confirmation and the verification are the evidence for the current head, so the head-binding rule is unchanged. A hardening diff that goes beyond the findings is reviewed as a `second_review`.
-- Readiness: `ready_for_merge` checks, on the current head, the selected gates that precede it, plus any such gate the floor made required; `post_merge` runs only after an authorized merge and is never part of this check. A profile that omits a gate does not need its evidence; the skill's stage 10 wording, which names review, hardening and verification, is updated in step 1 to refer to the selected gates.
+- `lite` review: one full round on the reviewed head. When hardening produces commits, the same reviewer confirms the hardening diff, which is a confirmation of the answers to the findings and not a second full review, and the full verification runs green on the final head. The confirmation and the verification are the evidence for the current head, so the head-binding rule is unchanged. Hardening stays limited to the findings, as the skill already requires, so `lite` has no case of out-of-findings hardening.
+- Readiness: `ready_for_merge` checks, on the current head, the selected gates that precede it, plus any such gate the floor made required, plus a required external review (configured by the project or requested by the authorizer, as today, whatever the profile selects); `post_merge` runs only after an authorized merge and is never part of this check. A profile that omits a gate does not need its evidence; the skill's stage 10 wording, which names review, hardening and verification, is updated in step 1 to refer to the selected gates.
 - Design: a profile that shortens `design` still produces a written design record before `implementation` starts; it is linked or copied into the pull request.
 - This amends the current sentence "a project pipeline never removes a gate":
   a profile may omit the optional gates above, a project pipeline still may
@@ -151,8 +150,7 @@ next action
 
 Shared parser and validation module (no Runtime needed, tested directly):
 
-- every new key, wrong type, `stages` without `custom`, an always-on gate set
-  to `false`, an external reviewer configured while `lite` or `custom` disables it, and an omitted `custom` stage taking its `full` value;
+- every new key, wrong type, `stages` without `custom`, `second_review: true` with `review` off, an omitted `second_review` while `review` is off (resolves to off), a requested external review that readiness still requires under `lite`, an external reviewer configured while `lite` or `custom` disables it, and an omitted `custom` stage taking its `full` value;
 - configured profile and configuration-derived gate selection for `lite`, `full`, `custom`, and for an absent `delivery.profile` (equals `full`); the output is never labelled effective, and a test asserts that it carries no floor.
 
 Skill contract and package validation (handoff packet included):
@@ -164,7 +162,7 @@ Skill contract and package validation (handoff packet included):
 - floor rules are pinned by contract invariants and removal tests: floor
   determined at preflight; re-evaluated before leaving `implementation`, before
   `ready_for_merge` and on a head change that can alter the classification;
-  floor is applied gate by gate, including to `custom` with gates turned off; it only moves up; an omitted gate that becomes required is executed before the task proceeds; lowering below the floor is refused; under a floor trigger a gate that ran in a reduced form (one review round, non-independent QA, short design record) is run again in its `full` form and the reduced evidence does not cover it; the `lite` review rule is pinned (one full round; confirmation of the hardening diff by the reviewer when there are hardening commits; full verification on the final head; a hardening diff beyond the findings is reviewed as a `second_review`), together with the unchanged head-binding rule; `ready_for_merge` excludes `post_merge`; the accepted `stages` keys are exactly `design`, `review`, `second_review`, `qa`, `external_review`, so `stages.hardening` is rejected; `ready_for_merge` checks the selected gates plus the gates the floor made required; a shortened `design` still has a written record before `implementation`.
+  floor is applied gate by gate, including to `custom` with gates turned off; it only moves up; an omitted gate that becomes required is executed before the task proceeds; lowering below the floor is refused; under a floor trigger a gate that ran in a reduced form (one review round, non-independent QA, short design record) is run again in its `full` form and the reduced evidence does not cover it; the `lite` review rule is pinned (one full round; confirmation of the hardening diff by the reviewer when there are hardening commits; full verification on the final head; hardening stays limited to the findings), together with the unchanged head-binding rule; `ready_for_merge` excludes `post_merge` and includes a required external review; the accepted `stages` keys are exactly `design`, `review`, `second_review`, `qa`, `external_review`, so `stages.hardening` is rejected; `ready_for_merge` checks the selected gates plus the gates the floor made required; a shortened `design` still has a written record before `implementation`.
 
 CLI `delivery:validate`, end to end through the Unix-socket protocol with a
 Runtime available (daemon-backed):
