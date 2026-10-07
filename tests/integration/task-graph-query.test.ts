@@ -138,6 +138,32 @@ describe("task dependency graph read model", () => {
     expect(graph.longestDependencyChain).toHaveLength(length);
   });
 
+  test("reads graph facts in storage-safe batches larger than presentation pages", async () => {
+    const f = await fixture();
+    await f.project("p");
+    const insert = f.database.prepare(
+      `INSERT INTO task(id, project_id, title, status, priority, created_at, updated_at)
+       VALUES (?, 'p', ?, 'pending', 0, ?, ?)`,
+    );
+    f.database.transaction(() => {
+      for (let index = 0; index < 801; index += 1) {
+        const id = `t${String(index).padStart(4, "0")}`;
+        insert.run(id, id, now.toISOString(), now.toISOString());
+      }
+    })();
+    const batchSizes: number[] = [];
+    const original = f.reads.listTaskRunFacts.bind(f.reads);
+    f.reads.listTaskRunFacts = async (...args) => {
+      batchSizes.push(args[1].length);
+      return original(...args);
+    };
+
+    const graph = await f.queries.getTaskGraph("p");
+
+    expect(graph.tasks).toHaveLength(801);
+    expect(batchSizes).toEqual([800, 1]);
+  });
+
   test("derives milestones from explicit requirement links and isolates projects", async () => {
     const f = await fixture();
     await f.project("p");

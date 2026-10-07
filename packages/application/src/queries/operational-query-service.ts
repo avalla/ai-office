@@ -88,6 +88,10 @@ import {
   type GlobalMemoryOverview,
 } from "../read-models/operational-read-models.ts";
 
+// Graph projection is exhaustive, so its fact reads should not reuse the
+// 100-task presentation page. Leave room for the adapters' other SQL binds.
+const taskGraphFactBatchSize = 800;
+
 export class OperationalResourceNotFoundError extends Error {
   constructor(resource: string, id: string) {
     super(`${resource} ${id} was not found`);
@@ -1053,7 +1057,7 @@ export class OperationalQueryService {
     );
     const taskRequirements = taskRequirementIndex(requirementRecords);
     const agents = agentIndex(agentRecords);
-    const batchSize = queryLimits.tasks.default;
+    const batchSize = taskGraphFactBatchSize;
     const states: TaskOperationalState[] = [];
     for (let start = 0; start < snapshot.tasks.length; start += batchSize) {
       states.push(

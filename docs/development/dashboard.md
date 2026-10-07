@@ -202,7 +202,9 @@ duplicate the full task, milestone, requirement, or agent tables.
 prerequisite edge, the project's milestones, a whole-project `summary`, and the
 `longestDependencyChain`. It is an authoritative projection input, never a
 sample, so it is not paginated or truncated; tasks are projected in bounded
-batches of one fixed snapshot but none is dropped.
+batches of one fixed snapshot but none is dropped. Fact reads use batches of
+800 task IDs, separate from the 100-task presentation page, to bound storage
+parameters without repeating the related queries for every display page.
 
 The operational meaning is computed once in the application layer; the browser
 only presents it:
