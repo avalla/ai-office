@@ -138,8 +138,13 @@ describe("GP-17 legal reference pack", () => {
       requirement: "optional",
     });
     expect(manifest.contributions.validators[0]).toMatchObject({
+      accepts: [{ kind: "artifactTypes", id: "citation-list" }],
       produces: "citation-review-evidence",
       failurePolicy: "fail_closed",
+    });
+    expect(manifest.contributions.evidenceTypes[0]).toMatchObject({
+      id: "citation-review-evidence",
+      subject: "citation-list",
     });
   });
 
@@ -294,6 +299,14 @@ describe("GP-17 legal reference pack", () => {
     };
     const preview = await h.binding.preview("legal", [unavailable]);
     expect(preview.issues[0]?.code).toBe("manifest_digest_mismatch");
+    await expect(
+      h.binding.apply({
+        projectId: "legal",
+        desired: [unavailable],
+        expectedRevision: preview.current.configurationRevision,
+        actorId: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "manifest_digest_mismatch" });
     expect((await h.binding.read("legal")).packs).toEqual([]);
   });
 
