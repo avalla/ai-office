@@ -39,7 +39,7 @@ They are independent. Decide each explicitly and write both in the pull request.
 - When a task stops or is postponed, it leaves the chain: the tasks whose
   branches are stacked on it stop too, and the authorizer decides how their
   branches are rebuilt; a task not yet started stacks on the nearest active
-  task beneath it, or on the integration branch. Never
+  task beneath it, or on the integration branch; this needs no new approval unless the stop changes the selection, the exclusions, or a task dependency. Never
   rewrite reviewed history to do so.
 - A stacked pull request targets the branch it is stacked on, and says so. Its
   review covers only its own diff. An external review command is run against

@@ -174,7 +174,8 @@ approved. If the selection, the order, a task dependency, a Git branch
 dependency, the pipeline, or the exclusions changed materially, show a new
 summary and ask for a new approval, and start neither preflight nor
 development before it is given. The new summary repeats the stacking offer
-with the recomputed bases, and an earlier answer does not carry over. Any difference in these items is material. If
+with the recomputed bases, and an earlier answer does not carry over. The repeated offer applies only to tasks not yet started: a base already created under an
+accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it. Any difference in these items is material. If
 nothing changed materially, say so and do not ask a second time. A task added
 to the selection this way is clarified in the same way, and the check and the
 comparison run again until a pass changes nothing materially. An answer
@@ -204,7 +205,7 @@ request and gates, and its task dependencies stay as they were. When a task
 stops or is postponed, it leaves the chain: the tasks whose branches are
 stacked on it stop too, and the authorizer decides how their branches are
 rebuilt; a task not yet started stacks on the nearest active task beneath it,
-or on the integration branch.
+or on the integration branch; this needs no new approval unless the stop changes the selection, the exclusions, or a task dependency.
 
 A run that covers several tasks gives each task its own branch, pull request,
 and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run

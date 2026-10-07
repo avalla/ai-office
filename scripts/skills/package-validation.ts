@@ -203,6 +203,11 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
           /A task starts only on a base that contains the work of each of its prerequisites/u,
       },
       {
+        id: "policy:repeated-offer-spares-created-bases",
+        pattern:
+          /The repeated offer applies only to tasks not yet started: a base already created under an accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it\./u,
+      },
+      {
         id: "policy:stopped-task-stops-stacked-tasks",
         pattern:
           /the tasks whose branches are stacked on it stop too, and the authorizer decides how their branches are rebuilt/u,
