@@ -27,6 +27,7 @@ import {
   blockers,
   unmetEdgeKeys,
   chainPage,
+  chainPageSize,
   createGraphRelationshipMemo,
   createLayoutMemo,
   decideFraming,
@@ -1082,6 +1083,7 @@ export function OverviewTaskLists({
         empty="No chain of dependent unfinished tasks."
         tasks={longestChainPage.tasks}
         ordered
+        start={longestChainPage.page * chainPageSize + 1}
         onFocus={onFocus}
       />
       <TaskListPager
@@ -1101,6 +1103,7 @@ function TaskList({
   empty,
   onFocus,
   ordered = false,
+  start,
   showPriority = false,
 }: {
   title: string;
@@ -1108,6 +1111,7 @@ function TaskList({
   empty: string;
   onFocus: (key: string) => void;
   ordered?: boolean;
+  start?: number;
   showPriority?: boolean;
 }) {
   const List = ordered ? "ol" : "ul";
@@ -1119,7 +1123,10 @@ function TaskList({
       {tasks.length === 0 ? (
         <p className="text-xs text-subtle">{empty}</p>
       ) : (
-        <List className={cn("space-y-1", ordered && "list-decimal pl-5")}>
+        <List
+          className={cn("space-y-1", ordered && "list-decimal pl-5")}
+          {...(ordered ? { start } : {})}
+        >
           {tasks.map((task) => (
             <li key={task.taskId}>
               <button

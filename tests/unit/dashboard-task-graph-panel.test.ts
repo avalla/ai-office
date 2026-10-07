@@ -23,6 +23,28 @@ function node(id: string): TaskGraphNode {
 }
 
 describe("graph overview task lists", () => {
+  test("keeps chain positions across pages", () => {
+    const chain = Array.from({ length: 30 }, (_, i) => node(`c${i}`));
+    const html = renderToStaticMarkup(
+      createElement(OverviewTaskLists, {
+        readyTasks: [],
+        attentionTasks: [],
+        chainIds: chain.map((task) => task.taskId),
+        tasksById: new Map(chain.map((task) => [task.taskId, task])),
+        readyPageIndex: 0,
+        attentionPageIndex: 0,
+        chainPageIndex: 1,
+        onReadyPageChange: () => {},
+        onAttentionPageChange: () => {},
+        onChainPageChange: () => {},
+        onFocus: () => {},
+      }),
+    );
+    expect(html).toMatch(/<ol[^>]*start="26"/);
+    expect(html).toContain("Title c25");
+    expect(html).not.toContain("Title c24");
+  });
+
   test("ready and attention tasks remain browsable beyond the first eight", () => {
     const readyTasks = Array.from({ length: 30 }, (_, i) => node(`r${i}`));
     const attentionTasks = Array.from({ length: 30 }, (_, i) => node(`a${i}`));
