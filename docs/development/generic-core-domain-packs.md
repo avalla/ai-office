@@ -4319,10 +4319,10 @@ A schema-1 knowledge item keeps `id` and the optional `title` and
 | Field                  | Meaning                                          | Bound                                                                                                                             |
 | ---------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
 | `category`             | The category label of the entry.                 | A local ID.                                                                                                                       |
-| `schema`               | The fields the entry's records are described by. | 1 to 64 entries (`maximumDescriptiveListEntries`); `field` follows the local ID rule; `description` is non-empty manifest text.   |
-| `seeds`                | Opaque references to seed material.              | 1 to 64 entries (`maximumKnowledgeSeeds`), each non-empty manifest text of at most 512 characters (`maximumKnowledgeTextLength`). |
+| `schema`               | The fields the entry's records are described by. | 1 to 64 entries (`maximumDescriptiveListEntries`); `field` follows the local ID rule; `description` is non-empty manifest text of at most 512 UTF-16 code units. |
+| `seeds`                | Opaque references to seed material.              | 1 to 64 entries (`maximumKnowledgeSeeds`), each non-empty manifest text of at most 512 UTF-16 code units (`maximumKnowledgeTextLength`). |
 | `retrieval.maxResults` | The most results retrieval guidance suggests.    | An integer from 1 to `knowledgeRetrievalLimits.maxResults` (5).                                                                   |
-| `retrieval.hint`       | Free-text retrieval guidance.                    | Non-empty manifest text of at most 512 characters.                                                                                |
+| `retrieval.hint`       | Free-text retrieval guidance.                    | Non-empty manifest text of at most 512 UTF-16 code units.                                                                         |
 | `retrieval.categories` | The categories retrieval should prefer.          | 1 to 64 local IDs (`maximumKnowledgeRetrievalCategories`).                                                                        |
 
 Every fact has one encoding. A member is canonical only when present: an
@@ -4340,7 +4340,9 @@ or checked against a scheme: `file:///etc/passwd`, `../../x` and
 `surreal://tenant-b/repository-b/memory` are kept byte for byte and mean
 nothing to this package or to the resolver. `categories` and `category` are
 labels, not references to a contribution; whether a category is also the
-`category` of another entry is not checked.
+`category` of another entry is not checked. "Non-empty" is the shared manifest
+rule, which counts length only: a whitespace-only seed, hint or description is
+accepted, as is a whitespace-only prompt text.
 
 The contract package rejects, with a typed `DomainPackManifestError`
 (`invalid_contribution`) and the path of the offending member:
@@ -4349,8 +4351,9 @@ The contract package rejects, with a typed `DomainPackManifestError`
 - `schema`, `seeds` or `retrieval.categories` that is not an array, is empty,
   holds more than its bound, or holds a duplicate;
 - a `schema` entry that is not an object, has an unknown or missing key, a
-  `field` that is not a local ID or a `description` that is empty or not text;
-- a seed or hint that is empty, not text, over 512 characters or holding a
+  `field` that is not a local ID or a `description` that is empty, not text
+  or over 512 UTF-16 code units;
+- a seed or hint that is empty, not text, over 512 UTF-16 code units or holding a
   lone surrogate;
 - `retrieval` that is not an object, is empty, has an unknown key, a
   `maxResults` that is not an integer from 1 to 5, or a `hint` or `categories`
@@ -4431,8 +4434,11 @@ retrieval? }`; `title` and `description` are presentation and are not
   the resulting guidance even when the previous closure cannot be read.
 
 A no-op plan carries both fields empty. The `project.pack_upgrade_applied`
-audit event records both fields: identities and guidance values only, never a
-title, a description or a project payload. No upgrade rewrites a project
+audit event records identities and one digest per guidance instead
+(`beforeDigest`, `afterDigest` and `guidanceDigest`, over the canonical
+guidance): never a schema description, a hint, a seed, a title, a description or
+a project payload. The plan keeps the full guidance, which the approver reads,
+and `planDigest` binds it. No upgrade rewrites a project
 value: an override is carried over whole and only the pack tuple of its source
 is retargeted.
 
@@ -4539,7 +4545,7 @@ same provider-independent contract test.
 - `maximumKnowledgeRetrievalResults` repeats the Runtime bound
   `knowledgeRetrievalLimits.maxResults` because the contract package cannot
   import the application port; a unit test keeps the two equal.
-- The 512-character bound of a seed and of a hint, and the 64-entry bound of
+- The 512 UTF-16 code unit bound of a seed, a hint and a schema description, and the 64-entry bound of
   `seeds` and `retrieval.categories`, are chosen by this task; the 64-entry
   bound of `schema` is the descriptive list bound of GP-10B-2.
 - A seed has no scheme or format check by design, so a later consumer must
