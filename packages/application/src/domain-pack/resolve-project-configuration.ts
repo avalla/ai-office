@@ -40,6 +40,10 @@ import {
   type RoleDefinition,
 } from "./project-definition.ts";
 import {
+  evidenceContractMembersOf,
+  type EvidenceContractKind,
+} from "./pack-evidence-contracts.ts";
+import {
   policyClauses,
   policyTargetMissing,
   policyTargetViolations,
@@ -179,6 +183,26 @@ export interface ResolvedPolicy extends PolicyClauses {
   readonly state: "active" | "inert";
 }
 
+/**
+ * The declared contract of one pack-owned artifact type, evidence type or
+ * validator reference (GP-14A), with the typed members as declared. The ID is
+ * the stable slot identity `pack:<packId>/<kind>/<localId>`. Typed members
+ * are the pack's under every customization. Nothing here is validated,
+ * stored, run or enforced; for a validator `registration` is always
+ * `unchecked` because no adapter is looked up.
+ */
+export type ResolvedEvidenceDefinition<
+  K extends EvidenceContractKind = EvidenceContractKind,
+> = {
+  readonly kind: K;
+  readonly definitionId: string;
+  readonly effectiveId: string;
+  readonly origin: "pack_owned";
+  readonly title?: string;
+  readonly description?: string;
+  readonly registration?: "unchecked";
+} & NonNullable<ReturnType<typeof evidenceContractMembersOf>>;
+
 export interface ResolvedWorkflowReferences {
   readonly workflowId: string;
   readonly taskTypeId: string;
@@ -260,6 +284,15 @@ export interface ResolvedProjectConfiguration {
    * the other views, it is not digest material.
    */
   readonly policies: readonly ResolvedPolicy[];
+  /**
+   * Derived artifact type, evidence type and validator views over
+   * `effectiveDefinitions` (GP-14A), one entry for every pack-owned
+   * definition of the kind, in the GP-06 definition order. Like the other
+   * views, they are not digest material.
+   */
+  readonly artifactTypes: readonly ResolvedEvidenceDefinition<"artifactTypes">[];
+  readonly evidenceTypes: readonly ResolvedEvidenceDefinition<"evidenceTypes">[];
+  readonly validators: readonly ResolvedEvidenceDefinition<"validators">[];
   /** The minimum evidence future run records must pin. */
   readonly pin: {
     readonly configurationDigest: string;
@@ -612,10 +645,20 @@ export function resolveProjectConfiguration(input: {
         current.kind === "roles"
           ? (current.payload as ResolvedPackRolePayload).capabilities
           : undefined;
+      // The typed members of an artifact or evidence type stay the pack's
+      // (GP-14A), like a role's capability set.
+      const typedMembers =
+        current.kind === "artifactTypes" || current.kind === "evidenceTypes"
+          ? evidenceContractMembersOf(current.kind, current.payload)
+          : undefined;
       next = {
         ...current,
         payload:
-          capabilities === undefined ? payload : { ...payload, capabilities },
+          capabilities !== undefined
+            ? { ...payload, capabilities }
+            : typedMembers !== undefined
+              ? { ...payload, ...typedMembers }
+              : payload,
       };
     } else if (
       entry.operation === "extend" &&
@@ -836,6 +879,37 @@ export function resolveProjectConfiguration(input: {
     });
   }
 
+  // GP-14A: artifact types, evidence types and validator references are
+  // declarations. A project cannot override a typed member, so each view
+  // lists the pack's; project-owned artifact and evidence types are
+  // descriptive and appear in `effectiveDefinitions` only.
+  const evidenceView = <K extends EvidenceContractKind>(
+    kind: K,
+  ): ResolvedEvidenceDefinition<K>[] =>
+    byKind[kind].flatMap((definition) => {
+      if (provenanceOf(definition.effectiveId).origin !== "pack_owned")
+        return [];
+      const { title, description } = definition.payload;
+      const members = evidenceContractMembersOf(kind, definition.payload);
+      return [
+        {
+          kind,
+          definitionId: stableId(definition),
+          effectiveId: definition.effectiveId,
+          origin: "pack_owned",
+          ...(title === undefined ? {} : { title }),
+          ...(description === undefined ? {} : { description }),
+          ...(kind === "validators" && members?.adapter !== undefined
+            ? { registration: "unchecked" as const }
+            : {}),
+          ...members,
+        } as ResolvedEvidenceDefinition<K>,
+      ];
+    });
+  const artifactTypes = evidenceView("artifactTypes");
+  const evidenceTypes = evidenceView("evidenceTypes");
+  const validators = evidenceView("validators");
+
   const roles: ResolvedRole[] = [];
   const omittedRoles: string[] = [];
   const roleIds = new Set<string>();
@@ -1010,6 +1084,9 @@ export function resolveProjectConfiguration(input: {
     disabledWorkflows,
     capabilities: bound.capabilities,
     policies,
+    artifactTypes,
+    evidenceTypes,
+    validators,
     pin: {
       configurationDigest,
       coreContractVersion,

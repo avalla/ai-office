@@ -2078,6 +2078,9 @@ profiles:
         "disabledWorkflows",
         "capabilities",
         "policies",
+        "artifactTypes",
+        "evidenceTypes",
+        "validators",
         "pin",
       ]);
       expect(
