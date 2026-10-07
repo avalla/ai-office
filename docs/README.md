@@ -37,6 +37,8 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Core/pack boundary](adr/ADR-0026-core-domain-pack-boundary.md): accepted GP-02 architectural contract aligned with ADR-0027; no pack Runtime is implemented.
 - [Cross-domain project authority and evidence](adr/ADR-0027-cross-domain-authority-and-evidence.md): accepted M15-4 architectural boundary for portable project identity, knowledge scope, mandatory evidence/constraints and trusted professional decisions; implementation is deferred.
 - [Actor/execution observation proposal](adr/ADR-0028-actor-execution-and-observation.md): proposed M17 decision gate for actor, role, assignment, execution, presence, evidence and provider hook authority; not accepted current architecture.
+- [M18 strong executor filesystem confinement](development/m18-strong-executor-filesystem-confinement.md): planned executor-neutral OS/container confinement, confinement levels, fail-closed admission, per-run filesystem root and adversarial verification; not implemented.
+- [Executor confinement proposal](adr/ADR-0029-executor-confinement-and-filesystem-trust-boundary.md): proposed M18 decision gate for the filesystem trust boundary outside the executor client; not accepted current architecture.
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
