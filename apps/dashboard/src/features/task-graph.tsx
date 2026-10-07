@@ -612,11 +612,6 @@ function TaskGraphCanvas({
     () => graph.tasks.filter((t) => t.needsAttention).sort(byPriority),
     [graph.tasks],
   );
-  const longestChainPage = chainPage(
-    graph.longestDependencyChain,
-    tasksById,
-    chainPageIndex,
-  );
   const canvasUnavailable = tooLarge || visible.tasks.length === 0;
 
   const filtered =
@@ -989,46 +984,15 @@ function TaskGraphCanvas({
               onClear={clearSelection}
             />
           ) : (
-            <>
-              <TaskList
-                title="Ready to start"
-                empty="Nothing is ready."
-                tasks={readyTasks.slice(0, 8)}
-                showPriority
-                onFocus={focusOn}
-                note={
-                  readyTasks.length > 8
-                    ? `${readyTasks.length - 8} more ready tasks; use the Ready summary to see them all.`
-                    : undefined
-                }
-              />
-              <TaskList
-                title="Needs attention"
-                empty="Nothing needs attention."
-                tasks={attentionTasks.slice(0, 8)}
-                showPriority
-                onFocus={focusOn}
-                note={
-                  attentionTasks.length > 8
-                    ? `${attentionTasks.length - 8} more; use the Needs attention summary to see them all.`
-                    : undefined
-                }
-              />
-              <TaskList
-                title="Longest dependency chain"
-                empty="No chain of dependent unfinished tasks."
-                tasks={longestChainPage.tasks}
-                ordered
-                onFocus={focusOn}
-              />
-              <TaskListPager
-                title="Longest dependency chain"
-                page={longestChainPage.page}
-                totalPages={longestChainPage.totalPages}
-                onPageChange={setChainPageIndex}
-              />
-              <Legend />
-            </>
+            <OverviewTaskLists
+              readyTasks={readyTasks}
+              attentionTasks={attentionTasks}
+              chainIds={graph.longestDependencyChain}
+              tasksById={tasksById}
+              chainPageIndex={chainPageIndex}
+              onChainPageChange={setChainPageIndex}
+              onFocus={focusOn}
+            />
           )}
         </aside>
       </div>
@@ -1046,6 +1010,68 @@ function TaskGraphCanvas({
 /* Side panel                                                                  */
 /* -------------------------------------------------------------------------- */
 
+export function OverviewTaskLists({
+  readyTasks,
+  attentionTasks,
+  chainIds,
+  tasksById,
+  chainPageIndex,
+  onChainPageChange,
+  onFocus,
+}: {
+  readyTasks: readonly TaskGraphNode[];
+  attentionTasks: readonly TaskGraphNode[];
+  chainIds: readonly string[];
+  tasksById: ReadonlyMap<string, TaskGraphNode>;
+  chainPageIndex: number;
+  onChainPageChange: (page: number) => void;
+  onFocus: (key: string) => void;
+}) {
+  const longestChainPage = chainPage(chainIds, tasksById, chainPageIndex);
+  const readyIds = useMemo(
+    () => readyTasks.map((task) => task.taskId),
+    [readyTasks],
+  );
+  const attentionIds = useMemo(
+    () => attentionTasks.map((task) => task.taskId),
+    [attentionTasks],
+  );
+  return (
+    <>
+      <PagedTaskList
+        title="Ready to start"
+        empty="Nothing is ready."
+        ids={readyIds}
+        tasksById={tasksById}
+        showPriority
+        onFocus={onFocus}
+      />
+      <PagedTaskList
+        title="Needs attention"
+        empty="Nothing needs attention."
+        ids={attentionIds}
+        tasksById={tasksById}
+        showPriority
+        onFocus={onFocus}
+      />
+      <TaskList
+        title="Longest dependency chain"
+        empty="No chain of dependent unfinished tasks."
+        tasks={longestChainPage.tasks}
+        ordered
+        onFocus={onFocus}
+      />
+      <TaskListPager
+        title="Longest dependency chain"
+        page={longestChainPage.page}
+        totalPages={longestChainPage.totalPages}
+        onPageChange={onChainPageChange}
+      />
+      <Legend />
+    </>
+  );
+}
+
 function TaskList({
   title,
   tasks,
@@ -1053,7 +1079,6 @@ function TaskList({
   onFocus,
   ordered = false,
   showPriority = false,
-  note,
 }: {
   title: string;
   tasks: readonly TaskGraphNode[];
@@ -1061,7 +1086,6 @@ function TaskList({
   onFocus: (key: string) => void;
   ordered?: boolean;
   showPriority?: boolean;
-  note?: string | undefined;
 }) {
   const List = ordered ? "ol" : "ul";
   return (
@@ -1091,7 +1115,6 @@ function TaskList({
           ))}
         </List>
       )}
-      {note !== undefined && <p className="mt-1 text-xs text-subtle">{note}</p>}
     </section>
   );
 }

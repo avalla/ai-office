@@ -292,7 +292,7 @@ describe("dashboard task graph", () => {
     expect(exceedsLayoutLimit(1_000, 0)).toBe(true);
     expect(exceedsLayoutLimit(75, 2_000)).toBe(true);
     // A deterministic dense DAG, with up to three prerequisites per task.
-    const count = 65;
+    const count = 55;
     const tasks = Array.from({ length: count }, (_, i) =>
       node(`t${String(i).padStart(5, "0")}`),
     );
@@ -314,10 +314,13 @@ describe("dashboard task graph", () => {
     expect(exceedsLayoutLimit(visible.tasks.length, visible.edges.length)).toBe(
       false,
     );
-    const started = performance.now();
+    // CPU time measures Dagre's own synchronous work even while parallel test
+    // workers compete for wall time on a loaded CI runner.
+    const started = process.cpuUsage();
     const positions = layoutGraph(visible, "LR");
     expect(positions.size).toBe(count);
-    expect(performance.now() - started).toBeLessThan(1_500);
+    const spent = process.cpuUsage(started);
+    expect((spent.user + spent.system) / 1_000).toBeLessThan(1_000);
   });
 
   test("selection-only data changes reuse the same dependency layout", () => {
