@@ -501,3 +501,32 @@ describe("GP-15 typed knowledge contributions in the schema-1 manifest", () => {
     );
   });
 });
+
+describe("GP-15 plan record", () => {
+  const plan = readFileSync(
+    new URL(
+      "../../docs/development/generic-core-domain-packs.md",
+      import.meta.url,
+    ),
+    "utf8",
+  ).replace(/\s+/gu, " ");
+
+  test("the contract section, the reworded row and the rows note say the same", () => {
+    expect(plan).toContain("## GP-15 pack knowledge guidance");
+    expect(plan).toContain("Definition layer only; store untouched.");
+    // The GP-15 bullet of the rows owned by other pull requests is gone.
+    expect(plan).not.toContain("GP-15. The row still reads as use of the");
+    for (const statement of [
+      "Persistence None.",
+      "### Scope compatibility plan",
+      "`knowledge_change_requires_upgrade`",
+    ])
+      expect(plan).toContain(statement);
+  });
+
+  test("the development pack still declares no knowledge entry, so no statement says otherwise", () => {
+    expect(plan).toContain(
+      "the development reference pack still declares no knowledge entry",
+    );
+  });
+});
