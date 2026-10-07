@@ -514,10 +514,11 @@ function TaskGraphCanvas({
     [graph.edges, graph.tasks.length],
   );
   const layoutSignature = `${direction}|${focusOnly}|${JSON.stringify(filters)}|${structure}`;
-  // Isolation belongs to a selection; do not carry it into the next one.
+  // Isolation belongs to one selection: choosing another item, or clearing,
+  // ends it.
   useEffect(() => {
-    if (related === null) setFocusOnly(false);
-  }, [related]);
+    setFocusOnly(false);
+  }, [selectedKey]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   /**
@@ -555,24 +556,37 @@ function TaskGraphCanvas({
   };
   const frameRef = useRef(frame);
   frameRef.current = frame;
+  // A focus jump that also changes the layout must win over the automatic
+  // framing, whichever animation frame runs last.
+  const pendingFocus = useRef<{ key: string; at: number } | null>(null);
+  const focusNode = useCallback(
+    (key: string) =>
+      fitView({
+        nodes: [{ id: key }],
+        maxZoom: 1.1,
+        padding: 0.6,
+        duration: prefersReducedMotion() ? 0 : 250,
+      }),
+    [fitView],
+  );
   useEffect(() => {
-    const handle = requestAnimationFrame(() => frameRef.current());
+    const handle = requestAnimationFrame(() => {
+      const pending = pendingFocus.current;
+      pendingFocus.current = null;
+      if (pending !== null && Date.now() - pending.at < 1000)
+        void focusNode(pending.key);
+      else frameRef.current();
+    });
     return () => cancelAnimationFrame(handle);
-  }, [layoutSignature]);
+  }, [layoutSignature, focusNode]);
 
   const focusOn = useCallback(
     (key: string) => {
+      pendingFocus.current = { key, at: Date.now() };
       setSelectedKey(key);
-      requestAnimationFrame(() =>
-        fitView({
-          nodes: [{ id: key }],
-          maxZoom: 1.1,
-          padding: 0.6,
-          duration: prefersReducedMotion() ? 0 : 250,
-        }),
-      );
+      requestAnimationFrame(() => void focusNode(key));
     },
-    [fitView],
+    [focusNode],
   );
 
   const readyTasks = useMemo(
@@ -743,13 +757,15 @@ function TaskGraphCanvas({
         )}
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]">
+      <div
+        className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setSelectedKey(null);
+        }}
+      >
         <div
           ref={canvasRef}
           className="h-[70vh] min-h-[26rem] overflow-hidden rounded-xl border border-border bg-surface"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") setSelectedKey(null);
-          }}
         >
           {visible.tasks.length === 0 ? (
             <div className="p-6">
