@@ -66,6 +66,7 @@ Rules:
 
 - Absent `delivery.profile` means `full`: existing projects behave as today.
 - The accepted `stages` keys are `design`, `review`, `second_review`, `qa` and `external_review`; any other key, including `hardening`, which is not configurable, is an unknown-key error.
+- Under `custom`, `false` means different things by key: for `design` and `qa` it selects the reduced form of the gate (the short design record, and `verification.full`), never the absence of the gate; for `review`, `second_review` and `external_review` it turns the gate off. `review: false` together with `qa: false` is a configuration error unless an external review is required, so that a hardening fix always has an independent re-check.
 - Under `custom`, a `stages` key that is omitted takes the value of that gate in `full`, so every configuration yields one deterministic selection; the one exception is `second_review`, which is off when `review` is off and omitted.
 - `stages` with a profile other than `custom` is an error, and so is `second_review: true` while `review` is off, since there is no review whose findings and hardening a second review could confirm. Gates that are always on are not `stages` keys.
 - Floor: when the diff touches migrations, controlled actions or connectors,
@@ -102,8 +103,7 @@ Rules:
 
 ### 1.3 Handoff packet
 
-At every gate the implementation context writes one compact record, and the
-next stage or a fresh session starts from it:
+At every gate the implementation context writes one compact record, and the next implementation-context stage or a fresh implementation session starts from it:
 
 ```text
 stage, result, profile, head sha, base sha, branch/PR
@@ -149,7 +149,7 @@ next action
 
 Shared parser and validation module (no Runtime needed, tested directly):
 
-- every new key, wrong type, `stages` without `custom`, `second_review: true` with `review` off, an omitted `second_review` while `review` is off (resolves to off), an external reviewer configured while `lite` or `custom` disables it, and an omitted `custom` stage taking its `full` value;
+- every new key, wrong type, `stages` without `custom`, `second_review: true` with `review` off, `review: false` with `qa: false` and no required external review, the meaning of `false` for `design` and `qa` (reduced form, never absent), an omitted `second_review` while `review` is off (resolves to off), an external reviewer configured while `lite` or `custom` disables it, and an omitted `custom` stage taking its `full` value;
 - configured profile and configuration-derived gate selection for `lite`, `full`, `custom`, and for an absent `delivery.profile` (equals `full`); the output is never labelled effective, and a test asserts that it carries no floor.
 
 Skill contract and package validation (handoff packet included):
@@ -157,7 +157,7 @@ Skill contract and package validation (handoff packet included):
 - stage table and references stay consistent with the gate catalog; a gate a
   profile turns off does not require its reference;
 - generated copies stay in sync (`skills:check`);
-- handoff packet rules are pinned by contract invariants and removal tests: the per-task packet location (`.task-delivery/<task>/handoff.md`) and its ignore through the common-directory exclude, so a clean tree stays clean; the per-gate, per-changed-commit invalidation on a head change, with the existing merge-in exception and verification re-run; cut points only at gate boundaries; reviewer and verifier inputs exclude the implementer's reasoning;
+- handoff packet rules are pinned by contract invariants and removal tests: the per-task packet location (`.task-delivery/<task>/handoff.md`) and its ignore through the common-directory exclude, so a clean tree stays clean; the per-gate, per-changed-commit invalidation on a head change, with the existing merge-in exception and verification re-run; cut points only at gate boundaries; reviewer and verifier inputs exclude the implementer's reasoning, claims and the packet itself;
 - floor rules are pinned by contract invariants and removal tests: floor
   determined at preflight; re-evaluated before leaving `implementation`, before
   `ready_for_merge` and on a head change that can alter the classification;
