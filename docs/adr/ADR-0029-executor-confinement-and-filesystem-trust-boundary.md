@@ -65,7 +65,9 @@ Runtime can detect. A confidentiality guarantee cannot rest on them.
    evidence of confinement support.
 6. **The Runtime owns a per-run filesystem root.** The executor's view is
    built from logical mounts (`input`, `workspace`, `output`, `credentials`,
-   `tmp`, optional `cache`); everything else on the host is absent by default.
+   `tmp`, optional `cache`); everything else on the host is absent by default,
+   apart from a per-provider baseline the provider declares and provenance
+   records.
    A cache source is Runtime-owned storage outside any repository or
    workspace path, never writable across runs.
    Workspace access is `none` or `read_only`; repository mutation stays on the controlled-action path. Credentials are a
