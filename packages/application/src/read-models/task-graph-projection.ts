@@ -6,6 +6,7 @@
  */
 
 import { isTaskRunnable } from "@ai-office/domain/agent/run-eligibility.ts";
+import { blockingPrerequisites } from "@ai-office/domain/task/task-dependency.ts";
 import { isTerminalTaskStatus } from "@ai-office/domain/task/task.ts";
 import type {
   TaskGraphEdge,
@@ -17,7 +18,9 @@ export function projectTaskGraphNodes(
   tasks: readonly TaskOperationalState[],
   edges: readonly TaskGraphEdge[],
 ): TaskGraphNode[] {
-  const recorded = new Map(tasks.map((task) => [task.taskId, task]));
+  const statuses = new Map(
+    tasks.map((task) => [task.taskId, task.recordedStatus]),
+  );
   const prerequisites = new Map<string, string[]>();
   for (const edge of edges) {
     const values = prerequisites.get(edge.taskId) ?? [];
@@ -26,9 +29,13 @@ export function projectTaskGraphNodes(
   }
   return tasks
     .map((task) => {
-      // Same rule as blockingPrerequisites(): only completed work satisfies.
-      const unmet = (prerequisites.get(task.taskId) ?? [])
-        .filter((id) => recorded.get(id)?.recordedStatus !== "completed")
+      // The domain rule itself; the snapshot guarantees every prerequisite exists.
+      const unmet = blockingPrerequisites(
+        task.taskId,
+        prerequisites.get(task.taskId) ?? [],
+        statuses,
+      )
+        .map((blocker) => blocker.taskId)
         .sort();
       return {
         taskId: task.taskId,

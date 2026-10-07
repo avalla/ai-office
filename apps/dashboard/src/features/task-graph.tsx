@@ -14,6 +14,7 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
+import { terminalTaskOperationalStatuses } from "@ai-office/application/read-models/operational-read-models.ts";
 import type {
   TaskGraph,
   TaskGraphMilestone,
@@ -502,9 +503,14 @@ function TaskGraphCanvas({
 
   // Re-frame only when the layout itself changes, never on selection or on a
   // live refresh that leaves the visible set untouched.
-  const layoutSignature = `${direction}|${visible.tasks
-    .map((t) => t.taskId)
-    .join(",")}|${visible.milestones.map((m) => m.milestoneId).join(",")}`;
+  // Keyed on what the user chose, not on the visible set: a live refresh that
+  // completes a task, or a focus jump, must not throw the viewport away.
+  const layoutSignature = `${direction}|${focusOnly}|${JSON.stringify(filters)}`;
+  // Isolation belongs to a selection; do not carry it into the next one.
+  useEffect(() => {
+    if (related === null) setFocusOnly(false);
+  }, [related]);
+
   const canvasRef = useRef<HTMLDivElement>(null);
   /**
    * Frame the whole graph, but never below a readable zoom: a long chain fitted
@@ -576,8 +582,7 @@ function TaskGraphCanvas({
     waiting: graph.tasks.filter(
       (t) =>
         t.unmetPrerequisiteIds.length > 0 &&
-        t.recordedStatus !== "completed" &&
-        t.recordedStatus !== "cancelled",
+        !terminalTaskOperationalStatuses.includes(t.operationalStatus),
     ).length,
   };
 
@@ -757,7 +762,7 @@ function TaskGraphCanvas({
               onlyRenderVisibleElements
               onPaneClick={() => setSelectedKey(null)}
               proOptions={{ hideAttribution: true }}
-              aria-label="Task dependency graph. Use the side panel lists for keyboard navigation."
+              aria-label="Task dependency graph. The side panel lists give keyboard access to runnable, critical-path and related tasks."
             >
               <Background gap={24} />
               <Controls showInteractive={false} />
