@@ -2190,8 +2190,8 @@ It depends only on the existing bounded worker port (ADR-0017) and may start
 before M12–M17 complete. Pack-originated requests are verified with
 test-supplied example requests through the generic contract, so M18 does not
 wait for the GP-16 capability contracts (merged) or for packs to execute
-(M16.5); wiring pack-declared requests belongs to that later work; SFC-02 must be checked against the M12 worker port as
-delivered by then. It is separate from M10, which hardens controlled mutations
+(M16.5); wiring pack-declared requests belongs to that later work. SFC-02 must be
+checked against the M12 worker port as delivered when SFC-02 starts. It is separate from M10, which hardens controlled mutations
 against a hostile same-UID process: M18 does not make the Runtime host a
 same-UID boundary and does not replace controlled actions. It also resolves,
 for confined runs, the unbounded process-group wait and the stale temporary

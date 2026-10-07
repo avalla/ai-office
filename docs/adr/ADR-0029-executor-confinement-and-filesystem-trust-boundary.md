@@ -120,8 +120,8 @@ option where a native provider cannot meet the level.
 - State the threat model: assets, trust boundaries, actors (model following
   injected task content, executor client, provider), guarantees and
   non-guarantees, and the residual system metadata per provider.
-- Decide how a pack or role request (GP-16) maps onto the contract without
-  becoming a grant.
+- Decide how a pack or role request maps onto the contract without becoming a
+  grant. Pack-declared requests are wired after pack execution (M16.5).
 - Decide the persisted provenance shape and its storage parity obligations.
 - Decide how the unbounded process-group wait recorded from PR #94 is bounded
   for confined runs.
