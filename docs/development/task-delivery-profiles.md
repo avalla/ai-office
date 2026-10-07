@@ -1,7 +1,7 @@
 # Task delivery profiles, handoff and Runtime-owned delivery state
 
-Status: plan, not implemented. Step 1 needs no architectural decision. Step 2
-is gated by the proposed
+Status: plan, not implemented. The choices step 1 left open were decided by
+the owner (see Owner decisions). Step 2 is gated by the proposed
 [ADR-0031](../adr/ADR-0031-runtime-owned-delivery-state.md).
 
 ## Objective
@@ -67,8 +67,19 @@ Rules:
   is always on being set to `false`.
 - Floor: when the diff touches migrations, controlled actions or connectors,
   security boundaries, or public contracts, the effective profile is at least
-  `full`. The skill states the floor and the evidence for it at preflight; an
-  authorizer may raise a profile, never lower below the floor.
+  `full`. The floor is a minimum, never a one-time decision:
+  - it is determined at preflight from the information available then, and
+    the skill states it with its evidence;
+  - it is evaluated again before the task leaves `implementation`, again
+    before `ready_for_merge`, and whenever a new commit on the head can change
+    the classification (for example a migration, a controlled action or a
+    connector, a security boundary, or a public contract added after a
+    `lite` start);
+  - it only moves up. When it moves from `lite` to `full`, every gate that is
+    now required and was omitted is executed before the task proceeds, and
+    evidence gathered under the reduced profile does not cover them;
+  - an authorizer may raise the profile, never lower it below the computed
+    floor.
 - External review keeps its current meaning: configured or requested makes it
   required, whatever the profile says; `lite` with a configured external
   reviewer is a configuration error rather than a silent skip.
@@ -118,17 +129,56 @@ next action
 - It is a Runtime-routed read like other product commands: the CLI stays a
   Runtime client and gains no new offline path (owner decision, 2026-10-07).
   The repository's `skills:validate` keeps using the shared module directly.
+- `--root` is resolved in the invoking client, as `AGENTS.md` requires for
+  caller-local paths:
+  - when `--root` is omitted, the CLI uses the working directory of its own
+    client process;
+  - when `--root` is relative, the CLI resolves it against that same working
+    directory;
+  - the path is materialized as an absolute path before IPC, and the Runtime
+    receives only absolute paths;
+  - the Runtime rejects a relative path with a typed error instead of
+    interpreting it against its own working directory, and never infers the
+    caller's filesystem context from the daemon's cwd.
 - It also reports the effective profile and gate list, so the skill can read
   them instead of re-deriving them.
 
-### Tests
+### Tests and acceptance criteria
 
-- Config contract: every new key, wrong type, `stages` without `custom`,
-  an always-on gate set to `false`, `lite` with an external reviewer.
-- Skill package validation: stage table and references stay consistent with
-  the gate catalog; a disabled gate's reference is not required.
-- Generated copies stay in sync (`skills:check`).
-- CLI: unknown key, valid file, `--json` shape, no Runtime required.
+Shared parser and validation module (no Runtime needed, tested directly):
+
+- every new key, wrong type, `stages` without `custom`, an always-on gate set
+  to `false`, `lite` with a configured external reviewer;
+- effective profile and gate list for `lite`, `full`, `custom`, and for an
+  absent `delivery.profile` (equals `full`).
+
+Skill contract and package validation:
+
+- stage table and references stay consistent with the gate catalog; a gate a
+  profile turns off does not require its reference;
+- generated copies stay in sync (`skills:check`);
+- floor rules are pinned by contract invariants and removal tests: floor
+  determined at preflight; re-evaluated before leaving `implementation`, before
+  `ready_for_merge` and on a head change that can alter the classification;
+  floor only moves up; omitted gates become required and are executed when it
+  moves from `lite` to `full`; lowering below the floor is refused.
+
+CLI `delivery:validate`, end to end through the Unix-socket protocol with a
+Runtime available (daemon-backed):
+
+- valid file, invalid file, `--json` shape;
+- `--root` omitted: the client's cwd is validated;
+- `--root` relative: resolved against the client's cwd, and the Runtime
+  receives an absolute path;
+- `--root` absolute: passed unchanged;
+- a Runtime that receives a relative path rejects it with a typed error and
+  does not read the daemon's cwd.
+
+Runtime unavailable:
+
+- the CLI reports the Runtime as unreachable with the established exit code and
+  message, performs no validation itself, and adds no embedded or offline
+  fallback; a test asserts that the shared module is not invoked on that path.
 
 ### Out of scope for step 1
 
@@ -146,11 +196,12 @@ subject of the ADR.
 
 ## Delivery order
 
-1. Land `feat/task-delivery-refinement` (7 commits, no pull request yet;
-   its worktree has uncommitted regenerated skill copies that need an owner
-   decision before it is touched).
-2. Step 1 in one pull request, built on that branch's content.
-3. ADR-0031 reviewed and decided; step 2 planned as its own milestone task.
+1. The `task-delivery` 0.3.0 change (clarifying tasks before a run and run-wide
+   stacking, currently pull request #126) is on `main`. Step 1 starts from
+   that `main`. No earlier interim branch of this work is a prerequisite.
+2. Step 1 in its own pull request, from the resulting `main`.
+3. ADR-0031 reviewed and decided.
+4. Step 2 planned as its own milestone task, only after ADR-0031 is accepted.
 
 ## Owner decisions (2026-10-07)
 

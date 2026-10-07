@@ -57,6 +57,9 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
   and any deduplication must be settled before implementation.
 - The CLI never falls back to an embedded writer. `delivery:validate` is a
   Runtime-routed read and adds no offline path.
+- Any caller-local path argument is resolved by the CLI against its own working
+  directory and sent as an absolute path; the Runtime rejects relative paths and
+  never infers the caller's working directory.
 
 ## Open questions
 
