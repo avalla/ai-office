@@ -4253,6 +4253,13 @@ payloads and this section. The second delivers the resolved view, the upgrade
 plan and the `project:pack:apply` guard, with integration and Unix-socket
 tests.
 
+Merge order. The first pull request alone accepts typed artifact and evidence
+types in a pack, but until the second merges a project `replace` of such a type
+replaces the whole payload and so silently drops its typed members from the
+effective definition. The resolver rule that keeps them is in the second pull
+request, which therefore merges directly after the first and before any pack
+declares a typed definition.
+
 Formal scope:
 
 > Give the schema-1 `artifactTypes`, `evidenceTypes` and `validators`
@@ -4318,7 +4325,7 @@ omitted instead).
 ```text
 artifactTypes[]: { id, title?, description?,
   mediaTypes?: [<type/subtype>, ...],       1..16, lower-case, no wildcard
-  maximumBytes?: <integer 1..1073741824>,
+  maximumBytes?: <integer 1..67108864>,
   contentSchema?: <schema> }
 
 evidenceTypes[]: { id, title?, description?,
@@ -4340,8 +4347,10 @@ rejected, so a typed validator has one complete encoding.
   restricted-name characters, in lower case so that a media type has one
   encoding, at most 127 characters, with no parameter and no wildcard.
 - `adapter.id` follows `^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$` and has at most
-  128 characters. It is not a connector operation name, a path or a URL, and
-  it is never looked up. `adapter.version` is an exact `MAJOR.MINOR.PATCH`,
+  128 characters. It is never looked up as, and never shares a namespace with,
+  a connector operation: a dotted adapter ID may look like an operation name,
+  but no registry, catalog or gateway is ever asked about it. It is not a path
+  or a URL. `adapter.version` is an exact `MAJOR.MINOR.PATCH`,
   the pack version grammar; a range, a tag, `latest` and a wildcard are
   rejected.
 - `accepts` is a set of 1 to 64 `{ kind, id }` references, `kind` being
@@ -4351,10 +4360,12 @@ rejected, so a typed validator has one complete encoding.
   dependency included, cannot be named.
 - `failurePolicy` is `"fail_closed"` and nothing else.
 - `timeoutMs` is an integer from 1 to 60,000. `maxInputBytes` is at most
-  67,108,864 and `maxOutputBytes` at most 16,777,216. The ceilings are
-  contract constants (`maximumValidatorTimeoutMs`,
-  `maximumValidatorInputBytes`, `maximumValidatorOutputBytes`); a pack
-  cannot raise them.
+  16,777,216 and `maxOutputBytes` at most 16,777,216; an artifact type's
+  `maximumBytes` is at most 67,108,864. The ceilings are contract constants
+  (`maximumValidatorTimeoutMs`, `maximumValidatorInputBytes`,
+  `maximumValidatorOutputBytes`, `maximumArtifactTypeBytes`); a pack cannot
+  raise them. A ceiling is part of the published contract: raising one is
+  compatible with published packs, lowering one is not.
 - No member can make a validator look like something that runs. The keys
   `command`, `entry`, `module`, `url` and `script`, and every other unknown
   key, are rejected with the member's path, on the entry and on `adapter`.
@@ -4368,12 +4379,12 @@ code in this repository validates a value against it.
 
 | `type`    | Members                                                              |
 | --------- | -------------------------------------------------------------------- |
-| `string`  | `minLength?`, `maxLength?` (0 to 1,048,576, ordered)                 |
+| `string`  | `minLength?`, `maxLength?` (0 to 65,536, ordered)                    |
 | `integer` | `minimum?`, `maximum?` (safe integers, ordered)                      |
 | `number`  | `minimum?`, `maximum?` (finite numbers, ordered)                     |
 | `boolean` | none                                                                 |
 | `enum`    | `values`: 1 to 64 distinct non-empty strings of at most 128 chars    |
-| `array`   | `items` (a schema), `minItems?`, `maxItems?` (0 to 100,000, ordered) |
+| `array`   | `items` (a schema), `minItems?`, `maxItems?` (0 to 10,000, ordered) |
 | `object`  | `properties` (1 to 64), `required?` (names of declared properties)   |
 
 An object schema is always closed: `additionalProperties` is not a member, an
@@ -4469,8 +4480,8 @@ state of these kinds beyond the existing descriptive overrides exists.
 
 - GP-16 owns capability contracts and provider binding. A validator is not a
   capability and never enters the provider catalog, the connector registry or
-  the controlled-action gateway; the adapter ID grammar differs on purpose
-  from connector operation names.
+  the controlled-action gateway; an adapter ID is never looked up as, and
+  never shares a namespace with, a connector operation.
 - GP-14B owns adapter registration checks, execution, fail-closed evidence,
   an advisory failure policy if any, and version-bound review. ADR-0026 states
   that registration checks identity, version, supported type and limits
