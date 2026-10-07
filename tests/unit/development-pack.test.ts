@@ -976,7 +976,7 @@ const pipelineOf = (office: EditableOffice, id: string) =>
   office.pipelines.find((pipeline) => pipeline.id === id)!;
 
 describe("GP-10B-1 development workflows in the reference pack", () => {
-  test("version 0.4.0 keeps the four workflows of 0.2.0 and adds only the descriptive fields and the maintenance route", () => {
+  test("version 0.4.0 keeps the four workflows of 0.2.0 and adds the descriptive fields, the maintenance route and the three policies", () => {
     const manifest = verifyDomainPackManifest(developmentPackBytes(), 1);
     expect(`${manifest.id}@${manifest.version}`).toBe(
       "org.ai-office.development@0.4.0",

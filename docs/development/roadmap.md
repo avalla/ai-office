@@ -1801,9 +1801,8 @@ See [Professional-work verticals](professional-work-verticals.md).
 ## M16 — Generic Core & Domain Packs
 
 Status: active in AI Office and in progress. GP-01 through GP-09, GP-10A,
-GP-10B-1, GP-10B-2, GP-11 through GP-13, GP-16, GP-22 and GP-23 are merged,
-as is the GP-25 contract (its development pack data, 0.4.0, is a second pull
-request): public contracts,
+GP-10B-1, GP-10B-2, GP-11 through GP-13, GP-16, GP-22, GP-23 and GP-25 (the
+contract and development pack 0.4.0) are merged: public contracts,
 host-local catalog/resolver, exact project binding, definition ownership and
 source-pinned overrides, derived effective configuration with read-only
 inspection, reviewed upgrades, the legacy development profile, role, agent
@@ -2131,9 +2130,10 @@ approvals, retrieve knowledge, persist state, and retain audit and
 provenance, on the legacy path, which stays the only source the Runtime
 executes from. Definitions of roles, agents and workflows, and of prompts,
 validator references, capability declarations, artifact and evidence types,
-knowledge guidance and policy contributions as far as each M16 contract
-allows, can be customized or replaced in project configuration without pack
-forks; upgrades preserve these choices. No Runtime role, agent, pipeline,
+and knowledge guidance can be customized or replaced in project configuration
+without pack forks; policy contributions are pack-owned, so a project
+cannot override or own one and they change only through reviewed upgrades;
+upgrades preserve these choices. No Runtime role, agent, pipeline,
 validator run or capability binding is created from them. Package import and
 cross-domain fixture tests prevent development semantics from returning to
 core. Domain-specific adapters remain behind public ports and controlled
@@ -2281,9 +2281,9 @@ It depends only on the existing bounded worker port (ADR-0017) and may start
 before M12–M17 complete. Pack-originated requests are verified with
 test-supplied example requests through the generic contract, so M18 does not
 wait for the GP-16 capability contracts (merged) or for packs to execute
-(M16.5); wiring pack-declared requests belongs to that later work. SFC-02 must be
-checked against the M12 worker port as delivered when SFC-02 starts. It is separate from M10, which hardens controlled mutations
-against a hostile same-UID process: M18 does not make the Runtime host a
+(M16.5); wiring pack-declared requests belongs to that later work. SFC-02 must
+be checked against the M12 worker port as delivered when SFC-02 starts. It is
+separate from M10, which hardens controlled mutations against a hostile same-UID process: M18 does not make the Runtime host a
 same-UID boundary and does not replace controlled actions. It also resolves,
 for confined runs, the unbounded process-group wait and the stale temporary
 run state recorded from the bounded Codex worker.
