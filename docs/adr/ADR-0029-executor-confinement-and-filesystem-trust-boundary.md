@@ -67,7 +67,8 @@ Runtime can detect. A confidentiality guarantee cannot rest on them.
    built from logical mounts (`input`, `workspace`, `output`, `credentials`,
    `tmp`, optional `cache`); everything else on the host is absent by default,
    apart from a per-provider baseline the provider declares and provenance
-   records.
+   records. The baseline is read-only, stays outside the hidden-by-default set
+   and passes the same path validation as any mount.
    A cache source is Runtime-owned storage outside any repository or
    workspace path, never writable across runs.
    Workspace access is `none` or `read_only`; repository mutation stays on the controlled-action path. Credentials are a
