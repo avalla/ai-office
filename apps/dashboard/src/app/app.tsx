@@ -9,6 +9,7 @@ import {
   FolderKanban,
   ListTodo,
   Menu,
+  Network,
   RefreshCw,
   WifiOff,
 } from "lucide-react";
@@ -68,11 +69,12 @@ const projectNavigation = [
   { label: "Pipeline", suffix: "/pipeline", icon: Blocks },
   { label: "Tasks", suffix: "/tasks", icon: ListTodo },
   { label: "Milestones", suffix: "/milestones", icon: FolderKanban },
+  { label: "Graph", suffix: "/graph", icon: Network },
   { label: "Requirements", suffix: "/requirements", icon: BriefcaseBusiness },
   { label: "Agents", suffix: "/agents", icon: Bot },
 ] as const;
 
-function SidebarLinks({
+export function SidebarLinks({
   currentProject,
   path,
   onNavigate,
