@@ -8,7 +8,7 @@ the owner (see Owner decisions). Step 2 is gated by the proposed
 
 The `task-delivery` skill (`skills/task-delivery`) runs one fixed 11-gate
 lifecycle for every task, holds delivery state only in the executor's context,
-loads about 1,275 lines of prose on every invocation, and validates its
+loads about 800 lines of prose (`SKILL.md` and its references) on every invocation, and validates its
 configuration with a repository script instead of the product CLI. The goal is:
 
 1. choose how much process a task gets: `lite`, `full`, or `custom`;
@@ -54,7 +54,7 @@ three words):
 ```yaml
 delivery:
   profile: custom # lite | full | custom; absent means full
-stages: # read only when profile is custom
+stages: # allowed only when profile is custom; an error otherwise
   design: true
   second_review: false
   external_review: false
@@ -63,6 +63,7 @@ stages: # read only when profile is custom
 Rules:
 
 - Absent `delivery.profile` means `full`: existing projects behave as today.
+- Under `custom`, a `stages` key that is omitted takes the value of that gate in `full`, so every configuration yields one deterministic selection.
 - `stages` with a profile other than `custom` is an error, as is a stage that
   is always on being set to `false`.
 - Floor: when the diff touches migrations, controlled actions or connectors,
@@ -75,11 +76,12 @@ Rules:
     the classification (for example a migration, a controlled action or a
     connector, a security boundary, or a public contract added after a
     `lite` start);
-  - it is applied gate by gate: every gate the `full` profile requires becomes required, whatever the configured profile is (`lite`, or `custom` with gates turned off), and a gate the configuration turns on stays on;
+  - it is applied gate by gate and in depth: every gate the `full` profile requires becomes required in its `full` form, whatever the configured profile is (`lite`, or `custom` with gates turned off or reduced), and a gate the configuration turns on stays on. Under a floor trigger review has the full number of rounds, `qa` is independent, `design` is the written design, and a gate that ran in a reduced form is run again in its `full` form;
   - it only moves up. A gate that becomes required and was omitted is executed before the task proceeds, and evidence gathered under the reduced profile does not cover it;
   - an authorizer may raise the profile, never lower it below the computed
     floor.
 - External review keeps its current meaning: configured or requested makes it required, whatever the profile says. A configuration that disables it while `external_review.command` is set (`lite`, or `custom` with `stages.external_review: false`) is a configuration error rather than a silent skip.
+- `lite` review: one round on the reviewed head. Hardening answers each finding and its commits are limited to that; the full verification runs green on the final head, and the review evidence stays bound to the reviewed head, with the hardening diff listed beside it. This is a deliberate, `lite`-only amendment of the rule that review evidence refers to the current head; a hardening diff that goes beyond the findings is a floor-style escalation to `full`.
 - Readiness: `ready_for_merge` checks the gates that are selected, plus any gate the floor made required, on the current head. A profile that omits a gate does not need its evidence; the skill's stage 10 wording, which names review, hardening and verification, is updated in step 1 to refer to the selected gates.
 - Design: a profile that shortens `design` still produces a written design record before `implementation` starts; it is linked or copied into the pull request.
 - This amends the current sentence "a project pipeline never removes a gate":
@@ -124,7 +126,8 @@ next action
 
 - `ai-office delivery:validate [--root <path>] [--json]` moves the contract
   check of `.task-delivery.yaml` from `scripts/skills/task-delivery-config.ts`
-  into a shared module used by both the CLI and `skills:validate`.
+  into a shared module used by the Runtime host and by `skills:validate`; `apps/cli` does not import it.
+- A `--root` that does not exist, is not a directory, or cannot be read is rejected with a typed error, never reported as valid.
 - It is a Runtime-routed read like other product commands: the CLI stays a
   Runtime client and gains no new offline path (owner decision, 2026-10-07).
   The repository's `skills:validate` keeps using the shared module directly.
@@ -146,8 +149,7 @@ next action
 Shared parser and validation module (no Runtime needed, tested directly):
 
 - every new key, wrong type, `stages` without `custom`, an always-on gate set
-  to `false`, and an external reviewer configured while `lite` or `custom`
-  disables it;
+  to `false`, an external reviewer configured while `lite` or `custom` disables it, and an omitted `custom` stage taking its `full` value;
 - configured profile and configuration-derived gate selection for `lite`, `full`, `custom`, and for an absent `delivery.profile` (equals `full`); the output is never labelled effective, and a test asserts that it carries no floor.
 
 Skill contract and package validation:
@@ -158,7 +160,7 @@ Skill contract and package validation:
 - floor rules are pinned by contract invariants and removal tests: floor
   determined at preflight; re-evaluated before leaving `implementation`, before
   `ready_for_merge` and on a head change that can alter the classification;
-  floor is applied gate by gate, including to `custom` with gates turned off; it only moves up; an omitted gate that becomes required is executed before the task proceeds; lowering below the floor is refused; `ready_for_merge` checks the selected gates plus the gates the floor made required; a shortened `design` still has a written record before `implementation`.
+  floor is applied gate by gate, including to `custom` with gates turned off; it only moves up; an omitted gate that becomes required is executed before the task proceeds; lowering below the floor is refused; under a floor trigger a gate that ran in a reduced form (one review round, non-independent QA, short design record) is run again in its `full` form and the reduced evidence does not cover it; the `lite` review rule (hardening limited to the findings, full verification on the final head) is pinned; `ready_for_merge` checks the selected gates plus the gates the floor made required; a shortened `design` still has a written record before `implementation`.
 
 CLI `delivery:validate`, end to end through the Unix-socket protocol with a
 Runtime available (daemon-backed):
@@ -168,6 +170,7 @@ Runtime available (daemon-backed):
 - `--root` relative: resolved against the client's cwd, and the Runtime
   receives an absolute path;
 - `--root` absolute: passed unchanged;
+- `--root` nonexistent, not a directory, or unreadable: a typed error, never a pass;
 - a Runtime that receives a relative path rejects it with a typed error and
   does not read the daemon's cwd.
 
@@ -175,7 +178,7 @@ Runtime unavailable:
 
 - the CLI reports the Runtime as unreachable with the established exit code and
   message, performs no validation itself, and adds no embedded or offline
-  fallback; a test asserts that the shared module is not invoked on that path.
+  fallback; a test asserts that the shared module is not invoked on that path, and an import-boundary check asserts that `apps/cli` does not import it.
 
 ### Out of scope for step 1
 

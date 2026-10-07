@@ -55,11 +55,8 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
 - Daemon and CLI end-to-end coverage through the Unix-socket protocol.
 - Two run records (pipeline run and delivery run) must not drift; the relation
   and any deduplication must be settled before implementation.
-- The CLI never falls back to an embedded writer. `delivery:validate` is a
-  Runtime-routed read and adds no offline path.
-- Any caller-local path argument is resolved by the CLI against its own working
-  directory and sent as an absolute path; the Runtime rejects relative paths and
-  never infers the caller's working directory.
+- The CLI never falls back to an embedded writer. Step 1's `delivery:validate` is a Runtime-routed read that adds no offline path; that is an owner decision and an existing `AGENTS.md` invariant, not a consequence of this ADR, and it stands if this ADR is rejected.
+- Any caller-local path argument is resolved by the CLI against its own working directory and sent as an absolute path, as `AGENTS.md` already requires; the Runtime rejects relative paths and never infers the caller's working directory.
 
 ## Open questions
 
