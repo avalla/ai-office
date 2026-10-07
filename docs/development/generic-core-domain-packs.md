@@ -148,7 +148,8 @@ removed and changed tuples, and any GP-04 availability or dependency error.
 Since GP-11 the preview also reports role capability changes, and preview and
 apply refuse (`role_capability_change_requires_upgrade`) a change to an
 existing role's capability set and, while the currently selected artifacts are
-not installed, every change other than a pure removal; see the GP-11 section.
+not installed, every changed selection including a pure removal; see the
+GP-11 section and issue #130.
 Preview is read-only. Apply checks the expected revision, validates the exact
 proposed tuples against the public GP-04 resolver, replaces the selection in
 one transaction and appends a project audit event with previous/new revisions,
@@ -969,21 +970,19 @@ plan and without the `customized` mark, and adds the issue
 - The current closure resolves, and a role present in both closures (same
   `roleId`) would have a different capability set.
 - The current closure cannot be resolved because its artifacts are no longer
-  installed, and the change is anything but a pure removal. A pure removal
-  proposes only exact tuples the project already selects, with nothing added
-  and no tuple changed. Without the previous manifests neither an added nor a
-  removed role capability can be ruled out: a role may have had a set that the
-  proposed version no longer declares, and a newly selected pack may have been
-  a dependency at another version. `roleCapabilityChanges` is then
-  `unavailable` (`previous_closure_unresolved`). This holds for packs without
-  role capabilities too, so it narrows GP-05: a version change or an addition
-  while the currently selected artifacts are not installed goes through
-  `project:pack:upgrade`, which approves the target capability sets.
+  installed, and the selection changes, including a pure removal. Without the
+  previous manifests no comparison that depends on that closure can be
+  verified. `roleCapabilityChanges` is then `unavailable`
+  (`previous_closure_unresolved`) with the catalog failure code as `detail`.
+  This holds for packs without role capabilities too. The change goes through
+  `project:pack:upgrade`, which reports every previous-closure comparison as
+  unavailable and requires approval of its exact `planDigest` before applying
+  a target that has no independent blocking issue. The previous closure is
+  neither reconstructed nor inferred from the remaining tuples.
   GP-04 availability is checked first and is unchanged: a proposed selection
   that keeps or names a tuple whose artifact is not installed fails with the
   GP-04 code, for example `missing_pack`, and the preview then reports no
-  capability change. So a pure removal is applied only when every tuple that
-  remains still resolves.
+  capability change. An unchanged selection remains a no-op.
 - The proposed closure resolves but its manifests cannot be read back.
   `roleCapabilityChanges` is then `unavailable`
   (`proposed_closure_unreadable`).
@@ -2075,8 +2074,8 @@ deliberately not delivered as written.
   `capability_contract_change_requires_upgrade`. Preview of the unchanged
   selection runs the provider check when the closure resolves, like the GP-22
   comparison. When the current closure cannot be read,
-  `capabilityContractChanges` is `unavailable` and the existing GP-11 rule
-  decides: only a pure removal is applied.
+  `capabilityContractChanges` is `unavailable` and the GP-11 rule refuses
+  every changed selection, including a pure removal.
 - Every entry of `capabilityContractChanges` carries `requirement` with
   `before` and `after`, changed or not. An earlier revision of this branch
   omitted it when only an operation changed; adding it changed `planDigest`
@@ -3726,7 +3725,7 @@ state is written and no `project.pack_binding_applied` event is added.
 When the current closure cannot be resolved or the proposed manifests cannot
 be read back, `policyChanges` is `unavailable` with the reason
 `roleCapabilityChanges` carries, and the selection change is already refused
-by the GP-11 rule for those cases (anything but a pure removal); no second
+by the GP-11 rule for those cases; no second
 issue is added.
 
 `project:pack:apply` still applies the addition of a pack that was not
@@ -3786,7 +3785,8 @@ Criteria 10 and 11 belong to the second pull request.
    rule, while `targetPolicies` still lists the target closure.
 9. `project:pack:apply` refuses a version change that alters an existing
    workflow's policy, with the typed error, exit 1, and no state or binding
-   event written. It still applies an addition or removal of a pack.
+   event written. It still applies an addition or removal of a pack when the
+   previous closure is readable.
 10. (Second pull request.) The development reference pack declares policies
     that equal the legacy defaults on the five entries.
 11. (Second pull request.) Mutating any of the five legacy fields in a copy
@@ -3900,9 +3900,8 @@ instead of `malformed_origin_reference`.
   get the security code on a stage; see "Policies are pack-owned and cannot
   be weakened", point 2.
 - Refusal while a closure cannot be read. The selection guard adds no second
-  issue in the two `unavailable` cases: the GP-11 rule already refuses every
-  such change but a pure removal, which leaves no surviving workflow with
-  another policy.
+  issue in the two `unavailable` cases: the GP-11 rule refuses every changed
+  selection, including a pure removal.
 - Restore. The preflight raises `ProjectRestorePolicyTargetError`, a
   `ProjectPortabilityError` with the code `policy_target_missing`, for the
   first violation of the first violating replacement.
@@ -4483,7 +4482,8 @@ schema body or a text.
 present in both closures with the typed error
 `evidence_contract_change_requires_upgrade` (exit 1, nothing written). It still
 applies the addition or removal of a pack and a version change that leaves
-every existing typed definition unchanged.
+every existing typed definition unchanged when the previous closure is
+readable.
 
 ### Persistence
 
@@ -4537,7 +4537,8 @@ proved in both.
    carries both empty; `unavailable` when the previous closure is not
    installed.
 9. `project:pack:apply` refuses an existing contract change with the typed
-   error and exit 1, and still applies an addition or removal of a pack.
+   error and exit 1, and still applies an addition or removal of a pack when
+   the previous closure is readable.
 10. SQLite and PostgreSQL-gated contract coverage, and Unix-socket end-to-end
     coverage of preview, refused apply, upgrade, the configuration views and a
     refused typed key.
@@ -4553,12 +4554,19 @@ proved in both.
   of a typed member, and disabling a type.
 - Development evidence types (GP-10C-1).
 
-### Known limitations
+### Unavailable previous closure
 
-- A pure pack removal while the current closure cannot be resolved skips the
-  policy guard and the evidence contract guard. The GP-11 rule applies only a
-  pure removal in that case, and neither guard has a closure to compare. This
-  is inherited from GP-25 and is unchanged here.
+When a selection changes and the previous closure cannot be read, plain
+`project:pack:apply` refuses it, including a pure removal. The upgrade preview
+marks policy changes, evidence contract changes and every other comparison
+that needs the previous closure as `availability: "unavailable"`, with
+`reason: "previous_closure_unresolved"` and the stable catalog error code in
+`detail`. It does not present those comparisons as empty or verified. A pure
+removal can proceed through `project:pack:upgrade` only after explicit approval
+of `planDigest` and only if no independent issue blocks the target. Its audit
+records the removed tuple identities, the unavailability codes and the
+approved digest without inventing previous definition contents. This is the
+issue #130 decision replacing the earlier GP-11 pure-removal exception.
 
 ### Implementation record
 
@@ -4798,8 +4806,9 @@ upgrade plan and without the `customized` mark, and adds the issue
 prints the message, which names `project:pack:upgrade`, on stderr and exits 1;
 no state is written. The addition or removal of a pack, a version change that
 alters presentation only, and a version change that adds or removes a whole
-entry are still applied. When the closures cannot be read, `knowledgeChanges`
-is `unavailable` with the reason `policyChanges` carries.
+entry are still applied when the previous closure is readable. When the
+closures cannot be read, `knowledgeChanges` is `unavailable` with the reason
+`policyChanges` carries.
 
 ### Scope compatibility plan
 

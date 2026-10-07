@@ -188,6 +188,127 @@ const checker = (version: string) => ({
 });
 
 describe("GP-14A evidence contracts over the Runtime socket", () => {
+  test("an unavailable previous closure makes pure removal require an approved upgrade", async () => {
+    const workspace = temporaryRoot("ai-office-gp130-e2e-");
+    const root = join(workspace, "project");
+    mkdirSync(root);
+    writeFileSync(join(root, "package.json"), '{"name":"gp130"}\n');
+    const { catalog: installed, v1 } = evidenceCatalog();
+    const unavailable = new InMemoryInstalledDomainPackCatalog(1, []);
+    let active: InstalledDomainPackCatalog = installed;
+    const catalog: InstalledDomainPackCatalog = {
+      coreContractVersion: 1,
+      read: (id, version) => active.read(id, version),
+      list: () => active.list(),
+      trusts: (provenance) => active.trusts(provenance),
+    };
+    const host = await start(join(workspace, "runtime"), catalog);
+    try {
+      const installedResult = await host.run(root, ["install", ".", "--json"]);
+      expect([0, 2]).toContain(installedResult.exitCode);
+      const projectId = (
+        JSON.parse(installedResult.stdout[0]!) as {
+          project: { id: string };
+        }
+      ).project.id;
+      const command = (name: string, ...options: string[]) =>
+        host.run(root, [name, "--project", projectId, ...options, "--json"]);
+      expect(
+        (
+          await command(
+            "project:pack:apply",
+            "--packs",
+            JSON.stringify([v1]),
+            "--expected-revision",
+            "0",
+          )
+        ).exitCode,
+      ).toBe(0);
+      active = unavailable;
+      const preview = await command("project:pack:preview", "--packs", "[]");
+      expect(preview.exitCode).toBe(1);
+      const unavailableComparison = {
+        availability: "unavailable",
+        reason: "previous_closure_unresolved",
+        detail: "missing_pack",
+      };
+      expect(JSON.parse(preview.stdout[0]!)).toMatchObject({
+        issues: [{ code: "role_capability_change_requires_upgrade" }],
+        policyChanges: unavailableComparison,
+        evidenceContractChanges: unavailableComparison,
+      });
+      const refused = await command(
+        "project:pack:apply",
+        "--packs",
+        "[]",
+        "--expected-revision",
+        "1",
+      );
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr[0]).toContain("project:pack:upgrade");
+      expect(
+        JSON.parse((await command("project:pack:show")).stdout[0]!),
+      ).toMatchObject({ configurationRevision: 1, packs: [v1] });
+      const planned = await command("project:pack:upgrade", "--packs", "[]");
+      expect(planned.exitCode).toBe(0);
+      const plan = JSON.parse(planned.stdout[0]!) as { planDigest: string };
+      expect(plan).toMatchObject({
+        removed: [v1],
+        issues: [],
+        policyChanges: unavailableComparison,
+        evidenceContractChanges: unavailableComparison,
+      });
+      expect(
+        (
+          await command(
+            "project:pack:upgrade",
+            "--packs",
+            "[]",
+            "--approve",
+            "sha256:wrong",
+          )
+        ).exitCode,
+      ).toBe(1);
+      expect(
+        JSON.parse((await command("project:pack:show")).stdout[0]!),
+      ).toMatchObject({ configurationRevision: 1, packs: [v1] });
+      const approved = await command(
+        "project:pack:upgrade",
+        "--packs",
+        "[]",
+        "--approve",
+        plan.planDigest,
+      );
+      expect(approved.exitCode).toBe(0);
+      expect(JSON.parse(approved.stdout[0]!)).toMatchObject({
+        result: "applied",
+        packs: [],
+      });
+      const database = new Database(host.runtimePaths.projectDatabasePath, {
+        readonly: true,
+      });
+      try {
+        const row = database
+          .query<{ payload_json: string }, []>(
+            "SELECT payload_json FROM audit_event WHERE event_type='project.pack_upgrade_applied'",
+          )
+          .get();
+        expect(JSON.parse(row!.payload_json)).toMatchObject({
+          previousClosureUnavailableRemoval: {
+            removedPacks: [v1],
+            reason: "previous_closure_unresolved",
+            detail: "missing_pack",
+            approvedPlanDigest: plan.planDigest,
+          },
+        });
+      } finally {
+        database.close();
+      }
+    } finally {
+      await host.stop();
+    }
+  });
+
   test("project:configuration:show lists the three views, project:definition:apply refuses a typed key, project:pack:apply refuses a contract change and project:pack:upgrade carries it out", async () => {
     const workspace = temporaryRoot("ai-office-gp14a-e2e-");
     const root = join(workspace, "project");

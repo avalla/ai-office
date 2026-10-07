@@ -392,9 +392,6 @@ function same(a: PackIdentity, b: PackIdentity): boolean {
   );
 }
 
-const tupleKey = (pack: PackIdentity): string =>
-  `${pack.id}\u0000${pack.version}\u0000${pack.manifestDigest}`;
-
 export class ManageProjectPackBinding {
   constructor(
     private readonly dependencies: {
@@ -521,8 +518,8 @@ export class ManageProjectPackBinding {
       capabilityContractChanges = guard.capabilityContractChanges;
       if (guard.issue) issues.push(guard.issue);
       if (guard.contractIssue) issues.push(guard.contractIssue);
-      // GP-25: the same two closures. Where they cannot be read the GP-11
-      // rule above already refused everything but a pure removal.
+      // GP-25: the same two closures. GP-11 refuses every changed selection
+      // when either closure cannot be read.
       if (guard.roleCapabilityChanges.availability === "unavailable") {
         policyChanges = guard.roleCapabilityChanges;
         knowledgeChanges = guard.roleCapabilityChanges;
@@ -580,9 +577,9 @@ export class ManageProjectPackBinding {
   /**
    * A role capability change is never incidental. This command refuses a
    * selection change that alters the capability set of a role present in both
-   * closures. When the current closure cannot be resolved it applies only a
-   * pure removal. Everything else goes through the reviewed
-   * `project:pack:upgrade` plan. The same holds, with its own code, for the
+   * closures. When the current closure cannot be resolved every changed
+   * selection goes through the reviewed `project:pack:upgrade` plan. The
+   * same holds, with its own code, for the
    * operation contract of a capability present in both closures (GP-16).
    */
   private roleCapabilityGuard(
@@ -641,24 +638,16 @@ export class ManageProjectPackBinding {
         reason: "previous_closure_unresolved",
         detail: previous,
       } as const;
-      // Without the old manifests neither an added nor a removed role
-      // capability can be ruled out: a role may have lost a set the target no
-      // longer declares, and a newly selected pack may have been an old
-      // dependency at another version. Only a pure removal, which leaves
-      // nothing but tuples the project already selected, is applied here.
-      const currentKeys = new Set(currentPacks.map(tupleKey));
+      // No comparison that needs the old closure is safe, including a pure
+      // removal: dependencies and contributions are unknown. One refusal
+      // covers role capabilities, operation contracts, policies, knowledge,
+      // and evidence contracts without guard-specific exceptions.
       return {
         roleCapabilityChanges,
-        // The same refusal covers the operation contracts: neither can be
-        // compared without the old manifests.
         capabilityContractChanges: roleCapabilityChanges,
-        ...(proposed.every((pack) => currentKeys.has(tupleKey(pack)))
-          ? {}
-          : {
-              issue: refuse(
-                "The current pack artifacts are not installed, so the selection change cannot be shown to leave role capabilities unchanged",
-              ),
-            }),
+        issue: refuse(
+          "The current pack artifacts are not installed, so the selection change cannot be shown to leave role capabilities unchanged",
+        ),
       };
     }
     const changes = roleCapabilityDifferences(previous, target);

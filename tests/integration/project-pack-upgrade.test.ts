@@ -955,6 +955,75 @@ describe("GP-08 pack upgrade reconciliation", () => {
     });
   });
 
+  test("an unavailable previous closure leaves a removed override unknown and still requires its explicit resolution", async () => {
+    const h = await harness();
+    await h.bind([h.v1]);
+    await h.override(h.v1, "counsel", "replace", { id: "counsel" });
+    const { catalog: empty } = catalogOf();
+    const unresolved = await h.upgrade(empty).preview({
+      projectId: "a",
+      desired: [],
+    });
+    expect(unresolved.templates).toEqual({
+      availability: "unavailable",
+      reason: "previous_closure_unresolved",
+      detail: "missing_pack",
+    });
+    expect(unresolved.overrides).toMatchObject([
+      {
+        outcome: "conflict",
+        upstream: "unknown",
+        conflict: "source_pack_removed",
+      },
+    ]);
+    expect(unresolved.issues).toMatchObject([
+      {
+        code: "unresolved_override_conflict",
+        detail: "source_pack_removed",
+      },
+    ]);
+    const before = await h.authority();
+    await expect(
+      h.upgrade(empty).apply({
+        projectId: "a",
+        desired: [],
+        approvedPlanDigest: unresolved.planDigest,
+        actorId: "operator",
+      }),
+    ).rejects.toMatchObject({ code: "upgrade_blocked" });
+    expect(await h.authority()).toEqual(before);
+
+    const resolutions = [
+      {
+        source: source(h.v1, "counsel"),
+        action: "remove_override",
+      },
+    ];
+    const approved = await h.upgrade(empty).preview({
+      projectId: "a",
+      desired: [],
+      resolutions,
+    });
+    expect(approved.issues).toEqual([]);
+    expect(approved.overrides).toMatchObject([
+      {
+        outcome: "removed",
+        upstream: "unknown",
+      },
+    ]);
+    expect(
+      (
+        await h.upgrade(empty).apply({
+          projectId: "a",
+          desired: [],
+          resolutions,
+          approvedPlanDigest: approved.planDigest,
+          actorId: "operator",
+        })
+      ).packs,
+    ).toEqual([]);
+  });
+
   test("an audit failure rolls back the selection, the definitions and the audit row", async () => {
     const h = await harness();
     await h.bind([h.v1]);
