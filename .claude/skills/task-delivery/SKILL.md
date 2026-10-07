@@ -151,12 +151,15 @@ only after the authorizer approves that summary.
 
 Clarifying first keeps development from stopping for questions. When the
 authorizer chooses it, take the selected tasks one at a time, in the approved
-order, before any branch is created or any code is written. For each task,
+order, before any development branch is created or any code is written. For each task,
 read it with its requirements and acceptance criteria, and ask together every
 question whose answer would change what is built. Record the answers where the
 project keeps its tasks and requirements, through the project's own way of
 changing them, and show what was changed; where the project has no such place,
-report the clarified task instead. Development starts only when no selected
+report the clarified task instead. Where the project keeps its tasks and
+requirements in Git, record the answers through the project's normal route for
+such changes, with its own branch and review, kept apart from the development
+branches. Development starts only when no selected
 task has an open question. A question that only comes up later is still a stop
 condition.
 
@@ -166,18 +169,28 @@ the Git branch plan. Compare the result with the summary the authorizer
 approved. If the selection, the order, a task dependency, a Git branch
 dependency, the pipeline, or the exclusions changed materially, show a new
 summary and ask for a new approval, and start neither preflight nor
-development before it is given. If nothing changed materially, do not ask a
-second time.
+development before it is given. Any difference in these items is material. If
+nothing changed materially, say so and do not ask a second time. A task added
+to the selection this way is clarified in the same way, and the check and the
+comparison run again until a pass changes nothing materially. An answer
+recorded later, while a task is in progress, goes through the same recheck
+and comparison before work resumes.
 
 Stacking the run is proposed by default where the project allows stacked work:
-each task's branch starts from the branch of the task before it, so later
-tasks build on earlier ones without waiting for a merge. The authorizer's
-approval of the summary approves these Git branch dependencies for the run.
+each task's branch starts from the branch of the task before it while that
+task is unmerged, and from the updated integration branch once it is merged, so
+later tasks build on earlier ones without waiting for a merge. The summary
+lists the resulting base of every task and says that each stacked task carries
+the unmerged commits of the tasks beneath it. The authorizer's approval of the
+summary approves these Git branch dependencies for the run. A go-ahead that
+does not answer the stacking offer declines it.
 Declining run-wide stacking leaves separately approved Git branch
 dependencies unchanged. Every other task starts from the integration branch
 unless another explicitly approved Git branch dependency applies. Stacking the
 run changes where branches start and nothing else: every task keeps its own pull
-request and gates, and its task dependencies stay as they were.
+request and gates, and its task dependencies stay as they were. When a task in
+a stacked run stops or is postponed, the tasks stacked on it stop too, and the
+authorizer decides how their branches are rebuilt.
 
 A run that covers several tasks gives each task its own branch, pull request,
 and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run

@@ -17,12 +17,23 @@ They are independent. Decide each explicitly and write both in the pull request.
 ## Rules
 
 - Default base is the integration branch. Stacking is the exception: it needs
-  the authorizer's approval and a reason stated in the pull request. The
-  authorizer may approve it once for a whole run, in which case each task's
-  branch starts from the branch of the task before it. Declining
-  run-wide stacking leaves separately approved Git branch dependencies
-  unchanged; every other task starts from the integration branch unless another
-  explicitly approved Git branch dependency applies.
+  the authorizer's approval and a reason stated in the pull request. For a run
+  over several tasks where the project allows stacked work, run-wide stacking is
+  proposed by default and the authorizer may approve it once for the whole run;
+  the reason stated in each pull request is then that the task is part of an
+  approved stacked run.
+- In a stacked run the first task starts from the integration branch and each
+  later task's branch starts from the branch of the task before it while that
+  task is unmerged; once it is merged, the next branch starts from the updated
+  integration branch. A separately approved Git branch dependency takes
+  precedence over the run chain for its task.
+- Declining run-wide stacking leaves separately approved Git branch
+  dependencies unchanged; every other task starts from the integration branch
+  unless another explicitly approved Git branch dependency applies. A go-ahead
+  that does not answer the stacking offer declines it.
+- When a task in a stacked run stops or is postponed, the tasks stacked on it
+  stop too, and the authorizer decides how their branches are rebuilt. Never
+  rewrite reviewed history to do so.
 - A stacked pull request targets the branch it is stacked on, and says so. Its
   review covers only its own diff. An external review command is run against
   that branch, not against the integration branch.
