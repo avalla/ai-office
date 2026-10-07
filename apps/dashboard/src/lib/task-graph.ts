@@ -162,21 +162,43 @@ export function searchTasks(
 ): { matches: readonly TaskGraphNode[]; total: number } {
   const search = text.trim().toLowerCase();
   if (search === "") return { matches: [], total: 0 };
-  const rank = (task: TaskGraphNode) =>
-    task.title.toLowerCase().startsWith(search)
+  const capacity = Math.max(0, Math.trunc(limit));
+  type RankedTask = { task: TaskGraphNode; rank: number };
+  const best: RankedTask[] = [];
+  const compare = (left: RankedTask, right: RankedTask) =>
+    left.rank - right.rank ||
+    left.task.title.localeCompare(right.task.title) ||
+    left.task.taskId.localeCompare(right.task.taskId);
+  let total = 0;
+  for (const task of graph.tasks) {
+    const title = task.title.toLowerCase();
+    const rank = title.startsWith(search)
       ? 0
-      : task.title.toLowerCase().includes(search)
+      : title.includes(search)
         ? 1
-        : 2;
-  const found = graph.tasks
-    .filter((task) => matchesSearch(task, search))
-    .sort(
-      (a, b) =>
-        rank(a) - rank(b) ||
-        a.title.localeCompare(b.title) ||
-        a.taskId.localeCompare(b.taskId),
-    );
-  return { matches: found.slice(0, limit), total: found.length };
+        : task.taskId.toLowerCase().includes(search)
+          ? 2
+          : null;
+    if (rank === null) continue;
+    total += 1;
+    if (capacity === 0) continue;
+    const candidate = { task, rank };
+    if (
+      best.length === capacity &&
+      compare(candidate, best[capacity - 1]!) >= 0
+    )
+      continue;
+    let low = 0;
+    let high = best.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (compare(candidate, best[middle]!) < 0) high = middle;
+      else low = middle + 1;
+    }
+    best.splice(low, 0, candidate);
+    if (best.length > capacity) best.pop();
+  }
+  return { matches: best.map(({ task }) => task), total };
 }
 
 export interface Lineage {

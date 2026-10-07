@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type {
   TaskGraph,
   TaskGraphNode,
@@ -289,6 +289,36 @@ describe("dashboard task graph", () => {
     expect(searchTasks(graph, "done").matches.map((t) => t.taskId)).toEqual([
       "done",
     ]);
+  });
+
+  test("counts broad search matches without sorting the full project", () => {
+    const tasks = Array.from({ length: 5_000 }, (_, index) =>
+      node(`task-${String(index).padStart(4, "0")}`, {
+        title: `Task ${String(index).padStart(4, "0")}`,
+      }),
+    ).reverse();
+    const originalSort = Array.prototype.sort;
+    const sortSpy = vi
+      .spyOn(Array.prototype, "sort")
+      .mockImplementation(function (
+        this: unknown[],
+        compareFn?: (a: unknown, b: unknown) => number,
+      ) {
+        expect(this.length).toBeLessThanOrEqual(8);
+        return Reflect.apply(originalSort, this, [compareFn]) as unknown[];
+      });
+    try {
+      const found = searchTasks({ ...graph, tasks }, "task", 8);
+      expect(found.total).toBe(5_000);
+      expect(found.matches.map((task) => task.taskId)).toEqual(
+        Array.from(
+          { length: 8 },
+          (_, index) => `task-${String(index).padStart(4, "0")}`,
+        ),
+      );
+    } finally {
+      sortSpy.mockRestore();
+    }
   });
 
   test("node wording comes from the read model's flags, not from statuses", () => {

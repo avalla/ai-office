@@ -233,9 +233,11 @@ only presents it:
   are no duration estimates, so it is **not** a project-management critical
   path. Renamed from `criticalPath` before release.
 
-Tasks and edges are read in one consistent SQLite read transaction
-(`readTaskGraphSnapshot`), never with OFFSET pages, so concurrent writes cannot
-skip or repeat a task. Milestone membership is the existing derived
+Tasks, edges, and task→milestone link facts are read in one consistent SQLite
+read transaction (`readTaskGraphSnapshot`), never with OFFSET pages, so
+concurrent writes cannot skip or repeat a task. The graph snapshot omits full
+task and requirement descriptions; those are fetched from the task detail
+endpoint only when a task is selected. Milestone membership is the existing derived
 task→requirement→milestone link; there is no task→milestone dependency, and
 milestones never take part in the dependency layout.
 
@@ -266,6 +268,7 @@ Searching locates: results are listed from the whole project, Enter or a click
 selects the task, frames it and dims the rest of the graph. "Show only tasks
 matching the search" turns the same text into a real filter. The framing follows
 the computed layout and leaves a viewport the user moved alone on live refresh.
+Search counts every match but ranks only the eight displayed candidates.
 The lineage adjacency index and direct task relationships are reused across
 selections and fact-only refreshes when dependency edges are unchanged.
 The canvas lays out only when visible tasks plus visible dependency edges total
