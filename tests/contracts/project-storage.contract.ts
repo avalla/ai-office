@@ -1962,6 +1962,214 @@ export function defineProjectStorageContracts(
         });
       });
 
+      test("a pack with knowledge guidance binds, resolves and upgrades with provider-independent results", async () => {
+        if (!harness.packBindings || !harness.definitions)
+          throw new Error("Configuration source repositories are required");
+        const { packBindings, definitions } = harness;
+        const projectId = (
+          await createProject(harness, `${prefix}-configuration-knowledge`)
+        ).snapshot().id;
+        // GP-15: one typed knowledge entry whose retrieval changes in version 2.
+        const encoder = new TextEncoder();
+        const packBytes = (version: string, maxResults: number) => {
+          const draft = {
+            schemaVersion: 1,
+            id: "org.example.library",
+            version,
+            manifestDigest: `sha256:${"0".repeat(64)}`,
+            coreContract: { minInclusive: 1, maxExclusive: 3 },
+            metadata: { name: "Library", description: "Knowledge fixture" },
+            dependencies: [],
+            contributions: {
+              ...Object.fromEntries(
+                contributionKinds.map((kind) => [kind, [] as unknown[]]),
+              ),
+              knowledge: [
+                {
+                  id: "clauses",
+                  title: "Clauses",
+                  category: "clauses",
+                  schema: [
+                    { field: "text", description: "The clause text" },
+                    { field: "jurisdiction", description: "\u00e9 \u{1F600}" },
+                  ],
+                  seeds: ["seed:b", "seed:a"],
+                  retrieval: { maxResults, hint: "Prefer the matter's law" },
+                },
+              ],
+            },
+          };
+          return encoder.encode(
+            JSON.stringify({
+              ...draft,
+              manifestDigest: computeManifestDigest(
+                parseDomainPackManifest(encoder.encode(JSON.stringify(draft))),
+              ),
+            }),
+          );
+        };
+        const catalog = new InMemoryInstalledDomainPackCatalog(1, [
+          "local-distribution",
+        ]);
+        const [v1, v2] = [packBytes("1.0.0", 3), packBytes("2.0.0", 2)].map(
+          (bytes) =>
+            catalog.register({
+              bytes,
+              artifactDigest: computeArtifactDigest(bytes),
+              provenance: {
+                installerId: "local-distribution",
+                reference: "contract",
+              },
+            }),
+        ) as [PackIdentity, PackIdentity];
+        const events: AuditEvent[] = [];
+        let sequence = 0;
+        const ports = {
+          projects: harness.projects,
+          bindings: packBindings,
+          definitions,
+          catalog,
+          auditEvents: {
+            append: async (event: AuditEvent) => {
+              events.push(event);
+            },
+          },
+          transactions: harness.transactions,
+          clock: { now: () => now },
+          ids: { generate: () => `${prefix}-knowledge-audit-${++sequence}` },
+        };
+        const binding = new ManageProjectPackBinding(ports);
+        const mutations = new ManageProjectDefinitions(ports);
+        const upgrade = new ReconcileProjectPackUpgrade(ports);
+        const reader = new ReadProjectConfiguration({ ...ports });
+        const guidanceOf = (maxResults: number) => ({
+          knowledgeId: "pack:org.example.library/knowledge/clauses",
+          category: "clauses",
+          schema: [
+            { field: "jurisdiction", description: "\u00e9 \u{1F600}" },
+            { field: "text", description: "The clause text" },
+          ],
+          seeds: ["seed:a", "seed:b"],
+          retrieval: { maxResults, hint: "Prefer the matter's law" },
+        });
+        await binding.apply({
+          projectId,
+          desired: [v1],
+          expectedRevision: 0,
+          actorId: "operator",
+        });
+        // A descriptive replacement is stored; the guidance stays the pack's.
+        await mutations.apply({
+          projectId,
+          mutation: {
+            action: "put_override",
+            source: { ...v1, kind: "knowledge", localId: "clauses" },
+            operation: "replace",
+            payload: { id: "clauses", title: "Project clauses" },
+          },
+          expectedRevision: 0,
+          actorId: "operator",
+        });
+        const pure = async () =>
+          resolveProjectConfiguration({
+            projectId: "provider-independent",
+            binding: {
+              ...(await packBindings.get(projectId)),
+              projectId: "provider-independent",
+            },
+            definitions: {
+              ...(await definitions.get(projectId)),
+              projectId: "provider-independent",
+            },
+            catalog,
+            coreContractVersion: 1,
+          });
+        const resolved = await reader.read(projectId);
+        expect(resolved.knowledge).toEqual([
+          {
+            ...guidanceOf(3),
+            effectiveId: `pack:${v1.id}@${v1.version}#${v1.manifestDigest}/knowledge/clauses`,
+            origin: "pack_owned",
+            title: "Project clauses",
+            customization: "replace",
+          },
+        ]);
+        expect(resolved).toEqual(await pure());
+
+        // The guidance change is refused as a plain selection change and
+        // carried out by the reviewed upgrade.
+        expect(
+          (await binding.preview(projectId, [v2])).issues.map(
+            (issue) => issue.code,
+          ),
+        ).toEqual(["knowledge_change_requires_upgrade"]);
+        await expect(
+          binding.apply({
+            projectId,
+            desired: [v2],
+            expectedRevision: 1,
+            actorId: "operator",
+          }),
+        ).rejects.toMatchObject({ code: "knowledge_change_requires_upgrade" });
+        const plan = await upgrade.preview({ projectId, desired: [v2] });
+        expect(plan).toEqual(
+          planProjectPackUpgrade({
+            binding: await packBindings.get(projectId),
+            definitions: await definitions.get(projectId),
+            desired: [v2],
+            resolutions: [],
+            catalog,
+          }),
+        );
+        expect(plan.issues).toEqual([]);
+        expect(plan.knowledgeChanges).toEqual({
+          availability: "available",
+          changes: [
+            {
+              knowledgeId: "pack:org.example.library/knowledge/clauses",
+              change: "changed",
+              before: guidanceOf(3),
+              after: guidanceOf(2),
+              customized: true,
+            },
+          ],
+        });
+        expect(plan.targetKnowledge).toEqual([guidanceOf(2)]);
+        await upgrade.apply({
+          projectId,
+          desired: [v2],
+          approvedPlanDigest: plan.planDigest,
+          actorId: "operator",
+        });
+        expect(events.at(-1)!.snapshot().payload).toMatchObject({
+          knowledgeChanges: plan.knowledgeChanges,
+          targetKnowledge: plan.targetKnowledge,
+        });
+        const upgraded = await reader.read(projectId);
+        expect(upgraded.configurationDigest).toBe(
+          plan.prospectiveConfigurationDigest,
+        );
+        expect(upgraded).toEqual(await pure());
+        expect(upgraded.knowledge[0]).toMatchObject(guidanceOf(2));
+
+        // Stored state that carries a guidance key fails closed at resolution.
+        const stored = await definitions.get(projectId);
+        await definitions.replace(
+          {
+            ...stored,
+            overrides: stored.overrides.map((item) => ({
+              ...item,
+              payload: { id: "clauses", seeds: ["seed:injected"] },
+            })),
+          },
+          stored.revision,
+          now,
+        );
+        await expect(reader.read(projectId)).rejects.toMatchObject({
+          code: "unresolved_override",
+        });
+      });
+
       test("stored definitions resolve to the provider-independent digest and order", async () => {
         if (!harness.definitions)
           throw new Error("Definition repository is required");

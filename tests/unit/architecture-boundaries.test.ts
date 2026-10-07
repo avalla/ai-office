@@ -936,6 +936,70 @@ test("only the Runtime admission service writes native knowledge", () => {
   ]);
 });
 
+describe("GP-15 pack knowledge guidance stays a definition layer", () => {
+  /** The knowledge store port, its SurrealDB adapter and the admission service. */
+  const knowledgeStoreModule =
+    /(?:^|\/)(?:agent-knowledge-store\.port|surreal-agent-knowledge\.store|manage-knowledge-admission)(?:\.ts)?$/u;
+
+  function knowledgeStoreImports(file: string, source: string): string[] {
+    return importedSpecifiers(source).filter(
+      (specifier) =>
+        knowledgeStoreModule.test(specifier) ||
+        knowledgeStoreModule.test(resolvedTarget(file, specifier) ?? ""),
+    );
+  }
+
+  test("no domain-pack module imports the knowledge store port, its SurrealDB adapter or the admission service", () => {
+    const directories = [
+      "packages/application/src/domain-pack",
+      ...readdirSync(join(repositoryRoot, "packages"))
+        .filter((name) => name.startsWith("domain-pack-"))
+        .map((name) => `packages/${name}`),
+    ];
+    const scanned = directories.flatMap((directory) =>
+      typescriptFiles(join(repositoryRoot, directory)),
+    );
+    // The scan sees the pack modules, so an empty result is not blindness.
+    expect(scanned.map((file) => relative(repositoryRoot, file))).toEqual(
+      expect.arrayContaining([
+        "packages/application/src/domain-pack/pack-knowledge-guidance.ts",
+        "packages/application/src/domain-pack/resolve-project-configuration.ts",
+        "packages/domain-pack-contracts/src/manifest.ts",
+      ]),
+    );
+    expect(
+      scanned.flatMap((file) =>
+        knowledgeStoreImports(file, readFileSync(file, "utf8")).map(
+          (specifier) => `${relative(repositoryRoot, file)} -> ${specifier}`,
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("the scan recognizes each forbidden module by relative and aliased specifier", () => {
+    const file = join(
+      repositoryRoot,
+      "packages/application/src/domain-pack/example.ts",
+    );
+    for (const specifier of [
+      "../ports/agent-knowledge-store.port.ts",
+      "@ai-office/application/ports/agent-knowledge-store.port.ts",
+      "../../../storage-surrealdb/src/surreal-agent-knowledge.store.ts",
+      "../agent-knowledge/manage-knowledge-admission.ts",
+      "@ai-office/application/agent-knowledge/manage-knowledge-admission.ts",
+    ])
+      expect(
+        knowledgeStoreImports(file, `import { x } from "${specifier}";`),
+      ).toEqual([specifier]);
+    expect(
+      knowledgeStoreImports(
+        file,
+        'import { x } from "./pack-knowledge-guidance.ts";',
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("GP-10A development pack stays a reference artifact outside production", () => {
   const packDirectory = "packages/domain-pack-development";
   const names = /domain-pack-development|org\.ai-office\.development/u;
