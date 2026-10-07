@@ -12,5 +12,9 @@ gateway still requires a separate grant and approval where applicable. The
 pack does not run a Runtime pipeline, validate a real inspection or perform
 MES, ERP, OPC-UA or PLC writes.
 
+The `deviation` stage is a required review point in this declarative workflow;
+the definition layer does not express a conditional branch. Supervisor approval
+must be independent of execution, inspection and deviation review.
+
 See the [Domain Pack contract](../domain-pack-contracts/README.md) and the
 [M16 plan](../../docs/development/generic-core-domain-packs.md).

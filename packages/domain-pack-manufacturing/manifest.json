@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "org.ai-office.manufacturing",
   "version": "0.1.0",
-  "manifestDigest": "sha256:6b2c9ca7f752f38d165d065d051158552a8e3fa1b1749cdb7d4c308afe4e9b94",
+  "manifestDigest": "sha256:a33270905ed8a6cc72e70066a9b9ae6d850bbe0db62024134fea5ab692d70919",
   "coreContract": {
     "minInclusive": 1,
     "maxExclusive": 2
@@ -234,7 +234,7 @@
             "stage": "supervisor-approval",
             "requiresApproval": true,
             "requiresIndependentApproval": true,
-            "requiresDifferentAgentFrom": ["execute", "inspect"]
+            "requiresDifferentAgentFrom": ["execute", "inspect", "deviation"]
           }
         ]
       }

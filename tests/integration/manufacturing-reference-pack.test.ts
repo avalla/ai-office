@@ -43,11 +43,13 @@ function nextVersion(): Uint8Array {
     version: "0.2.0",
     contributions: {
       ...manifest.contributions,
-      roles: manifest.contributions.roles.map((role) =>
-        role.id === "inspector"
-          ? { ...role, title: "Senior quality inspector" }
-          : role,
-      ),
+      roles: manifest.contributions.roles.map((role) => {
+        if (role.id === "inspector")
+          return { ...role, title: "Senior quality inspector" };
+        if (role.id === "operator")
+          return { ...role, title: "Production technician" };
+        return role;
+      }),
     },
   };
   return new TextEncoder().encode(
@@ -137,6 +139,7 @@ describe("GP-18 manufacturing reference pack", () => {
           stage: "supervisor-approval",
           requiresApproval: true,
           requiresIndependentApproval: true,
+          requiresDifferentAgentFrom: ["deviation", "execute", "inspect"],
         },
       ],
     });
@@ -193,10 +196,20 @@ describe("GP-18 manufacturing reference pack", () => {
       localId: "production-flow",
       pack: v1,
     });
-    expect(before.policies[0]?.stages[0]).toMatchObject({
-      stage: "execute",
-      operations: ["manufacturing.order.record"],
-    });
+    expect(before.policies[0]?.stages).toMatchObject([
+      { stage: "execute", operations: ["manufacturing.order.record"] },
+      {
+        stage: "inspect",
+        requiresApproval: true,
+        requiresDifferentAgentFrom: ["execute"],
+      },
+      {
+        stage: "supervisor-approval",
+        requiresApproval: true,
+        requiresIndependentApproval: true,
+        requiresDifferentAgentFrom: ["deviation", "execute", "inspect"],
+      },
+    ]);
     expect(
       before.evidenceTypes.find((item) =>
         item.definitionId.endsWith("/execution-evidence"),
@@ -204,6 +217,14 @@ describe("GP-18 manufacturing reference pack", () => {
     ).toMatchObject({
       subject: "production-order",
     });
+    expect(before.evidenceTypes.map((item) => item.definitionId)).toEqual(
+      [
+        "approval-evidence",
+        "deviation-evidence",
+        "execution-evidence",
+        "inspection-evidence",
+      ].map((id) => `pack:org.ai-office.manufacturing/evidenceTypes/${id}`),
+    );
     expect(before.validators[0]?.registration).toBe("unchecked");
     expect(before.capabilities[0]?.operations[0]?.binding).toBe(
       "unbound_optional",
@@ -254,6 +275,9 @@ describe("GP-18 manufacturing reference pack", () => {
     const after = await h.configuration.read("factory");
     expect(after.selectedPacks).toEqual([v2]);
     expect(
+      after.roles.find((role) => role.roleId.endsWith("/operator")),
+    ).toMatchObject({ title: "Production technician" });
+    expect(
       after.roles.find((role) => role.roleId.endsWith("/inspector")),
     ).toMatchObject({
       title: "Project quality inspector",
@@ -263,6 +287,37 @@ describe("GP-18 manufacturing reference pack", () => {
     expect(after.policies.map((policy) => policy.policyId)).toEqual(
       before.policies.map((policy) => policy.policyId),
     );
+    expect(
+      h.database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM capability_grants",
+        )
+        .get()?.count,
+    ).toBe(0);
+    expect(
+      h.database
+        .query<{ count: number }, []>(
+          "SELECT COUNT(*) AS count FROM pipeline_run",
+        )
+        .get()?.count,
+    ).toBe(0);
+  });
+
+  test("rejects tampered fixture bytes before catalog installation", () => {
+    const tampered = JSON.parse(new TextDecoder().decode(bytes)) as Record<
+      string,
+      unknown
+    >;
+    tampered.metadata = {
+      ...manifest.metadata,
+      name: "Tampered manufacturing reference",
+    };
+    expect(() =>
+      verifyDomainPackManifest(
+        new TextEncoder().encode(JSON.stringify(tampered)),
+        1,
+      ),
+    ).toThrow(expect.objectContaining({ code: "digest_mismatch" }));
   });
 
   test("rejects an exact tuple with a wrong manifest digest without changing the binding", async () => {
