@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "org.ai-office.development",
-  "version": "0.4.0",
-  "manifestDigest": "sha256:c575ec687088bdf3861cb3fe1fee3b73cc8214c95ff4898c96e57c9ccde59848",
+  "version": "0.3.0",
+  "manifestDigest": "sha256:4f54452420bae28efd34818451b86b256e4edb785c377104cf8e7636d6f48a35",
   "coreContract": {
     "minInclusive": 1,
     "maxExclusive": 2
@@ -231,45 +231,7 @@
     ],
     "artifactTypes": [],
     "evidenceTypes": [],
-    "policies": [
-      {
-        "id": "delivery-governance",
-        "title": "Feature delivery governance",
-        "description": "The feature delivery workflow is enforced and its review stage requires an approval",
-        "workflow": "delivery",
-        "enforcement": "enforced",
-        "stages": [
-          {
-            "stage": "review",
-            "requiresApproval": true
-          }
-        ]
-      },
-      {
-        "id": "bugfix-governance",
-        "title": "Bug fix governance",
-        "description": "The review stage of the bug fix workflow requires an approval",
-        "workflow": "bugfix",
-        "stages": [
-          {
-            "stage": "review",
-            "requiresApproval": true
-          }
-        ]
-      },
-      {
-        "id": "release-governance",
-        "title": "Release governance",
-        "description": "The verification stage of the release workflow requires an approval",
-        "workflow": "release",
-        "stages": [
-          {
-            "stage": "verification",
-            "requiresApproval": true
-          }
-        ]
-      }
-    ],
+    "policies": [],
     "knowledge": [],
     "capabilities": [
       {

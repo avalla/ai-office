@@ -1,13 +1,13 @@
 # Development Domain Pack (reference artifact)
 
 `manifest.json` is the development Domain Pack,
-`org.ai-office.development@0.3.0`, a schema-1 manifest under the
+`org.ai-office.development@0.4.0`, a schema-1 manifest under the
 [Domain Pack contract](../domain-pack-contracts/README.md). It is a committed
 reference artifact. GP-10A defined the four software development roles
 (`architect`, `developer`, `reviewer`, `qa`), one agent per role, the five
 task types and the role capabilities as ID-only labels. GP-10B-1 added the
 four development workflows, `delivery`, `bugfix`, `discovery` and `release`.
-GP-10B-2 (second pull request) adds the descriptive vocabulary and the
+GP-10B-2 (second pull request) added the descriptive vocabulary and the
 prompts that the contract extension made expressible:
 
 - each role carries the `responsibilities` of the office role of the same ID;
@@ -22,8 +22,21 @@ prompts that the contract extension made expressible:
   contract (the per-pipeline lines are derived and are not prompts) and one
   reference prompt with the system message of `requirement:validate`.
 
-`knowledge`, `policies`, `artifactTypes`, `evidenceTypes` and `validators`
-stay empty.
+GP-25 (second pull request) adds three typed policies, the declaration of the
+legacy governance defaults that the GP-25 contract made expressible:
+
+- `delivery-governance` declares `enforcement: "enforced"` for `delivery` and
+  `requiresApproval: true` on its `review` stage;
+- `bugfix-governance` declares `requiresApproval: true` on `bugfix/review`;
+- `release-governance` declares `requiresApproval: true` on
+  `release/verification`;
+- no policy admits an operation on a stage, which is the legacy empty
+  `capabilities` of the `delivery` stages, and none declares
+  `requiresIndependentApproval` or `requiresDifferentAgentFrom`, which the
+  default stages do not use; `discovery` has no policy.
+
+`knowledge`, `artifactTypes`, `evidenceTypes` and `validators` stay empty. A
+policy is a declaration: nothing is enforced from it.
 
 The package is data only. Nothing in the Runtime reads it, no catalog
 registers it and no project is bound to it. Projects keep running on their
@@ -39,7 +52,9 @@ legacy defaults and is bound to this pack through a catalog a test supplies,
 the roles, agents, task types and workflows of the resolved configuration
 equal those of the legacy development profile. That is the pipeline ID, name
 and description, the ordered stages by ID, role, title, objective and checks,
-the role responsibilities and the full route set. On the shipped defaults the
+the role responsibilities, the full route set and the governance (pipeline
+`enforcement` and, per stage, approval, independent approval, separation and
+`capabilities` against the policy `operations`). On the shipped defaults the
 guidance prompts equal `agents/<id>/system.md` and the guidance digest of the
 legacy profile, the instruction-contract prompts equal the output of the
 instruction builder for a manifest without constraints, and the assessment
@@ -50,11 +65,11 @@ Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`.
 `outside-pack-vocabulary.json` lists the legacy fields that are not carried in
 full. Each entry states what the pack delivers of the field, what remains as
 residue (`null` when the pack carries the whole field) and the task that owns
-it. The seven fields that GP-10B-2 owned are delivered. Pipeline
-`enforcement` and every stage approval, capability and separation setting
-remain with the policy task GP-25, `tools` with GP-10C, and the Runtime role
-name, version, model policy, limits, capability order and agent enablement
-with the execution parity task.
+it. The seven fields that GP-10B-2 owned and the five governance fields of
+GP-25 are delivered. `tools` stays with GP-10C, and the Runtime role name,
+version, model policy, limits, capability order and agent enablement with the
+execution parity task.
 
-See the GP-10A, GP-10B-1 and "GP-10B-2 PR 2 development pack 0.3.0" sections
-of the [M16 plan](../../docs/development/generic-core-domain-packs.md).
+See the GP-10A, GP-10B-1, "GP-10B-2 PR 2 development pack 0.3.0" and "GP-25 PR
+2 development pack 0.4.0" sections of the
+[M16 plan](../../docs/development/generic-core-domain-packs.md).

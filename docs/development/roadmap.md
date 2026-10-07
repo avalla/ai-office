@@ -2010,15 +2010,22 @@ only through `project:pack:upgrade`, whose plan reports `policyChanges` and
 `targetPolicies` (`project:pack:apply` refuses it with
 `policy_change_requires_upgrade`). It adds no migration and no archive
 format, and nothing is enforced from a policy: the Runtime still reads only
-the OfficeManifest pipelines. The policies of the development reference pack
-and their parity tests are a second GP-25 pull request that follows the pack
-version of GP-10B-2. Aliases, the development pack's policy data (GP-25, second pull
-request) and declarative development evidence, knowledge and capability
-entries (GP-10C-1) remain planned work of M16; automatic selection, remote
-marketplace/downloads and executable validators remain deferred. Runtime
-enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and Runtime
-execution from packs are planned for M16.5. M16 remains incomplete until its
-re-scoped exit criteria are met.
+the OfficeManifest pipelines. The second GP-25 pull request extends the
+development pack to `0.4.0` with three typed policies that declare the legacy
+governance defaults: `delivery` is enforced, and `delivery/review`,
+`bugfix/review` and `release/verification` require an approval; no operation is
+admitted on a stage and the two legacy fields the defaults do not use are not
+declared. It proves expressible-subset parity on the GP-09 fixture and on the
+shipped defaults, in both directions for all five fields, and marks the five
+GP-25 entries of the residue list delivered. It is not execution parity: a
+policy is a declaration, nothing is enforced from it, the pack is still
+unregistered and unread by the Runtime, and nothing was removed from the
+legacy path. Aliases and declarative development evidence, knowledge and
+capability entries (GP-10C-1) remain planned work of M16; automatic selection,
+remote marketplace/downloads and executable validators remain deferred.
+Runtime enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and
+Runtime execution from packs are planned for M16.5. M16 remains incomplete
+until its re-scoped exit criteria are met.
 
 ### Post-GP-06 hardening follow-ups
 

@@ -2,13 +2,13 @@
   "schemaVersion": 3,
   "pack": {
     "id": "org.ai-office.development",
-    "version": "0.3.0"
+    "version": "0.4.0"
   },
   "claim": "expressible-subset parity",
-  "description": "Legacy development fields that the schema-1 pack vocabulary cannot express, in whole or in part, and the fields the development pack has come to carry. The parity comparison does not cover the residue. delivered is the part of the field the development pack carries, or null when it carries none of it. residue is what stays outside the pack, or null when the pack carries the whole field since GP-10B-2 PR 2. owner is the task that owns the residue next, or, for an entry with no residue, the task that delivered it. gp09Gap is the GP-09 vocabulary gap code that reports the field in a state that uses it. inDefaultState is true for a field observed in the default legacy state and false for a legacy field the default state does not use, listed so that its owner is on record.",
+  "description": "Legacy development fields that the schema-1 pack vocabulary cannot express, in whole or in part, and the fields the development pack has come to carry. The parity comparison does not cover the residue. delivered is the part of the field the development pack carries, or null when it carries none of it. residue is what stays outside the pack, or null when the pack carries the whole field (since GP-10B-2 PR 2 or, for the governance fields, GP-25 PR 2). owner is the task that owns the residue next, or, for an entry with no residue, the task that delivered it. gp09Gap is the GP-09 vocabulary gap code that reports the field in a state that uses it. inDefaultState is true for a field observed in the default legacy state and false for a legacy field the default state does not use, listed so that its owner is on record.",
   "owners": {
     "GP-10B-2": "Development descriptive contract extension and prompts (Runtime task e890324a-ecd4-4fcc-b1f8-37fdbdaca319)",
-    "GP-25": "Pack policy contribution contract (provisional number; Runtime task 1a883c04-0905-4b36-a57b-12d45fdfd59f)",
+    "GP-25": "Pack policy contribution contract (Runtime task 1a883c04-0905-4b36-a57b-12d45fdfd59f)",
     "GP-10C": "Development evidence and adoption",
     "a45ddb12-3159-4b60-9b8b-c26516720834": "Runtime resolved-configuration execution parity"
   },
@@ -128,11 +128,11 @@
       "subject": "pipeline",
       "field": "enforcement",
       "owner": "GP-25",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "The enforcement of each workflow: `enforcement: \"enforced\"` on the `delivery` policy and none, which is guidance, on the other workflows. Declared only; nothing is enforced by the Runtime.",
+      "residue": null,
       "gp09Gap": "pipeline_fields_not_expressible",
       "inDefaultState": true,
-      "reason": "Whether the pipeline is enforced or guidance."
+      "reason": "Whether the pipeline is enforced or guidance. Carried since pack 0.4.0 by the typed policy of each workflow."
     },
     {
       "subject": "stage",
@@ -168,41 +168,41 @@
       "subject": "stage",
       "field": "requiresApproval",
       "owner": "GP-25",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "`requiresApproval: true` on `delivery/review`, `bugfix/review` and `release/verification`, in the policy of each workflow. Declared only; nothing is enforced by the Runtime.",
+      "residue": null,
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
-      "reason": "Approval semantics: whether completing the stage requires an approval."
+      "reason": "Approval semantics: whether completing the stage requires an approval. Carried since pack 0.4.0 by the typed policy of each workflow."
     },
     {
       "subject": "stage",
       "field": "capabilities",
       "owner": "GP-25",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "The admitted `operations` of each stage: none, which is the absent field and equals the legacy empty and absent `capabilities`. Declared only; nothing is enforced by the Runtime.",
+      "residue": null,
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": true,
-      "reason": "Capabilities a stage requires."
+      "reason": "Capabilities a stage requires. Carried since pack 0.4.0 as the admitted `operations` of a policy stage."
     },
     {
       "subject": "stage",
       "field": "requiresIndependentApproval",
       "owner": "GP-25",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "The clause form `requiresIndependentApproval: true`. No default stage uses it, so no policy declares it. Nothing is enforced by the Runtime.",
+      "residue": null,
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": false,
-      "reason": "Approval semantics: whether the agent assigned to the stage is barred from deciding its approval. The default state does not use it."
+      "reason": "Approval semantics: whether the agent assigned to the stage is barred from deciding its approval. The default state does not use it. Carried since pack 0.4.0 as a clause form; no default exercises it."
     },
     {
       "subject": "stage",
       "field": "requiresDifferentAgentFrom",
       "owner": "GP-25",
-      "delivered": null,
-      "residue": "The whole field.",
+      "delivered": "The clause form `requiresDifferentAgentFrom`, a set of earlier stages. No default stage uses it, so no policy declares it. Nothing is enforced by the Runtime.",
+      "residue": null,
       "gp09Gap": "stage_fields_not_expressible",
       "inDefaultState": false,
-      "reason": "Separation constraint: earlier stages whose agent may not do this stage. The default state does not use it."
+      "reason": "Separation constraint: earlier stages whose agent may not do this stage. The default state does not use it. Carried since pack 0.4.0 as a clause form; no default exercises it."
     }
   ]
 }
