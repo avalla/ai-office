@@ -169,11 +169,12 @@ export interface Lineage {
   downstream: ReadonlySet<string>;
 }
 
-/** Walks the whole graph, so a filter can never shorten a lineage. */
-export function lineage(
-  edges: readonly TaskGraphEdge[],
-  taskId: string,
-): Lineage {
+interface LineageIndex {
+  prerequisites: ReadonlyMap<string, readonly string[]>;
+  dependents: ReadonlyMap<string, readonly string[]>;
+}
+
+function buildLineageIndex(edges: readonly TaskGraphEdge[]): LineageIndex {
   const prerequisites = new Map<string, string[]>();
   const dependents = new Map<string, string[]>();
   const add = (map: Map<string, string[]>, key: string, value: string) => {
@@ -185,18 +186,74 @@ export function lineage(
     add(prerequisites, edge.taskId, edge.dependsOnTaskId);
     add(dependents, edge.dependsOnTaskId, edge.taskId);
   }
+  return { prerequisites, dependents };
+}
+
+function lineageFromIndex(index: LineageIndex, taskId: string): Lineage {
   const walk = (adjacent: ReadonlyMap<string, readonly string[]>) => {
     const seen = new Set<string>();
-    const queue = [...(adjacent.get(taskId) ?? [])];
+    const queue: string[] = [];
+    const enqueue = (id: string) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      queue.push(id);
+    };
+    for (const id of adjacent.get(taskId) ?? []) enqueue(id);
     while (queue.length > 0) {
       const next = queue.pop()!;
-      if (seen.has(next)) continue;
-      seen.add(next);
-      queue.push(...(adjacent.get(next) ?? []));
+      for (const id of adjacent.get(next) ?? []) enqueue(id);
     }
     return seen;
   };
-  return { upstream: walk(prerequisites), downstream: walk(dependents) };
+  return {
+    upstream: walk(index.prerequisites),
+    downstream: walk(index.dependents),
+  };
+}
+
+/** Walks the whole graph, so a filter can never shorten a lineage. */
+export function lineage(
+  edges: readonly TaskGraphEdge[],
+  taskId: string,
+): Lineage {
+  return lineageFromIndex(buildLineageIndex(edges), taskId);
+}
+
+/** Keep the adjacency index and selected lineage across fact-only refreshes. */
+export function createLineageMemo() {
+  let previousEdges: readonly TaskGraphEdge[] | null = null;
+  let index: LineageIndex | null = null;
+  let previousTaskId: string | null = null;
+  let previousResult: Lineage | null = null;
+  const sameEdges = (
+    a: readonly TaskGraphEdge[],
+    b: readonly TaskGraphEdge[],
+  ) =>
+    a === b ||
+    (a.length === b.length &&
+      a.every(
+        (edge, i) =>
+          edge.taskId === b[i]?.taskId &&
+          edge.dependsOnTaskId === b[i]?.dependsOnTaskId,
+      ));
+  return (edges: readonly TaskGraphEdge[], taskId: string): Lineage => {
+    if (
+      index === null ||
+      previousEdges === null ||
+      !sameEdges(previousEdges, edges)
+    ) {
+      index = buildLineageIndex(edges);
+      previousTaskId = null;
+      previousResult = null;
+    }
+    previousEdges = edges;
+    if (previousTaskId === taskId && previousResult !== null)
+      return previousResult;
+    const result = lineageFromIndex(index, taskId);
+    previousTaskId = taskId;
+    previousResult = result;
+    return result;
+  };
 }
 
 export interface Positioned {

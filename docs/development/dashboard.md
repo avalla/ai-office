@@ -265,6 +265,8 @@ Searching locates: results are listed from the whole project, Enter or a click
 selects the task, frames it and dims the rest of the graph. "Show only tasks
 matching the search" turns the same text into a real filter. The framing follows
 the computed layout and leaves a viewport the user moved alone on live refresh.
+The lineage adjacency index is reused across selections and fact-only refreshes
+when dependency edges are unchanged.
 The canvas lays out only when visible tasks plus visible dependency edges total
 at most 300. Dagre runs synchronously; a dense graph can cost much more than a
 chain with the same task count. When the budget is exceeded, an announced canvas

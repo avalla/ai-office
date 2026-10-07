@@ -8,6 +8,7 @@ import {
   exceedsLayoutLimit,
   maxLayoutWeight,
   createLayoutMemo,
+  createLineageMemo,
   chainPage,
   chainPageSize,
   otherDependentIds,
@@ -262,6 +263,33 @@ describe("dashboard task graph", () => {
       upstream: new Set(),
       downstream: new Set(),
     });
+  });
+
+  test("reuses lineage across selections and structure-preserving refreshes", () => {
+    const memo = createLineageMemo();
+    const first = memo(graph.edges, "b");
+    const refreshedEdges = graph.edges.map((edge) => ({ ...edge }));
+    expect(memo(refreshedEdges, "b")).toBe(first);
+    expect([...memo(refreshedEdges, "d").upstream].sort()).toEqual([
+      "a",
+      "b",
+      "c",
+      "done",
+    ]);
+    const rewiredEdges = refreshedEdges.map((edge) =>
+      edge.taskId === "d" && edge.dependsOnTaskId === "c"
+        ? { taskId: "lone", dependsOnTaskId: "c" }
+        : edge,
+    );
+    expect([...memo(rewiredEdges, "c").downstream]).toEqual(["lone"]);
+    const changedEdges = [
+      ...refreshedEdges,
+      { taskId: "lone", dependsOnTaskId: "d" },
+    ];
+    expect([...memo(changedEdges, "b").downstream].sort()).toEqual([
+      "d",
+      "lone",
+    ]);
   });
 
   test("isolating a lineage shows exactly those tasks, ignoring filters", () => {

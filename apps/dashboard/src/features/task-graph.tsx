@@ -27,6 +27,7 @@ import {
   blockers,
   unmetEdgeKeys,
   chainPage,
+  createLineageMemo,
   createLayoutMemo,
   decideFraming,
   exceedsLayoutLimit,
@@ -36,7 +37,6 @@ import {
   statusLabel,
   defaultGraphFilters,
   filterGraph,
-  lineage,
   nodeSize,
   otherDependentIds,
   quickFilters,
@@ -240,6 +240,7 @@ function TaskGraphCanvas({
   const [attentionPageIndex, setAttentionPageIndex] = useState(0);
   const [chainPageIndex, setChainPageIndex] = useState(0);
   const [memoizedLayout] = useState(createLayoutMemo);
+  const [memoizedLineage] = useState(createLineageMemo);
   const { fitView, setViewport } = useReactFlow();
 
   const patch = (change: Partial<GraphFilters>) =>
@@ -279,8 +280,10 @@ function TaskGraphCanvas({
 
   const selectedLineage = useMemo(
     () =>
-      selectedTask === null ? null : lineage(graph.edges, selectedTask.taskId),
-    [graph.edges, selectedTask],
+      selectedTask === null
+        ? null
+        : memoizedLineage(graph.edges, selectedTask.taskId),
+    [graph.edges, selectedTask, memoizedLineage],
   );
   const related = useMemo(
     () =>
