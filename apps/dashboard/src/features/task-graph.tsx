@@ -26,15 +26,16 @@ import { Button, Input, Select, cn } from "../components/ui/primitives.tsx";
 import {
   blockers,
   blockingEdgeKeys,
+  chainPage,
+  createLayoutMemo,
   decideFraming,
   exceedsLayoutLimit,
-  maxLaidOutTasks,
+  maxLayoutWeight,
   nodeStateLabel,
   idleState,
   statusLabel,
   defaultGraphFilters,
   filterGraph,
-  layoutGraph,
   lineage,
   nodeSize,
   quickFilters,
@@ -234,6 +235,8 @@ function TaskGraphCanvas({
   const [focusOnly, setFocusOnly] = useState(false);
   const [showChain, setShowChain] = useState(true);
   const [showMinimap, setShowMinimap] = useState(true);
+  const [chainPageIndex, setChainPageIndex] = useState(0);
+  const [memoizedLayout] = useState(createLayoutMemo);
   const { fitView, setViewport } = useReactFlow();
 
   const patch = (change: Partial<GraphFilters>) =>
@@ -302,13 +305,16 @@ function TaskGraphCanvas({
     [effectiveFilters, focusOnly, graph, related, selectedTask],
   );
 
-  const tooLarge = exceedsLayoutLimit(visible.tasks.length);
+  const tooLarge = exceedsLayoutLimit(
+    visible.tasks.length,
+    visible.edges.length,
+  );
   const positions = useMemo(
     () =>
       tooLarge
         ? new Map<string, { x: number; y: number }>()
-        : layoutGraph(visible, direction),
-    [tooLarge, visible, direction],
+        : memoizedLayout(visible, direction),
+    [tooLarge, visible, direction, memoizedLayout],
   );
 
   const chainIds = useMemo(
@@ -608,6 +614,12 @@ function TaskGraphCanvas({
     () => graph.tasks.filter((t) => t.needsAttention).sort(byPriority),
     [graph.tasks],
   );
+  const longestChainPage = chainPage(
+    graph.longestDependencyChain,
+    tasksById,
+    chainPageIndex,
+  );
+  const canvasUnavailable = tooLarge || visible.tasks.length === 0;
 
   const filtered =
     query !== "" ||
@@ -835,13 +847,17 @@ function TaskGraphCanvas({
                 <Empty>No tasks match these filters.</Empty>
               </div>
             ) : tooLarge ? (
-              <div className="p-6">
+              <div className="p-6" role="status">
                 <Empty>
-                  {visible.tasks.length} tasks match, more than the{" "}
-                  {maxLaidOutTasks} the graph can lay out. Narrow the view with
-                  a summary shortcut, a status or milestone filter, or select a
-                  task from the lists and use &ldquo;Only this lineage&rdquo;.
-                  The summary and the side panel stay complete.
+                  {visible.tasks.length.toLocaleString()} tasks and{" "}
+                  {visible.edges.length.toLocaleString()} dependencies match.
+                  The graph can lay out at most{" "}
+                  {maxLayoutWeight.toLocaleString()} combined tasks and
+                  dependencies. Narrow the view with a summary shortcut, a
+                  status or milestone filter, or select a task from the lists
+                  and use &ldquo;Only this lineage&rdquo;. Summary counts remain
+                  complete. Search can find any task; the chain list is paged,
+                  while ready and attention lists show eight items each.
                 </Empty>
               </div>
             ) : (
@@ -899,6 +915,7 @@ function TaskGraphCanvas({
               size="sm"
               variant="outline"
               onClick={fitGraph}
+              disabled={canvasUnavailable}
             >
               Fit graph
             </Button>
@@ -920,6 +937,7 @@ function TaskGraphCanvas({
                   variant={direction === value ? "default" : "outline"}
                   aria-pressed={direction === value}
                   onClick={() => setDirection(value)}
+                  disabled={canvasUnavailable}
                 >
                   {label}
                 </Button>
@@ -930,6 +948,7 @@ function TaskGraphCanvas({
                 type="checkbox"
                 checked={showChain}
                 onChange={(event) => setShowChain(event.target.checked)}
+                disabled={canvasUnavailable}
               />
               Longest dependency chain
             </label>
@@ -938,6 +957,7 @@ function TaskGraphCanvas({
                 type="checkbox"
                 checked={showMinimap}
                 onChange={(event) => setShowMinimap(event.target.checked)}
+                disabled={canvasUnavailable}
               />
               Minimap
             </label>
@@ -998,13 +1018,42 @@ function TaskGraphCanvas({
               <TaskList
                 title="Longest dependency chain"
                 empty="No chain of dependent unfinished tasks."
-                tasks={graph.longestDependencyChain.flatMap((id) => {
-                  const t = tasksById.get(id);
-                  return t === undefined ? [] : [t];
-                })}
+                tasks={longestChainPage.tasks}
                 ordered
                 onFocus={focusOn}
               />
+              {longestChainPage.totalPages > 1 && (
+                <div
+                  role="group"
+                  aria-label="Longest dependency chain pages"
+                  className="flex items-center justify-between gap-2 text-xs"
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={longestChainPage.page === 0}
+                    onClick={() => setChainPageIndex(longestChainPage.page - 1)}
+                  >
+                    Previous
+                  </Button>
+                  <span className="tabular-nums">
+                    Page {longestChainPage.page + 1} of{" "}
+                    {longestChainPage.totalPages.toLocaleString()}
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={
+                      longestChainPage.page === longestChainPage.totalPages - 1
+                    }
+                    onClick={() => setChainPageIndex(longestChainPage.page + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
+              )}
               <Legend />
             </>
           )}

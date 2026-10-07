@@ -11,14 +11,15 @@ export const nodeSize = { width: 264, height: 96 } as const;
 export type GraphDirection = "LR" | "TB";
 
 /**
- * Layout runs synchronously while rendering, so it is bounded: beyond this many
- * visible tasks the canvas asks the user to narrow the view instead of freezing
- * the page. The read model, the summary and the side-panel lists stay exhaustive.
+ * Dagre runs on the main thread. Dense dependencies cost much more than a
+ * sparse chain, so both visible tasks and edges count toward this budget.
  */
-export const maxLaidOutTasks = 1000;
+export const maxLayoutWeight = 300;
 
-export const exceedsLayoutLimit = (visibleTasks: number) =>
-  visibleTasks > maxLaidOutTasks;
+export const exceedsLayoutLimit = (
+  visibleTasks: number,
+  visibleEdges: number,
+) => visibleTasks + visibleEdges > maxLayoutWeight;
 
 /**
  * Operational shortcuts. Every value is a flag or status the read model already
@@ -236,6 +237,43 @@ export function layoutGraph(
     });
   }
   return positions;
+}
+
+/** Reuse geometry across selection and live data changes with the same layout. */
+export function createLayoutMemo() {
+  let previousKey = "";
+  let previous: Map<string, Positioned> | null = null;
+  return (visible: VisibleGraph, direction: GraphDirection) => {
+    // Order is significant to Dagre's tie-breaking, so keep it in the key.
+    const key = JSON.stringify([
+      direction,
+      visible.tasks.map((task) => task.taskId),
+      visible.edges.map((edge) => [edge.dependsOnTaskId, edge.taskId]),
+    ]);
+    if (previous !== null && key === previousKey) return previous;
+    previousKey = key;
+    previous = layoutGraph(visible, direction);
+    return previous;
+  };
+}
+
+export const chainPageSize = 25;
+
+/** Resolve only the current page; the full chain stays searchable and available. */
+export function chainPage(
+  chain: readonly string[],
+  tasksById: ReadonlyMap<string, TaskGraphNode>,
+  requestedPage: number,
+) {
+  const totalPages = Math.ceil(chain.length / chainPageSize);
+  const page = Math.max(0, Math.min(requestedPage, totalPages - 1));
+  const tasks = chain
+    .slice(page * chainPageSize, (page + 1) * chainPageSize)
+    .flatMap((id) => {
+      const task = tasksById.get(id);
+      return task === undefined ? [] : [task];
+    });
+  return { tasks, page, totalPages };
 }
 
 export const taskKey = (taskId: string) => `t:${taskId}`;

@@ -6,7 +6,10 @@ import type {
 import {
   blockingEdgeKeys,
   exceedsLayoutLimit,
-  maxLaidOutTasks,
+  maxLayoutWeight,
+  createLayoutMemo,
+  chainPage,
+  chainPageSize,
   decideFraming,
   nodeStateLabel,
   searchTasks,
@@ -281,26 +284,65 @@ describe("dashboard task graph", () => {
     );
   });
 
-  test("the canvas only lays out a bounded number of tasks", () => {
-    expect(exceedsLayoutLimit(maxLaidOutTasks)).toBe(false);
-    expect(exceedsLayoutLimit(maxLaidOutTasks + 1)).toBe(true);
-    // The bound keeps the synchronous layout fast at the limit.
-    const count = maxLaidOutTasks;
+  test("the canvas bounds both tasks and dependencies before synchronous layout", () => {
+    expect(exceedsLayoutLimit(80, maxLayoutWeight - 80)).toBe(false);
+    expect(exceedsLayoutLimit(80, maxLayoutWeight - 79)).toBe(true);
+    expect(exceedsLayoutLimit(1_000, 0)).toBe(true);
+    expect(exceedsLayoutLimit(75, 2_000)).toBe(true);
+    // A deterministic dense DAG, with up to three prerequisites per task.
+    const count = 75;
     const tasks = Array.from({ length: count }, (_, i) =>
       node(`t${String(i).padStart(5, "0")}`),
     );
-    const chain = {
+    const dense = {
       ...graph,
       tasks,
-      edges: tasks.slice(1).map((t, i) => ({
-        taskId: t.taskId,
-        dependsOnTaskId: tasks[i]!.taskId,
-      })),
+      edges: tasks.flatMap((task, i) =>
+        i < 3
+          ? []
+          : [
+              ...new Set([i - 1, Math.floor(i * 0.63), Math.floor(i * 0.23)]),
+            ].map((prerequisite) => ({
+              taskId: task.taskId,
+              dependsOnTaskId: tasks[prerequisite]!.taskId,
+            })),
+      ),
     };
+    const visible = filterGraph(dense, all);
+    expect(exceedsLayoutLimit(visible.tasks.length, visible.edges.length)).toBe(
+      false,
+    );
     const started = performance.now();
-    const positions = layoutGraph(filterGraph(chain, all), "LR");
+    const positions = layoutGraph(visible, "LR");
     expect(positions.size).toBe(count);
-    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(performance.now() - started).toBeLessThan(1_500);
+  });
+
+  test("selection-only data changes reuse the same dependency layout", () => {
+    const layout = createLayoutMemo();
+    const visible = filterGraph(graph, defaultGraphFilters);
+    const first = layout(visible, "LR");
+    const copied = {
+      ...visible,
+      tasks: visible.tasks.map((task) => ({ ...task, title: "Refreshed" })),
+      edges: visible.edges.map((edge) => ({ ...edge })),
+    };
+    expect(layout(copied, "LR")).toBe(first);
+    expect(layout(copied, "TB")).not.toBe(first);
+    expect(layout({ ...copied, edges: copied.edges.slice(1) }, "LR")).not.toBe(
+      first,
+    );
+  });
+
+  test("long dependency chains expose every task through bounded pages", () => {
+    const chain = Array.from({ length: 50_000 }, (_, i) => `t${i}`);
+    const byId = new Map(chain.map((id) => [id, node(id)]));
+    const first = chainPage(chain, byId, 0);
+    const last = chainPage(chain, byId, 1_999);
+    expect(first.tasks).toHaveLength(chainPageSize);
+    expect(last.tasks).toHaveLength(chainPageSize);
+    expect(last.tasks.at(-1)?.taskId).toBe("t49999");
+    expect(chainPage(chain, byId, 99_999).page).toBe(1_999);
   });
 
   test("layout is deterministic", () => {
