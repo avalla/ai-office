@@ -35,6 +35,12 @@ import {
   packDefinitionCollision,
   packDefinitionCollisions,
 } from "./pack-definition-collisions.ts";
+import { evidenceContractChangeRequiresUpgrade } from "./pack-evidence-contracts.ts";
+import {
+  closureEvidenceDefinitionIds,
+  evidenceContractDifferences,
+  type EvidenceContractDifference,
+} from "./pack-evidence-contract-changes.ts";
 import {
   closureWorkflowIds,
   workflowPolicyDifferences,
@@ -73,15 +79,18 @@ export const policyChangeRequiresUpgrade =
 /**
  * A selection change this command does not carry out. A role capability
  * change, a change to the operation contract of an existing capability
- * (GP-16), and a change to the policy of an existing workflow (GP-25) are
- * reviewed and approved through `project:pack:upgrade` only.
+ * (GP-16), a change to the policy of an existing workflow (GP-25), and a
+ * change to the typed contract of an existing artifact type, evidence type or
+ * validator reference (GP-14A) are reviewed and approved through
+ * `project:pack:upgrade` only.
  */
 export class ProjectPackBindingRefusedError extends Error {
   constructor(
     readonly code:
       | typeof roleCapabilityChangeRequiresUpgrade
       | typeof capabilityContractChangeRequiresUpgrade
-      | typeof policyChangeRequiresUpgrade,
+      | typeof policyChangeRequiresUpgrade
+      | typeof evidenceContractChangeRequiresUpgrade,
     message: string,
   ) {
     super(message);
@@ -162,6 +171,40 @@ function policyChangeGuard(
   };
 }
 
+/**
+ * An evidence contract change is never incidental (GP-14A). A selection
+ * change that alters the typed contract of an artifact type, evidence type or
+ * validator reference present in both closures is refused: a changed
+ * contract, one added to an existing label and one removed from it, an
+ * adapter version bump included. A definition only one closure provides is an
+ * addition or a removal, which stays an explicit selection change.
+ */
+function evidenceContractGuard(
+  previous: readonly ResolvedPackManifest[],
+  target: readonly ResolvedPackManifest[],
+): {
+  changes: EvidenceContractDifference[];
+  issue?: { code: string; message: string };
+} {
+  const changes = evidenceContractDifferences(previous, target);
+  const before = closureEvidenceDefinitionIds(previous);
+  const after = closureEvidenceDefinitionIds(target);
+  const altered = changes.find(
+    ({ contractId }) => before.has(contractId) && after.has(contractId),
+  );
+  return {
+    changes,
+    ...(altered
+      ? {
+          issue: {
+            code: evidenceContractChangeRequiresUpgrade,
+            message: `The selection changes the contract of ${altered.contractId}; review and approve it with project:pack:upgrade`,
+          },
+        }
+      : {}),
+  };
+}
+
 function collisionIssues(
   closure: readonly ResolvedPackManifest[],
   owned: readonly ProjectOwnedDefinition[],
@@ -229,12 +272,28 @@ export interface ProjectPackBindingPreview {
         readonly detail: string;
       };
   /**
+   * Artifact type, evidence type and validator contract differences between
+   * the current and the proposed resolved closures (GP-14A), computed as in
+   * the upgrade plan and with the availability of `roleCapabilityChanges`.
+   */
+  readonly evidenceContractChanges:
+    | {
+        readonly availability: "available";
+        readonly changes: readonly EvidenceContractDifference[];
+      }
+    | {
+        readonly availability: "unavailable";
+        readonly reason:
+          "previous_closure_unresolved" | "proposed_closure_unreadable";
+        readonly detail: string;
+      };
+  /**
    * In order: a GP-04 selection or availability failure, alone; then one
    * `pack_definition_collision` for each project-owned definition that the
    * proposed closure also contains; then the GP-16 provider issues of the
    * proposed closure; then the GP-11 capability refusal; then the GP-16
-   * contract change refusal; then the GP-25 policy refusal. Apply raises the
-   * first.
+   * contract change refusal; then the GP-25 policy refusal; then the GP-14A
+   * evidence contract refusal. Apply raises the first.
    */
   readonly issues: readonly { code: string; message: string }[];
 }
@@ -396,6 +455,8 @@ export class ManageProjectPackBinding {
       availability: "available",
       changes: [],
     };
+    let evidenceContractChanges: ProjectPackBindingPreview["evidenceContractChanges"] =
+      { availability: "available", changes: [] };
     // An unchanged selection reads no further artifact, as before GP-11. A
     // collision does not hide the capability refusal; it is listed first.
     if (resolved && added.length + removed.length + changed.length > 0) {
@@ -416,6 +477,20 @@ export class ManageProjectPackBinding {
         policyChanges = { availability: "available", changes: policy.changes };
         if (policy.issue) issues.push(policy.issue);
       }
+      // GP-14A: the same two closures, with the same availability rule.
+      if (guard.roleCapabilityChanges.availability === "unavailable")
+        evidenceContractChanges = guard.roleCapabilityChanges;
+      else if (guard.closures !== undefined) {
+        const evidence = evidenceContractGuard(
+          guard.closures.previous,
+          guard.closures.target,
+        );
+        evidenceContractChanges = {
+          availability: "available",
+          changes: evidence.changes,
+        };
+        if (evidence.issue) issues.push(evidence.issue);
+      }
     }
     return {
       preview: {
@@ -427,6 +502,7 @@ export class ManageProjectPackBinding {
         roleCapabilityChanges,
         capabilityContractChanges,
         policyChanges,
+        evidenceContractChanges,
         issues,
       },
       ...(closure === undefined ? {} : { closure }),
@@ -593,7 +669,8 @@ export class ManageProjectPackBinding {
       if (
         first?.code === roleCapabilityChangeRequiresUpgrade ||
         first?.code === capabilityContractChangeRequiresUpgrade ||
-        first?.code === policyChangeRequiresUpgrade
+        first?.code === policyChangeRequiresUpgrade ||
+        first?.code === evidenceContractChangeRequiresUpgrade
       )
         throw new ProjectPackBindingRefusedError(first.code, first.message);
       if (preview.issues[0])
