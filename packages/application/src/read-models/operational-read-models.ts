@@ -935,3 +935,102 @@ export interface ProjectDetail {
   reviews: BoundedList<ReviewState>;
   recentActivity: ActivityPage;
 }
+
+/* -------------------------------------------------------------------------- */
+/* Task dependency graph                                                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One task in the dependency graph. Carries only what the graph needs; the
+ * task detail remains the owner of everything else.
+ */
+export interface TaskGraphNode {
+  taskId: string;
+  title: string;
+  priority: number;
+  recordedStatus: TaskStatus;
+  operationalStatus: TaskOperationalStatus;
+  assignedAgent: AgentReference | null;
+  /** Milestones derived from explicit task→requirement→milestone links. */
+  milestoneIds: readonly string[];
+  /** Prerequisites whose recorded status is not `completed`, sorted by id. */
+  unmetPrerequisiteIds: readonly string[];
+  /**
+   * Runnable by the admission rule (`isTaskRunnable`) and every prerequisite is
+   * completed: exactly `ManageTaskDependencies.readiness().runnable`, evaluated
+   * over the whole project. A blocked or terminal task is never ready.
+   */
+  ready: boolean;
+  /**
+   * Not finished and at least one prerequisite is not completed (it is
+   * `unmetPrerequisiteIds.length > 0` on non-terminal work). A task can be both
+   * waiting and in any non-terminal status.
+   */
+  waiting: boolean;
+  /** The task carries at least one authoritative attention reason. */
+  needsAttention: boolean;
+  /**
+   * The recorded status is terminal (`isTerminalTaskStatus`). Distinct from the
+   * operational status: a runnable task whose latest run failed reads
+   * operationally `failed` yet can still complete.
+   */
+  terminal: boolean;
+  /**
+   * Dependents that become ready when this task completes: this task is their
+   * only unmet prerequisite and their own status allows work. Empty for a
+   * terminal task: a completed task is nobody's unmet prerequisite any more, and
+   * a failed or cancelled one can never complete. Sorted by id.
+   */
+  completionUnblocks: readonly string[];
+}
+
+/**
+ * Whole-project operational counts, computed from the same nodes as the graph
+ * so a summary and the graph can never disagree. Each task is counted in every
+ * bucket that applies.
+ */
+export interface TaskGraphSummary {
+  total: number;
+  ready: number;
+  waiting: number;
+  /** Operational status `blocked`. */
+  blocked: number;
+  inProgress: number;
+  needsAttention: number;
+}
+
+export interface TaskGraphMilestone {
+  milestoneId: string;
+  title: string;
+  status: MilestoneStatus;
+  requirements: RequirementCounts;
+}
+
+/** `taskId` depends on `dependsOnTaskId` (the prerequisite). */
+export interface TaskGraphEdge {
+  taskId: string;
+  dependsOnTaskId: string;
+}
+
+/**
+ * Exhaustive dependency graph of a project. Never a sample: a missing edge
+ * would silently change which tasks look ready, so every task and every edge
+ * is present.
+ */
+export interface TaskGraph {
+  generatedAt: IsoTimestamp;
+  projectId: string;
+  projectName: string;
+  tasks: readonly TaskGraphNode[];
+  milestones: readonly TaskGraphMilestone[];
+  edges: readonly TaskGraphEdge[];
+  summary: TaskGraphSummary;
+  /**
+   * The longest chain of prerequisite-linked, non-terminal tasks, from the first
+   * to start to the last to finish. It counts tasks, not time: there are no
+   * duration estimates, so this is not a project-management critical path.
+   * Empty when no chain of two or more exists. Ties are broken by task id so the
+   * result is deterministic.
+   */
+  longestDependencyChain: readonly string[];
+}

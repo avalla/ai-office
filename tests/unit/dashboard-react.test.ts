@@ -30,6 +30,7 @@ import {
   routeHref,
 } from "../../apps/dashboard/src/ui/view-model.ts";
 import { taskFilterQuery } from "../../apps/dashboard/src/lib/task-filters.ts";
+import { SidebarLinks } from "../../apps/dashboard/src/app/app.tsx";
 
 const now = "2026-09-03T12:00:00.000Z";
 const agent = {
@@ -349,6 +350,7 @@ describe("React dashboard routes", () => {
     "#/projects/project-1/tasks",
     "#/projects/project-1/tasks/task-1",
     "#/projects/project-1/milestones",
+    "#/projects/project-1/graph",
     "#/projects/project-1/requirements",
     "#/projects/project-1/agents",
     "#/pipelines",
@@ -358,6 +360,23 @@ describe("React dashboard routes", () => {
   ])("round trips %s", (hash) =>
     expect(routeHref(parseRoute(hash))).toBe(hash),
   );
+  test("shows Graph in persistent project navigation", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(SidebarLinks, {
+          currentProject: summary,
+          path: "/projects/project-1/graph",
+        }),
+      ),
+    );
+    expect(html).toContain('href="/projects/project-1/graph"');
+    expect(html).toContain('aria-current="page"');
+    expect(html).toMatch(
+      /href="\/projects\/project-1\/graph"[^>]*>.*?Graph<\/a>/,
+    );
+  });
   test("rejects malformed task filters", () =>
     expect(parseRoute("#/projects/project-1/tasks?priority=abc").kind).toBe(
       "invalid",
@@ -654,7 +673,9 @@ describe("operational presentation", () => {
     const work = html(WorkPage, {
       data: { kind: "work", overview: sampledOverview, pipelines: samples },
     });
-    expect(work).toContain("No active pipeline shown in the displayed samples.");
+    expect(work).toContain(
+      "No active pipeline shown in the displayed samples.",
+    );
     const globalPipelines = html(PipelinesPage, {
       data: {
         kind: "pipelines",

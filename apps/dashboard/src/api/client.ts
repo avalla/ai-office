@@ -9,6 +9,7 @@ import type {
   ProjectDetail,
   ProjectSummary,
   TaskDetail,
+  TaskGraph,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import { taskPageParameters } from "@ai-office/application/protocol/query-protocol.ts";
 import type { DashboardRoute } from "../ui/view-model.ts";
@@ -23,11 +24,12 @@ export class DashboardApiError extends Error {
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, {
     credentials: "same-origin",
     headers: { accept: "application/json" },
     cache: "no-store",
+    ...(signal === undefined ? {} : { signal }),
   });
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null);
@@ -47,6 +49,19 @@ async function get<T>(path: string): Promise<T> {
 }
 
 const projectPath = (id: string) => `/api/projects/${encodeURIComponent(id)}`;
+
+export async function getTaskDetail(
+  projectId: string,
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<TaskDetail> {
+  return (
+    await get<{ task: TaskDetail }>(
+      `${projectPath(projectId)}/tasks/${encodeURIComponent(taskId)}`,
+      signal,
+    )
+  ).task;
+}
 export async function getProjectSummaries(): Promise<
   readonly ProjectSummary[]
 > {
@@ -86,6 +101,7 @@ export type DashboardData =
       activePipelines: BoundedList<PipelineRunState>;
       activeRuns: BoundedList<AgentRunState>;
     }
+  | { kind: "graph"; graph: TaskGraph }
   | { kind: "task"; detail: TaskDetail }
   | { kind: "run"; detail: AgentRunDetail; task: TaskDetail | null }
   | { kind: "memory"; memory: GlobalMemoryOverview }
@@ -116,10 +132,10 @@ export async function queryRoute(
   if (route.kind === "invalid")
     return { kind: "invalid", message: route.message };
   if (route.kind === "task") {
-    const body = await get<{ task: TaskDetail }>(
-      `${projectPath(route.projectId)}/tasks/${encodeURIComponent(route.taskId)}`,
-    );
-    return { kind: "task", detail: body.task };
+    return {
+      kind: "task",
+      detail: await getTaskDetail(route.projectId, route.taskId),
+    };
   }
   if (route.kind === "run") {
     const body = await get<{ run: AgentRunDetail }>(
@@ -145,6 +161,12 @@ export async function queryRoute(
     return { kind: "memory", memory: body.memory };
   }
   if (route.kind === "project") {
+    if (route.section === "graph") {
+      const body = await get<{ graph: TaskGraph }>(
+        `${projectPath(route.projectId)}/graph`,
+      );
+      return { kind: "graph", graph: body.graph };
+    }
     const parameters = taskPageParameters(
       route.section === "tasks" ||
         (route.section === undefined && route.taskQuery !== undefined)

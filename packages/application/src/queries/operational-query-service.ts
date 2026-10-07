@@ -39,6 +39,11 @@ import {
 } from "../protocol/query-protocol.ts";
 import { projectActivityEntry } from "../read-models/activity-sanitization.ts";
 import {
+  projectLongestDependencyChain,
+  projectTaskGraphSummary,
+  projectTaskGraphNodes,
+} from "../read-models/task-graph-projection.ts";
+import {
   activeAgentRunStatuses,
   agentReference,
   agentRunAttentionReasons,
@@ -76,11 +81,16 @@ import {
   terminalTaskOperationalStatuses,
   type TaskOperationalState,
   type TaskDetail,
+  type TaskGraph,
   type TaskPageInfo,
   type TaskPageQuery,
   type TaskOperationalStatus,
   type GlobalMemoryOverview,
 } from "../read-models/operational-read-models.ts";
+
+// Graph projection is exhaustive, so its fact reads should not reuse the
+// 100-task presentation page. Leave room for the adapters' other SQL binds.
+const taskGraphFactBatchSize = 800;
 
 export class OperationalResourceNotFoundError extends Error {
   constructor(resource: string, id: string) {
@@ -124,27 +134,34 @@ function agentIndex(
   );
 }
 
-function taskMilestoneIndex(
+function* requirementMilestoneLinks(
   requirements: readonly {
     milestoneId: string | null;
     taskReferences: readonly { taskId: string }[];
   }[],
+): Iterable<{ taskId: string; milestoneId: string }> {
+  for (const requirement of requirements) {
+    if (requirement.milestoneId === null) continue;
+    for (const reference of requirement.taskReferences)
+      yield { taskId: reference.taskId, milestoneId: requirement.milestoneId };
+  }
+}
+
+function taskMilestoneIndex(
+  links: Iterable<{ taskId: string; milestoneId: string }>,
   milestones: readonly TaskMilestoneReference[],
 ): Map<string, TaskMilestoneReference[]> {
   const milestonesById = new Map(
     milestones.map((milestone) => [milestone.milestoneId, milestone]),
   );
   const result = new Map<string, TaskMilestoneReference[]>();
-  for (const requirement of requirements) {
-    if (requirement.milestoneId === null) continue;
-    const milestone = milestonesById.get(requirement.milestoneId);
+  for (const link of links) {
+    const milestone = milestonesById.get(link.milestoneId);
     if (milestone === undefined) continue;
-    for (const reference of requirement.taskReferences) {
-      const linked = result.get(reference.taskId) ?? [];
-      if (!linked.some((value) => value.milestoneId === milestone.milestoneId))
-        linked.push(milestone);
-      result.set(reference.taskId, linked);
-    }
+    const linked = result.get(link.taskId) ?? [];
+    if (!linked.some((value) => value.milestoneId === milestone.milestoneId))
+      linked.push(milestone);
+    result.set(link.taskId, linked);
   }
   for (const linked of result.values())
     linked.sort(
@@ -596,7 +613,7 @@ export class OperationalQueryService {
       }),
     );
     const taskMilestones = taskMilestoneIndex(
-      requirementRecords,
+      requirementMilestoneLinks(requirementRecords),
       milestoneReferences,
     );
     const taskRequirements = taskRequirementIndex(requirementRecords);
@@ -1017,6 +1034,70 @@ export class OperationalQueryService {
   /* ---------------------------------------------------------------------- */
   /* Internals                                                               */
   /* ---------------------------------------------------------------------- */
+
+  /**
+   * The exhaustive dependency graph. Tasks are projected in bounded batches
+   * of one fixed snapshot (no transaction spans the batches) but none is
+   * dropped: readiness and the longest dependency chain must never depend on a
+   * presentation limit or on concurrent writes.
+   */
+  async getTaskGraph(projectId: string): Promise<TaskGraph> {
+    const project = await this.requireProject(projectId);
+    const now = this.clock.now();
+    // Tasks, edges, and milestone links come from one consistent snapshot; the
+    // loop below only slices that fixed array, so no task can be skipped or repeated.
+    const [snapshot, milestoneRecords, requirementCounts] = await Promise.all([
+      this.reads.readTaskGraphSnapshot(projectId),
+      this.reads.listMilestones([projectId]),
+      this.reads.countRequirementsByStatus([projectId]),
+    ]);
+    const agentRecords = await this.reads.listAgents([projectId]);
+    const taskMilestones = taskMilestoneIndex(
+      snapshot.milestoneLinks,
+      milestoneRecords.map((record) => ({
+        milestoneId: record.id,
+        title: record.title,
+        status: record.status,
+      })),
+    );
+    const agents = agentIndex(agentRecords);
+    const batchSize = taskGraphFactBatchSize;
+    const states: TaskOperationalState[] = [];
+    for (let start = 0; start < snapshot.tasks.length; start += batchSize) {
+      states.push(
+        ...(await this.projectTasks(
+          projectId,
+          snapshot.tasks.slice(start, start + batchSize),
+          agents,
+          now,
+          taskMilestones,
+        )),
+      );
+    }
+    const edges = snapshot.dependencies.map((edge) => ({
+      taskId: edge.taskId,
+      dependsOnTaskId: edge.dependsOnTaskId,
+    }));
+    const tasks = projectTaskGraphNodes(states, edges);
+    return {
+      generatedAt: now.toISOString(),
+      projectId,
+      projectName: project.name,
+      tasks,
+      milestones: milestoneRecords.map((record) => {
+        const summary = projectMilestoneSummary(record, requirementCounts);
+        return {
+          milestoneId: summary.milestoneId,
+          title: summary.title,
+          status: summary.status,
+          requirements: summary.requirements,
+        };
+      }),
+      edges,
+      summary: projectTaskGraphSummary(tasks),
+      longestDependencyChain: projectLongestDependencyChain(tasks, edges),
+    };
+  }
 
   private async requireProject(
     projectId: string,

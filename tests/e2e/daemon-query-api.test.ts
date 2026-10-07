@@ -84,6 +84,69 @@ async function startDaemon(): Promise<Harness> {
 }
 
 describe("daemon query API", () => {
+  test("task graph exposes dependency edges through the socket", async () => {
+    const harness = await startDaemon();
+    try {
+      const command = (args: string[]) => harness.client.execute(args);
+      const projectId = (
+        await command(["project:create", "Graph"])
+      ).stdout[0]!.replace("Project created: ", "");
+      const create = async (title: string) =>
+        (
+          await command([
+            "task:create",
+            "--project",
+            projectId,
+            "--title",
+            title,
+          ])
+        ).stdout[0]!.replace("Task created: ", "");
+      const first = await create("First");
+      const second = await create("Second");
+      await command([
+        "task:dependency:add",
+        "--project",
+        projectId,
+        "--task",
+        second,
+        "--depends-on",
+        first,
+      ]);
+
+      const result = await harness.get(`/api/projects/${projectId}/graph`);
+
+      expect(result.status).toBe(200);
+      expect(result.body).toMatchObject({
+        queryApiVersion,
+        graph: {
+          projectId,
+          edges: [{ taskId: second, dependsOnTaskId: first }],
+          longestDependencyChain: [first, second],
+        },
+      });
+      expect(
+        (
+          result.body.graph as { tasks: { taskId: string; ready: boolean }[] }
+        ).tasks.find((task) => task.taskId === first)?.ready,
+      ).toBe(true);
+      expect((await harness.get("/api/projects/missing/graph")).status).toBe(
+        404,
+      );
+      expect((await harness.get("/api/projects/bad%20id/graph")).status).toBe(
+        400,
+      );
+      expect(
+        (
+          await harness.raw(`/api/projects/${projectId}/graph`, {
+            method: "POST",
+          })
+        ).status,
+      ).toBe(405);
+    } finally {
+      await harness.stop();
+    }
+  });
+
   test("task detail reads persisted state through the socket and rejects foreign ownership", async () => {
     const harness = await startDaemon();
     try {
