@@ -335,17 +335,16 @@ export function nodeStateLabel(task: TaskGraphNode): string {
 }
 
 /**
- * `prerequisite>dependent` keys of the edges that still constrain work: the
- * dependent is waiting and lists the prerequisite as unmet. Built from the
- * per-task read-model lists, never from statuses.
+ * `prerequisite>dependent` keys for every unmet prerequisite, including those
+ * of terminal dependents. Built from the per-task read model, never from
+ * statuses reconstructed in the browser.
  */
-export function blockingEdgeKeys(
+export function unmetEdgeKeys(
   tasks: readonly TaskGraphNode[],
 ): ReadonlySet<string> {
   const keys = new Set<string>();
   for (const task of tasks)
-    if (task.waiting)
-      for (const id of task.unmetPrerequisiteIds)
-        keys.add(`${id}>${task.taskId}`);
+    for (const id of task.unmetPrerequisiteIds)
+      keys.add(`${id}>${task.taskId}`);
   return keys;
 }

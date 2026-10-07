@@ -25,7 +25,7 @@ import { Empty, Section, StatusBadge } from "../components/operations.tsx";
 import { Button, Input, Select, cn } from "../components/ui/primitives.tsx";
 import {
   blockers,
-  blockingEdgeKeys,
+  unmetEdgeKeys,
   chainPage,
   createLayoutMemo,
   decideFraming,
@@ -53,12 +53,12 @@ import { taskStatusTone, type ToneName } from "../ui/view-model.ts";
 /* -------------------------------------------------------------------------- */
 
 /**
- * Few meanings, few colours. Meaning is never colour alone: blocking edges are
+ * Few meanings, few colours. Meaning is never colour alone: unmet edges are
  * dashed, the chain is thicker, and the legend and side panel say it in text.
  */
 const colour = {
   neutral: "#8b95a7",
-  blocking: "#d97706",
+  unmet: "#d97706",
   lineage: "#2563eb",
   chain: "#dc2626",
 } as const;
@@ -253,10 +253,7 @@ function TaskGraphCanvas({
     () => new Map(graph.tasks.map((task) => [task.taskId, task])),
     [graph.tasks],
   );
-  const unmetPairs = useMemo(
-    () => blockingEdgeKeys(graph.tasks),
-    [graph.tasks],
-  );
+  const unmetPairs = useMemo(() => unmetEdgeKeys(graph.tasks), [graph.tasks]);
   const milestonesById = useMemo(
     () => new Map(graph.milestones.map((m) => [m.milestoneId, m])),
     [graph.milestones],
@@ -397,7 +394,7 @@ function TaskGraphCanvas({
         : null;
     if (tooLarge) return [];
     return visible.edges.map((edge) => {
-      const blocking = unmetPairs.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
+      const unmet = unmetPairs.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
       const onLineage =
         lineageScope !== null &&
         ((lineageScope.up.has(edge.taskId) &&
@@ -409,8 +406,8 @@ function TaskGraphCanvas({
         ? colour.lineage
         : onChain
           ? colour.chain
-          : blocking
-            ? colour.blocking
+          : unmet
+            ? colour.unmet
             : colour.neutral;
       return {
         id: `d:${edge.dependsOnTaskId}>${edge.taskId}`,
@@ -421,10 +418,10 @@ function TaskGraphCanvas({
         style: {
           stroke,
           strokeWidth: onLineage || onChain ? 3 : 1.5,
-          // A completed prerequisite no longer constrains anything: recede.
-          strokeDasharray: blocking && !onLineage && !onChain ? "6 4" : "none",
+          // Every unmet prerequisite stays dashed, even for a terminal task.
+          strokeDasharray: unmet ? "6 4" : "none",
           opacity:
-            lineageScope !== null && !onLineage ? 0.12 : blocking ? 1 : 0.55,
+            lineageScope !== null && !onLineage ? 0.12 : unmet ? 1 : 0.55,
         },
       };
     });
@@ -1335,9 +1332,7 @@ function Legend() {
         Legend
       </h3>
       <ul className="space-y-1 text-xs text-subtle">
-        <li>
-          {swatch(colour.blocking, true)} dashed: prerequisite not completed
-        </li>
+        <li>{swatch(colour.unmet, true)} dashed: prerequisite not completed</li>
         <li>{swatch(colour.neutral)} faint: prerequisite completed</li>
         <li>{swatch(colour.chain, false, true)} thick red: longest chain</li>
         <li>

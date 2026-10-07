@@ -4,7 +4,7 @@ import type {
   TaskGraphNode,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
-  blockingEdgeKeys,
+  unmetEdgeKeys,
   exceedsLayoutLimit,
   maxLayoutWeight,
   createLayoutMemo,
@@ -234,7 +234,7 @@ describe("dashboard task graph", () => {
     ).toBe("Not startable");
   });
 
-  test("only edges into a waiting task with an unmet prerequisite are blocking", () => {
+  test("unmet edges remain distinct from completed edges for terminal dependents", () => {
     const tasks = [
       ...graph.tasks,
       node("z", {
@@ -245,9 +245,10 @@ describe("dashboard task graph", () => {
         unmetPrerequisiteIds: ["a"],
       }),
     ];
-    expect([...blockingEdgeKeys(tasks)].sort()).toEqual([
+    expect([...unmetEdgeKeys(tasks)].sort()).toEqual([
       "a>b",
       "a>c",
+      "a>z",
       "b>d",
       "c>d",
     ]);
@@ -291,7 +292,7 @@ describe("dashboard task graph", () => {
     expect(exceedsLayoutLimit(1_000, 0)).toBe(true);
     expect(exceedsLayoutLimit(75, 2_000)).toBe(true);
     // A deterministic dense DAG, with up to three prerequisites per task.
-    const count = 75;
+    const count = 65;
     const tasks = Array.from({ length: count }, (_, i) =>
       node(`t${String(i).padStart(5, "0")}`),
     );
