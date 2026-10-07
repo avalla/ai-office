@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Background,
@@ -28,6 +28,7 @@ import {
   layoutGraph,
   lineage,
   milestoneKey,
+  milestoneNodeSize,
   nodeSize,
   taskKey,
   type GraphDirection,
@@ -124,7 +125,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
         aria-pressed={data.selected}
         aria-label={`${task.title}. ${statusLabel(task.operationalStatus)}. ${
           task.ready
-            ? "Ready to start"
+            ? "Runnable"
             : waiting > 0
               ? `Waiting on ${waiting} prerequisite${waiting === 1 ? "" : "s"}`
               : "Not startable"
@@ -144,7 +145,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
         <span className="line-clamp-2 text-sm font-medium leading-snug">
           {task.title}
         </span>
-        <span className="flex items-center justify-between gap-2">
+        <span className="flex items-center justify-between gap-2 [&_span]:whitespace-nowrap">
           <StatusBadge
             label={statusLabel(task.operationalStatus)}
             tone={taskStatusTone(task.operationalStatus)}
@@ -152,7 +153,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
           <span className="flex items-center gap-1.5 text-xs text-subtle tabular-nums">
             {task.ready && (
               <span className="rounded border border-emerald-300 px-1 text-emerald-700 dark:border-emerald-700 dark:text-emerald-300">
-                ready
+                runnable
               </span>
             )}
             {waiting > 0 && (
@@ -194,7 +195,7 @@ function MilestoneNodeView({ data }: NodeProps<MilestoneFlowNode>) {
         aria-pressed={data.selected}
         aria-label={`Milestone ${milestone.title}. ${milestone.status}. ${verified} of ${total} requirements verified. ${data.memberCount} visible tasks.`}
         onClick={() => data.onSelect(milestoneKey(milestone.milestoneId))}
-        style={{ width: nodeSize.width }}
+        style={{ width: milestoneNodeSize.width }}
         className={cn(
           "flex flex-col gap-1 rounded-lg border-2 border-dashed bg-muted px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           data.selected ? "border-primary" : "border-subtle",
@@ -230,6 +231,8 @@ const nodeTypes = { task: TaskNodeView, milestone: MilestoneNodeView };
 /* Page                                                                        */
 /* -------------------------------------------------------------------------- */
 
+const readableZoom = 0.55;
+
 const prefersReducedMotion = () =>
   typeof window !== "undefined" &&
   window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
@@ -260,7 +263,7 @@ function TaskGraphCanvas({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [focusOnly, setFocusOnly] = useState(false);
   const [showCritical, setShowCritical] = useState(true);
-  const { fitView } = useReactFlow();
+  const { fitView, setViewport } = useReactFlow();
 
   const patch = (change: Partial<GraphFilters>) =>
     setFilters((current) => ({ ...current, ...change }));
@@ -355,6 +358,8 @@ function TaskGraphCanvas({
         id: taskKey(task.taskId),
         type: "task",
         position,
+        width: nodeSize.width,
+        height: nodeSize.height,
         draggable: false,
         connectable: false,
         focusable: false,
@@ -380,6 +385,8 @@ function TaskGraphCanvas({
         id: milestoneKey(milestone.milestoneId),
         type: "milestone",
         position,
+        width: milestoneNodeSize.width,
+        height: milestoneNodeSize.height,
         draggable: false,
         connectable: false,
         focusable: false,
@@ -397,7 +404,16 @@ function TaskGraphCanvas({
         },
       });
     }
-    return result;
+    // DOM order is keyboard order: follow the flow, not the id sort.
+    const along = (node: { position: { x: number; y: number } }) =>
+      direction === "LR"
+        ? [node.position.x, node.position.y]
+        : [node.position.y, node.position.x];
+    return result.sort((a, b) => {
+      const [a1, a2] = along(a);
+      const [b1, b2] = along(b);
+      return a1! - b1! || a2! - b2!;
+    });
   }, [
     criticalIds,
     direction,
@@ -489,12 +505,46 @@ function TaskGraphCanvas({
   const layoutSignature = `${direction}|${visible.tasks
     .map((t) => t.taskId)
     .join(",")}|${visible.milestones.map((m) => m.milestoneId).join(",")}`;
-  useEffect(() => {
-    const frame = requestAnimationFrame(() =>
-      fitView({ padding: 0.15, duration: prefersReducedMotion() ? 0 : 200 }),
+  const canvasRef = useRef<HTMLDivElement>(null);
+  /**
+   * Frame the whole graph, but never below a readable zoom: a long chain fitted
+   * entirely into view is unreadable, so past that floor the view starts at the
+   * beginning of the flow and the minimap and Fit control cover the rest.
+   */
+  const frame = () => {
+    const element = canvasRef.current;
+    if (element === null || positions.size === 0) return;
+    const boxes = [...positions.values()];
+    const minX = Math.min(...boxes.map((b) => b.x));
+    const minY = Math.min(...boxes.map((b) => b.y));
+    const width = Math.max(...boxes.map((b) => b.x)) + nodeSize.width - minX;
+    const height = Math.max(...boxes.map((b) => b.y)) + nodeSize.height - minY;
+    const margin = 32;
+    const fit = Math.min(
+      (element.clientWidth - 2 * margin) / width,
+      (element.clientHeight - 2 * margin) / height,
+      1,
     );
-    return () => cancelAnimationFrame(frame);
-  }, [fitView, layoutSignature]);
+    const zoom = Math.max(fit, readableZoom);
+    const place = (size: number, available: number, origin: number) =>
+      size * zoom <= available
+        ? (available - size * zoom) / 2 - origin * zoom
+        : margin - origin * zoom;
+    void setViewport(
+      {
+        x: place(width, element.clientWidth, minX),
+        y: place(height, element.clientHeight, minY),
+        zoom,
+      },
+      { duration: prefersReducedMotion() ? 0 : 200 },
+    );
+  };
+  const frameRef = useRef(frame);
+  frameRef.current = frame;
+  useEffect(() => {
+    const handle = requestAnimationFrame(() => frameRef.current());
+    return () => cancelAnimationFrame(handle);
+  }, [layoutSignature]);
 
   const focusOn = useCallback(
     (key: string) => {
@@ -631,7 +681,7 @@ function TaskGraphCanvas({
         {(
           [
             [
-              "Ready only",
+              "Runnable only",
               filters.readyOnly,
               (v: boolean) => patch({ readyOnly: v }),
             ],
@@ -682,6 +732,7 @@ function TaskGraphCanvas({
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_21rem]">
         <div
+          ref={canvasRef}
           className="h-[70vh] min-h-[26rem] overflow-hidden rounded-xl border border-border bg-surface"
           onKeyDown={(event) => {
             if (event.key === "Escape") setSelectedKey(null);
@@ -711,6 +762,7 @@ function TaskGraphCanvas({
               <Background gap={24} />
               <Controls showInteractive={false} />
               <MiniMap
+                className="!hidden sm:!block"
                 pannable
                 zoomable
                 nodeColor={(node) =>
@@ -722,6 +774,7 @@ function TaskGraphCanvas({
                       ]
                     : colour.edge
                 }
+                bgColor="hsl(var(--surface))"
                 maskColor="rgba(120,130,150,0.18)"
               />
             </ReactFlow>
@@ -760,14 +813,14 @@ function TaskGraphCanvas({
           ) : (
             <>
               <dl className="grid grid-cols-2 gap-3">
-                <Fact label="Ready to start" value={totals.ready} />
+                <Fact label="Runnable now" value={totals.ready} />
                 <Fact label="Waiting on prerequisites" value={totals.waiting} />
                 <Fact label="Dependencies" value={graph.edges.length} />
                 <Fact label="Critical path" value={graph.criticalPath.length} />
               </dl>
               <TaskList
-                title="Ready to start"
-                empty="Nothing visible is ready."
+                title="Runnable now"
+                empty="Nothing visible is runnable."
                 tasks={readyTasks.slice(0, 10)}
                 onFocus={focusOn}
                 note={
@@ -903,7 +956,7 @@ function TaskPanel({
         </div>
         <p className="text-xs">
           {task.ready
-            ? "Ready to start: every prerequisite is completed."
+            ? "Runnable: its status allows work and every prerequisite is completed."
             : task.unmetPrerequisiteIds.length > 0
               ? `Blocked by ${task.unmetPrerequisiteIds.length} unfinished prerequisite${task.unmetPrerequisiteIds.length === 1 ? "" : "s"}.`
               : "Not startable in its current state."}

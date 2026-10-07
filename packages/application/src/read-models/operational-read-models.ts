@@ -956,8 +956,9 @@ export interface TaskGraphNode {
   /** Prerequisites whose recorded status is not `completed`, sorted by id. */
   unmetPrerequisiteIds: readonly string[];
   /**
-   * Not finished, not cancelled, and every prerequisite is completed: the same
-   * rule that gates admission, evaluated over the whole project.
+   * Runnable by the admission rule (`isTaskRunnable`) and every prerequisite is
+   * completed: exactly `ManageTaskDependencies.readiness().runnable`, evaluated
+   * over the whole project. A blocked or terminal task is never ready.
    */
   ready: boolean;
 }
@@ -988,7 +989,7 @@ export interface TaskGraph {
   milestones: readonly TaskGraphMilestone[];
   edges: readonly TaskGraphEdge[];
   /**
-   * The longest prerequisite chain through unfinished work, from the first task
+   * The longest prerequisite chain through unfinished (non-terminal) work, from the first task
    * to start to the last to finish. Empty when nothing is unfinished. Ties are
    * broken by task id so the result is deterministic.
    */

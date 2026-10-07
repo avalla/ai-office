@@ -29,6 +29,7 @@ import type {
   OperationalAgentRunRecord,
   OperationalAttentionTaskRecord,
   OperationalMilestoneRecord,
+  TaskGraphSnapshotRecord,
   OperationalPipelineRunRecord,
   OperationalProjectRecord,
   OperationalReadRepository,
@@ -350,23 +351,6 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
         status: row.status,
         createdAt: new Date(row.created_at),
         updatedAt: new Date(row.updated_at),
-      }));
-  }
-
-  async listTaskDependencies(
-    projectId: string,
-  ): Promise<{ taskId: string; dependsOnTaskId: string }[]> {
-    return this.database
-      .query<{ task_id: string; depends_on_task_id: string }, [string]>(
-        `SELECT task_id, depends_on_task_id
-         FROM task_dependency
-         WHERE project_id = ?
-         ORDER BY task_id, depends_on_task_id`,
-      )
-      .all(projectId)
-      .map((row) => ({
-        taskId: row.task_id,
-        dependsOnTaskId: row.depends_on_task_id,
       }));
   }
 
@@ -764,16 +748,38 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
          LIMIT ? OFFSET ?`,
       )
       .all(projectId, limit, offset)
-      .map((row) => ({
-        id: row.id,
-        projectId: row.project_id,
-        title: row.title,
-        ...(row.description === null ? {} : { description: row.description }),
-        status: row.status,
-        priority: row.priority,
-        createdAt: new Date(row.created_at),
-        updatedAt: new Date(row.updated_at),
-      }));
+      .map(taskRecord);
+  }
+
+  async readTaskGraphSnapshot(
+    projectId: string,
+  ): Promise<TaskGraphSnapshotRecord> {
+    // One read transaction: both statements see the same committed state, so
+    // an edge can never reference a task the task list lacks.
+    return this.database.transaction(() => ({
+      tasks: this.database
+        .query<TaskRow, [string]>(
+          `SELECT id, project_id, title, description, status, priority,
+                  created_at, updated_at
+           FROM task
+           WHERE project_id = ?
+           ORDER BY id`,
+        )
+        .all(projectId)
+        .map(taskRecord),
+      dependencies: this.database
+        .query<{ task_id: string; depends_on_task_id: string }, [string]>(
+          `SELECT task_id, depends_on_task_id
+           FROM task_dependency
+           WHERE project_id = ?
+           ORDER BY task_id, depends_on_task_id`,
+        )
+        .all(projectId)
+        .map((row) => ({
+          taskId: row.task_id,
+          dependsOnTaskId: row.depends_on_task_id,
+        })),
+    }))();
   }
 
   async findTask(projectId: string, taskId: string): Promise<TaskProps | null> {
@@ -1335,6 +1341,19 @@ const activeRunStatuses: readonly AgentRunStatus[] = [
   "running",
   "reviewing",
 ];
+
+function taskRecord(row: TaskRow): TaskProps {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    title: row.title,
+    ...(row.description === null ? {} : { description: row.description }),
+    status: row.status,
+    priority: row.priority,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
+}
 
 function placeholders(count: number): string {
   return new Array(count).fill("?").join(", ");

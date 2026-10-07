@@ -5,13 +5,13 @@
  * presentation surface agrees; a browser only lays the result out.
  */
 
+import { isTaskRunnable } from "@ai-office/domain/agent/run-eligibility.ts";
+import { isTerminalTaskStatus } from "@ai-office/domain/task/task.ts";
 import type {
   TaskGraphEdge,
   TaskGraphNode,
   TaskOperationalState,
 } from "./operational-read-models.ts";
-
-const nonReadyStatuses = new Set(["completed", "cancelled", "failed"]);
 
 export function projectTaskGraphNodes(
   tasks: readonly TaskOperationalState[],
@@ -39,7 +39,8 @@ export function projectTaskGraphNodes(
         assignedAgent: task.assignedAgent,
         milestoneIds: (task.milestones ?? []).map((m) => m.milestoneId).sort(),
         unmetPrerequisiteIds: unmet,
-        ready: !nonReadyStatuses.has(task.recordedStatus) && unmet.length === 0,
+        // The admission rule of ManageTaskDependencies.readiness, not a copy.
+        ready: isTaskRunnable(task.recordedStatus) && unmet.length === 0,
       };
     })
     .sort((a, b) => a.taskId.localeCompare(b.taskId));
@@ -56,8 +57,7 @@ export function projectCriticalPath(
 ): string[] {
   const unfinished = new Set(
     nodes
-      .filter((node) => node.recordedStatus !== "completed")
-      .filter((node) => node.recordedStatus !== "cancelled")
+      .filter((node) => !isTerminalTaskStatus(node.recordedStatus))
       .map((node) => node.taskId),
   );
   const dependents = new Map<string, string[]>();

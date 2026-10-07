@@ -16,6 +16,7 @@ import {
   OperationalResourceNotFoundError,
 } from "@ai-office/application/queries/operational-query-service.ts";
 import { queryLimits } from "@ai-office/application/protocol/query-protocol.ts";
+import { isTaskRunnable } from "@ai-office/domain/agent/run-eligibility.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
 
@@ -40,10 +41,8 @@ async function fixture() {
   const dependencies = new SqliteTaskDependencyRepository(database);
   const governance = new SqliteGovernanceRepository(database);
   const taskRequirements = new SqliteTaskRequirementRepository(database);
-  const queries = new OperationalQueryService({
-    reads: new SqliteOperationalReadRepository(database),
-    clock,
-  });
+  const reads = new SqliteOperationalReadRepository(database);
+  const queries = new OperationalQueryService({ reads, clock });
 
   async function project(id: string): Promise<void> {
     await projects.save(Project.create({ id, name: `Project ${id}`, now }));
@@ -63,6 +62,9 @@ async function fixture() {
       createdAt: now,
     });
   }
+  function setStatus(id: string, status: string): void {
+    database.prepare("UPDATE task SET status = ? WHERE id = ?").run(status, id);
+  }
   function complete(id: string): void {
     database
       .prepare("UPDATE task SET status = 'completed' WHERE id = ?")
@@ -70,11 +72,13 @@ async function fixture() {
   }
   return {
     database,
+    reads,
     queries,
     project,
     task,
     depend,
     complete,
+    setStatus,
     governance: new ManageGovernance(projects, governance, ids, clock),
     taskRequirements,
   };
@@ -180,21 +184,130 @@ describe("task dependency graph read model", () => {
       OperationalResourceNotFoundError,
     );
   });
+  test.each(["cancelled", "failed"])(
+    "a %s prerequisite keeps its dependents blocked",
+    async (status) => {
+      const f = await fixture();
+      await f.project("p");
+      for (const id of ["gone", "next"]) await f.task("p", id);
+      await f.depend("p", "next", "gone");
+      f.setStatus("gone", status);
 
-  test("a prerequisite that is cancelled or failed keeps its dependents blocked", async () => {
+      const graph = await f.queries.getTaskGraph("p");
+
+      expect(graph.tasks.find((t) => t.taskId === "next")).toMatchObject({
+        ready: false,
+        unmetPrerequisiteIds: ["gone"],
+      });
+    },
+  );
+
+  test("readiness is exactly the admission rule for every task status", async () => {
     const f = await fixture();
     await f.project("p");
-    for (const id of ["gone", "next"]) await f.task("p", id);
-    await f.depend("p", "next", "gone");
-    f.database
-      .prepare("UPDATE task SET status = 'cancelled' WHERE id = 'gone'")
-      .run();
+    const statuses = [
+      "pending",
+      "assigned",
+      "running",
+      "blocked",
+      "waiting_review",
+      "completed",
+      "failed",
+      "cancelled",
+    ] as const;
+    for (const status of statuses) {
+      await f.task("p", status);
+      f.setStatus(status, status);
+    }
+    // A runnable task whose prerequisite is not completed is never ready.
+    await f.task("p", "needs-pending");
+    await f.depend("p", "needs-pending", "pending");
+
+    const graph = await f.queries.getTaskGraph("p");
+    const ready = (id: string) =>
+      graph.tasks.find((t) => t.taskId === id)?.ready;
+
+    for (const status of statuses)
+      expect(ready(status), status).toBe(isTaskRunnable(status));
+    expect(ready("blocked")).toBe(false);
+    expect(ready("needs-pending")).toBe(false);
+  });
+
+  test("failed work is not unfinished and never sits on the critical path", async () => {
+    const f = await fixture();
+    await f.project("p");
+    for (const id of ["lone-failed", "a", "bad", "z"]) await f.task("p", id);
+    f.setStatus("lone-failed", "failed");
+    f.setStatus("bad", "failed");
+    // a -> bad -> z, with the failed task in the middle of the chain.
+    await f.depend("p", "bad", "a");
+    await f.depend("p", "z", "bad");
 
     const graph = await f.queries.getTaskGraph("p");
 
-    expect(graph.tasks.find((t) => t.taskId === "next")).toMatchObject({
+    // A failed task alone is not a chain, and it is removed from the chain it
+    // sits in: a and z are no longer connected through unfinished work.
+    expect(graph.criticalPath).toEqual([]);
+    // Existing prerequisite rules still hold for the dependent.
+    expect(graph.tasks.find((t) => t.taskId === "z")).toMatchObject({
       ready: false,
-      unmetPrerequisiteIds: ["gone"],
+      unmetPrerequisiteIds: ["bad"],
+    });
+  });
+
+  test("a concurrent reprioritisation or insert cannot skip or repeat a task", async () => {
+    const f = await fixture();
+    await f.project("p");
+    const length = queryLimits.tasks.default * 3;
+    for (let index = 0; index < length; index += 1)
+      await f.task("p", `t${String(index).padStart(4, "0")}`);
+    await f.depend("p", "t0299", "t0000");
+    let mutated = false;
+    const original = f.reads.listTaskRunFacts.bind(f.reads);
+    // The first batch's projection awaits; shuffle the ordering underneath it,
+    // the way a concurrent writer would.
+    f.reads.listTaskRunFacts = async (...args) => {
+      if (!mutated) {
+        mutated = true;
+        f.database.prepare("UPDATE task SET priority = 1000 - rowid").run();
+        await f.task("p", "inserted-during-read");
+      }
+      return original(...args);
+    };
+
+    const graph = await f.queries.getTaskGraph("p");
+
+    const ids = graph.tasks.map((t) => t.taskId);
+    expect(mutated).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toHaveLength(length);
+    expect(ids).not.toContain("inserted-during-read");
+    expect(graph.edges).toEqual([
+      { taskId: "t0299", dependsOnTaskId: "t0000" },
+    ]);
+  });
+
+  test("the graph never uses OFFSET-paged task reads", async () => {
+    const f = await fixture();
+    await f.project("p");
+    await f.task("p", "a");
+    f.reads.listTasks = async () => {
+      throw new Error("the exhaustive graph must not page tasks");
+    };
+
+    await expect(f.queries.getTaskGraph("p")).resolves.toMatchObject({
+      tasks: [expect.objectContaining({ taskId: "a" })],
+    });
+  });
+
+  test("an empty project yields an empty graph", async () => {
+    const f = await fixture();
+    await f.project("p");
+    await expect(f.queries.getTaskGraph("p")).resolves.toMatchObject({
+      tasks: [],
+      edges: [],
+      milestones: [],
+      criticalPath: [],
     });
   });
 });

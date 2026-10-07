@@ -204,11 +204,15 @@ authoritative projection input, never a sample, so it is not paginated or
 truncated; tasks are projected in bounded batches but none is dropped.
 
 Readiness and the critical path are computed once in the application layer.
-A task is `ready` when it is not completed, cancelled, or failed and every
-prerequisite's recorded status is `completed` (the admission rule); a
-cancelled or failed prerequisite keeps its dependents blocked. The critical
-path is the longest chain of unfinished prerequisite-linked tasks, with ties
-broken by task id. Milestone membership is the same derived
+A task is `ready` when `isTaskRunnable` accepts its recorded status
+(`pending`, `assigned`, `running`, `waiting_review`; so never `blocked` or
+terminal) and every prerequisite's recorded status is `completed`: the same
+rule as `ManageTaskDependencies.readiness`. A cancelled or failed prerequisite
+keeps its dependents blocked. The critical path is the longest chain of
+non-terminal prerequisite-linked tasks, with ties broken by task id. Tasks and
+edges are read in one consistent SQLite read transaction
+(`readTaskGraphSnapshot`), never with OFFSET pages, so concurrent writes cannot
+skip or repeat a task. Milestone membership is the same derived
 task→requirement→milestone link used elsewhere; there is no task→milestone
 dependency.
 

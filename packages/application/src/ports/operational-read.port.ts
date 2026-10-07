@@ -88,6 +88,11 @@ export interface CountRecord {
   count: number;
 }
 
+export interface TaskGraphSnapshotRecord {
+  tasks: TaskProps[];
+  dependencies: { taskId: string; dependsOnTaskId: string }[];
+}
+
 export interface OperationalMilestoneRecord {
   id: string;
   projectId: string;
@@ -506,12 +511,12 @@ export interface OperationalReadRepository {
   listRequirements(projectId: string): Promise<OperationalRequirementRecord[]>;
   listAgents(projectIds: readonly string[]): Promise<OperationalAgentRecord[]>;
   /**
-   * Every hard prerequisite edge of the project, never a page: a missing edge
-   * would silently change which tasks look ready.
+   * Every task and every hard prerequisite edge of the project, read in one
+   * consistent snapshot. Deliberately not a page: OFFSET pages drift under
+   * concurrent inserts or reprioritisation and would skip or repeat tasks, and
+   * reading edges separately could reference a task the snapshot lacks.
    */
-  listTaskDependencies(
-    projectId: string,
-  ): Promise<{ taskId: string; dependsOnTaskId: string }[]>;
+  readTaskGraphSnapshot(projectId: string): Promise<TaskGraphSnapshotRecord>;
 
   /* --- scoped projection inputs ------------------------------------------ */
 

@@ -7,8 +7,8 @@ import type {
   TaskOperationalStatus,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 
-export const nodeSize = { width: 232, height: 76 } as const;
-export const milestoneNodeSize = { width: 232, height: 64 } as const;
+export const nodeSize = { width: 264, height: 80 } as const;
+export const milestoneNodeSize = { width: 264, height: 64 } as const;
 
 export type GraphDirection = "LR" | "TB";
 
