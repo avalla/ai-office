@@ -449,8 +449,20 @@ describe("task dependency graph read model", () => {
   test("terminal follows the recorded status, not the operational one", async () => {
     const f = await fixture();
     await f.project("p");
-    for (const id of ["open", "failed", "retry", "next"]) await f.task("p", id);
+    for (const id of [
+      "open",
+      "failed",
+      "retry",
+      "next",
+      "done",
+      "cancelled",
+      "blocked",
+    ])
+      await f.task("p", id);
     f.setStatus("failed", "failed");
+    f.setStatus("done", "completed");
+    f.setStatus("cancelled", "cancelled");
+    f.setStatus("blocked", "blocked");
     await f.depend("p", "next", "retry");
     // A failed latest run changes the operational status, but leaves the
     // recorded task pending and eligible to be completed after a retry.
@@ -487,5 +499,44 @@ describe("task dependency graph read model", () => {
       terminal: false,
     });
     expect(by("retry").completionUnblocks).toEqual(["next"]);
+    expect(by("done").terminal).toBe(true);
+    expect(by("cancelled").terminal).toBe(true);
+    expect(by("blocked").terminal).toBe(false);
+
+    const active = await f.queries.getProjectDetail("p", {
+      taskQuery: { status: "active" },
+    });
+    expect(active.tasks.items.map((task) => task.taskId).sort()).toEqual([
+      "blocked",
+      "next",
+      "open",
+      "retry",
+    ]);
+    expect(active.tasks.total).toBe(active.summary.tasks.open);
+    expect(active.summary.tasks).toMatchObject({
+      total: 7,
+      open: 4,
+      terminal: 3,
+    });
+    for (const task of active.tasks.items)
+      expect(task.terminal).toBe(by(task.taskId).terminal);
+
+    const failed = await f.queries.getProjectDetail("p", {
+      taskQuery: { status: "failed" },
+    });
+    expect(failed.tasks.items.map((task) => task.taskId).sort()).toEqual([
+      "failed",
+      "retry",
+    ]);
+    expect(
+      failed.tasks.items.find((task) => task.taskId === "retry"),
+    ).toMatchObject({
+      recordedStatus: "pending",
+      operationalStatus: "failed",
+      terminal: false,
+    });
+
+    const overview = await f.queries.getDashboardOverview();
+    expect(overview.totals.openTasks).toBe(active.tasks.total);
   });
 });

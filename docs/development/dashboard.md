@@ -216,7 +216,9 @@ only presents it:
   its dependents unmet.
 - `terminal`: the recorded status is terminal (`isTerminalTaskStatus`); not the
   same as an operational `failed`, which a runnable task can show after a failed
-  run.
+  run. The task list's `active` filter, project open-task counts, and graph
+  terminal flag use this same recorded-task rule. An operational `failed` filter
+  still finds both a failed task and an open task with a failed latest run.
 - `waiting`: not terminal and at least one prerequisite is unmet;
   `unmetPrerequisiteIds` lists them.
 - `needsAttention`: the task carries an authoritative attention reason
@@ -303,11 +305,11 @@ references, with a control to reveal the rest in batches of eight.
 ### Task search, filters, and pages
 
 The project task table searches title, description, and task ID with literal,
-case-insensitive matching. The default `active` view omits operational
-`failed`, `completed`, and `cancelled` tasks. The Status filter also offers
-`all` and each exact operational status, so terminal tasks remain available
-without occupying the default work queue. Status means the application's
-operational status;
+case-insensitive matching. The default `active` view includes every task whose
+recorded lifecycle is not terminal, even if its latest run makes its operational
+status `failed`. The Status filter also offers `all` and each exact operational
+status, so terminal tasks remain available without occupying the default work
+queue. Exact status filters use the application's operational status;
 priority is the persisted integer, including zero and negative values. Agent
 matches any active run or current assignment in an active pipeline, and
 "No current agent" matches neither. Historical run agents are excluded.

@@ -206,6 +206,7 @@ const task: TaskOperationalState = {
   description: "A clear and readable description.",
   priority: 0,
   recordedStatus: "pending",
+  terminal: false,
   operationalStatus: "in_progress",
   divergesFromRecordedStatus: true,
   divergenceReasons: ["agent_run_active_without_task_transition"],
