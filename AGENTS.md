@@ -1,5 +1,7 @@
 # AI Office project instructions
 
+Project-specific operating guidance for this repository's AI Office office is in [AI-OFFICE.md](AI-OFFICE.md); read it alongside this file.
+
 ## Mission
 
 Build and maintain AI Office as a local AI software office: one authoritative Runtime coordinates agents, persists project state in SQLite, meters LLM usage and costs, and mediates protected resource access through capabilities and controlled actions. A local persistent daemon is the current Runtime host, not a same-UID security boundary.
