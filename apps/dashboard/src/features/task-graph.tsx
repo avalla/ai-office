@@ -24,7 +24,12 @@ import type {
 import { Empty, Section, StatusBadge } from "../components/operations.tsx";
 import { Button, Input, Select, cn } from "../components/ui/primitives.tsx";
 import {
+  blockers,
+  blockingEdgeKeys,
   decideFraming,
+  nodeStateLabel,
+  idleState,
+  statusLabel,
   defaultGraphFilters,
   filterGraph,
   layoutGraph,
@@ -73,9 +78,6 @@ const statusOptions: readonly TaskOperationalStatus[] = [
   "cancelled",
 ];
 
-const statusLabel = (status: TaskOperationalStatus) =>
-  status.replaceAll("_", " ");
-
 const quickLabels: Record<QuickFilter, string> = {
   ready: "Ready",
   waiting: "Waiting on prerequisites",
@@ -83,15 +85,6 @@ const quickLabels: Record<QuickFilter, string> = {
   in_progress: "In progress",
   attention: "Needs attention",
 };
-
-/** Wording for a task that is neither ready nor waiting (read-model flags). */
-const idleState = (task: TaskGraphNode) =>
-  task.operationalStatus === "completed" ||
-  task.operationalStatus === "cancelled"
-    ? statusLabel(task.operationalStatus).replace(/^./, (c) => c.toUpperCase())
-    : "Not startable";
-
-const blockers = (count: number) => `${count} blocker${count === 1 ? "" : "s"}`;
 
 /* -------------------------------------------------------------------------- */
 /* Nodes                                                                       */
@@ -117,11 +110,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
   const target = data.direction === "LR" ? Position.Left : Position.Top;
   const source = data.direction === "LR" ? Position.Right : Position.Bottom;
   const waitingOn = task.unmetPrerequisiteIds.length;
-  const state = task.ready
-    ? "Ready to start"
-    : task.waiting
-      ? `Waiting on ${blockers(waitingOn)}`
-      : idleState(task);
+  const state = nodeStateLabel(task);
   return (
     <>
       <Handle
@@ -256,15 +245,8 @@ function TaskGraphCanvas({
     () => new Map(graph.tasks.map((task) => [task.taskId, task])),
     [graph.tasks],
   );
-  // Edges whose prerequisite is unmet for the dependent, taken from the read
-  // model's per-task lists rather than re-derived from statuses.
   const unmetPairs = useMemo(
-    () =>
-      new Set(
-        graph.tasks.flatMap((task) =>
-          task.unmetPrerequisiteIds.map((id) => `${id}>${task.taskId}`),
-        ),
-      ),
+    () => blockingEdgeKeys(graph.tasks),
     [graph.tasks],
   );
   const milestonesById = useMemo(
@@ -273,6 +255,7 @@ function TaskGraphCanvas({
   );
 
   // A live refresh can remove the selected task; never keep a dangling one.
+  const staleReset = useRef(false);
   const selectedTask =
     selectedKey === null ? null : (tasksById.get(selectedKey.slice(2)) ?? null);
 
@@ -280,6 +263,8 @@ function TaskGraphCanvas({
   // isolation if the id reappears.
   useEffect(() => {
     if (selectedKey !== null && selectedTask === null) {
+      // Data-driven, not a user clear: it must not count as one when framing.
+      staleReset.current = true;
       setSelectedKey(null);
       setFocusOnly(false);
     }
@@ -513,12 +498,15 @@ function TaskGraphCanvas({
   const previousSelection = useRef<string | null>(null);
   useEffect(() => {
     if (selectedKey === null && previousSelection.current !== null) {
-      clearedSelection.current = true;
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => {
-          clearedSelection.current = false;
-        }),
-      );
+      if (staleReset.current) staleReset.current = false;
+      else {
+        clearedSelection.current = true;
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            clearedSelection.current = false;
+          }),
+        );
+      }
     }
     previousSelection.current = selectedKey;
   }, [selectedKey]);
@@ -566,9 +554,19 @@ function TaskGraphCanvas({
       if (focusWasInPanel) asideRef.current?.focus();
     });
   };
+  const searchRef = useRef<HTMLInputElement>(null);
+  // Returning focus to the input after a jump must not reopen the results.
+  const refocusingSearch = useRef(false);
   const locate = (key: string) => {
     focusOn(key);
     setSearchOpen(false);
+    // The result button that held focus is about to unmount.
+    requestAnimationFrame(() => {
+      // focus() dispatches its event synchronously, so the flag cannot leak.
+      refocusingSearch.current = true;
+      searchRef.current?.focus();
+      refocusingSearch.current = false;
+    });
   };
 
   const fitGraph = () => {
@@ -648,6 +646,7 @@ function TaskGraphCanvas({
         <div className="relative flex min-w-56 flex-1 flex-col gap-1 text-xs text-subtle">
           <label htmlFor="graph-search">Find a task</label>
           <Input
+            ref={searchRef}
             id="graph-search"
             type="search"
             value={query}
@@ -656,7 +655,11 @@ function TaskGraphCanvas({
               setQuery(event.target.value);
               setSearchOpen(true);
             }}
+            onFocus={() => {
+              if (!refocusingSearch.current) setSearchOpen(true);
+            }}
             onKeyDown={(event) => {
+              if (event.key === "Escape") setSearchOpen(false);
               const first = search.matches[0];
               if (
                 event.key === "Enter" &&

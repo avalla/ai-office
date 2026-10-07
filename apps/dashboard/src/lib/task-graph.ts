@@ -251,3 +251,44 @@ export function decideFraming(input: {
   if (input.actionChanged || input.cleared || !input.userMoved) return "frame";
   return "keep";
 }
+
+export const statusLabel = (status: TaskOperationalStatus) =>
+  status.replaceAll("_", " ");
+
+export const blockers = (count: number) =>
+  `${count} blocker${count === 1 ? "" : "s"}`;
+
+/** Wording for a task that is neither ready nor waiting (read-model flags). */
+export function idleState(task: TaskGraphNode): string {
+  const finished =
+    task.operationalStatus === "completed" ||
+    task.operationalStatus === "cancelled" ||
+    task.operationalStatus === "failed";
+  return finished
+    ? statusLabel(task.operationalStatus).replace(/^./, (c) => c.toUpperCase())
+    : "Not startable";
+}
+
+/** One line saying what a task is doing, from the read model's flags only. */
+export function nodeStateLabel(task: TaskGraphNode): string {
+  if (task.ready) return "Ready to start";
+  if (task.waiting)
+    return `Waiting on ${blockers(task.unmetPrerequisiteIds.length)}`;
+  return idleState(task);
+}
+
+/**
+ * `prerequisite>dependent` keys of the edges that still constrain work: the
+ * dependent is waiting and lists the prerequisite as unmet. Built from the
+ * per-task read-model lists, never from statuses.
+ */
+export function blockingEdgeKeys(
+  tasks: readonly TaskGraphNode[],
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const task of tasks)
+    if (task.waiting)
+      for (const id of task.unmetPrerequisiteIds)
+        keys.add(`${id}>${task.taskId}`);
+  return keys;
+}

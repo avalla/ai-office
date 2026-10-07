@@ -335,15 +335,15 @@ describe("task dependency graph read model", () => {
     });
     // pending: ready + waits(waiting); running: ready, in progress; blocked and
     // failed carry attention; done is finished.
-    expect(graph.summary).toMatchObject({
+    expect(graph.summary).toEqual({
       total: 6,
+      ready: 2,
       waiting: 1,
       blocked: 1,
       inProgress: 1,
+      needsAttention: 2,
     });
     expect(byId.get("running")?.ready).toBe(true);
-    expect(graph.summary.ready).toBe(2);
-    expect(graph.summary.needsAttention).toBeGreaterThanOrEqual(2);
   });
 
   test("a blocked task with an unmet prerequisite is waiting and not ready", async () => {

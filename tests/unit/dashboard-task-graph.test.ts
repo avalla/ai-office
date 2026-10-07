@@ -4,7 +4,9 @@ import type {
   TaskGraphNode,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
+  blockingEdgeKeys,
   decideFraming,
+  nodeStateLabel,
   searchTasks,
   defaultGraphFilters,
   filterGraph,
@@ -192,6 +194,54 @@ describe("dashboard task graph", () => {
     // Completed tasks are searchable even though the graph hides them.
     expect(searchTasks(graph, "done").matches.map((t) => t.taskId)).toEqual([
       "done",
+    ]);
+  });
+
+  test("node wording comes from the read model's flags, not from statuses", () => {
+    const by = (id: string) => graph.tasks.find((t) => t.taskId === id)!;
+    expect(nodeStateLabel(by("a"))).toBe("Ready to start");
+    expect(nodeStateLabel(by("b"))).toBe("Waiting on 1 blocker");
+    expect(nodeStateLabel(by("d"))).toBe("Waiting on 2 blockers");
+    expect(nodeStateLabel(by("done"))).toBe("Completed");
+    // A failed or cancelled task keeps its unmet prerequisite but is not waiting.
+    expect(
+      nodeStateLabel(
+        node("x", {
+          operationalStatus: "failed",
+          recordedStatus: "failed",
+          ready: false,
+          waiting: false,
+          unmetPrerequisiteIds: ["a"],
+        }),
+      ),
+    ).toBe("Failed");
+    expect(
+      nodeStateLabel(
+        node("y", {
+          ready: false,
+          waiting: false,
+          operationalStatus: "blocked",
+        }),
+      ),
+    ).toBe("Not startable");
+  });
+
+  test("only edges into a waiting task with an unmet prerequisite are blocking", () => {
+    const tasks = [
+      ...graph.tasks,
+      node("z", {
+        operationalStatus: "cancelled",
+        recordedStatus: "cancelled",
+        ready: false,
+        waiting: false,
+        unmetPrerequisiteIds: ["a"],
+      }),
+    ];
+    expect([...blockingEdgeKeys(tasks)].sort()).toEqual([
+      "a>b",
+      "a>c",
+      "b>d",
+      "c>d",
     ]);
   });
 
