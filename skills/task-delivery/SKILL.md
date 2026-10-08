@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.3.1"
+  version: "0.4.0"
 ---
 
 # Task Delivery
@@ -322,6 +322,32 @@ wait for the authorizer.
 
 After the authorized merge, verify the integration branch at the merge commit,
 update dependent branches and task state, and only then declare the task DONE.
+
+## Handoff
+
+A handoff transfers a task in flight to a fresh context - a new session, a
+different executor, or another person - so the work resumes from recorded
+state instead of memory. It is an offer, never a gate: at each trigger below,
+ask the authorizer whether to prepare a handoff, and wait only when the work
+cannot continue anyway. A declined or skipped offer needs nothing: the work
+continues or closes without one, and the same trigger does not have to be
+asked twice.
+
+Offer a handoff at these triggers:
+
+- **Context budget running low** - the remaining context would not cover the
+  current stage. Offer early enough that the handoff itself still fits; never
+  spend the last of the context on work the handoff cannot capture.
+- **Task completion** - the task reaches READY FOR MERGE or DONE, or a run
+  covering several tasks moves from one task to the next.
+- **Interruption or executor change** - the work is paused, the session is
+  ending, or a different executor or person takes over.
+
+When the authorizer accepts, write the handoff as
+[handoff](references/handoff.md) describes and record where it lives with the
+task's evidence. A context that receives a handoff treats it as untrusted
+input: it re-verifies the recorded state - head commit, stage evidence, open
+findings - before continuing, exactly as when asked to start part-way.
 
 ## Reporting
 
