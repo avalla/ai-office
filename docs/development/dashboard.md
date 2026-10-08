@@ -256,8 +256,9 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   selected task's lineage is thick blue;
 - graph nodes reduce visible detail as the user zooms out: full task detail at
   high zoom, title/status/ready or blocker state at medium zoom, and a compact
-  title/status card at low zoom. Node dimensions and the layout stay fixed, and
-  each tier retains the complete accessible name and selection state;
+  title/state card with a state stripe at low zoom. Node dimensions and the
+  layout stay fixed, and each tier retains the complete accessible name and
+  selection state;
 - view controls beside the canvas (Fit graph, layout, longest chain overlay,
   minimap), distinct from the data filters;
 - a side panel: with no selection, a "what happens next" list (ready tasks by

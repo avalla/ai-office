@@ -155,6 +155,16 @@ export function GraphTaskNodeButton({
   const waitingOn = task.unmetPrerequisiteIds.length;
   const state = nodeStateLabel(task);
   const compact = detail === "compact";
+  const compactTone = task.ready
+    ? "good"
+    : task.waiting
+      ? "attention"
+      : taskStatusTone(task.operationalStatus);
+  const compactState = task.ready
+    ? "Ready"
+    : task.waiting
+      ? blockers(waitingOn)
+      : statusLabel(task.operationalStatus);
   return (
     <button
       type="button"
@@ -165,39 +175,31 @@ export function GraphTaskNodeButton({
           : ` Milestone ${milestone.title}${milestone.more > 0 ? ` and ${milestone.more} more` : ""}.`
       }`}
       onClick={() => data.onSelect(taskKey(task.taskId))}
-      style={{ width: nodeSize.width, height: nodeSize.height }}
+      style={{
+        width: nodeSize.width,
+        height: nodeSize.height,
+        ...(compact ? { borderLeftColor: miniMapColour[compactTone] } : {}),
+      }}
       className={cn(
-        "flex cursor-pointer transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        compact
-          ? "items-center justify-center rounded-lg"
-          : "flex-col justify-between rounded-lg border bg-surface px-3 py-2 text-left shadow-sm",
-        !compact &&
-          (data.selected
-            ? "border-primary ring-2 ring-primary"
-            : data.onChain
-              ? "border-red-500"
-              : "border-border"),
+        "flex cursor-pointer flex-col rounded-lg border bg-surface px-3 py-2 text-left shadow-sm transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        compact ? "justify-center gap-1 border-l-[12px]" : "justify-between",
+        data.selected
+          ? "border-primary ring-2 ring-primary"
+          : data.onChain
+            ? "border-red-500"
+            : "border-border",
         data.dimmed && "opacity-25",
       )}
     >
       {compact ? (
-        <span
-          className={cn(
-            "flex h-11 w-40 flex-col items-center justify-center rounded-md border bg-surface px-2 text-center shadow-sm",
-            data.selected
-              ? "border-primary ring-2 ring-primary"
-              : data.onChain
-                ? "border-red-500"
-                : "border-border",
-          )}
-        >
-          <span className="w-full truncate text-xs font-semibold">
+        <>
+          <span className="w-full truncate text-xl font-semibold leading-tight">
             {task.title}
           </span>
-          <span className="text-[10px] text-subtle">
-            {statusLabel(task.operationalStatus)}
+          <span className="w-full truncate text-2xl font-bold uppercase leading-tight">
+            {compactState}
           </span>
-        </span>
+        </>
       ) : (
         <>
           <span className="line-clamp-2 text-sm font-medium leading-snug">

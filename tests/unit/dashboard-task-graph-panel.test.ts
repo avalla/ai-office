@@ -133,7 +133,7 @@ test("graph node tiers preserve accessible identity, selection, and fixed footpr
     expect(html).toContain(`aria-label="${name}"`);
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("ring-2 ring-primary");
-    expect(html).toContain('style="width:264px;height:96px"');
+    expect(html).toContain('style="width:264px;height:96px');
   }
   // Remove the full accessible name to inspect only the visible tier content.
   const visible = (html: string) => html.replace(/aria-label="[^"]+"/, "");
@@ -142,9 +142,39 @@ test("graph node tiers preserve accessible identity, selection, and fixed footpr
   expect(visible(medium)).toContain("2 blockers");
   expect(visible(medium)).not.toContain("Current milestone");
   expect(visible(medium)).not.toContain("P3");
-  expect(visible(compact)).toContain("not started");
-  expect(visible(compact)).not.toContain("2 blockers");
+  expect(visible(compact)).toContain("2 blockers");
+  expect(visible(compact)).toContain("border-left-color:#f59e0b");
   expect(visible(compact)).not.toContain("Current milestone");
+});
+
+test("compact graph nodes distinguish ready from waiting with text and a stripe", () => {
+  const base = {
+    milestone: null,
+    dimmed: false,
+    selected: false,
+    onChain: false,
+    direction: "LR" as const,
+    onSelect: () => {},
+  };
+  const render = (task: TaskGraphNode) =>
+    renderToStaticMarkup(
+      createElement(GraphTaskNodeButton, {
+        data: { ...base, task },
+        detail: "compact",
+      }),
+    );
+  const ready = render(node("ready"));
+  const waiting = render({
+    ...node("waiting"),
+    ready: false,
+    waiting: true,
+    unmetPrerequisiteIds: ["prerequisite"],
+  });
+
+  expect(ready).toContain("Ready</span>");
+  expect(ready).toContain("border-left-color:#10b981");
+  expect(waiting).toContain("1 blocker</span>");
+  expect(waiting).toContain("border-left-color:#f59e0b");
 });
 
 test("shipped dashboard CSS includes the compact node utilities", () => {
@@ -153,10 +183,10 @@ test("shipped dashboard CSS includes the compact node utilities", () => {
     "utf8",
   );
   for (const selector of [
-    ".h-11{",
-    ".w-40{",
-    ".text-center{",
-    ".text-\\[10px\\]{",
+    ".border-l-\\[12px\\]{",
+    ".text-xl{",
+    ".text-2xl{",
+    ".gap-1{",
   ]) {
     expect(styles).toContain(selector);
   }
