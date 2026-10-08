@@ -253,7 +253,9 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   its blocker count, and its first milestone (`+N` for more). Arrows point from
   a prerequisite to the task that needs it. Dashed amber edges are unmet
   prerequisites, completed ones recede, the longest chain is thick red, and a
-  selected task's lineage is thick blue;
+  selected task's lineage is thick blue. A small cue below a task counts its
+  direct completed prerequisites hidden from the current view; the task's
+  accessible name includes the same context;
 - view controls beside the canvas (Fit graph, layout, longest chain overlay,
   minimap), distinct from the data filters;
 - a side panel: with no selection, a "what happens next" list (ready tasks by

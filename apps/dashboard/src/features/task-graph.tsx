@@ -41,6 +41,7 @@ import {
   statusLabel,
   defaultGraphFilters,
   filterGraph,
+  hiddenCompletedPrerequisiteCounts,
   nodeSize,
   otherDependentIds,
   quickFilters,
@@ -109,6 +110,7 @@ interface TaskNodeData extends Record<string, unknown> {
   dimmed: boolean;
   selected: boolean;
   onChain: boolean;
+  hiddenCompletedPrerequisites: number;
   direction: GraphDirection;
   onSelect: (key: string) => void;
 }
@@ -123,6 +125,10 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
   const source = data.direction === "LR" ? Position.Right : Position.Bottom;
   const waitingOn = task.unmetPrerequisiteIds.length;
   const state = nodeStateLabel(task);
+  const completedContext =
+    data.hiddenCompletedPrerequisites === 0
+      ? ""
+      : `${data.hiddenCompletedPrerequisites} completed prerequisite${data.hiddenCompletedPrerequisites === 1 ? "" : "s"} hidden from graph`;
   return (
     <>
       <Handle
@@ -138,7 +144,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
           milestone === null
             ? ""
             : ` Milestone ${milestone.title}${milestone.more > 0 ? ` and ${milestone.more} more` : ""}.`
-        }`}
+        }${completedContext === "" ? "" : ` ${completedContext}.`}`}
         onClick={() => data.onSelect(taskKey(task.taskId))}
         style={{ width: nodeSize.width, height: nodeSize.height }}
         className={cn(
@@ -190,6 +196,15 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
           </span>
         </span>
       </button>
+      {completedContext !== "" && (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute left-2 top-full z-10 mt-1 max-w-[240px] truncate rounded border border-border bg-surface px-1.5 text-xs leading-4 text-subtle shadow-sm"
+        >
+          ✓ {data.hiddenCompletedPrerequisites} completed prerequisite
+          {data.hiddenCompletedPrerequisites === 1 ? "" : "s"}
+        </span>
+      )}
       <Handle
         type="source"
         position={source}
@@ -355,6 +370,11 @@ function TaskGraphCanvas({
     [effectiveFilters, focusOnly, graph, related, selectedTask],
   );
 
+  const hiddenCompleted = useMemo(
+    () => hiddenCompletedPrerequisiteCounts(graph, visible),
+    [graph, visible],
+  );
+
   const tooLarge = exceedsLayoutLimit(
     visible.tasks.length,
     visible.edges.length,
@@ -413,6 +433,7 @@ function TaskGraphCanvas({
               : { title: first.title, more: task.milestoneIds.length - 1 },
           selected: selectedKey === taskKey(task.taskId),
           onChain: chainIds.has(task.taskId),
+          hiddenCompletedPrerequisites: hiddenCompleted.get(task.taskId) ?? 0,
           dimmed: related !== null && !related.has(task.taskId),
           onSelect: select,
         },
@@ -431,6 +452,7 @@ function TaskGraphCanvas({
   }, [
     chainIds,
     direction,
+    hiddenCompleted,
     milestonesById,
     positions,
     related,

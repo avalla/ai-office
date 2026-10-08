@@ -17,6 +17,7 @@ import {
   searchTasks,
   defaultGraphFilters,
   filterGraph,
+  hiddenCompletedPrerequisiteCounts,
   layoutGraph,
   lineage,
   taskKey,
@@ -109,6 +110,54 @@ describe("dashboard task graph", () => {
     expect(visible.hiddenTaskCount).toBe(1);
     // An edge to a hidden prerequisite is not drawn.
     expect(visible.edges).toHaveLength(4);
+  });
+
+  test("counts only direct completed prerequisites hidden by the current view", () => {
+    const mixedGraph: TaskGraph = {
+      ...graph,
+      tasks: [
+        ...graph.tasks,
+        node("done2", {
+          recordedStatus: "completed",
+          operationalStatus: "completed",
+          ready: false,
+        }),
+        node("target", {
+          ready: false,
+          waiting: true,
+          unmetPrerequisiteIds: ["a"],
+        }),
+      ],
+      edges: [
+        ...graph.edges,
+        { taskId: "target", dependsOnTaskId: "a" },
+        { taskId: "target", dependsOnTaskId: "done" },
+        { taskId: "target", dependsOnTaskId: "done2" },
+      ],
+    };
+    const counts = (filters = defaultGraphFilters, keep = new Set<string>()) =>
+      hiddenCompletedPrerequisiteCounts(
+        mixedGraph,
+        filterGraph(mixedGraph, filters, { keep }),
+      );
+
+    expect(counts().get("target")).toBe(2);
+    expect(counts().get("a")).toBe(1);
+    expect(counts(defaultGraphFilters, new Set(["done"])).get("target")).toBe(
+      1,
+    );
+    expect(counts(all).get("target")).toBeUndefined();
+    expect(counts({ ...all, quick: "waiting" }).get("target")).toBe(2);
+    const isolated = filterGraph(mixedGraph, defaultGraphFilters, {
+      only: new Set(["target", "done"]),
+    });
+    expect(
+      hiddenCompletedPrerequisiteCounts(mixedGraph, isolated).get("target"),
+    ).toBe(1);
+    expect(
+      hiddenCompletedPrerequisiteCounts(mixedGraph, isolated).has("a"),
+    ).toBe(false);
+    expect(isolated.tasks).toHaveLength(2);
   });
 
   test("keeps cancelled prerequisites visible while they block open work", () => {
