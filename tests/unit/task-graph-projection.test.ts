@@ -24,6 +24,7 @@ const node = (
   operationalStatus: "not_started",
   assignedAgent: null,
   milestoneIds: [],
+  milestoneGap: "no_requirement",
   unmetPrerequisiteIds: [],
   ready: false,
   waiting: false,
@@ -98,6 +99,41 @@ describe("projectLongestDependencyChain", () => {
     // With every node on or behind the cycle, nothing is ever ready to start,
     // so no chain is reported rather than a misleading partial one.
     expect(projectLongestDependencyChain(nodes, edges)).toEqual([]);
+  });
+});
+
+describe("projectTaskGraphNodes milestone gap", () => {
+  const state = (taskId: string, milestoneIds: string[] = []) =>
+    ({
+      taskId,
+      title: taskId,
+      priority: 0,
+      recordedStatus: "pending",
+      operationalStatus: "not_started",
+      assignedAgent: null,
+      attentionReasons: [],
+      terminal: false,
+      milestones: milestoneIds.map((milestoneId) => ({
+        milestoneId,
+        title: milestoneId,
+        status: "active",
+      })),
+    }) as unknown as TaskOperationalState;
+
+  test("separates a missing requirement from a requirement without a milestone", () => {
+    const gaps = Object.fromEntries(
+      projectTaskGraphNodes(
+        [state("a", ["m1"]), state("b"), state("c"), state("d", ["m1"])],
+        [],
+        new Set(["c", "d"]),
+      ).map((node) => [node.taskId, node.milestoneGap]),
+    );
+    expect(gaps).toEqual({
+      a: null,
+      b: "no_requirement",
+      c: "requirement_without_milestone",
+      d: null,
+    });
   });
 });
 

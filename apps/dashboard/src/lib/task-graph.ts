@@ -271,10 +271,9 @@ export function hiddenCompletedPrerequisiteCounts(
 }
 
 /**
- * Open tasks without any milestone that depend on, or are depended on by, a
- * task of the milestones being filtered. A milestone is derived from a task's
- * requirements, so such a neighbour is usually a task whose requirement was
- * recorded without a milestone and silently drops out of the milestone view.
+ * Open tasks outside every milestone that depend on, or are depended on by, a
+ * task of the milestones being filtered. The read model says why each one is
+ * outside (`milestoneGap`); the browser only selects and groups them.
  */
 export function unassignedMilestoneNeighbours(
   graph: TaskGraph,
@@ -294,7 +293,7 @@ export function unassignedMilestoneNeighbours(
   }
   return graph.tasks.filter(
     (task) =>
-      linked.has(task.taskId) && task.milestoneIds.length === 0 && !task.terminal,
+      linked.has(task.taskId) && task.milestoneGap !== null && !task.terminal,
   );
 }
 

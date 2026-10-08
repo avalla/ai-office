@@ -1077,7 +1077,11 @@ export class OperationalQueryService {
       taskId: edge.taskId,
       dependsOnTaskId: edge.dependsOnTaskId,
     }));
-    const tasks = projectTaskGraphNodes(states, edges);
+    const tasks = projectTaskGraphNodes(
+      states,
+      edges,
+      new Set(snapshot.unmilestonedRequirementTaskIds),
+    );
     return {
       generatedAt: now.toISOString(),
       projectId,

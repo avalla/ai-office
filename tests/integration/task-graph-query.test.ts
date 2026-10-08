@@ -219,6 +219,58 @@ describe("task dependency graph read model", () => {
     expect(graph.tasks.find((t) => t.taskId === "b")?.milestoneIds).toEqual([]);
   });
 
+  test("tells a task without a requirement from one whose requirement has no milestone", async () => {
+    const f = await fixture();
+    await f.project("p");
+    await f.project("other");
+    for (const id of ["owned", "none", "orphaned", "both"])
+      await f.task("p", id);
+    await f.task("other", "foreign");
+    const milestoneId = await f.governance.createMilestone({
+      projectId: "p",
+      title: "M1",
+    });
+    const requirement = (projectId: string, key: string, milestone?: string) =>
+      f.governance.createRequirement({
+        projectId,
+        key,
+        title: key,
+        description: key,
+        ...(milestone === undefined ? {} : { milestoneId: milestone }),
+      });
+    const link = async (
+      projectId: string,
+      taskId: string,
+      requirementId: string,
+    ) => f.taskRequirements.link({ projectId, taskId, requirementId, now });
+    const owned = await requirement("p", "REQ-OWNED", milestoneId);
+    const orphan = await requirement("p", "REQ-ORPHAN");
+    await link("p", "owned", owned);
+    await link("p", "orphaned", orphan);
+    await link("p", "both", owned);
+    await link("p", "both", orphan);
+    // Another project's unmilestoned requirement never leaks in.
+    await link("other", "foreign", await requirement("other", "REQ-OTHER"));
+
+    const snapshot = await f.reads.readTaskGraphSnapshot("p");
+    expect(snapshot.unmilestonedRequirementTaskIds).toEqual([
+      "both",
+      "orphaned",
+    ]);
+    const gap = Object.fromEntries(
+      (await f.queries.getTaskGraph("p")).tasks.map((task) => [
+        task.taskId,
+        task.milestoneGap,
+      ]),
+    );
+    expect(gap).toEqual({
+      owned: null,
+      both: null,
+      none: "no_requirement",
+      orphaned: "requirement_without_milestone",
+    });
+  });
+
   test("an unknown project is not found", async () => {
     const f = await fixture();
     await expect(f.queries.getTaskGraph("missing")).rejects.toBeInstanceOf(

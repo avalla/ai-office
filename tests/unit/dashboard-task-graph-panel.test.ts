@@ -15,6 +15,7 @@ import {
   OverviewTaskLists,
   TaskGraphView,
   TaskPanel,
+  milestoneGapNotes,
 } from "../../apps/dashboard/src/features/task-graph.tsx";
 
 function node(id: string): TaskGraphNode {
@@ -26,6 +27,7 @@ function node(id: string): TaskGraphNode {
     operationalStatus: "not_started",
     assignedAgent: null,
     milestoneIds: [],
+    milestoneGap: "no_requirement",
     unmetPrerequisiteIds: [],
     ready: true,
     waiting: false,
@@ -404,5 +406,32 @@ describe("task panel prerequisite wording", () => {
     const html = renderToStaticMarkup(createElement(Legend));
     expect(html).toContain("prerequisite neither completed nor in review");
     expect(html).toContain("prerequisite completed or in review");
+  });
+});
+
+describe("milestone gap notes", () => {
+  test("give each reason its own remedy and never presume a requirement", () => {
+    const task = (id: string, gap: TaskGraphNode["milestoneGap"]) => ({
+      ...node(id),
+      milestoneGap: gap,
+    });
+    const notes = milestoneGapNotes([
+      task("a", "requirement_without_milestone"),
+      task("b", "no_requirement"),
+      task("c", "no_requirement"),
+      task("d", "no_requirement"),
+      task("e", "no_requirement"),
+    ]);
+    expect(notes.map((note) => note.gap)).toEqual([
+      "requirement_without_milestone",
+      "no_requirement",
+    ]);
+    expect(notes[0]!.text).toContain("requirement:assign-milestone");
+    expect(notes[0]!.text).toContain("Title a");
+    expect(notes[1]!.text).toContain("task:link-requirement");
+    expect(notes[1]!.text).not.toContain("assign-milestone");
+    // Long lists are clipped.
+    expect(notes[1]!.text).toContain("Title b; Title c; Title d; …");
+    expect(notes[1]!.text).not.toContain("Title e");
   });
 });

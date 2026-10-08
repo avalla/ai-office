@@ -12,12 +12,30 @@ import type {
   TaskGraphEdge,
   TaskGraphNode,
   TaskGraphSummary,
+  TaskMilestoneGap,
   TaskOperationalState,
 } from "./operational-read-models.ts";
+
+/**
+ * Milestones are derived from task→requirement→milestone links, so a task
+ * outside every milestone has either no requirement or only requirements
+ * recorded without one.
+ */
+function milestoneGap(
+  task: TaskOperationalState,
+  unmilestonedRequirementTaskIds: ReadonlySet<string>,
+): TaskMilestoneGap | null {
+  if ((task.milestones ?? []).length > 0) return null;
+  return unmilestonedRequirementTaskIds.has(task.taskId)
+    ? "requirement_without_milestone"
+    : "no_requirement";
+}
 
 export function projectTaskGraphNodes(
   tasks: readonly TaskOperationalState[],
   edges: readonly TaskGraphEdge[],
+  /** Tasks linked to a requirement that has no milestone. */
+  unmilestonedRequirementTaskIds: ReadonlySet<string> = new Set(),
 ): TaskGraphNode[] {
   const statuses = new Map(
     tasks.map((task) => [task.taskId, task.recordedStatus]),
@@ -69,6 +87,7 @@ export function projectTaskGraphNodes(
         operationalStatus: task.operationalStatus,
         assignedAgent: task.assignedAgent,
         milestoneIds: (task.milestones ?? []).map((m) => m.milestoneId).sort(),
+        milestoneGap: milestoneGap(task, unmilestonedRequirementTaskIds),
         unmetPrerequisiteIds: unmet,
         // The admission rule of ManageTaskDependencies.readiness, not a copy.
         ready: isTaskRunnable(task.recordedStatus) && unmet.length === 0,
