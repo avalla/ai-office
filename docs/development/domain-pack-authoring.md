@@ -96,9 +96,15 @@ official packs, so a nonempty selection there reports unavailable packs.
 The commands below are the actual CLI surface. They require a reachable
 Runtime, an existing `PROJECT_ID`, and, for a nonempty selection, a trusted
 host that has registered the exact artifacts. `project:create "Pack demo"`
-creates a project and prints its ID. Set `PROJECT_ID` to that ID before using
-the commands. Derive `PACKS` from a verified file; this example uses the legal
-reference artifact:
+creates a project. With `--json`, its output contains `projectId` and
+`created`; set `PROJECT_ID` from that value before using the commands:
+
+```bash
+ai-office project:create "Pack demo" --json
+```
+
+Derive `PACKS` from a verified file; this example uses the legal reference
+artifact:
 
 ```bash
 PACKS=$(bun -e '
@@ -130,6 +136,8 @@ selection. A missing artifact, untrusted provenance, wrong digest, incompatible
 core contract, duplicate active pack version, dependency problem, or collision
 with a project-owned definition blocks the change. Selection is explicit;
 installing an artifact never selects it for a project.
+
+`project:pack:preview` prints its report and exits 1 when it contains issues.
 
 Project definitions have a **separate** revision. Use
 `project:definition:show` to read it, then preview and apply a single mutation:
@@ -168,12 +176,21 @@ ai-office project:definition:apply --project "$PROJECT_ID" --mutation "$OVERRIDE
 Set `DEFINITION_REVISION` from `project:definition:show` and run the apply
 command only after inspecting the preview. Other kinds support the applicable
 `replace`, `extend` or `disable` operations. Preview reports the ownership
-transition and typed
-issues before any write. Replacing an existing owned entry or override also
-requires its `expectedEntryRevision`. A project may add, replace or disable
-optional defaults, but cannot weaken mandatory pack policy or core approvals,
-mint grants, or change Runtime authority. `project:configuration:show` is a
-derived read; it does not activate roles, agents or workflows.
+transition and typed issues before any write; `project:definition:show` and
+`project:definition:preview` exit 1 when they report issues. Replacing an
+existing owned entry or override also requires its `expectedEntryRevision`.
+A project may add, replace or disable optional defaults, but cannot weaken
+mandatory pack policy or core approvals, mint grants, or change Runtime
+authority. `project:configuration:show` is a derived read; it does not activate
+roles, agents or workflows.
+
+For removal, preview a `remove_owned` mutation such as
+`{"action":"remove_owned","kind":"roles","id":"gardener"}`, or a
+`remove_override` mutation with the same exact `source` object used by
+`put_override`. Apply with the current **project definition** revision after
+review. To deselect all packs, use `--packs '[]'` with the binding preview and,
+when reconciliation is needed, the upgrade flow below; an empty selection
+does not automatically delete project-owned definitions.
 
 ## Review conflicts and upgrades
 
@@ -200,6 +217,24 @@ every issue. A source definition removed upstream, a removed pack, competing
 overrides, a newly occupied extension field, an owned-definition collision,
 or a stronger role/capability/policy contract can block the plan. There is no
 automatic winner or silent downgrade of mandatory policy.
+
+For a conflict involving the earlier legal `researcher` override, this is the
+exact resolution shape. It uses the **old** selected tuple from `PACKS`:
+
+```bash
+RESOLUTIONS=$(bun -e '
+const old = JSON.parse(process.argv[1])[0];
+console.log(JSON.stringify([{
+  source: { ...old, kind: "roles", localId: "researcher" },
+  action: "remove_override",
+}]));
+' "$PACKS")
+ai-office project:pack:upgrade --project "$PROJECT_ID" --packs "$NEXT_PACKS" --resolutions "$RESOLUTIONS" --json
+```
+
+Use a resolution only for a conflict the plan actually reports. Its object
+has exactly `source` and `action`; `source` has the old `id`, `version`,
+`manifestDigest`, `kind` and `localId`.
 
 After reviewing an issue-free plan, copy **that plan's** digest and apply the
 same desired tuples and resolutions:
@@ -231,7 +266,12 @@ bunx --bun vitest run tests/integration/development-pack-parity.test.ts tests/in
 
 The [Unix-socket CLI tests](../../tests/e2e/daemon-cli.test.ts) exercise the
 `project:pack:*`, `project:definition:*` and
-`project:configuration:show` commands with test-supplied catalogs. The
-[M16 plan](generic-core-domain-packs.md) records detailed conflict and
+`project:configuration:show` commands with test-supplied catalogs:
+
+```bash
+bunx --bun vitest run tests/e2e/daemon-cli.test.ts -t 'previews and applies an explicit project pack binding over the socket|previews, blocks and applies a pack upgrade over the socket'
+```
+
+The [M16 plan](generic-core-domain-packs.md) records detailed conflict and
 compatibility rules; [ADR-0026](../adr/ADR-0026-core-domain-pack-boundary.md)
 records the core/pack authority boundary.
