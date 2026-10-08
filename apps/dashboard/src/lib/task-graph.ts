@@ -8,6 +8,15 @@ import type {
 
 export const nodeSize = { width: 264, height: 96 } as const;
 
+export type GraphNodeDetail = "full" | "medium" | "compact";
+
+/** The node footprint stays fixed; only its presentation changes with zoom. */
+export function graphNodeDetail(zoom: number): GraphNodeDetail {
+  if (zoom >= 0.85) return "full";
+  if (zoom >= 0.4) return "medium";
+  return "compact";
+}
+
 export type GraphDirection = "LR" | "TB";
 
 /**
@@ -76,6 +85,62 @@ export interface VisibleGraph {
   hiddenTaskCount: number;
 }
 
+export const neighborhoodModes = [
+  "direct",
+  "one_hop",
+  "two_hops",
+  "full_lineage",
+] as const;
+export type NeighborhoodMode = (typeof neighborhoodModes)[number];
+
+export interface GraphNeighborhood {
+  taskIds: ReadonlySet<string>;
+  /** Direct relations draw only edges incident to the selected task. */
+  edgeKeys?: ReadonlySet<string>;
+}
+
+/** A tuple encoding keeps arbitrary task IDs from colliding at an edge key. */
+export const graphEdgeKey = (prerequisiteId: string, taskId: string): string =>
+  JSON.stringify([prerequisiteId, taskId]);
+
+/** Compute scope from the complete dependency index, independent of filters. */
+function graphNeighborhoodFromIndex(
+  index: LineageIndex,
+  taskId: string,
+  mode: NeighborhoodMode,
+  fullLineage?: Lineage,
+): GraphNeighborhood {
+  if (mode === "full_lineage") {
+    const { upstream, downstream } =
+      fullLineage ?? lineageFromIndex(index, taskId);
+    return { taskIds: new Set([taskId, ...upstream, ...downstream]) };
+  }
+  const taskIds = new Set([taskId]);
+  const depth = mode === "two_hops" ? 2 : 1;
+  const walk = (adjacent: ReadonlyMap<string, readonly string[]>) => {
+    let frontier = [taskId];
+    for (let hop = 0; hop < depth; hop += 1) {
+      const next: string[] = [];
+      for (const id of frontier)
+        for (const neighbor of adjacent.get(id) ?? []) {
+          if (taskIds.has(neighbor)) continue;
+          taskIds.add(neighbor);
+          next.push(neighbor);
+        }
+      frontier = next;
+    }
+  };
+  walk(index.prerequisites);
+  walk(index.dependents);
+  if (mode !== "direct") return { taskIds };
+  const edgeKeys = new Set<string>();
+  for (const prerequisite of index.prerequisites.get(taskId) ?? [])
+    edgeKeys.add(graphEdgeKey(prerequisite, taskId));
+  for (const dependent of index.dependents.get(taskId) ?? [])
+    edgeKeys.add(graphEdgeKey(taskId, dependent));
+  return { taskIds, edgeKeys };
+}
+
 export function filterGraph(
   graph: TaskGraph,
   filters: GraphFilters,
@@ -84,9 +149,11 @@ export function filterGraph(
     keep?: ReadonlySet<string>;
     /** When set, exactly these tasks are shown and the filters are ignored. */
     only?: ReadonlySet<string>;
+    /** When set, only these dependency edges are drawn within the scope. */
+    onlyEdges?: ReadonlySet<string>;
   } = {},
 ): VisibleGraph {
-  const { keep = new Set<string>(), only } = scope;
+  const { keep = new Set<string>(), only, onlyEdges } = scope;
   const search = filters.search.trim().toLowerCase();
   const matchingTasks = graph.tasks.filter((task) => {
     if (only !== undefined) return only.has(task.taskId);
@@ -137,7 +204,11 @@ export function filterGraph(
   return {
     tasks,
     edges: graph.edges.filter(
-      (edge) => ids.has(edge.taskId) && ids.has(edge.dependsOnTaskId),
+      (edge) =>
+        ids.has(edge.taskId) &&
+        ids.has(edge.dependsOnTaskId) &&
+        (onlyEdges === undefined ||
+          onlyEdges.has(graphEdgeKey(edge.dependsOnTaskId, edge.taskId))),
     ),
     hiddenTaskCount: graph.tasks.length - tasks.length,
   };
@@ -241,6 +312,7 @@ export interface TaskRelationships {
   prerequisites: readonly string[];
   dependents: readonly string[];
   lineage: Lineage;
+  neighborhood: (mode: NeighborhoodMode) => GraphNeighborhood;
 }
 
 function buildLineageIndex(edges: readonly TaskGraphEdge[]): LineageIndex {
@@ -321,10 +393,25 @@ export function createGraphRelationshipMemo() {
     previousEdges = edges;
     if (previousTaskId === taskId && previousResult !== null)
       return previousResult;
-    const result = {
-      prerequisites: index.prerequisites.get(taskId) ?? [],
-      dependents: index.dependents.get(taskId) ?? [],
-      lineage: lineageFromIndex(index, taskId),
+    const currentIndex = index;
+    const currentLineage = lineageFromIndex(currentIndex, taskId);
+    const neighborhoods = new Map<NeighborhoodMode, GraphNeighborhood>();
+    const result: TaskRelationships = {
+      prerequisites: currentIndex.prerequisites.get(taskId) ?? [],
+      dependents: currentIndex.dependents.get(taskId) ?? [],
+      lineage: currentLineage,
+      neighborhood: (mode) => {
+        const cached = neighborhoods.get(mode);
+        if (cached !== undefined) return cached;
+        const scope = graphNeighborhoodFromIndex(
+          currentIndex,
+          taskId,
+          mode,
+          currentLineage,
+        );
+        neighborhoods.set(mode, scope);
+        return scope;
+      },
     };
     previousTaskId = taskId;
     previousResult = result;
@@ -450,11 +537,7 @@ export const blockers = (count: number) =>
 
 /** Wording for a task that is neither ready nor waiting (read-model flags). */
 export function idleState(task: TaskGraphNode): string {
-  const finished =
-    task.operationalStatus === "completed" ||
-    task.operationalStatus === "cancelled" ||
-    task.operationalStatus === "failed";
-  return finished
+  return task.terminal
     ? statusLabel(task.operationalStatus).replace(/^./, (c) => c.toUpperCase())
     : "Not startable";
 }
@@ -468,7 +551,7 @@ export function nodeStateLabel(task: TaskGraphNode): string {
 }
 
 /**
- * `prerequisite>dependent` keys for every unmet prerequisite, including those
+ * Collision-free keys for every unmet prerequisite, including those
  * of terminal dependents. Built from the per-task read model, never from
  * statuses reconstructed in the browser.
  */
@@ -478,6 +561,6 @@ export function unmetEdgeKeys(
   const keys = new Set<string>();
   for (const task of tasks)
     for (const id of task.unmetPrerequisiteIds)
-      keys.add(`${id}>${task.taskId}`);
+      keys.add(graphEdgeKey(id, task.taskId));
   return keys;
 }
