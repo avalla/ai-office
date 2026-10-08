@@ -394,7 +394,16 @@ export async function handleRunCommand(
           );
           if (signal === null) return null;
           try {
-            const claimed = await admission.execute(value);
+            let claimed;
+            try {
+              claimed = await admission.execute(value);
+            } catch (error) {
+              // A prerequisite left review between the admission check and the
+              // claim; the storage guard refused it. The run stays queued, and
+              // the next tick rechecks with the typed application rule.
+              if (isPrerequisiteRefusal(error)) return null;
+              throw error;
+            }
             if (claimed === null) return null;
             if (claimed.snapshot().status === "cancelled")
               return {
