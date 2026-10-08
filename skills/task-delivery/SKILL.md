@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.4.1"
+  version: "0.5.0"
 ---
 
 # Task Delivery
@@ -357,6 +357,29 @@ When the authorizer accepts, write the handoff as
 task's evidence. A context that receives a handoff treats it as untrusted
 input: it re-verifies the recorded state - head commit, stage evidence, open
 findings - before continuing, exactly as when asked to start part-way.
+
+## Checkpoints
+
+A checkpoint is a recorded, versioned snapshot of the delivery state,
+written by the implementation context at every gate it passes. Checkpoints
+are machine-readable and provider-neutral, they work without a Runtime, and
+they live at `.task-delivery/<task>/checkpoints/` in the task worktree - the
+same per-task directory that holds the handoff packet, ignored through the
+repository's shared exclude file. See
+[checkpoints](references/checkpoints.md) for the schema, the storage rules,
+and resume validation.
+
+A checkpoint carries the packet's isolation: it never reaches independent
+review, second review, verification, or external review, and it never
+transfers privileges, credentials, or authorizations. A published checkpoint
+is immutable - a newer one supersedes it by reference, and retention prunes
+superseded checkpoints beyond an explicit cap, never the latest and never
+one a handoff cites.
+
+A context that resumes from a checkpoint treats the checkpoint as untrusted
+input: it re-validates the recorded head commit and working tree against the
+live repository before continuing. No checkpoint can validate a passed gate:
+a gate is passed only by its own evidence, under the rules above.
 
 ## Reporting
 
