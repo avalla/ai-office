@@ -17,9 +17,13 @@ import {
   searchTasks,
   defaultGraphFilters,
   filterGraph,
+  graphStatusOption,
   layoutGraph,
   lineage,
   taskKey,
+  toggleMilestoneFilter,
+  withGraphStatusOption,
+  activeStatusOption,
 } from "../../apps/dashboard/src/lib/task-graph.ts";
 
 function node(
@@ -164,7 +168,7 @@ describe("dashboard task graph", () => {
       ids(
         filterGraph(blockedGraph, {
           ...defaultGraphFilters,
-          milestone: "m1",
+          milestones: ["m1"],
         }).tasks,
       ),
     ).toEqual([
@@ -200,12 +204,11 @@ describe("dashboard task graph", () => {
     expect(
       ids(filterGraph(graph, { ...all, status: "completed" }).tasks),
     ).toEqual(["done"]);
-    expect(ids(filterGraph(graph, { ...all, milestone: "m1" }).tasks)).toEqual([
-      "a",
-      "b",
-    ]);
     expect(
-      ids(filterGraph(graph, { ...all, milestone: "none" }).tasks),
+      ids(filterGraph(graph, { ...all, milestones: ["m1"] }).tasks),
+    ).toEqual(["a", "b"]);
+    expect(
+      ids(filterGraph(graph, { ...all, milestones: ["none"] }).tasks),
     ).toEqual(["done", "c", "d", "lone"]);
     expect(ids(filterGraph(graph, { ...all, quick: "ready" }).tasks)).toEqual([
       "a",
@@ -223,6 +226,44 @@ describe("dashboard task graph", () => {
     expect(
       ids(filterGraph(graph, { ...all, search: " TITLE C" }).tasks),
     ).toEqual(["c"]);
+  });
+
+  test("multiple milestone categories match any selected category", () => {
+    const multi: TaskGraph = {
+      ...graph,
+      tasks: graph.tasks.map((task) =>
+        task.taskId === "b"
+          ? { ...task, milestoneIds: ["m1", "m2"] }
+          : task.taskId === "c"
+            ? { ...task, milestoneIds: ["m2"] }
+            : task,
+      ),
+    };
+    expect(
+      ids(filterGraph(multi, { ...all, milestones: ["m1", "m2"] }).tasks),
+    ).toEqual(["a", "b", "c"]);
+    expect(
+      ids(filterGraph(multi, { ...all, milestones: ["m1", "none"] }).tasks),
+    ).toEqual(["done", "a", "b", "d", "lone"]);
+    expect(
+      ids(filterGraph(multi, { ...all, milestones: ["none"] }).tasks),
+    ).toEqual(["done", "d", "lone"]);
+    expect(toggleMilestoneFilter(["m2"], "m1")).toEqual(["m1", "m2"]);
+    expect(toggleMilestoneFilter(["m1", "m2"], "m1")).toEqual(["m2"]);
+  });
+
+  test("explicit All statuses includes completed tasks", () => {
+    expect(graphStatusOption(defaultGraphFilters)).toBe(activeStatusOption);
+    expect(ids(filterGraph(graph, defaultGraphFilters).tasks)).not.toContain(
+      "done",
+    );
+    const allStatuses = withGraphStatusOption(defaultGraphFilters, "");
+    expect(graphStatusOption(allStatuses)).toBe("");
+    expect(allStatuses.hideCompleted).toBe(false);
+    expect(ids(filterGraph(graph, allStatuses).tasks)).toContain("done");
+    const active = withGraphStatusOption(allStatuses, activeStatusOption);
+    expect(graphStatusOption(active)).toBe(activeStatusOption);
+    expect(ids(filterGraph(graph, active).tasks)).not.toContain("done");
   });
 
   test("an operational shortcut is not hidden by 'hide completed'", () => {
