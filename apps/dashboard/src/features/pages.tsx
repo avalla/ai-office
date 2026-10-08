@@ -2102,7 +2102,10 @@ export function RuntimePage({
           </p>
         </Card>
       </Section>
-      <Section title="Distribution" detail="How the running code was obtained">
+      <Section
+        title="Distribution"
+        detail="How the running code was obtained · revision captured at startup"
+      >
         <Card>
           <FactGrid
             facts={[

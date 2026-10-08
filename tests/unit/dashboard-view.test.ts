@@ -287,6 +287,7 @@ describe("Runtime status page", () => {
     expect(rendered).toContain(
       "The project store opened when the Runtime started; this page does not probe it live.",
     );
+    expect(rendered).toContain("revision captured at startup");
   });
 
   test("a disabled knowledge store reads as disabled, not as an error", () => {

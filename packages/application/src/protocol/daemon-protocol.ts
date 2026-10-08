@@ -47,9 +47,11 @@ export interface DaemonHealthResponse {
 
 /**
  * Read-only Runtime status behind `GET /api/status`. Subsystem state reuses
- * the exact shapes `/health` reports; identity fields are observed at request
- * time. `sourceRevision` is `null` when the checkout's HEAD is not
- * authoritatively known — never a guess.
+ * the exact shapes `/health` reports. Identity fields are observed at
+ * request time, except `sourceRevision`, which the daemon resolves once at
+ * startup so it always describes the code this process actually loaded;
+ * it is `null` when the checkout's HEAD is not authoritatively known —
+ * never a guess.
  */
 export interface RuntimeStatus {
   protocolVersion: typeof daemonProtocolVersion;

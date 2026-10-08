@@ -147,6 +147,8 @@ export interface BootstrapOptions {
   projectStorageBootstrap?: ProjectStorageBootstrapLike;
   /** Internal bootstrap seam for deterministic global-database failure tests. */
   openGlobalDatabase?: typeof openDatabase;
+  /** Internal bootstrap seam for deterministic source-revision capture tests. */
+  readSourceRevision?: (directory: string) => string | null;
 }
 
 interface ProjectStorageBootstrapLike {
@@ -392,14 +394,20 @@ export async function bootstrap(
 
     // The provider reads the host through a holder, assigned just below; it
     // only runs at request time, once the host has recorded its start instant.
+    // The source revision is resolved once, here: re-reading mutable git
+    // metadata per request could report a checkout that moved after this
+    // process loaded its code, misrepresenting the running distribution.
     const statusHost: { current?: PersistentRuntimeHost } = {};
+    const sourceRevision = (options.readSourceRevision ?? readSourceRevision)(
+      sourceDirectory,
+    );
     const runtimeStatus = async (): Promise<RuntimeStatus> => {
       const startedAt = statusHost.current?.startedAtInstant ?? new Date();
       return {
         protocolVersion: daemonProtocolVersion,
         status: "ok",
         productVersion,
-        sourceRevision: readSourceRevision(sourceDirectory),
+        sourceRevision,
         startedAt: startedAt.toISOString(),
         uptimeSeconds: Math.max(
           0,
