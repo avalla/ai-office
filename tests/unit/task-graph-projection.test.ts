@@ -158,6 +158,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
       projectTaskGraphNodes(
         [state("pre", prerequisite), state("dep", "pending")],
         [edge("pre", "dep")],
+        new Set(),
       ).map((n) => [n.taskId, n]),
     );
 
@@ -222,6 +223,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
           state("dep", "pending"),
         ],
         [edge("rev", "dep"), edge("pend", "dep")],
+        new Set(),
       ).map((n) => [n.taskId, n]),
     );
     expect(nodes.get("dep")?.unmetPrerequisiteIds).toEqual(["pend"]);
@@ -234,6 +236,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
       projectTaskGraphNodes(
         [state("pre", "waiting_review"), state("dep", "blocked")],
         [edge("pre", "dep")],
+        new Set(),
       ).map((n) => [n.taskId, n]),
     );
     expect(nodes.get("dep")).toMatchObject({ ready: false, waiting: false });

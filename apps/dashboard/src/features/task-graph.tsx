@@ -369,7 +369,7 @@ export function TaskGraphView({
 
 const gapAdvice: Record<NonNullable<TaskGraphNode["milestoneGap"]>, string> = {
   requirement_without_milestone:
-    "Its requirement has no milestone; assign one with requirement:assign-milestone",
+    "Its requirement has no milestone; if that requirement is still proposed, assign one with requirement:assign-milestone",
   no_requirement: "It has no requirement; link one with task:link-requirement",
 };
 

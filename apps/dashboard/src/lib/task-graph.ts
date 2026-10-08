@@ -293,7 +293,9 @@ export function unassignedMilestoneNeighbours(
   }
   return graph.tasks.filter(
     (task) =>
-      linked.has(task.taskId) && task.milestoneGap !== null && !task.terminal,
+      linked.has(task.taskId) &&
+      typeof task.milestoneGap === "string" &&
+      !task.terminal,
   );
 }
 

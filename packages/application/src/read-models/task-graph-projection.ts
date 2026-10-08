@@ -35,7 +35,7 @@ export function projectTaskGraphNodes(
   tasks: readonly TaskOperationalState[],
   edges: readonly TaskGraphEdge[],
   /** Tasks linked to a requirement that has no milestone. */
-  unmilestonedRequirementTaskIds: ReadonlySet<string> = new Set(),
+  unmilestonedRequirementTaskIds: ReadonlySet<string>,
 ): TaskGraphNode[] {
   const statuses = new Map(
     tasks.map((task) => [task.taskId, task.recordedStatus]),

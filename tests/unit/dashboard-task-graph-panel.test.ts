@@ -427,6 +427,8 @@ describe("milestone gap notes", () => {
       "no_requirement",
     ]);
     expect(notes[0]!.text).toContain("requirement:assign-milestone");
+    // The command only works on a proposed requirement, so the advice says so.
+    expect(notes[0]!.text).toContain("still proposed");
     expect(notes[0]!.text).toContain("Title a");
     expect(notes[1]!.text).toContain("task:link-requirement");
     expect(notes[1]!.text).not.toContain("assign-milestone");
