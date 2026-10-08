@@ -1345,3 +1345,123 @@ describe("GP-10A development pack stays a reference artifact outside production"
     ]);
   });
 });
+
+describe("GP-20 official Domain Packs use only public core contracts", () => {
+  const packagesRoot = join(repositoryRoot, "packages");
+  const packDirectories = readdirSync(packagesRoot)
+    .filter(
+      (name) =>
+        name.startsWith("domain-pack-") && name !== "domain-pack-contracts",
+    )
+    .sort();
+
+  function filesUnder(directory: string): string[] {
+    return readdirSync(directory).flatMap((entry) => {
+      if (entry === "node_modules") return [];
+      const path = join(directory, entry);
+      return statSync(path).isDirectory() ? filesUnder(path) : [path];
+    });
+  }
+
+  function forbiddenPackImports(
+    file: string,
+    source: string,
+    name: string,
+  ): string[] {
+    return importedSpecifiers(source).filter((specifier) => {
+      const target = resolvedTarget(file, specifier);
+      return target === null
+        ? specifier !== "@ai-office/domain-pack-contracts" &&
+            !specifier.startsWith("@ai-office/domain-pack-contracts/")
+        : !target.startsWith(`packages/${name}/`) &&
+            !target.startsWith("packages/domain-pack-contracts/");
+    });
+  }
+
+  test("every official pack imports only itself or the contracts package", () => {
+    for (const name of [
+      "domain-pack-development",
+      "domain-pack-legal",
+      "domain-pack-manufacturing",
+    ])
+      expect(packDirectories).toContain(name);
+    const offenders: string[] = [];
+    for (const name of packDirectories) {
+      const packRoot = join(packagesRoot, name);
+      const packageManifest = JSON.parse(
+        readFileSync(join(packRoot, "package.json"), "utf8"),
+      ) as Record<string, unknown>;
+      for (const field of [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+      ]) {
+        const dependencies = packageManifest[field];
+        if (dependencies === undefined) continue;
+        if (
+          typeof dependencies !== "object" ||
+          dependencies === null ||
+          Array.isArray(dependencies)
+        ) {
+          offenders.push(`${name} has invalid ${field}`);
+          continue;
+        }
+        for (const dependency of Object.keys(dependencies))
+          if (dependency !== "@ai-office/domain-pack-contracts")
+            offenders.push(`${name} -> ${dependency}`);
+      }
+      for (const file of filesUnder(packRoot)) {
+        if (!/\.(?:ts|tsx|mts|js|mjs)$/u.test(file)) continue;
+        for (const specifier of forbiddenPackImports(
+          file,
+          readFileSync(file, "utf8"),
+          name,
+        ))
+          offenders.push(`${relative(repositoryRoot, file)} -> ${specifier}`);
+      }
+      const manifest = JSON.parse(
+        readFileSync(join(packRoot, "manifest.json"), "utf8"),
+      ) as { id: string };
+      for (const layer of ["domain", "application", "runtime-host"]) {
+        const packageSource = readFileSync(
+          join(packagesRoot, layer, "package.json"),
+          "utf8",
+        );
+        if (packageSource.includes(`@ai-office/${name}`))
+          offenders.push(`packages/${layer}/package.json -> ${name}`);
+      }
+      for (const file of [
+        ...typescriptFiles(join(packagesRoot, "domain")),
+        ...typescriptFiles(join(packagesRoot, "application")),
+        ...typescriptFiles(join(packagesRoot, "runtime-host")),
+      ]) {
+        const source = readFileSync(file, "utf8");
+        if (source.includes(manifest.id) || source.includes(name))
+          offenders.push(`${relative(repositoryRoot, file)} names ${name}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("the rule detects relative, aliased and built-in imports from a pack", () => {
+    const file = join(packagesRoot, "domain-pack-legal/src/index.ts");
+    expect(
+      forbiddenPackImports(
+        file,
+        [
+          'import { x } from "@ai-office/domain-pack-contracts";',
+          'import { x } from "../../domain-pack-contracts/src/index.ts";',
+          'import { x } from "./local.ts";',
+          'import { x } from "../../application/src/domain-pack/project-definition.ts";',
+          'import { x } from "@ai-office/domain/project/project.ts";',
+          'import { x } from "node:fs";',
+        ].join("\n"),
+        "domain-pack-legal",
+      ),
+    ).toEqual([
+      "../../application/src/domain-pack/project-definition.ts",
+      "@ai-office/domain/project/project.ts",
+      "node:fs",
+    ]);
+  });
+});
