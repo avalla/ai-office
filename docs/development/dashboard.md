@@ -185,7 +185,7 @@ and React Router hash routes provide these views:
   assignments, active run evidence, and involved agents;
 - `#/projects/:id/tasks` — searchable, paged task table;
 - `#/projects/:id/tasks/:taskId` — task execution and history;
-- `#/projects/:id/milestones` — milestone progress and status filter;
+- `#/projects/:id/milestones` — milestone progress and status filter; archived milestones are hidden by default and remain available under All statuses or archived;
 - `#/projects/:id/requirements` — requirement descriptions, status and
   milestone filters, and linked tasks;
 - `#/projects/:id/agents` — every agent's projected activity state;

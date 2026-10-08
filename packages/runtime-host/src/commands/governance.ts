@@ -118,13 +118,18 @@ export async function handleGovernanceCommand(
       new Set(["project", "milestone", "status"]),
     );
     const status = requiredOption(parsed, "status");
-    if (!["planned", "active", "completed", "cancelled"].includes(status))
+    if (
+      !["planned", "active", "completed", "cancelled", "archived"].includes(
+        status,
+      )
+    )
       throw new CliUsageError("Invalid milestone status");
     await service.setStatus({
       projectId: requiredOption(parsed, "project"),
       kind: "milestone",
       id: requiredOption(parsed, "milestone"),
-      status: status as "planned" | "active" | "completed" | "cancelled",
+      status: status as
+        "planned" | "active" | "completed" | "cancelled" | "archived",
     });
     io.stdout(`milestone status updated: ${status}`);
     return 0;

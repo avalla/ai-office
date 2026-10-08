@@ -717,7 +717,45 @@ describe("operational presentation", () => {
     expect(html(ProjectPage, { data: page, section: "pipeline" })).toContain(
       "Stage timeline",
     );
+    expect(html(ProjectPage, { data: page, section: "milestones" })).toContain(
+      'value="archived"',
+    );
     expect(html(TaskTable, { tasks: [task] })).toContain("No linked milestone");
+  });
+  test("hides archived milestones in the default project view", () => {
+    const page = {
+      kind: "project",
+      project: {
+        ...project,
+        milestones: [
+          {
+            milestoneId: "current",
+            title: "Current phase",
+            status: "active",
+            requirements: summary.requirements,
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            milestoneId: "old",
+            title: "Old phase",
+            status: "archived",
+            requirements: summary.requirements,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+      activePipelines: { total: 0, items: [], truncated: false },
+      activeRuns: { total: 0, items: [], truncated: false },
+    };
+    const markup = html(ProjectPage, { data: page, section: "milestones" });
+    expect(markup).toContain("Current phase");
+    expect(markup).not.toContain("Old phase");
+    expect(markup).toContain("Current (hide archived)");
+    expect(markup).toContain("All statuses");
+    expect(markup).toContain('value="archived"');
+    expect(markup).toContain("1 archived");
   });
   test("renders run failure and controlled action facts safely", () => {
     const report = {
