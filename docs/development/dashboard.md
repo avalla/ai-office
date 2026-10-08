@@ -182,7 +182,9 @@ and React Router hash routes provide these views:
 - `#/` — exact cross-project totals, active work, attention, and activity;
 - `#/projects`, `#/work`, `#/pipelines`, `#/agents`, `#/memory` — global views;
 - `#/runtime` — daemon identity and uptime, knowledge, queue, storage, and
-  distribution versions (read-only host state, not project data);
+  distribution versions (read-only host state, not project data); it
+  re-queries on the shell's 30s cadence because uptime and live reachability
+  emit no invalidation events;
 - `#/projects/:id` — current work, exact aggregates, attention, progress, and activity;
 - `#/projects/:id/pipeline` — active pipeline runs, current stage, stage timeline,
   assignments, active run evidence, and involved agents;

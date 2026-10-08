@@ -191,7 +191,15 @@ function DashboardShell() {
 
   useEffect(() => {
     const timer = window.setInterval(
-      () => setClockTick((tick) => tick + 1),
+      () => {
+        setClockTick((tick) => tick + 1);
+        // The runtime route shows time-varying host state — uptime, live
+        // Redis reachability — that produces no invalidation events, so SSE
+        // alone leaves the page frozen while it stays open. Re-query it on
+        // the same cadence; the controller coalesces and single-flights it.
+        if (parseRoute(window.location.hash).kind === "runtime")
+          controller.current?.invalidated();
+      },
       30_000,
     );
     return () => window.clearInterval(timer);
