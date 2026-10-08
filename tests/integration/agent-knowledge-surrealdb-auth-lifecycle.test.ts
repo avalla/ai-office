@@ -100,9 +100,12 @@ function startFakeSurreal(options: { accessTokenTtlSec: number; rejectPassword?:
         closeObserved,
       };
       const data = { connection, notifyClosed };
-      // The SDK connects with subprotocol "cbor"; select it on the upgrade or
-      // the client rejects the handshake.
-      if (!s.upgrade(request, { headers: { "Sec-WebSocket-Protocol": "cbor" }, data })) {
+      // The negotiated subprotocol is deliberately NOT echoed via upgrade()
+      // headers: Bun <= 1.3.6 answers such upgrades with a response its own
+      // WebSocket client rejects (close 1002 "Mismatch client protocol"),
+      // while the SDK never inspects the negotiated protocol — it only needs
+      // the binary CBOR frames, which flow regardless.
+      if (!s.upgrade(request, { data })) {
         return new Response("upgrade refused", { status: 400 });
       }
       connections.push(connection);
