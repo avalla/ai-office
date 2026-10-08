@@ -176,7 +176,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
             </span>
           ) : task.waiting ? (
             <span
-              title={`${blockers(waitingOn)}: prerequisites not completed or in review`}
+              title={`${blockers(waitingOn)}: prerequisites neither completed nor in review`}
               className="rounded border border-amber-400 px-1 text-amber-800 dark:text-amber-300"
             >
               <Hourglass aria-hidden="true" className="mr-1 inline h-3 w-3" />
@@ -1455,7 +1455,7 @@ export function TaskPanel({
         title="Completed prerequisites"
         empty="None."
         ids={satisfied.filter(
-          (id) => tasksById.get(id)?.recordedStatus !== "waiting_review",
+          (id) => tasksById.get(id)?.recordedStatus === "completed",
         )}
         tasksById={tasksById}
         onFocus={onFocus}
@@ -1572,8 +1572,8 @@ export function Legend() {
       </h3>
       <ul className="space-y-1 text-xs text-subtle">
         <li>
-          {swatch(colour.unmet, true)} dashed: prerequisite not completed or in
-          review
+          {swatch(colour.unmet, true)} dashed: prerequisite neither completed
+          nor in review
         </li>
         <li>
           {swatch(colour.neutral)} faint: prerequisite completed or in review

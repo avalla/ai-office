@@ -243,7 +243,7 @@ task→requirement→milestone link; there is no task→milestone dependency, an
 milestones never take part in the dependency layout.
 
 The **Graph** project section is an operational view of the project, answering
-what can run now, what is blocked and why, and what completing a task unblocks:
+what can run now, what is blocked and why, and what reaching review or completion unblocks:
 
 - a summary row (Ready, Waiting on prerequisites, Blocked, In progress, Needs
   attention) whose buttons are filter shortcuts;

@@ -159,4 +159,43 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
       completionUnblocks: [],
     });
   });
+
+  test.each(["failed", "cancelled"] as const)(
+    "a %s prerequisite keeps the dependent waiting and unblocks nothing",
+    (status) => {
+      const nodes = project(status);
+      expect(nodes.get("dep")).toMatchObject({
+        unmetPrerequisiteIds: ["pre"],
+        waiting: true,
+        ready: false,
+      });
+      expect(nodes.get("pre")?.completionUnblocks).toEqual([]);
+    },
+  );
+
+  test("mixed prerequisites: only the pending one is unmet and unblocks", () => {
+    const nodes = new Map(
+      projectTaskGraphNodes(
+        [
+          state("rev", "waiting_review"),
+          state("pend", "pending"),
+          state("dep", "pending"),
+        ],
+        [edge("rev", "dep"), edge("pend", "dep")],
+      ).map((n) => [n.taskId, n]),
+    );
+    expect(nodes.get("dep")?.unmetPrerequisiteIds).toEqual(["pend"]);
+    expect(nodes.get("pend")?.completionUnblocks).toEqual(["dep"]);
+    expect(nodes.get("rev")?.completionUnblocks).toEqual([]);
+  });
+
+  test("a blocked dependent is neither ready nor waiting on a review prerequisite", () => {
+    const nodes = new Map(
+      projectTaskGraphNodes(
+        [state("pre", "waiting_review"), state("dep", "blocked")],
+        [edge("pre", "dep")],
+      ).map((n) => [n.taskId, n]),
+    );
+    expect(nodes.get("dep")).toMatchObject({ ready: false, waiting: false });
+  });
 });

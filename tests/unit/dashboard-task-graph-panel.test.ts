@@ -184,6 +184,9 @@ describe("task panel prerequisite wording", () => {
     expect(html).toContain("every prerequisite is completed or in review.");
     expect(html).toContain("Prerequisites in review");
     expect(html).toContain("Completed prerequisites");
+    expect(html.indexOf("Prerequisites in review")).toBeLessThan(
+      html.indexOf("Title rev"),
+    );
     expect(html.indexOf("Title rev")).toBeLessThan(
       html.indexOf("Completed prerequisites"),
     );
@@ -210,7 +213,7 @@ describe("task panel prerequisite wording", () => {
 
   test("legend does not equate satisfied with completed", () => {
     const html = renderToStaticMarkup(createElement(Legend));
-    expect(html).toContain("prerequisite not completed or in review");
+    expect(html).toContain("prerequisite neither completed nor in review");
     expect(html).toContain("prerequisite completed or in review");
   });
 });
