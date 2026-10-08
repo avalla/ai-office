@@ -148,7 +148,9 @@ describe("GP-13 workflow override migration", () => {
   test("a fresh database accepts workflow overrides and still constrains every other kind", () => {
     const { database } = temporaryDatabase("ai-office-gp13-fresh-");
     try {
-      expect(migrate(database, migrations).applied.at(-1)).toBe(migration);
+      expect(migrate(database, migrations).applied.at(-1)).toBe(
+        "0047_milestone_archived_status.sql",
+      );
       expect(migrate(database, migrations).applied).toEqual([]);
       seedProject(database);
       expectWorkflowConstraint(database);
@@ -236,7 +238,10 @@ describe("GP-13 workflow override migration", () => {
       const repository = new SqliteProjectDefinitionRepository(database);
       const stateBefore = await repository.get("legacy");
 
-      expect(migrate(database, migrations).applied).toEqual([migration]);
+      expect(migrate(database, migrations).applied).toEqual([
+        migration,
+        "0047_milestone_archived_status.sql",
+      ]);
 
       expect(tables.map(rows)).toEqual(before);
       expect(await repository.get("legacy")).toEqual(stateBefore);

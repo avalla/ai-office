@@ -407,7 +407,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
   ): Promise<GovernanceStatusByKind[K] | null> {
     const [row] = await this.database.query<{ status: string }>(
       `
-        SELECT status
+        SELECT ${kind === "milestone" ? "CASE WHEN item.archived_at IS NOT NULL THEN 'archived' ELSE item.status END AS status" : "item.status"}
         FROM core.${tableForKind(kind)} AS item
         JOIN core.project AS project ON project.id = item.project_id
         WHERE item.id = $1 AND item.project_id = $2
@@ -448,7 +448,15 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
     return this.database.transaction(async () => {
       await this.assertProjectTenant(projectId);
       const rows = await this.database.query<{ id: string }>(
+        kind === "milestone" && status === "archived"
+          ? `
+          UPDATE core.milestone SET archived_at = $1, updated_at = $1
+          WHERE id = $2 AND project_id = $3 AND status = 'completed'
+            AND archived_at IS NULL
+            AND EXISTS (SELECT 1 FROM core.project WHERE id = $3 AND tenant_id = $4)
+          RETURNING id
         `
+          : `
           UPDATE core.${tableForKind(kind)}
           SET status = $1, updated_at = $2
           WHERE id = $3 AND project_id = $4 AND status = $5
@@ -458,7 +466,9 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
             )
           RETURNING id
         `,
-        [status, now, id, projectId, expectedStatus, this.tenantId],
+        kind === "milestone" && status === "archived"
+          ? [now, id, projectId, this.tenantId]
+          : [status, now, id, projectId, expectedStatus, this.tenantId],
       );
       if (rows.length !== 1) return false;
       await this.appendEvent({
@@ -528,7 +538,8 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
       await Promise.all([
         this.database.query<MilestoneRow>(
           `
-            SELECT id, project_id, title, description, status, created_at,
+            SELECT id, project_id, title, description,
+                   CASE WHEN archived_at IS NOT NULL THEN 'archived' ELSE status END AS status, created_at,
                    updated_at
             FROM core.milestone AS item
             WHERE item.project_id = $1

@@ -334,12 +334,25 @@ describe("GP-09 committed legacy fixtures", () => {
       "0044_project_role_omission.sql",
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
+      "0047_milestone_archived_status.sql",
     ]);
     const preExisting = Object.keys(before).filter(
       (name) => name !== "schema_migration",
     );
     expect(tableRows(database, preExisting)).toEqual(
-      Object.fromEntries(preExisting.map((name) => [name, before[name]])),
+      Object.fromEntries(
+        preExisting.map((name) => [
+          name,
+          name === "milestone"
+            ? before[name]!.map((row) =>
+                JSON.stringify({
+                  ...(JSON.parse(row) as Record<string, unknown>),
+                  archived_at: null,
+                }),
+              )
+            : before[name],
+        ]),
+      ),
     );
     // The upgrade selects no pack and creates no definition.
     const added = tableRows(database);

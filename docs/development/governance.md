@@ -8,7 +8,7 @@ Requirements may reference only milestones in the same project. Requirement keys
 
 The lifecycle state machines are:
 
-- milestone: `planned -> active -> completed`, with `planned|active -> cancelled`;
+- milestone: `planned -> active -> completed -> archived`, with `planned|active -> cancelled`; archived milestones remain in project history and can be shown with the dashboard status filter;
 - requirement: `proposed -> accepted -> implemented -> verified`, with explicit rejection only from `proposed` or `accepted`;
 - ADR: `proposed -> accepted -> deprecated|superseded` or `proposed -> rejected`.
 

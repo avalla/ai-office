@@ -332,7 +332,9 @@ export class SqliteGovernanceRepository implements GovernanceRepository {
   ): Promise<GovernanceStatusByKind[K] | null> {
     const row = this.database
       .query<{ status: string }, [string, string]>(
-        `SELECT status FROM ${tableForKind(kind)} WHERE id=? AND project_id=?`,
+        kind === "milestone"
+          ? "SELECT CASE WHEN archived_at IS NOT NULL THEN 'archived' ELSE status END AS status FROM milestone WHERE id=? AND project_id=?"
+          : `SELECT status FROM ${tableForKind(kind)} WHERE id=? AND project_id=?`,
       )
       .get(id, projectId);
     return (row?.status as GovernanceStatusByKind[K] | undefined) ?? null;
@@ -359,13 +361,21 @@ export class SqliteGovernanceRepository implements GovernanceRepository {
     now: Date,
   ): Promise<boolean> {
     return this.immediate(() => {
-      const result = this.database
-        .prepare(
-          `UPDATE ${tableForKind(kind)}
-           SET status=?, updated_at=?
-           WHERE id=? AND project_id=? AND status=?`,
-        )
-        .run(status, now.toISOString(), id, projectId, expectedStatus);
+      const result =
+        kind === "milestone" && status === "archived"
+          ? this.database
+              .prepare(
+                `UPDATE milestone SET archived_at=?, updated_at=?
+             WHERE id=? AND project_id=? AND status='completed' AND archived_at IS NULL`,
+              )
+              .run(now.toISOString(), now.toISOString(), id, projectId)
+          : this.database
+              .prepare(
+                `UPDATE ${tableForKind(kind)}
+             SET status=?, updated_at=?
+             WHERE id=? AND project_id=? AND status=?`,
+              )
+              .run(status, now.toISOString(), id, projectId, expectedStatus);
       if (result.changes !== 1) return false;
       this.appendEvent({
         id: `${kind}:${id}:status:${status}`,
@@ -422,7 +432,10 @@ export class SqliteGovernanceRepository implements GovernanceRepository {
   async getSnapshot(projectId: string): Promise<GovernanceSnapshot> {
     const milestones = this.database
       .query<Record<string, unknown>, [string]>(
-        "SELECT * FROM milestone WHERE project_id=? ORDER BY created_at,id",
+        `SELECT id, project_id, title, description,
+                CASE WHEN archived_at IS NOT NULL THEN 'archived' ELSE status END AS status,
+                created_at, updated_at
+         FROM milestone WHERE project_id=? ORDER BY created_at,id`,
       )
       .all(projectId)
       .map((row) => this.milestoneFromRow(row));

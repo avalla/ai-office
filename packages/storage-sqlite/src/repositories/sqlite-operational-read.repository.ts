@@ -337,7 +337,9 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
     if (projectIds.length === 0) return [];
     return this.database
       .query<MilestoneRow, string[]>(
-        `SELECT id, project_id, title, description, status, created_at, updated_at
+        `SELECT id, project_id, title, description,
+                CASE WHEN archived_at IS NOT NULL THEN 'archived' ELSE status END AS status,
+                created_at, updated_at
          FROM milestone
          WHERE project_id IN (${placeholders(projectIds.length)})
          ORDER BY created_at, id`,

@@ -1,4 +1,5 @@
-export type MilestoneStatus = "planned" | "active" | "completed" | "cancelled";
+export type MilestoneStatus =
+  "planned" | "active" | "completed" | "cancelled" | "archived";
 export type RequirementStatus =
   "proposed" | "accepted" | "implemented" | "verified" | "rejected";
 export type AdrStatus =
@@ -70,8 +71,9 @@ const governanceTransitions = {
   milestone: {
     planned: ["active", "cancelled"],
     active: ["completed", "cancelled"],
-    completed: [],
+    completed: ["archived"],
     cancelled: [],
+    archived: [],
   },
   requirement: {
     proposed: ["accepted", "rejected"],
