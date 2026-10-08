@@ -264,6 +264,22 @@ export function lineage(
   return lineageFromIndex(buildLineageIndex(edges), taskId);
 }
 
+/** Classify a visible dependency relative to the selected task. */
+export function relationshipEdgeKind(
+  edge: TaskGraphEdge,
+  selectedTaskId: string,
+  lineage: Lineage,
+): "direct" | "transitive" | null {
+  if (edge.taskId === selectedTaskId || edge.dependsOnTaskId === selectedTaskId)
+    return "direct";
+  return (lineage.upstream.has(edge.taskId) &&
+    lineage.upstream.has(edge.dependsOnTaskId)) ||
+    (lineage.downstream.has(edge.taskId) &&
+      lineage.downstream.has(edge.dependsOnTaskId))
+    ? "transitive"
+    : null;
+}
+
 /** Keep direct and transitive relationships across fact-only refreshes. */
 export function createGraphRelationshipMemo() {
   let previousEdges: readonly TaskGraphEdge[] | null = null;
