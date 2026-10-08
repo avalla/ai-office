@@ -11,6 +11,7 @@ import {
   Menu,
   Network,
   RefreshCw,
+  Server,
   WifiOff,
 } from "lucide-react";
 import type { ProjectSummary } from "@ai-office/application/read-models/operational-read-models.ts";
@@ -47,6 +48,7 @@ import {
   ProjectPage,
   ProjectsPage,
   RunPage,
+  RuntimePage,
   TaskPage,
   WorkPage,
 } from "../features/pages.tsx";
@@ -64,6 +66,7 @@ const navigation = [
   { label: "Pipelines", path: "/pipelines", icon: Blocks },
   { label: "Agents", path: "/agents", icon: Bot },
   { label: "Memory", path: "/memory", icon: Database },
+  { label: "Runtime", path: "/runtime", icon: Server },
 ] as const;
 const projectNavigation = [
   { label: "Overview", suffix: "", icon: Activity },
@@ -188,7 +191,15 @@ function DashboardShell() {
 
   useEffect(() => {
     const timer = window.setInterval(
-      () => setClockTick((tick) => tick + 1),
+      () => {
+        setClockTick((tick) => tick + 1);
+        // The runtime route shows time-varying host state — uptime, live
+        // Redis reachability — that produces no invalidation events, so SSE
+        // alone leaves the page frozen while it stays open. Re-query it on
+        // the same cadence; the controller coalesces and single-flights it.
+        if (parseRoute(window.location.hash).kind === "runtime")
+          controller.current?.invalidated();
+      },
       30_000,
     );
     return () => window.clearInterval(timer);
@@ -376,6 +387,7 @@ function Page({
     );
   if (data.kind === "run") return <RunPage data={data} />;
   if (data.kind === "memory") return <MemoryPage data={data} />;
+  if (data.kind === "runtime") return <RuntimePage data={data} />;
   if (data.kind === "graph")
     return <ProjectGraphPage graph={data.graph} project={currentProject} />;
   const section =

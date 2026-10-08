@@ -12,6 +12,7 @@ import type {
   TaskGraph,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import { taskPageParameters } from "@ai-office/application/protocol/query-protocol.ts";
+import type { RuntimeStatus } from "@ai-office/application/protocol/daemon-protocol.ts";
 import type { DashboardRoute } from "../ui/view-model.ts";
 
 export class DashboardApiError extends Error {
@@ -69,6 +70,12 @@ export async function getProjectSummaries(): Promise<
     .projects;
 }
 
+export async function getRuntimeStatus(
+  signal?: AbortSignal,
+): Promise<RuntimeStatus> {
+  return (await get<{ status: RuntimeStatus }>("/api/status", signal)).status;
+}
+
 export type DashboardData =
   | {
       kind: "overview";
@@ -105,6 +112,7 @@ export type DashboardData =
   | { kind: "task"; detail: TaskDetail }
   | { kind: "run"; detail: AgentRunDetail; task: TaskDetail | null }
   | { kind: "memory"; memory: GlobalMemoryOverview }
+  | { kind: "runtime"; status: RuntimeStatus }
   | { kind: "invalid"; message: string };
 
 async function pipelineSamples(
@@ -159,6 +167,9 @@ export async function queryRoute(
   if (route.kind === "memory") {
     const body = await get<{ memory: GlobalMemoryOverview }>("/api/memory");
     return { kind: "memory", memory: body.memory };
+  }
+  if (route.kind === "runtime") {
+    return { kind: "runtime", status: await getRuntimeStatus() };
   }
   if (route.kind === "project") {
     if (route.section === "graph") {

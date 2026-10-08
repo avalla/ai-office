@@ -35,9 +35,21 @@ export async function connectSurrealAgentKnowledgeStore(
   };
   try {
     requireActive();
-    await db.connect(config.endpoint, { reconnect: false });
-    requireActive();
-    await db.signin({ username: config.username, password: config.password });
+    // `authentication` is the only sign-in: the SDK applies it during
+    // `connect()` (before `ready()` resolves, so the calls below are already
+    // authenticated) and replays it when the session token expires and after
+    // an automatic reconnect. A manual `signin()` here would set the SDK's
+    // `authOverriden` flag and disable that replay, reintroducing the
+    // ~1-hour silent knowledge outage this connection exists to prevent.
+    await db.connect(config.endpoint, {
+      reconnect: true,
+      namespace: config.namespace,
+      database: config.database,
+      authentication: {
+        username: config.username,
+        password: config.password,
+      },
+    });
     requireActive();
     await db.query("DEFINE NAMESPACE IF NOT EXISTS $namespace", {
       namespace: config.namespace,
