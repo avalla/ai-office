@@ -8,7 +8,10 @@ import {
   projectLongestDependencyChain,
   projectTaskGraphNodes,
 } from "@ai-office/application/read-models/task-graph-projection.ts";
-import type { TaskStatus } from "@ai-office/domain/task/task.ts";
+import {
+  isTerminalTaskStatus,
+  type TaskStatus,
+} from "@ai-office/domain/task/task.ts";
 
 const node = (
   taskId: string,
@@ -26,7 +29,7 @@ const node = (
   waiting: false,
   needsAttention: false,
   completionUnblocks: [],
-  terminal: false,
+  terminal: isTerminalTaskStatus(recordedStatus),
 });
 const edge = (dependsOnTaskId: string, taskId: string): TaskGraphEdge => ({
   taskId,
@@ -108,6 +111,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
       title: taskId,
       priority: 0,
       recordedStatus,
+      terminal: isTerminalTaskStatus(recordedStatus),
       operationalStatus: "not_started",
       assignedAgent: null,
       attentionReasons: [],
