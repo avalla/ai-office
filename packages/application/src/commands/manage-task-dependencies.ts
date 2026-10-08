@@ -30,6 +30,19 @@ export class TaskPrerequisiteIncompleteError extends TaskDependencyError {
   }
 }
 
+/**
+ * True for the typed refusal and for the storage guard's own refusal. Under a
+ * race the database trigger is the authoritative recheck and surfaces the same
+ * rule as a driver error, so callers that tolerate the refusal match both.
+ */
+export function isPrerequisiteRefusal(error: unknown): boolean {
+  return (
+    error instanceof TaskPrerequisiteIncompleteError ||
+    (error instanceof Error &&
+      error.message.includes("task has incomplete prerequisites"))
+  );
+}
+
 export async function assertTaskPrerequisitesComplete(
   projectId: string,
   taskId: string,

@@ -24,7 +24,7 @@ import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import { projectWorkerOutput } from "@ai-office/application/read-models/worker-output.ts";
 import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
-import { TaskPrerequisiteIncompleteError } from "@ai-office/application/commands/manage-task-dependencies.ts";
+import { isPrerequisiteRefusal } from "@ai-office/application/commands/manage-task-dependencies.ts";
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
 import {
   CliUsageError,
@@ -426,13 +426,15 @@ export async function handleRunCommand(
                 // The run finished but the final stage cannot close while a
                 // prerequisite is still in review. The refusal rolled back, so
                 // report it for this run instead of failing the whole batch.
-                if (!(error instanceof TaskPrerequisiteIncompleteError))
-                  throw error;
+                if (!isPrerequisiteRefusal(error)) throw error;
                 return {
                   ...result,
                   error: {
                     code: "STAGE_AWAITING_PREREQUISITES",
-                    message: error.message,
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : "prerequisites are not completed",
                   },
                 };
               }
