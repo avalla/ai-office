@@ -5,8 +5,8 @@ import { closeProbeClient } from "../../packages/storage-surrealdb/src/probe-age
 /**
  * Proves the bounded cleanup contract of the knowledge probe: the client
  * close is awaited within a fixed budget, a wedged close cannot extend it,
- * and cleanup failures never surface — so no unmanaged promise survives a
- * probe and the next probe on a fresh connection always runs.
+ * and cleanup failures never surface — so the next probe on a fresh
+ * connection always runs and reports on time.
  */
 describe("closeProbeClient", () => {
   it("settles within the budget when the client close never settles", async () => {

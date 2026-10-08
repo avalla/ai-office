@@ -8,9 +8,10 @@ const probeCloseBudgetMs = 250;
  * Close a probe client within a fixed budget. SDK close() resolves
  * immediately while the handshake is incomplete, but on an open connection
  * it awaits the socket close event — an event a blackholed transport never
- * delivers. The budget guarantees settlement either way, so no pending
- * promise survives the probe; cleanup failures are swallowed and never
- * change the probe outcome.
+ * delivers. The budget guarantees settlement either way, so no cleanup
+ * extends the probe past the budget (a wedged close promise may outlive the
+ * probe, but it is raced and can never delay or change the outcome);
+ * cleanup failures are swallowed and never change the probe outcome.
  */
 export async function closeProbeClient(
   db: Surreal,
