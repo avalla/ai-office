@@ -72,6 +72,12 @@ const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 type AgentKnowledgeConnector = typeof connectSurrealAgentKnowledgeStore;
 type AgentKnowledgeHandle = Awaited<ReturnType<AgentKnowledgeConnector>>;
 const knowledgeConnectTimeoutMs = 5_000;
+const knowledgeProbeTimeoutMs = 1_500;
+/**
+ * Synthetic repository scope for the live status probe. The read matches no
+ * caller data by construction; it only proves the connected store answers.
+ */
+const knowledgeProbeRepositoryId = "runtime-status-probe";
 
 async function connectKnowledgeWithDeadline(
   connector: AgentKnowledgeConnector,
@@ -125,6 +131,8 @@ export interface BootstrapOptions {
   connectAgentKnowledge?: AgentKnowledgeConnector;
   /** Internal seam for a bounded connection test. */
   agentKnowledgeConnectTimeoutMs?: number;
+  /** Internal seam for a bounded live status probe test. */
+  agentKnowledgeProbeTimeoutMs?: number;
   /**
    * Optional host model routing. When omitted, the host reads it once from
    * `<AI_OFFICE_HOME>/model-routing.yaml` or, in the foreground only, from
@@ -401,6 +409,35 @@ export async function bootstrap(
     const sourceRevision = (options.readSourceRevision ?? readSourceRevision)(
       sourceDirectory,
     );
+    // Live request-time connectivity probe, separate from the startup-observed
+    // `knowledgeStatus`: a bounded read-only query through the connected store.
+    // It never runs inside a transaction and cannot write; a slow or dead
+    // store only delays this one status request by the probe deadline.
+    const knowledgeLiveStatus = async (): Promise<
+      "connected" | "unavailable" | "not_checked"
+    > => {
+      if (agentKnowledge.state !== "connected") return "not_checked";
+      try {
+        await Promise.race([
+          agentKnowledge.store.findKnowledge(
+            {
+              tenantId: agentKnowledge.tenantId,
+              repositoryId: knowledgeProbeRepositoryId,
+            },
+            { text: "probe", limit: 1 },
+          ),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("knowledge probe deadline exceeded")),
+              options.agentKnowledgeProbeTimeoutMs ?? knowledgeProbeTimeoutMs,
+            ),
+          ),
+        ]);
+        return "connected";
+      } catch {
+        return "unavailable";
+      }
+    };
     const runtimeStatus = async (): Promise<RuntimeStatus> => {
       const startedAt = statusHost.current?.startedAtInstant ?? new Date();
       return {
@@ -413,7 +450,10 @@ export async function bootstrap(
           0,
           Math.floor((Date.now() - startedAt.getTime()) / 1000),
         ),
-        knowledge: knowledgeStatus,
+        knowledge: {
+          ...knowledgeStatus,
+          live: await knowledgeLiveStatus(),
+        },
         queue: await queueStatus(),
         // Reaching this composition means the authoritative project store
         // opened; a daemon that failed to open it never answers.

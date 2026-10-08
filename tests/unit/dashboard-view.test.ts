@@ -230,7 +230,7 @@ describe("Runtime status page", () => {
     sourceRevision: revision,
     startedAt: now,
     uptimeSeconds: 3_661,
-    knowledge: { provider: "surrealdb", startup: "connected" },
+    knowledge: { provider: "surrealdb", startup: "connected", live: "connected" },
     queue: {
       provider: "configured",
       redis: "reachable",
@@ -261,6 +261,7 @@ describe("Runtime status page", () => {
       "Knowledge store",
       "surrealdb",
       "connected",
+      "Live",
       "Queue",
       "configured",
       "reachable",
@@ -293,11 +294,12 @@ describe("Runtime status page", () => {
   test("a disabled knowledge store reads as disabled, not as an error", () => {
     const rendered = render({
       ...base,
-      knowledge: { provider: "none", startup: "disabled" },
+      knowledge: { provider: "none", startup: "disabled", live: "not_checked" },
       sourceRevision: null,
     });
     expect(rendered).toContain("Agent knowledge is disabled on this Runtime.");
     expect(rendered).toContain(">none<");
+    expect(rendered).toContain("not checked");
     expect(rendered).toContain("Unknown");
   });
 });

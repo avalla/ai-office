@@ -60,7 +60,15 @@ export interface RuntimeStatus {
   sourceRevision: string | null;
   startedAt: string;
   uptimeSeconds: number;
-  knowledge: NonNullable<DaemonHealthResponse["knowledge"]>;
+  knowledge: NonNullable<DaemonHealthResponse["knowledge"]> & {
+    /**
+     * Live connectivity probe executed at request time through the connected
+     * store (a bounded read-only query), distinct from the startup-observed
+     * `startup` state. "not_checked" when no store connected at startup, so
+     * there is nothing to probe.
+     */
+    live: "connected" | "unavailable" | "not_checked";
+  };
   queue: NonNullable<DaemonHealthResponse["queue"]>;
   /**
    * Observed at startup, not a live probe: reaching this composition means
