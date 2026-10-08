@@ -581,6 +581,19 @@ function fsyncDirectory(directory: string): void {
   }
 }
 
+/**
+ * A couple of milliseconds, spent synchronously: long enough for a
+ * concurrent publisher to finish its rename between reservation attempts,
+ * short enough to keep a contended publish cheap. Publish is a synchronous
+ * API, so this spins rather than sleeping.
+ */
+function pauseBetweenPublishAttempts(): void {
+  const until = Date.now() + 2;
+  while (Date.now() < until) {
+    // Spin: see the function comment.
+  }
+}
+
 function readIndex(taskDirectory: string): CheckpointIndex | null {
   const path = join(checkpointsDirectory(taskDirectory), "index.json");
   if (!existsSync(path)) return null;
@@ -626,16 +639,15 @@ function scanLatest(
   const directory = checkpointsDirectory(taskDirectory);
   let best: { entry: CheckpointIndexEntry; bytes: Buffer } | null = null;
   for (const file of listPublishedFiles(taskDirectory)) {
-    const path = join(directory, file);
-    const bytes = readFileSync(path);
     try {
+      const bytes = readFileSync(join(directory, file));
       const checkpoint = parseCheckpoint(bytes.toString("utf8"));
       const seq = seqFromFileName(file);
       if (seq === null || seq !== checkpoint.stage.seq) continue;
       if (best === null || seq > best.entry.seq)
         best = { entry: { seq, file, id: checkpoint.id, sha256: sha256Hex(bytes) }, bytes };
     } catch {
-      // Not a valid checkpoint: it cannot be the latest one.
+      // Unreadable, unparseable, or inconsistent: not the latest valid one.
     }
   }
   return best;
@@ -730,7 +742,7 @@ function loadLatestCheckpoint(
       const bytes = readFileSync(path);
       if (sha256Hex(bytes) !== indexEntry.sha256)
         throw new CheckpointFormatError(
-          `checkpoint ${indexEntry.file} does not match the hash recorded in index.json`,
+          `checkpoint ${indexEntry.file} does not match the hash recorded in index.json; resume from live state without it, or restore the file from a trusted copy`,
         );
       indexed = { entry: indexEntry, bytes };
     }
@@ -745,8 +757,10 @@ function loadLatestCheckpoint(
  * Publishes the next checkpoint for a task. The sequence is one more than
  * the latest valid checkpoint known to a fresh read; losing the exclusive
  * reservation re-reads and retries, so a concurrent publisher can stall a
- * sequence but never fork it. Published checkpoints are never modified; a
- * newer one supersedes them by reference.
+ * sequence but never fork it. Under real contention the reservation race
+ * can be lost on every attempt: the typed {@link CheckpointExistsError}
+ * then reaches the caller, which retries the call. Published checkpoints
+ * are never modified; a newer one supersedes them by reference.
  */
 export function publishCheckpoint(
   taskDirectory: string,
@@ -778,6 +792,7 @@ export function publishCheckpoint(
   const id = idGen();
   let lastCollision: CheckpointExistsError | null = null;
   for (let attempt = 0; attempt < maximumPublishAttempts; attempt += 1) {
+    if (attempt > 0) pauseBetweenPublishAttempts();
     const current = loadLatestCheckpoint(taskDirectory);
     const previous = current === null ? null : parseCheckpoint(current.bytes.toString("utf8"));
     const seq = previous === null ? 1 : previous.stage.seq + 1;
@@ -821,16 +836,9 @@ export function publishCheckpoint(
     try {
       writeAtomic(directory, checkpointFileName(seq), body, true);
       const bytes = Buffer.from(body, "utf8");
-      let pruned: readonly string[] = [];
-      let pruneError: string | null = null;
-      try {
-        pruned = pruneCheckpoints(
-          taskDirectory,
-          options.retentionCap ?? defaultCheckpointRetentionCap,
-        );
-      } catch (error) {
-        pruneError = errorMessage(error);
-      }
+      // The index is made durable before retention pruning, so no index,
+      // old or new, ever references a file pruning is about to delete; a
+      // crash between the two renames is recovered by the scan.
       const index: CheckpointIndex = {
         schemaVersion: 1,
         latest: { seq, file: checkpointFileName(seq), id: checkpoint.id, sha256: sha256Hex(bytes) },
@@ -842,6 +850,16 @@ export function publishCheckpoint(
         `${JSON.stringify(index, null, 2)}\n`,
         false,
       );
+      let pruned: readonly string[] = [];
+      let pruneError: string | null = null;
+      try {
+        pruned = pruneCheckpoints(
+          taskDirectory,
+          options.retentionCap ?? defaultCheckpointRetentionCap,
+        );
+      } catch (error) {
+        pruneError = errorMessage(error);
+      }
       return { checkpoint, pruned, pruneError };
     } catch (error) {
       if (error instanceof CheckpointExistsError) {
@@ -858,12 +876,20 @@ export function publishCheckpoint(
   );
 }
 
-/** All published checkpoints of a task, oldest first; unparseable files throw. */
+/**
+ * All published checkpoints of a task, oldest first. Zero-byte files are
+ * reservation artifacts (live or crashed) and are skipped; any other file
+ * that does not validate throws, because a non-empty corrupt file is
+ * evidence of tampering or media corruption, not of a transient state.
+ */
 export function listCheckpoints(taskDirectory: string): Checkpoint[] {
   const directory = checkpointsDirectory(taskDirectory);
-  return listPublishedFiles(taskDirectory).map((file) =>
-    readPublishedCheckpoint(directory, file),
-  );
+  const checkpoints: Checkpoint[] = [];
+  for (const file of listPublishedFiles(taskDirectory)) {
+    if (statSync(join(directory, file)).size === 0) continue;
+    checkpoints.push(readPublishedCheckpoint(directory, file));
+  }
+  return checkpoints;
 }
 
 function handoffCitedCheckpointIds(taskDirectory: string): Set<string> {

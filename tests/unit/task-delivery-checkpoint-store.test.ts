@@ -300,6 +300,15 @@ describe("publishCheckpoint", () => {
     expect(readFileSync(join(checkpointsDir(root), "000002.json"), "utf8")).toBe("");
   });
 
+  test("a fresh in-flight reservation is skipped by listCheckpoints, not thrown", () => {
+    const root = temporaryRoot();
+    publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    writeFileSync(join(checkpointsDir(root), "000002.json"), "");
+    const listed = listCheckpoints(taskDir(root));
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.stage.seq).toBe(1);
+  });
+
   test("a fresh corrupt file at the next sequence surfaces contention, not deletion", () => {
     const root = temporaryRoot();
     publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());

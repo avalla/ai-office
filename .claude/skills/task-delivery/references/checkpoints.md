@@ -76,7 +76,12 @@ lives in the document and in the index.
   index; the scan reveals the newer checkpoint, so the crash loses the
   update, never the store. An index that does not parse falls back to the
   same scan; an indexed checkpoint file that fails the recorded hash is a
-  tamper signal and stops the reader.
+  tamper signal and stops the reader. The index is always made durable
+  before retention pruning runs, so no index ever references a pruned file.
+- Publishing may still lose the reservation race on every internal attempt
+  under heavy contention (a live competitor's reservation is never
+  deleted). The failure is the typed `CheckpointExistsError`: retry the
+  publish call.
 - Published checkpoints are immutable. The only changes are new checkpoints
   (`supersedes` points at the previous one) and retention pruning.
 - Retention runs after each publish and on demand; its failure never fails
